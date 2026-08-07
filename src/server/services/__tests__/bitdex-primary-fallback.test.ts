@@ -7,8 +7,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // receives a truthy `{ data: [] }`, never consults Meilisearch, and the user gets a blank
 // feed instead of a degraded one.
 //
+// The same null also comes back for queries that CANNOT match — an empty follow set, an
+// unknown username — which short-circuit before any request. Those must not fall back to
+// Meili, and must not reach the own-excluded merge either: a Following feed with nobody
+// followed would otherwise render as the viewer's own private and blocked images.
+//
 // Pinned here, end to end through getImagesFromSearch:
 //   - main pass FAILED, nothing accumulated → falls through to Meili (source 'meili')
+//   - main pass UNSATISFIABLE → empty BitDex page, own-excluded content not merged
 //   - main pass returned a legitimate empty 200 → serves the empty BitDex page
 //
 // Minimal-seam mocking follows image-feed-clickhouse-failsoft.test.ts: stub the infra
@@ -41,7 +47,12 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
+// userEngagement backs the `followed` short-circuit; an empty follow set is the
+// unsatisfiable case exercised below.
+vi.mock('~/server/db/client', () => ({
+  dbRead: { userEngagement: { findMany: vi.fn(async () => [] as unknown[]) } },
+  dbWrite: {},
+}));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/redis/client', () => {
   const make = (): any => new Proxy(() => 'k', { get: () => make() });
@@ -97,6 +108,34 @@ describe('BitDex primary fallback', () => {
     queryBitdexOutcomeMock.mockResolvedValue(emptyOk);
 
     const result = await getImagesFromSearch(baseInput);
+
+    expect(result.source).toBe('bitdex');
+    expect(result.data).toEqual([]);
+  });
+
+  it("serves an empty feed — not the viewer's own excluded content — when the query cannot match", async () => {
+    // Following nobody short-circuits before any request is made. The own-excluded pass
+    // still runs and still returns the viewer's private/blocked/unpublished images; those
+    // must not become the feed.
+    queryBitdexOutcomeMock.mockResolvedValue(emptyOk);
+    queryBitdexMock.mockResolvedValue({
+      ids: [99],
+      total_matched: 1,
+      elapsed_us: 1,
+      documents: [
+        {
+          id: 99,
+          url: 'own-private.jpeg',
+          nsfwLevel: 1,
+          userId: 500,
+          availability: 'Private',
+          postId: 7,
+          sortAt: 1_700_000_000,
+        },
+      ],
+    });
+
+    const result = await getImagesFromSearch({ ...baseInput, followed: true });
 
     expect(result.source).toBe('bitdex');
     expect(result.data).toEqual([]);

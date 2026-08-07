@@ -2863,7 +2863,7 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
   // is fetched in the parallel second pass above and merged after.
   const accumulated: ReturnType<typeof mapBitdexDoc>[] = [];
   let lastCursor: any = undefined;
-  const queryStatus: BitdexQueryStatus = { failed: false };
+  const queryStatus: BitdexQueryStatus = {};
 
   for (let pass = 0; pass < MAX_PASSES && accumulated.length < limit; pass++) {
     const result = await (pass === 0
@@ -2885,10 +2885,11 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
     if (!result.cursor) break; // no more pages
   }
 
-  // A failed BitDex round-trip is not an empty feed. The own-excluded pass would
-  // otherwise carry an empty accumulation past the guard below and serve a blank
-  // page, so the caller never gets the chance to try Meilisearch.
-  if (queryStatus.failed && !accumulated.length) return null;
+  // "Following nobody" must render as nothing — never as the viewer's own
+  // private/blocked/unpublished images, which is what the merge below would show.
+  if (queryStatus.reason === 'unsatisfiable') return { data: [], nextCursor: undefined };
+  // Null tells the caller to try Meili; a failed round-trip is not an empty feed.
+  if (queryStatus.reason === 'failed' && !accumulated.length) return null;
   if (!accumulated.length && !ownExcludedPromise) return null;
 
   let data = accumulated;
@@ -3940,11 +3941,15 @@ export function mapBitdexDoc(doc: Record<string, unknown>) {
  * @param includeDocs - true to return all doc fields, or an array of field names
  */
 /**
- * Records whether the BitDex round-trip itself failed. `getImagesFromBitdexPreFilter`
- * also returns null for queries that cannot match anything (unknown username, empty
- * follow list) — those short-circuit before any request and leave this untouched.
+ * Why `getImagesFromBitdexPreFilter` returned null — the caller cannot tell from the null
+ * itself, and the two cases need opposite handling:
+ *   'failed'        — the BitDex round-trip failed; the feed should try another backend.
+ *   'unsatisfiable' — the query cannot match anything (unknown username, empty follow
+ *                     set, empty new-creators board, nothing hidden). The feed is
+ *                     legitimately empty and must stay empty.
+ * Left unset when the request succeeded, whatever it matched.
  */
-export type BitdexQueryStatus = { failed: boolean };
+export type BitdexQueryStatus = { reason?: 'failed' | 'unsatisfiable' };
 
 export async function getImagesFromBitdexPreFilter(
   input: ImageSearchInput,
@@ -3952,6 +3957,10 @@ export async function getImagesFromBitdexPreFilter(
   cursor?: any,
   queryStatus?: BitdexQueryStatus
 ) {
+  const unsatisfiable = () => {
+    if (queryStatus) queryStatus.reason = 'unsatisfiable';
+    return null;
+  };
   let { postIds = [] } = input;
   const {
     sort,
@@ -4035,14 +4044,14 @@ export async function getImagesFromBitdexPreFilter(
       select: { imageId: true },
     });
     const imageIds = hiddenImages.map((x) => x.imageId);
-    if (!imageIds.length) return null;
+    if (!imageIds.length) return unsatisfiable();
     filters.push(_in('id', imageIds.map(_int)));
   }
 
   // --- Username → userId ---
   if (username && !userId) {
     const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
-    if (!targetUser) return null;
+    if (!targetUser) return unsatisfiable();
     userId = targetUser.id;
   }
 
@@ -4053,14 +4062,14 @@ export async function getImagesFromBitdexPreFilter(
       select: { targetUserId: true },
     });
     const userIds = followedUsers.map((x) => x.targetUserId);
-    if (!userIds.length) return null;
+    if (!userIds.length) return unsatisfiable();
     filters.push(_in('userId', userIds.map(_int)));
   }
 
   // --- New & upcoming creators ---
   if (newCreators) {
     const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
-    if (!newCreatorIds.length) return null;
+    if (!newCreatorIds.length) return unsatisfiable();
     filters.push(_in('userId', newCreatorIds.map(_int)));
   }
 
@@ -4186,7 +4195,7 @@ export async function getImagesFromBitdexPreFilter(
     includeDocs
   );
   if (outcome.status === 'failed') {
-    if (queryStatus) queryStatus.failed = true;
+    if (queryStatus) queryStatus.reason = 'failed';
     return null;
   }
   return outcome.result;
