@@ -116,6 +116,20 @@
         Timed mute
       </Button>
 
+      <form method="POST" action="?/resetCaches" use:enhance={onSubmit}>
+        <input type="hidden" name="userId" value={identity.id} />
+        <Button type="submit" size="sm" disabled={submitting} variant="outline">
+          Reset subscription caches
+        </Button>
+      </form>
+
+      <form method="POST" action="?/refreshSession" use:enhance={onSubmit}>
+        <input type="hidden" name="userId" value={identity.id} />
+        <Button type="submit" size="sm" disabled={submitting} variant="outline">
+          Refresh session
+        </Button>
+      </form>
+
       {#if identity.bannedAt}
         <Button size="sm" variant="outline" onclick={() => (confirming = 'unban')}>Unban</Button>
       {:else}

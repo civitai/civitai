@@ -8,6 +8,8 @@ import {
   BAN_REASON_CODES,
   addTimedMute,
   forceLogout,
+  refreshSessionCache,
+  resetSubscriptionCaches,
   revokeTimedMute,
   setBanned,
   setMuted,
@@ -103,6 +105,34 @@ export const actions: Actions = {
     if (typeof input === 'string') return accountFail(input);
 
     const result = await forceLogout({ userId: input.userId, moderatorId: locals.user.id });
+    if (!result.ok) return accountFail(result.error);
+    return { success: true };
+  },
+
+  // Cache and session refresh are recoverable and touch no content, so they are gated on the same
+  // action permission as the rest but carry no confirmation step.
+  resetCaches: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');
+    const input = parseForm(userIdSchema, await request.formData());
+    if (typeof input === 'string') return accountFail(input);
+
+    const result = await resetSubscriptionCaches({
+      userId: input.userId,
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return accountFail(result.error);
+    return { success: true };
+  },
+
+  refreshSession: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');
+    const input = parseForm(userIdSchema, await request.formData());
+    if (typeof input === 'string') return accountFail(input);
+
+    const result = await refreshSessionCache({
+      userId: input.userId,
+      moderatorId: locals.user.id,
+    });
     if (!result.ok) return accountFail(result.error);
     return { success: true };
   },

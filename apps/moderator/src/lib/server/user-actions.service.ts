@@ -19,6 +19,65 @@ import { invalidateUserSessions } from './sessions';
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
+/** Main-app endpoints authenticated by `WEBHOOK_TOKEN` in the query string. The token must never reach
+ *  the client, so every one of these is called from a form action, never proxied. */
+async function callMainApp(
+  path: string,
+  params: Record<string, string>,
+  label: string
+): Promise<ActionResult> {
+  const token = env.WEBHOOK_TOKEN;
+  if (!token) return { ok: false, error: 'WEBHOOK_TOKEN is not configured.' };
+
+  const base = (env.CIVITAI_APP_URL || 'https://civitai.com').replace(/\/$/, '');
+  const query = new URLSearchParams({ ...params, token });
+  try {
+    const res = await fetch(`${base}${path}?${query}`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return { ok: false, error: `${label} returned ${res.status}.` };
+    return { ok: true };
+  } catch (e) {
+    console.error(`[user-actions] ${label} failed`, e);
+    return { ok: false, error: `${label} failed.` };
+  }
+}
+
+// CACHE / SESSION REFRESH (Retool's ClearCache + RefreshSession). Both were recorded as blocked on an
+// API key; they are plain webhook-token endpoints and were never blocked at all. The recurring support
+// case is a user who paid and whose tier has not taken effect — this is the fix for it, and without it
+// the moderator has to ask an engineer.
+export async function resetSubscriptionCaches(input: {
+  userId: number;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  const result = await callMainApp(
+    '/api/mod/reset-user-subscription-caches',
+    { userId: String(input.userId) },
+    'Cache reset'
+  );
+  if (!result.ok) return result;
+
+  await logAction('resetSubscriptionCaches', input.userId, input.moderatorId);
+  return { ok: true };
+}
+
+export async function refreshSessionCache(input: {
+  userId: number;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  const result = await callMainApp(
+    '/api/admin/cache-check',
+    { userId: String(input.userId), reset: 'true' },
+    'Session refresh'
+  );
+  if (!result.ok) return result;
+
+  await logAction('refreshSession', input.userId, input.moderatorId);
+  return { ok: true };
+}
+
 async function logAction(activity: string, targetUserId: number, moderatorId: number) {
   await recordModActivity({
     userId: moderatorId,
@@ -135,24 +194,12 @@ export async function setBanned(input: {
   if (isBanned === input.ban)
     return { ok: false, error: `User is already ${input.ban ? 'banned' : 'not banned'}. Reload.` };
 
-  const base = (env.CIVITAI_APP_URL || 'https://civitai.com').replace(/\/$/, '');
-  const token = env.WEBHOOK_TOKEN;
-  if (!token) return { ok: false, error: 'WEBHOOK_TOKEN is not configured.' };
+  const params: Record<string, string> = { userId: String(input.userId) };
+  if (input.ban && input.reasonCode) params.reasonCode = input.reasonCode;
+  if (input.ban && input.detailsInternal) params.detailsInternal = input.detailsInternal;
 
-  const params = new URLSearchParams({ token, userId: String(input.userId) });
-  if (input.ban && input.reasonCode) params.set('reasonCode', input.reasonCode);
-  if (input.ban && input.detailsInternal) params.set('detailsInternal', input.detailsInternal);
-
-  try {
-    const res = await fetch(`${base}/api/mod/ban-user?${params}`, {
-      method: 'POST',
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) return { ok: false, error: `Ban endpoint returned ${res.status}.` };
-  } catch (e) {
-    console.error('[user-actions] ban request failed', e);
-    return { ok: false, error: 'Ban request failed.' };
-  }
+  const result = await callMainApp('/api/mod/ban-user', params, 'Ban endpoint');
+  if (!result.ok) return result;
 
   await logAction(input.ban ? 'ban' : 'unban', input.userId, input.moderatorId);
   return { ok: true };
