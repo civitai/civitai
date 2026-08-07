@@ -85,14 +85,14 @@ export default function StickerPlacements() {
                   />
 
                   {row.image && (
-                    // `type="image"` with `anim={false}` even for a video target:
-                    // that asks the CDN for a still frame instead of embedding a
-                    // player, which is what the rest of the app does for a
-                    // thumbnail. Rendering the raw url through EdgeImage gave a
-                    // broken image for every video.
+                    // `anim={false}` is what keeps a list of these quiet: it
+                    // suppresses the autoplay observer and the autoPlay
+                    // attribute, leaving a poster frame that plays on hover.
+                    // The type has to be the real one — forcing `image` asks the
+                    // CDN to transform a video as a still, which it will not do.
                     <EdgeMedia
                       src={row.image.url}
-                      type="image"
+                      type={row.image.type}
                       anim={false}
                       name={row.image.name ?? row.image.id.toString()}
                       alt={row.image.name ?? undefined}

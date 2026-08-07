@@ -1,4 +1,4 @@
-import { Badge, Group, HoverCard, Skeleton, Text, UnstyledButton } from '@mantine/core';
+import { Anchor, Badge, Group, HoverCard, Skeleton, Text } from '@mantine/core';
 import { IconSticker } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -64,6 +64,7 @@ export function StickerPlacementHoverCard({
   );
 
   const stickerCreator = data?.sticker?.creator;
+  const shopHref = stickerCreator ? `/user/${stickerCreator.username}/shop` : null;
 
   return (
     <HoverCard
@@ -84,11 +85,46 @@ export function StickerPlacementHoverCard({
           outline instead of two nested ones a pixel apart. */}
       <HoverCard.Dropdown p={0}>
         <Group gap={6} px="sm" py={6} wrap="nowrap" justify="space-between">
-          <Group gap={6} wrap="nowrap">
-            <IconSticker size={14} className="text-yellow-6" />
-            <Text size="xs" c="dimmed">
-              {data ? `Placed ${placedLabel(data.placedAt)}` : 'Placed'}
+          <Group gap={6} wrap="nowrap" className="min-w-0 flex-1">
+            <IconSticker size={14} className="shrink-0 text-yellow-6" />
+
+            {/* The names truncate and the timestamp does not. A long sticker name
+                is still recognisable from its first few words, whereas half a
+                timestamp is worth nothing — and "how long has this been here" is
+                the question the line exists to answer. */}
+            <Text size="xs" c="dimmed" className="min-w-0 truncate">
+              Placed
+              {data?.sticker && (
+                <>
+                  {' '}
+                  {shopHref ? (
+                    <Anchor component={Link} href={shopHref} underline="always" fw={600} inherit>
+                      {data.sticker.name}
+                    </Anchor>
+                  ) : (
+                    // A sticker whose creator's account is gone still has a name
+                    // worth showing; it just has nowhere to link to.
+                    <Text span fw={600} inherit>
+                      {data.sticker.name}
+                    </Text>
+                  )}
+                  {stickerCreator && shopHref && (
+                    <>
+                      {' by '}
+                      <Anchor component={Link} href={shopHref} underline="always" inherit>
+                        {stickerCreator.username}
+                      </Anchor>
+                    </>
+                  )}
+                </>
+              )}
             </Text>
+
+            {data && (
+              <Text size="xs" c="dimmed" className="shrink-0">
+                · {placedLabel(data.placedAt)}
+              </Text>
+            )}
           </Group>
           {pending && (
             <Badge size="xs" color="yellow" variant="light">
@@ -106,32 +142,7 @@ export function StickerPlacementHoverCard({
             <Skeleton height={92} radius="md" />
           </div>
         ) : (
-          <>
-            <SmartCreatorCard user={data.placer} withActions={false} withBorder={false} />
-
-            {data.sticker && (
-              <UnstyledButton
-                component={Link}
-                href={stickerCreator ? `/user/${stickerCreator.username}/shop` : '#'}
-                // The row is the link, not just the names in it — a two-word
-                // target inside a 400px card is a needle to hit with a mouse
-                // that is already hovering something else.
-                className="block w-full border-t border-gray-3 px-3 py-2 hover:bg-gray-1 dark:border-dark-4 dark:hover:bg-dark-6"
-              >
-                <Text size="xs" lineClamp={1}>
-                  <Text span fw={600}>
-                    {data.sticker.name}
-                  </Text>
-                  {stickerCreator && (
-                    <Text span c="dimmed">
-                      {' '}
-                      by {stickerCreator.username}
-                    </Text>
-                  )}
-                </Text>
-              </UnstyledButton>
-            )}
-          </>
+          <SmartCreatorCard user={data.placer} withActions={false} withBorder={false} />
         )}
       </HoverCard.Dropdown>
     </HoverCard>
