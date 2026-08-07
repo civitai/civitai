@@ -29,8 +29,12 @@ export function StickerPlacementActions({
   const act = trpc.placement.actOnStickers.useMutation({
     onSuccess: async (result) => {
       showSuccessNotification({
+        // Deliberately does not promise a retry. Nothing retries a failed owner
+        // action; the placement stays pending and reaches expiry, which refunds
+        // the placer and pays the owner nothing — the opposite of what they just
+        // chose. Saying "try again" is the only honest instruction.
         message: result.failed.length
-          ? `Actioned ${result.settled}. ${result.failed.length} could not be completed and will be retried.`
+          ? `Actioned ${result.settled}. ${result.failed.length} didn't go through — try those again.`
           : `Actioned ${result.settled}.`,
       });
       await utils.placement.invalidate();
@@ -73,8 +77,8 @@ export function StickerPlacementActions({
               {placementIds.length > 1
                 ? `Decline ${placementIds.length} placements?`
                 : 'Decline this placement?'}{' '}
-              The placer keeps most of what they paid, but a 30% fee stays with you. This can&apos;t
-              be undone.
+              The placer keeps most of what they paid, and a fee stays with you. This can&apos;t be
+              undone.
             </Text>
             <Group gap="xs" justify="end">
               <Button size="compact-xs" variant="default" onClick={() => setConfirming(false)}>

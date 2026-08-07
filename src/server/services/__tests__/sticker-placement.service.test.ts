@@ -220,6 +220,17 @@ describe("the creator's size limit", () => {
    * shrink placements people already paid for, and nothing else fails when it
    * happens: the sticker just quietly gets smaller.
    */
+  it('never consults the space when reading placements back', async () => {
+    placementFindMany.mockResolvedValueOnce([]);
+
+    await getStickerPlacements({ imageIds: [IMAGE] });
+
+    // The clamp-on-read someone would write needs the creator's current limit in
+    // hand. Asserting the read never asks for it is the guard that fails when
+    // they reach for it, which the scale assertion below cannot do on its own.
+    expect(resolvePlacementSpaceFor).not.toHaveBeenCalled();
+  });
+
   it('leaves an existing placement at the size it was accepted at', async () => {
     placementFindMany.mockResolvedValueOnce([
       {
@@ -352,11 +363,14 @@ describe('a pending placement is visible to the person who paid for it and nobod
     };
     const pending = where.OR.filter((clause) => clause.status === 'pending');
 
-    // Exactly two, each pinned to the viewer: the person who paid for it and the
-    // person being asked to accept it. An unpinned clause here would show every
-    // pending placement to everyone, which is the feature working in reverse.
-    expect(pending).toHaveLength(2);
-    expect(pending.map((clause) => clause.placerId ?? clause.ownerId)).toEqual([PLACER, PLACER]);
+    // Asserted as whole clauses, not as a list of ids. The viewer is the same
+    // person in both roles, so `placerId ?? ownerId` collapsed them to the same
+    // value — and the test then passed with either clause duplicated, which is
+    // exactly the mutation it exists to catch. The key name is the discriminator.
+    expect(pending).toEqual([
+      { status: 'pending', placerId: PLACER },
+      { status: 'pending', ownerId: PLACER },
+    ]);
   });
 
   it('asks for approved placements only when nobody is signed in', async () => {
@@ -387,21 +401,23 @@ describe('a pending placement is visible to the person who paid for it and nobod
 
 describe('settlement state comes from the ledger, never from Placement.status', () => {
   it('reports settled when every leg carries a receipt', async () => {
+    placementFindMany.mockResolvedValueOnce([{ id: PLACEMENT }]);
     transactionFindMany.mockResolvedValueOnce([
       { placementId: PLACEMENT, transactionId: 'buzz-1', attempts: 1 },
     ]);
 
-    await expect(getPlacementSettlementStates([PLACEMENT])).resolves.toEqual({
+    await expect(getPlacementSettlementStates([PLACEMENT], PLACER)).resolves.toEqual({
       [PLACEMENT]: 'settled',
     });
   });
 
   it('reports pending while an unpaid leg is still being retried', async () => {
+    placementFindMany.mockResolvedValueOnce([{ id: PLACEMENT }]);
     transactionFindMany.mockResolvedValueOnce([
       { placementId: PLACEMENT, transactionId: null, attempts: 2 },
     ]);
 
-    await expect(getPlacementSettlementStates([PLACEMENT])).resolves.toEqual({
+    await expect(getPlacementSettlementStates([PLACEMENT], PLACER)).resolves.toEqual({
       [PLACEMENT]: 'pending',
     });
   });
@@ -409,28 +425,41 @@ describe('settlement state comes from the ledger, never from Placement.status', 
   // The case the whole rule exists for: the placement reads a clean `approved`
   // while somebody is still owed and nothing will pay them without a human.
   it('reports stalled when a leg has exhausted its retries', async () => {
+    placementFindMany.mockResolvedValueOnce([{ id: PLACEMENT }]);
     transactionFindMany.mockResolvedValueOnce([
       { placementId: PLACEMENT, transactionId: null, attempts: 5 },
     ]);
 
-    await expect(getPlacementSettlementStates([PLACEMENT])).resolves.toEqual({
+    await expect(getPlacementSettlementStates([PLACEMENT], PLACER)).resolves.toEqual({
       [PLACEMENT]: 'stalled',
     });
   });
 
   it('keeps stalled once a sibling leg has given up', async () => {
+    placementFindMany.mockResolvedValueOnce([{ id: PLACEMENT }]);
     transactionFindMany.mockResolvedValueOnce([
       { placementId: PLACEMENT, transactionId: null, attempts: 5 },
       { placementId: PLACEMENT, transactionId: null, attempts: 1 },
     ]);
 
-    await expect(getPlacementSettlementStates([PLACEMENT])).resolves.toEqual({
+    await expect(getPlacementSettlementStates([PLACEMENT], PLACER)).resolves.toEqual({
       [PLACEMENT]: 'stalled',
     });
   });
 
+  it('tells a stranger nothing about a placement they are not party to', async () => {
+    // The visibility read returns nothing for an unrelated viewer, so there is
+    // no state to report. Without this scope any signed-in user could enumerate
+    // whether an arbitrary placement had paid out.
+    placementFindMany.mockResolvedValueOnce([]);
+
+    await expect(getPlacementSettlementStates([PLACEMENT], 999_999)).resolves.toEqual({});
+    expect(transactionFindMany).not.toHaveBeenCalled();
+  });
+
   it('never reads the hold legs, which are not payouts', async () => {
-    await getPlacementSettlementStates([PLACEMENT]);
+    placementFindMany.mockResolvedValueOnce([{ id: PLACEMENT }]);
+    await getPlacementSettlementStates([PLACEMENT], PLACER);
 
     const { where } = transactionFindMany.mock.calls[0][0] as {
       where: { kind: { notIn: string[] } };

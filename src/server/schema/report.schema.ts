@@ -43,7 +43,11 @@ export const reportSpamDetailsSchema = baseDetailSchema;
  * guessing — or removing the wrong person's sticker, which costs them money.
  */
 export const reportStickerPlacementDetailsSchema = baseDetailSchema.extend({
-  placementId: z.number().int().positive(),
+  // Coerced, because a radio group hands back a string and there is nothing on
+  // the form path that converts it. `z.number()` typechecks clean here — `Radio`
+  // takes `string | number` — and then rejects at submit, so the report can be
+  // filled in and never sent.
+  placementId: z.coerce.number().int().positive(),
 });
 
 export const reportAutomatedDetailsSchema = baseDetailSchema.extend({

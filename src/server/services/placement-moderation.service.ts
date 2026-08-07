@@ -83,10 +83,22 @@ export const countPendingPlacementsFrom = ({
 export async function declinePlacementsOnBlock({
   ownerId,
   placerId,
+  waiveFee,
   limit = 200,
 }: {
   ownerId: number;
   placerId: number;
+  /**
+   * Only when the **owner** did the blocking.
+   *
+   * The fee is the price of the owner's attention, and an owner refusing to give
+   * attention to anyone should not charge for it. But the same cascade also runs
+   * in reverse — the blocker's own pending placements on the person they
+   * blocked — and waiving there hands the placer a unilateral, repeatable
+   * cancel: place ten, let the owner start reviewing, block, get everything
+   * back, unblock, repeat. The owner spent the attention either way.
+   */
+  waiveFee: boolean;
   limit?: number;
 }) {
   // The correctness argument for this cascade is that no new placement can join
@@ -103,7 +115,11 @@ export async function declinePlacementsOnBlock({
   });
 
   return settleEach(pending, (id) =>
-    settlePlacement({ placementId: id, action: 'declineByBlock', actorId: ownerId })
+    settlePlacement({
+      placementId: id,
+      action: waiveFee ? 'declineByBlock' : 'decline',
+      actorId: ownerId,
+    })
   );
 }
 

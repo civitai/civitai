@@ -97,7 +97,11 @@ describe('blocking cascades to pending placements', () => {
   it('declines every pending placement from that user, fee waived', async () => {
     placementFindMany.mockResolvedValue([{ id: 1 }, { id: 2 }, { id: 3 }]);
 
-    const result = await declinePlacementsOnBlock({ ownerId: OWNER, placerId: PLACER });
+    const result = await declinePlacementsOnBlock({
+      ownerId: OWNER,
+      placerId: PLACER,
+      waiveFee: true,
+    });
 
     expect(result).toMatchObject({ considered: 3, settled: 3 });
     for (const call of settlePlacement.mock.calls)
@@ -110,17 +114,32 @@ describe('blocking cascades to pending placements', () => {
   it('never declines through the fee-charging path', async () => {
     placementFindMany.mockResolvedValue([{ id: 1 }]);
 
-    await declinePlacementsOnBlock({ ownerId: OWNER, placerId: PLACER });
+    await declinePlacementsOnBlock({ ownerId: OWNER, placerId: PLACER, waiveFee: true });
 
     expect(settlePlacement).not.toHaveBeenCalledWith(
       expect.objectContaining({ action: 'decline' })
     );
   });
 
+  // The same cascade also runs the other way: the blocker's own pending
+  // placements on the person they blocked. Waiving there would hand a placer a
+  // free, repeatable cancel — place, let the owner start reviewing, block, get
+  // everything back, unblock, repeat. The owner spent the attention either way.
+  it('charges the fee when the blocker is the one who placed', async () => {
+    placementFindMany.mockResolvedValue([{ id: 1 }]);
+
+    await declinePlacementsOnBlock({ ownerId: OWNER, placerId: PLACER, waiveFee: false });
+
+    expect(settlePlacement).toHaveBeenCalledWith(expect.objectContaining({ action: 'decline' }));
+    expect(settlePlacement).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'declineByBlock' })
+    );
+  });
+
   it('leaves approved placements alone, because a block is not retroactive', async () => {
     placementFindMany.mockResolvedValue([{ id: 1 }]);
 
-    await declinePlacementsOnBlock({ ownerId: OWNER, placerId: PLACER });
+    await declinePlacementsOnBlock({ ownerId: OWNER, placerId: PLACER, waiveFee: true });
 
     expect(placementFindMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ status: 'pending' }) })
@@ -132,13 +151,17 @@ describe('blocking cascades to pending placements', () => {
     placementFindMany.mockResolvedValue([{ id: 1 }, { id: 2 }, { id: 3 }]);
     settlePlacement.mockRejectedValueOnce(new Error('buzz service down'));
 
-    const result = await declinePlacementsOnBlock({ ownerId: OWNER, placerId: PLACER });
+    const result = await declinePlacementsOnBlock({
+      ownerId: OWNER,
+      placerId: PLACER,
+      waiveFee: true,
+    });
 
     expect(result).toMatchObject({ considered: 3, settled: 2, failed: [1] });
   });
 
   it('bounds the batch', async () => {
-    await declinePlacementsOnBlock({ ownerId: OWNER, placerId: PLACER, limit: 50 });
+    await declinePlacementsOnBlock({ ownerId: OWNER, placerId: PLACER, waiveFee: true, limit: 50 });
     expect(placementFindMany).toHaveBeenCalledWith(expect.objectContaining({ take: 50 }));
   });
 });
@@ -227,9 +250,9 @@ describe('the preconditions the cascades depend on', () => {
   it('refuses to decline placements before the block is committed', async () => {
     queryRaw.mockResolvedValue([{ exists: false }]);
 
-    await expect(declinePlacementsOnBlock({ ownerId: OWNER, placerId: PLACER })).rejects.toThrow(
-      /block must be committed/
-    );
+    await expect(
+      declinePlacementsOnBlock({ ownerId: OWNER, placerId: PLACER, waiveFee: true })
+    ).rejects.toThrow(/block must be committed/);
     expect(settlePlacement).not.toHaveBeenCalled();
   });
 

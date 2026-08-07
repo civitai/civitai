@@ -111,7 +111,7 @@ export const placementRouter = router({
   // placement was processed, not that anyone was paid.
   getSettlementStates: protectedProcedure
     .input(getPlacementSettlementStatesSchema)
-    .query(({ input }) => getPlacementSettlementStates(input.placementIds)),
+    .query(({ input, ctx }) => getPlacementSettlementStates(input.placementIds, ctx.user.id)),
 
   createSticker: protectedProcedure
     .input(createStickerPlacementSchema)
@@ -159,9 +159,27 @@ export const placementRouter = router({
 
     if (!input.removeExisting) return { removed: null };
 
-    return {
-      removed: await removePlacementsByUser({ placerId: input.userId, actorId: ctx.user.id }),
-    };
+    // Drains rather than clearing one batch: `removePlacementsByUser` is bounded
+    // at 200 and returns `hasMore`, and nothing else resumes it — a placer with
+    // 500 placements would otherwise be reported as fully handled with 300 still
+    // live on other people's work. Capped so a runaway cannot hold the request.
+    let removed = { considered: 0, settled: 0, failed: [] as number[], takenDown: 0, hasMore: false };
+    for (let batch = 0; batch < 10; batch++) {
+      const result = await removePlacementsByUser({
+        placerId: input.userId,
+        actorId: ctx.user.id,
+      });
+      removed = {
+        considered: removed.considered + result.considered,
+        settled: removed.settled + result.settled,
+        failed: [...removed.failed, ...result.failed],
+        takenDown: removed.takenDown + result.takenDown,
+        hasMore: result.hasMore,
+      };
+      if (!result.hasMore) break;
+    }
+
+    return { removed };
   }),
 
   restorePlacer: moderatorProcedure

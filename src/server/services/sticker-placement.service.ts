@@ -274,7 +274,12 @@ export async function getStickerPlacementDetail({
       surface: SURFACE,
       OR: [
         { status: 'approved' },
-        ...(viewerId ? [{ status: 'pending' as const, placerId: viewerId }] : []),
+        ...(viewerId
+          ? [
+              { status: 'pending' as const, placerId: viewerId },
+              { status: 'pending' as const, ownerId: viewerId },
+            ]
+          : []),
       ],
     },
     select: {
@@ -389,13 +394,31 @@ export async function getStickerPlacementCounts(imageIds: number[]) {
  * surfaces if this reads the column.
  */
 export async function getPlacementSettlementStates(
-  placementIds: number[]
+  placementIds: number[],
+  viewerId?: number
 ): Promise<Record<number, PlacementSettlementState>> {
   if (!placementIds.length) return {};
 
+  // Scoped to placements the viewer is actually party to. Without this any
+  // signed-in user could enumerate whether an arbitrary placement had paid out
+  // — the only read here that returns placement-derived state, so the only one
+  // where an unscoped id list means anything.
+  const visible = viewerId
+    ? await dbRead.placement.findMany({
+        where: {
+          id: { in: placementIds },
+          surface: SURFACE,
+          OR: [{ placerId: viewerId }, { ownerId: viewerId }],
+        },
+        select: { id: true },
+      })
+    : [];
+  const ids = visible.map((row) => row.id);
+  if (!ids.length) return {};
+
   const legs = await dbRead.placementTransaction.findMany({
     where: {
-      placementId: { in: placementIds },
+      placementId: { in: ids },
       kind: { notIn: ['holdFee', 'holdPrincipal'] },
       amount: { gt: 0 },
     },
@@ -405,7 +428,7 @@ export async function getPlacementSettlementStates(
   const states: Record<number, PlacementSettlementState> = Object.fromEntries(
     // No payout legs means nothing was owed — a placement still pending, or one
     // whose escrow never landed. Neither is money in flight.
-    placementIds.map((id) => [id, 'settled' as PlacementSettlementState])
+    ids.map((id) => [id, 'settled' as PlacementSettlementState])
   );
 
   for (const leg of legs) {

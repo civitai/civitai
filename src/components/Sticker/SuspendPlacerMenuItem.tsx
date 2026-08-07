@@ -33,10 +33,19 @@ export function SuspendPlacerMenuItem({ userId }: { userId: number }) {
 
   const suspend = trpc.placement.suspendPlacer.useMutation({
     onSuccess: async (result) => {
+      const removed = result.removed;
       showSuccessNotification({
-        message: result.removed
-          ? `Suspended. Removed ${result.removed.settled + result.removed.takenDown} placements.`
-          : 'Sticker placement suspended.',
+        message: !removed
+          ? 'Sticker placement suspended.'
+          : [
+              `Suspended. Removed ${removed.settled + removed.takenDown} placements.`,
+              // Both of these were being dropped, which turned a partial sweep
+              // into a clean success message.
+              removed.failed.length ? `${removed.failed.length} could not be removed.` : '',
+              removed.hasMore ? 'More remain — run it again.' : '',
+            ]
+              .filter(Boolean)
+              .join(' '),
       });
       await utils.placement.invalidate();
     },

@@ -41,6 +41,12 @@ export const placementNotifications = createNotificationProcessor({
           -- expired between the last run and this one has already been answered,
           -- and telling someone to review it sends them to a dead link.
           AND p.status = 'pending'
+          -- Stamped by holdPlacementEscrow, so its presence means the escrow has
+          -- at least been attempted. The row is created before that runs, and a
+          -- notification landing in the gap would send someone to review a
+          -- placement that is about to be unwound, or one in an auto space that
+          -- approves itself seconds later.
+          AND p."expiresAt" IS NOT NULL
           AND p."createdAt" > '${lastSent}'
       )
       SELECT

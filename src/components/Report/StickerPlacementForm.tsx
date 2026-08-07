@@ -41,7 +41,7 @@ function StickerPlacementFields() {
             return (
               <Radio
                 key={placement.id}
-                value={placement.id}
+                value={String(placement.id)}
                 label={
                   <Group gap={6} wrap="nowrap">
                     {art && (

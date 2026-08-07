@@ -5,6 +5,7 @@ import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray'
 import {
   useImagePlacementSpace,
   useStickerPlacementCounts,
+  useStickerPlacements,
 } from '~/components/Sticker/placement.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -33,6 +34,12 @@ export function StickerPlacementBar({
   const count = counts[imageId] ?? 0;
   const { space } = useImagePlacementSpace(imageId);
 
+  // The count is approved-only, so an owner whose first placement is still
+  // pending had no entry here at all — and therefore no reveal toggle on the
+  // page the notification just sent them to.
+  const { byImage } = useStickerPlacements([imageId], !!currentUser);
+  const pending = (byImage.get(imageId) ?? []).filter((placement) => placement.isPending).length;
+
   const openTray = useStickerPlacementDraftStore((state) => state.open);
   const revealed = useStickerRevealStore((state) => state.revealed);
   const toggle = useStickerRevealStore((state) => state.toggle);
@@ -48,12 +55,12 @@ export function StickerPlacementBar({
     !!currentUser &&
     currentUser.id !== space.ownerId;
 
-  if (!count && !canPlace) return null;
+  if (!count && !canPlace && !pending) return null;
 
   return (
     <>
       <Group gap={4} className={clsx(className)}>
-        {count > 0 && (
+        {(count > 0 || pending > 0) && (
           <Tooltip
             label={revealed ? 'Hide stickers on all images' : 'Show stickers on all images'}
             withArrow
@@ -66,7 +73,7 @@ export function StickerPlacementBar({
               leftSection={<IconSticker size={16} />}
             >
               <Text size="xs" fw={600}>
-                {count}
+                {count + pending}
               </Text>
             </Button>
           </Tooltip>

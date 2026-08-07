@@ -47,7 +47,7 @@ interface StickerPlacementDraftStore {
   open: (imageId: number) => void;
   close: () => void;
   setSurface: (element: HTMLElement | null) => void;
-  begin: (cosmeticId: number, at?: { x: number; y: number }) => void;
+  begin: (cosmeticId: number, at?: { x: number; y: number }, maxScale?: number) => void;
   setInteraction: (interaction: StickerInteraction | null) => void;
   move: (next: Partial<Omit<StickerDraft, 'imageId' | 'cosmeticId'>>) => void;
 }
@@ -65,7 +65,7 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
   setInteraction: (interaction) => set({ interaction }),
   setSurface: (element) => set({ surface: element }),
 
-  begin: (cosmeticId, at) =>
+  begin: (cosmeticId, at, maxScale) =>
     set((state) =>
       state.targetImageId == null
         ? state
@@ -75,7 +75,10 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
               cosmeticId,
               x: at?.x ?? 0.5,
               y: at?.y ?? 0.5,
-              scale: STICKER_PLACEMENT_DEFAULT_SCALE,
+              // The creator's ceiling, not just the global one. A creator below
+              // the 18% default is a third of the slider's range, and their
+              // space refused the very first gesture with no hint why.
+              scale: Math.min(STICKER_PLACEMENT_DEFAULT_SCALE, maxScale ?? STICKER_PLACEMENT_MAX_SCALE),
               rotation: 0,
             },
           }

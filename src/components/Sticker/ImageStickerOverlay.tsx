@@ -42,14 +42,21 @@ export function ImageStickerOverlay({
   }, [isPlacing, setSurface]);
 
   const imageIds = useMemo(() => [imageId], [imageId]);
-  // Placing implies looking: someone positioning a sticker has to see what is
-  // already there, whatever their reveal setting says.
-  const { byImage } = useStickerPlacements(imageIds, revealed || isPlacing);
+  // Signed-in viewers always fetch, because a pending placement is something
+  // they either paid for or have been asked to answer — and the notification
+  // sends the owner straight here. Gating this on `revealed` meant the owner
+  // followed the link to an image that looked untouched, with no control on the
+  // page that would have shown them the thing they came to decide on.
+  const { byImage } = useStickerPlacements(imageIds, revealed || isPlacing || !!currentUser);
 
-  const placements = byImage.get(imageId) ?? [];
-  const showPlacements = (revealed || isPlacing) && placements.length > 0;
+  const all = byImage.get(imageId) ?? [];
+  // Pending rows are already scoped server-side to the placer and the owner, so
+  // anything pending in this payload belongs to the person looking at it. That
+  // is what makes "always show pending" safe rather than a leak.
+  const pending = all.filter((placement) => placement.isPending);
+  const placements = revealed || isPlacing ? all : pending;
 
-  if (!showPlacements && !isPlacing) return null;
+  if (!placements.length && !isPlacing) return null;
   if (width <= 0 || height <= 0) return null;
 
   return (
@@ -58,7 +65,7 @@ export function ImageStickerOverlay({
       className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
       style={{ width, height }}
     >
-      {showPlacements && (
+      {placements.length > 0 && (
         <StickerPlacementOverlay placements={placements} viewerId={currentUser?.id} />
       )}
       {isPlacing && <DraftStickerLayer />}

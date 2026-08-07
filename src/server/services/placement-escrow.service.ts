@@ -21,6 +21,7 @@ import type {
   PlacementTransactionKind,
 } from '~/shared/utils/placement';
 import {
+  PLACEMENT_SURFACES,
   declineFeeAmount,
   placementOutcomeFromStatus,
   placementTransactionId,
@@ -358,14 +359,28 @@ export async function holdPlacementEscrow({
   if (!Number.isSafeInteger(amount) || amount < 0)
     throw new Error(`placement escrow: amount must be a non-negative integer, got ${amount}`);
 
-  const config = await getPlacementConfig();
-
-  // Escrow with no deadline is money frozen indefinitely, and a null `expiresAt`
-  // is never `<= now()`, so the sweep would step over it forever.
-  await dbWrite.placement.updateMany({
+  // Stamped from the surface's compiled default BEFORE the config is read.
+  // `getPlacementConfig` touches KeyValue, so it can throw — and a throw here
+  // used to leave a pending row with a null `expiresAt`, which is never
+  // `<= now()`, so the expiry sweep steps over it forever. That row is then
+  // permanent: it shows in the owner's queue and holds one of the placer's
+  // pending slots against that creator for good. The operator override is
+  // applied immediately after, so a configured expiry still wins.
+  const fallbackHours = PLACEMENT_SURFACES[surface].expiryHours;
+  const stamped = await dbWrite.placement.updateMany({
     where: { id: placementId, expiresAt: null },
-    data: { expiresAt: new Date(Date.now() + config.expiryHours(surface) * 3_600_000) },
+    data: { expiresAt: new Date(Date.now() + fallbackHours * 3_600_000) },
   });
+
+  const config = await getPlacementConfig();
+  const configured = config.expiryHours(surface);
+  // Only when this call is the one that stamped it, so a retry cannot extend a
+  // deadline that is already running.
+  if (stamped.count > 0 && configured !== fallbackHours)
+    await dbWrite.placement.updateMany({
+      where: { id: placementId },
+      data: { expiresAt: new Date(Date.now() + configured * 3_600_000) },
+    });
 
   if (amount === 0) return { fee: 0, principal: 0 };
 
@@ -850,6 +865,7 @@ export async function sweepUnplannedSettlements({
     SELECT count(*)::int AS count FROM (
       SELECT 1 FROM "Placement" p
       WHERE p.status <> 'pending'
+        AND p.amount > 0
         AND NOT EXISTS (
           SELECT 1 FROM "PlacementTransaction" t
           WHERE t."placementId" = p.id AND t.kind = ANY(${[...PAYOUT_KINDS]}::text[])
@@ -859,6 +875,19 @@ export async function sweepUnplannedSettlements({
           WHERE h."placementId" = p.id
             AND h.kind = ANY(${[...HOLD_KINDS]}::text[])
             AND h."transactionId" IS NOT NULL
+        )
+        -- A hold was *claimed* and never receipted, which is the only state
+        -- where money may have moved and left no record. Without this the gauge
+        -- also counts two entirely routine populations — a placement whose
+        -- escrow could not be taken (someone was short on Buzz) and a free
+        -- space priced at zero — neither of which anyone can act on. Both are
+        -- permanent by construction, so they would pin the gauge at its ceiling
+        -- and turn "a human is overdue" into background noise.
+        AND EXISTS (
+          SELECT 1 FROM "PlacementTransaction" c
+          WHERE c."placementId" = p.id
+            AND c.kind = ANY(${[...HOLD_KINDS]}::text[])
+            AND c.amount > 0
         )
       LIMIT ${UNFUNDED_GAUGE_CEILING}
     ) capped

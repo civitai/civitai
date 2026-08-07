@@ -2,6 +2,7 @@ import { CloseButton, Group, ScrollArea, Text } from '@mantine/core';
 import clsx from 'clsx';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { useImagePlacementSpace } from '~/components/Sticker/placement.util';
+import { stickerMaxScale } from '~/shared/utils/sticker-placement';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
@@ -55,7 +56,11 @@ export function StickerPlacementTray() {
     event.preventDefault();
     // Undefined when the press is outside the image, which it always is on the
     // first grab — the draft then starts centred and follows the pointer in.
-    begin(cosmeticId, pointerOverSurface(event.clientX, event.clientY) ?? undefined);
+    begin(
+      cosmeticId,
+      pointerOverSurface(event.clientX, event.clientY) ?? undefined,
+      stickerMaxScale(space?.settings as Record<string, unknown> | undefined)
+    );
     setInteraction('move');
   };
 

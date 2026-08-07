@@ -76,7 +76,10 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
       entityType: level,
       entityId,
       mode: nextMode as 'off' | 'review' | 'auto',
-      price: nextPrice === '' ? undefined : nextPrice,
+      // `null` clears and inherits; `undefined` means "leave whatever is set".
+      // Sending undefined here made an emptied field keep charging the old price
+      // while the copy said it was inheriting.
+      price: nextPrice === '' ? null : nextPrice,
     });
   };
 

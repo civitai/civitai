@@ -786,12 +786,15 @@ async function cascadeBlockToPlacements({
     '~/server/services/placement-moderation.service'
   );
 
-  for (const [ownerId, placerId] of [
-    [userId, targetUserId],
-    [targetUserId, userId],
+  for (const { ownerId, placerId, waiveFee } of [
+    // The blocker's own content: they are refusing attention, so no fee.
+    { ownerId: userId, placerId: targetUserId, waiveFee: true },
+    // The blocker's own placements on the person they blocked: the fee stands,
+    // or blocking becomes a free undo of every submission you regret.
+    { ownerId: targetUserId, placerId: userId, waiveFee: false },
   ]) {
     try {
-      await declinePlacementsOnBlock({ ownerId, placerId });
+      await declinePlacementsOnBlock({ ownerId, placerId, waiveFee });
     } catch (error) {
       await logToAxiom({
         name: 'placement-moderation',
