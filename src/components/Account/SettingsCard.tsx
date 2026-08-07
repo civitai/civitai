@@ -150,7 +150,6 @@ export function SettingsCard() {
               <ToggleableFeatures data={assistantToggleableFeatures} />
               <Tooltip
                 withArrow
-                color="gray"
                 offset={-10}
                 label={!flags.assistantPersonality ? 'Available to subscribers only' : undefined}
                 disabled={flags.assistantPersonality}

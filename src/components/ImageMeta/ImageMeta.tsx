@@ -146,7 +146,7 @@ export function ImageMeta({
                 {(label === 'Prompt' || label === 'Negative prompt') && (
                   <CopyButton value={value as string}>
                     {({ copied, copy }) => (
-                      <Tooltip label={`Copy ${label.toLowerCase()}`} color="dark" withArrow>
+                      <Tooltip label={`Copy ${label.toLowerCase()}`} withArrow>
                         <LegacyActionIcon
                           variant="transparent"
                           size="xs"
@@ -373,7 +373,7 @@ function GenerationDataButton({
 
   if (!iconOnly) return button;
   return (
-    <Tooltip label={label} color="dark" withArrow withinPortal>
+    <Tooltip label={label} withArrow withinPortal>
       {button}
     </Tooltip>
   );
