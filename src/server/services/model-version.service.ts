@@ -143,6 +143,7 @@ import { deleteModelFileObjects } from '~/utils/s3-utils';
 import { deregisterFileLocations } from '~/utils/storage-resolver';
 import { purgeCache } from '~/server/cloudflare/client';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { paidAccessPayoutAccount } from '~/server/utils/buzz-helpers';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
@@ -2115,10 +2116,7 @@ export const earlyAccessPurchase = async ({
       details: { modelVersionId, type, earlyAccessPurchase: true, permanent },
       externalTransactionIdPrefix: externalTransactionIdPrefix,
       fromAccountTypes: [buzzType],
-      // Blue must pay out blue, or the purchase converts non-withdrawable credit into withdrawable.
-      // Only blue: green/yellow keep crediting the owner's yellow account, which the unpublish-refund
-      // balance guard (refundModelEarlyAccessPurchases) checks before reversing anything.
-      toAccountType: buzzType === 'blue' ? 'blue' : undefined,
+      toAccountType: paidAccessPayoutAccount(buzzType),
     });
 
     if (data?.transactionCount === 0)

@@ -55,6 +55,13 @@ const actionSchema = z.enum([
   'revoke-access',
 ]);
 
+// NOT z.coerce.boolean(), which maps every non-empty string to true — `"payWithBlue": "false"` would
+// spend blue. On an endpoint that moves real Buzz the string forms have to be read, not truthy-cast.
+const boolish = z
+  .union([z.boolean(), z.enum(['true', 'false', '1', '0'])])
+  .transform((v) => v === true || v === 'true' || v === '1')
+  .optional();
+
 const schema = z
   .object({
     action: actionSchema,
@@ -63,8 +70,8 @@ const schema = z
     userId: z.coerce.number().int().positive().optional(),
     price: z.coerce.number().int().positive().optional(),
     amount: z.coerce.number().int().positive().optional(),
-    acceptsBlueBuzz: z.coerce.boolean().optional(),
-    payWithBlue: z.coerce.boolean().optional(),
+    acceptsBlueBuzz: boolish,
+    payWithBlue: boolish,
     type: z.enum(['download', 'generation']).optional(),
   })
   .superRefine((data, ctx) => {

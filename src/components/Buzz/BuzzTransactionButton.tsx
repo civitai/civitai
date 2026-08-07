@@ -79,6 +79,9 @@ export function BuzzTransactionButton({
     buzzAmount,
   });
 
+  // Blue can't be bought, so a blue-only button must not promise a purchase flow that won't open.
+  const canBuyMore = accounts.some((account) => account.purchasable);
+
   const mainBuzzColor = Object.entries(buzzTypeDistribution.amt).reduce(
     (max, [key, amount]) =>
       amount > (buzzTypeDistribution.amt[max as BuzzSpendType] || 0) ? key : max,
@@ -145,7 +148,7 @@ export function BuzzTransactionButton({
         >
           {!hasRequiredAmount(buzzAmount) && (
             <Tooltip
-              label="Insufficient Buzz. Click to buy more"
+              label={canBuyMore ? 'Insufficient Buzz. Click to buy more' : 'Insufficient Buzz'}
               style={{ textTransform: 'capitalize' }}
               maw={250}
               multiline

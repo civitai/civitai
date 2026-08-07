@@ -149,27 +149,22 @@ describe('earlyAccessPurchase — Blue Buzz', () => {
     expect(charge.toAccountType).toBe('blue');
   });
 
-  // Only blue overrides the destination. Green/yellow must keep falling through to the service's
-  // yellow default, because refundModelEarlyAccessPurchases checks the owner's YELLOW balance before
-  // reversing an unpublish — routing green purchases to green would block unpublishing with the
-  // money sitting in an account the guard never reads.
-  it.each(['green', 'yellow'] as const)(
-    'leaves the payout account untouched for %s purchases',
-    async (buzzType) => {
-      seed({ acceptsBlueBuzz: true });
+  // Only blue changes where the money lands. Green is a buyer-side currency with no payout account
+  // of its own — it pays into yellow, the bankable one, same as a yellow purchase.
+  it.each(['green', 'yellow'] as const)('pays a %s purchase into yellow', async (buzzType) => {
+    seed({ acceptsBlueBuzz: true });
 
-      await earlyAccessPurchase({
-        userId: BUYER,
-        modelVersionId: VERSION_ID,
-        type: 'download',
-        buzzType,
-      });
+    await earlyAccessPurchase({
+      userId: BUYER,
+      modelVersionId: VERSION_ID,
+      type: 'download',
+      buzzType,
+    });
 
-      const charge = mockCreateMultiAccountBuzzTransaction.mock.calls[0][0];
-      expect(charge.fromAccountTypes).toEqual([buzzType]);
-      expect(charge.toAccountType).toBeUndefined();
-    }
-  );
+    const charge = mockCreateMultiAccountBuzzTransaction.mock.calls[0][0];
+    expect(charge.fromAccountTypes).toEqual([buzzType]);
+    expect(charge.toAccountType).toBe('yellow');
+  });
 
   it('rejects blue when the creator has not opted in', async () => {
     seed({ acceptsBlueBuzz: false });
