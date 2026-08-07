@@ -145,18 +145,29 @@ describe('mint-audit stdout-mirror call-site ledger (#3715)', () => {
 
   it('THE DUAL SINK: every mint-audit event reaches BOTH sinks, from the SAME file', () => {
     // The property that actually matters, and the one no per-path test can express.
-    // Checked in BOTH directions, because each direction is a different real mistake:
-    //   - an Axiom event with no mirror  → invisible to the stdout-scraped log store,
-    //   - a mirror with no Axiom event   → the rich sink silently lost.
+    //
+    // Asserted as SET DIFFERENCES, not as two set equalities. A set equality fires
+    // whichever side changed but its message names only one direction, so deleting a
+    // mirror reported "…with NO Axiom sink", the exact opposite of the real defect —
+    // a maintainer would be sent the wrong way. A difference asserts precisely the
+    // direction its message describes.
     const axiomByName = new Map(AXIOM_MINTS);
     const mirrorByName = new Map(MIRRORS);
+    const axiomNames = [...axiomByName.keys()].sort();
+    const mirrorNames = [...mirrorByName.keys()].sort();
+
     expect(
-      [...axiomByName.keys()].sort(),
-      'a mint-audit event is emitted to Axiom with NO stdout mirror — it would be invisible to the stdout-scraped log store, and the #3703 step-3 gate would read a structurally guaranteed zero'
-    ).toEqual(LEDGER_NAMES);
+      axiomNames.filter((n) => !mirrorByName.has(n)),
+      'these mint-audit events reach Axiom but have NO stdout mirror — they are invisible to the stdout-scraped log store, so the #3703 step-3 gate would read a structurally guaranteed zero. Add emitMintAuditToStdout beside the req.log call.'
+    ).toEqual([]);
     expect(
-      [...mirrorByName.keys()].sort(),
-      'a mint-audit event is mirrored to stdout with NO Axiom sink — the rich sink was dropped'
+      mirrorNames.filter((n) => !axiomByName.has(n)),
+      'these mint-audit events are mirrored to stdout but have NO Axiom sink — the rich sink was dropped. Restore the req.log call.'
+    ).toEqual([]);
+    // Both sinks present, so the union is the population the ledger must describe.
+    expect(
+      axiomNames,
+      'the mint-audit event population changed — update MINT_AUDIT_LEDGER in this file'
     ).toEqual(LEDGER_NAMES);
     for (const name of LEDGER_NAMES) {
       expect(mirrorByName.get(name), `${name}: both sinks must live in the same file`).toBe(
