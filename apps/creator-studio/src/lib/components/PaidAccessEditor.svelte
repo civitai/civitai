@@ -68,6 +68,7 @@
         number | undefined,
       donationGoalEnabled: c?.donationGoalEnabled ?? false,
       donationGoal: c?.donationGoal as number | undefined,
+      acceptsBlueBuzz: c?.acceptsBlueBuzz ?? false,
     };
   }
   // Seed once from the version at mount (the parent remounts via `{#key version.id}` on open).

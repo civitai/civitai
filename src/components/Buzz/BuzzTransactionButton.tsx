@@ -25,6 +25,12 @@ type Props = ButtonProps &
     showPurchaseModal?: boolean;
     error?: string;
     accountTypes?: BuzzSpendType[];
+    /**
+     * Spend EXACTLY these types, skipping the domain-currency append `accountTypes` goes through.
+     * For surfaces where the buyer picks one currency and the server charges only that one — a
+     * distribution across two would pass the balance check and then fail the charge.
+     */
+    exactAccountTypes?: BuzzSpendType[];
     showTypePct?: boolean;
     priceReplacement?: React.ReactNode;
     // Force the buzz color (button + amount badge) instead of deriving it from
@@ -45,13 +51,14 @@ export function BuzzTransactionButton({
   showPurchaseModal = true,
   error,
   accountTypes,
+  exactAccountTypes,
   showTypePct = false,
   priceReplacement,
   colorType,
   ...buttonProps
 }: Props) {
-  const allowedAccountTypes = useAvailableBuzz(accountTypes);
-  // Use provided account types filtered by domain, or domain defaults
+  const domainAccountTypes = useAvailableBuzz(accountTypes);
+  const allowedAccountTypes = exactAccountTypes ?? domainAccountTypes;
   const features = useFeatureFlags();
   const colorScheme = useComputedColorScheme('dark');
   const {

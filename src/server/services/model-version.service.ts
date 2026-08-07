@@ -90,6 +90,7 @@ import {
   capMediaType,
   effectivePaidAccessPrice,
   isPermanentGate,
+  acceptsBlueBuzz,
   generationPrice,
   isPaidAccessActive,
   isTimedGateActive,
@@ -1982,10 +1983,6 @@ export const earlyAccessPurchase = async ({
   type: 'generation' | 'download';
   buzzType: BuzzSpendType;
 }) => {
-  if (buzzType === 'blue') {
-    throw throwBadRequestError('You cannot use Blue Buzz for early access purchases.');
-  }
-
   const permission =
     type === 'generation'
       ? EntityAccessPermission.EarlyAccessGeneration
@@ -2028,12 +2025,21 @@ export const earlyAccessPurchase = async ({
   const terms = paidAccess.terms as ModelVersionTerms;
   const generationTier = paidGenerationGrant(terms);
 
+  if (buzzType === 'blue' && !acceptsBlueBuzz(terms)) {
+    throw throwBadRequestError('This model version does not accept Blue Buzz.');
+  }
+
   // The EA donation goal is the forward relation (DonationGoal entity target), not a config back-link.
   // Only an active goal receives the purchase's donation record. We use the raw owner accessor (not the
   // public getDonationGoals, whose display filters would drop the goal for permanent/opted-out gates) —
   // safe on this buyer path because we only read `.id`/`.active` internally to attach the donation and
   // trip completion; the goal is never returned to the purchaser.
-  const ownerGoal = (await getOwnerDonationGoals('ModelVersion', [modelVersionId]))[modelVersionId];
+  // A completed goal ends the early-access window early, so a blue purchase must not advance one:
+  // blue is granted by rewards, which would let farmed credit close a paid window for everyone.
+  const ownerGoal =
+    buzzType === 'blue'
+      ? null
+      : (await getOwnerDonationGoals('ModelVersion', [modelVersionId]))[modelVersionId];
   const earlyAccessDonationGoal = ownerGoal?.active ? ownerGoal : null;
 
   if (modelVersion.status !== ModelStatus.Published) {
@@ -2109,6 +2115,10 @@ export const earlyAccessPurchase = async ({
       details: { modelVersionId, type, earlyAccessPurchase: true, permanent },
       externalTransactionIdPrefix: externalTransactionIdPrefix,
       fromAccountTypes: [buzzType],
+      // Blue must pay out blue, or the purchase converts non-withdrawable credit into withdrawable.
+      // Only blue: green/yellow keep crediting the owner's yellow account, which the unpublish-refund
+      // balance guard (refundModelEarlyAccessPurchases) checks before reversing anything.
+      toAccountType: buzzType === 'blue' ? 'blue' : undefined,
     });
 
     if (data?.transactionCount === 0)
