@@ -162,14 +162,13 @@ export function Home() {
 
                       <ImagesInfinite
                         showAds
+                        // Fixed "highest rated this week" section with no filter UI of
+                        // its own, so it must not inherit the /images store. Matches the
+                        // Models section below.
+                        disableStoreFilters
                         filters={{
-                          // Required to override localStorage filters
                           period: MetricTimeframe.Week,
                           sort: ImageSort.MostReactions,
-                          types: undefined,
-                          hidden: undefined,
-                          followed: false,
-                          newCreators: false,
                           withMeta: true,
                         }}
                       />

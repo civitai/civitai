@@ -35,7 +35,6 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
       types = [type],
       withMeta = false,
       followed = undefined,
-      newCreators = undefined,
       fromPlatform = false,
       baseModels = undefined,
       tools = [],
@@ -119,7 +118,6 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                     types,
                     withMeta,
                     followed,
-                    newCreators,
                     fromPlatform,
                     baseModels,
                     tools,
@@ -147,6 +145,11 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
             ) : (
               <ImagesInfinite
                 filterType={isVideo ? 'videos' : 'images'}
+                // Every filter this tab honors comes from the URL, and the tab is
+                // already scoped to one user. Merging the global /images store on
+                // top would AND that user against whatever audience or toggle the
+                // main feed was left on. Matches the Models tab.
+                disableStoreFilters
                 filters={{
                   ...query,
                   period,
@@ -161,7 +164,6 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                   notPublished,
                   scheduled,
                   followed,
-                  newCreators,
                   baseModels,
                   tools,
                   techniques,

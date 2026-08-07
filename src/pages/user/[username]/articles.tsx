@@ -103,6 +103,10 @@ function UserArticlesPage() {
             </Group>
             {viewingPublished ? (
               <ArticlesInfinite
+                // Same reason as the profile media tabs: URL-driven and already
+                // scoped to one user, so the /articles store's `followed` would
+                // otherwise empty this tab for anyone the viewer doesn't follow.
+                disableStoreFilters
                 filters={{
                   ...query,
                   sort,
