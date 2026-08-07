@@ -1233,6 +1233,9 @@ export const getCreatorShopReviewQueue = async ({
     orderBy: { createdAt: 'asc' },
     select: {
       ...creatorShopItemSelect,
+      // A pack has no cosmetic, so its author is the lister — without this the
+      // review panel has nobody to attribute it to.
+      addedBy: { select: { id: true, username: true, image: true } },
       cosmetic: {
         select: {
           id: true,

@@ -20,6 +20,7 @@ import {
 } from '@mantine/core';
 import {
   IconAlertTriangle,
+  IconPackage,
   IconArrowBackUp,
   IconBan,
   IconBolt,
@@ -66,6 +67,7 @@ import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema'
 import type { CosmeticOffsets } from '~/server/schema/creator-shop.schema';
 import {
   CREATOR_SHOP_CREATOR_SHARE,
+  CREATOR_SHOP_PACK_SUBMISSION_FEE,
   CREATOR_SHOP_SUBMISSION_FEE,
   DECORATION_OFFSET_LIMIT,
 } from '~/server/schema/creator-shop.schema';
@@ -78,7 +80,6 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { PackContentsPanel } from '~/components/CreatorShop/Pack/PackContentsPanel';
-import { PackCoverTiles } from '~/components/CreatorShop/Pack/PackCoverTiles';
 
 type StatusFilter = CosmeticShopItemStatus | 'all';
 type PreviewCosmetic = ComponentProps<typeof CosmeticPreview>['cosmetic'];
@@ -222,6 +223,9 @@ function CreatorShopReviewPage() {
   }, [selectedId]);
 
   const selected = items.find((i) => i.id === selectedId) ?? null;
+  const isPack = !!selected && !selected.cosmetic;
+  // A pack is authored by whoever listed it; a cosmetic by whoever made it.
+  const submitter = selected?.cosmetic?.creator ?? selected?.addedBy ?? null;
   const selectedMeta = (selected?.meta ?? {}) as CosmeticShopItemMeta;
   const checks = selectedMeta.autoChecks ?? [];
   const dims = selectedMeta.imageMeta;
@@ -230,8 +234,8 @@ function CreatorShopReviewPage() {
   // The affirmer is normally the submitting creator, but a cross-listed item is
   // sold by someone else — don't put the creator's name on their affirmation.
   const affirmedBy =
-    affirmation && affirmation.userId === selected?.cosmetic?.creator?.id
-      ? `@${selected?.cosmetic?.creator?.username ?? 'unknown'}`
+    affirmation && affirmation.userId === (selected?.cosmetic?.creator?.id ?? selected?.addedBy?.id)
+      ? `@${selected?.cosmetic?.creator?.username ?? selected?.addedBy?.username ?? 'unknown'}`
       : `user #${affirmation?.userId}`;
   // The slug is user-visible text in its own right, so it needs reviewing
   // alongside the artwork — not just the image.
@@ -557,15 +561,15 @@ function CreatorShopReviewPage() {
                     <Text size="sm" c="dimmed">
                       Submitted by
                     </Text>
-                    {selected.cosmetic?.creator?.username ? (
+                    {submitter?.username ? (
                       <Anchor
                         component={NextLink}
-                        href={`/user/${selected.cosmetic?.creator.username}`}
+                        href={`/user/${submitter.username}`}
                         target="_blank"
                         size="sm"
                         fw={600}
                       >
-                        @{selected.cosmetic?.creator.username}
+                        @{submitter.username}
                       </Anchor>
                     ) : (
                       <Text size="sm" fw={600}>
@@ -604,8 +608,10 @@ function CreatorShopReviewPage() {
                           alt={selected.title}
                           className="max-h-[300px] max-w-[85%] object-contain"
                         />
-                      ) : selectedMeta.coverTiles?.length ? (
-                        <PackCoverTiles tiles={selectedMeta.coverTiles} size={240} />
+                      ) : isPack ? (
+                        <ThemeIcon variant="light" color="gray" size={96} radius="md">
+                          <IconPackage size={48} />
+                        </ThemeIcon>
                       ) : (
                         <Text size="sm" c="dimmed">
                           No artwork
@@ -749,7 +755,9 @@ function CreatorShopReviewPage() {
                       />
                       <MoneyTile
                         label="Submission fee"
-                        value={`${numberWithCommas(CREATOR_SHOP_SUBMISSION_FEE)} · Paid`}
+                        value={`${numberWithCommas(
+                          isPack ? CREATOR_SHOP_PACK_SUBMISSION_FEE : CREATOR_SHOP_SUBMISSION_FEE
+                        )} · Paid`}
                         icon={<IconCheck size={14} />}
                         iconColor="var(--mantine-color-blue-5)"
                       />
@@ -763,28 +771,35 @@ function CreatorShopReviewPage() {
                         icon={<IconBox size={14} />}
                         iconColor="var(--mantine-color-grape-5)"
                       />
-                      <MoneyTile
-                        label="Animated"
-                        value={isAnimated ? 'Yes' : 'No'}
-                        icon={<IconSparkles size={14} />}
-                        iconColor="var(--mantine-color-pink-5)"
-                      />
+                      {!isPack && (
+                        <MoneyTile
+                          label="Animated"
+                          value={isAnimated ? 'Yes' : 'No'}
+                          icon={<IconSparkles size={14} />}
+                          iconColor="var(--mantine-color-pink-5)"
+                        />
+                      )}
                       <MoneyTile
                         label="Type"
                         value={selected.cosmetic ? getDisplayName(selected.cosmetic.type) : 'Pack'}
                         icon={<IconTag size={14} />}
                         iconColor="var(--mantine-color-cyan-5)"
                       />
-                      <MoneyTile
-                        label="Resale by others"
-                        value={
-                          selectedMeta.sellableByOthers
-                            ? `Allowed · seller keeps ${selectedMeta.sellerShare ?? 0}%`
-                            : 'Owner only'
-                        }
-                        icon={<IconUsers size={14} />}
-                        iconColor="var(--mantine-color-teal-5)"
-                      />
+                      {/* A pack cannot be resold by reference — the split is
+                          computed from one cosmetic's creator and a pack has
+                          several. */}
+                      {!isPack && (
+                        <MoneyTile
+                          label="Resale by others"
+                          value={
+                            selectedMeta.sellableByOthers
+                              ? `Allowed · seller keeps ${selectedMeta.sellerShare ?? 0}%`
+                              : 'Owner only'
+                          }
+                          icon={<IconUsers size={14} />}
+                          iconColor="var(--mantine-color-teal-5)"
+                        />
+                      )}
                     </SimpleGrid>
 
                     <ChecksCard
@@ -816,14 +831,16 @@ function CreatorShopReviewPage() {
                         Details
                       </Text>
                       <Paper withBorder radius="md">
-                        <DetailRow
-                          label="Cosmetic name"
-                          value={
-                            <Text size="sm" fw={500}>
-                              {selected.cosmetic?.name}
-                            </Text>
-                          }
-                        />
+                        {!isPack && (
+                          <DetailRow
+                            label="Cosmetic name"
+                            value={
+                              <Text size="sm" fw={500}>
+                                {selected.cosmetic?.name}
+                              </Text>
+                            }
+                          />
+                        )}
                         {!!stickerSlug && (
                           <DetailRow
                             label="Slug"
@@ -834,25 +851,27 @@ function CreatorShopReviewPage() {
                             }
                           />
                         )}
-                        <DetailRow
-                          label="Rights affirmed"
-                          value={
-                            affirmation ? (
-                              <Stack gap={2}>
-                                <Text size="sm">“{affirmation.statement}”</Text>
-                                <Text size="xs" c="dimmed">
-                                  {affirmedBy} ·{' '}
-                                  {formatDate(affirmation.affirmedAt, 'MMM D, YYYY h:mm A')} · v
-                                  {affirmation.version}
+                        {(!isPack || !!affirmation) && (
+                          <DetailRow
+                            label="Rights affirmed"
+                            value={
+                              affirmation ? (
+                                <Stack gap={2}>
+                                  <Text size="sm">“{affirmation.statement}”</Text>
+                                  <Text size="xs" c="dimmed">
+                                    {affirmedBy} ·{' '}
+                                    {formatDate(affirmation.affirmedAt, 'MMM D, YYYY h:mm A')} · v
+                                    {affirmation.version}
+                                  </Text>
+                                </Stack>
+                              ) : (
+                                <Text size="sm" c="dimmed">
+                                  Not recorded — submitted before this confirmation was required.
                                 </Text>
-                              </Stack>
-                            ) : (
-                              <Text size="sm" c="dimmed">
-                                Not recorded — submitted before this confirmation was required.
-                              </Text>
-                            )
-                          }
-                        />
+                              )
+                            }
+                          />
+                        )}
                         <DetailRow
                           label="Description"
                           last
