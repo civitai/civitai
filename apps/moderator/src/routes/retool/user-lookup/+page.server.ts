@@ -9,6 +9,7 @@ import {
   addSocial,
   addTimedMute,
   clearProfileText,
+  purgeAllContent,
   removeSocial,
   setModerationFlag,
   forceLogout,
@@ -19,7 +20,7 @@ import {
   setMuted,
   unmuteAndClearTimed,
 } from '$lib/server/user-actions.service';
-import { getUserLookup, resolveUserId } from '$lib/server/user-lookup.service';
+import { getUserLookup, resolveUserId, resolveUsername } from '$lib/server/user-lookup.service';
 
 const querySchema = z.object({ q: z.string().trim().catch('') });
 
@@ -260,6 +261,26 @@ export const actions: Actions = {
       userId: input.userId,
       moderatorId: locals.user.id,
     });
+    if (!result.ok) return accountFail(result.error);
+    return { success: true };
+  },
+
+  // The typed-username confirmation is checked SERVER-side as well as in the UI: this is irreversible,
+  // and a client-only guard is no guard at all against a double-submit or a forged post.
+  purgeContent: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');
+    const input = parseForm(
+      userIdSchema.extend({ confirm: z.string().trim() }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return accountFail(input);
+
+    const user = await resolveUsername(input.userId);
+    if (!user) return accountFail('User not found.');
+    if (input.confirm !== (user.username ?? String(input.userId)))
+      return accountFail('Type the username exactly to confirm the purge.');
+
+    const result = await purgeAllContent({ userId: input.userId, moderatorId: locals.user.id });
     if (!result.ok) return accountFail(result.error);
     return { success: true };
   },

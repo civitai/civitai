@@ -205,6 +205,31 @@ export async function setBanned(input: {
   return { ok: true };
 }
 
+// PURGE ALL CONTENT (Retool's PURGEAPI). Irreversible from here: the endpoint deletes models, images,
+// posts, articles and comments for the account. The confirmation lives in the UI; this only refuses to
+// act on an id that does not resolve, so a mistyped id cannot reach the endpoint.
+export async function purgeAllContent(input: {
+  userId: number;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  const exists = await dbWrite
+    .selectFrom('User')
+    .select('id')
+    .where('id', '=', input.userId)
+    .executeTakeFirst();
+  if (!exists) return { ok: false, error: 'User not found.' };
+
+  const result = await callMainApp(
+    '/api/mod/remove-all-content',
+    { userId: String(input.userId) },
+    'Purge'
+  );
+  if (!result.ok) return result;
+
+  await logAction('purgeAllContent', input.userId, input.moderatorId);
+  return { ok: true };
+}
+
 // PROFILE TEXT (Retool's UpdateUserDeets / UpdateUserProfile). The moderation case is a bio, profile
 // message or location used as an advertising or abuse surface: the text has to come off the site
 // without banning the account over it.

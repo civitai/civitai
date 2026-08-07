@@ -38,7 +38,8 @@
   const error = $derived(form?.scope === 'account' ? form.error : null);
 
   let version = $state(0);
-  let confirming = $state<'ban' | 'unban' | null>(null);
+  let confirming = $state<'ban' | 'unban' | 'purge' | null>(null);
+  let purgeConfirm = $state('');
   let showTimedMute = $state(false);
   let reasonCode = $state('');
 
@@ -64,6 +65,7 @@
         confirming = null;
         showTimedMute = false;
         reasonCode = '';
+        purgeConfirm = '';
         version += 1;
         await invalidateAll();
       }
@@ -135,6 +137,10 @@
       {:else}
         <Button size="sm" variant="destructive" onclick={() => (confirming = 'ban')}>Ban</Button>
       {/if}
+
+      <Button size="sm" variant="destructive" onclick={() => (confirming = 'purge')}>
+        Purge content
+      </Button>
     </div>
 
     {#if showTimedMute}
@@ -154,7 +160,35 @@
       </form>
     {/if}
 
-    {#if confirming}
+    {#if confirming === 'purge'}
+      <form method="POST" action="?/purgeContent" use:enhance={onSubmit} class="mt-4">
+        <input type="hidden" name="userId" value={identity.id} />
+        <div class="rounded-md border border-red-500/40 bg-red-500/10 p-3">
+          <p class="mb-2 text-sm text-white">
+            Delete <strong>all content</strong> belonging to
+            <strong>{identity.username ?? identity.id}</strong> — models, images, posts, articles and
+            comments. This cannot be undone from here.
+          </p>
+          <label class="text-xs text-dark-2">
+            Type <code class="text-dark-0">{identity.username ?? identity.id}</code> to confirm
+            <Input name="confirm" bind:value={purgeConfirm} class="mt-1" autocomplete="off" />
+          </label>
+          <div class="mt-2 flex gap-2">
+            <Button
+              type="submit"
+              size="sm"
+              variant="destructive"
+              disabled={submitting || purgeConfirm !== (identity.username ?? String(identity.id))}
+            >
+              {submitting ? 'Working…' : 'Purge all content'}
+            </Button>
+            <Button type="button" size="sm" variant="outline" onclick={() => (confirming = null)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </form>
+    {:else if confirming}
       <form method="POST" action="?/setBanned" use:enhance={onSubmit} class="mt-4">
         <input type="hidden" name="userId" value={identity.id} />
         <input type="hidden" name="ban" value={confirming === 'ban' ? 'true' : 'false'} />

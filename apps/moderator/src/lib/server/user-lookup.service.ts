@@ -100,6 +100,18 @@ export async function resolveUserId(term: string): Promise<number | null> {
   return row?.id ?? null;
 }
 
+/** The username as stored, for actions that make a moderator type it back to confirm. */
+export async function resolveUsername(
+  userId: number
+): Promise<{ username: string | null } | null> {
+  const row = await dbRead
+    .selectFrom('User')
+    .select('username')
+    .where('id', '=', userId)
+    .executeTakeFirst();
+  return row ?? null;
+}
+
 export async function getUserLookup(userId: number): Promise<UserLookupResult | null> {
   const [
     identity,
