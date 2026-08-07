@@ -79,6 +79,7 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import {
   ChallengeSource,
   CollectionContributorPermission,
+  CollectionInviteStatus,
   CollectionItemStatus,
   CollectionMode,
   CollectionReadConfiguration,
@@ -93,6 +94,10 @@ import {
 import { isDefined } from '~/utils/type-guards';
 import { assertUserChallengeAcceptingEntries } from '~/server/games/daily-challenge/challenge-entry-gate';
 import { liveInviteWhere } from '~/server/services/collection-invite.utils';
+import {
+  freeGrantBaseline,
+  isCollaboratorRow,
+} from '~/server/services/collection-permission.utils';
 
 export type CollectionContributorPermissionFlags = {
   collectionId: number;
@@ -202,6 +207,7 @@ export async function getUserCollectionPermissionsByIds({
     mode: CollectionMode | null;
     contributorPermissions: CollectionContributorPermission[] | null;
     collaborationDisabledAt: Date | null;
+    hasAcceptedSeat: boolean;
   };
 
   const collections = await dbRead.$queryRaw<CollectionPermissionRow[]>`
@@ -215,13 +221,17 @@ export async function getUserCollectionPermissionsByIds({
       c."collaborationDisabledAt",
       ${
         userId
-          ? Prisma.sql`cc.permissions as "contributorPermissions"`
-          : Prisma.sql`NULL as "contributorPermissions"`
+          ? Prisma.sql`cc.permissions as "contributorPermissions", ci.id IS NOT NULL as "hasAcceptedSeat"`
+          : Prisma.sql`NULL as "contributorPermissions", false as "hasAcceptedSeat"`
       }
     FROM "Collection" c
     ${
       userId
-        ? Prisma.sql`LEFT JOIN "CollectionContributor" cc ON cc."collectionId" = c.id AND cc."userId" = ${userId}`
+        ? Prisma.sql`
+          LEFT JOIN "CollectionContributor" cc ON cc."collectionId" = c.id AND cc."userId" = ${userId}
+          LEFT JOIN "CollectionInvite" ci ON ci."collectionId" = c.id AND ci."userId" = ${userId}
+            AND ci.status = ${CollectionInviteStatus.Accepted}::"CollectionInviteStatus"
+        `
         : Prisma.empty
     }
     WHERE c.id IN (${Prisma.join(ids)})
@@ -275,9 +285,7 @@ export async function getUserCollectionPermissionsByIds({
       permissions.followPermissions.push(CollectionContributorPermission.ADD_REVIEW);
     }
 
-    // Snapshot before the lapse block below filters `followPermissions` — this must reflect
-    // the collection's structural free-tier grant, not what's left after a lapse closes it.
-    const freelyGranted = new Set(permissions.followPermissions);
+    const freelyGranted = freeGrantBaseline(collection);
 
     if (collection.collaborationDisabledAt) {
       permissions.write = false;
@@ -315,12 +323,11 @@ export async function getUserCollectionPermissionsByIds({
 
     permissions.isContributor = true;
 
-    permissions.isCollaborator = contributorPermissions.some(
-      (p) =>
-        (p === CollectionContributorPermission.ADD ||
-          p === CollectionContributorPermission.MANAGE) &&
-        !freelyGranted.has(p)
-    );
+    permissions.isCollaborator = isCollaboratorRow({
+      permissions: contributorPermissions,
+      freeBaseline: freelyGranted,
+      hasAcceptedSeat: collection.hasAcceptedSeat,
+    });
 
     if (contributorPermissions.includes(CollectionContributorPermission.VIEW)) {
       permissions.read = true;

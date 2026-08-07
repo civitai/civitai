@@ -20,11 +20,13 @@ function arrange({
   write = 'Private',
   contributorPermissions = null,
   collaborationDisabledAt = null,
+  hasAcceptedSeat = false,
 }: {
   read?: 'Public' | 'Unlisted' | 'Private';
   write?: 'Public' | 'Review' | 'Private';
   contributorPermissions?: string[] | null;
   collaborationDisabledAt?: Date | null;
+  hasAcceptedSeat?: boolean;
 }) {
   mockDbRead.$queryRaw.mockReset();
   mockDbRead.$queryRaw.mockResolvedValueOnce([
@@ -37,6 +39,7 @@ function arrange({
       mode: null,
       contributorPermissions,
       collaborationDisabledAt,
+      hasAcceptedSeat,
     },
   ]);
 }
@@ -56,6 +59,27 @@ describe('collection collaborator permissions', () => {
 
   it('does not treat ADD as collaboration on a Public-write collection', async () => {
     arrange({ write: 'Public', contributorPermissions: ['VIEW', 'ADD'] });
+    const permissions = await getUserCollectionPermissionsById({
+      id: COLLECTION_ID,
+      userId: OTHER_ID,
+    });
+    expect(permissions.isCollaborator).toBe(false);
+  });
+
+  // The sidebar groups on this flag while the detail header groups on the roster. On a
+  // write:Public collection an accepted Contributor's {VIEW, ADD} is identical to a follower's,
+  // so without the seat signal the two surfaces disagree about the same person.
+  it('treats an accepted seat on a Public-write collection as collaboration', async () => {
+    arrange({ write: 'Public', contributorPermissions: ['VIEW', 'ADD'], hasAcceptedSeat: true });
+    const permissions = await getUserCollectionPermissionsById({
+      id: COLLECTION_ID,
+      userId: OTHER_ID,
+    });
+    expect(permissions.isCollaborator).toBe(true);
+  });
+
+  it('does not treat an accepted seat with no contributor row as collaboration', async () => {
+    arrange({ write: 'Public', contributorPermissions: null, hasAcceptedSeat: true });
     const permissions = await getUserCollectionPermissionsById({
       id: COLLECTION_ID,
       userId: OTHER_ID,

@@ -304,6 +304,26 @@ describe('inviteCollaborator', () => {
     expect(mockDbWrite.collectionInvite.upsert).toHaveBeenCalled();
   });
 
+  // Counting only Accepted rows would let someone issue hundreds of invites and stay under the
+  // cap until they all land, so the cap window — unlike the public roster — must span Pending.
+  it('counts seats over both Accepted and non-expired Pending invites', async () => {
+    asOwner();
+
+    await inviteCollaborator({
+      collectionId: COLLECTION_ID,
+      userId: OWNER_ID,
+      targetUserId: TARGET_ID,
+      role: 'Contributor',
+      isMember: true,
+    });
+
+    const countQuery = mockDbRead.collectionInvite.findMany.mock.calls[0][0];
+    expect(countQuery.where.OR).toEqual([
+      { status: 'Accepted' },
+      { status: 'Pending', createdAt: { gte: expect.any(Date) } },
+    ]);
+  });
+
   it('still charges a seat for an Accepted invite whose collaborator is present', async () => {
     asOwner();
     mockDbRead.collectionContributor.findMany.mockResolvedValue(
@@ -767,6 +787,39 @@ describe('getCollaborators', () => {
     );
   });
 
+  // A follower's row on a write:Public collection is {VIEW, ADD} — the same shape an accepted
+  // Contributor gets — so the seat lookup is the only thing separating them. Rescuing on a
+  // Pending seat would publish an invitee in the public header before they ever answered.
+  describe('seat rescue on a write:Public collection', () => {
+    function arrangeInvite(status: 'Pending' | 'Accepted') {
+      asOwner();
+      mockDbRead.collectionContributor.findMany.mockResolvedValue([
+        { userId: TARGET_ID, permissions: ['VIEW', 'ADD'] },
+      ]);
+      const invites = [{ id: 9, userId: TARGET_ID, role: 'Contributor', status, createdAt: new Date() }];
+      mockDbRead.collectionInvite.findMany.mockImplementation(
+        async ({ where }: { where: { status?: string } }) =>
+          invites.filter((invite) => !where.status || invite.status === where.status)
+      );
+    }
+
+    it('excludes a pending invitee', async () => {
+      arrangeInvite('Pending');
+
+      const result = await getCollaborators({ collectionId: COLLECTION_ID, userId: OWNER_ID });
+
+      expect(result.collaborators).toEqual([]);
+    });
+
+    it('includes the same row once the invite is accepted', async () => {
+      arrangeInvite('Accepted');
+
+      const result = await getCollaborators({ collectionId: COLLECTION_ID, userId: OWNER_ID });
+
+      expect(result.collaborators).toEqual([{ userId: TARGET_ID, role: 'Contributor' }]);
+    });
+  });
+
   it('gives a read-only caller an empty invites list', async () => {
     mockGetPermissions.mockResolvedValue({
       isOwner: false,
@@ -864,25 +917,19 @@ describe('getCollaborators', () => {
     expect(rosterQuery.where.userId).toEqual({ not: OWNER_ID });
   });
 
-  // Re-inviting an accepted collaborator flips their invite back to Pending; a roster that
-  // only looked at Accepted dropped them while the caps kept charging for them.
-  it('keeps a re-invited collaborator on the roster while their invite is Pending', async () => {
+  // The roster is public on every collection detail page, so it must not widen to the seat
+  // window the caps use — that window includes Pending. The cost is that re-inviting an
+  // existing collaborator (which flips their invite back to Pending) drops them off the roster
+  // of a write:Public collection until they accept again; the caps keep charging for them.
+  it('queries accepted seats only, not the cap seat window', async () => {
     asOwner();
-    mockDbRead.collectionContributor.findMany.mockResolvedValue([
-      { userId: TARGET_ID, permissions: ['VIEW', 'ADD'] },
-    ]);
-    mockDbRead.collectionInvite.findMany
-      .mockResolvedValueOnce([{ userId: TARGET_ID }])
-      .mockResolvedValueOnce([]);
+    mockDbRead.collectionInvite.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
 
-    const result = await getCollaborators({ collectionId: COLLECTION_ID, userId: OWNER_ID });
+    await getCollaborators({ collectionId: COLLECTION_ID, userId: OWNER_ID });
 
-    expect(result.collaborators).toEqual([{ userId: TARGET_ID, role: 'Contributor' }]);
     const inviteQuery = mockDbRead.collectionInvite.findMany.mock.calls[0][0];
-    expect(inviteQuery.where.OR).toEqual([
-      { status: 'Accepted' },
-      { status: 'Pending', createdAt: { gte: expect.any(Date) } },
-    ]);
+    expect(inviteQuery.where.status).toBe('Accepted');
+    expect(inviteQuery.where.OR).toBeUndefined();
   });
 });
 

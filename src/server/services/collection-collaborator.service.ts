@@ -4,14 +4,21 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { inviteExpiryCutoff, liveInviteWhere } from '~/server/services/collection-invite.utils';
+import {
+  freeGrantBaseline,
+  hasElevatedPermission,
+  isCollaboratorRow,
+} from '~/server/services/collection-permission.utils';
 import { createNotification } from '~/server/services/notification.service';
+import type {
+  CollectionReadConfiguration,
+  CollectionWriteConfiguration,
+} from '~/shared/utils/prisma/enums';
 import {
   CollectionCollaboratorRole,
   CollectionContributorPermission,
   CollectionInviteStatus,
   CollectionMode,
-  CollectionReadConfiguration,
-  CollectionWriteConfiguration,
 } from '~/shared/utils/prisma/enums';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 
@@ -47,46 +54,6 @@ function roleFromPermissions(
   return permissions.includes(CollectionContributorPermission.MANAGE)
     ? CollectionCollaboratorRole.Manager
     : CollectionCollaboratorRole.Contributor;
-}
-
-// What the collection already grants everyone for free, independent of who's asking.
-// Sourced from the collection's own read/write columns — NOT from `followPermissions` on
-// `getUserCollectionPermissionsById`'s result, which the collaborationDisabledAt lapse
-// filter prunes; using that would misreport a lapsed collection's free ADD grant as
-// elevated and undercount every follower's real standing.
-function freeGrantBaseline(collection: {
-  read: CollectionReadConfiguration;
-  write: CollectionWriteConfiguration;
-}): Set<CollectionContributorPermission> {
-  const baseline = new Set<CollectionContributorPermission>();
-  if (
-    collection.read === CollectionReadConfiguration.Public ||
-    collection.read === CollectionReadConfiguration.Unlisted
-  ) {
-    baseline.add(CollectionContributorPermission.VIEW);
-  }
-  if (collection.write === CollectionWriteConfiguration.Public) {
-    baseline.add(CollectionContributorPermission.ADD);
-  }
-  if (collection.write === CollectionWriteConfiguration.Review) {
-    baseline.add(CollectionContributorPermission.ADD_REVIEW);
-  }
-  return baseline;
-}
-
-// Mirrors Task 2's `isCollaborator`: a row only counts as a collaborator when it holds
-// ADD/MANAGE beyond the free baseline. A plain Follow on a write:Public collection writes
-// a CollectionContributor row carrying ADD too — that row must NOT read as elevated.
-function hasElevatedPermission(
-  permissions: CollectionContributorPermission[],
-  freeBaseline: Set<CollectionContributorPermission>
-): boolean {
-  return permissions.some(
-    (p) =>
-      (p === CollectionContributorPermission.ADD ||
-        p === CollectionContributorPermission.MANAGE) &&
-      !freeBaseline.has(p)
-  );
 }
 
 // Both counts must include non-expired pending invites, not just accepted rows — counting
@@ -395,8 +362,8 @@ function collectionSupportsCollaborators(collection: {
 /**
  * The roster derivation shared by `getCollaborators` and `collection.getById`. It returns an empty
  * roster for collections that don't support collaborators rather than throwing, so a caller that
- * also serves curated and system-owned collections can call it unconditionally. Never returns
- * pending invites — those are `getCollaborators`' business and are gated on `manage` there.
+ * also serves curated and system-owned collections can call it unconditionally. Only accepted
+ * seats count — a pending invitee must never be published in the roster before they answer.
  */
 export async function getCollectionRoster(collection: {
   id: number;
@@ -410,12 +377,8 @@ export async function getCollectionRoster(collection: {
   const freeBaseline = freeGrantBaseline(collection);
 
   // CollectionContributor also holds follow rows — on a write:Public collection a plain
-  // Follow carries ADD too, so this must never return every row for the collection. A row
-  // qualifies as a roster entry when its permissions are elevated beyond the free baseline,
-  // or (to catch a Contributor invite accepted on a write:Public collection, whose granted
-  // {VIEW, ADD} is otherwise indistinguishable from a follower's) when the user holds an
-  // invite that occupies a seat — a signal only the invite/accept flow produces.
-  const [rows, seatedInvites] = await Promise.all([
+  // Follow carries ADD too, so this must never return every row for the collection.
+  const [rows, acceptedInvites] = await Promise.all([
     dbRead.collectionContributor.findMany({
       where: {
         collectionId: collection.id,
@@ -427,17 +390,20 @@ export async function getCollectionRoster(collection: {
       select: { userId: true, permissions: true },
     }),
     dbRead.collectionInvite.findMany({
-      where: liveInviteWhere(collection.id),
+      where: { collectionId: collection.id, status: CollectionInviteStatus.Accepted },
       select: { userId: true },
     }),
   ]);
 
-  const seatedInviteUserIds = new Set(seatedInvites.map((invite) => invite.userId));
+  const acceptedSeatUserIds = new Set(acceptedInvites.map((invite) => invite.userId));
 
   return rows
-    .filter(
-      (row) =>
-        hasElevatedPermission(row.permissions, freeBaseline) || seatedInviteUserIds.has(row.userId)
+    .filter((row) =>
+      isCollaboratorRow({
+        permissions: row.permissions,
+        freeBaseline,
+        hasAcceptedSeat: acceptedSeatUserIds.has(row.userId),
+      })
     )
     .map((row) => ({
       userId: row.userId,
