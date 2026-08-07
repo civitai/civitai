@@ -3,6 +3,7 @@ import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
 import { clickhouseDate } from './clickhouse-date';
 import { usersByIds } from './users.service';
+import { strikeCountsByUserIds } from './moderation-memory.service';
 import { INTERNAL_IP_RANGE, IP_PATTERN } from './clickhouse-filters';
 
 // Everything behind `/api/user-signals` — the ban-evasion and abuse half of User Lookup.
@@ -54,10 +55,18 @@ export async function getUserIps(userId: number): Promise<UserIp[]> {
   }));
 }
 
-export type SharedIpAccount = {
+// Retool's FindPreviousBans + SimilarIpStrikes: whether a linked account was itself actioned. Without
+// it the linked-account lists say only that two accounts share an address, which is not by itself
+// evidence of anything — the enforcement history is the part that makes the panel actionable.
+export type LinkedAccount = {
   userId: number;
   username: string | null;
   bannedAt: Date | null;
+  muted: boolean | null;
+  strikes: number;
+};
+
+export type SharedIpAccount = LinkedAccount & {
   ip: string;
   type: string;
   last: string;
@@ -111,15 +120,19 @@ export async function getSharedIpAccounts(
 
   const truncated = rows.length > LIMIT;
   const page = rows.slice(0, LIMIT);
-  const byId = await usersByIds(page.map((r) => Number(r.userId)));
+  const ids = page.map((r) => Number(r.userId));
+  const [byId, strikes] = await Promise.all([usersByIds(ids), strikeCountsByUserIds(ids)]);
 
   return {
     accounts: page.map((r) => {
-      const u = byId.get(Number(r.userId));
+      const id = Number(r.userId);
+      const u = byId.get(id);
       return {
-        userId: Number(r.userId),
+        userId: id,
         username: u?.username ?? null,
         bannedAt: u?.bannedAt ?? null,
+        muted: u?.muted ?? null,
+        strikes: strikes.get(id) ?? 0,
         ip: r.ip,
         type: r.type,
         last: clickhouseDate(r.last),
@@ -127,6 +140,46 @@ export async function getSharedIpAccounts(
     }),
     truncated,
   };
+}
+
+// ACCOUNT LIFECYCLE EVENTS (Retool's ClickhouseUserActivities). Registration, subscribe, cancel,
+// ban/unban, mute/unmute — the account's own history, which `ModActivity` does not hold: that table
+// keys on content, and these events predate it.
+//
+// Retool UNIONed a second half over `default.images` for moderator actions on this user's images;
+// that half is what ModActivityPanel already reads from Postgres, with usernames and no duplication.
+export type AccountEvent = {
+  /** `userActivities` has no primary key and repeats freely; the ordinal is the only stable identity. */
+  key: string;
+  type: string;
+  time: string;
+  actorId: number | null;
+  actor: string | null;
+};
+
+export async function getAccountEvents(userId: number, limit = 50): Promise<AccountEvent[]> {
+  const rows = await getClickhouse().$query<{ type: string; time: string; actorId: string }>(`
+    SELECT type, time, userId AS actorId
+    FROM default.userActivities
+    WHERE targetUserId = ${userId}
+    ORDER BY time DESC
+    LIMIT ${limit}
+  `);
+
+  const byId = await usersByIds(rows.map((r) => Number(r.actorId)));
+  return rows.map((r, i) => {
+    // Self-service events (registration, subscribe) carry the user's own id or none at all; only a
+    // DIFFERENT id is a moderator acting on the account.
+    const actorId = Number(r.actorId);
+    const isActor = actorId > 0 && actorId !== userId;
+    return {
+      key: `${i}:${r.time}`,
+      type: r.type,
+      time: clickhouseDate(r.time),
+      actorId: isActor ? actorId : null,
+      actor: isActor ? (byId.get(actorId)?.username ?? null) : null,
+    };
+  });
 }
 
 export type UserSocial = { id: number; url: string; type: string };
@@ -153,12 +206,7 @@ export async function getSocials(userId: number): Promise<UserSocial[]> {
     .execute();
 }
 
-export type SharedSocialAccount = {
-  userId: number;
-  username: string | null;
-  bannedAt: Date | null;
-  url: string;
-};
+export type SharedSocialAccount = LinkedAccount & { url: string };
 
 // Ban-evasion signal in the same class as shared IPs, and in practice a sharper one: the most-shared
 // links in the table are spam-network domains posted by dozens of accounts each.
@@ -187,7 +235,7 @@ export async function getSharedSocialAccounts(
   const rows = await dbRead
     .selectFrom('UserLink as ul')
     .innerJoin('User as u', 'u.id', 'ul.userId')
-    .select(['ul.userId', 'ul.url', 'u.username', 'u.bannedAt'])
+    .select(['ul.userId', 'ul.url', 'u.username', 'u.bannedAt', 'u.muted'])
     .distinctOn('ul.userId')
     .where(normalizedUrl('ul.url'), 'in', urls)
     .where('ul.userId', '!=', userId)
@@ -198,7 +246,13 @@ export async function getSharedSocialAccounts(
 
   // DISTINCT ON fixes the row order, so banned-first ordering is applied here rather than in SQL.
   const sorted = rows.sort((a, b) => Number(!!b.bannedAt) - Number(!!a.bannedAt));
-  return { accounts: sorted.slice(0, LIMIT), truncated: sorted.length > LIMIT };
+  const page = sorted.slice(0, LIMIT);
+  const strikes = await strikeCountsByUserIds(page.map((r) => r.userId));
+
+  return {
+    accounts: page.map((r) => ({ ...r, strikes: strikes.get(r.userId) ?? 0 })),
+    truncated: sorted.length > LIMIT,
+  };
 }
 
 // Retool's PotentialSpammer/V2 (Postgres, despite sitting beside the ClickHouse queries): a burst of

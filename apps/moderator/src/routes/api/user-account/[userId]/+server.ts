@@ -2,12 +2,17 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireUserIdParam } from '$lib/server/api-guard';
 import {
+  getBounties,
+  getBountyEntries,
   getBuzzBalance,
   getComments,
   getCosmetics,
   getReactionTargets,
+  getReceivedReviews,
+  getResourceGenerations,
   getReviews,
   getTrainingRuns,
+  getUserNotifications,
 } from '$lib/server/user-account.service';
 
 // Client-fetched: the Buzz balance is an external HTTP call and the lists are only wanted once an
@@ -15,14 +20,43 @@ import {
 export const GET: RequestHandler = async ({ params, locals }) => {
   const userId = requireUserIdParam(locals, params, '/retool/user-lookup');
 
-  const [buzz, reviews, comments, cosmetics, reactions, trainings] = await Promise.all([
+  const [
+    buzz,
+    reviews,
+    receivedReviews,
+    comments,
+    cosmetics,
+    reactions,
+    trainings,
+    bounties,
+    bountyEntries,
+    notifications,
+    resourceGenerations,
+  ] = await Promise.all([
     getBuzzBalance(userId),
     getReviews(userId),
+    getReceivedReviews(userId),
     getComments(userId),
     getCosmetics(userId),
     getReactionTargets(userId),
     getTrainingRuns(userId),
+    getBounties(userId),
+    getBountyEntries(userId),
+    getUserNotifications(userId),
+    getResourceGenerations(userId),
   ]);
 
-  return json({ buzz, reviews, comments, cosmetics, reactions, trainings });
+  return json({
+    buzz,
+    reviews,
+    receivedReviews,
+    comments,
+    cosmetics,
+    reactions,
+    trainings,
+    bounties,
+    bountyEntries,
+    notifications,
+    resourceGenerations,
+  });
 };

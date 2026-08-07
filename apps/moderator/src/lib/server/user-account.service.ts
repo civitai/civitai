@@ -3,6 +3,7 @@ import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
 import { clickhouseDate } from './clickhouse-date';
 import { getBuzz } from './buzz';
+import { getNotifications } from './notifications';
 import { usersByIds } from './users.service';
 import type { BuzzTransaction } from '../../routes/retool/user-lookup/buzz-history';
 
@@ -42,6 +43,98 @@ export async function getReviews(userId: number, limit = 25): Promise<UserReview
     ])
     .where('rr.userId', '=', userId)
     .orderBy('rr.createdAt', 'desc')
+    .limit(limit)
+    .execute();
+}
+
+// Reviews RECEIVED on this user's models (Retool's ReceivedReviews, behind the tab that was never
+// ported). A different question from reviews written: a creator drawing a burst of 1★ reviews, or one
+// whose models are reviewed only by a handful of accounts, is what this surfaces.
+export type ReceivedReview = {
+  id: number;
+  createdAt: Date;
+  rating: number | null;
+  exclude: boolean | null;
+  details: string | null;
+  modelId: number | null;
+  modelName: string | null;
+  reviewerId: number;
+  reviewer: string | null;
+};
+
+export async function getReceivedReviews(userId: number, limit = 25): Promise<ReceivedReview[]> {
+  return dbRead
+    .selectFrom('ResourceReview as rr')
+    .innerJoin('Model as m', 'm.id', 'rr.modelId')
+    .innerJoin('User as u', 'u.id', 'rr.userId')
+    .select([
+      'rr.id',
+      'rr.createdAt',
+      'rr.rating',
+      'rr.exclude',
+      'rr.details',
+      'rr.modelId',
+      'm.name as modelName',
+      'rr.userId as reviewerId',
+      'u.username as reviewer',
+    ])
+    .where('m.userId', '=', userId)
+    // Retool showed a creator's own reviews of their own models among the reviews they received; they
+    // are self-authored and carry no signal about how the model was received.
+    .where('rr.userId', '!=', userId)
+    .orderBy('rr.createdAt', 'desc')
+    .limit(limit)
+    .execute();
+}
+
+// BOUNTIES (Retool's BountyList / BountyEntryList — a whole tab pair that was never ported). Both
+// sides matter: bounties this user funded, and entries they submitted to others'.
+export type UserBounty = {
+  id: number;
+  name: string;
+  createdAt: Date;
+  expiresAt: Date;
+  complete: boolean;
+  /** Summed across benefactors — Retool's join emitted one row per benefactor, so a bounty with three
+   *  backers appeared three times, each showing only that backer's share. */
+  unitAmount: number;
+};
+
+export async function getBounties(userId: number, limit = 25): Promise<UserBounty[]> {
+  const rows = await dbRead
+    .selectFrom('Bounty as b')
+    .leftJoin('BountyBenefactor as bb', 'bb.bountyId', 'b.id')
+    .select((eb) => [
+      'b.id',
+      'b.name',
+      'b.createdAt',
+      'b.expiresAt',
+      'b.complete',
+      eb.fn.coalesce(eb.fn.sum<string>('bb.unitAmount'), sql<string>`0`).as('unitAmount'),
+    ])
+    .where('b.userId', '=', userId)
+    .groupBy(['b.id', 'b.name', 'b.createdAt', 'b.expiresAt', 'b.complete'])
+    .orderBy('b.createdAt', 'desc')
+    .limit(limit)
+    .execute();
+  return rows.map((r) => ({ ...r, unitAmount: Number(r.unitAmount) }));
+}
+
+export type UserBountyEntry = {
+  id: number;
+  bountyId: number;
+  bountyName: string;
+  createdAt: Date;
+  description: string | null;
+};
+
+export async function getBountyEntries(userId: number, limit = 25): Promise<UserBountyEntry[]> {
+  return dbRead
+    .selectFrom('BountyEntry as be')
+    .innerJoin('Bounty as b', 'b.id', 'be.bountyId')
+    .select(['be.id', 'be.bountyId', 'b.name as bountyName', 'be.createdAt', 'be.description'])
+    .where('be.userId', '=', userId)
+    .orderBy('be.createdAt', 'desc')
     .limit(limit)
     .execute();
 }
@@ -149,6 +242,83 @@ export async function getBuzzBalance(userId: number): Promise<UserBuzz> {
     console.error('[user-lookup] buzz balance unavailable', e);
     return null;
   }
+}
+
+// NOTIFICATIONS the user has been sent (Retool's GetNotifications / ViewNotifications, which read the
+// notifications database directly). This app has no connection to it, so it goes through the same
+// service client the rest of the monorepo uses.
+//
+// Best-effort: the notifications app being down should not blank the panel it shares.
+export type UserNotification = {
+  id: number;
+  type: string;
+  category: string;
+  createdAt: Date;
+  read: boolean;
+};
+
+export async function getUserNotifications(
+  userId: number,
+  limit = 25
+): Promise<UserNotification[] | null> {
+  try {
+    const rows = await getNotifications().queryNotifications({ userId, limit });
+    return rows.map((r) => ({
+      id: r.id,
+      type: r.type,
+      category: r.category,
+      createdAt: r.createdAt,
+      read: r.read,
+    }));
+  } catch (e) {
+    console.error('[user-lookup] notifications unavailable', e);
+    return null;
+  }
+}
+
+// GENERATIONS OF THIS USER'S RESOURCES (Retool's GetModelVersions + GensPerResource, run as two steps).
+// The reward-farming signal: a creator whose resources are generated with almost exclusively by a
+// handful of accounts, or whose counts spike, is what this surfaces.
+export type ResourceGeneration = {
+  modelVersionId: number;
+  modelId: number;
+  modelName: string;
+  count: number;
+};
+
+export async function getResourceGenerations(
+  userId: number,
+  days = 30,
+  limit = 15
+): Promise<ResourceGeneration[]> {
+  const versions = await dbRead
+    .selectFrom('ModelVersion as mv')
+    .innerJoin('Model as m', 'm.id', 'mv.modelId')
+    .select(['mv.id as modelVersionId', 'm.id as modelId', 'm.name as modelName'])
+    .where('m.userId', '=', userId)
+    // Bounded because the id list is interpolated into ClickHouse unescaped and a prolific creator has
+    // thousands of versions. Newest first — those are the ones a farming check is about.
+    .orderBy('mv.id', 'desc')
+    .limit(500)
+    .execute();
+  if (!versions.length) return [];
+
+  const ids = versions.map((v) => v.modelVersionId).join(', ');
+  const rows = await getClickhouse().$query<{ modelVersionId: string; count: string }>(`
+    SELECT modelVersionId, sum(count) AS count
+    FROM daily_resource_generation_counts
+    WHERE createdDate >= subtractDays(toStartOfDay(now()), ${days})
+      AND modelVersionId IN (${ids})
+    GROUP BY modelVersionId
+    ORDER BY count DESC
+    LIMIT ${limit}
+  `);
+
+  const byVersion = new Map(versions.map((v) => [v.modelVersionId, v]));
+  return rows.flatMap((r) => {
+    const v = byVersion.get(Number(r.modelVersionId));
+    return v ? [{ ...v, count: Number(r.count) }] : [];
+  });
 }
 
 // MODERATOR ACTIVITY (ticket §1.2e — "what was done to this account, and who did it")

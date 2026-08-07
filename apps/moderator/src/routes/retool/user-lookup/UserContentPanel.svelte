@@ -2,25 +2,14 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import type { Account } from './user-account';
+  import ListCard from './ListCard.svelte';
 
   let { account, civitaiUrl }: { account: Promise<Account> | null; civitaiUrl: string } = $props();
 
-  const SHOWN = 5;
-  let showReviews = $state(false);
-  let showComments = $state(false);
-  let showCosmetics = $state(false);
-
   const modelUrl = (modelId: number | null) => (modelId ? `${civitaiUrl}/models/${modelId}` : null);
+  const bountyUrl = (bountyId: number) => `${civitaiUrl}/bounties/${bountyId}`;
   const CARD = 'rounded-xl border border-dark-4 bg-dark-6 p-5';
 </script>
-
-{#snippet moreToggle(total: number, expanded: boolean, toggle: () => void)}
-  {#if total > SHOWN}
-    <button type="button" class="mt-3 text-sm {LINK_CLASS}" onclick={toggle}>
-      {expanded ? 'Show less' : `Show all ${total}`}
-    </button>
-  {/if}
-{/snippet}
 
 <section class="mb-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
   {#await account}
@@ -29,13 +18,10 @@
     </div>
   {:then result}
     {#if result}
-      <div class={CARD}>
-        <h3 class="mb-3 text-sm font-semibold text-white">Reviews ({result.reviews.length})</h3>
-        {#if result.reviews.length === 0}
-          <p class="text-sm text-dark-2">None.</p>
-        {:else}
+      <ListCard title="Reviews written" total={result.reviews.length}>
+        {#snippet children(limit)}
           <ul class="space-y-1 text-sm">
-            {#each showReviews ? result.reviews : result.reviews.slice(0, SHOWN) as r (r.id)}
+            {#each result.reviews.slice(0, limit) as r (r.id)}
               <li class="flex flex-wrap items-baseline gap-x-2">
                 {#if modelUrl(r.modelId)}
                   <a href={modelUrl(r.modelId)} target="_blank" rel="noreferrer" class={LINK_CLASS}>
@@ -49,30 +35,48 @@
               </li>
             {/each}
           </ul>
-          {@render moreToggle(
-            result.reviews.length,
-            showReviews,
-            () => (showReviews = !showReviews)
-          )}
-        {/if}
-      </div>
+        {/snippet}
+      </ListCard>
 
-      <div class={CARD}>
-        <h3 class="mb-3 text-sm font-semibold text-white">Comments ({result.comments.length})</h3>
-        {#if result.comments.length === 0}
-          <p class="text-sm text-dark-2">None.</p>
-        {:else}
+      <ListCard
+        title="Reviews received"
+        total={result.receivedReviews.length}
+        hint="On this user's models, by others. A burst of 1★ from few accounts is the signal."
+      >
+        {#snippet children(limit)}
+          <ul class="space-y-1 text-sm">
+            {#each result.receivedReviews.slice(0, limit) as r (r.id)}
+              <li class="flex flex-wrap items-baseline gap-x-2">
+                <a href="?q={r.reviewerId}" class={LINK_CLASS}>
+                  {r.reviewer ?? `#${r.reviewerId}`}
+                </a>
+                {#if r.rating !== null}<span class="text-dark-0">{r.rating}★</span>{/if}
+                {#if modelUrl(r.modelId)}
+                  <a
+                    href={modelUrl(r.modelId)}
+                    target="_blank"
+                    rel="noreferrer"
+                    class="truncate {LINK_CLASS}"
+                  >
+                    {r.modelName ?? `model ${r.modelId}`}
+                  </a>
+                {/if}
+                {#if r.exclude}<Badge variant="secondary">excluded</Badge>{/if}
+                <span class="text-xs text-dark-2">{dateTime(r.createdAt)}</span>
+              </li>
+            {/each}
+          </ul>
+        {/snippet}
+      </ListCard>
+
+      <ListCard title="Comments" total={result.comments.length}>
+        {#snippet children(limit)}
           <ul class="space-y-2 text-sm">
-            {#each showComments ? result.comments : result.comments.slice(0, SHOWN) as c (c.id)}
+            {#each result.comments.slice(0, limit) as c (c.id)}
               <li>
                 <div class="flex flex-wrap items-baseline gap-x-2">
                   {#if modelUrl(c.modelId)}
-                    <a
-                      href={modelUrl(c.modelId)}
-                      target="_blank"
-                      rel="noreferrer"
-                      class={LINK_CLASS}
-                    >
+                    <a href={modelUrl(c.modelId)} target="_blank" rel="noreferrer" class={LINK_CLASS}>
                       model {c.modelId}
                     </a>
                   {/if}
@@ -84,21 +88,13 @@
               </li>
             {/each}
           </ul>
-          {@render moreToggle(
-            result.comments.length,
-            showComments,
-            () => (showComments = !showComments)
-          )}
-        {/if}
-      </div>
+        {/snippet}
+      </ListCard>
 
-      <div class={CARD}>
-        <h3 class="mb-3 text-sm font-semibold text-white">Cosmetics ({result.cosmetics.length})</h3>
-        {#if result.cosmetics.length === 0}
-          <p class="text-sm text-dark-2">None.</p>
-        {:else}
+      <ListCard title="Cosmetics" total={result.cosmetics.length}>
+        {#snippet children(limit)}
           <ul class="space-y-1 text-sm">
-            {#each showCosmetics ? result.cosmetics : result.cosmetics.slice(0, SHOWN) as c (c.key)}
+            {#each result.cosmetics.slice(0, limit) as c (c.key)}
               <li class="flex flex-wrap items-baseline gap-x-2">
                 <span class="text-dark-0">{c.name}</span>
                 <Badge variant="secondary">{c.type}</Badge>
@@ -106,15 +102,103 @@
               </li>
             {/each}
           </ul>
-          {@render moreToggle(
-            result.cosmetics.length,
-            showCosmetics,
-            () => (showCosmetics = !showCosmetics)
-          )}
-        {/if}
-      </div>
+        {/snippet}
+      </ListCard>
 
-      <div class={CARD}>
+      <ListCard
+        title="Bounties funded"
+        total={result.bounties.length}
+        hint="Created by this user, with the total pledged across all benefactors."
+      >
+        {#snippet children(limit)}
+          <ul class="space-y-1 text-sm">
+            {#each result.bounties.slice(0, limit) as b (b.id)}
+              <li class="flex flex-wrap items-baseline gap-x-2">
+                <a href={bountyUrl(b.id)} target="_blank" rel="noreferrer" class="truncate {LINK_CLASS}">
+                  {b.name}
+                </a>
+                <span class="tabular-nums text-dark-0">{num(b.unitAmount)} buzz</span>
+                {#if b.complete}<Badge variant="secondary">complete</Badge>{/if}
+                <span class="text-xs text-dark-2">{dateTime(b.createdAt)}</span>
+              </li>
+            {/each}
+          </ul>
+        {/snippet}
+      </ListCard>
+
+      <ListCard title="Bounty entries" total={result.bountyEntries.length}>
+        {#snippet children(limit)}
+          <ul class="space-y-1 text-sm">
+            {#each result.bountyEntries.slice(0, limit) as e (e.id)}
+              <li class="flex flex-wrap items-baseline gap-x-2">
+                <a
+                  href={bountyUrl(e.bountyId)}
+                  target="_blank"
+                  rel="noreferrer"
+                  class="truncate {LINK_CLASS}"
+                >
+                  {e.bountyName}
+                </a>
+                <span class="text-xs text-dark-2">{dateTime(e.createdAt)}</span>
+              </li>
+            {/each}
+          </ul>
+        {/snippet}
+      </ListCard>
+
+      <ListCard
+        title="Generations of their resources"
+        total={result.resourceGenerations.length}
+        hint="Last 30 days, most-used first. Concentration or a spike is the farming signal."
+      >
+        {#snippet children(limit)}
+          <ul class="space-y-1 text-sm">
+            {#each result.resourceGenerations.slice(0, limit) as g (g.modelVersionId)}
+              <li class="flex flex-wrap items-baseline gap-x-2">
+                <span class="tabular-nums text-dark-0">{num(g.count)}</span>
+                <a
+                  href="{civitaiUrl}/models/{g.modelId}?modelVersionId={g.modelVersionId}"
+                  target="_blank"
+                  rel="noreferrer"
+                  class="truncate {LINK_CLASS}"
+                >
+                  {g.modelName}
+                </a>
+              </li>
+            {/each}
+          </ul>
+        {/snippet}
+      </ListCard>
+
+      {#if result.notifications === null}
+        <div class={CARD}>
+          <h3 class="mb-3 text-sm font-semibold text-white">Notifications</h3>
+          <p class="text-sm text-amber-300">Notifications service unavailable.</p>
+        </div>
+      {:else}
+        <ListCard
+          title="Notifications sent"
+          total={result.notifications.length}
+          hint="What the site has told this user — context for “I was never warned”."
+        >
+          {#snippet children(limit)}
+            {#if result.notifications}
+              <ul class="space-y-1 text-sm">
+                {#each result.notifications.slice(0, limit) as n (n.id)}
+                  <li class="flex flex-wrap items-baseline gap-x-2">
+                    <span class="text-dark-0">{n.type}</span>
+                    <Badge variant="secondary">{n.category}</Badge>
+                    {#if !n.read}<span class="text-xs text-dark-2">unread</span>{/if}
+                    <span class="text-xs text-dark-2">{dateTime(n.createdAt)}</span>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          {/snippet}
+        </ListCard>
+      {/if}
+
+      <div class="{CARD} sm:col-span-2">
         <h3 class="mb-1 text-sm font-semibold text-white">
           Image reactions given ({num(result.reactions.total)})
         </h3>

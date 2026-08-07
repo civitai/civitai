@@ -60,6 +60,7 @@
   <IdentityPanel
     identity={result.identity}
     profile={result.profile}
+    curator={result.curator}
     civitaiUrl={data.civitaiUrl}
   />
   <ContentCounts
@@ -67,7 +68,7 @@
     civitaiUrl={data.civitaiUrl}
     username={result.identity.username}
   />
-  <ReputationPanel stats={result.stats} scores={result.scores} />
+  <ReputationPanel stats={result.stats} scores={result.scores} ranks={result.ranks} />
 
   <!-- Order is deliberate, and reads top-down as an investigation: who they are, what they did, what we
        already know about them, and only then what to do about it. Account actions sits LAST because a

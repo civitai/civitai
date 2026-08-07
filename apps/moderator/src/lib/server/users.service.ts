@@ -15,7 +15,11 @@ export const isInt4Id = (value: number) => Number.isInteger(value) && value > 0 
 
 export type UserSearchResult = { id: number; username: string | null; image: string | null };
 
-export type UserSummary = { username: string | null; bannedAt: Date | null };
+export type UserSummary = {
+  username: string | null;
+  bannedAt: Date | null;
+  muted: boolean | null;
+};
 
 // Rows from ClickHouse and from aggregate queries carry user ids and no names; four places were each
 // hand-rolling this hydration and had already drifted on the guard (one deduped, one filtered `> 0`,
@@ -26,10 +30,12 @@ export async function usersByIds(ids: number[]): Promise<Map<number, UserSummary
 
   const rows = await dbRead
     .selectFrom('User')
-    .select(['id', 'username', 'bannedAt'])
+    .select(['id', 'username', 'bannedAt', 'muted'])
     .where('id', 'in', unique)
     .execute();
-  return new Map(rows.map((r) => [r.id, { username: r.username, bannedAt: r.bannedAt }]));
+  return new Map(
+    rows.map((r) => [r.id, { username: r.username, bannedAt: r.bannedAt, muted: r.muted }])
+  );
 }
 
 export async function searchUsers({

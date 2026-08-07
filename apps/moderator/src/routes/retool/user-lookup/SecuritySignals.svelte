@@ -3,7 +3,13 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
 
-  type Account = { userId: number; username: string | null; bannedAt: string | null };
+  type Account = {
+    userId: number;
+    username: string | null;
+    bannedAt: string | null;
+    muted: boolean | null;
+    strikes: number;
+  };
 
   export type Signals = {
     commentBurst: number;
@@ -29,6 +35,13 @@
       last24h: number;
     };
     modContact: { chats: number; lastAt: string | null };
+    events: {
+      key: string;
+      type: string;
+      time: string;
+      actorId: number | null;
+      actor: string | null;
+    }[];
   };
 
   let { userId }: { userId: number } = $props();
@@ -54,10 +67,16 @@
   const safeHref = (url: string) => (/^https?:\/\//i.test(url.trim()) ? url : null);
 </script>
 
-{#snippet accountLine(acct: { userId: number; username: string | null; bannedAt: string | null })}
+{#snippet accountLine(acct: Account)}
   <a href="?q={acct.userId}" class={LINK_CLASS}>{acct.username ?? `#${acct.userId}`}</a>
   {#if acct.bannedAt}
     <Badge variant="destructive">banned</Badge>
+  {/if}
+  {#if acct.muted}
+    <Badge variant="destructive">muted</Badge>
+  {/if}
+  {#if acct.strikes > 0}
+    <Badge variant="destructive">{acct.strikes} {acct.strikes === 1 ? 'strike' : 'strikes'}</Badge>
   {/if}
 {/snippet}
 
@@ -195,6 +214,34 @@
             {/if}
           {/if}
         </div>
+      </div>
+
+      <div class="mt-5 border-t border-dark-4 pt-4">
+        <h4 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
+          Account history ({result.events.length})
+        </h4>
+        {#if result.events.length === 0}
+          <p class="text-sm text-dark-2">No recorded account events.</p>
+        {:else}
+          <ul class="space-y-1 text-sm">
+            {#each result.events.slice(0, SHOWN) as e (e.key)}
+              <li class="flex flex-wrap items-baseline gap-x-2">
+                <Badge variant="secondary">{e.type}</Badge>
+                <span class="text-xs text-dark-2">{dateTime(e.time)}</span>
+                {#if e.actorId}
+                  <span class="text-xs text-dark-2">
+                    by <a href="?q={e.actorId}" class={LINK_CLASS}>
+                      {e.actor ?? `#${e.actorId}`}
+                    </a>
+                  </span>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+          {#if result.events.length > SHOWN}
+            <p class="mt-2 text-xs text-dark-2">+{result.events.length - SHOWN} more</p>
+          {/if}
+        {/if}
       </div>
 
       <div class="mt-5 border-t border-dark-4 pt-4">

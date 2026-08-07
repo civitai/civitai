@@ -71,6 +71,8 @@ export type UserLookupResult = {
   reportsFiled: ReportsFiled;
   reportedContent: ReportedContent[];
   subscription: UserSubscription | null;
+  curator: CuratorStatus;
+  ranks: LeaderboardRank[];
 };
 
 // Retool used three separate queries behind three inputs; one resolver keeps the caller from having to
@@ -99,20 +101,90 @@ export async function resolveUserId(term: string): Promise<number | null> {
 }
 
 export async function getUserLookup(userId: number): Promise<UserLookupResult | null> {
-  const [identity, profile, scores, counts, stats, reportsFiled, reportedContent, subscription] =
-    await Promise.all([
-      getIdentity(userId),
-      getProfile(userId),
-      getScores(userId),
-      getCounts(userId),
-      getStats(userId),
-      getReportsFiled(userId),
-      getReportedContent(userId),
-      getSubscription(userId),
-    ]);
+  const [
+    identity,
+    profile,
+    scores,
+    counts,
+    stats,
+    reportsFiled,
+    reportedContent,
+    subscription,
+    curator,
+    ranks,
+  ] = await Promise.all([
+    getIdentity(userId),
+    getProfile(userId),
+    getScores(userId),
+    getCounts(userId),
+    getStats(userId),
+    getReportsFiled(userId),
+    getReportedContent(userId),
+    getSubscription(userId),
+    getCuratorStatus(userId),
+    getLeaderboardRanks(userId),
+  ]);
   return identity
-    ? { identity, profile, scores, counts, stats, reportsFiled, reportedContent, subscription }
+    ? {
+        identity,
+        profile,
+        scores,
+        counts,
+        stats,
+        reportsFiled,
+        reportedContent,
+        subscription,
+        curator,
+        ranks,
+      }
     : null;
+}
+
+// CURATOR STATUS (Retool's CuratorStatus / CuratorStatus2). Curators hold elevated permissions on the
+// featured collections, so it changes what an account can already do and belongs beside identity — a
+// moderator acting on one without knowing is the failure this prevents.
+//
+// The collection ids are Retool's, carried over verbatim: they are the featured collections the
+// curation programme runs on, and there is no flag on `Collection` that identifies them.
+const CURATED_COLLECTION_IDS = [104, 105, 106, 107];
+
+export type CuratorStatus = { isCurator: boolean; collectionIds: number[] };
+
+export async function getCuratorStatus(userId: number): Promise<CuratorStatus> {
+  const rows = await dbRead
+    .selectFrom('CollectionContributor')
+    .select('collectionId')
+    .where('userId', '=', userId)
+    .where('collectionId', 'in', CURATED_COLLECTION_IDS)
+    // Retool matched the permission ARRAY literally against '{VIEW,ADD}' / '{VIEW,ADD_REVIEW}', so a
+    // curator whose row also carries MANAGE — the most privileged case — did not match at all.
+    .where(sql<boolean>`permissions && ARRAY['ADD','ADD_REVIEW','MANAGE']::"CollectionContributorPermission"[]`)
+    .execute();
+  return { isCurator: rows.length > 0, collectionIds: rows.map((r) => r.collectionId) };
+}
+
+// LEADERBOARD POSITIONS (Retool's UserRank) — a top-100 placement is a reward-eligibility signal, and
+// the reason a farming investigation matters commercially.
+export type LeaderboardRank = {
+  leaderboardId: string;
+  position: number;
+  score: number;
+  date: Date;
+};
+
+export async function getLeaderboardRanks(userId: number): Promise<LeaderboardRank[]> {
+  return dbRead
+    .selectFrom('LeaderboardResult')
+    // One row per board: the table holds a row per DAY, so without this a single board contributes
+    // thirty near-identical rows and crowds out the others.
+    .distinctOn('leaderboardId')
+    .select(['leaderboardId', 'position', 'score', 'date'])
+    .where('userId', '=', userId)
+    .where('position', '<', 100)
+    .where('date', '>=', sql<Date>`now() - interval '30 days'`)
+    .orderBy('leaderboardId')
+    .orderBy('date', 'desc')
+    .execute();
 }
 
 async function getIdentity(userId: number): Promise<UserIdentity | null> {

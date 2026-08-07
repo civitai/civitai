@@ -1,4 +1,5 @@
 import { getModeratorDb } from './moderator-db';
+import { isInt4Id } from './users.service';
 
 // Moderation memory — notes and strikes about a user (Retool's SelectUserNotes / UserStrikes, ticket
 // §1.2 "mod notes" and "strike account"). This is the first slice served from the MODERATOR database
@@ -45,6 +46,21 @@ export async function getUserStrikes(userId: number): Promise<UserStrike[]> {
     .where('userId', '=', userId)
     .orderBy('createdAt', 'desc')
     .execute();
+}
+
+// Strike counts for a SET of accounts (Retool's SimilarIpStrikes), for the linked-account lists. Empty
+// in / empty out, and accounts with no strikes are absent from the map rather than present as 0.
+export async function strikeCountsByUserIds(ids: number[]): Promise<Map<number, number>> {
+  const unique = [...new Set(ids)].filter(isInt4Id);
+  if (!unique.length) return new Map();
+
+  const rows = await getModeratorDb()
+    .selectFrom('UserStrikes')
+    .select((eb) => ['userId', eb.fn.countAll<string>().as('count')])
+    .where('userId', 'in', unique)
+    .groupBy('userId')
+    .execute();
+  return new Map(rows.flatMap((r) => (r.userId === null ? [] : [[r.userId, Number(r.count)]])));
 }
 
 export async function addUserNote(input: {

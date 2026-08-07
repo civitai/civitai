@@ -6,12 +6,14 @@
 
   type Identity = NonNullable<PageData['result']>['identity'];
   type Profile = NonNullable<PageData['result']>['profile'];
+  type Curator = NonNullable<PageData['result']>['curator'];
 
   let {
     identity,
     profile,
+    curator,
     civitaiUrl,
-  }: { identity: Identity; profile: Profile; civitaiUrl: string } = $props();
+  }: { identity: Identity; profile: Profile; curator: Curator; civitaiUrl: string } = $props();
 
   const profileText = $derived(
     [
@@ -59,6 +61,11 @@
     {/if}
     {#if identity.isModerator}
       <Badge variant="secondary">moderator</Badge>
+    {/if}
+    {#if curator.isCurator}
+      <Badge variant="secondary">
+        curator ({curator.collectionIds.join(', ')})
+      </Badge>
     {/if}
   </div>
 

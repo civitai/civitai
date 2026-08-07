@@ -15,6 +15,35 @@ export type Review = {
   modelCreator: string | null;
 };
 
+export type ReceivedReview = {
+  id: number;
+  createdAt: string;
+  rating: number | null;
+  exclude: boolean | null;
+  details: string | null;
+  modelId: number | null;
+  modelName: string | null;
+  reviewerId: number;
+  reviewer: string | null;
+};
+
+export type Bounty = {
+  id: number;
+  name: string;
+  createdAt: string;
+  expiresAt: string;
+  complete: boolean;
+  unitAmount: number;
+};
+
+export type BountyEntry = {
+  id: number;
+  bountyId: number;
+  bountyName: string;
+  createdAt: string;
+  description: string | null;
+};
+
 export type Comment = {
   id: number;
   createdAt: string;
@@ -55,13 +84,34 @@ export type TrainingRun = {
   completedAt: string | null;
 };
 
+export type Notification = {
+  id: number;
+  type: string;
+  category: string;
+  createdAt: string;
+  read: boolean;
+};
+
+export type ResourceGeneration = {
+  modelVersionId: number;
+  modelId: number;
+  modelName: string;
+  count: number;
+};
+
 export type Account = {
   buzz: { balance: number; lifetimeBalance: number } | null;
   reviews: Review[];
+  receivedReviews: ReceivedReview[];
   comments: Comment[];
   cosmetics: Cosmetic[];
   reactions: Reactions;
   trainings: { runs: TrainingRun[]; truncated: boolean };
+  bounties: Bounty[];
+  bountyEntries: BountyEntry[];
+  /** Null when the notifications service is unreachable — distinct from "none sent". */
+  notifications: Notification[] | null;
+  resourceGenerations: ResourceGeneration[];
 };
 
 export async function fetchAccount(userId: number): Promise<Account> {

@@ -5,8 +5,9 @@
   type Result = NonNullable<PageData['result']>;
   type Stats = Result['stats'];
   type Scores = Result['scores'];
+  type Ranks = Result['ranks'];
 
-  let { stats, scores }: { stats: Stats; scores: Scores } = $props();
+  let { stats, scores, ranks }: { stats: Stats; scores: Scores; ranks: Ranks } = $props();
 
   const rows = $derived<[string, string][]>(
     stats
@@ -69,6 +70,24 @@
           <div class="text-sm">
             <span class="tabular-nums text-dark-0">{num(value)}</span>
             <span class="ml-1 text-xs text-dark-2">{label.toLowerCase()}</span>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </div>
+
+  <div class="mt-5 border-t border-dark-4 pt-4">
+    <h4 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
+      Leaderboard placements (top 100, last 30 days)
+    </h4>
+    {#if ranks.length === 0}
+      <p class="text-sm text-dark-2">None.</p>
+    {:else}
+      <div class="flex flex-wrap gap-x-6 gap-y-2">
+        {#each ranks as rank (rank.leaderboardId)}
+          <div class="text-sm">
+            <span class="tabular-nums text-dark-0">#{rank.position}</span>
+            <span class="ml-1 text-xs text-dark-2">{rank.leaderboardId}</span>
           </div>
         {/each}
       </div>
