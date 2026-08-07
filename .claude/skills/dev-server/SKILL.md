@@ -40,6 +40,8 @@ node .claude/skills/dev-server/cli.mjs stop <session-id>
 | `stop <session-id>` | Stop a session |
 | `restart <session-id>` | Restart a session |
 | `rgb [subcmd]` | RGB proxy control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
+| `app` | List the spoke apps and their state |
+| `app <name> [subcmd]` | Spoke app control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
 | `auth [subcmd]` | Auth hub control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
 | `shutdown` | Shutdown the daemon |
 
@@ -135,6 +137,56 @@ In the dashboard TUI, press `R` to toggle the proxy.
 ### Admin / sudo requirement
 
 Redbird binds ports 80 and 443. On Windows the daemon must be launched from an elevated terminal; on macOS/Linux start it with `sudo`. If it fails the daemon surfaces `lastError` via `/rgb` status and in RGB proxy logs.
+
+## Spoke Apps
+
+The SvelteKit apps under `apps/` (moderator, creator-studio, storage, notifications) run through the
+daemon the same way the auth hub does, so their logs land in the same place and either a human or an
+agent can start one and read the output.
+
+```bash
+node .claude/skills/dev-server/cli.mjs app                      # list all, with state and URL
+node .claude/skills/dev-server/cli.mjs app moderator start
+node .claude/skills/dev-server/cli.mjs app moderator logs
+node .claude/skills/dev-server/cli.mjs app moderator restart
+node .claude/skills/dev-server/cli.mjs app moderator stop
+```
+
+| App | Port |
+|-----|------|
+| moderator | 5174 |
+| creator-studio | 5175 |
+| storage | 5176 |
+| notifications | 5177 |
+
+Ports are fixed rather than auto-assigned, so a redirect between two apps (moderator sends you to the
+auth hub to sign in) always lands in the same place. `--strictPort` means a collision fails loudly
+instead of silently drifting to the next free port.
+
+Each app needs its own `.env` in its directory — vite loads it, the daemon does not inject it. Start
+from that app's `.env.example`.
+
+**Most spoke pages need the auth hub running**, since they redirect to it to sign in:
+
+```bash
+node .claude/skills/dev-server/cli.mjs auth start
+node .claude/skills/dev-server/cli.mjs app moderator start
+```
+
+### They bind to 127.0.0.1, deliberately
+
+The daemon starts every vite sidecar with `--host 127.0.0.1`. Vite's default binds IPv6 loopback
+only (`[::1]`), and a Windows hosts file that defines `localhost` explicitly lists `127.0.0.1`
+first — so the browser dials an IPv4 socket nothing is listening on and hangs with no error
+anywhere. curl papers over it by falling back to `::1` after a couple hundred milliseconds, which
+makes it look like a slow server rather than a broken one. Forcing the IPv4 bind removes the whole
+class of problem.
+
+### First request is slow
+
+Vite compiles routes on demand in dev. The first hit on a cold app can take **25 seconds or more**
+(the auth hub's `/login` is the worst offender); every hit after is a few hundred milliseconds. A
+browser sitting on a white page right after startup is usually this, not a hang.
 
 ## Auth Hub
 

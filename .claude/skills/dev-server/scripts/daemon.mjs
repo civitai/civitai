@@ -800,7 +800,7 @@ class AuthHub {
     try {
       proc = spawn(
         pnpmCmd,
-        ['exec', 'vite', 'dev', '--port', String(this.port), '--strictPort'],
+        ['exec', 'vite', 'dev', '--host', '127.0.0.1', '--port', String(this.port), '--strictPort'],
         spawnOptions
       );
     } catch (err) {
@@ -924,6 +924,36 @@ class AuthHub {
 }
 
 const authHub = new AuthHub(skillConfig.authHubPath, skillConfig.authHubPort);
+
+// Every other SvelteKit app under apps/ runs the same way the auth hub does: `vite dev` in the app
+// directory, vite loads that app's own .env. AuthHub already encodes all of that plus the readiness
+// parsing, crash handling and log ring buffer, so a spoke is an AuthHub with a different label.
+//
+// Ports are fixed per app rather than auto-assigned so a redirect between two of them (moderator ->
+// auth) always lands on the same place, and so `--strictPort` fails loudly on a collision instead of
+// silently drifting to the next free port.
+const SPOKE_APPS = {
+  moderator: { path: 'apps/moderator', port: 5174 },
+  'creator-studio': { path: 'apps/creator-studio', port: 5175 },
+  storage: { path: 'apps/storage', port: 5176 },
+  notifications: { path: 'apps/notifications', port: 5177 },
+};
+
+class SpokeApp extends AuthHub {
+  constructor(name, appPath, port) {
+    super(appPath, port);
+    this.name = name;
+  }
+
+  getStatus() {
+    return { ...super.getStatus(), name: this.name, enabled: true };
+  }
+}
+
+const spokeApps = new Map(
+  Object.entries(SPOKE_APPS).map(([name, cfg]) => [name, new SpokeApp(name, cfg.path, cfg.port)])
+);
+
 
 // Session manager
 const sessions = new Map();
@@ -1066,6 +1096,59 @@ async function main() {
         res.writeHead(200);
         res.end(JSON.stringify(status));
         return;
+      }
+
+      // /app/<name>[/logs|/start|/stop|/restart] - spoke app control
+      if (path === '/apps' && req.method === 'GET') {
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          apps: [...spokeApps.values()].map((a) => a.getStatus()),
+        }));
+        return;
+      }
+
+      if (path.startsWith('/app/')) {
+        const [, , name, action] = path.split('/');
+        const app = spokeApps.get(name);
+        if (!app) {
+          res.writeHead(404);
+          res.end(JSON.stringify({
+            error: `Unknown app: ${name}`,
+            available: [...spokeApps.keys()],
+          }));
+          return;
+        }
+
+        if (!action && req.method === 'GET') {
+          res.writeHead(200);
+          res.end(JSON.stringify(app.getStatus()));
+          return;
+        }
+        if (action === 'logs' && req.method === 'GET') {
+          const since = parseInt(url.searchParams.get('since') || '0', 10);
+          const limit = parseInt(url.searchParams.get('limit') || '500', 10);
+          res.writeHead(200);
+          res.end(JSON.stringify({ currentIndex: app.logIndex, logs: app.getLogs(since, limit) }));
+          return;
+        }
+        if (action === 'start' && req.method === 'POST') {
+          const status = app.start();
+          res.writeHead(status.status === 'error' ? 500 : 200);
+          res.end(JSON.stringify(status));
+          return;
+        }
+        if (action === 'stop' && req.method === 'POST') {
+          const status = await app.stop();
+          res.writeHead(200);
+          res.end(JSON.stringify(status));
+          return;
+        }
+        if (action === 'restart' && req.method === 'POST') {
+          const status = await app.restart();
+          res.writeHead(status.status === 'error' ? 500 : 200);
+          res.end(JSON.stringify(status));
+          return;
+        }
       }
 
       // GET /auth - Auth hub status
