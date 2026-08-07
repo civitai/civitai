@@ -44,15 +44,25 @@ function skipBaseModelForOwnTabs(
   return (tab === 'mine' || tab === 'official') && selectSource === 'modelVersion';
 }
 
-function meiliSortFor(sort: GetResourceSelectInput['sort']): string[] | undefined {
+// `id:desc` is a stable final tiebreaker: without one Meili breaks ties on internal
+// document order, which index writes reshuffle, so offset pagination repeats or skips
+// models across pages. thumbsUpCount ties are dense enough to collide at the page seam.
+//
+// A text query must keep `sort` unset — an explicit sort activates the `sort` ranking
+// rule, which would outrank words/proximity/exactness. With no query those are no-ops
+// and `metrics.thumbsUpCount:desc` already decides the order, so naming it is a no-op.
+function meiliSortFor(
+  sort: GetResourceSelectInput['sort'],
+  hasQuery: boolean
+): string[] | undefined {
   switch (sort) {
     case 'popularity':
-      return ['metrics.thumbsUpCount:desc'];
+      return ['metrics.thumbsUpCount:desc', 'id:desc'];
     case 'newest':
-      return ['createdAt:desc'];
+      return ['createdAt:desc', 'id:desc'];
     case 'relevance':
     default:
-      return undefined;
+      return hasQuery ? undefined : ['metrics.thumbsUpCount:desc', 'id:desc'];
   }
 }
 
@@ -272,7 +282,7 @@ export async function getResourceSelectModels(
 
   const results = await searchModels(query, {
     filter: filter ?? undefined,
-    sort: meiliSortFor(sort),
+    sort: meiliSortFor(sort, query.length > 0),
     offset,
     limit: take,
   });
