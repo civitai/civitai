@@ -158,7 +158,9 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *    AUDIT TRAIL: as with the pending path, the no-row path has NO durable
  *    AppBlock-backed audit rows (the synthetic appId/appBlockId don't resolve),
  *    so the ONLY forensic trail is the structured `blocks.dev-token.local-mint`
- *    log event (userId/slug/scopes/spendGranted), queryable in Axiom/Loki.
+ *    log event (userId/slug/scopes/spendGranted), DUAL-SINKED to Axiom and to
+ *    stdout (`src/server/logging/mint-audit-stdout.ts` — the Axiom sink alone is
+ *    invisible to a stdout-scraping log store).
  *    Same GA-gate as the pending path: durable per-spend audit rows are required
  *    before no-row dev spend is widened past the mod-only pre-GA posture.
  *
