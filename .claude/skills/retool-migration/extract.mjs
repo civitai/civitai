@@ -82,10 +82,20 @@ for (const p of plugins) {
       bindings: [...new Set([...bindings(sql), ...bindings(body), ...bindings(tpl.url)])],
     });
   } else {
+    // A widget's OPTION SET is functionality, not layout. Retool encodes canned workflows as dropdown
+    // presets — "Stripe Chargeback Retrieval" is one of five that fill a buzz-transfer form with a set
+    // amount, type and description, and it appears in no query. Dropping these hid that button, the
+    // timed-mute duration presets, and two whole tabs from a migration that otherwise looked complete.
+    const options = [tpl._labels, tpl.labels, tpl.values, tpl._values]
+      .filter(Array.isArray)
+      .flat()
+      .filter((v) => typeof v === 'string' && v.trim());
+
     widgets.push({
       ...base,
       type: p.type,
       label: tpl.label ?? tpl.text ?? tpl.title ?? null,
+      options: [...new Set(options)],
       dataBindings: [...new Set([...bindings(tpl.data), ...bindings(tpl.value)])],
     });
   }
@@ -108,6 +118,22 @@ if (!queriesOnly) {
   Object.entries(bySub)
     .sort((a, b) => b[1] - a[1])
     .forEach(([k, c]) => console.log(`  ${k}: ${c}`));
+
+  // TABS AND OPTION SETS ARE THE SPEC, not layout. Retool splits an app with tabs, so the tab bar is
+  // its table of contents — "Submitted Reviews / Received Reviews" means two views exist, and porting
+  // one is porting half. Dropdown presets are the same: canned workflows that appear in no query.
+  const withOptions = widgets.filter((w) => w.options.length);
+  if (withOptions.length) {
+    console.log(`\n## tabs & option sets — READ THESE, they are functionality`);
+    console.log(
+      `  Tab labels are the app's table of contents; dropdown options are canned workflows that`
+    );
+    console.log(`  exist in no query. A tab you did not port is a capability you did not port.`);
+    for (const w of withOptions) {
+      console.log(`\n### ${w.id}   [${w.subtype}]`);
+      for (const o of w.options) console.log(`    - ${o}`);
+    }
+  }
 }
 
 console.log(`\n## queries`);

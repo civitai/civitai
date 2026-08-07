@@ -106,22 +106,55 @@ You get: query count, component count, backing resources, a component-type histo
 signal only — do not reproduce it), and every query with its SQL/URL plus the `{{ … }}` bindings
 it depends on.
 
-**The queries are the spec.** Components mostly render query output. Read the queries first and
-work out what question each answers; the page is whatever surfaces those answers well.
+**The queries are most of the spec, but NOT all of it.** Read them first and work out what question
+each answers; the page is whatever surfaces those answers well.
 
-Expect volume — real apps run 77–170 queries. Do not port them one-for-one. Many are variants of
-the same lookup, dead experiments, or Retool plumbing (`Function`, `State`).
+**The rest of the spec is in the widgets, and the extractor's job is to surface it — check that it
+did.** A dropdown's options, a button's label, the JS that fires on selection: these encode workflows
+that exist nowhere in the SQL. A moderator asked about a "Stripe Chargeback Retrieval" button that
+appears in no query — it is one of five *presets* filling the `BuzzSend` form with a canned amount, type
+and description. The same blind spot hid timed-mute duration presets (`6h/12h/24h/48h/72h/1 week`,
+ported as a free-text box), a `Received Reviews` tab, and a `Bounties` tab.
 
-## 2. Agree the scope before building
+If something a moderator describes is not in the inventory, **grep the raw export before concluding it
+is not there**:
 
-These apps are far too large to port in one page. Decide with the user:
+```bash
+grep -io "chargeback[^\"]\{0,60\}" "<export.json>"      # find the label
+grep -o '\\"_labels\\",\[[^]]*\]' "<export.json>"        # every option set in the app
+```
 
-- which queries are actually in use (ask — the export cannot tell you)
-- what the smallest useful slice is
-- what stays in Retool for now
+Expect volume — real apps run 77–170 queries, and many are variants of one lookup, dead experiments,
+or Retool plumbing (`Function`, `State`, `Timer`). That does not license skipping them; it licenses
+*classifying* them. See §2.
 
-Then say what you are leaving out. A half-built page presented as complete is worse than a
-narrow one presented honestly.
+## 2. Classify every query before building — no partial ports
+
+**An app is ONE slice: port all of it, then review it.** Not a panel at a time, not "the useful half".
+Retool stays live until the port is whole, so a partial port is a moderator using two tools and
+trusting whichever one they opened.
+
+Before writing code, put **every** query into exactly one bucket:
+
+| Bucket | Meaning |
+| --- | --- |
+| **port** | Real functionality. Build it. |
+| **equivalent** | Covered by a different shape here — say which. Retool's twelve per-type COUNTs become one list. |
+| **plumbing** | Retool-side glue with no server meaning: `State`, table grouping, `CurrentUTCTime`, pickers. |
+| **superseded** | A v1 whose v2 is also present, or a duplicate. Name the winner. |
+| **blocked** | Needs a key, a system, or a decision we do not have. Say exactly what unblocks it. |
+
+Anything not in a bucket is unported by accident. Commit the classification next to the inventory —
+see [`user-lookup-audit.md`](../../../docs/moderator-app/retool-exports/user-lookup-audit.md) for the
+shape.
+
+**Do not let a ticket's musing become a decision.** The User Lookup ticket said of add/subtract buzz
+"maybe this should be a separate app". That went into the tracker as settled, and a capability
+moderators use daily went unported for weeks. A ticket aside is an open question — ask, do not resolve
+it silently in a doc.
+
+**"Which queries are actually in use" is not answerable from the export.** Ask, but do not treat silence
+as permission to drop one. Bucket it as `port` and build it.
 
 ## 3. Map Retool resources to ours
 
@@ -179,7 +212,19 @@ Two things that will otherwise bite you:
 
 ## 6. Verify
 
-**Run the [`moderator-review`](../moderator-review/SKILL.md) skill before calling a slice done.** It
+**Coverage first — it is a gate, not a formality.** Re-read the §2 classification against what you
+built and confirm every query is accounted for. The three review agents read the code you wrote; none
+of them can see what you never wrote, so a missing capability passes every review cleanly. User Lookup
+passed three full review rounds while 97 of its 170 queries were unported.
+
+```bash
+# every query name in the export
+grep "^### " docs/moderator-app/retool-exports/<app>.md | sed 's/^### //' | awk '{print $1}' | sort
+```
+
+Diff that against your classification. Anything unaccounted for is a gap, not a judgement call.
+
+**Then run the [`moderator-review`](../moderator-review/SKILL.md) skill.** It
 fans out three review agents — correctness, Svelte 5 + UI conventions, abstraction — over the segment.
 Every slice reviewed so far has come back with findings, several of them the kind that make a moderator
 believe something false about a user. Then:

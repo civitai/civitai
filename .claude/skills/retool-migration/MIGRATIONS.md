@@ -14,7 +14,7 @@ left worth porting) · `dropped` (agreed not to port)
 | Moderation Status | `868kn5zg1` | 77 | 197 | `/retool/moderation-status` | not started |
 | Bulk Image Manager | `868kn76au` | 40 | 60 | `/retool/bulk-image-manager` | not started |
 | User Reports | `868kn78hc` | 34 | 57 | `/retool/user-reports` | not started |
-| Chat Audit | `868kn7m9r` | 20 | 50 | `/retool/chat-audit` | not started |
+| Chat Audit | `868kn7m9r` | 20 | 50 | `/retool/chat-audit` | **built** — all 20 queries ported and reviewed, unverified in a browser, Retool still live |
 | Front Page Audit | `868kn82bf` | 16 | 19 | `/retool/front-page-audit` | not started |
 | Image Lookup | `868kn7q2v` | 10 | 21 | `/retool/image-lookup` | **built** — all 10 queries ported, unverified in a browser, Retool still live |
 | Article Lookup | `868kn7t8d` | 3 | 9 | `/retool/article-lookup` | not started |
@@ -286,6 +286,52 @@ lived in the other apps. All 10 queries ported in one slice.
 
 Not ported: `Reactions` listed every row (capped at 100 with the cap disclosed).
 
+## Chat Audit
+
+Resources: `Replicated_Read_Prod`, `retool_db`, REST. All 20 queries ported in one slice.
+
+READS PRIVATE DIRECT MESSAGES. Grant-based access means the page is admin-only until someone grants it
+on /admin — keep that deliberate.
+
+- [x] **Search** — one box for Retool's three inputs (`SearchMessages`, `SearchUser`, chat id).
+      **Every branch orders before it limits.** `SELECT DISTINCT chatId ... LIMIT 50` with no ORDER BY
+      is satisfied by a sort/unique, so it returned the 50 LOWEST ids — the OLDEST chats — which the
+      summary step then re-sorted by recency, so the list READ as newest-first. `discord.gg` matches
+      4,620 chats.
+      **All-digit terms above int4 are usernames, not chat ids.** `Chat.id` is `integer`, so a larger
+      value ERRORS the query and 500s the page; 978 users with a 10+ digit numeric username have chat
+      messages. `@` forces username mode, and an all-digit term that is also a real username surfaces
+      a banner offering the other reading — 88 short numeric usernames sit inside the live chat-id
+      range, and guessing wrong shows two strangers their private conversation.
+      `%` and `_` are escaped: unescaped, `100%` matched 31,606 messages instead of 5,563.
+- [x] **Chat list** — `FindChats`. Retool joined member names with `string_agg` and split on `,`,
+      corrupting any username containing one; a real array avoids inventing a delimiter.
+      **`array_agg(username)` must be cast `::text`** — username is citext, node-pg has no parser for
+      citext[], and the driver returns the raw literal as a STRING that the panel's `.join()` throws on.
+      `coalesce` keeps purged accounts visible: 8,589 users with a NULL username hold 34,147 membership
+      rows, and dropping them made the list and the member panel disagree about who was in a chat.
+- [x] **Transcript + members** — `FindChatById`, `FindChatMembers`. Newest 300, reversed for reading
+      order, cap disclosed. System rows excluded: 274,106 are `Embed` type whose content is raw JSON,
+      rendered verbatim attributed to "civitai".
+- [x] **Chat reports** — `ChatReport`, served by the SHARED `reports.service.ts` rather than a third
+      hand-written join. That also settles a policy split: this page and `/reports` previously
+      disagreed about which chat reports are open, so one actioned on `/reports` stayed here forever.
+- [x] **Platform stats** — `ChatsTotal`, `Chats24`, `MessagesTotal`, `Messages24`, `TopChatters`.
+      Grouped by userId and resolved after, so a rename cannot split one person into two rows.
+      `TopChats` NOT ported — nothing rendered it and it is another full-table GROUP BY.
+- [x] **Spam detection** — `SPAMDetect`, the most useful thing on the page: the same text sent by one
+      account into several chats. Retool ran it UNBOUNDED: 5.3s and a **429MB external merge sort
+      spilling to disk**, because it groups 4.2M rows by full message text. 30-day window is 630ms with
+      no spill. Message bodies are collapsed by default, matching the blocked-prompt decision on User
+      Lookup.
+
+Not ported: `BANAPI`, `SetNote`, `LogBan`. Every username links to User Lookup, which owns enforcement
+with confirmation and an audit trail — duplicating a ban button here means two gates and two places to
+get it wrong.
+
+Deferred: message-text search is ~3s over 4.2M unindexed rows. A pg_trgm GIN index on
+`ChatMessage.content` would fix it, but that is a large index and an extension — an infra decision, not
+a migration one.
 ## User Reports
 
 Resources: `Replicated_Read_Prod`, `retool_db`, ClickHouse, REST. The smallest of the three, and the

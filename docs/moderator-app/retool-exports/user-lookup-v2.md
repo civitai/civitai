@@ -1,4 +1,4 @@
-# User Lookup v2.json
+# user-lookup-v2.json
 
 queries: 170   components: 433
 resources: REST-WithoutResource, Clickhouse, Replicated_Read_Prod, Clickhouse - protection disabled, BuzzTemp, retool_db, Prod, JavascriptQuery, MongoDB, Notifications DB
@@ -35,6 +35,192 @@ resources: REST-WithoutResource, Clickhouse, Replicated_Read_Prod, Clickhouse - 
   SplitButtonWidget: 1
   SidebarFrameWidget: 1
   AvatarWidget: 1
+
+## tabs & option sets — READ THESE, they are functionality
+  Tab labels are the app's table of contents; dropdown options are canned workflows that
+  exist in no query. A tab you did not port is a capability you did not port.
+
+### select12   [SelectWidget2]
+    - Actioned
+    - Unactioned
+    - Pending
+
+### select13   [SelectWidget2]
+    - Admin Attention
+    - NSFW
+    - TOS Violation
+    - Ownership
+    - Claim
+
+### select22   [SelectWidget2]
+    - True
+    - False
+    - 1
+    - 0
+
+### select23   [SelectWidget2]
+    - True
+    - False
+    - 1
+    - 0
+
+### select24   [SelectWidget2]
+    - True
+    - False
+    - 1
+    - 0
+
+### select25   [SelectWidget2]
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+
+### segmentedControl1   [SegmentedControlWidget]
+    - Model Comments
+    - Other Comments
+    - Comment
+    - CommentV2
+
+### presetMutes   [SelectWidget2]
+    - 6 Hours
+    - 12 Hours
+    - 24 Hours
+    - 48 Hours
+    - 72 Hours
+    - 1 Week
+    - 6
+    - 12
+    - 24
+    - 48
+    - 72
+    - 168
+
+### socialTypeInsert   [SelectWidget2]
+    - Social
+    - Sponsorship
+
+### tabbedContainer8   [ContainerWidget2]
+    - Submitted Reviews
+    - Received Reviews
+
+### tabs7   [TabsWidget2]
+    - Tab 1
+    - Tab 2
+    - Tab 3
+
+### select41   [SelectWidget2]
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+
+### tabbedContainer9   [ContainerWidget2]
+    - Bounties
+    - Bounty Entries
+
+### tabs8   [TabsWidget2]
+    - Tab 1
+    - Tab 2
+    - Tab 3
+
+### tabbedContainer10   [ContainerWidget2]
+    - Reports Received
+    - Reports Submitted
+
+### tabs9   [TabsWidget2]
+    - Tab 1
+    - Tab 2
+    - Tab 3
+
+### tabbedContainer12   [ContainerWidget2]
+    - Buzz Transaction
+
+### tabs11   [TabsWidget2]
+    - Tab 1
+    - Tab 2
+    - Tab 3
+
+### buzzSendEntityType   [SelectWidget2]
+    - Collection
+    - Image
+    - Model
+
+### buzzSendAction   [SelectWidget2]
+    - Send Buzz to User
+    - Deduct Buzz from User
+    - send
+    - deduct
+
+### tabbedContainer13   [ContainerWidget2]
+    - Reactions Given
+
+### tabs12   [TabsWidget2]
+    - Tab 1
+    - Tab 2
+    - Tab 3
+
+### buzzType   [SelectWidget2]
+    - Yellow Buzz
+    - Blue Buzz
+    - Green Buzz
+    - User
+    - generation
+    - green
+
+### tabbedContainer14   [ContainerWidget2]
+    - 1. Find Account
+    - 2. Remove an old paddleCustomerId account
+    - 3. Link Paddle Account
+
+### tabs13   [TabsWidget2]
+    - Tab 1
+    - Tab 2
+    - Tab 3
+
+### splitButton1   [SplitButtonWidget]
+    - Stripe Chargeback Retrieval
+    - Stripe Refund
+    - 1st Place Stream Bingo
+    - 2nd Place Stream Bingo
+    - 3rd Place Stream Bingo
+    - Action 4
+    - Action 5
+
+### navigation1   [NavigationWidget2]
+    - Basic User Information
+    - Socials & Bio
+    - Content Overview
+    - Bulk Image Manager
+    - Buzz
+    - Prompt Audit
+    - Cosmetic Shop
+    - Image Generation
+    - LoRA Training
+    - Bounties
+    - Comments
+    - Leaderboard
+    - Reports
+    - Reviews
+    - Reactions
+    - Moderation Activity
+    - Chat (DMs)
+    - Civitai Score
+
+### navigation3   [NavigationWidget2]
+    - Admin 
+    - Notifications
+    - Timed Mutes
+
+### MainContentContainer   [ContainerWidget2]
+    - basic
+
+### tabs14   [TabsWidget2]
+    - Tab 1
+    - Tab 2
+    - Tab 3
 
 ## queries
 
