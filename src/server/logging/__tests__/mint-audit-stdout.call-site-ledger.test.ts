@@ -15,11 +15,19 @@ import { describe, expect, it } from 'vitest';
  * AXIOM_* env vars are UNSET (`@civitai/next-axiom/dist/logger.js:198-202`). With them
  * set — production — the batch is POSTed to Axiom's HTTP ingest and NOTHING is written
  * to stdout, so a log store that scrapes container stdout cannot see the event at all.
- * The step-3 adoption gate flips a spend default once `spendGrantBasis === 'inferred'`
- * falls to zero; read from a surface that structurally cannot see the event, that zero
- * is guaranteed and meaningless. So a NEW mint-audit event added with only the Axiom
- * sink would be silently unreadable, and dropping a mirror would silently re-open the
- * blind spot — in both cases with every existing test still green.
+ * So a NEW mint-audit event added with only the Axiom sink has no short-window forensic
+ * copy, and dropping a mirror silently removes one — in both cases with every existing
+ * test still green. That is what this ledger detects.
+ *
+ * 🔴 BUT THE TWO SINKS ANSWER DIFFERENT QUESTIONS, AND THIS LEDGER DOES NOT MAKE STDOUT
+ * A SUBSTITUTE FOR AXIOM. The stdout mirror is a SHORT-WINDOW (~72h measured) forensic
+ * copy, useful at incident time. The 30-day #3715 adoption gate
+ * (`spendGrantBasis === 'inferred'` over a rolling 30 days) is read from AXIOM, whose
+ * retention is ~96 days, via the APL queries recorded on that issue. At ~0.8 bearer
+ * mints/day a 72h window holds ~2.4 mints total, so a "30-day" query against stdout
+ * returns a near-unconditional 0 — the same structurally guaranteed zero this work
+ * exists to eliminate, just at a 3-day horizon. Full reasoning and the measured numbers
+ * are in `src/server/logging/mint-audit-stdout.ts`.
  *
  * This ledger fails when the set GROWS (a mint path added without a mirror, or a mirror
  * added without the ledger being updated) or SHRINKS (one removed or renamed, and the
@@ -40,26 +48,46 @@ const ROOT = process.cwd();
  * Every PRODUCTION mint-audit event, mapped to the file that emits it and why it is
  * audited. Update this table in the same commit as any change to the set.
  */
-const MINT_AUDIT_LEDGER: Record<string, { file: string; why: string }> = {
+type LedgerEntry = {
+  file: string;
+  /**
+   * 'gate-bearing' — carries `requestBudgetedSpend` + `spendGrantBasis`, so it counts
+   * toward the #3715 30-day adoption gate (read from Axiom, not from stdout).
+   * 'audit-only'  — carries `spendGranted` only; forensic record, NOT gate input.
+   *
+   * 🔴 A reader who counts all five against the gate gets the WRONG DENOMINATOR, and the
+   * audit-only path is the BUSIER one in practice, which makes that mistake easy to
+   * reach for. Only 3 of the 5 are gate input.
+   */
+  kind: 'gate-bearing' | 'audit-only';
+  why: string;
+};
+
+const MINT_AUDIT_LEDGER: Record<string, LedgerEntry> = {
   'blocks.dev-token.pending-mint': {
     file: 'src/pages/api/v1/blocks/dev-token.ts',
+    kind: 'gate-bearing',
     why: 'BEARER dev-token mint against a PENDING publish request. The synthetic `pending-<id>` appId writes no durable audit rows, so the event is the only forensic trail. Carries the three-valued requestBudgetedSpend + the derived spendGrantBasis the step-3 gate counts.',
   },
   'blocks.dev-token.local-mint': {
     file: 'src/pages/api/v1/blocks/dev-token.ts',
+    kind: 'gate-bearing',
     why: 'BEARER dev-token mint against a brand-new local manifest (NO row). Synthetic `local-<slug>` ids resolve to nothing, so no durable rows exist. Same three-valued spend audit as its siblings.',
   },
   'blocks.dev-token.approved-mint': {
     file: 'src/pages/api/v1/blocks/dev-token.ts',
+    kind: 'gate-bearing',
     why: 'BEARER dev-token mint against an APPROVED app. It DOES write durable rows, but they are byte-identical to a production page mint, so only this event distinguishes a dev mint and records the spend-grant basis.',
   },
   'app-blocks.dev-tunnel.mint': {
     file: 'src/pages/api/v1/block-tokens/index.ts',
-    why: 'DEV TUNNEL ephemeral (pre-approval) mint. A synthetic `ephemeral-<slug>` app has no AppBlock-backed row; this is the record of granting a possibly spend-capable token to an un-approved app.',
+    kind: 'audit-only',
+    why: 'DEV TUNNEL ephemeral (pre-approval) mint. A synthetic `ephemeral-<slug>` app has no AppBlock-backed row; this is the record of granting a possibly spend-capable token to an un-approved app. NO spendGrantBasis: the tunnel path has no per-mint request mechanism, so there is no basis to derive — correct per #3715, not an omission.',
   },
   'app-blocks.dev-tunnel.owned-nonapproved-mint': {
     file: 'src/pages/api/v1/block-tokens/index.ts',
-    why: 'DEV TUNNEL owned NON-APPROVED mint. Parity with the ephemeral branch: the record of granting a possibly spend-capable token to an app no moderator approved.',
+    kind: 'audit-only',
+    why: 'DEV TUNNEL owned NON-APPROVED mint. Parity with the ephemeral branch: the record of granting a possibly spend-capable token to an app no moderator approved. Also carries no spendGrantBasis, for the same reason as its sibling.',
   },
 };
 
@@ -109,8 +137,24 @@ function emits(re: RegExp): [string, string][] {
 }
 
 const MIRRORS = emits(MIRROR_RE);
-/** Axiom-sink events whose name looks like a mint audit (`…-mint` / `….mint`). */
-const AXIOM_MINTS = emits(AXIOM_RE).filter(([name]) => /(^|[.-])mint$/.test(name));
+/**
+ * Axiom-sink events whose name mentions a mint at all — deliberately a SUBSTRING match,
+ * not an anchored suffix.
+ *
+ * An anchored `/(^|[.-])mint$/` was ESCAPABLE BY SPELLING in the one direction the
+ * ledger exists to cover. `blocks.dev-token.extra-mint` was caught, but an Axiom-ONLY
+ * `blocks.dev-token.minted-extra` slipped through with the whole suite green — and
+ * Axiom-only is precisely the unreadable case, because a both-sinks event always trips
+ * the unfiltered `MIRRORS` equality no matter how it is spelled.
+ *
+ * Widening discards nothing today: the entire non-test `src/` tree contains exactly
+ * FIVE `log?.info('…')` calls IN CODE and all five are these events, so the filter is not
+ * protecting the ledger from unrelated log lines. (A bare grep reports six — the extra
+ * hit is prose inside a docblock, which `code()` strips and which lacks the quoted first
+ * argument this regex requires.) If an unrelated event ever legitimately contains "mint",
+ * add it to the ledger or tighten this with a stated reason — do not silently re-anchor.
+ */
+const AXIOM_MINTS = emits(AXIOM_RE).filter(([name]) => /mint/i.test(name));
 
 const LEDGER_NAMES = Object.keys(MINT_AUDIT_LEDGER).sort();
 
@@ -118,7 +162,12 @@ describe('mint-audit stdout-mirror call-site ledger (#3715)', () => {
   it('POSITIVE CONTROL: the scan enumerates a real population and can match', () => {
     // A broken walk / a regex that matches nothing would make every assertion below
     // vacuously true. Prove the instrument works before reading its verdict.
-    expect(FILES.length).toBeGreaterThan(500);
+    //
+    // The bound is >3000 against a measured 3,563 non-test .ts/.tsx files under src/
+    // (2026-08). It was >500, which would have passed having silently lost 85% of the
+    // tree — a threshold that cannot fail is not a control. Kept well below the real
+    // count so ordinary file churn does not make this flap; raise it if it ever does.
+    expect(FILES.length).toBeGreaterThan(3000);
     expect(FILES).toContain('src/pages/api/v1/blocks/dev-token.ts');
     expect(FILES).toContain('src/pages/api/v1/block-tokens/index.ts');
     expect(MIRRORS.length).toBeGreaterThan(0);
@@ -158,7 +207,7 @@ describe('mint-audit stdout-mirror call-site ledger (#3715)', () => {
 
     expect(
       axiomNames.filter((n) => !mirrorByName.has(n)),
-      'these mint-audit events reach Axiom but have NO stdout mirror — they are invisible to the stdout-scraped log store, so the #3703 step-3 gate would read a structurally guaranteed zero. Add emitMintAuditToStdout beside the req.log call.'
+      'these mint-audit events reach Axiom but have NO stdout mirror — they are invisible to the stdout-scraped log store, so there is no short-window (~72h) forensic copy to read at incident time. Add emitMintAuditToStdout beside the req.log call. (NOTE: this does NOT affect the #3715 30-day gate, which is read from Axiom.)'
     ).toEqual([]);
     expect(
       mirrorNames.filter((n) => !axiomByName.has(n)),
@@ -173,6 +222,43 @@ describe('mint-audit stdout-mirror call-site ledger (#3715)', () => {
       expect(mirrorByName.get(name), `${name}: both sinks must live in the same file`).toBe(
         axiomByName.get(name)
       );
+    }
+  });
+
+  it('the gate-bearing / audit-only split matches the SOURCE, not just the prose', () => {
+    // Finding 4: only 3 of the 5 events feed the #3715 gate, and nothing in the code
+    // said so. This pins the split to reality so the prose above cannot drift from it:
+    // a gate-bearing event's file must actually mention spendGrantBasis, and an
+    // audit-only event's file must NOT.
+    //
+    // LIMITATION, stated rather than hidden: the check is FILE-granular, which is only
+    // sufficient because the split happens to fall exactly along file lines today (all
+    // three bearer mints in dev-token.ts, both tunnel mints in block-tokens/index.ts).
+    // If a gate-bearing and an audit-only event ever share a file, this must become a
+    // per-call-site check.
+    const gateBearing = Object.entries(MINT_AUDIT_LEDGER).filter(
+      ([, e]) => e.kind === 'gate-bearing'
+    );
+    const auditOnly = Object.entries(MINT_AUDIT_LEDGER).filter(([, e]) => e.kind === 'audit-only');
+    // Positive control: both groups are non-empty, so neither loop is vacuous.
+    expect(gateBearing.length).toBe(3);
+    expect(auditOnly.length).toBe(2);
+
+    for (const [name, e] of gateBearing) {
+      const src = CODE.get(e.file)!;
+      expect(src, `${name} is gate-bearing, so ${e.file} must emit spendGrantBasis`).toContain(
+        'spendGrantBasis'
+      );
+      expect(src, `${name} is gate-bearing, so ${e.file} must emit requestBudgetedSpend`).toContain(
+        'requestBudgetedSpend'
+      );
+    }
+    for (const [name, e] of auditOnly) {
+      const src = CODE.get(e.file)!;
+      expect(
+        src,
+        `${name} is audit-only, but ${e.file} mentions spendGrantBasis — either the event became gate-bearing (update kind) or the field leaked in`
+      ).not.toContain('spendGrantBasis');
     }
   });
 

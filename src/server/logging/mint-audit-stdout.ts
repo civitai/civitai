@@ -15,15 +15,63 @@
  * `req.log` mint-audit events returned zero, including one that provably fired at
  * least 15 times.
  *
- * That matters because these events are the primary signal for the step-3 adoption
- * gate of #3703 (issue #3715): the gate flips a spend default only after
- * `spendGrantBasis === 'inferred'` falls to zero over a rolling window. Read from a
- * surface that structurally cannot see the event, a clean zero is meaningless — and
- * indistinguishable from real adoption.
+ * So this is a DUAL SINK, not a duplicate log. Removing either half loses a distinct
+ * capability. Do not "simplify" this away.
  *
- * So this is a DUAL SINK, not a duplicate log. Axiom keeps the rich, queryable copy;
- * stdout is the copy the log store can actually see. Removing either half re-opens the
- * blind spot. Do not "simplify" this away.
+ * 🔴 WHAT EACH SINK IS FOR — THE TWO HAVE DIFFERENT HORIZONS, AND CONFUSING THEM
+ * REINSTALLS THE VERY DEFECT THIS MODULE REMOVES.
+ *
+ *   - STDOUT (this file) is a SHORT-WINDOW FORENSIC copy, horizon ~72h. It is the right
+ *     tool at incident time — "what happened during the outage an hour ago" — and a
+ *     second sink that does not depend on a single vendor being reachable.
+ *
+ *   - AXIOM (`req.log?.info`) is the LONG-WINDOW ANALYTICAL copy, retention ~96 days.
+ *     🔴 THE 30-DAY #3715 ADOPTION GATE IS READ FROM AXIOM, using the APL queries and
+ *     schema check recorded on that issue. NOT from the log store.
+ *
+ * The 72h figure is measured, not assumed: the log store's GLOBAL retention is 72h with
+ * compaction-based enforcement, and there is NO per-stream retention override covering
+ * this application's namespace (the only overrides are unrelated: two 24h ones and one
+ * 720h kernel stream). Live probe: ~1.7M lines present at now−1h/−24h/−48h/−70h, and
+ * ZERO at now−96h and now−8d.
+ *
+ * 🔴 So DO NOT answer a 30-day question from stdout. #3715's gate is
+ * `spendGrantBasis === 'inferred'` over a ROLLING 30 DAYS, against a base rate of ~24
+ * bearer mints per 30 days (~0.8/day). A 72h window holds ~2.4 mints in total and
+ * `inferred` is a subset of those, so a "30-day" LogQL query over this surface returns a
+ * hard 0 essentially unconditionally — a structurally guaranteed zero, which is exactly
+ * the defect this module was written to remove, merely relocated from a 0-day horizon to
+ * a 3-day one. Reading it and flipping the Buzz-spend default would be the original bug.
+ *
+ * (A per-stream 720h override is NOT an available fix and is not claimed as one: those
+ * selectors match STREAM LABELS, not line content, and these lines share the app's
+ * ordinary stdout stream. Giving them 720h would require relabeling from line content
+ * across the log pipeline — new streams, cardinality risk. Unproven follow-up at best.)
+ *
+ * 🔴 NOT EVERY EVENT IS GATE-BEARING — a reader counting all five against the #3715 gate
+ * gets the wrong denominator:
+ *
+ *   - GATE-BEARING (carry `requestBudgetedSpend` + `spendGrantBasis`): the three BEARER
+ *     mints, `blocks.dev-token.{pending,local,approved}-mint`.
+ *   - AUDIT-ONLY (carry `spendGranted` only): the two DEV-TUNNEL mints,
+ *     `app-blocks.dev-tunnel.{mint,owned-nonapproved-mint}`. Correct per #3715 — the
+ *     tunnel path has no per-mint request mechanism to record, so there is no basis to
+ *     derive. They are the BUSIER path in practice, which is what makes the wrong
+ *     denominator easy to reach for.
+ *
+ * QUERYING — the two sinks SPELL FIELDS DIFFERENTLY, so a query written for one returns
+ * a confident zero against the other rather than an error:
+ *
+ *   - Axiom (APL): event name in `message`, fields as `['fields.<name>']`. Canonical
+ *     queries live on #3715; use those for anything gate-related.
+ *   - Log store (LogQL), event name in `event`, fields TOP-LEVEL, ~72h only:
+ *
+ *       {namespace="<app-namespace>"} |= "blocks.dev-token." | json
+ *         | event =~ "blocks.dev-token..*-mint"
+ *
+ *     POSITIVE CONTROL before believing any zero from it: drop the `event` filter and
+ *     confirm the `|= "app-blocks.dev-tunnel."` form returns rows for the tunnel path
+ *     (the busier one). A zero on both is a query/horizon problem, not evidence.
  *
  * 🔴 Callers pass FLAGS AND IDENTIFIERS ONLY — never a token, a secret, or PII.
  */

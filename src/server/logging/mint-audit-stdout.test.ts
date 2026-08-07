@@ -82,12 +82,48 @@ describe('emitMintAuditToStdout', () => {
   });
 
   it('emits unconditionally — a second call writes a second line', () => {
-    // No sampling, no dedupe, no env gate. These are low-volume audit events and the
-    // gate counts them; a suppressed line is an undercount that reads as adoption.
+    // No sampling, no dedupe. These are low-volume audit events and the gate counts
+    // them; a suppressed line is an undercount that reads as adoption. NOTE this test
+    // covers sampling/dedupe ONLY — it cannot observe an env gate, which is why the
+    // NODE_ENV test below exists as a separate case.
     emitMintAuditToStdout('e', { n: 1 });
     emitMintAuditToStdout('e', { n: 2 });
     expect(logSpy).toHaveBeenCalledTimes(2);
     expect(JSON.parse(logSpy.mock.calls[1][0] as string)).toEqual({ event: 'e', n: 2 });
+  });
+
+  it('STILL emits when NODE_ENV is production — the only environment that matters', () => {
+    // 🔴 The mutant this exists to kill: wrapping the console.log in
+    // `if (process.env.NODE_ENV !== 'production')` left ALL 159 tests green, because
+    // vitest runs with NODE_ENV !== 'production' (nothing in src/__tests__/setup.ts or
+    // vitest.config.mts sets it), so every other test takes the emitting branch. That
+    // mutant's real-world consequence is exactly this PR's target failure mode — the
+    // audit event silently absent in production and nowhere else.
+    //
+    // So this case pins the ONE environment the mirror has to work in.
+    //
+    // `vi.stubEnv` rather than a direct assignment: NODE_ENV is typed read-only here, so
+    // `process.env.NODE_ENV = 'production'` is a TS2540 compile error. stubEnv mutates
+    // process.env for real and is undone by `vi.unstubAllEnvs()` in `finally`, so a
+    // failure cannot leak the value into sibling tests.
+    try {
+      vi.stubEnv('NODE_ENV', 'production');
+      // The precondition really held — otherwise this test would pass vacuously by
+      // simply never entering the environment it claims to cover.
+      expect(process.env.NODE_ENV).toBe('production');
+      emitMintAuditToStdout('blocks.dev-token.approved-mint', {
+        userId: 7,
+        spendGrantBasis: 'inferred',
+      });
+      expect(logSpy).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
+        event: 'blocks.dev-token.approved-mint',
+        userId: 7,
+        spendGrantBasis: 'inferred',
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('does not mutate the caller-supplied fields object', () => {
