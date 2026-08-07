@@ -8,10 +8,10 @@ import { useResourceSelectContext } from '~/components/ImageGeneration/Generatio
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import type { TransformedModel } from '~/shared/search/models-transform';
+import type { ResourceSelectModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { ResourceSelectCard } from './ResourceSelectCard';
-import { skipBaseModelForOwnTabs } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import { filterResourceVersions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useResourceSelectInfinite } from './useResourceSelectInfinite';
 import { isDefined } from '~/utils/type-guards';
 
@@ -37,26 +37,8 @@ export function ResourceHitList({ query }: { query: string }) {
   const loading = isLoading || isFetching || loadingPreferences;
 
   const filterVersions = useCallback(
-    (model: TransformedModel) => {
-      // Mirror the server query's base-model relaxation so we don't strip every
-      // version client-side (e.g. linking a Flux VAE into a Boogu checkpoint).
-      // The featured tab is a cross-ecosystem podium (the server returns winners
-      // from any baseModel), so don't re-apply the ecosystem's base-model filter.
-      const skipBaseModel = skipBaseModelForOwnTabs(tab, selectSource) || tab === 'featured';
-      const modelBaseModels = resources
-        .filter((x) => x.type === model.type)
-        .flatMap((x) => x.baseModels);
-
-      return model.versions.filter((version) => {
-        return (
-          (canGenerate ? canGenerate === version.canGenerate : true) &&
-          (skipBaseModel ||
-            modelBaseModels.length === 0 ||
-            modelBaseModels.includes(version.baseModel)) &&
-          !excludedIds.includes(version.id)
-        );
-      });
-    },
+    (model: ResourceSelectModel) =>
+      filterResourceVersions(model, { tab, selectSource, canGenerate, resources, excludedIds }),
     [canGenerate, resources, excludedIds, tab, selectSource]
   );
 
@@ -125,7 +107,7 @@ export function ResourceHitList({ query }: { query: string }) {
   }, [canGenerate, featured, models, resources, tab, filterVersions]);
 
   const renderCard = useCallback(
-    ({ data, height }: { data: TransformedModel; height: number }) => (
+    ({ data, height }: { data: ResourceSelectModel; height: number }) => (
       <ResourceSelectCard data={data} height={height} selectSource={selectSource} />
     ),
     [selectSource]

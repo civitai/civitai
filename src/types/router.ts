@@ -14,6 +14,9 @@ export type MyRecentlyAddedModels = ModelRouter['getRecentlyManuallyAdded'];
 export type MyRecentlyRecommended = ModelRouter['getRecentlyRecommended'];
 export type ModelGetAllPagedSimple = ModelRouter['getAllPagedSimple'];
 export type ModelGetAssociatedResourcesSimple = ModelRouter['getAssociatedResourcesSimple'];
+// Derived from the wire rather than exported from the service, so tsc verifies the
+// picker's components against what the endpoint actually sends after projection.
+export type ResourceSelectModel = ModelRouter['getResourceSelect']['items'][number];
 
 type ModelVersionRouter = RouterOutput['modelVersion'];
 export type ModelVersionById = ModelVersionRouter['getById'];
@@ -112,9 +115,7 @@ export type CosmeticGetById = Exclude<RouterOutput['cosmetic']['getById'], null>
 export type CosmeticShopItemGetById = RouterOutput['cosmeticShop']['getShopItemById'];
 export type CosmeticShopSectionGetById = RouterOutput['cosmeticShop']['getSectionById'];
 
-export type ModelVersionDonationGoal = NonNullable<
-  RouterOutput['modelVersion']['donationGoal']
->;
+export type ModelVersionDonationGoal = NonNullable<RouterOutput['modelVersion']['donationGoal']>;
 export type PostContestCollectionItem =
   RouterOutput['post']['getContestCollectionDetails']['items'][number];
 
