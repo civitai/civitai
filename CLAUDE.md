@@ -267,7 +267,8 @@ get system Node instead of the flake's pinned version. Measured: system Node **2
 whose cwd was set to a different repo lost two suites to collection failures and **77 tests silently never ran**
 (10849 → 10772) while the output otherwise looked entirely normal.
 
-**Browser/component tests on NixOS: the playwright pin must equal the version of the nix browser bundle.**
+**Browser/component tests on NixOS: the host's browser bundle must match this repo's playwright pin — fix the
+host, not `package.json`.**
 The failure is *not* "no `chromium` on `PATH`" — a NixOS host that sets `PLAYWRIGHT_BROWSERS_PATH` (nixpkgs
 `playwright-driver.browsers`) already has Chromium. Playwright pins **one exact Chromium build per release** and
 looks it up by revision under that path, so a driver/bundle mismatch fails with
@@ -275,13 +276,24 @@ looks it up by revision under that path, so a driver/bundle mismatch fails with
 `component` project then reports **`Test Files (130)` / `Tests no tests`**, i.e. 0 of 130 executed. That reads
 like a broken suite, not a missing browser.
 
-Because of that 1:1 pinning, `playwright` / `@playwright/test` are pinned **exactly** in `package.json` (no `^`).
-A caret range is not a pin: `^1.61.1` resolves to the newest 1.x, which wants a *different* Chromium revision and
-re-breaks the host silently. When bumping, bump to the version whose bundled Chromium the environments provide —
-check `node_modules/.pnpm/playwright-core@<v>/node_modules/playwright-core/browsers.json` against
-`ls $PLAYWRIGHT_BROWSERS_PATH`. **CI also runs some Playwright jobs in version-matched container images that
-ship their own browsers**, so a bump here is not self-contained — ask an infra owner to move those image pins in
-the same window, or the e2e job hits this exact error with CI's revision instead of yours.
+**The repo pin is `^1.57.0` and stays there — adapt the host to it.** `playwright` / `@playwright/test` resolve
+to **1.57.0**, which wants Chromium revision **1200**. Before running, check the two numbers that have to be
+equal: `node_modules/playwright/../playwright-core/browsers.json` (the revision playwright will look for) against
+`ls $PLAYWRIGHT_BROWSERS_PATH` (the revisions the bundle actually has). If they differ, point
+`PLAYWRIGHT_BROWSERS_PATH` at a `playwright-driver` bundle of the *matching* version instead of bumping the repo.
+Nixpkgs carries exactly one playwright version per revision, so a host that drives several repos on different
+playwright lines needs one pinned nixpkgs input per line and a per-project selector — the version skew is a
+property of the host, not of this repo.
+
+**Do not "fix" this by bumping the pin.** It was tried and reverted, for two independent reasons, both measured:
+(1) 1.61.1 broke the preview e2e smoke suite — **2 passed / 59 failed**, reproduced identically on a re-run of
+the same commit, while an unrelated PR passed smoke on the same infrastructure in the same window (so the
+environment was healthy and the bump is what broke those specs at runtime); and (2) CI runs some Playwright jobs
+in **version-matched container images that ship their own browsers**, so a bump here is not self-contained — the
+image tags would have to move in the same window or the e2e job hits this exact error with CI's revision
+instead of yours. A caret range is also not a pin for a package with a 1:1 browser mapping: `^1.57.0` floats
+within the 1.57 line, which is fine (Chromium build is stable across a minor line), but bumping the *minor*
+changes the revision.
 
 Escape hatch if your host's bundle can't match the pin: `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=<abs path to a
 chrome/chrome-headless-shell binary>` — honoured by `vitest.config.mts`'s provider, and it bypasses the revision
