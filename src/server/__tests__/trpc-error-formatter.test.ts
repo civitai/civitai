@@ -3,12 +3,13 @@ import { describe, expect, it } from 'vitest';
 /**
  * The generation gate marks an overridable block by throwing with
  * `cause: { softBlock: true }`; `trpc.ts`'s errorFormatter lifts that onto
- * `data.softBlock` so the client can offer "Generate Anyway". Nothing else in the
- * app reads `cause.softBlock`, so without this the whole formatter branch can be
- * deleted and every other test still passes.
+ * `data.softBlock` so the client can offer "Generate Anyway".
  *
- * The formatter body is replicated here rather than imported: `~/server/trpc`
- * pulls in the full router context (db, redis, auth) at module scope.
+ * ⚠️ This pins the LOGIC, not the wiring. The formatter body is replicated below
+ * because importing `~/server/trpc` pulls the whole router context (db, redis,
+ * auth) in at module scope — so deleting the real branch in `trpc.ts` still
+ * leaves the suite green, and the button would stop rendering with no test
+ * failing. Fails closed, but silently. Keep the copy in step with the original.
  */
 function formatError(shape: Record<string, unknown>, error: { cause?: unknown }) {
   const cause = error.cause as { softBlock?: boolean } | undefined;
