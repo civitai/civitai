@@ -173,14 +173,60 @@ export type UserCommentV2 = {
   content: string;
   tosViolation: boolean | null;
   threadId: number;
+  /** What the comment is ON — resolved through the thread, and through its root thread for replies. */
+  entityType: string | null;
+  entityId: number | null;
 };
+
+// `Thread` carries one nullable FK per commentable type, so resolving what a comment is attached to is
+// a coalesce across all of them — no builder equivalent. A reply's own thread points at the parent
+// comment, so the ROOT thread is what identifies the image or model it ultimately hangs off; Retool's
+// CommentsWithLinks coalesced root first for exactly that reason.
+//
+// (Its name promises a link filter that its SQL does not contain — the filtering was done in the
+// browser. What the query is actually for is this resolution, so that is what is ported.)
+const THREAD_TARGETS = [
+  'imageId',
+  'modelId',
+  'postId',
+  'articleId',
+  'bountyId',
+  'bountyEntryId',
+  'reviewId',
+  'questionId',
+  'answerId',
+] as const;
+
+const threadEntityId = sql<number | null>`coalesce(${sql.join(
+  THREAD_TARGETS.flatMap((c) => [sql`root.${sql.ref(c)}`, sql`t.${sql.ref(c)}`]),
+  sql`, `
+)})`;
+
+const threadEntityType = sql<string | null>`case ${sql.join(
+  THREAD_TARGETS.map(
+    (c) => sql`when coalesce(root.${sql.ref(c)}, t.${sql.ref(c)}) is not null then ${sql.lit(
+      c.replace(/Id$/, '')
+    )}`
+  ),
+  sql` `
+)} end`;
 
 export async function getCommentsV2(userId: number, limit = 25): Promise<UserCommentV2[]> {
   return dbRead
-    .selectFrom('CommentV2')
-    .select(['id', 'createdAt', 'content', 'tosViolation', 'threadId'])
-    .where('userId', '=', userId)
-    .orderBy('createdAt', 'desc')
+    .selectFrom('CommentV2 as c')
+    .leftJoin('Thread as t', 't.id', 'c.threadId')
+    .leftJoin('Thread as root', 'root.id', 't.rootThreadId')
+    .select([
+      'c.id',
+      'c.createdAt',
+      'c.content',
+      'c.tosViolation',
+      'c.threadId',
+      threadEntityId.as('entityId'),
+      threadEntityType.as('entityType'),
+    ])
+    .where('c.userId', '=', userId)
+    .orderBy('c.createdAt', 'desc')
     .limit(limit)
     .execute();
 }

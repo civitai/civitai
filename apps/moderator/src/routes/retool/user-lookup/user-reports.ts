@@ -28,21 +28,3 @@ export async function fetchUserReports(userId: number): Promise<UserReports> {
   if (!r.ok) throw new Error(String(r.status));
   return r.json();
 }
-
-/** Retool's `link` column, rebuilt per entity type rather than hardcoded to models and images. */
-export function entityUrl(civitaiUrl: string, entityType: string, entityId: number | null) {
-  if (!entityId) return null;
-  switch (entityType) {
-    case 'Image':
-      return `${civitaiUrl}/images/${entityId}`;
-    case 'Model':
-      return `${civitaiUrl}/models/${entityId}`;
-    case 'Post':
-      return `${civitaiUrl}/posts/${entityId}`;
-    case 'Article':
-      return `${civitaiUrl}/articles/${entityId}`;
-    default:
-      // Comments and account reports have no standalone page worth linking to.
-      return null;
-  }
-}

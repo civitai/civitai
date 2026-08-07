@@ -60,6 +60,8 @@ export type CommentV2 = {
   content: string;
   tosViolation: boolean | null;
   threadId: number;
+  entityType: string | null;
+  entityId: number | null;
 };
 
 export type Cosmetic = {

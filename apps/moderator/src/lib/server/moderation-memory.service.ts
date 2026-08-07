@@ -2,6 +2,7 @@ import { getModeratorDb } from './moderator-db';
 import { getNotifications } from './notifications';
 import { recordModActivity } from './mod-activity';
 import { isInt4Id } from './users.service';
+import type { ActionResult } from './user-actions.service';
 
 // Moderation memory — notes and strikes about a user (Retool's SelectUserNotes / UserStrikes, ticket
 // §1.2 "mod notes" and "strike account"). This is the first slice served from the MODERATOR database
@@ -132,6 +133,39 @@ export async function addUserStrike(input: {
   }
 
   return { ok: true, notified };
+}
+
+// A moderator-authored notification (Retool's SendNotification, which POSTed the main app's
+// /api/mod/send-mod-notification). Sent through the same client the strike path uses — the main-app
+// endpoint only forwards to this service, so going direct removes a hop and one more place the
+// payload shape can drift.
+export async function sendModNotification(input: {
+  userId: number;
+  message: string;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  try {
+    await getNotifications().createNotification({
+      // Keyed on the moderator and the instant so two different messages cannot collapse into one,
+      // while a double-submit of the same one does.
+      key: `moderator-message:${input.moderatorId}:${input.userId}:${input.message.slice(0, 64)}`,
+      userId: input.userId,
+      type: 'system-announcement',
+      category: 'System',
+      details: { message: input.message },
+    });
+  } catch (e) {
+    console.error('[moderation-memory] notification failed', e);
+    return { ok: false, error: 'Could not send the notification.' };
+  }
+
+  await recordModActivity({
+    userId: input.moderatorId,
+    entityType: 'user',
+    entityId: input.userId,
+    activity: 'notify',
+  });
+  return { ok: true };
 }
 
 export async function addUserNote(input: {

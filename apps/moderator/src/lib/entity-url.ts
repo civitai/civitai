@@ -6,14 +6,21 @@ const ENTITY_PATH: Record<string, string> = {
   model: 'models',
   post: 'posts',
   article: 'articles',
+  bounty: 'bounties',
 };
 
+// Callers disagree on casing — ModActivity stores 'image', the report joins label rows 'Image', and
+// thread resolution yields 'bountyEntry'. Matching case-sensitively silently returned null for one of
+// them, which reads as "no link exists" rather than "the key was spelled differently".
+//
+// Types with no standalone page (comments, bounty entries, questions, answers, reviews, accounts)
+// have no entry and correctly return null.
 export function entityUrl(
   civitaiUrl: string,
-  entityType: string,
+  entityType: string | null,
   entityId: number | null
 ): string | null {
-  const segment = ENTITY_PATH[entityType];
+  const segment = entityType ? ENTITY_PATH[entityType.toLowerCase()] : undefined;
   return entityId && segment ? `${civitaiUrl}/${segment}/${entityId}` : null;
 }
 

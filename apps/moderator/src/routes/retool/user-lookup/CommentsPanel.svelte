@@ -3,6 +3,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { LINK_CLASS, dateTime } from '$lib/format';
+  import { entityUrl } from '$lib/entity-url';
   import type { Account } from './user-account';
   import type { SubmitFunction } from '@sveltejs/kit';
   import type { FormResult } from './form-result';
@@ -97,7 +98,18 @@
                     {#if canAct}
                       <input type="checkbox" name="commentV2Ids" value={c.id} class={CHECKBOX} />
                     {/if}
-                    <span class="text-xs text-dark-2">thread {c.threadId}</span>
+                    {#if entityUrl(civitaiUrl, c.entityType, c.entityId)}
+                      <a
+                        href={entityUrl(civitaiUrl, c.entityType, c.entityId)}
+                        target="_blank"
+                        rel="noreferrer"
+                        class={LINK_CLASS}
+                      >
+                        {c.entityType} {c.entityId}
+                      </a>
+                    {:else}
+                      <span class="text-xs text-dark-2">thread {c.threadId}</span>
+                    {/if}
                     {#if c.tosViolation}<Badge variant="destructive">ToS</Badge>{/if}
                     <span class="text-xs text-dark-2">{dateTime(c.createdAt)}</span>
                   </div>

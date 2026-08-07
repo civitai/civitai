@@ -3,7 +3,12 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess } from '$lib/server/access';
 import { isSection } from '../sections';
-import { addUserNote, addUserStrike, updateUserNote } from '$lib/server/moderation-memory.service';
+import {
+  addUserNote,
+  addUserStrike,
+  sendModNotification,
+  updateUserNote,
+} from '$lib/server/moderation-memory.service';
 import {
   BAN_REASON_CODES,
   addSocial,
@@ -48,6 +53,7 @@ const profileFail = (message: string) => fail(400, { scope: 'profile' as const, 
 const contentFail = (message: string) => fail(400, { scope: 'content' as const, error: message });
 const buzzFail = (message: string) => fail(400, { scope: 'buzz' as const, error: message });
 const shopFail = (message: string) => fail(400, { scope: 'shop' as const, error: message });
+const notifyFail = (message: string) => fail(400, { scope: 'notify' as const, error: message });
 
 const userIdSchema = z.object({ userId: z.coerce.number().int().positive() });
 const noteSchema = z.object({ notes: z.string().trim().min(1).max(NOTE_MAX) });
@@ -265,6 +271,24 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
     if (!result.ok) return accountFail(result.error);
+    return { success: true };
+  },
+
+  // Notifying a user is an enforcement-adjacent act, not a note, so it takes the same gate.
+  sendNotification: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return notifyFail('Not permitted.');
+    const input = parseForm(
+      userIdSchema.extend({ message: z.string().trim().min(1).max(1000) }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return notifyFail(input);
+
+    const result = await sendModNotification({
+      userId: input.userId,
+      message: input.message,
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return notifyFail(result.error);
     return { success: true };
   },
 

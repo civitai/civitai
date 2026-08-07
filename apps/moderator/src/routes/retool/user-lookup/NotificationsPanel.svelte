@@ -1,11 +1,68 @@
 <script lang="ts">
+  import { enhance } from '$app/forms';
+  import type { SubmitFunction } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { dateTime } from '$lib/format';
   import type { Account } from './user-account';
+  import type { FormResult } from './form-result';
   import ListCard from './ListCard.svelte';
 
-  let { account }: { account: Promise<Account> | null } = $props();
+  let {
+    account,
+    userId,
+    canAct,
+    form,
+    onSubmit,
+  }: {
+    account: Promise<Account> | null;
+    userId: number;
+    canAct: boolean;
+    form: FormResult;
+    onSubmit: SubmitFunction;
+  } = $props();
+
+  const error = $derived(form?.scope === 'notify' ? form.error : null);
+  let sending = $state(false);
 </script>
+
+<section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
+  <div class="mb-1 flex items-baseline justify-between gap-3">
+    <h3 class="text-sm font-semibold text-white">Send a notification</h3>
+    {#if canAct && !sending}
+      <Button size="sm" onclick={() => (sending = true)}>Compose</Button>
+    {/if}
+  </div>
+  <p class="mb-3 text-xs text-dark-2">
+    Goes to this user as a system notification. There is no reply channel — for a conversation, use
+    Chat.
+  </p>
+
+  {#if error}
+    <div
+      class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
+      role="alert"
+    >
+      {error}
+    </div>
+  {/if}
+
+  {#if !canAct}
+    <p class="text-sm text-dark-2">Sending requires the Users permission.</p>
+  {:else if sending}
+    <form method="POST" action="?/sendNotification" use:enhance={onSubmit}>
+      <input type="hidden" name="userId" value={userId} />
+      <Textarea name="message" rows={3} placeholder="What should this user be told?" required />
+      <div class="mt-2 flex gap-2">
+        <Button type="submit" size="sm">Send</Button>
+        <Button type="button" size="sm" variant="outline" onclick={() => (sending = false)}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  {/if}
+</section>
 
 {#await account}
   <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">

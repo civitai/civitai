@@ -2,7 +2,15 @@
 // a refused ban would also render inside the notes panel.
 export type FormResult =
   | {
-      scope?: 'notes' | 'account' | 'socials' | 'profile' | 'content' | 'buzz' | 'shop';
+      scope?:
+        | 'notes'
+        | 'account'
+        | 'socials'
+        | 'profile'
+        | 'content'
+        | 'buzz'
+        | 'shop'
+        | 'notify';
       error?: string;
     }
   | null;

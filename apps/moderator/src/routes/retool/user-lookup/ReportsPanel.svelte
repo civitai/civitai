@@ -3,7 +3,8 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import type { LayoutData } from './$types';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
-  import { entityUrl, fetchUserReports, type ReportRow } from './user-reports';
+  import { entityUrl } from '$lib/entity-url';
+  import { fetchUserReports, type ReportRow } from './user-reports';
   import ListCard from './ListCard.svelte';
 
   type Result = NonNullable<LayoutData['result']>;

@@ -143,7 +143,13 @@
     {:else if section === 'notes'}
       <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} {form} />
     {:else if section === 'notifications'}
-      <NotificationsPanel {account} />
+      <NotificationsPanel
+        {account}
+        userId={result.identity.id}
+        canAct={data.canAct}
+        {form}
+        {onSubmit}
+      />
     {:else}
       <!-- admin + mutes: AccountActionsPanel carries both the enforcement row and the timed-mute list. -->
       <AccountActionsPanel identity={result.identity} canAct={data.canAct} {form} />
