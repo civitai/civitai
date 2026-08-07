@@ -64,13 +64,21 @@ export function getReemitMinIntervalSecs(): number {
 }
 
 // Same reasoning as the min-interval knob: this gates whether the second (scheduled)
-// scan runs at all, it is not a parameter of either emit statement. Default ON —
-// the sweep is the only healer that can reach a future-scheduled post, so it has to
-// be on by default; the env var exists to shed the ~94K-image scan under load.
+// scan runs at all, it is not a parameter of either emit statement.
+//
+// DEFAULT OFF — DO NOT ENABLE until the BitDex engine ships the
+// remove-with-future-value = reschedule fix (bitdex-v2, targeted v1.1.53).
+// The shared fan-out function emits a future-guarded publishedAt REMOVE, and the
+// current engine treats ANY remove of the deferred source field on a deferred slot
+// as an UNSCHEDULE: the slot leaves the deferred map and activates as a draft,
+// destroying its scheduled Tf activation. On a pod with a healthy deferred map the
+// first sweep pass would unschedule the entire scheduled population (~93K images,
+// 2026-08-07 review finding). Once the engine treats a future-valued remove as a
+// re-arm, this same sweep becomes the standing heal for drained deferred maps —
+// flip the env var on in the deploy AFTER that release is verified in prod.
 export function getScheduledSweepEnabled(): boolean {
   const raw = process.env.REEMIT_SCHEDULED_SWEEP_ENABLED?.trim().toLowerCase();
-  if (raw === 'false' || raw === '0' || raw === 'off' || raw === 'no') return false;
-  return true;
+  return raw === 'true' || raw === '1' || raw === 'on' || raw === 'yes';
 }
 
 // The sweep's own cadence, decoupled from the job's 5-min fire. BitDex suppresses

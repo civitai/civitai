@@ -161,22 +161,25 @@ describe('buildScheduledReemitQuery', () => {
 });
 
 describe('getScheduledSweepEnabled', () => {
-  it('defaults ON — the sweep is the only healer that reaches scheduled posts', () => {
-    expect(getScheduledSweepEnabled()).toBe(true);
+  it('defaults OFF until the engine reschedule fix ships (bitdex-v2 v1.1.53)', () => {
+    // A future-guarded publishedAt REMOVE currently UNSCHEDULES a deferred slot
+    // (engine drops it from the deferred map and activates it as a draft), so the
+    // sweep must not run against a healthy deferred map. See the source comment.
+    expect(getScheduledSweepEnabled()).toBe(false);
   });
 
-  it('honors the off switch in its several spellings', () => {
-    for (const raw of ['false', 'FALSE', '0', 'off', 'no', ' false ']) {
+  it('honors the on switch in its several spellings', () => {
+    for (const raw of ['true', 'TRUE', '1', 'on', 'yes', ' true ']) {
       process.env.REEMIT_SCHEDULED_SWEEP_ENABLED = raw;
-      expect(getScheduledSweepEnabled()).toBe(false);
+      expect(getScheduledSweepEnabled()).toBe(true);
     }
   });
 
-  it('stays ON for anything that is not an off value', () => {
-    process.env.REEMIT_SCHEDULED_SWEEP_ENABLED = 'true';
-    expect(getScheduledSweepEnabled()).toBe(true);
+  it('stays OFF for anything that is not an explicit on value', () => {
     process.env.REEMIT_SCHEDULED_SWEEP_ENABLED = 'gibberish';
-    expect(getScheduledSweepEnabled()).toBe(true);
+    expect(getScheduledSweepEnabled()).toBe(false);
+    delete process.env.REEMIT_SCHEDULED_SWEEP_ENABLED;
+    expect(getScheduledSweepEnabled()).toBe(false);
   });
 });
 
@@ -253,6 +256,7 @@ describe('reemitBitdexOps job body', () => {
   });
 
   it('runs once the min interval has elapsed and advances the last-run marker', async () => {
+    process.env.REEMIT_SCHEDULED_SWEEP_ENABLED = 'true';
     // Last emit was 5 minutes ago — past the 270s interval. Sweep clock at epoch = due.
     mockGetJobDate.mockImplementation((key: string) =>
       Promise.resolve(
@@ -275,6 +279,7 @@ describe('reemitBitdexOps job body', () => {
   });
 
   it('runs BOTH scans and records per-scope metrics when ON', async () => {
+    process.env.REEMIT_SCHEDULED_SWEEP_ENABLED = 'true';
     mockIsFlipt.mockResolvedValue(true);
     mockDbWrite.$queryRaw
       .mockResolvedValueOnce([{ postsScanned: 3, imagesEmitted: 12 }])
@@ -322,6 +327,7 @@ describe('reemitBitdexOps job body', () => {
   });
 
   it('skips the sweep (published scan only) when the sweep interval has not elapsed', async () => {
+    process.env.REEMIT_SCHEDULED_SWEEP_ENABLED = 'true';
     // Sweep ran 5 minutes ago — inside the 1h default sweep interval. Reemit clock
     // stays at epoch so the published-window scan is not rate-limited.
     mockGetJobDate.mockImplementation((key: string) =>
@@ -346,6 +352,7 @@ describe('reemitBitdexOps job body', () => {
   });
 
   it('counts the error and rethrows when the SCHEDULED scan fails', async () => {
+    process.env.REEMIT_SCHEDULED_SWEEP_ENABLED = 'true';
     mockIsFlipt.mockResolvedValue(true);
     mockDbWrite.$queryRaw
       .mockResolvedValueOnce([{ postsScanned: 3, imagesEmitted: 12 }])
