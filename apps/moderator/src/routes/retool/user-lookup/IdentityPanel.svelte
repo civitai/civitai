@@ -1,8 +1,13 @@
 <script lang="ts">
+  import { applyAction, enhance } from '$app/forms';
+  import { invalidateAll } from '$app/navigation';
+  import type { ActionResult } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
   import type { PageData } from './$types';
   import { userUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime } from '$lib/format';
+  import type { FormResult } from './form-result';
 
   type Identity = NonNullable<PageData['result']>['identity'];
   type Profile = NonNullable<PageData['result']>['profile'];
@@ -12,8 +17,39 @@
     identity,
     profile,
     curator,
+    canAct,
+    form,
     civitaiUrl,
-  }: { identity: Identity; profile: Profile; curator: Curator; civitaiUrl: string } = $props();
+  }: {
+    identity: Identity;
+    profile: Profile;
+    curator: Curator;
+    canAct: boolean;
+    form: FormResult;
+    civitaiUrl: string;
+  } = $props();
+
+  const error = $derived(form?.scope === 'profile' ? form.error : null);
+
+  let clearing = $state(false);
+  let submitting = $state(false);
+
+  const afterWrite =
+    () =>
+    async ({ result }: { result: ActionResult }) => {
+      await applyAction(result);
+      if (result.type === 'success') {
+        clearing = false;
+        // The bio comes from `load`, so unlike the client-fetched panels this one does need it back.
+        await invalidateAll();
+      }
+      submitting = false;
+    };
+
+  const onSubmit = () => {
+    submitting = true;
+    return afterWrite();
+  };
 
   const profileText = $derived(
     [
@@ -109,15 +145,50 @@
     </div>
   </dl>
 
+  {#if error}
+    <div
+      class="mt-4 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
+      role="alert"
+    >
+      {error}
+    </div>
+  {/if}
+
   {#if profileText.length}
-    <dl class="mt-4 grid gap-x-8 gap-y-2 border-t border-dark-4 pt-4 text-sm sm:grid-cols-3">
-      {#each profileText as [label, value] (label)}
-        <div>
-          <dt class="text-xs tracking-wide text-dark-2 uppercase">{label}</dt>
-          <dd class="whitespace-pre-wrap text-dark-0">{value}</dd>
-        </div>
-      {/each}
-    </dl>
+    <div class="mt-4 border-t border-dark-4 pt-4">
+      <dl class="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-3">
+        {#each profileText as [label, value] (label)}
+          <div>
+            <dt class="text-xs tracking-wide text-dark-2 uppercase">{label}</dt>
+            <dd class="whitespace-pre-wrap text-dark-0">{value}</dd>
+          </div>
+        {/each}
+      </dl>
+
+      <!-- The moderation case is a bio used as an ad or abuse surface: the text has to come off the
+           site without banning the account over it. -->
+      {#if canAct && !clearing}
+        <button type="button" class="mt-3 text-xs {LINK_CLASS}" onclick={() => (clearing = true)}>
+          Clear profile text
+        </button>
+      {:else if canAct}
+        <form method="POST" action="?/clearProfileText" use:enhance={onSubmit} class="mt-3">
+          <input type="hidden" name="userId" value={identity.id} />
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+            {#each [['bio', 'Bio'], ['message', 'Profile message'], ['location', 'Location']] as [field, label] (field)}
+              <label class="flex items-center gap-1.5 text-xs text-dark-2">
+                <input type="checkbox" name="fields" value={field} class="accent-blue-500" />
+                {label}
+              </label>
+            {/each}
+            <Button type="submit" size="sm" variant="destructive" disabled={submitting}>Clear</Button>
+            <Button type="button" size="sm" variant="outline" onclick={() => (clearing = false)}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      {/if}
+    </div>
   {/if}
 
   {#if identity.banReason || identity.banDetails}

@@ -61,6 +61,8 @@
     identity={result.identity}
     profile={result.profile}
     curator={result.curator}
+    canAct={data.canAct}
+    {form}
     civitaiUrl={data.civitaiUrl}
   />
   <ContentCounts
@@ -86,9 +88,9 @@
 
     <!-- what we already know -->
     <ReportsPanel reportsFiled={result.reportsFiled} reportedContent={result.reportedContent} />
-    <SecuritySignals userId={result.identity.id} />
+    <SecuritySignals userId={result.identity.id} canAct={data.canAct} {form} />
     <ModActivityPanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
-    <ModerationMemoryPanel userId={result.identity.id} {form} />
+    <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} {form} />
 
     <!-- what to do -->
     <AccountActionsPanel identity={result.identity} canAct={data.canAct} {form} />

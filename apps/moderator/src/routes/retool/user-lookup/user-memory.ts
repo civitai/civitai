@@ -17,7 +17,9 @@ export type Strike = {
   createdBy: string | null;
 };
 
-export type Memory = { notes: Note[]; strikes: Strike[] };
+export type ModerationFlags = { spamWhitelist: boolean; deservedMute: boolean };
+
+export type Memory = { notes: Note[]; strikes: Strike[]; flags: ModerationFlags };
 
 export async function fetchMemory(userId: number, version: number): Promise<Memory> {
   const r = await fetch(`/api/user-memory/${userId}?v=${version}`);

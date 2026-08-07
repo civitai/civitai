@@ -6,7 +6,11 @@ import { parseQuery } from '$lib/server/query';
 import { addUserNote, updateUserNote } from '$lib/server/moderation-memory.service';
 import {
   BAN_REASON_CODES,
+  addSocial,
   addTimedMute,
+  clearProfileText,
+  removeSocial,
+  setModerationFlag,
   forceLogout,
   refreshSessionCache,
   resetSubscriptionCaches,
@@ -38,6 +42,8 @@ const NOTE_MAX = 5000;
 const accountFail = (message: string) => fail(400, { scope: 'account' as const, error: message });
 const noteFail = (status: number, message: string) =>
   fail(status, { scope: 'notes' as const, error: message });
+const socialsFail = (message: string) => fail(400, { scope: 'socials' as const, error: message });
+const profileFail = (message: string) => fail(400, { scope: 'profile' as const, error: message });
 
 const userIdSchema = z.object({ userId: z.coerce.number().int().positive() });
 const noteSchema = z.object({ notes: z.string().trim().min(1).max(NOTE_MAX) });
@@ -106,6 +112,99 @@ export const actions: Actions = {
 
     const result = await forceLogout({ userId: input.userId, moderatorId: locals.user.id });
     if (!result.ok) return accountFail(result.error);
+    return { success: true };
+  },
+
+  clearProfileText: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return profileFail('Not permitted.');
+    const form = await request.formData();
+    const input = parseForm(userIdSchema, form);
+    if (typeof input === 'string') return profileFail(input);
+
+    // Checkboxes: absent when unticked, so they are read off the raw FormData rather than the parsed
+    // object, which only carries the last value for a repeated name.
+    const fields = form
+      .getAll('fields')
+      .map(String)
+      .filter((f): f is 'bio' | 'message' | 'location' =>
+        ['bio', 'message', 'location'].includes(f)
+      );
+
+    const result = await clearProfileText({
+      userId: input.userId,
+      fields,
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return profileFail(result.error);
+    return { success: true };
+  },
+
+  removeSocial: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return socialsFail('Not permitted.');
+    const input = parseForm(
+      userIdSchema.extend({ id: z.coerce.number().int().positive() }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return socialsFail(input);
+
+    const result = await removeSocial({
+      id: input.id,
+      userId: input.userId,
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return socialsFail(result.error);
+    return { success: true };
+  },
+
+  addSocial: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return socialsFail('Not permitted.');
+    const input = parseForm(
+      userIdSchema.extend({
+        // http(s) only: the panel renders these as links, and a `javascript:` url would execute in
+        // the next moderator's session.
+        url: z
+          .string()
+          .trim()
+          .max(1000)
+          .regex(/^https?:\/\//i, 'Link must start with http:// or https://'),
+        type: z.enum(['Sponsorship', 'Social', 'Other']),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return socialsFail(input);
+
+    const result = await addSocial({
+      userId: input.userId,
+      url: input.url,
+      type: input.type,
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return socialsFail(result.error);
+    return { success: true };
+  },
+
+  setModerationFlag: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return noteFail(403, 'Not permitted.');
+    const author = locals.user.username;
+    if (!author) return noteFail(400, 'Your account has no username.');
+
+    const input = parseForm(
+      userIdSchema.extend({
+        flag: z.enum(['spamWhitelist', 'deservedMute']),
+        value: z.enum(['true', 'false']),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return noteFail(400, input);
+
+    const result = await setModerationFlag({
+      userId: input.userId,
+      flag: input.flag,
+      value: input.value === 'true',
+      author,
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return noteFail(400, result.error);
     return { success: true };
   },
 

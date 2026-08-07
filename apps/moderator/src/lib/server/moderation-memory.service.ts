@@ -39,6 +39,23 @@ export async function getUserNotes(userId: number, viewer: string | null): Promi
   return rows.map((r) => ({ ...r, isMine: !!viewer && r.lastUpdateBy === viewer }));
 }
 
+// Account-level moderation flags, stored per NOTE row but meaning something about the account. Any row
+// carrying the flag sets it — a moderator who whitelisted this account did so regardless of which of
+// their notes the write landed on.
+export type ModerationFlags = { spamWhitelist: boolean; deservedMute: boolean };
+
+export async function getModerationFlags(userId: number): Promise<ModerationFlags> {
+  const rows = await getModeratorDb()
+    .selectFrom('UserNotes')
+    .select(['spamWhitelist', 'deservedMute'])
+    .where('userId', '=', userId)
+    .execute();
+  return {
+    spamWhitelist: rows.some((r) => r.spamWhitelist === true),
+    deservedMute: rows.some((r) => r.deservedMute === true),
+  };
+}
+
 export async function getUserStrikes(userId: number): Promise<UserStrike[]> {
   return getModeratorDb()
     .selectFrom('UserStrikes')

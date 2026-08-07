@@ -1,7 +1,13 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { applyAction, enhance } from '$app/forms';
+  import type { ActionResult } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
+  import type { FormResult } from './form-result';
 
   type Account = {
     userId: number;
@@ -44,10 +50,40 @@
     }[];
   };
 
-  let { userId }: { userId: number } = $props();
+  let {
+    userId,
+    canAct,
+    form,
+  }: { userId: number; canAct: boolean; form: FormResult } = $props();
 
   const SHOWN = 12;
   let showPrompts = $state(false);
+  let addingLink = $state(false);
+  let submitting = $state(false);
+  let linkType = $state('Social');
+
+  const error = $derived(form?.scope === 'socials' ? form.error : null);
+
+  // Bumped after a link write so the derived promise refetches. The socials come from this endpoint,
+  // not from `load`, so invalidating the page would not bring them back.
+  let version = $state(0);
+
+  const afterWrite =
+    () =>
+    async ({ result }: { result: ActionResult }) => {
+      await applyAction(result);
+      if (result.type === 'success') {
+        addingLink = false;
+        linkType = 'Social';
+        version += 1;
+      }
+      submitting = false;
+    };
+
+  const onSubmit = () => {
+    submitting = true;
+    return afterWrite();
+  };
 
   // Fetched here rather than in the page load: ~500ms of ClickHouse work that must not hold up identity.
   // Derived promise + {#await} means there is no state to reassign — a new userId produces a new promise
@@ -55,7 +91,7 @@
   // from issuing the request.
   const signals = $derived(
     browser
-      ? fetch(`/api/user-signals/${userId}`).then((r): Promise<Signals> => {
+      ? fetch(`/api/user-signals/${userId}?v=${version}`).then((r): Promise<Signals> => {
           if (!r.ok) throw new Error(String(r.status));
           return r.json();
         })
@@ -86,6 +122,15 @@
     Addresses and links this account was seen on, and other accounts sharing them. Only the addresses it
     registered or subscribed from are matched; internal traffic excluded.
   </p>
+
+  {#if error}
+    <div
+      class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
+      role="alert"
+    >
+      {error}
+    </div>
+  {/if}
 
   {#await signals}
     <p class="text-sm text-dark-2">Checking addresses and linked accounts…</p>
@@ -162,9 +207,43 @@
 
       <div class="mt-5 grid gap-5 border-t border-dark-4 pt-4 lg:grid-cols-2">
         <div>
-          <h4 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
-            Social links ({result.socials.links.length})
-          </h4>
+          <div class="mb-2 flex items-baseline justify-between gap-3">
+            <h4 class="text-xs tracking-wide text-dark-2 uppercase">
+              Social links ({result.socials.links.length})
+            </h4>
+            {#if canAct && !addingLink}
+              <button type="button" class="text-xs {LINK_CLASS}" onclick={() => (addingLink = true)}>
+                add
+              </button>
+            {/if}
+          </div>
+
+          {#if addingLink}
+            <form method="POST" action="?/addSocial" use:enhance={onSubmit} class="mb-3">
+              <input type="hidden" name="userId" value={userId} />
+              <div class="flex flex-wrap items-end gap-2">
+                <Input name="url" placeholder="https://…" class="min-w-48 flex-1" required />
+                <Select.Root type="single" name="type" bind:value={linkType}>
+                  <Select.Trigger class="w-36">{linkType}</Select.Trigger>
+                  <Select.Content>
+                    {#each ['Social', 'Sponsorship', 'Other'] as t (t)}
+                      <Select.Item value={t}>{t}</Select.Item>
+                    {/each}
+                  </Select.Content>
+                </Select.Root>
+                <Button type="submit" size="sm" disabled={submitting}>Add</Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onclick={() => (addingLink = false)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          {/if}
+
           {#if result.socials.links.length === 0}
             <p class="text-sm text-dark-2">None on this account.</p>
           {:else}
@@ -183,6 +262,15 @@
                     </a>
                   {:else}
                     <span class="break-all text-dark-0">{link.url}</span>
+                  {/if}
+                  {#if canAct}
+                    <form method="POST" action="?/removeSocial" use:enhance={onSubmit}>
+                      <input type="hidden" name="id" value={link.id} />
+                      <input type="hidden" name="userId" value={userId} />
+                      <button type="submit" disabled={submitting} class="text-xs {LINK_CLASS}">
+                        remove
+                      </button>
+                    </form>
                   {/if}
                 </li>
               {/each}

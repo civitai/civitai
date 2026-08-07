@@ -9,7 +9,16 @@
   import type { FormResult } from './form-result';
   import { fetchMemory } from './user-memory';
 
-  let { userId, form }: { userId: number; form: FormResult } = $props();
+  let {
+    userId,
+    canAct,
+    form,
+  }: { userId: number; canAct: boolean; form: FormResult } = $props();
+
+  const FLAGS = [
+    ['spamWhitelist', 'Spam whitelist', 'Exempt from spam heuristics.'],
+    ['deservedMute', 'Deserved mute', 'A past mute was judged earned.'],
+  ] as const;
 
   const error = $derived(form?.scope === 'notes' ? form.error : null);
 
@@ -80,6 +89,30 @@
     {#await memory}
       <p class="text-sm text-dark-2">Loading notes…</p>
     {:then result}
+      {#if result}
+        <!-- Both flags live on the note rows but describe the ACCOUNT, and until now nothing read
+             them — a whitelisted account looked identical to one that had never been reviewed. -->
+        <div class="mb-4 flex flex-wrap gap-x-4 gap-y-2 border-b border-dark-4 pb-3">
+          {#each FLAGS as [flag, label, hint] (flag)}
+            {@const on = result.flags[flag]}
+            <div class="flex items-baseline gap-2">
+              <Badge variant={on ? 'default' : 'secondary'}>{label}: {on ? 'yes' : 'no'}</Badge>
+              {#if canAct}
+                <form method="POST" action="?/setModerationFlag" use:enhance={onSubmit}>
+                  <input type="hidden" name="userId" value={userId} />
+                  <input type="hidden" name="flag" value={flag} />
+                  <input type="hidden" name="value" value={on ? 'false' : 'true'} />
+                  <button type="submit" disabled={submitting} class="text-xs {LINK_CLASS}">
+                    {on ? 'clear' : 'set'}
+                  </button>
+                </form>
+              {/if}
+              <span class="text-xs text-dark-2">{hint}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
       {#if !result}
         <p class="text-sm text-dark-2">Loading notes…</p>
       {:else if result.notes.length === 0}

@@ -205,6 +205,126 @@ export async function setBanned(input: {
   return { ok: true };
 }
 
+// PROFILE TEXT (Retool's UpdateUserDeets / UpdateUserProfile). The moderation case is a bio, profile
+// message or location used as an advertising or abuse surface: the text has to come off the site
+// without banning the account over it.
+//
+// Only the three free-text fields are writable. Retool's GUI write pointed at the whole `User` row,
+// which put username and email one mis-click from being overwritten.
+export type ProfileField = 'bio' | 'message' | 'location';
+const PROFILE_FIELDS: ProfileField[] = ['bio', 'message', 'location'];
+
+export async function clearProfileText(input: {
+  userId: number;
+  fields: ProfileField[];
+  moderatorId: number;
+}): Promise<ActionResult> {
+  const fields = input.fields.filter((f) => PROFILE_FIELDS.includes(f));
+  if (!fields.length) return { ok: false, error: 'Nothing selected to clear.' };
+
+  const result = await dbWrite
+    .updateTable('UserProfile')
+    .set(Object.fromEntries(fields.map((f) => [f, null])))
+    .where('userId', '=', input.userId)
+    .executeTakeFirst();
+
+  if (Number(result.numUpdatedRows ?? 0) === 0)
+    return { ok: false, error: 'This account has no profile row to edit.' };
+
+  await logAction(`clearProfile:${fields.join('+')}`, input.userId, input.moderatorId);
+  return { ok: true };
+}
+
+// SOCIAL LINKS (Retool's InsertNewSocial / NullSelectedSocial). Removal is the moderation action —
+// the shared-link panel is how a spam ring is found, and taking the link down is the follow-up.
+const LINK_TYPES = ['Sponsorship', 'Social', 'Other'] as const;
+export type LinkType = (typeof LINK_TYPES)[number];
+
+export async function removeSocial(input: {
+  id: number;
+  userId: number;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  // Scoped by userId as well as id: filtering on id alone would let a stale or forged value delete
+  // another account's link and log it against this one.
+  const result = await dbWrite
+    .deleteFrom('UserLink')
+    .where('id', '=', input.id)
+    .where('userId', '=', input.userId)
+    .executeTakeFirst();
+
+  if (Number(result.numDeletedRows ?? 0) === 0)
+    return { ok: false, error: 'That link does not belong to this user.' };
+
+  await logAction('removeSocial', input.userId, input.moderatorId);
+  return { ok: true };
+}
+
+export async function addSocial(input: {
+  userId: number;
+  url: string;
+  type: LinkType;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  const exists = await dbWrite
+    .selectFrom('User')
+    .select('id')
+    .where('id', '=', input.userId)
+    .executeTakeFirst();
+  if (!exists) return { ok: false, error: 'User not found.' };
+
+  await dbWrite
+    .insertInto('UserLink')
+    .values({ userId: input.userId, url: input.url, type: input.type })
+    .execute();
+
+  await logAction('addSocial', input.userId, input.moderatorId);
+  return { ok: true };
+}
+
+// MODERATION FLAGS on the moderator database's UserNotes row (Retool's RemoveDeserveMute).
+// `spamWhitelist` exempts an account from spam heuristics and `deservedMute` marks a mute as earned;
+// both have been in the schema and readable by nothing, so a whitelisted account looked identical to
+// an un-whitelisted one.
+//
+// The row is per-user but `UserNotes` holds MANY rows per user, so the flags are set across all of
+// them — matching how Retool's GUI write behaved, and keeping the flag a property of the account
+// rather than of whichever note happened to be edited last.
+export type ModerationFlag = 'spamWhitelist' | 'deservedMute';
+
+export async function setModerationFlag(input: {
+  userId: number;
+  flag: ModerationFlag;
+  value: boolean;
+  author: string;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  const db = getModeratorDb();
+  const result = await db
+    .updateTable('UserNotes')
+    .set({ [input.flag]: input.value })
+    .where('userId', '=', input.userId)
+    .executeTakeFirst();
+
+  // No note row yet — create one carrying the flag, or the toggle silently does nothing on exactly
+  // the accounts no moderator has written about.
+  if (Number(result.numUpdatedRows ?? 0) === 0) {
+    await db
+      .insertInto('UserNotes')
+      .values({
+        userId: input.userId,
+        notes: null,
+        lastUpdate: new Date(),
+        lastUpdateBy: input.author,
+        [input.flag]: input.value,
+      })
+      .execute();
+  }
+
+  await logAction(`${input.flag}:${input.value}`, input.userId, input.moderatorId);
+  return { ok: true };
+}
+
 // TIMED MUTES — moderator database. Retool's ActivateSystemMute / RevokeTimedMutes / ViewMutes.
 // The table is empty as of 2026-08-06, so this is built to the schema rather than to observed usage.
 //
