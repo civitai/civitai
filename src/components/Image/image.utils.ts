@@ -57,6 +57,7 @@ export const imagesQueryParamSchema = z
     hideAutoResources: booleanString(),
     hideManualResources: booleanString(),
     followed: booleanString(),
+    newCreators: booleanString(),
     fromPlatform: booleanString(),
     hidden: booleanString(),
     includeBaseModel: booleanString(),
@@ -97,6 +98,7 @@ export const imagesQueryParamSchema = z
     disableMinor: booleanString(),
     remixesOnly: booleanString(),
     nonRemixesOnly: booleanString(),
+    hideChallenges: booleanString(),
   })
   .partial();
 

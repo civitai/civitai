@@ -51,10 +51,7 @@ export const getBuzzBulkMultiplier = ({
  * Any `yellow`/`green` already present in the seed is stripped so the maturity
  * branch is the single source of truth for which domain currency applies.
  */
-function appendDomainCurrency(
-  baseTypes: BuzzSpendType[],
-  isSfw: boolean
-): BuzzSpendType[] {
+function appendDomainCurrency(baseTypes: BuzzSpendType[], isSfw: boolean): BuzzSpendType[] {
   const domainTypes: BuzzSpendType[] = baseTypes.filter(
     // Remove default yellow/green if provided.
     (type) => !['yellow', 'green'].includes(type)
@@ -74,6 +71,19 @@ export function getAllowedAccountTypes(
   baseTypes: BuzzSpendType[] = []
 ): BuzzSpendType[] {
   return appendDomainCurrency(baseTypes, features.isGreen);
+}
+
+/**
+ * The owner account a paid-access purchase pays into, given what the buyer spent.
+ *
+ * Blue pays out blue — the credit is non-withdrawable and must stay that way, or the purchase
+ * launders it into cashable currency. Everything else pays into yellow.
+ *
+ * Shared with the unpublish-refund guard, which has no other way to learn the payout account — the
+ * ledger's multi-transaction listing reports each leg by the account the BUYER spent from.
+ */
+export function paidAccessPayoutAccount(spendType: BuzzSpendType): BuzzSpendType {
+  return spendType === 'blue' ? 'blue' : 'yellow';
 }
 
 /**

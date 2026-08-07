@@ -454,15 +454,18 @@ describe('getMyAppAnalytics — OAuth scope gate', () => {
    *     Full (deliberately, so an opt-in bit is not dropped), so a token's real ceiling is
    *     its client's `allowedScopes | UserRead`.
    *   - `allowedScopes` written by RAW SQL MIGRATION — exactly how the one client
-   *     exceeding Full got its value (civitai-cli, 100663297, which is NOT a superset of
-   *     Full: bit 0 and none of 1..24, which is why the flip is unreachable in practice).
+   *     exceeding Full got its value (civitai-cli, now 100777985 after the AI-services
+   *     widening for issue #3681, which is still NOT a superset of Full: bits 0/14/15/16/
+   *     25/26 and none of 1..13 or 17..24, which is why the flip is unreachable in practice).
    *   - `allowedScopes` written by publish-request.service for `appblk-*` clients. Safe
    *     by construction (mapped bits are all below 25, and `grants: []` means no bearer
    *     token) rather than by any cap this test can assert on.
    *
-   * So: if either cap below is raised, this test goes red. If a MIGRATION grants some
-   * client `Full | <opt-in bit>`, nothing here will notice — that case is held only by
-   * inspection.
+   * So: if either cap below is raised, this test goes red. The MIGRATION case is no longer
+   * held by inspection — `src/server/services/oauth/__tests__/oauth-client-scope-grants.test.ts`
+   * enumerates every migration writing `"OauthClient"."allowedScopes"` and fails if the
+   * folded grant for any client is a strict superset of Full. Neither test covers a grant
+   * written outside a migration (a hand-run UPDATE), which remains inspection-only.
    */
   it('the two zod-validated credential surfaces reject a superset-of-Full mask', async () => {
     const { addApiKeyInputSchema } = await import('~/server/schema/api-key.schema');

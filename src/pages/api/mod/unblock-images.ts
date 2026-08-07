@@ -5,7 +5,11 @@ import { ImageSort, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/com
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { getImagesFromSearch, queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import {
+  dropBlockedImageDeleteQueue,
+  getImagesFromSearch,
+  queueImageSearchIndexUpdate,
+} from '~/server/services/image.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -89,6 +93,11 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
       data: { blockedFor: null },
     });
     console.log(`[unblock-images] DB update complete.`);
+
+    // This clears `blockedFor` without touching `ingestion`, so any row still sitting at
+    // ingestion='Blocked' would be armed for purge by trg_blocked_image_delete_queue on the
+    // very update that was meant to unblock it.
+    await dropBlockedImageDeleteQueue(updatedIds);
 
     // Update search index for the unblocked images
     console.log(`[unblock-images] Updating search index for ${updatedIds.length} images...`);

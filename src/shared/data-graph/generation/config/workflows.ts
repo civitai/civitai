@@ -68,6 +68,9 @@ const EDIT_IMG_IDS = [
   ECO.Boogu,
   ECO.Reve,
   ECO.MageFlow,
+  // Krea 2 edit is fully wired (graph variants + handler branch + diffusionModel
+  // base selection) but held back from the picker. Re-enable by uncommenting.
+  // ECO.Krea2,
 ];
 
 /** Image ecosystems that support image:create */
@@ -132,6 +135,7 @@ const TXT2VID_IDS = [
   ECO.Grok,
   ECO.Seedance,
   ECO.HappyHorse,
+  ECO.Flux3Video,
 ];
 
 /** I2V-only Wan ecosystems (no T2V support) — added to video:create with required images */
@@ -296,7 +300,15 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'First/Last Frame',
     description: 'Generate video from start and end images',
     category: 'video',
-    ecosystemIds: [ECO.Vidu, ECO.Kling, ECO.LTXV2, ECO.LTXV23, ECO.WanVideo27, ECO.MiniMaxH3],
+    ecosystemIds: [
+      ECO.Vidu,
+      ECO.Kling,
+      ECO.LTXV2,
+      ECO.LTXV23,
+      ECO.WanVideo27,
+      ECO.MiniMaxH3,
+      ECO.Flux3Video,
+    ],
     excludeModelVersionIds: [klingVersionIds.v1_6, klingVersionIds.v2, klingVersionIds.v2_5_turbo],
     variantOf: 'img2vid',
   },

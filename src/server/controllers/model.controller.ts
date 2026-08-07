@@ -115,6 +115,7 @@ import {
   upsertModel,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { getLatestModelAppeal } from '~/server/services/report.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags, getCreationBlockedTags } from '~/server/services/system-cache';
 import {
@@ -134,6 +135,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import { getPrimaryFile, selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import {
   GET_ALL_IMAGES_PER_MODEL,
@@ -141,6 +143,11 @@ import {
 } from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import {
+  filterModelMetaForClient,
+  resolveMinorAppeal,
+  resolveMinorFlagged,
+} from '~/server/utils/minor-flag-meta';
 import {
   allBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
@@ -361,7 +368,7 @@ export const getModelHandler = async ({
     const hideIf = (hidden: boolean, value: number) => (hidden ? null : value);
 
     const mappedVersions = filteredVersions.map((version) => {
-      const { paidAccess, licensingFee } = monetizationByVersion[version.id];
+      const { paidAccess, licensingFee, effectiveLicensingFee } = monetizationByVersion[version.id];
       const eaDonationGoal = donationGoalsByVersion[version.id] ?? null;
       const paidAccessGated =
         features.earlyAccessModel && !!paidAccess && isPaidAccessActive(paidAccess);
@@ -427,6 +434,7 @@ export const getModelHandler = async ({
       return {
         ...version,
         licensingFee,
+        effectiveLicensingFee,
         metrics: undefined,
         hiddenMetrics: versionHidden,
         rank: {
@@ -497,6 +505,10 @@ export const getModelHandler = async ({
       };
     });
 
+    // Gated here to skip the query for the vast majority of page views (visitors);
+    // resolveMinorAppeal below is the actual enforced boundary, independent of this.
+    const minorAppeal = isOwner ? await getLatestModelAppeal(model.id, model.user.id) : null;
+
     return {
       ...model,
       metrics: undefined,
@@ -513,8 +525,16 @@ export const getModelHandler = async ({
       },
       canGenerate: mappedVersions.some((v) => v.canGenerate),
       hasSuggestedResources: suggestedResources > 0,
+      // Owner-only: this is a publicProcedure, and whether a model is flagged
+      // (and by whom) is not a visitor's business.
+      minorFlagged: resolveMinorFlagged({
+        isOwner,
+        minor: model.minor,
+        meta: model.meta as ModelMeta | null,
+      }),
+      minorAppeal: resolveMinorAppeal({ isOwner, appeal: minorAppeal }),
       meta: model.meta
-        ? filterSensitiveProfanityData(model.meta as ModelMeta, ctx?.user?.isModerator)
+        ? filterModelMetaForClient(model.meta as ModelMeta, ctx?.user?.isModerator)
         : null,
       tagsOnModels:
         tagsOnModels[model.id]?.tags
@@ -563,6 +583,7 @@ export const getModelsInfiniteHandler = async ({
       const result = await getModelsWithImagesAndModelVersions({
         input,
         user: ctx.user,
+        domain: getRequestBoardDomainColor(ctx.req),
         imagesPerModel,
         biasImageSlice: slim,
         metricPrivacyEnabled,
@@ -618,9 +639,7 @@ export const getModelsPagedSimpleHandler = async ({
 
       return {
         ...model,
-        meta: model.meta
-          ? filterSensitiveProfanityData(model.meta as ModelMeta, isModerator)
-          : null,
+        meta: model.meta ? filterModelMetaForClient(model.meta as ModelMeta, isModerator) : null,
         modelVersion: version
           ? {
               ...version,

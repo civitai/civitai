@@ -1,5 +1,11 @@
 import { Button, Center, Divider, Loader, Modal, Stack, Text } from '@mantine/core';
-import { type ModelVersionTerms, generationPrice, generationTrialLimit } from '@civitai/buzz';
+import {
+  type ModelVersionTerms,
+  acceptsBlueBuzz,
+  generationPrice,
+  generationTrialLimit,
+  isPermanentGate,
+} from '@civitai/buzz';
 import { IconAlertCircle, IconBrush } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -14,6 +20,55 @@ import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
+
+/**
+ * One button per accepted currency. `BuzzTransactionButton` distributes a spend across the account
+ * types it's given rather than asking which to use, so offering a choice means one single-currency
+ * button each — matching what the server charges.
+ */
+const PurchaseTierButtons = ({
+  action,
+  amount,
+  loading,
+  disabled,
+  acceptsBlueBuzz,
+  onPurchase,
+}: {
+  action: string;
+  amount: number;
+  loading: boolean;
+  disabled: boolean;
+  acceptsBlueBuzz: boolean;
+  onPurchase: (payWithBlue: boolean) => void;
+}) => {
+  const features = useFeatureFlags();
+  const domainLabel = features.isGreen ? 'Green Buzz' : 'Yellow Buzz';
+
+  return (
+    <>
+      <BuzzTransactionButton
+        type="submit"
+        label={acceptsBlueBuzz ? `${action} with ${domainLabel}` : action}
+        loading={loading}
+        buzzAmount={amount}
+        onPerformTransaction={() => onPurchase(false)}
+        disabled={disabled}
+      />
+      {acceptsBlueBuzz && (
+        <BuzzTransactionButton
+          type="submit"
+          label={`${action} with Blue Buzz`}
+          loading={loading}
+          buzzAmount={amount}
+          exactAccountTypes={['blue']}
+          colorType="blue"
+          onPerformTransaction={() => onPurchase(true)}
+          disabled={disabled}
+        />
+      )}
+    </>
+  );
+};
 
 export const ModelVersionEarlyAccessPurchase = ({
   modelVersionId,
@@ -36,14 +91,19 @@ export const ModelVersionEarlyAccessPurchase = ({
   const downloadPrice = paidAccessTerms?.download?.price;
   const genPrice = paidAccessTerms ? generationPrice(paidAccessTerms) : undefined;
   const genTrialLimit = paidAccessTerms ? generationTrialLimit(paidAccessTerms) : 0;
+  const acceptsBlue = acceptsBlueBuzz(paidAccessTerms);
 
   const invalidateWhatIf = useInvalidateWhatIf();
 
-  const handlePurchase = async (type: 'download' | 'generation' = 'download') => {
+  const handlePurchase = async (
+    type: 'download' | 'generation' = 'download',
+    payWithBlue = false
+  ) => {
     try {
       await modelVersionEarlyAccessPurchase({
         modelVersionId,
         type,
+        payWithBlue,
       });
 
       showSuccessNotification({
@@ -73,6 +133,9 @@ export const ModelVersionEarlyAccessPurchase = ({
     .filter(Boolean)
     .join(' or ');
   const resourceLabel = getDisplayName(modelVersion?.model.type ?? '');
+  // A permanent gate never becomes free, so the timed copy (and its countdown to nothing) would tell the
+  // buyer to just wait it out.
+  const permanent = !!paidAccess && isPermanentGate(paidAccess);
 
   return (
     <Modal {...dialog} title="Get access to this Model Version!" size="sm" withCloseButton>
@@ -84,34 +147,41 @@ export const ModelVersionEarlyAccessPurchase = ({
         <Stack>
           {reason === 'generation' && supportsGeneration && !supportsGenerationPurchase && (
             <AlertWithIcon icon={<IconAlertCircle />} size="xs" color="yellow" iconColor="yellow">
-              The creator of this {resourceLabel} has not made generation available during the early
-              access period.
+              The creator of this {resourceLabel} has not made generation available
+              {permanent ? '' : ' during the early access period'}.
             </AlertWithIcon>
           )}
           {reason === 'download' && !supportsDownloadPurchase && (
             <AlertWithIcon icon={<IconAlertCircle />} size="xs" color="yellow" iconColor="yellow">
-              The creator of this {resourceLabel} has not made download access available during the
-              early access period.
+              The creator of this {resourceLabel} has not made download access available
+              {permanent ? '' : ' during the early access period'}.
             </AlertWithIcon>
           )}
-          <Text size="sm">
-            The creator of this {resourceLabel} has set this version to early access, You can{' '}
-            {userCanDoLabel} with this {resourceLabel} by purchasing it during the early access
-            period or just waiting until it becomes public. The remaining time for early access is{' '}
-            <Text component="span" fw="bold">
-              <Countdown endTime={paidAccess?.endsAt ?? new Date()} />
+          {permanent ? (
+            <Text size="sm">
+              The creator of this {resourceLabel} charges for access. You can {userCanDoLabel} with
+              this {resourceLabel} by purchasing it — access is permanent and does not expire.
             </Text>
-          </Text>
+          ) : (
+            <Text size="sm">
+              The creator of this {resourceLabel} has set this version to early access, You can{' '}
+              {userCanDoLabel} with this {resourceLabel} by purchasing it during the early access
+              period or just waiting until it becomes public. The remaining time for early access is{' '}
+              <Text component="span" fw="bold">
+                <Countdown endTime={paidAccess?.endsAt ?? new Date()} />
+              </Text>
+            </Text>
+          )}
           <Stack>
             {supportsDownloadPurchase && (
               <Stack gap="xs">
-                <BuzzTransactionButton
-                  type="submit"
-                  label="Get Download Access"
+                <PurchaseTierButtons
+                  action="Get Download Access"
+                  amount={downloadPrice as number}
                   loading={purchasingModelVersionEarlyAccess}
-                  buzzAmount={downloadPrice as number}
-                  onPerformTransaction={() => handlePurchase('download')}
                   disabled={canDownload}
+                  acceptsBlueBuzz={acceptsBlue}
+                  onPurchase={(payWithBlue) => handlePurchase('download', payWithBlue)}
                 />
                 <Text size="xs" c="dimmed">
                   Download access also grants generation access.
@@ -121,13 +191,13 @@ export const ModelVersionEarlyAccessPurchase = ({
 
             {supportsGenerationPurchase && (
               <Stack gap="xs">
-                <BuzzTransactionButton
-                  type="submit"
-                  label="Get Generation Access"
+                <PurchaseTierButtons
+                  action="Get Generation Access"
+                  amount={genPrice as number}
                   loading={purchasingModelVersionEarlyAccess}
-                  buzzAmount={genPrice as number}
-                  onPerformTransaction={() => handlePurchase('generation')}
                   disabled={!generationRequiresPurchase}
+                  acceptsBlueBuzz={acceptsBlue}
+                  onPurchase={(payWithBlue) => handlePurchase('generation', payWithBlue)}
                 />
                 <Text size="xs" c="dimmed">
                   By purchasing generation access, you will not be able to download this resource,

@@ -55,6 +55,14 @@ function loadEnv() {
 loadEnv();
 
 const { Client } = pg;
+
+// `timestamp` (OID 1114) carries no offset and node-postgres parses it in the
+// reader's local timezone, silently shifting every value we print as UTC.
+const parseTimestamp = pg.types.getTypeParser(1114);
+pg.types.setTypeParser(1114, (value) =>
+  /^-?infinity$/i.test(value) ? parseTimestamp(value) : new Date(value + 'Z')
+);
+
 const DEFAULT_TIMEOUT_SECONDS = 30;
 
 // Parse arguments

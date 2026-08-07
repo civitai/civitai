@@ -101,7 +101,7 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) =
                         <Text size="lg">{leaderboard.title}</Text>
                         <Button
                           component={Link}
-                          href={`/leaderboard/${leaderboard.id}`}
+                          href={leaderboard.moreHref ?? `/leaderboard/${leaderboard.id}`}
                           rightSection={<IconArrowRight size={16} />}
                           variant="subtle"
                           size="compact-xs"

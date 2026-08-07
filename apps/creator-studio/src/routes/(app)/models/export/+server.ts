@@ -2,7 +2,8 @@ import type { RequestHandler } from './$types';
 import { getCreatorVersionsForCsv } from '$lib/server/models';
 import { buildFeeCsv } from '$lib/server/monetization/fee-csv';
 
-// CSV export of the creator's licensing fees, filtered to match the current /models view (early-access 2.2).
+// CSV export of the creator's monetization config — licensing fee, paid-access gate and donation goal per
+// version — filtered to match the current /models view.
 export const GET: RequestHandler = async ({ locals, url }) => {
   const p = url.searchParams;
   const status = p.get('status');
@@ -24,7 +25,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
   return new Response(buildFeeCsv(rows), {
     headers: {
       'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': 'attachment; filename="licensing-fees.csv"',
+      'Content-Disposition': 'attachment; filename="model-monetization.csv"',
     },
   });
 };

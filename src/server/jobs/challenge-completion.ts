@@ -45,6 +45,7 @@ export async function runChallengeCompletion() {
             type: 'error',
             name: 'challenge-completion',
             message: err.message,
+            stack: err.stack,
             challengeId: challenge.challengeId,
           });
           log(`Failed to complete challenge ${challenge.challengeId}:`, error);
@@ -76,6 +77,7 @@ export async function runChallengeCompletion() {
             type: 'error',
             name: 'challenge-reconciliation',
             message: err.message,
+            stack: err.stack,
             challengeId: challenge.challengeId,
           });
           log(`Failed to reconcile challenge ${challenge.challengeId}:`, error);

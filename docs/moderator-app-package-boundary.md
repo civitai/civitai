@@ -45,7 +45,7 @@ Everything below is organized around that closure test.
                                                      biggest Tier-A item.
 ```
 
-> The new `@civitai/moderator-server`, `@civitai/shared-schema`, and `@civitai/ui-common` are **domain/feature packages**, a *higher tier* than the base infra packages. Per the handoff, base packages stay infra-only and independent; higher-level packages **may** compose multiple base packages. These do not violate the [base-package rules](../C:/Users/bkdie/.claude/projects/c--Work-model-share-monorepo-bootstrap/memory/monorepo-bootstrap-base-package-rules.md) because they are not base packages.
+> The new `@civitai/moderator-server`, `@civitai/shared-schema`, and `@civitai/ui-common` are **domain/feature packages**, a *higher tier* than the base infra packages. Per the handoff, base packages stay infra-only and independent; higher-level packages **may** compose multiple base packages. These do not violate the [base-package rules](../<local-path>/.claude/projects/c--Work-model-share-monorepo-bootstrap/memory/monorepo-bootstrap-base-package-rules.md) because they are not base packages.
 
 ## 3. Already solved by the completed migration ✅
 

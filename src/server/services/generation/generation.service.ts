@@ -843,8 +843,8 @@ export async function toggleGenerationDisabled({
   if (!isModerator) throw throwAuthorizationError();
 
   // Flip the bit in a single atomic statement (`#` is Postgres bitwise XOR).
-  // `flags` is shared with DisablePayout/NotDerivative, so a read-modify-write
-  // would clobber a concurrent write to those other bits.
+  // `flags` is shared with NotDerivative, so a read-modify-write would clobber a
+  // concurrent write to those other bits.
   const [updated] = await dbWrite.$queryRaw<{ modelId: number; flags: number }[]>`
     UPDATE "ModelVersion"
     SET flags = flags # ${ModelVersionFlag.GenerationDisabled}
@@ -945,7 +945,12 @@ export function getResourceCanGenerate({
     (resource.covered || explicitCoveredModelVersionIds.includes(resource.id)) && !isUnavailable;
 
   const validGenerationStatuses = ['Draft', 'Training', 'Published'];
-  const hasValidStatus = validGenerationStatuses.includes(resource.status);
+  // Moderators additionally get 'Scheduled' so a release can be exercised end to
+  // end before its publish time - without it, a scheduled launch is untestable
+  // by anyone until the cron flips it.
+  const hasValidStatus =
+    validGenerationStatuses.includes(resource.status) ||
+    (resource.status === 'Scheduled' && !!user.isModerator);
   const isPrivate =
     resource.availability === 'Private' || ['Draft', 'Training'].includes(resource.status);
 

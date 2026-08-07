@@ -13,6 +13,8 @@ const {
   mockLimitConcurrency,
   mockUnpublishModelById,
   mockSetNxKeepTtlWithEx,
+  mockCheckMinorHashOnScan,
+  mockIsFlipt,
 } = vi.hoisted(() => {
   // Test-local copy of the real error class so rescanModel's instanceof
   // check resolves without importing the real orchestrator module.
@@ -65,6 +67,8 @@ const {
     }),
     mockUnpublishModelById: vi.fn().mockResolvedValue({}),
     mockSetNxKeepTtlWithEx: vi.fn().mockResolvedValue(true),
+    mockCheckMinorHashOnScan: vi.fn().mockResolvedValue('skipped'),
+    mockIsFlipt: vi.fn().mockResolvedValue(true),
   };
 });
 
@@ -131,6 +135,18 @@ vi.mock('~/server/redis/client', () => ({
 
 vi.mock('~/server/services/model-version.service', () => ({ addLinkedComponent: vi.fn() }));
 
+vi.mock('~/server/services/minor-hash.service', () => ({
+  checkMinorHashOnScan: mockCheckMinorHashOnScan,
+  MINOR_HASH_FILE_TYPE: 'Model',
+}));
+
+// Default ON so the existing wiring tests exercise the real path; the gate's
+// off-state is asserted explicitly below.
+vi.mock('~/server/flipt/client', () => ({
+  isFlipt: mockIsFlipt,
+  FLIPT_FEATURE_FLAGS: { MINOR_HASH_AUTO_FLAG: 'minor-hash-auto-flag' },
+}));
+
 import {
   applyScanOutcome,
   examinePickleImports,
@@ -146,6 +162,7 @@ import { constants } from '~/server/common/constants';
 describe('model-file-scan.service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsFlipt.mockResolvedValue(true);
   });
 
   // ==========================================================================
@@ -763,9 +780,7 @@ describe('model-file-scan.service', () => {
       );
 
       const createManyCall = mockDbWrite.modelFileHash.createMany.mock.calls[0][0];
-      expect(createManyCall.data).toEqual([
-        { fileId: 1, type: ModelHashType.SHA256, hash: 'sha' },
-      ]);
+      expect(createManyCall.data).toEqual([{ fileId: 1, type: ModelHashType.SHA256, hash: 'sha' }]);
     });
 
     it('maps clamScan status "clean" to virusScan.Success even when exitCode is null', async () => {
@@ -1225,9 +1240,7 @@ describe('model-file-scan.service', () => {
 
       await unpublishBlockedModel(50);
 
-      expect(mockUnpublishModelById).toHaveBeenCalledWith(
-        expect.objectContaining({ meta: {} })
-      );
+      expect(mockUnpublishModelById).toHaveBeenCalledWith(expect.objectContaining({ meta: {} }));
     });
   });
 
@@ -1246,25 +1259,47 @@ describe('model-file-scan.service', () => {
         modelVersion: { modelId: 1, model: { userId: 999 } },
       });
       vi.mocked(findOfficialFileByHash).mockResolvedValue({
-        versionId: 42, fileId: 900, modelId: 7, modelName: 'Boogu VAE',
-        versionName: 'v1', fileName: 'boogu.vae.safetensors', sizeKB: 300_000, componentType: 'VAE',
+        versionId: 42,
+        fileId: 900,
+        modelId: 7,
+        modelName: 'Boogu VAE',
+        versionName: 'v1',
+        fileName: 'boogu.vae.safetensors',
+        sizeKB: 300_000,
+        componentType: 'VAE',
       });
 
-      await applyScanOutcome({ fileId: 500, hashes: { SHA256: 'abc' }, virusScan: { result: ScanResultCode.Success, message: null } });
+      await applyScanOutcome({
+        fileId: 500,
+        hashes: { SHA256: 'abc' },
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
 
       expect(addLinkedComponent).toHaveBeenCalledWith(
         expect.objectContaining({
-          id: 10, targetVersionId: 42, targetFileId: 900, replaceFileId: 500,
-          componentType: 'VAE', userId: OFFICIAL, isModerator: true,
+          id: 10,
+          targetVersionId: 42,
+          targetFileId: 900,
+          replaceFileId: 500,
+          componentType: 'VAE',
+          userId: OFFICIAL,
+          isModerator: true,
         })
       );
     });
 
     it('does nothing when the uploader IS official', async () => {
       mockDbWrite.modelFile.findUnique.mockResolvedValue({
-        id: 501, type: 'VAE', modelVersionId: 11, modelVersion: { modelId: 2, model: { userId: OFFICIAL } },
+        id: 501,
+        type: 'VAE',
+        modelVersionId: 11,
+        modelVersion: { modelId: 2, model: { userId: OFFICIAL } },
       });
-      await applyScanOutcome({ fileId: 501, hashes: { SHA256: 'abc' }, virusScan: { result: ScanResultCode.Success, message: null } });
+      await applyScanOutcome({
+        fileId: 501,
+        hashes: { SHA256: 'abc' },
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
       expect(findOfficialFileByHash).not.toHaveBeenCalled();
       expect(addLinkedComponent).not.toHaveBeenCalled();
     });
@@ -1273,23 +1308,131 @@ describe('model-file-scan.service', () => {
       // addLinkedComponent refuses to delete a Model-typed file, so the post-scan
       // dedup never attempts it; the client prevents that case before upload.
       mockDbWrite.modelFile.findUnique.mockResolvedValue({
-        id: 503, type: 'Model', modelVersionId: 13, modelVersion: { modelId: 4, model: { userId: 999 } },
+        id: 503,
+        type: 'Model',
+        modelVersionId: 13,
+        modelVersion: { modelId: 4, model: { userId: 999 } },
       });
-      await applyScanOutcome({ fileId: 503, hashes: { SHA256: 'abc' }, virusScan: { result: ScanResultCode.Success, message: null } });
+      await applyScanOutcome({
+        fileId: 503,
+        hashes: { SHA256: 'abc' },
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
       expect(findOfficialFileByHash).not.toHaveBeenCalled();
       expect(addLinkedComponent).not.toHaveBeenCalled();
     });
 
     it('never throws out of scan finalization when dedup fails', async () => {
       mockDbWrite.modelFile.findUnique.mockResolvedValue({
-        id: 502, type: 'VAE', modelVersionId: 12, modelVersion: { modelId: 3, model: { userId: 999 } },
+        id: 502,
+        type: 'VAE',
+        modelVersionId: 12,
+        modelVersion: { modelId: 3, model: { userId: 999 } },
       });
       vi.mocked(findOfficialFileByHash).mockRejectedValue(new Error('boom'));
       await expect(
-        applyScanOutcome({ fileId: 502, hashes: { SHA256: 'abc' }, virusScan: { result: ScanResultCode.Success, message: null } })
+        applyScanOutcome({
+          fileId: 502,
+          hashes: { SHA256: 'abc' },
+          virusScan: { result: ScanResultCode.Success, message: null },
+        })
       ).resolves.toBeUndefined();
       // prove the error path was actually entered (not skipped) before it was swallowed
       expect(findOfficialFileByHash).toHaveBeenCalled();
+    });
+  });
+
+  // ==========================================================================
+  // applyScanOutcome — minor-hash-detection wiring
+  // ==========================================================================
+  describe('applyScanOutcome — minor-hash wiring', () => {
+    it('calls checkMinorHashOnScan with the fileId/modelId/userId/sha256 derived from the scanned file', async () => {
+      mockDbWrite.modelFile.findUnique.mockResolvedValue({
+        id: 700,
+        type: 'Model',
+        modelVersionId: 30,
+        modelVersion: { modelId: 55, model: { userId: 777 } },
+      });
+      mockDbWrite.modelFileHash.findMany.mockResolvedValue([]);
+      mockDbWrite.$transaction.mockResolvedValue([]);
+
+      await applyScanOutcome({
+        fileId: 700,
+        hashes: { SHA256: 'deadbeef' },
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
+
+      expect(mockCheckMinorHashOnScan).toHaveBeenCalledWith({
+        // the scanned file, not just its model: the clear stamp is time-scoped
+        // against this file's createdAt
+        fileId: 700,
+        modelId: 55,
+        userId: 777,
+        sha256: 'deadbeef',
+      });
+    });
+
+    // The kill switch has to hold on the scan path specifically: this is the
+    // only auto-flag that fires on live uploads, so if it keeps running after
+    // the flag is off, throwing the switch does nothing where it matters most.
+    it('does not call checkMinorHashOnScan when the kill switch is off', async () => {
+      mockIsFlipt.mockResolvedValue(false);
+      mockDbWrite.modelFile.findUnique.mockResolvedValue({
+        id: 703,
+        type: 'Model',
+        modelVersionId: 33,
+        modelVersion: { modelId: 58, model: { userId: 780 } },
+      });
+      mockDbWrite.modelFileHash.findMany.mockResolvedValue([]);
+      mockDbWrite.$transaction.mockResolvedValue([]);
+
+      await applyScanOutcome({
+        fileId: 703,
+        hashes: { SHA256: 'deadbeef' },
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
+
+      expect(mockCheckMinorHashOnScan).not.toHaveBeenCalled();
+      // the rest of the scan outcome must still be applied
+      expect(mockDbWrite.modelFile.update).toHaveBeenCalled();
+    });
+
+    it('does not call checkMinorHashOnScan for a non-Model file type', async () => {
+      // The sweep and the review queue both only cover MINOR_HASH_FILE_TYPE, so a
+      // match here would auto-flag off-sweep or queue somewhere unreachable. Every
+      // other test in this block mocks type: 'Model', which hid the gap.
+      mockDbWrite.modelFile.findUnique.mockResolvedValue({
+        id: 702,
+        type: 'Training Data',
+        modelVersionId: 32,
+        modelVersion: { modelId: 57, model: { userId: 779 } },
+      });
+      mockDbWrite.modelFileHash.findMany.mockResolvedValue([]);
+      mockDbWrite.$transaction.mockResolvedValue([]);
+
+      await applyScanOutcome({
+        fileId: 702,
+        hashes: { SHA256: 'deadbeef' },
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
+
+      expect(mockCheckMinorHashOnScan).not.toHaveBeenCalled();
+    });
+
+    it('does not call checkMinorHashOnScan when the outcome carries no hashes', async () => {
+      mockDbWrite.modelFile.findUnique.mockResolvedValue({
+        id: 701,
+        type: 'Model',
+        modelVersionId: 31,
+        modelVersion: { modelId: 56, model: { userId: 778 } },
+      });
+
+      await applyScanOutcome({
+        fileId: 701,
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
+
+      expect(mockCheckMinorHashOnScan).not.toHaveBeenCalled();
     });
   });
 });

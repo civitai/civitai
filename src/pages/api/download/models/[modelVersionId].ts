@@ -1,7 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import requestIp from 'request-ip';
 import * as z from 'zod';
-import { clickhouse, Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -11,6 +10,8 @@ import { bustUserDownloadsCache } from '~/server/services/user.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { createLimiter } from '~/server/utils/rate-limiting';
+import { getTrustedClientIp, parseIpBlocklist, parseUserBlocklist } from '~/server/utils/client-ip';
+import { fetchDownloadCount } from '~/server/utils/download-count';
 import { isRequestFromBrowser } from '~/server/utils/request-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 
@@ -27,20 +28,9 @@ const schema = z.object({
 const downloadLimiter = createLimiter({
   counterKey: REDIS_SYS_KEYS.DOWNLOAD.COUNT,
   limitKey: REDIS_SYS_KEYS.DOWNLOAD.LIMITS,
-  fetchCount: async (userKey) => {
-    const isIP = userKey.includes(':') || userKey.includes('.');
-    if (!clickhouse) return 0;
-
-    const data = await clickhouse.$query<{ count: number }>`
-      SELECT
-        COUNT(*) as count
-      FROM modelVersionEvents
-      WHERE type = 'Download' AND time > subtractHours(now(), 24)
-      ${isIP ? `AND ip = '${userKey}'` : `AND userId = ${userKey}`}
-    `;
-    const count = data[0]?.count ?? 0;
-    return count;
-  },
+  // Extracted to ~/server/utils/download-count so the key-shape validation that
+  // makes this query safe to build has a test of its own.
+  fetchCount: fetchDownloadCount,
 });
 
 export default PublicEndpoint(
@@ -62,26 +52,59 @@ export default PublicEndpoint(
     }
 
     try {
-      // Get ip so that we can block exploits we catch
-      const ip = requestIp.getClientIp(req);
-      const ipBlacklist = (
-        ((await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ??
-        ''
-      ).split(',');
+      // Get ip so that we can block exploits we catch. Derived via getTrustedClientIp
+      // (edge-attested or transport peer only) — an enforcement control must not key
+      // on an address the caller supplies, and for anonymous callers this same value
+      // is the download-quota bucket below. Do not swap this for an inline resolver.
+      //
+      // Operator note before you add an entry to `ip-blacklist`: a request that
+      // did not transit the Cloudflare edge is attributed to the transport peer,
+      // so where that peer is a shared hop, listing its address blocks all such
+      // traffic to every download route at once. See `parseIpBlocklist`.
+      const ip = getTrustedClientIp(req);
+      const ipBlacklist = parseIpBlocklist(
+        (await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value
+      );
       if (ip && ipBlacklist.includes(ip)) return errorResponse(403, 'Forbidden');
 
       // Check if user is blacklisted
       const session = await getServerAuthSession({ req, res });
       if (!!session?.user) {
-        const userBlacklist = (
-          ((await dbRead.keyValue.findUnique({ where: { key: 'user-blacklist' } }))
-            ?.value as string) ?? ''
-        ).split(',');
+        const userBlacklist = parseUserBlocklist(
+          (await dbRead.keyValue.findUnique({ where: { key: 'user-blacklist' } }))?.value
+        );
         if (userBlacklist.includes(session.user.id.toString()))
           return errorResponse(403, 'Forbidden');
       }
 
       // Check if user has a concerning number of downloads
+      //
+      // 🔴 READ THIS BEFORE KEYING AN ANONYMOUS DOWNLOAD LIMIT ON THIS BUCKET.
+      //
+      // For an authenticated caller `userKey` is the user id and each account
+      // counts separately. For an ANONYMOUS caller it is `ip`, which comes from
+      // getTrustedClientIp: a request that did not transit the Cloudflare edge
+      // is attributed to the transport peer, so wherever that peer is a shared
+      // hop, every such caller lands on ONE counter.
+      //
+      // That collapse is fine for the blocklist above (a membership test
+      // against a curated list) and it is NOT fine for a counter with a
+      // threshold: a shared counter is driven by the aggregate volume of
+      // unrelated callers, so when it trips it 429s all of them together, none
+      // of whom did anything the limit was aimed at. The people it lands on are
+      // exactly the ones who reached us without edge transit.
+      //
+      // The COUPLING is the point. `hasExceededLimit` reads a bucket's
+      // threshold out of a redis hash, and the two cases are symmetric: a
+      // bucket whose threshold is unset is counted but not enforced, and a
+      // bucket whose threshold is set shares one counter across every
+      // non-edge-attested anonymous caller. Neither is a property of this
+      // file — the hash decides which one applies, so this code is correct
+      // under both and the design question is unaffected by which holds.
+      //
+      // Before setting a threshold for the anonymous bucket, give this surface
+      // a key that does not collapse, or scope the limit to edge-attested
+      // requests.
       const isAuthed = !!session?.user;
       const userKey = session?.user?.id?.toString() ?? ip;
       if (!userKey) return errorResponse(403, 'Forbidden');
@@ -188,16 +211,20 @@ export default PublicEndpoint(
 
         const now = new Date();
 
+        // An unpublished version is only reachable by its owner and by internal services — the scanner
+        // fetches the file minutes after upload, which was landing a Download event (userId -1,
+        // `civitai-spine` UA) and leaving every draft showing 1 download before it went live.
         const tracker = new Tracker(req, res);
-        await tracker.modelVersionEvent({
-          type: 'Download',
-          modelId: fileResult.modelId,
-          modelVersionId,
-          fileId: fileResult.fileId,
-          nsfw: fileResult.nsfw,
-          earlyAccess: fileResult.inEarlyAccess,
-          time: now,
-        });
+        if (fileResult.published)
+          await tracker.modelVersionEvent({
+            type: 'Download',
+            modelId: fileResult.modelId,
+            modelVersionId,
+            fileId: fileResult.fileId,
+            nsfw: fileResult.nsfw,
+            earlyAccess: fileResult.inEarlyAccess,
+            time: now,
+          });
 
         // Bust the downloads cache so the user sees their download immediately
         if (session?.user?.id) {

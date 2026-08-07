@@ -26,7 +26,7 @@ export type UserEngagementType = "Follow" | "Hide" | "Block";
 
 export type LinkType = "Sponsorship" | "Social" | "Other";
 
-export type ModelType = "Checkpoint" | "TextualInversion" | "Hypernetwork" | "AestheticGradient" | "LORA" | "LoCon" | "DoRA" | "Controlnet" | "Upscaler" | "MotionModule" | "VAE" | "TextEncoder" | "UNet" | "CLIPVision" | "Poses" | "Wildcards" | "Workflows" | "Detection" | "VisionLanguage" | "CLIP" | "LLM" | "Other";
+export type ModelType = "Checkpoint" | "TextualInversion" | "Hypernetwork" | "AestheticGradient" | "LORA" | "LoCon" | "DoRA" | "Controlnet" | "Upscaler" | "MotionModule" | "VAE" | "TextEncoder" | "UNet" | "CLIPVision" | "Poses" | "Wildcards" | "Workflows" | "ComfyWorkflows" | "Detection" | "VisionLanguage" | "CLIP" | "LLM" | "Other";
 
 export type ImportStatus = "Pending" | "Processing" | "Failed" | "Completed";
 
@@ -138,7 +138,7 @@ export type CollectionItemStatus = "ACCEPTED" | "REVIEW" | "REJECTED";
 
 export type CollectionContributorPermission = "VIEW" | "ADD" | "ADD_REVIEW" | "MANAGE";
 
-export type HomeBlockType = "Collection" | "Announcement" | "Leaderboard" | "Social" | "Event" | "CosmeticShop" | "FeaturedModelVersion" | "FeaturedCollections";
+export type HomeBlockType = "Collection" | "Announcement" | "Leaderboard" | "Social" | "Event" | "CosmeticShop" | "FeaturedModelVersion" | "FeaturedCollections" | "Feed";
 
 export type Currency = "USD" | "BUZZ" | "USDC";
 
@@ -2836,6 +2836,7 @@ export interface Leaderboard {
   query: string;
   active: boolean;
   public: boolean;
+  domain: DomainColor[];
   results?: LeaderboardResult[];
 }
 

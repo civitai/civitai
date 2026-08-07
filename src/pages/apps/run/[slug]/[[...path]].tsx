@@ -207,6 +207,8 @@ export default function AppPage(props: PageProps) {
           blockInstanceId={blockInstanceId}
           appName={appName}
           iframeSrc={iframeSrc}
+          // The public full-page run surface.
+          surface="page-run"
           sandbox={sandbox}
           trustTier={trustTier}
           slug={slug}

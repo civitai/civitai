@@ -168,13 +168,39 @@ async function main(): Promise<number> {
   }
 
   const catalog = await loadCatalog(options);
+  // Sanity-check BEFORE dumping, not only before comparing. The STALE message this tool
+  // prints tells an operator to recapture with `--dump-catalog`, and without this that
+  // recapture could happily emit a catalog the very next `drift` run would reject — the
+  // reserved-word `NOTNULL` read, which succeeds and returns a constant `true` for every
+  // column, being the motivating case. Failing at capture time is the cheap end.
+  assertCatalogSanity(catalog);
+
   if (options.dumpCatalog) {
-    process.stdout.write(`${JSON.stringify(catalog)}\n`);
+    // Stamp the capture instant. A frozen catalog decays — every column created after it is
+    // invisible to a comparison against it — and without a date on the artefact that decay
+    // cannot be reported by anything downstream. Read from a --catalog file, an existing
+    // stamp is preserved rather than refreshed: it dates the CAPTURE, not the re-dump.
+    const stamped: DbCatalog = {
+      ...catalog,
+      capturedAt: catalog.capturedAt ?? new Date().toISOString(),
+    };
+    // Indented, and the committed snapshot is `.prettierignore`d to match. Single-line JSON
+    // made a CONTENT-IDENTICAL re-dump of the committed fixture a 21,522-line diff, which is
+    // the same unreviewable-diff problem `drift-baseline.json` was fixed for — and worse
+    // here, because the gate's own STALE message tells you to run this command. Prettier
+    // cannot be the owner instead: it collapses short arrays (`"columns": ["userId"]`) in a
+    // way `JSON.stringify` will not reproduce, so the two disagree by 3,598 lines and the
+    // artefact only stays clean if every operator remembers to run a formatter afterwards.
+    // Nothing enforces that, and `prettier --check` on a MODIFIED file is report-only here.
+    // One owner, no discipline required: a re-dump of the committed snapshot is a zero-line
+    // diff.
+    //
+    // (3,598 is measured with the file IN the repo, where `.prettierrc` resolves and sets
+    // printWidth 100. Copying it to /tmp first gives 3,589 — prettier's default width 80 —
+    // which is a fact about where the measurement was taken, not about these two formats.)
+    process.stdout.write(`${JSON.stringify(stamped, null, 2)}\n`);
     return 0;
   }
-
-  // Fails loudly on a catalog read that answered uniformly — see compare.ts.
-  assertCatalogSanity(catalog);
 
   const schema = parsePrismaSchema(readFileSync(options.schemaPath, 'utf8'));
   const report = compareSchemaToCatalog(schema, catalog);

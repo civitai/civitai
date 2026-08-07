@@ -135,8 +135,12 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
     userSettings: Record<string, unknown>;       // per-viewer prefs from block_user_settings (e.g. SET_USER_CHECKPOINT)
   };
   viewer: {
+    /** @deprecated identity disclosed unconditionally at load — use GET_VIEWER */
     id: number;
+    /** @deprecated same — use GET_VIEWER */
     username: string | null;
+    signedIn?: true;                   // v2. Literally `true`; ABSENT when anon,
+                                       // because an anon viewer has no object at all.
     // NOTE: moderation `status` (ban/mute) is intentionally NOT sent to the
     // iframe in this render-time payload — it's a viewer-privacy leak. A block
     // that needs a fresh, authoritative viewer (incl. `status: 'active'|'muted'`)
@@ -144,10 +148,76 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
     // `blocks.getMyViewer`), the successor to the deprecated /api/v1/blocks/me
     // call.
   } | null;                            // null for anon viewers
-  theme: 'light' | 'dark';             // matches host color scheme
+  theme: 'light' | 'dark';             // host color scheme AT MOUNT — see "Theme changes"
   renderMode: 'iframe' | 'inline';     // always 'iframe' today (the inline host is a stub)
 }
 ```
+
+#### `viewer.signedIn`, and what "deprecated" means here (v2)
+
+`viewer.signedIn` is the forward-looking MINIMAL viewer signal and the only
+viewer field a new block should read: it answers "is someone signed in?", which
+is what almost every block actually branches on. It is literally `true` when
+present, and **absent for an anonymous viewer** — because an anonymous viewer has
+no `viewer` object at all (`viewer: null`). Do not expect `signedIn: false`; it
+never appears.
+
+`viewer.id` / `viewer.username` are **deprecated but still sent, and will keep
+being sent**. Deprecated because identity reaches the block unconditionally at
+load, before the viewer has interacted with it, with nothing recording that it
+happened; the replacement is `GET_VIEWER` (`blocks.getMyViewer`), which requires
+the block to **ask** — a round-trip gated on the block having declared and been
+granted the `user:read:self` scope, self-bound to the token subject, and
+rate-limited per block instance. Still sent because the `isValidBlockInitPayload`
+guard compiled into already-deployed bundles **rejects the whole payload** without
+a numeric `viewer.id` — removing it would blank every deployed block at once.
+Same story for `blockId` / `appId`.
+
+⚠️ **Deprecating those two fields does not end identity disclosure — on either
+surface.** A BLOCK_INIT carries viewer identity through **three** channels, and
+the deprecation covers one:
+
+1. `viewer.id` / `viewer.username` — deprecated (this section).
+2. `context.viewerUserId` / `context.viewerUsername` — **full-page surface only.**
+   `PageBlockHost` does not project its context, so `BLOCK_INIT.context` on the
+   `app.page` surface still carries both verbatim. (The model-slot host _does_
+   project, and drops both.) Those page-context fields are deprecated too, but
+   nothing has been removed from the wire.
+3. `token.raw` — **both surfaces, undeprecated, and not going away.** The block
+   token is a plain RS256 JWT, not an opaque handle: its `sub` claim is
+   `user:<id>` for a signed-in viewer (see "Tokens" above), so any block can read
+   the viewer's numeric id by base64url-decoding a value it was handed — no
+   scope, no round-trip, and nothing server-side can observe that it did. This is
+   not a bug to be closed: the token _is_ the auth mechanism and the block needs
+   it.
+
+So what the deprecation actually buys is narrower than "identity is no longer
+disclosed": on the model slot it removes the **username** from the unconditional
+payload (the token's `sub` carries only the id), and on both surfaces it turns a
+convenient typed field read into a deliberate JWT decode. The token discloses on
+exactly the same condition the `viewer` object does — `sub` is `anon` for an
+anonymous viewer, precisely when `viewer` is `null`. Treat `GET_VIEWER` as the
+**supported** way to learn who the viewer is, and expect the id to remain
+derivable from the token regardless.
+
+### Theme changes
+
+`BLOCK_INIT.theme` is the theme **at mount**, and it cannot move afterwards: the
+SDK dedupes `BLOCK_INIT` (only the first is honored) and the host deliberately
+FREEZES the init URL fragment (`#civitai-block=v1&theme=…`, where that gate is
+on) at mount, so a toggle can never re-navigate a third-party frame. The live
+value arrives as a host→block push instead:
+
+- **`THEME_CHANGE`** — pushed whenever the viewer flips the site's color scheme,
+  carrying `{ theme: 'light' | 'dark' }`. Fire-and-forget; nothing is awaited. It
+  is sent only after the first `BLOCK_INIT` has gone out (before that there is
+  nothing to talk to). BOTH host surfaces push it — the model slot
+  (`IframeHost.tsx`) and the `/apps/run/<slug>` page (`PageBlockHost.tsx`).
+
+Handling it is **optional**: a block on an older SDK has no listener, its
+transport drops the message, and it keeps rendering its mount-time theme. A block
+that does listen should re-theme in place — the frame is never re-navigated for a
+theme change.
 
 ### Token refresh
 
@@ -156,9 +226,31 @@ Two flows, both delivering the same wrapped-token shape:
 1. **Host-pushed**: when the host refreshes the token (~13 min cadence) the
    iframe receives `TOKEN_REFRESH` with the new `token` object. No user
    action required.
-2. **Iframe-initiated**: the iframe sends `REQUEST_TOKEN` (optionally with a
-   `requestId`) and the host replies with `TOKEN_REFRESH_RESPONSE` carrying
-   the current token. Useful right before an expensive orchestrator call.
+2. **Iframe-initiated**: the iframe sends `REQUEST_TOKEN` and the host answers
+   with the current token. Useful right before an expensive orchestrator call.
+
+   🔴 **Send a `requestId`, or you do not get a reply — you get a push.** The SDK
+   correlates a `TOKEN_REFRESH_RESPONSE` **strictly** by `requestId`: it resolves
+   the pending promise for that id and nothing else, so an uncorrelated response
+   has never resolved anyone's `refresh()` (where it appeared to work at all, it
+   was the SDK's incidental side effect of snapshotting whatever token rides on
+   any `TOKEN_REFRESH_RESPONSE`, while the caller's promise sat there to its own
+   timeout). Both hosts therefore branch on what arrived:
+
+   | `REQUEST_TOKEN` payload | host answers with |
+   |---|---|
+   | `{ requestId: '<string>' }` — any string, **`''` included** | `TOKEN_REFRESH_RESPONSE` echoing that exact `requestId` |
+   | `{}`, no `requestId`, or a non-string one | `TOKEN_REFRESH` **push** (no `requestId` — there is nothing to correlate to) |
+
+   An empty-string `requestId` is echoed verbatim. It used to be dropped by a
+   truthiness test, which silently turned a legitimate request into an
+   uncorrelated response that could never resolve.
+
+   The no-`requestId` case is a **push**, not a reply, because that is what the
+   message semantically is: a host-initiated rotation. It arrives on the same
+   handler as flow 1 above — which was the only path that ever actually delivered
+   a token in that case — instead of putting an unanswerable
+   `TOKEN_REFRESH_RESPONSE` on the wire for the SDK to discard.
 
 ### Block↔host message inventory
 
@@ -177,7 +269,8 @@ block) or fire-and-forget. Rather than duplicate a list here that will re-drift,
 read that file. As of this writing the families are:
 
 - **Lifecycle** (fire-and-forget): `BLOCK_READY`, `BLOCK_ERROR`, `RESIZE_IFRAME`.
-- **Auth / consent**: `REQUEST_TOKEN` (→ `TOKEN_REFRESH_RESPONSE`),
+- **Auth / consent**: `REQUEST_TOKEN` (→ `TOKEN_REFRESH_RESPONSE` when it carried
+  a string `requestId`, else a `TOKEN_REFRESH` push — see "Token refresh"),
   `REQUEST_SIGN_IN`, `REQUEST_CONSENT`.
 - **Viewer**: `GET_VIEWER` (→ `VIEWER_RESULT`) — the viewer self-read ("who am
   I") backing the SDK `useViewer()` hook, host-mediated via the
@@ -202,8 +295,11 @@ read that file. As of this writing the families are:
   hangs the block). Flip the host entries to `required` in the inventory if/when
   a sink lands.
 
-The `SUSPEND` / `RESUME` messages flow the other direction (parent→block). The
-SDK degrades gracefully when a host does not handle a fire-and-forget surface.
+`SUSPEND` / `RESUME`, `TOKEN_REFRESH` (see "Token refresh") and `THEME_CHANGE`
+(see "Theme changes") flow the other direction (host→block), which is why they
+are absent from that inventory — it covers block→host only. The SDK degrades
+gracefully when a host does not handle a fire-and-forget surface, and a block
+that ignores a host→block push is equally fine.
 
 ### Buzz and per-account spend
 

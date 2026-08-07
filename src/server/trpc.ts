@@ -105,7 +105,14 @@ const t = initTRPC
         )
       )
     ),
-    errorFormatter({ shape }) {
+    errorFormatter({ shape, error }) {
+      // `cause.softBlock` is set only by the generation gate (auditPromptServer)
+      // and read only by the generator form. Keep it off the message: consumers
+      // match that with `startsWith`.
+      const cause = error.cause as { softBlock?: boolean } | undefined;
+      if (cause?.softBlock === true) {
+        return { ...shape, data: { ...shape.data, softBlock: true } };
+      }
       return shape;
     },
   });

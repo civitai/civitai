@@ -514,7 +514,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 
               {article.contentJson && (
                 <article>
-                  <RenderRichText content={article.contentJson} />
+                  <RenderRichText content={article.contentJson} fallbackHtml={article.content} />
                 </article>
               )}
               <Divider />

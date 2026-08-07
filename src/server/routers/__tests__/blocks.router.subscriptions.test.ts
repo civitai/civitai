@@ -78,7 +78,9 @@ vi.mock('~/server/db/client', () => ({
 // tree, so no hand-trimmed subset can go stale. (Replaces the old completeKeys Proxy,
 // which covered REDIS_KEYS but not REDIS_SYS_KEYS.)
 vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
+  const actual = await vi.importActual<typeof import('@civitai/redis/client')>(
+    '@civitai/redis/client'
+  );
   return { ...actual, redis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) } };
 });
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
@@ -455,9 +457,9 @@ describe('soft-launch — developer + mod-review procs reject a plain non-mod (F
   });
 
   it('approveRequest (mod-only review/curation, unchanged) → FORBIDDEN', async () => {
-    await expect(
-      nonMod().approveRequest({ publishRequestId: 'pubreq_x' })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(nonMod().approveRequest({ publishRequestId: 'pubreq_x' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
   });
 
   it('getMyRevenue (author-gated) → FORBIDDEN for a non-cohort non-mod', async () => {
@@ -615,10 +617,10 @@ describe('Layer 1 — install procs widened to protectedProcedure (owner-scoped,
       settings: {},
     };
 
-    // PAGE-ONLY LAUNCH GATE: a subscription only ever attaches a MODEL-slot app
-    // (manifest has no page) — a non-launch app — so a non-mod is now rejected
-    // even with the flag ON. This supersedes the pre-launch-gate "(a) non-mod
-    // OWNER upserts".
+    // PAGE-ONLY LAUNCH GATE: a MODEL-slot app (manifest has no page) is a
+    // non-launch app, so a non-mod is rejected even with the flag ON. This
+    // supersedes the pre-launch-gate "(a) non-mod OWNER upserts". See the
+    // page-app sibling below for what the gate does NOT reject.
     it('(a) non-mod + flag ON + MODEL-slot app → FORBIDDEN (non-launch app), never upserts', async () => {
       mockDbReadAppBlockFindUnique.mockResolvedValue({
         blockId: 'g',
@@ -650,6 +652,56 @@ describe('Layer 1 — install procs widened to protectedProcedure (owner-scoped,
       );
     });
 
+    /**
+     * 🔴 CHARACTERISATION TEST — pins what the gate ACTUALLY does, which is not
+     * what its comment used to claim. `assertLaunchAppForCaller` reduces to
+     * `if (declaresPage) return`, because `app.page` is in `LAUNCH_SLOT_IDS` and
+     * so `isLaunchSlot(PAGE_SLOT_ID)` is a constant `true`. Every approved app
+     * in production declares `page.path`, so a non-mod is ADMITTED for all of
+     * them — and `BlockRegistry.upsertSubscription` applies no slot check of its
+     * own, so a `block_user_subscriptions` row is written against an app that is
+     * STATELESS by decision and has no UI for managing one.
+     *
+     * This is currently unreachable in production only because
+     * `enforceAppBlocksFlag` is mod-only. Widening `app-blocks-enabled` past
+     * moderators would make it reachable. The behaviour is deliberately left
+     * ALONE here; this test exists so a later change to it is a visible,
+     * intentional edit rather than a silent one.
+     */
+    it('(a-page) non-mod + flag ON + PAGE app → ADMITTED and UPSERTS (the latent write hole)', async () => {
+      mockDbReadAppBlockFindUnique.mockResolvedValue({
+        blockId: 'g',
+        status: 'approved',
+        approvedScopes: [],
+        // The prod shape: declares a page, no targets at all.
+        manifest: { page: { path: '/' } },
+      });
+      mockUpsertSubscription.mockResolvedValue({ id: 'bus_new' });
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, false) as never);
+
+      await caller.upsertSubscription(input);
+
+      expect(mockUpsertSubscription).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: OWNER_ID, appBlockId: 'ab_x' })
+      );
+    });
+
+    // The page gate reads `page.path` specifically — an empty path is not a
+    // declaration, so this app is non-launch and a non-mod is rejected. Pins
+    // that the admit branch is the PAGE one and not "any manifest at all".
+    it('(a-page-empty) non-mod + flag ON + empty page.path → FORBIDDEN, never upserts', async () => {
+      mockDbReadAppBlockFindUnique.mockResolvedValue({
+        blockId: 'g',
+        status: 'approved',
+        approvedScopes: [],
+        manifest: { page: { path: '' } },
+      });
+      mockUpsertSubscription.mockResolvedValue({ id: 'bus_new' });
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, false) as never);
+      await expect(caller.upsertSubscription(input)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockUpsertSubscription).not.toHaveBeenCalled();
+    });
+
     it('(b) non-mod + flag ON + app NOT approved → BAD_REQUEST, never upserts', async () => {
       // The "owner" boundary for a per-user subscription is the approved-app gate
       // + the session-stamped userId; a non-approved app is rejected outright.
@@ -662,7 +714,9 @@ describe('Layer 1 — install procs widened to protectedProcedure (owner-scoped,
     it('(c) flag OFF (live for a non-mod) → UNAUTHORIZED before the body', async () => {
       mockIsAppBlocksEnabled.mockImplementation(fakePerUserFlag);
       const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, false) as never);
-      await expect(caller.upsertSubscription(input)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      await expect(caller.upsertSubscription(input)).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+      });
       expect(mockDbReadAppBlockFindUnique).not.toHaveBeenCalled();
       expect(mockUpsertSubscription).not.toHaveBeenCalled();
     });
@@ -700,7 +754,9 @@ describe('Layer 1 — install procs widened to protectedProcedure (owner-scoped,
     it('(c) flag OFF (live for a non-mod) → UNAUTHORIZED before the body', async () => {
       mockIsAppBlocksEnabled.mockImplementation(fakePerUserFlag);
       const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, false) as never);
-      await expect(caller.deleteSubscription(input)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      await expect(caller.deleteSubscription(input)).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+      });
       expect(mockDeleteSubscription).not.toHaveBeenCalled();
     });
   });

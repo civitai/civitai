@@ -56,7 +56,11 @@ export default function Account() {
           <StickerInventoryCard />
           <AccountsCard />
           <UserPaymentConfigurationCard />
-          {currentUser?.subscriptionId && <SubscriptionCard />}
+          {/* No `subscriptionId` guard: a Buzz-purchased membership writes a
+              CustomerSubscription row but never sets User.subscriptionId, so gating here
+              kept the card unmounted no matter what the query returned. The card already
+              self-hides when it resolves no subscriptions. */}
+          <SubscriptionCard />
           <MembershipGiftsCard />
           <PaymentMethodsCard />
           {/* {buzz && <UserReferralCodesCard />} */}

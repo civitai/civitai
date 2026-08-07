@@ -2,8 +2,8 @@
 
 **Scope:** what to verify + do **right after** the auth-hub / OAuth-first-party cutover goes live. This is the
 *verification + watch + cleanup* list — the *pre-deploy* env/infra setup lives in
-[auth-hub-launch-checklist.md](auth-hub-launch-checklist.md), the deferred hardening in
-[oauth-security-review-2026-06-22.md](oauth-security-review-2026-06-22.md), and the `NEXT_PUBLIC_BASE_URL`
+[auth-hub-launch-checklist.md](auth-hub-launch-checklist.md), the deferred security hardening in the
+private infra repo, and the `NEXT_PUBLIC_BASE_URL`
 cleanup in [post-deploy-domain-env-consolidation.md](post-deploy-domain-env-consolidation.md).
 
 Legend: 🛠️ devops/config · 🧪 smoke test · 👁️ monitor · 🧹 cleanup · ⏭️ deferred follow-up.
@@ -12,10 +12,9 @@ Legend: 🛠️ devops/config · 🧪 smoke test · 👁️ monitor · 🧹 clea
 
 ## Phase 1 — Config sanity (first 15 min, before announcing)
 
-- [x] 🛠️ **`NEXTAUTH_SECRET` is IDENTICAL on the hub and the main app.** It's the shared salt for hashing
-  every API key + OAuth token (`SHA512(token + NEXTAUTH_SECRET)`), so a mismatch silently breaks ALL token
+- [x] 🛠️ **`NEXTAUTH_SECRET` is IDENTICAL on the hub and the main app.** A mismatch silently breaks ALL token
   auth (validation just returns 401, no error). Confirm by comparing a fingerprint (`SHA256(secret)[:8]`) on
-  both. (This is review finding **H2** — not legacy-only.)
+  both.
 - [x] 🛠️ **`AUTH_JWT_ISSUER` / `AUTH_JWKS_URI` point at the hub** (`https://auth.civitai.com`) on the main
   app + every spoke, and the hub can actually be reached from each app's server context (the spoke does a
   server-side JWKS + identity fetch). A wrong/unreachable value degrades sessions to anonymous (fails open),
@@ -62,10 +61,7 @@ Legend: 🛠️ devops/config · 🧪 smoke test · 👁️ monitor · 🧹 clea
   `POST /api/auth/impersonate/exit`).
 - [ ] 🧪 **Connected accounts** (`/user/account`): link + unlink each provider (Discord/Google/GitHub/Reddit)
   — routes through the hub's `?link=true` flow.
-- [ ] 🧪 **Discord Linked-Roles** (`/discord/link-role`): connect, then confirm roles actually sync. ⚠️
-  **Known gap:** the hub stores the granted *scope* but not the Discord `access_token`/`refresh_token` on the
-  `Account` row, so the role-metadata push may silently fail (the page still shows success). Verify; if
-  broken, it's the hub-token-persistence follow-up.
+- [ ] 🧪 **Discord Linked-Roles** (`/discord/link-role`): connect, then confirm roles actually sync.
 - [ ] 🧪 **Same-site spokes** (`moderator.civitai.com`, `advertising.civitai.com`): they read the shared
   `.civitai.com` cookie directly. Confirm they see the session after a hub login.
 
@@ -131,7 +127,7 @@ busts, analytics), so the pattern is "move the write behind a hub endpoint; keep
   `verificationToken` rows — a table the **hub** now owns (it creates them for email-login). Move the sweep to
   the hub (or delete if the hub adds its own). Minor: its `deleteMany` is also not `await`ed.
 
-## Deferred hardening (post-deploy, not blockers — see oauth-security-review-2026-06-22.md)
+## Deferred hardening (post-deploy, not blockers — tracked in the private infra repo)
 
 - [ ] ⏭️ **H1 belt-and-suspenders:** reject `redirect_uri`/`allowedOrigin` under an owned/trusted domain at
   client registration (the identity-gating fix already shipped closes the hole; this prevents the junk-client

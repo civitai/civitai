@@ -382,6 +382,7 @@ const generationGrantSchema = z.union([
 export const modelVersionTermsSchema = z.object({
   download: downloadGrantSchema.optional(),
   generation: generationGrantSchema.optional(),
+  acceptsBlueBuzz: z.boolean().optional(),
 });
 
 export type ModelVersionPaidAccessInputSchema = z.infer<typeof modelVersionPaidAccessInputSchema>;
@@ -584,6 +585,9 @@ export type ModelVersionEarlyAccessPurchase = z.infer<typeof modelVersionEarlyAc
 export const modelVersionEarlyAccessPurchase = z.object({
   modelVersionId: z.number(),
   type: z.enum(['download', 'generation']),
+  // A boolean, not a currency: the buyer may only choose BETWEEN blue and their domain currency, and
+  // naming the currency outright would let a client ask a green-domain purchase to spend yellow.
+  payWithBlue: z.boolean().optional(),
 });
 
 export type GetModelVersionPopularityInput = z.infer<typeof getModelVersionPopularityInput>;

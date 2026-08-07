@@ -304,8 +304,8 @@ export function getFileDescription(file: FileForDisplay): string {
  *  - The download-variant grouper (groupFilesByVariant) to decide which files surface in the
  *    primary download card vs. the optional/components sections.
  *
- * For model types that don't ship a traditional weights file (Workflows, Poses, Wildcards, Other),
- * archive and config files ARE the main download.
+ * For model types that don't ship a traditional weights file, archive and config files ARE the
+ * main download.
  */
 export const primaryFileTypesByModelType: Record<ModelType, readonly ModelFileType[]> = {
   Checkpoint: ['Model', 'Pruned Model', 'UNet', 'Diffusion Model'],
@@ -329,6 +329,7 @@ export const primaryFileTypesByModelType: Record<ModelType, readonly ModelFileTy
   Poses: ['Archive', 'Config'],
   Wildcards: ['Archive', 'Config'],
   Workflows: ['Archive', 'Config'],
+  ComfyWorkflows: ['Archive', 'Config'],
   Other: ['Archive', 'Config', 'Model'],
 };
 

@@ -249,6 +249,11 @@ export default function DevTunnelPage(props: DevTunnelProps) {
             blockInstanceId={blockInstanceId}
             appName={appName}
             iframeSrc={iframeSrc}
+            // 🔴 The author dev tunnel. `resolveDevPageBlockForAuthor` applies NO
+            // status filter, so this mounts ARBITRARY UNPUBLISHED code that no
+            // query can enumerate. `blockInitFragmentEnabled` refuses this
+            // surface unconditionally — no allowlist entry can turn it on.
+            surface="dev-tunnel"
             sandbox={sandbox}
             trustTier={trustTier}
             slug={blockId}

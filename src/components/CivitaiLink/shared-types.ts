@@ -56,6 +56,7 @@ export type ResourceType =
   | 'Other'
   | 'Wildcards'
   | 'Workflows'
+  | 'ComfyWorkflows'
   | 'DoRA'
   | 'Detection'
   | 'VisionLanguage'

@@ -10,7 +10,8 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
-import { getRequestDomainColor } from '~/server/utils/server-domain';
+import { resolveClientIp } from '~/server/utils/client-ip';
+import { getRequestBoardDomainColor, getRequestDomainColor } from '~/server/utils/server-domain';
 import type { SessionUser } from '~/types/session';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { hashifyObject, slugit } from '~/utils/string-helpers';
@@ -176,7 +177,22 @@ export function rateLimit<TInput = any>(
     // quota; otherwise key on the tRPC path.
     const keyName = options?.sharedKey ?? path.replace('.', ':');
     const cacheKey = `${REDIS_KEYS.TRPC.LIMIT.BASE}:${keyName}` as const;
-    const hashKey = ctx.user?.id?.toString() ?? ctx.ip;
+    // Anonymous callers bucket by client IP, authenticated ones by user id. The
+    // IP comes from the SHARED predicate in `~/server/utils/client-ip` rather
+    // than the general-purpose `ctx.ip`, so this limiter and the public REST
+    // limiter derive the bucket the same way — see that module's doc for which
+    // predicate suits which surface.
+    //
+    // NAMESPACE THE FIELD. User ids and addresses are two different namespaces
+    // and both are written into one hash, where equal strings are one bucket.
+    // The prefix makes the two key spaces disjoint by construction rather than
+    // by whichever values happen not to overlap. Same shape as the public REST
+    // limiter (`~/server/utils/public-api-rate-limit`), deliberately.
+    // `!= null` and not a truthiness test: it must match the nullish semantics of
+    // the `??` this replaced, or a user id of 0 would silently route to the IP
+    // branch. Pinned by the id-0 case in
+    // `src/server/__tests__/middleware.trpc.rate-limit-key.test.ts`.
+    const hashKey = ctx.user?.id != null ? `user:${ctx.user.id}` : `ip:${resolveClientIp(ctx.req)}`;
     const attempts = (await redis.packed.hGet<number[]>(cacheKey, hashKey)) ?? [];
 
     // Check if user can proceed and find the failing limit
@@ -328,6 +344,22 @@ export const applyRequestDomainColor = middleware(async (options) => {
   // so there's an object to stamp the domain onto when the caller sends no input.
   const input = options.input as { domain?: string } | undefined;
   if (input) input.domain = getRequestDomainColor(ctx.req);
+
+  return next();
+});
+
+/**
+ * Same contract as `applyRequestDomainColor`, but resolves `red` for red-capable
+ * hosts — see `getRequestBoardDomainColor`. Use this for anything that has SFW and
+ * mature variants of the same content; the plain color walk never yields `red`.
+ *
+ * Must be `.use()`d BEFORE `cacheIt`, which keys on a hash of the input: a domain
+ * stamped afterwards would leave one cache entry shared across every color.
+ */
+export const applyRequestBoardDomainColor = middleware(async (options) => {
+  const { next, ctx } = options;
+  const input = options.input as { domain?: string } | undefined;
+  if (input) input.domain = getRequestBoardDomainColor(ctx.req);
 
   return next();
 });

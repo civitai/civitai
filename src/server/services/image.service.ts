@@ -37,6 +37,7 @@ import {
 import { datapacketDbRead } from '~/server/db/datapacketDb';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import {
+  dailyChallengeConfig,
   parseJudgeScore,
   type JudgeScore,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
@@ -69,6 +70,7 @@ import {
   registerCounter,
   registerCounterWithLabels,
 } from '~/server/prom/client';
+import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
 import { imageOnSiteSql, isImageMetaOnSite } from '~/server/utils/image-onsite';
 import { stripImageForInfiniteWire } from '~/server/utils/image-infinite-wire';
 import {
@@ -195,6 +197,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type {
+  DomainColor,
   ModelType,
   ReportReason,
   ReviewReactions,
@@ -208,6 +211,7 @@ import {
   AppealStatus,
   EntityType,
   ImageIngestionStatus,
+  JobQueueType,
   MediaType,
   NewOrderRankType,
   ReportStatus,
@@ -585,6 +589,7 @@ export async function handleUnblockImages({
     const postIds = uniq(images.map(({ postId }) => postId).filter(isDefined));
     await Promise.all([
       resetBlockedNsfwLevel(ids),
+      dropBlockedImageDeleteQueue(ids),
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
       deleteImagTagsForReviewByImageIds(ids),
       bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined)),
@@ -761,6 +766,25 @@ export async function resetBlockedNsfwLevel(ids: number | number[]) {
     WHERE id IN (${Prisma.join(ids)}) AND "nsfwLevel" = ${NsfwLevel.Blocked};
   `;
   await updateNsfwLevel(ids);
+}
+
+/**
+ * Clears a pending blocked-image purge. `create_job_queue_record` is ON CONFLICT DO NOTHING and
+ * `remove-blocked-images` counts its retention window from the queue row's `createdAt`, so a row
+ * left behind by an unblock makes a later re-block inherit the *original* block's clock — the
+ * image can then be deleted with no retention at all. Call this from anything that takes an image
+ * out of `Blocked` or clears its `blockedFor`.
+ */
+export async function dropBlockedImageDeleteQueue(ids: number[]) {
+  if (!ids.length) return;
+  // ANY over an array rather than IN over a join: callers pass unbounded id lists, and one
+  // bind parameter can't hit Postgres' 65535 parameter ceiling.
+  await dbWrite.$executeRaw`
+    DELETE FROM "JobQueue"
+    WHERE type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
+      AND "entityType" = ${EntityType.Image}::"EntityType"
+      AND "entityId" = ANY(${ids})
+  `;
 }
 
 export const updateImageReportStatusByReason = ({
@@ -1312,6 +1336,8 @@ type GetAllImagesRaw = {
 type GetAllImagesInput = GetInfiniteImagesOutput & {
   useCombinedNsfwLevel?: boolean;
   user?: SessionUser;
+  // Request color, used to pick which "new & upcoming" board backs `newCreators`.
+  domain?: DomainColor;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
   signal?: AbortSignal;
@@ -1359,6 +1385,23 @@ const imageMetricsClickhouseTimeoutCounter = registerCounter({
   help: 'getImageMetricsObject ClickHouse read exceeded the soft-fallback timeout (served empty metrics)',
 });
 
+/**
+ * Resolve the `hideChallenges` flag into an `excludedTagIds` entry, in place.
+ * Mirrors `enforceBlockedBrowsingTags`: the client sends intent, the server owns
+ * the tag id, and every query path picks it up from `excludedTagIds` unchanged.
+ * Reads the static config rather than `getChallengeConfig()` so the feed doesn't
+ * take a sysRedis round-trip per request.
+ */
+function applyHideChallengesExclusion(input: {
+  hideChallenges?: boolean;
+  excludedTagIds?: number[];
+}) {
+  if (!input.hideChallenges) return;
+  input.excludedTagIds = [
+    ...new Set([...(input.excludedTagIds ?? []), dailyChallengeConfig.challengeTagId]),
+  ];
+}
+
 export const getAllImages = async (
   input: GetAllImagesInput & {
     userId?: number;
@@ -1370,6 +1413,7 @@ export const getAllImages = async (
     isModerator: input.user?.isModerator,
   });
   if (blockedEnforcement.emptyResult) return { nextCursor: undefined, items: [] };
+  applyHideChallengesExclusion(input);
 
   const {
     limit,
@@ -1389,6 +1433,8 @@ export const getAllImages = async (
     tags,
     generation,
     reviewId,
+    newCreators,
+    domain,
     prioritizedUserIds,
     include,
     // hideAutoResources,
@@ -1477,6 +1523,7 @@ export const getAllImages = async (
     prefetchedTargetUser,
     prefetchedIsFlipt,
     prefetchedUserFollows,
+    prefetchedNewCreators,
     prefetchedCollectionPermissions,
     prefetchedCollectionSeed,
   ] = await Promise.all([
@@ -1498,6 +1545,7 @@ export const getAllImages = async (
         })
       : false,
     userId && followed ? getUserFollows(userId) : undefined,
+    newCreators ? getNewCreatorUserIds({ entity: 'images', domain }) : undefined,
     collectionId
       ? getUserCollectionPermissionsById({ userId, isModerator, id: collectionId })
       : undefined,
@@ -1663,6 +1711,20 @@ export const getAllImages = async (
   if (userId && followed && prefetchedUserFollows?.length) {
     isPersonalized = true; // per-user follow set
     AND.push(Prisma.sql`i."userId" IN (${Prisma.join(prefetchedUserFollows)})`);
+  }
+
+  // Filter to creators on the "new & upcoming" board. Unlike `followed` this set is
+  // global (per domain, not per viewer), so it deliberately does NOT set
+  // isPersonalized — the feed stays cacheable, and the id list is part of the query
+  // text the cache keys on.
+  if (newCreators) {
+    // An empty board (never populated, or a failed nightly run) must return nothing
+    // rather than silently degrading to the unfiltered global feed.
+    AND.push(
+      prefetchedNewCreators?.length
+        ? Prisma.sql`i."userId" IN (${Prisma.join(prefetchedNewCreators)})`
+        : Prisma.sql`1 = 0`
+    );
   }
 
   // Filter to specific tags
@@ -2371,6 +2433,7 @@ export const getAllImagesIndex = async (
     isModerator: user?.isModerator,
   });
   if (blockedEnforcement.emptyResult) return { nextCursor: undefined, items: [] };
+  applyHideChallengesExclusion(input);
 
   // - cursor uses "offset|entryTimestamp" like "500|1724677401898"
   const cursorParsed = input.cursor?.toString().split('|');
@@ -2672,6 +2735,7 @@ export const makeMeiliImageSearchSort = (
 
 type ImageSearchInput = GetInfiniteImagesOutput & {
   useCombinedNsfwLevel?: boolean;
+  domain?: DomainColor;
   currentUserId?: number;
   isModerator?: boolean;
   offset?: number;
@@ -3003,6 +3067,13 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   return { ...result, source: 'meili' as const };
 }
 
+// No applyHideChallengesExclusion here: `hideChallenges` cannot reach this function. Its only
+// upstreams are /api/v1/images and /api/v1/blocks/images, whose zod objects declare neither
+// `hideChallenges` nor `excludedTagIds` and strip unknown keys. Adding either key to those
+// schemas would hand the REST API an unfiltered feed — apply the exclusion here first. Note
+// image-search.service.ts spreads the same `data` into all three branches
+// (getAllImages / getAllImagesIndex / here), so the result wouldn't be uniformly unfiltered:
+// two branches would filter and this one wouldn't, which reads as a caching bug, not a gap.
 export async function getImagesFromFeedSearch(
   input: ImageSearchInput
 ): Promise<GetAllImagesIndexResult> {
@@ -3260,6 +3331,8 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     poiOnly,
     minorOnly,
     blockedFor,
+    newCreators,
+    domain,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -3347,6 +3420,15 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     } else {
       return { data: [], nextCursor: undefined };
     }
+  }
+
+  // Creators on the "new & upcoming" board. Same shape as `followed` above, but the
+  // set is global per domain rather than per viewer. An unpopulated board returns
+  // nothing rather than degrading to the unfiltered feed.
+  if (newCreators) {
+    const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
+    if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
+    filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
   }
 
   // nb: commenting this out while we try checking existence in the db
@@ -3914,6 +3996,8 @@ export async function getImagesFromBitdexPreFilter(
     minorOnly,
     blockedFor,
     requiringMeta,
+    newCreators,
+    domain,
   } = input;
   let { browsingLevel, userId } = input;
 
@@ -3978,6 +4062,13 @@ export async function getImagesFromBitdexPreFilter(
     const userIds = followedUsers.map((x) => x.targetUserId);
     if (!userIds.length) return null;
     filters.push(_in('userId', userIds.map(_int)));
+  }
+
+  // --- New & upcoming creators ---
+  if (newCreators) {
+    const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
+    if (!newCreatorIds.length) return null;
+    filters.push(_in('userId', newCreatorIds.map(_int)));
   }
 
   // --- NSFW Browsing Level ---
@@ -4149,6 +4240,8 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     minorOnly,
     blockedFor,
     // TODO check the unused stuff in here
+    newCreators,
+    domain,
   } = input;
   let { browsingLevel, userId } = input;
 
@@ -4223,6 +4316,12 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     } else {
       return { data: [], nextCursor: undefined };
     }
+  }
+
+  if (newCreators) {
+    const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
+    if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
+    filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
   }
 
   // nb: commenting this out while we try checking existence in the db
@@ -7783,6 +7882,7 @@ export async function getImagesByUserIdForModeration(userId: number) {
   return await dbRead.image.findMany({
     where: { userId },
     select,
+    orderBy: { id: 'desc' },
   });
 }
 

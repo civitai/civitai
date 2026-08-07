@@ -151,6 +151,7 @@ export const ModelType = {
   Poses: 'Poses',
   Wildcards: 'Wildcards',
   Workflows: 'Workflows',
+  ComfyWorkflows: 'ComfyWorkflows',
   Detection: 'Detection',
   VisionLanguage: 'VisionLanguage',
   CLIP: 'CLIP',
@@ -687,6 +688,7 @@ export const HomeBlockType = {
   CosmeticShop: 'CosmeticShop',
   FeaturedModelVersion: 'FeaturedModelVersion',
   FeaturedCollections: 'FeaturedCollections',
+  Feed: 'Feed',
 } as const;
 
 export type HomeBlockType = (typeof HomeBlockType)[keyof typeof HomeBlockType];

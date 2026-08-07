@@ -10,7 +10,6 @@
 > For the current release/cutover process use:
 > - [oauth-post-deploy-checklist.md](./oauth-post-deploy-checklist.md) — verify + watch + cleanup after cutover
 > - [auth-hub-launch-checklist.md](./auth-hub-launch-checklist.md) — pre-deploy env/infra setup
-> - [oauth-security-review-2026-06-22.md](./oauth-security-review-2026-06-22.md) — current security posture + deferred hardening
 > - [post-deploy-domain-env-consolidation.md](./post-deploy-domain-env-consolidation.md) — `NEXT_PUBLIC_BASE_URL` cleanup
 >
 > Kept for historical context only (the §1 security fixes B1–B5 and their reasoning remain accurate history).

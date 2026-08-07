@@ -79,6 +79,8 @@ async function queryValidCreatorMembership(userIds: number[]): Promise<Map<numbe
     const subMeta = (sub.metadata ?? {}) as { renewalEmailSent?: boolean };
     if (subMeta.renewalEmailSent) continue;
     const productMeta = subscriptionProductMetadataSchema.parse(sub.product.metadata);
+    // Buzz-purchased perks memberships confer no Creator Program validity.
+    if (productMeta.buzzPurchase) continue;
     const tier = (productMeta?.[env.TIER_METADATA_KEY] ?? 'free') as string;
     const prev = highestTierByUser.get(sub.userId);
     if (prev === undefined || tierOrder.indexOf(tier) > tierOrder.indexOf(prev))

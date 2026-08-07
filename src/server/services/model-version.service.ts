@@ -49,8 +49,6 @@ import {
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
-import { Flags } from '~/shared/utils/flags';
 import type { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type {
   MergeVersionsInput,
@@ -92,9 +90,11 @@ import {
   capMediaType,
   effectivePaidAccessPrice,
   isPermanentGate,
+  acceptsBlueBuzz,
   generationPrice,
   isPaidAccessActive,
   isTimedGateActive,
+  migrateTermsForUsageControl,
   paidAccessCharges,
   paidGenerationGrant,
 } from '@civitai/buzz';
@@ -143,6 +143,7 @@ import { deleteModelFileObjects } from '~/utils/s3-utils';
 import { deregisterFileLocations } from '~/utils/storage-resolver';
 import { purgeCache } from '~/server/cloudflare/client';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { paidAccessPayoutAccount } from '~/server/utils/buzz-helpers';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
@@ -329,6 +330,33 @@ export async function assertUserEarlyAccessLimits({
 }) {
   if (!timeframeDays || isModerator) return;
 
+  // A timed window can't be STARTED on a version that has ever been published: it's meant to precede
+  // release, and on expiry process-ending-early-access bumps `publishedAt`, which would resurface an old
+  // model as New. `initialPublishedAt` is the test — `publishedAt` is what that job rewrites, and a
+  // Scheduled version carries a FUTURE anchor, so only a date that has passed counts.
+  //
+  // Lives here rather than in the REST endpoint because both write paths (the endpoint and tRPC
+  // `modelVersion.upsert`) already call this, and enforcing in one of the two left the other open.
+  // Editing a window a version already has stays allowed.
+  if (versionId) {
+    const existing = await dbRead.modelVersion.findUnique({
+      where: { id: versionId },
+      select: { initialPublishedAt: true, status: true },
+    });
+    const everPublished =
+      (!!existing?.initialPublishedAt && existing.initialPublishedAt <= new Date()) ||
+      existing?.status === ModelStatus.Published;
+    if (everPublished) {
+      const gate = (await getPaidAccess('ModelVersion', [versionId]))[versionId];
+      const hasActiveTimedGate =
+        !!gate && gate.timeframeDays != null && (gate.endsAt == null || gate.endsAt > new Date());
+      if (!hasActiveTimedGate)
+        throw throwBadRequestError(
+          "Early access can't be started on a version that has already been published."
+        );
+    }
+  }
+
   if (timeframeDays > getMaxEarlyAccessDays({ userMeta, features })) {
     throw throwBadRequestError('Early access days exceeds user limit');
   }
@@ -484,10 +512,6 @@ export const upsertModelVersion = async ({
 }) => {
   if (data.description) await throwOnBlockedLinkDomain(data.description);
 
-  const existingFlags = id
-    ? (await dbRead.modelVersion.findUnique({ where: { id }, select: { flags: true } }))?.flags ?? 0
-    : 0;
-
   // `undefined` means the caller didn't send a fee at all — requestReviewHandler / declineReviewHandler
   // pass a partial version — so only an explicitly supplied fee may rewrite fee state below. Treating
   // absent as cleared would wipe a creator's fee when a moderator declines a review.
@@ -500,16 +524,6 @@ export const upsertModelVersion = async ({
     data.licensingFee = null;
     data.licensingFeeType = null;
     data.licensingFeeSettlementCurrency = null;
-  }
-
-  // Versions with a license fee earn through that channel, so they opt out of tip + creator-comp
-  // payouts. This is the flag's only set site, so clearing the fee has to strip it — otherwise the
-  // version earns neither the fee nor payouts (CU 868kk4j2k).
-  let flagsOverride: number | undefined;
-  if (hasLicensingFee) {
-    flagsOverride = Flags.addFlag(existingFlags, ModelVersionFlag.DisablePayout);
-  } else if (feeProvided && Flags.hasFlag(existingFlags, ModelVersionFlag.DisablePayout)) {
-    flagsOverride = Flags.removeFlag(existingFlags, ModelVersionFlag.DisablePayout);
   }
 
   // Get model information to check NSFW + restricted base model combination
@@ -563,11 +577,12 @@ export const upsertModelVersion = async ({
   ) {
     throw throwBadRequestError('Paid access is not available for this version’s usage control.');
   }
-  if (data.usageControl !== ModelUsageControl.Download && !!paidAccess?.terms.download) {
-    throw throwBadRequestError(
-      'Cannot charge for download if downloads are disabled for this model version'
-    );
-  }
+  // Migrate rather than refuse — same rule Creator Studio applies (see docs/features/monetization-rules.md).
+  if (paidAccess?.terms)
+    paidAccess.terms = migrateTermsForUsageControl(
+      paidAccess.terms,
+      data.usageControl !== ModelUsageControl.Download
+    ) as typeof paidAccess.terms;
 
   assertPaidAccessInput(paidAccess);
 
@@ -614,7 +629,6 @@ export const upsertModelVersion = async ({
             ((rightsAffirmation
               ? { ...((metaInput as Record<string, unknown> | null) ?? {}), rightsAffirmation }
               : metaInput) as Prisma.ModelVersionCreateInput['meta']) ?? undefined,
-          flags: flagsOverride,
           availability: [ModelStatus.Published, ModelStatus.Scheduled].some(
             (s) => s === data?.status
           )
@@ -724,7 +738,6 @@ export const upsertModelVersion = async ({
       data: {
         ...data,
         meta: (mergedMeta as Prisma.ModelVersionUpdateInput['meta']) ?? undefined,
-        flags: flagsOverride,
         availability: existingVersion.model.availability, // Will ensure a version keeps the parent's availability.
         settings: settings !== null ? settings : Prisma.JsonNull,
         monetization:
@@ -825,17 +838,12 @@ export const upsertModelVersion = async ({
           // applied (absent input = gate cleared / monetization deleted).
           paidAccess: toPaidAccessAuditState(paidAccess),
           monetization: toMonetizationAuditShape(monetization),
-          flags: flagsOverride,
         },
         actorRole: resolveActorRole({
           actorUserId: actorUserId ?? 0,
           ownerId: model.userId,
           isModerator,
         }),
-        systemFields:
-          flagsOverride !== undefined
-            ? { flags: hasLicensingFee ? 'licensing-fee-disable-payout' : 'licensing-fee-cleared' }
-            : undefined,
       });
       tracker.entityChanges(changeRows).catch(() => null);
     }
@@ -845,13 +853,13 @@ export const upsertModelVersion = async ({
       logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
     );
 
-    // The orchestrator caches fee + payoutEnabled per version, so a fee or flag change that doesn't
-    // invalidate it keeps pricing and paying against the old value. Never rejects: the write has
-    // already committed, and a failed bust must not surface as a failed save.
+    // The orchestrator caches fee + payoutEnabled per version, and payoutEnabled now derives from the
+    // fee, so a fee change that doesn't invalidate it keeps pricing and paying against the old value.
+    // Never rejects: the write has already committed, and a failed bust must not surface as a failed save.
     const feeBefore =
       existingVersion.licensingFee != null ? Number(existingVersion.licensingFee) : null;
     const feeAfter = feeProvided ? data.licensingFee ?? null : feeBefore;
-    if (feeBefore !== feeAfter || flagsOverride !== undefined)
+    if (feeBefore !== feeAfter)
       await bustMvCache(version.id, version.modelId, actorUserId).catch(() => undefined);
 
     return version;
@@ -901,11 +909,11 @@ export const updateModelVersionPaidAccess = async ({
     throw throwBadRequestError('Paid access is not available for this version’s usage control.');
   }
 
-  if (existingVersion.usageControl !== ModelUsageControl.Download && !!paidAccess?.terms.download) {
-    throw throwBadRequestError(
-      'Cannot charge for download if downloads are disabled for this model version'
-    );
-  }
+  if (paidAccess?.terms)
+    paidAccess.terms = migrateTermsForUsageControl(
+      paidAccess.terms,
+      existingVersion.usageControl !== ModelUsageControl.Download
+    ) as typeof paidAccess.terms;
 
   assertPaidAccessInput(paidAccess);
 
@@ -1976,10 +1984,6 @@ export const earlyAccessPurchase = async ({
   type: 'generation' | 'download';
   buzzType: BuzzSpendType;
 }) => {
-  if (buzzType === 'blue') {
-    throw throwBadRequestError('You cannot use Blue Buzz for early access purchases.');
-  }
-
   const permission =
     type === 'generation'
       ? EntityAccessPermission.EarlyAccessGeneration
@@ -2022,12 +2026,21 @@ export const earlyAccessPurchase = async ({
   const terms = paidAccess.terms as ModelVersionTerms;
   const generationTier = paidGenerationGrant(terms);
 
+  if (buzzType === 'blue' && !acceptsBlueBuzz(terms)) {
+    throw throwBadRequestError('This model version does not accept Blue Buzz.');
+  }
+
   // The EA donation goal is the forward relation (DonationGoal entity target), not a config back-link.
   // Only an active goal receives the purchase's donation record. We use the raw owner accessor (not the
   // public getDonationGoals, whose display filters would drop the goal for permanent/opted-out gates) —
   // safe on this buyer path because we only read `.id`/`.active` internally to attach the donation and
   // trip completion; the goal is never returned to the purchaser.
-  const ownerGoal = (await getOwnerDonationGoals('ModelVersion', [modelVersionId]))[modelVersionId];
+  // A completed goal ends the early-access window early, so a blue purchase must not advance one:
+  // blue is granted by rewards, which would let farmed credit close a paid window for everyone.
+  const ownerGoal =
+    buzzType === 'blue'
+      ? null
+      : (await getOwnerDonationGoals('ModelVersion', [modelVersionId]))[modelVersionId];
   const earlyAccessDonationGoal = ownerGoal?.active ? ownerGoal : null;
 
   if (modelVersion.status !== ModelStatus.Published) {
@@ -2084,7 +2097,14 @@ export const earlyAccessPurchase = async ({
   });
 
   try {
-    const externalTransactionIdPrefix = `early-access-${modelVersionId}-${type}-${userId}`;
+    // A timed early-access window and a permanent paid-access sale are different products and must be
+    // separable in the ledger. They previously shared the `early-access-` prefix, leaving the description
+    // string as the only signal — which made a copy edit enough to silently reclassify revenue. Both
+    // prefixes are two segments, so the `<versionId>` position is unchanged for anything parsing them.
+    // Readers must match BOTH: rows written before this change carry `early-access-` either way.
+    const externalTransactionIdPrefix = `${
+      permanent ? 'permanent-access' : 'early-access'
+    }-${modelVersionId}-${type}-${userId}`;
     const data = await createMultiAccountBuzzTransaction({
       fromAccountId: userId,
       toAccountId: modelVersion.model.userId,
@@ -2093,9 +2113,10 @@ export const earlyAccessPurchase = async ({
       description: `${permanent ? 'Gain access to model' : 'Gain early access on model'}: ${
         modelVersion.model.name
       } - ${modelVersion.name}`,
-      details: { modelVersionId, type, earlyAccessPurchase: true },
+      details: { modelVersionId, type, earlyAccessPurchase: true, permanent },
       externalTransactionIdPrefix: externalTransactionIdPrefix,
       fromAccountTypes: [buzzType],
+      toAccountType: paidAccessPayoutAccount(buzzType),
     });
 
     if (data?.transactionCount === 0)

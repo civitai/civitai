@@ -54,6 +54,8 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { ArticleGetAll } from '~/server/services/article.service';
 import { getArticles } from '~/server/services/article.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
+import { getModeratedTags } from '~/server/services/system-cache';
+import { applyTagRules, insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { getAllImages, enqueueImageIngestion } from '~/server/services/image.service';
@@ -564,6 +566,82 @@ const inputToCollectionType = {
   postId: CollectionType.Post,
 } as const;
 
+/**
+ * Apply a collection's configured `metadata.autoTagId` to the images just added to it.
+ *
+ * Runs AFTER the write and independently of `CollectionItemStatus`, so a submission
+ * awaiting review is tagged the same as an accepted one — the point is to mark what was
+ * submitted, not what a moderator kept.
+ *
+ * Takes the metadata rather than a collection id: both callers already hold the
+ * collection in scope, and re-reading it would add a query to every image submission on
+ * the site for a field almost no collection sets.
+ *
+ * `insertTagsOnImageNew` handles cache busting and the search-index push that feed
+ * filtering depends on, so nothing else needs syncing here.
+ *
+ * Never throws into the caller: a failed tag must not fail (or roll back) the
+ * submission itself.
+ */
+async function applyCollectionAutoTag(
+  metadata: CollectionMetadataSchema | null | undefined,
+  imageIds: number[]
+) {
+  const tagId = metadata?.autoTagId;
+  if (!tagId || !imageIds.length) return;
+
+  try {
+    // Defense in depth. `upsertCollection` already restricts `autoTagId` to moderators,
+    // because nothing in the save path validates that the submitter OWNS the images —
+    // so a self-owned collection plus someone else's imageIds would otherwise write tags
+    // onto a stranger's content. A moderated tag is the sharp end of that: it drives
+    // `updateImageNsfwLevels` and could push another user's image out of view.
+    //
+    // Tested against `getModeratedTags()` — what `updateImageNsfwLevels` itself gates on.
+    // `Tag.type === 'Moderation'` is NOT the same set: it misses ~37 prod tags that are
+    // moderated via `nsfwLevel > PG` or by inheriting a Parent edge, so checking type
+    // would look like a guard while letting all of them through.
+    //
+    // Resolved through `applyTagRules` FIRST, because a TagsOnTags rule can rewrite a
+    // permitted tag into a moderated one (~36 such rules in prod) — checking the raw
+    // `autoTagId` would pass while a moderated row still lands. Test what actually gets
+    // written, not what was configured. Both lookups are in-proc memoized.
+    const resolved = await applyTagRules(
+      imageIds.map((imageId) => ({ imageId, tagId, source: 'User' as const }))
+    );
+    const moderatedTagIds = await getModeratedTags().then((tags) => tags.map((t) => t.id));
+    const offending = resolved.find((t) => moderatedTagIds.includes(t.tagId));
+    if (offending) {
+      logToAxiom({
+        type: 'warning',
+        name: 'collection-auto-tag-refused',
+        message: 'autoTagId resolves to a moderated tag',
+        tagId,
+        resolvedTagId: offending.tagId,
+      }).catch();
+      return;
+    }
+
+    await insertTagsOnImageNew(
+      [...new Set(imageIds)].map((imageId) => ({
+        imageId,
+        tagId,
+        source: 'User' as const,
+        confidence: 100,
+        automated: true,
+      }))
+    );
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'collection-auto-tag-failed',
+      message: (error as Error).message,
+      tagId,
+      imageIds: imageIds.slice(0, 20),
+    }).catch();
+  }
+}
+
 export const saveItemInCollections = async ({
   input: {
     collections: upsertCollectionItems,
@@ -818,6 +896,16 @@ export const saveItemInCollections = async ({
 
   await dbWrite.$transaction(transactions);
 
+  if (itemKey === 'imageId' && input.imageId) {
+    const imageId = input.imageId;
+    for (const { collectionId } of data) {
+      const collection = collections.find((c) => c.id === collectionId);
+      await applyCollectionAutoTag(collection?.metadata as CollectionMetadataSchema | null, [
+        imageId,
+      ]);
+    }
+  }
+
   // Check for updates to featured models
   if (input.modelId && collections.some((c) => c.id === FEATURED_MODEL_COLLECTION_ID)) {
     await bustFeaturedModelsCache();
@@ -871,6 +959,32 @@ export const upsertCollection = async ({
     tags,
     ...collectionItem
   } = input;
+
+  // `autoTagId` writes tag rows onto every image submitted to the collection, including
+  // images the submitter doesn't own (nothing in the save path validates image
+  // ownership). In a collection anyone can create and manage, that would let a user
+  // stamp an arbitrary tag onto a stranger's image — and a MODERATED tag additionally
+  // drives `updateImageNsfwLevels`, so it could raise someone else's image out of view.
+  // Moderator-only. Every other field here only affects the collection itself.
+  // Non-moderators can't set or change it, but the edit modal round-trips the whole
+  // metadata blob — so rejecting on PRESENCE would 403 a co-manager who opened Edit and
+  // hit Save without touching (or knowing about) the field. Pin it to the stored value
+  // instead: their save becomes a no-op on this field rather than a wall.
+  if (!isModerator && metadata) {
+    const storedAutoTagId = id
+      ? (
+          (
+            await dbRead.collection.findUnique({
+              where: { id },
+              select: { metadata: true },
+            })
+          )?.metadata as CollectionMetadataSchema | null
+        )?.autoTagId
+      : undefined;
+
+    if (storedAutoTagId === undefined) delete metadata.autoTagId;
+    else metadata.autoTagId = storedAutoTagId;
+  }
 
   if (id) {
     const permission = await getUserCollectionPermissionsById({
@@ -2742,13 +2856,14 @@ export const bulkSaveItems = async ({
   }
 
   const { count } = await dbWrite.collectionItem.createMany({ data });
+  const savedImageIds = data.map((d) => d.imageId).filter(isDefined);
 
   // Entry fee (user challenges): charge AFTER the entries are written so a failed save never
   // leaves a paid-but-missing entry. Charges are idempotent per (challenge, image) and NEVER
   // refunded (see challenge-funding.ts) — on a partial charge we keep the paid entries and
   // roll back only the unpaid rows; a Buzz charge can't be undone by a Postgres rollback.
   if (collection.mode === CollectionMode.Contest) {
-    const chargeImageIds = data.map((d) => d.imageId).filter(isDefined);
+    const chargeImageIds = savedImageIds;
     const rollbackItems = async (imageIds: number[], originalError: unknown) => {
       await dbWrite.collectionItem
         .deleteMany({
@@ -2787,9 +2902,14 @@ export const bulkSaveItems = async ({
 
     if (chargeResult && chargeResult.unpaidImageIds.length > 0) {
       await rollbackItems(chargeResult.unpaidImageIds, new Error('insufficient funds'));
-      // The paid entries above stay committed, so bust the cache before aborting the request.
-      if (chargeResult.paidImageIds.length > 0)
+      // The paid entries above stay committed, so tag and bust the cache before aborting
+      // the request. The unpaid ones were just deleted and must NOT be tagged — a rolled-back
+      // submission that stayed tagged would be filtered out of feeds for an entry that never
+      // landed, with nothing to undo it.
+      if (chargeResult.paidImageIds.length > 0) {
+        await applyCollectionAutoTag(metadata, chargeResult.paidImageIds);
         await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
+      }
       throw throwInsufficientFundsError(
         chargeResult.paidImageIds.length > 0
           ? `You ran out of Buzz partway through: ${chargeResult.paidImageIds.length} ${
@@ -2799,6 +2919,9 @@ export const bulkSaveItems = async ({
       );
     }
   }
+
+  // Tag AFTER the entry-fee block, so anything rolled back for non-payment is never tagged.
+  await applyCollectionAutoTag(metadata, savedImageIds);
 
   // Bust AFTER the write so a concurrent read can't repopulate the cache with pre-write data.
   await homeBlockCacheBust(HomeBlockType.Collection, collectionId);

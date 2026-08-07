@@ -40,3 +40,20 @@ export async function getCreatorScore(userId: number): Promise<number> {
 export async function getModelsScore(userId: number): Promise<number> {
   return num((await readScores(userId)).models);
 }
+
+// Moderator-only testing override (this app only), mirroring TEST_MEMBERSHIP_COOKIE. The early-access
+// ladder keys off the *models* score, which membership doesn't touch — so simulating a tier alone can't
+// reach these flows, and the ladder's first rung is 40k. Set from the sidebar simulator.
+export const TEST_MODELS_SCORE_COOKIE = 'cs-test-models-score';
+
+export async function resolveModelsScore(
+  userId: number,
+  isModerator: boolean,
+  testCookie?: string
+): Promise<number> {
+  if (isModerator && testCookie) {
+    const n = Number(testCookie);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return getModelsScore(userId);
+}

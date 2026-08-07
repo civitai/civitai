@@ -67,7 +67,16 @@ export type HostReq = 'required' | string; // string = N/A reason
 export interface MessageSpec {
   /** REQUEST-style (sendTypedRequest, awaits a *_RESULT/ack). Unhandled ⇒ hang. */
   request: boolean;
-  /** Reply type the SDK awaits (REQUEST-style only); '' for fire-and-forget. */
+  /**
+   * Reply type the SDK awaits (REQUEST-style only); '' for fire-and-forget.
+   *
+   * 🔴 DOCUMENTATION ONLY — NOTHING ENFORCES THIS STRING. The parity test greps
+   * each host for a REGISTERED handler (`onMessage('<TYPE>'`), then interpolates
+   * this value into the test's NAME. It never checks that the host actually
+   * sends it, so a wrong value here is invisible: it produces a green test with a
+   * misleading title. Treat it as a comment, and put behavioural claims about the
+   * reply in the per-message browser tests.
+   */
   reply: string;
   IframeHost: HostReq;
   PageBlockHost: HostReq;
@@ -83,6 +92,22 @@ export const INLINE_STUB =
 export const INVENTORY = {
   // ── Lifecycle / fire-and-forget (no reply ⇒ unhandled never HANGS, but a
   //    page that ignores them just no-ops; documented per host) ───────────────
+  //
+  // The block's readiness ANNOUNCE — posted by the SDK transport the moment its
+  // message listener is attached, so the host can push BLOCK_INIT in response
+  // instead of waiting out a retry tick. Fire-and-forget and, uniquely in this
+  // table, an ACCELERATOR rather than a bridge: an unhandled BLOCK_HELLO costs
+  // only latency, because every host keeps its own immediate-post + bounded
+  // retry + readiness-timeout schedule. Marked `required` on the two live hosts
+  // anyway — the whole point of the parity gate is that a message the SDK sends
+  // has a named answer on every host that could receive it.
+  BLOCK_HELLO: {
+    request: false,
+    reply: '',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   BLOCK_READY: {
     request: false,
     reply: '',
@@ -149,9 +174,18 @@ export const INVENTORY = {
   },
 
   // ── REQUEST-style (await a reply ⇒ unhandled HANGS the block) ───────────────
+  // 🔴 CONDITIONAL REPLY — the one entry in this table where `reply` is not a
+  // single type. A REQUEST_TOKEN carrying a STRING `requestId` (`''` included) is
+  // answered with `TOKEN_REFRESH_RESPONSE` echoing that id; one with no usable
+  // `requestId` gets a `TOKEN_REFRESH` PUSH instead, because the SDK correlates
+  // strictly by `requestId` and an uncorrelated response can never resolve
+  // anyone's `refresh()`. `reply` is documentation only (see MessageSpec), so
+  // this comment — not that string — is what carries the contract. The
+  // behavioural pins are IframeHostInitContractV2 / PageBlockHostInitContractV2
+  // `.browser.test.tsx`.
   REQUEST_TOKEN: {
     request: true,
-    reply: 'TOKEN_REFRESH_RESPONSE',
+    reply: 'TOKEN_REFRESH_RESPONSE (or a TOKEN_REFRESH push when no requestId was sent)',
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,

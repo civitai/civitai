@@ -1,7 +1,11 @@
+import { sql } from '@civitai/db/kysely';
 import { getClickhouse } from '$lib/server/clickhouse';
 import { dbRead } from '$lib/server/db';
 import { createCache } from '$lib/server/cache';
 import { rangeTtlSeconds } from '$lib/date-range';
+import { bucketReactors, type ReactionAudienceSplit } from '$lib/analytics/reaction-audience';
+
+export type { AudienceBucket, ReactionAudienceSplit } from '$lib/analytics/reaction-audience';
 
 // Content/Creator analytics (B4 section b). Every metric is keyed **directly to the creator's userId** in
 // ClickHouse — no owner-keyed rollup (A1) needed. Daily/weekly counts over a rolling window, gap-filled so the
@@ -34,21 +38,25 @@ export type ContentAnalytics = {
   totals: ContentTotals;
 };
 
-// All-time reactions + comments on the creator's images, from the per-creator `image_metrics_user` rollup (a cheap
-// point lookup — comments have no fast period-scoped source, so this is the one place we surface them).
+// All-time reactions + comments on the creator's content. Reactions come from `reactions_owner_scores` (the same
+// owner-keyed rollup behind `UserMetric.reactionCount`, so this tile agrees with the creator's profile). Comments are
+// still the `image_metrics_user` backfill, which nothing writes any more — see the note on the fetch below.
 export type AllTimeTotals = { reactions: number; comments: number };
 
 // Cached read-through wrappers. The named args double as the cache key; the TTL scales with the range span
-// (span-based, capped at 30 min) so reloads/back-nav hit Redis, not ClickHouse (fail-open).
+// (span-based, capped at 30 min) so reloads/back-nav hit Redis, not ClickHouse (fail-open). The `name` carries a
+// version suffix because the args alone don't distinguish a change in what the numbers *mean* — bump it whenever one
+// of these queries changes, or warm keys keep serving the old shape past the deploy. These four expire independently,
+// so a stale one next to a fresh one puts contradictory reaction totals on /dashboard and /analytics at once.
 export const getContentAnalytics = createCache({
-  name: 'analytics:content',
+  name: 'analytics:content:v2',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchContentAnalytics(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
 export const getContentTotals = createCache({
-  name: 'analytics:totals',
+  name: 'analytics:totals:v2',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchContentTotals(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
@@ -56,23 +64,38 @@ export const getContentTotals = createCache({
 
 // Top reacted media over the range (images + videos, split by `type` on each page).
 export const getTopMedia = createCache({
-  name: 'analytics:top-media',
+  name: 'analytics:top-media:v2',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchTopMedia(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
+export const getReactionAudienceSplit = createCache({
+  name: 'analytics:reaction-split:v1',
+  fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
+    fetchReactionAudienceSplit(userId, from, to),
+  ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
+}).get;
+
 export const getAllTimeTotals = createCache({
-  name: 'analytics:alltime',
+  name: 'analytics:alltime:v2',
   fetch: async ({ userId }: { userId: number }): Promise<AllTimeTotals> => {
     const uid = Number(userId);
-    const rows = await getClickhouse().$query<{
-      reactions: number | string;
-      comments: number | string;
-    }>(
-      `SELECT sumMerge(reactions) AS reactions, sumMerge(comments) AS comments FROM image_metrics_user WHERE userId = ${uid}`
-    );
-    return { reactions: Number(rows[0]?.reactions ?? 0), comments: Number(rows[0]?.comments ?? 0) };
+    const ch = getClickhouse();
+    // `image_metrics_user` is a dead one-off backfill — nothing writes it and its max userId is 9.66M against
+    // current ids past 12.5M, so this comments number is frozen and reads 0 for newer creators. Needs a real source.
+    const [reactionRows, commentRows] = await Promise.all([
+      ch.$query<{ reactions: number | string }>(
+        `SELECT sum(score) AS reactions FROM reactions_owner_scores WHERE ownerId = ${uid}`
+      ),
+      ch.$query<{ comments: number | string }>(
+        `SELECT sumMerge(comments) AS comments FROM image_metrics_user WHERE userId = ${uid}`
+      ),
+    ]);
+    return {
+      reactions: Number(reactionRows[0]?.reactions ?? 0),
+      comments: Number(commentRows[0]?.comments ?? 0),
+    };
   },
   ttlSeconds: 3600,
 }).get;
@@ -90,6 +113,17 @@ function seriesSql(
   return `SELECT toDate(${timeCol}) AS date, count() AS value FROM ${table} WHERE ${filter} AND toDate(${timeCol}) >= toDate('${from}') AND toDate(${timeCol}) <= toDate('${to}') GROUP BY date ORDER BY date WITH FILL FROM toDate('${from}') TO toDate('${to}') + 1 STEP 1`;
 }
 
+// `reactions` is append-only: un-reacting writes a `<Entity>_Delete` row rather than removing the `_Create`, so a
+// count filtered to `_Create` makes every react/un-react cycle a permanent +1. Must stay unclamped — clamping a
+// negative bucket makes the period total depend on bucket width. Kept in sync with `reactions_owner_scores_mv`; a
+// new entity type in the `type` enum has to be added to both or it counts as a delete here.
+const reactionCreateTypes = `('Image_Create', 'Comment_Create', 'CommentV2_Create', 'Review_Create', 'Question_Create', 'Answer_Create', 'BountyEntry_Create', 'Article_Create')`;
+const netReactions = `sum(if(type IN ${reactionCreateTypes}, 1, -1))`;
+
+function netReactionsDailySql(uid: number, from: string, to: string): string {
+  return `SELECT toDate(time) AS date, ${netReactions} AS value FROM reactions WHERE ownerId = ${uid} AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY date`;
+}
+
 async function fetchContentAnalytics(
   userId: number,
   from: string,
@@ -105,13 +139,11 @@ async function fetchContentAnalytics(
 
   const [reactions, followers, images, posts, profileViews] = await Promise.all([
     series(
-      seriesSql(
-        'reactions',
-        'time',
-        `ownerId = ${uid} AND endsWith(toString(type), '_Create')`,
+      `${netReactionsDailySql(
+        uid,
         from,
         to
-      )
+      )} ORDER BY date WITH FILL FROM toDate('${from}') TO toDate('${to}') + 1 STEP 1`
     ),
     series(
       seriesSql('userEngagements', 'time', `targetUserId = ${uid} AND type = 'Follow'`, from, to)
@@ -138,6 +170,47 @@ async function fetchContentAnalytics(
   };
 }
 
+// Bounded by the number of *reactors*, never the number of followers: `UserEngagement`'s only usable index is its
+// PK `(userId, targetUserId)`, so "does this user follow X" is an index seek while "everyone who follows X" is a
+// seq scan. We therefore aggregate reactors in ClickHouse first and probe Postgres with that list — measured 143
+// index searches / ~96 ms for a creator's all-time reactor set (~87k), against 825M reaction rows.
+//
+// `reactions` carries the reactor on every row back to 2023-04-27 with no TTL, so this is not limited to a rolling
+// window the way an `entityMetricEvents_month` approach would be — any range the picker offers works, including a
+// future lifetime range, with no new materialized view.
+async function fetchReactionAudienceSplit(
+  userId: number,
+  from: string,
+  to: string
+): Promise<ReactionAudienceSplit> {
+  const uid = Number(userId);
+  const rows = await getClickhouse().$query<{
+    reactorId: number | string;
+    reactions: number | string;
+  }>(
+    `SELECT userId AS reactorId, ${netReactions} AS reactions FROM reactions WHERE ownerId = ${uid} AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY reactorId`
+  );
+
+  // Rows with no actor (611 all-time, across 399 owners) fall through to non-followers rather than being filtered:
+  // a reactor with no session isn't following, and dropping them would make the buckets stop summing to the
+  // reactions total this page already shows.
+  const reactors = rows.map((r) => ({ id: Number(r.reactorId), reactions: Number(r.reactions) }));
+  const otherIds = reactors.filter((r) => r.id !== uid && r.id > 0).map((r) => r.id);
+
+  // `= ANY($1)` and not an `in` list: kysely expands `in` to one placeholder per id, and a heavy creator's reactor
+  // set is past Postgres' 65535-parameter ceiling.
+  const followerIds = new Set<number>();
+  if (otherIds.length) {
+    const result = await sql<{ userId: number }>`
+      SELECT "userId" FROM "UserEngagement"
+      WHERE "targetUserId" = ${uid} AND "type" = 'Follow' AND "userId" = ANY(${otherIds})
+    `.execute(dbRead);
+    for (const row of result.rows) followerIds.add(Number(row.userId));
+  }
+
+  return bucketReactors(reactors, uid, followerIds);
+}
+
 // Top reacted media (images + videos) over the range — the /analytics/content tabs filter this by `type`. We rank
 // the creator's most-reacted image-entities in ClickHouse, then enrich via Postgres (which is where the media type
 // lives), so both tabs share one fetch. 100 gives each type a reasonable list.
@@ -147,7 +220,7 @@ async function fetchTopMedia(userId: number, from: string, to: string): Promise<
     imageId: number | string;
     reactions: number | string;
   }>(
-    `SELECT entityId AS imageId, count() AS reactions FROM reactions WHERE ownerId = ${uid} AND type = 'Image_Create' AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId ORDER BY reactions DESC LIMIT 100`
+    `SELECT entityId AS imageId, ${netReactions} AS reactions FROM reactions WHERE ownerId = ${uid} AND type IN ('Image_Create', 'Image_Delete') AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId HAVING reactions > 0 ORDER BY reactions DESC LIMIT 100`
   );
   return enrichTopImages(raw);
 }
@@ -198,8 +271,15 @@ async function fetchContentTotals(
     return Number(rows[0]?.value ?? 0);
   };
 
+  const netReactionsTotal = async (): Promise<number> => {
+    const rows = await ch.$query<{ value: number | string }>(
+      `SELECT sum(value) AS value FROM (${netReactionsDailySql(uid, from, to)})`
+    );
+    return Number(rows[0]?.value ?? 0);
+  };
+
   const [reactions, followers, images, posts, profileViews] = await Promise.all([
-    count('reactions', 'time', `ownerId = ${uid} AND endsWith(toString(type), '_Create')`),
+    netReactionsTotal(),
     count('userEngagements', 'time', `targetUserId = ${uid} AND type = 'Follow'`),
     count('images_created', 'createdAt', `userId = ${uid}`),
     count('posts', 'time', `userId = ${uid} AND type = 'Publish'`),

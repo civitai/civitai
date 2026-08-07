@@ -167,6 +167,49 @@ export async function getAvailableOAuthProviders(): Promise<OAuthProviderId[]> {
   }
 }
 
+/**
+ * Domain color for content that is SPLIT into SFW and mature variants (today:
+ * leaderboards).
+ *
+ * Why not plain `getRequestDomainColor`: `civitai.red` is configured as BOTH the
+ * blue and the red domain, and that function is a first-match walk over
+ * [green, blue, red] — so it returns `blue` for `.red` and NEVER returns `red` in
+ * production. Scoping a board to `['red']` on the back of it would hide that board
+ * on every host, not move it to `.red`. `isHostForColor(host, 'red')` is the
+ * membership test that correctly identifies a red-capable host regardless of walk
+ * order; the App-Blocks NSFW gate uses the same escape hatch.
+ *
+ * Returns a SINGLE color rather than every color the host matches, so a red-capable
+ * host resolves to `red` alone — otherwise `.red` would match blue too and render
+ * both the SFW and the mature variant of the same board side by side.
+ *
+ * Fail-closed: an unknown/missing host returns undefined, and callers treat that as
+ * "only boards marked `all`".
+ */
+export function getRequestBoardDomainColor(req: {
+  headers: { host?: string };
+}): ColorDomain | undefined {
+  const host = req?.headers?.host?.toLowerCase();
+  if (host && isHostForColor(host, 'red')) return 'red';
+
+  // Second pass, for a host that is an ALIAS of a color whose own primary is
+  // red-capable. Prod ships exactly that: `civitaired.com` is a blue alias, blue's
+  // primary is `civitai.red`, and red has no aliases — so the direct test above
+  // misses it and the walk would hand it the SFW board set while `civitai.red`
+  // itself got the mature one. Two front doors to the same site must agree.
+  //
+  // NB this encodes "blue's primary is the red host", which is true of the current
+  // deployment but not of the config the docs describe: multi-host-domain-aliases.md
+  // presents `civitai.blue` as a possible SFW front door for blue. Add one and it
+  // would resolve red here (fail-OPEN) — the durable fix is to stop overloading
+  // civitai.red as blue's primary, not more special-casing.
+  const walked = getRequestDomainColor(req);
+  const primary = walked ? serverDomainMap[walked]?.primary : undefined;
+  if (primary && isHostForColor(primary, 'red')) return 'red';
+
+  return walked;
+}
+
 export function getRequestDomainColor(req: { headers: { host?: string } }) {
   const host = req?.headers?.host?.toLowerCase();
   if (!host) return undefined;
