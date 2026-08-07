@@ -1658,8 +1658,14 @@ async function main() {
           port = await findAvailablePort(config.baseDevPort, usedPorts);
         }
 
-        // Determine env path
-        const resolvedEnvPath = envPath ? resolve(envPath) : mainEnvPath;
+        // A worktree's own .env is the one its branch was written against. Falling back to the
+        // daemon's project root hands every session whichever tree happened to launch the daemon.
+        const worktreeEnvPath = resolve(resolvedWorktree, '.env');
+        const resolvedEnvPath = envPath
+          ? resolve(envPath)
+          : existsSync(worktreeEnvPath)
+            ? worktreeEnvPath
+            : mainEnvPath;
 
         // Create and start session
         const sessionId = generateSessionId();
