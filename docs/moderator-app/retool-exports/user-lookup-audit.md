@@ -43,6 +43,59 @@ not hidden by a bad export.
    capability moderators use daily. Same error dismissed `CreatorClub`/`CreatorClubBuzz` as "a different
    domain from moderation".
 
+## Status as of 2026-08-07 — the 97 is stale, and it was never 97
+
+Four clusters shipped after this audit was written. Re-reading the list against what is now in the
+app, **the "97 genuine gaps" figure overstated the work in three separate ways** and should not be
+used for planning.
+
+**Shipped since the audit** (commits `f0f7de93b3`, `c5689dedce`, `1e0ec57362`):
+
+| Cluster | Queries closed |
+| --- | --- |
+| E1 | `FindPreviousBans`, `SimilarIpStrikes` — ban/mute/strike history on linked accounts, on the social list too |
+| E2 | `ReceivedReviews`, `BountyList`, `BountyEntryList` |
+| E3 | `CuratorStatus`, `CuratorStatus2`, `UserRank`, `GetModelVersions`, `GensPerResource`, `ClickhouseUserActivities`, `GetNotifications`, `ViewNotifications` |
+| D1 | `ClearCache`, `RefreshSession` — confirmed never blocked on an API key |
+| D2 | `UpdateUserDeets`/`UpdateUserProfile` (profile text), `InsertNewSocial`, `NullSelectedSocial`, `RemoveDeserveMute` |
+
+**Counted as missing but already ported when the audit was written:** `UserCosmetics` (read),
+and the whole mute/ban surface — `Mute`, `Unmute`, `MuteUnmute`, `ToggleMute`, `BANAPINOREASON`,
+`ForceLogout` — which the port had covered locally rather than by the Retool query name.
+
+**Counted as missing but deliberately not ported, with the reasoning already in the code:**
+
+- `ReactionsAll` — unbounded raw rows; `ReactionsGrouped` answers the question they were scanned for.
+- `GeneratorCount` — an all-time COUNT over 1.08B rows; `UserStat.generationCountAllTime` is free.
+- `UserChats`, `WarrantChatLog` — transcripts belong to Chat Audit; User Lookup carries the contact
+  banner instead.
+- `ToggleMod` — granting moderator needs the role-tier decision still open in the tracker.
+
+**Not User Lookup's job at all.** These have no `userId` filter — they are site-wide admin lists that
+happened to live in the same Retool app, and porting them into a per-user lookup would be wrong:
+`MutedList`, `BannedList`, `ModeratorList`, `CuratorList`, `SubscriberList`, `MostFollows`,
+`UsersWithNotes`, `HolidayTeams`, `HolidayTeamCounts`, `UsersCreatedCurrentDay`,
+`DistinctUsersWithSocialLinks`, `SubTiers`, `SubTierStatus`, `TopBuzzKoenQuery`, `TopBuzzUsernames`.
+They want their own tool; track them there.
+
+**Not portable as written:** the `CreatorClub` group reads `UserStripeConnect`, which is not in the
+Prisma schema this app types against.
+
+### What is actually left
+
+- **A — buzz and commerce.** Unchanged, and still the cluster moderators ask for. **Blocked** on the
+  open question at the bottom of this file: `ReToolActions` vs `ModActivity`. Decide it before writing
+  the first transaction, because that is where the audit trail matters most.
+- **B — destructive content actions.** `DeleteComments`, `ToSComments`, `DeleteReview`,
+  `ExcludeOrIncludeReview`, `CommentsWithLinks`, `PURGEAPI`. Needs a decision on side effects the
+  spoke does not own: search-index sync and cache busting. Route through the main app's endpoints, or
+  accept stale index entries — not a choice to make casually.
+- **C — strikes and notifications.** `InsertStrike`, `InsertStrikeNotif`, `SendNotification`. The
+  notifications client is now wired for reads (E3), so the producer path is a smaller step than it was.
+- **Report detail lists.** `ReportsReceived`, `ReportsSubmitted`, `ReportOnUser`, `ActionReport` — the
+  panel still shows only counts where Retool showed rows with status and who set it.
+- **`SubmittedReviewImageCount`**, and `GetSuccesfulPromptsUpdated` (MongoDB, no connection).
+
 ## Classification of all 170
 
 ### Ported (42)
