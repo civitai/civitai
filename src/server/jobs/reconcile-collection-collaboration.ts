@@ -16,6 +16,10 @@ export const reconcileCollectionCollaboration = createJob(
         SELECT c.id, c."userId", c."collaborationDisabledAt"
         FROM "Collection" c
         WHERE c.mode IS NULL
+          -- System-owned collections (the Featured/Events/Newsroom curation set, userId -1) can
+          -- never hold a CustomerSubscription, so without this they lapse on the first run and
+          -- the front-page curation flow locks out.
+          AND c."userId" > 0
           AND (
             c.write <> 'Private'
             OR EXISTS (
