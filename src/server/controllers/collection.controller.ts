@@ -209,12 +209,21 @@ export const getCollectionByIdHandler = async ({
     const collection = await getCollectionById({ input });
 
     // The roster no longer arrives via the flag-protected getCollaborators procedure, so the flag
-    // has to be re-applied here; skipping the derivation also keeps getById's query count unchanged
-    // wherever the feature is off. getCollectionRoster returns [] for the collections that must
-    // never publish one, and never returns pending invites.
+    // has to be re-applied here. The catch covers the roster read alone — the reads above still
+    // 500 — because getById backs the whole detail page and every other useCollection consumer.
+    // Logged because an empty roster is indistinguishable from a collection that simply has none.
     const collaborators =
       ctx.features.collaborativeCollections && permissions.read
-        ? await getCollectionRoster(collection)
+        ? await getCollectionRoster(collection).catch((error) => {
+            logToAxiom({
+              type: 'error',
+              name: 'collection-roster-failed',
+              message: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
+              collectionId: input.id,
+            }).catch(() => undefined);
+            return [] as Collaborator[];
+          })
         : [];
 
     return { collection, permissions, collaborators };

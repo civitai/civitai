@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as CollectionService from '~/server/services/collection.service';
+import type * as LoggingClient from '~/server/logging/client';
 import type { Context } from '~/server/createContext';
 
 /**
@@ -10,15 +11,17 @@ import type { Context } from '~/server/createContext';
  * a mocked `dbRead`, so the guards are asserted where they actually execute.
  */
 
-const { mockDbRead, mockDbWrite, mockGetPermissions, mockGetCollectionById } = vi.hoisted(() => ({
-  mockDbRead: {
-    collectionContributor: { findMany: vi.fn().mockResolvedValue([]) },
-    collectionInvite: { findMany: vi.fn().mockResolvedValue([]) },
-  },
-  mockDbWrite: {},
-  mockGetPermissions: vi.fn(),
-  mockGetCollectionById: vi.fn(),
-}));
+const { mockDbRead, mockDbWrite, mockGetPermissions, mockGetCollectionById, mockLogToAxiom } =
+  vi.hoisted(() => ({
+    mockDbRead: {
+      collectionContributor: { findMany: vi.fn().mockResolvedValue([]) },
+      collectionInvite: { findMany: vi.fn().mockResolvedValue([]) },
+    },
+    mockDbWrite: {},
+    mockGetPermissions: vi.fn(),
+    mockGetCollectionById: vi.fn(),
+    mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
+  }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 
@@ -26,6 +29,11 @@ vi.mock('~/server/services/collection.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CollectionService>()),
   getUserCollectionPermissionsById: mockGetPermissions,
   getCollectionById: mockGetCollectionById,
+}));
+
+vi.mock('~/server/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof LoggingClient>()),
+  logToAxiom: mockLogToAxiom,
 }));
 
 const { getCollectionByIdHandler } = await import('~/server/controllers/collection.controller');
@@ -89,6 +97,7 @@ beforeEach(() => {
   arrangeCollection();
   mockDbRead.collectionContributor.findMany.mockResolvedValue([]);
   mockDbRead.collectionInvite.findMany.mockResolvedValue([]);
+  mockLogToAxiom.mockResolvedValue(undefined);
 });
 
 describe('collection.getById roster — collections that must never publish one', () => {
@@ -204,6 +213,46 @@ describe('collection.getById roster — the follower-disclosure rule', () => {
         }),
       })
     );
+  });
+});
+
+describe('collection.getById roster — a roster failure must not take the page down', () => {
+  it('still resolves the page payload with an empty roster when the roster read rejects', async () => {
+    mockDbRead.collectionContributor.findMany.mockRejectedValue(new Error('pool timeout'));
+
+    const result = await callHandler();
+
+    expect(result.collaborators).toEqual([]);
+    expect(result.collection).toEqual(expect.objectContaining({ id: COLLECTION_ID }));
+    expect(result.permissions).toEqual(expect.objectContaining({ read: true }));
+  });
+
+  it('reports the swallowed roster failure rather than hiding it', async () => {
+    mockDbRead.collectionContributor.findMany.mockRejectedValue(new Error('pool timeout'));
+
+    await callHandler();
+
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'collection-roster-failed',
+        message: 'pool timeout',
+        collectionId: COLLECTION_ID,
+      })
+    );
+  });
+
+  // The degrade is scoped to the roster read; the reads it sits beside genuinely should fail loud.
+  it('still fails the request when the collection read itself fails', async () => {
+    mockGetCollectionById.mockRejectedValue(new Error('collection read down'));
+
+    await expect(callHandler()).rejects.toThrow();
+  });
+
+  it('still fails the request when the permission read fails', async () => {
+    mockGetPermissions.mockRejectedValue(new Error('permission read down'));
+
+    await expect(callHandler()).rejects.toThrow();
   });
 });
 
