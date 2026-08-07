@@ -77,7 +77,9 @@ export const dailyChallengeConfig: ChallengeConfig = {
   challengeType: 'world-morph',
   challengeCollectionId: 6236625,
   judgedTagId: 299729,
-  challengeTagId: 676575, // collection:daily-challenge — applied to every entry via Collection.metadata.autoTagId.
+  // collection:daily-challenge — set as the daily collection's autoTagId so entries are tagged on
+  // submission. Daily only: mod- and user-created challenges deliberately go untagged.
+  challengeTagId: 676575,
   reviewMeTagId: 301770,
   userCooldown: '14 day',
   resourceCooldown: '90 day',
