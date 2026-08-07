@@ -5592,11 +5592,14 @@ export const blocksRouter = router({
 
       const { forgejoUsername, token } = await ensureForgejoIdentity(ctx.user!.id);
       // Grants AT LEAST write on this slug's repo — `addCollaborator` reads the
-      // current level first and never lowers it, so an existing admin/owner is
+      // current level first and does not lower it, so an existing admin/owner is
       // left untouched. This is NOT "idempotent" in the Forgejo sense the old
       // comment claimed: the underlying PUT is a SET that applies DOWNGRADES
       // too (measured on 15.0.6), which is precisely why the read-before-write
-      // lives in the service. The repo lives under civitai-apps/<slug>.
+      // lives in the service. That read-then-write is NOT atomic — see the
+      // TOCTOU note on `addCollaborator` — so "does not lower it" describes the
+      // sequential case, not this proc racing the CLI one.
+      // The repo lives under civitai-apps/<slug>.
       await addCollaborator({ slug, username: forgejoUsername, permission: 'write' });
 
       // Browser-facing host (clone via Cloudflare → oauth2-proxy is bypassed by
@@ -6069,8 +6072,12 @@ export const blocksRouter = router({
       // defensive — the raw PUT this replaced answered 204 for a DOWNGRADE just
       // as it does for a grant (measured on Forgejo 15.0.6), so `civitai app
       // pull` silently stripped push access from the author's own repo and no
-      // status code distinguished it from success. The old comment called that
-      // "idempotent"; the API has no such property.
+      // status code distinguished it from success. Measured with the
+      // `write:repository` PAT this flow mints: at `read` a clone succeeds but a
+      // push is rejected, so the downgrade genuinely broke authors' pushes.
+      // The old comment called that "idempotent"; the API has no such property.
+      // The read-then-write is not atomic, so a call racing getMyAppRepo can
+      // still land on `read` — see the TOCTOU note on `addCollaborator`.
       await addCollaborator({ slug, username: forgejoUsername, permission: 'read' });
 
       const publicHost = env.FORGEJO_PUBLIC_URL.replace(/^https?:\/\//, '').replace(/\/$/, '');

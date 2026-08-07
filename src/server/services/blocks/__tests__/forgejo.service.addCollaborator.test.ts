@@ -18,15 +18,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * `codeberg.org/forgejo/forgejo:15.0.6` container — the version the deployed
  * instance reports (`GET /api/v1/version` → `15.0.6+gitea-1.22.0`). Observed:
  *   - `GET …/collaborators/{user}/permission` → 200
- *     `{permission, role_name, user}`; a NON-collaborator reads back
- *     `permission: "none"` (200, NOT 404). A nonexistent user or repo is a 404.
- *     An org owner reads back `owner`.
+ *     `{permission, role_name, user}`; on a PRIVATE repo a NON-collaborator
+ *     reads back `permission: "none"` (200, NOT 404). A nonexistent user or repo
+ *     is a 404. An org owner reads back `owner`, and still reads `owner` after
+ *     being added as a collaborator.
  *   - `PUT …/collaborators/{user}` → **204 for all four of** first grant,
  *     same-level re-grant, upgrade, and DOWNGRADE. A read-back confirms the
  *     downgrade landed. No status code distinguishes them, so the old
- *     `res.status !== 422` check could not have caught this.
+ *     `res.status !== 422` check could not have caught this. `admin` → `write`
+ *     is a downgrade too.
  *   - A PUT body naming an unrecognised permission is a no-op (204, level
- *     unchanged); `owner` is not grantable that way either.
+ *     unchanged); `owner` is not grantable that way either; and the match is
+ *     case-SENSITIVE, so an uppercase `WRITE` is likewise a no-op.
+ *   - With the `write:repository` PAT this flow mints: no collaborator row →
+ *     clone FAILS; `read` → clone OK but push REJECTED; `write` → both OK.
+ *     That is why a skipped grant would deny access outright, and why the
+ *     downgrade genuinely broke authors' pushes.
  * `TestHarnessControls` below pins that the fake still reproduces the downgrade
  * — without that, every "the permission survived" assertion here would pass
  * vacuously against a fake that simply cannot lower anything.
@@ -56,10 +63,20 @@ const USER = 'dev-7';
 /** Levels a PUT can actually apply — measured; anything else is a no-op. */
 const APPLICABLE = new Set(['read', 'write', 'admin']);
 
-function makeForgejo(initial: Record<string, string> = {}) {
-  const state = new Map<string, string>(Object.entries(initial));
-  const puts: Array<{ user: string; permission: unknown }> = [];
-  const reads: string[] = [];
+/**
+ * State is keyed by `repo/user`, NOT by user alone. That is not tidiness: a fake
+ * that ignores the repo segment cannot tell the real endpoint from one pointed
+ * at a DIFFERENT repo, and a mutant that reads some other repo's permission
+ * then survives the whole suite. Keying on the pair makes the wrong-repo read
+ * return that repo's answer — which is exactly what production would do — so the
+ * downgrade lands and the regression test sees it.
+ */
+function makeForgejo(initial: Record<string, string> = {}, repo: string = SLUG) {
+  const state = new Map<string, string>(
+    Object.entries(initial).map(([user, level]) => [`${repo}/${user}`, level])
+  );
+  const puts: Array<{ repo: string; user: string; permission: unknown }> = [];
+  const reads: Array<{ repo: string; user: string }> = [];
   let readOverride: null | (() => Response | Promise<Response>) = null;
   let putStatus = 204;
 
@@ -67,28 +84,27 @@ function makeForgejo(initial: Record<string, string> = {}) {
     const u = String(url);
     const perm = new RegExp(`/repos/${ORG}/([^/]+)/collaborators/([^/]+)/permission$`).exec(u);
     if (perm) {
+      const readRepo = decodeURIComponent(perm[1]);
       const user = decodeURIComponent(perm[2]);
-      reads.push(user);
+      reads.push({ repo: readRepo, user });
       if (readOverride) return readOverride();
+      const level = state.get(`${readRepo}/${user}`) ?? 'none';
       return new Response(
-        JSON.stringify({
-          permission: state.get(user) ?? 'none',
-          role_name: state.get(user) ?? 'none',
-          user: { login: user },
-        }),
+        JSON.stringify({ permission: level, role_name: level, user: { login: user } }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     }
     const collab = new RegExp(`/repos/${ORG}/([^/]+)/collaborators/([^/]+)$`).exec(u);
     if (collab && init?.method === 'PUT') {
+      const putRepo = decodeURIComponent(collab[1]);
       const user = decodeURIComponent(collab[2]);
       const body = JSON.parse(String(init.body ?? '{}')) as { permission?: unknown };
-      puts.push({ user, permission: body.permission });
+      puts.push({ repo: putRepo, user, permission: body.permission });
       if (putStatus >= 200 && putStatus < 300) {
         // The measured behaviour the service has to defend against: Forgejo
         // SETS the level in BOTH directions.
         if (typeof body.permission === 'string' && APPLICABLE.has(body.permission)) {
-          state.set(user, body.permission);
+          state.set(`${putRepo}/${user}`, body.permission);
         }
       }
       return new Response(null, { status: putStatus });
@@ -100,9 +116,9 @@ function makeForgejo(initial: Record<string, string> = {}) {
     fetch: fetchMock,
     puts,
     reads,
-    effective: (user: string) => state.get(user) ?? 'none',
+    effective: (user: string, onRepo: string = repo) => state.get(`${onRepo}/${user}`) ?? 'none',
     rawPut: (user: string, permission: string) =>
-      fetchMock(`https://forgejo.example/api/v1/repos/${ORG}/${SLUG}/collaborators/${user}`, {
+      fetchMock(`https://forgejo.example/api/v1/repos/${ORG}/${repo}/collaborators/${user}`, {
         method: 'PUT',
         body: JSON.stringify({ permission }),
       }),
@@ -184,7 +200,7 @@ describe('addCollaborator — never lowers an existing permission', () => {
     expect(fj.effective(USER)).toBe('write');
 
     // Exactly one PUT across both calls — the second was skipped, not re-applied.
-    expect(fj.puts).toEqual([{ user: USER, permission: 'write' }]);
+    expect(fj.puts).toEqual([{ repo: SLUG, user: USER, permission: 'write' }]);
   });
 
   it.each(['read', 'write'] as const)(
@@ -258,7 +274,7 @@ describe('addCollaborator — grants that SHOULD go out still go out', () => {
 
     expect(fj.effective(USER)).toBe('read');
     expect(result).toEqual({ requested: 'read', existing: 'none', outcome: 'granted' });
-    expect(fj.puts).toEqual([{ user: USER, permission: 'read' }]);
+    expect(fj.puts).toEqual([{ repo: SLUG, user: USER, permission: 'read' }]);
   });
 
   it('upgrades read → write', async () => {
@@ -280,10 +296,18 @@ describe('addCollaborator — grants that SHOULD go out still go out', () => {
     const result = await addCollaborator({ slug: SLUG, username: USER });
 
     expect(result.requested).toBe('write');
-    expect(fj.puts).toEqual([{ user: USER, permission: 'write' }]);
+    expect(fj.puts).toEqual([{ repo: SLUG, user: USER, permission: 'write' }]);
   });
 
-  it('URL-encodes the username on BOTH the read and the write', async () => {
+  /**
+   * The FULL URL, not just the trailing segments. A `toContain` on
+   * `/collaborators/<user>/permission` cannot see which REPO is being read, and
+   * a read pointed at the wrong repo is not a cosmetic bug: it either reports
+   * some other repo's level and skips a grant the author actually needed, or
+   * reports `none` and lets the downgrade through. Both hops are asserted
+   * whole, so the org and slug segments are pinned too.
+   */
+  it('addresses the RIGHT repo on both hops, and URL-encodes the username', async () => {
     const fj = makeForgejo();
     install(fj);
     const { addCollaborator } = await svc();
@@ -291,9 +315,49 @@ describe('addCollaborator — grants that SHOULD go out still go out', () => {
     await addCollaborator({ slug: SLUG, username: 'dev user+1', permission: 'write' });
 
     const urls = fj.fetch.mock.calls.map((c) => String(c[0]));
-    expect(urls[0]).toContain('/collaborators/dev%20user%2B1/permission');
-    expect(urls[1]).toMatch(/\/collaborators\/dev%20user%2B1$/);
+    expect(urls).toEqual([
+      `https://forgejo.example/api/v1/repos/${ORG}/${SLUG}/collaborators/dev%20user%2B1/permission`,
+      `https://forgejo.example/api/v1/repos/${ORG}/${SLUG}/collaborators/dev%20user%2B1`,
+    ]);
   });
+
+  it('reads the permission for the SAME (repo, user) pair it is about to grant on', async () => {
+    const fj = makeForgejo({ [USER]: 'write' });
+    install(fj);
+    const { addCollaborator } = await svc();
+
+    await addCollaborator({ slug: SLUG, username: USER, permission: 'read' });
+
+    expect(fj.reads).toEqual([{ repo: SLUG, user: USER }]);
+  });
+});
+
+describe('addCollaborator — the ranking table itself', () => {
+  /**
+   * `permissionRank` deliberately uses `hasOwnProperty` rather than `in`. With
+   * `in`, an inherited Object.prototype key would "rank" as a FUNCTION, and the
+   * `>=` comparison against a number is then always false — silently turning a
+   * junk permission string into a grant that proceeds while claiming it was
+   * observed. Unreachable through today's Forgejo, pinned so the cheaper
+   * spelling cannot be swapped in without a test going red.
+   */
+  it.each(['toString', 'constructor', 'valueOf', '__proto__'])(
+    'treats the inherited Object key %s as unrankable, not as a permission',
+    async (inherited) => {
+      const fj = makeForgejo({ [USER]: 'write' });
+      fj.readReturns(JSON.stringify({ permission: inherited }));
+      install(fj);
+      const { addCollaborator } = await svc();
+
+      const result = await addCollaborator({ slug: SLUG, username: USER, permission: 'read' });
+
+      expect(result.outcome).toBe('granted-unobserved');
+      expect(vi.mocked(logToAxiom).mock.calls[0][0]).toMatchObject({
+        type: 'warning',
+        reason: `unrankable "${inherited}"`,
+      });
+    }
+  );
 });
 
 describe('addCollaborator — unobservable reads fail toward ACCESS, loudly', () => {
@@ -306,7 +370,7 @@ describe('addCollaborator — unobservable reads fail toward ACCESS, loudly', ()
     const result = await addCollaborator({ slug: SLUG, username: USER, permission: 'read' });
 
     expect(result).toEqual({ requested: 'read', existing: null, outcome: 'granted-unobserved' });
-    expect(fj.puts).toEqual([{ user: USER, permission: 'read' }]);
+    expect(fj.puts).toEqual([{ repo: SLUG, user: USER, permission: 'read' }]);
     expect(vi.mocked(logToAxiom).mock.calls[0][0]).toMatchObject({
       name: 'forgejo-add-collaborator',
       type: 'warning',

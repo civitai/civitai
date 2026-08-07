@@ -181,12 +181,23 @@ export async function getRepo(slug: string): Promise<ForgejoRepo> {
  * Every string here was MEASURED against Forgejo `15.0.6+gitea-1.22.0` — the
  * version `GET /api/v1/version` reports for the deployed instance — as a value
  * `GET …/collaborators/{user}/permission` actually returns:
- *   - `none`  is what a NON-collaborator reads back. That endpoint answers
- *             200 with `permission: "none"`, NOT 404, so "not a collaborator
- *             yet" is an ordinary reading, not an error.
- *   - `owner` is what an org owner reads back.
+ *   - `none`  is what a NON-collaborator reads back **on a PRIVATE repo**. That
+ *             endpoint answers 200 with `permission: "none"`, NOT 404, so "not
+ *             a collaborator yet" is an ordinary reading, not an error.
+ *             🔴 On a PUBLIC repo the same read answers `"read"` instead
+ *             (measured), because everyone can read it. Canonical app repos are
+ *             created `private: true` (`createRepoFromTemplate`, above), so this
+ *             is not live today — but this file already records one visibility
+ *             regression (the `#3498` note on the review-repo helpers below), and
+ *             if a canonical repo ever went public the CLI-pull `read` grant
+ *             would rank as already-satisfied and become a permanent no-op, so
+ *             no collaborator row would ever be created.
+ *   - `owner` is what an org owner reads back. Adding an org owner as a
+ *             collaborator creates a row but still reads `owner` (measured), so
+ *             the short-circuit below is correct for them.
  * Only `read` / `write` / `admin` are grantable by PUT: a PUT of `owner`
- * answers 204 and changes nothing.
+ * answers 204 and changes nothing, and the match is case-SENSITIVE — an
+ * uppercase `WRITE` from a `read` baseline is a 204 no-op (measured).
  */
 const COLLABORATOR_PERMISSION_RANK = {
   none: 0,
@@ -206,11 +217,24 @@ function permissionRank(value: string): number | null {
 }
 
 /**
- * Three-valued on purpose. `unknown` (a permission string this Forgejo returned
- * that our table does not rank) and `unreadable` (the call failed) are NOT the
- * same as `none`, and collapsing either into `none` would silently re-enable the
- * downgrade this whole helper exists to prevent — a rank of 0 compares below
- * everything, so every grant would proceed.
+ * Three-valued on purpose — but for OBSERVABILITY, not correctness. Be precise
+ * about this, because the obvious stronger claim is false and a maintainer who
+ * tests it will (correctly) conclude the distinction is dead weight and delete
+ * it.
+ *
+ * What it does NOT buy: collapsing `unknown` or `unreadable` into `none` would
+ * NOT change one byte of HTTP. Both already fall through to the PUT — that is
+ * the fail-toward-access design below — and rank 0 falls through too, so the
+ * requests sent and the resulting permission are identical either way. Measured:
+ * with both collapses applied, the outgoing URLs, methods and bodies and the
+ * final permission are byte-identical to HEAD.
+ *
+ * What it DOES buy: `none` is a MEASUREMENT ("we asked; they hold nothing")
+ * while the other two are the ABSENCE of one. Only the distinction lets the
+ * warning below fire, and that warning is the sole signal that a grant went out
+ * blind. Fold them together and blind grants become indistinguishable from
+ * observed ones — a fabricated zero of exactly the kind this codebase keeps
+ * paying for elsewhere.
  */
 type PermissionRead =
   | { kind: 'known'; permission: CollaboratorPermission }
@@ -264,17 +288,46 @@ export type AddCollaboratorResult = {
  * access from an author who had `write` from the web flow, and no status code
  * distinguished that from success.
  *
+ * The downgrade was not cosmetic. Measured with a `write:repository` PAT — the
+ * exact scope `dev-git-access.service.ts` mints — against a private repo:
+ * no collaborator row → `git clone` FAILS (`Repository not found`); `read` →
+ * clone succeeds but `git push` is REJECTED (`not allowed to push to branch
+ * 'main'`); `write` → both succeed. So the read/write split between the two call
+ * sites buys real least-privilege rather than being decorative, and the bug it
+ * enabled genuinely broke authors' pushes.
+ *
  * Read-before-write closes it: rank the current level, and skip the PUT whenever
  * it is already at or above what the caller asked for. `admin` and `owner` are
  * therefore unreachable by either call site.
  *
- * WHEN THE READ IS UNOBSERVABLE we still send the grant (`granted-unobserved`),
- * and say so in the log. The trade, stated rather than implied: proceeding can
- * reproduce the downgrade on the narrow path where the read fails but the write
- * succeeds, whereas skipping would deny a first-time author access to their own
- * repo with no workaround — a hard, immediate, user-visible failure, versus a
- * regression to the behaviour that shipped before this function was fixed. The
- * log is what keeps the choice from being silent.
+ * 🔴 NOT ATOMIC. Forgejo offers no compare-and-set here, so the read and the
+ * write are two round trips, and the two procedures that call this run on
+ * separate connections. A concurrent web call and CLI call can interleave —
+ * both read `none`, the web one PUTs `write`, the CLI one then PUTs `read` —
+ * reproducing the original downgrade inside a one-round-trip window. That
+ * window is strictly narrower than the unconditional overwrite this replaced,
+ * so it is an improvement rather than a regression, but "never lowers" above is
+ * a claim about the SEQUENTIAL case. Closing it needs a lock or a server-side
+ * CAS.
+ *
+ * WHEN THE READ IS UNOBSERVABLE we still send the grant (`granted-unobserved`)
+ * and log it. Why proceeding beats skipping: both failure modes are real —
+ * skipping denies access, and the denial is total (measured above: with no
+ * collaborator row the clone fails outright) — but a denial is LOUD and
+ * SELF-HEALING, since the read failure is transient by hypothesis and both call
+ * sites re-run on the user's next attempt, whereas a downgrade is SILENT and
+ * PERSISTENT, sticking until someone notices they can no longer push. Prefer
+ * the failure the user can see and retry past.
+ *
+ * A third option was considered and REJECTED: on an unobservable read, grant
+ * `write` (the ceiling `getMyAppRepo` already asks for) instead of the requested
+ * level. It does not do what it promises. It still downgrades an existing
+ * `admin` — measured, `admin` → `write` answers 204 and lowers — so it narrows
+ * the window rather than closing it, and it pays for that by silently and
+ * PERMANENTLY handing push access to a CLI-pull caller who asked only for
+ * `read`, triggered by an infrastructure hiccup. Trading a silent persistent
+ * downgrade for a silent persistent ESCALATION is not an improvement; it is the
+ * same bug mirrored.
  */
 export async function addCollaborator(opts: {
   slug: string;
@@ -308,6 +361,13 @@ export async function addCollaborator(opts: {
       return { requested, existing: current.permission, outcome: 'kept' };
     }
   } else {
+    // The blind-grant signal. Honest about its reach: nothing consumes
+    // `forgejo-add-collaborator` today — no alert, no dashboard, no saved query
+    // — and `logToAxiom` here is fire-and-forget (unawaited, errors swallowed),
+    // so a logging outage drops it without a trace. It makes a blind grant
+    // DISCOVERABLE by someone who goes looking; it does not make anyone look.
+    // If this path ever matters operationally, wire an alert on this name — do
+    // not assume emitting the event is the same as being told.
     logToAxiom(
       {
         name: 'forgejo-add-collaborator',
