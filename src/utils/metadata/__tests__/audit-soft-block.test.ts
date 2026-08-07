@@ -19,7 +19,7 @@ const trigger = (category: PromptTriggerCategory, message = 'x'): PromptTrigger 
 });
 
 describe('isSoftBlock — the overridable boundary', () => {
-  it.each<PromptTriggerCategory>(['minor_age', 'nsfw_blocklist', 'profanity', 'external'])(
+  it.each<PromptTriggerCategory>(['nsfw_blocklist', 'profanity', 'external'])(
     '%s is soft',
     (category) => {
       expect(isSoftBlock([trigger(category)])).toBe(true);
@@ -27,6 +27,7 @@ describe('isSoftBlock — the overridable boundary', () => {
   );
 
   it.each<PromptTriggerCategory>([
+    'minor_age',
     'poi',
     'inappropriate_minor',
     'inappropriate_poi',
@@ -52,22 +53,29 @@ describe('isSoftBlock — the overridable boundary', () => {
   });
 });
 
-describe('auditPromptEnriched — hard checks must be evaluated first', () => {
-  // Every check returns on first match, so ordering decides the reported category
-  // and therefore the severity. If `minor_age` ran first (as it did before the
-  // soft/hard split) it would short-circuit and report the SOFT category here,
-  // making an explicitly sexual minor prompt click-through.
-  it('a sexual minor prompt reports inappropriate_minor, not the soft minor_age', () => {
-    const result = auditPromptEnriched('17 year old, nude');
+describe('minor_age has no override path', () => {
+  // `minor_age` looks like a false-positive machine ("an 8 year old oak tree")
+  // and was proposed for the soft set. It was rejected because it is also the
+  // ONLY thing catching a suggestive-minor prompt that carries no explicit term:
+  // `inappropriate_minor` requires an NSFW word, so these reach `minor_age` and
+  // nothing else. Adding 'minor_age' to SOFT_BLOCK_CATEGORIES makes every case
+  // below overridable.
+  it.each([
+    '12 year old girl, swimsuit, beach',
+    '15 year old girl, bedroom, lying down',
+    '13 year old, revealing outfit',
+    'child, 9 years old, wet t-shirt',
+    'teen, 16 years old, short skirt',
+  ])('suggestive-minor prompt is blocked with no override: %s', (prompt) => {
+    const result = auditPromptEnriched(prompt);
     expect(result.success).toBe(false);
-    expect(result.triggers[0].category).toBe('inappropriate_minor');
     expect(isSoftBlock(result.triggers)).toBe(false);
   });
 
-  it('a bare age mention with no sexual context stays soft', () => {
+  it('an innocent age mention is also still hard — the known cost of keeping the above safe', () => {
     const result = auditPromptEnriched('an 8 year old oak tree in a field');
     expect(result.success).toBe(false);
     expect(result.triggers[0].category).toBe('minor_age');
-    expect(isSoftBlock(result.triggers)).toBe(true);
+    expect(isSoftBlock(result.triggers)).toBe(false);
   });
 });
