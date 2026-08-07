@@ -222,6 +222,28 @@ const baseProps = {
   expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
 };
 
+// REQUEST_CONSENT is a TWO-condition gate (requestConsentGate.ts): status must be
+// 'ready' AND `missingScopes` must be non-empty. With the default `baseProps` the
+// second condition alone drops every request, so a consent guard mounted on them
+// would pass for a reason that has nothing to do with the status gate — the shape
+// of a vacuous test. These props satisfy the scopes half so the STATUS half is the
+// only thing under test.
+const consentProps = { ...baseProps, missingScopes: ['ai:write:budgeted'] };
+
+// The manifest's minHeight, i.e. the height the iframe is pinned at from mount
+// until something honours a RESIZE_IFRAME. Any assertion that "the height did not
+// move" is an assertion that it is still this.
+const MIN_HEIGHT = 200;
+// A distinct in-bounds height (manifest min 200 / max 800), so a pass cannot be
+// the clamp landing on the default by coincidence.
+const RESIZE_HEIGHT = 640;
+
+// The host renders the negotiated height as an inline style on the iframe.
+function iframeHeightPx(): number {
+  const el = page.getByTestId('block-iframe').element() as HTMLIFrameElement;
+  return parseFloat(el.style.height);
+}
+
 async function waitForMount() {
   await vi.waitFor(() => {
     const el = page.getByTestId('block-iframe').element() as HTMLIFrameElement;
@@ -251,10 +273,27 @@ async function driveToReady() {
  * Unlike `driveToReady` this returns control to the caller WITHOUT waiting for
  * `data-block-ready` — the point is that the `onReadyAttributeWrite` hook fires from
  * inside React's commit, on React's own stack, while this drive is still running.
+ *
+ * 🔴 THE INTERVAL IS BOUNDED BY usePostMessage'S OWN RATE LIMIT, not by taste. That
+ * transport drops inbound messages once RATE_LIMIT_MAX_MESSAGES = 30 have arrived
+ * within RATE_LIMIT_WINDOW_MS = 1000 (usePostMessage.ts), counting only types that
+ * have a subscriber — which BLOCK_READY does. At the original 10ms this drive asked
+ * for 100/s against a 30/s budget, so a drive that ran for a full second would spend
+ * ~70% of it above the limit, dropping its own posts (and the one the commit-window
+ * hook piggybacks) with a `console.warn` each. It worked because the drives are
+ * short and the decisive post lands in the first few ticks — i.e. it was under the
+ * limit by luck of timing, not by construction, and every guard added here narrows
+ * that margin. 40ms is 25/s, which stays under the budget with headroom for the
+ * commit-window post on top. Raise this number, never lower it.
+ *
+ * (Stated as the arithmetic it is: the constants are read from usePostMessage.ts,
+ * the drop count itself was not instrumented.)
  */
+const READY_DRIVE_INTERVAL_MS = 40;
+
 async function startReadyDrive() {
   await waitForMount();
-  const timer = setInterval(() => postFromBlock('BLOCK_READY', {}), 10);
+  const timer = setInterval(() => postFromBlock('BLOCK_READY', {}), READY_DRIVE_INTERVAL_MS);
   postFromBlock('BLOCK_READY', {});
   return () => clearInterval(timer);
 }
@@ -432,5 +471,231 @@ describe('IframeHost status gates — commit→passive-effect window (model.side
 
     await new Promise((r) => setTimeout(r, 150));
     expect(openLoginPopup).not.toHaveBeenCalled();
+  });
+
+  /**
+   * GUARD 6 — RESIZE_IFRAME, the third of the four gated handlers.
+   *
+   * 🔴 WHY THIS EXISTS: MEASURED, TWICE. Before this guard, reverting the
+   * RESIZE_IFRAME handler to its exact pre-#3726 form — closing over `status`, with
+   * `status` back in the effect's dependency array — left the ENTIRE
+   * src/components/AppBlocks component suite green at 380 passed / 33 files. A
+   * quarter of this fix could be silently undone. Guards 1 and 4 cover the money and
+   * sign-in gates; nothing covered this one.
+   *
+   * Like REQUEST_SIGN_IN this handler is fire-and-forget with no NACK to soften a
+   * drop, so the root-cause half (reading a render-body-updated `statusRef` rather
+   * than a closed-over `status`) is the only thing standing between a block that
+   * negotiates its height at ready and a slot stuck at minHeight.
+   *
+   * The observable is the iframe's inline height rather than a mock call count: it
+   * is the actual user-visible effect, and it distinguishes "handler ran" from
+   * "handler ran and the clamp let the value through".
+   */
+  test("RESIZE_IFRAME posted in React's commit→passive-effect gap is still honoured", async () => {
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await waitForMount();
+    // The height the assertion below must move OFF. Read before the drive so a
+    // pass cannot be the iframe having already been at RESIZE_HEIGHT.
+    expect(iframeHeightPx()).toBe(MIN_HEIGHT);
+
+    const unpatch = onReadyAttributeWrite(() =>
+      postFromBlock('RESIZE_IFRAME', { height: RESIZE_HEIGHT })
+    );
+    try {
+      const stopDrive = await startReadyDrive();
+      try {
+        await vi.waitFor(() => expect(iframeHeightPx()).toBe(RESIZE_HEIGHT));
+      } finally {
+        stopDrive();
+      }
+    } finally {
+      unpatch();
+    }
+  });
+
+  /**
+   * GUARD 7 — RESIZE_IFRAME's own refusal, which was ALSO unguarded.
+   *
+   * 🔴 This closes a WIDER gap than the commit-window one, and the PR that
+   * introduced the fix did not disclose it: before this test, DELETING the
+   * `readGateStatus() !== 'ready'` line outright also left the whole suite green. A
+   * pre-handshake block could drive the slot's height around — while the iframe is
+   * still pointerEvents:none and the user has interacted with nothing — and nothing
+   * anywhere went red.
+   *
+   * 🔴 POSITIVE CONTROL is not optional. The first assertion is a ZERO ("the height
+   * did not move"), and a harness that never delivered the message, or that reads an
+   * `el.style.height` the host does not actually write, produces that same zero. The
+   * control fires the SAME message on the SAME host after ready and requires the
+   * height to move, so the zero above it is a measurement rather than an artefact.
+   */
+  test('RESIZE_IFRAME before BLOCK_READY does not move the slot height', async () => {
+    renderWithProviders(<IframeHost {...baseProps} />);
+    // Do NOT drive to ready — fire while status is still 'loading'.
+    await waitForMount();
+    expect(iframeHeightPx()).toBe(MIN_HEIGHT);
+
+    postFromBlock('RESIZE_IFRAME', { height: RESIZE_HEIGHT });
+
+    await new Promise((r) => setTimeout(r, 150));
+    // THE security property: a pre-handshake block cannot resize the slot.
+    expect(iframeHeightPx()).toBe(MIN_HEIGHT);
+
+    // POSITIVE CONTROL: the identical message, once ready, IS honoured — so the
+    // refusal above is the gate refusing, not the probe failing to observe.
+    await driveToReady();
+    postFromBlock('RESIZE_IFRAME', { height: RESIZE_HEIGHT });
+    await vi.waitFor(() => expect(iframeHeightPx()).toBe(RESIZE_HEIGHT));
+  });
+
+  /**
+   * GUARD 8 — REQUEST_CONSENT, the fourth gated handler and the one with the LEAST
+   * coverage of any of them.
+   *
+   * 🔴 MEASURED: reverting this handler to the closed-over `status` (with `status`
+   * back in its deps) left the whole suite green, exactly as for RESIZE_IFRAME. And
+   * REQUEST_CONSENT had ZERO browser coverage against IframeHost anywhere in the
+   * tree before this file — the three other files naming the message target
+   * PageBlockHost or BlockConsentModal, neither of which exercises this handler.
+   *
+   * Fire-and-forget in both directions (no requestId, no host→block reply), so a
+   * drop in the commit window is simply an anonymous-of-a-capability user clicking
+   * "Generate" and getting nothing — no permission modal, no error, no retry.
+   *
+   * The assertion pins the modal's OWN props (`missingScopes`), not just
+   * `dialogs.length`: the store is shared and a length check would be satisfied by
+   * any dialog from any source.
+   */
+  test("REQUEST_CONSENT posted in React's commit→passive-effect gap still opens the consent modal", async () => {
+    renderWithProviders(<IframeHost {...consentProps} />);
+    const unpatch = onReadyAttributeWrite(() => postFromBlock('REQUEST_CONSENT', {}));
+    try {
+      const stopDrive = await startReadyDrive();
+      try {
+        await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+      } finally {
+        stopDrive();
+      }
+    } finally {
+      unpatch();
+    }
+    // Prove it is the CONSENT modal, carrying the server-known missing set — not
+    // some other dialog that happened to be open.
+    expect(
+      (useDialogStore.getState().dialogs[0].props as { missingScopes?: string[] }).missingScopes
+    ).toEqual(['ai:write:budgeted']);
+  });
+
+  /**
+   * GUARD 9 — REQUEST_CONSENT's refusal, the second undisclosed hole.
+   *
+   * 🔴 Deleting this handler's status gate (forcing `resolveRequestConsent` to see
+   * 'ready') also left the whole suite green before this test: a pre-handshake block
+   * could pop the PERMISSION modal — the one that grants it `ai:write:budgeted` —
+   * before the user has interacted with anything.
+   *
+   * POSITIVE CONTROL as in guard 7, and for the same reason: "no modal opened" is
+   * the observable a dead harness also produces.
+   */
+  test('REQUEST_CONSENT before BLOCK_READY opens no consent modal', async () => {
+    renderWithProviders(<IframeHost {...consentProps} />);
+    // Do NOT drive to ready — fire while status is still 'loading'.
+    await waitForMount();
+
+    postFromBlock('REQUEST_CONSENT', {});
+
+    await new Promise((r) => setTimeout(r, 150));
+    // THE security property: no pre-handshake permission prompt.
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+
+    // POSITIVE CONTROL: the identical message, once ready, DOES open it.
+    await driveToReady();
+    postFromBlock('REQUEST_CONSENT', {});
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    expect(
+      (useDialogStore.getState().dialogs[0].props as { missingScopes?: string[] }).missingScopes
+    ).toEqual(['ai:write:budgeted']);
+  });
+
+  /**
+   * GUARD 10 — the NACK's own predicate, half one: `requestId.length > 0`.
+   *
+   * Guard 3 covers a payload with NO requestId key at all. It does NOT cover an
+   * EMPTY-STRING one, and that is a different branch: `resolveBuzzPurchaseRequest`
+   * rejects `''` (its `length === 0` check), so the message lands in the same
+   * never-hang block — where `raw.requestId.length > 0` is the only thing stopping a
+   * reply addressed to the empty string.
+   *
+   * 🔴 MEASURED: relaxing that to `>= 0` survived the whole suite. A NACK on `''` is
+   * not merely untidy — it is a reply the block cannot correlate (its transport keys
+   * pending requests by id), so it is indistinguishable from the silent drop it was
+   * supposed to replace while adding an unsolicited message to the channel.
+   *
+   * 🔴 COUNT ONLY `BUZZ_PURCHASE_RESULT` — see guard 3's note. Total received drifts
+   * on BLOCK_INIT / TOKEN_REFRESH the host emits on its own schedule.
+   */
+  test('OPEN_BUZZ_PURCHASE with an EMPTY requestId is dropped silently (nothing to reply to)', async () => {
+    renderWithProviders(<IframeHost {...baseProps} />);
+    // Pre-ready: the branch under test is the never-hang block, which this reaches
+    // whether the rejection came from the status or from the payload.
+    await waitForMount();
+    const replies = listenForReply();
+    const buzzReplies = () => replies.received.filter((m) => m.type === 'BUZZ_PURCHASE_RESULT');
+
+    // POSITIVE CONTROL: a well-formed pre-ready request IS NACKed, so a
+    // BUZZ_PURCHASE_RESULT is observable on this host before the zero is read.
+    postFromBlock('OPEN_BUZZ_PURCHASE', { requestId: 'rq_ctl_empty', suggestedAmount: 10 });
+    await vi.waitFor(() => expect(buzzReplies()).toHaveLength(1));
+
+    // The real case: a present-but-empty requestId.
+    postFromBlock('OPEN_BUZZ_PURCHASE', { requestId: '', suggestedAmount: 1000 });
+
+    await new Promise((r) => setTimeout(r, 150));
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    // Still exactly the control's reply — the empty-id post added none.
+    expect(buzzReplies()).toHaveLength(1);
+    replies.stop();
+  });
+
+  /**
+   * GUARD 11 — the NACK's predicate, half two: `typeof raw.requestId === 'string'`.
+   *
+   * 🔴 THE TWO PAYLOADS HERE ARE NOT REDUNDANT, AND PICKING ONLY THE OBVIOUS ONE
+   * LEAVES THE MUTANT ALIVE. Dropping the `typeof` check leaves
+   * `raw.requestId.length > 0`:
+   *
+   *   • `requestId: 5` — `(5).length` is `undefined`, `undefined > 0` is false, so
+   *     the mutant still sends nothing and a test built on this case alone passes
+   *     against BOTH the fix and the mutant. It is here because it is the payload
+   *     the `typeof` check nominally describes, not because it discriminates.
+   *   • `requestId: ['rq']` — a structured-clonable value with a TRUTHY `.length`.
+   *     This is the one that discriminates: without the `typeof` check the host
+   *     replies with `requestId: ['rq']`, an id of a type the protocol does not
+   *     have. MEASURED: dropping `typeof` survives the whole suite without it.
+   *
+   * Both are equally UNREPLIABLE by the PR's own stated invariant — there is no
+   * string id to thread a reply back on — so both must be dropped in total silence.
+   */
+  test('OPEN_BUZZ_PURCHASE with a NON-STRING requestId is dropped silently (nothing to reply to)', async () => {
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await waitForMount();
+    const replies = listenForReply();
+    const buzzReplies = () => replies.received.filter((m) => m.type === 'BUZZ_PURCHASE_RESULT');
+
+    // POSITIVE CONTROL first — proves the handler is live and a NACK observable.
+    postFromBlock('OPEN_BUZZ_PURCHASE', { requestId: 'rq_ctl_nonstring', suggestedAmount: 10 });
+    await vi.waitFor(() => expect(buzzReplies()).toHaveLength(1));
+
+    // A number: no `.length` at all.
+    postFromBlock('OPEN_BUZZ_PURCHASE', { requestId: 5, suggestedAmount: 1000 });
+    // An array: a non-string that DOES have a truthy `.length`.
+    postFromBlock('OPEN_BUZZ_PURCHASE', { requestId: ['rq'], suggestedAmount: 1000 });
+
+    await new Promise((r) => setTimeout(r, 150));
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    // Still exactly the control's reply — neither malformed post added one.
+    expect(buzzReplies()).toHaveLength(1);
+    replies.stop();
   });
 });

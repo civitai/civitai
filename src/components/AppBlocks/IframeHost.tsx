@@ -1391,6 +1391,25 @@ export function IframeHost({
           // unchanged — no modal opens, nothing is charged; the block just finds
           // out now instead of in 30 seconds.
           //
+          // 🔴 NOT AN UNCONDITIONAL IMPROVEMENT, AND THE HONEST VERSION IS
+          // WORTH THE THREE LINES. `usePostMessage` dedups INBOUND messages by
+          // `payload.requestId` for DEDUP_WINDOW_MS = 5000 (usePostMessage.ts),
+          // and it does so BEFORE any handler runs. So a block that reacts to
+          // this `purchased: false` by retrying with the SAME requestId inside
+          // five seconds is swallowed by the transport and hangs exactly as it
+          // did before — the NACK converts a guaranteed hang into a fast
+          // failure only for a block that retries with a FRESH id (or after the
+          // window). Deliberately not changed here: the dedup is a replay
+          // defense, and relaxing it for one message type would be a wider
+          // change than this fix earns.
+          //
+          // The "30 seconds" above is the SDK-side request timeout carried over
+          // from #3680's reasoning. It is NOT verifiable in this repo:
+          // `@civitai/blocks-react` is not a dependency (0 hits in
+          // pnpm-lock.yaml; the installed SDK is `@civitai/app-sdk@0.14.0`,
+          // which implements neither OPEN_BUZZ_PURCHASE nor a request timeout).
+          // Treat it as the reasonable inference it is, not a measurement.
+          //
           // `!raw` is implied by requestId != null; the compound condition also
           // narrows for TS.
           if (raw && typeof raw.requestId === 'string' && raw.requestId.length > 0) {
