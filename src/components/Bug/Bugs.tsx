@@ -229,7 +229,7 @@ const BugItem = ({
               <span className="inline-block text-lg font-bold">
                 {isNew && (
                   <div className="mr-1 inline-block">
-                    <Tooltip label="Updated" color="dark" withArrow withinPortal>
+                    <Tooltip label="Updated" withArrow withinPortal>
                       <IconPointFilled color="green" size={18} />
                     </Tooltip>
                   </div>
