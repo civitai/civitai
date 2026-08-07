@@ -20,6 +20,7 @@ import {
 } from '@tabler/icons-react';
 import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { PlacementSpaceSection } from '~/components/Account/PlacementSpaceSection';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -31,6 +32,10 @@ import { syncAccount } from '~/utils/sync-account';
  * hide flags for all of the creator's models. The flags only take effect while the
  * user holds a valid Creator Program membership (enforced read-side); non/lapsed
  * members see an upsell and disabled toggles.
+ *
+ * Sticker placement sits above that gate and is NOT a membership benefit — anyone
+ * may rent out space on their own images. The alert says "below this point" for
+ * that reason; it is a boundary in the card, not a description of the card.
  */
 export function CreatorControlsCard() {
   const user = useCurrentUser();
@@ -52,11 +57,13 @@ export function CreatorControlsCard() {
       <Stack>
         <Title order={2}>Creator Controls</Title>
 
+        <PlacementSpaceSection />
+
         {isActiveMember ? (
           <Alert color="blue" variant="light" icon={<IconInfoCircle size={16} />}>
             <Text size="sm">
-              These controls are a Creator Program benefit. They apply while your membership is
-              active and revert if it lapses.
+              The controls below this point are a Creator Program benefit. They apply while your
+              membership is active and revert if it lapses.
             </Text>
           </Alert>
         ) : (
@@ -69,7 +76,7 @@ export function CreatorControlsCard() {
             </Text>
             <Text size="sm" c="dimmed" maw={380}>
               {membershipLapsed
-                ? 'Renew your Creator Program membership to restore your Creator Controls and the rest of your perks:'
+                ? 'Renew your Creator Program membership to restore the controls below and the rest of your perks:'
                 : 'Gain more control over how your models are presented, plus the rest of the Creator Program:'}
             </Text>
             <Stack gap={6} align="flex-start" ta="left">
