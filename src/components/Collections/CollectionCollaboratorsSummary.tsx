@@ -1,4 +1,5 @@
 import { Avatar, Badge, Group, Popover, Stack, Text, UnstyledButton } from '@mantine/core';
+import clsx from 'clsx';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CollectionCollaboratorRole } from '~/shared/utils/prisma/enums';
@@ -10,6 +11,34 @@ const roleLabels: Record<CollectionCollaboratorRole, string> = {
   [CollectionCollaboratorRole.Contributor]: 'CONTRIBUTOR',
   [CollectionCollaboratorRole.Manager]: 'MANAGER',
 };
+
+// UserAvatar swaps between a Mantine Avatar and a Paper depending on whether the user has a
+// profilePicture, so Avatar.Group's context-driven offset only reaches some entries. Own the
+// overlap here instead, on a wrapper that every entry renders.
+const stackEntry = '-ml-2 rounded-full ring-2 first:ml-0';
+
+function CollaboratorAvatar({
+  userId,
+  withUsername,
+  linkToProfile,
+}: {
+  userId: number;
+  withUsername?: boolean;
+  linkToProfile?: boolean;
+}) {
+  const { data } = trpc.user.getById.useQuery(
+    { id: userId },
+    { gcTime: Infinity, staleTime: Infinity }
+  );
+
+  // Handing UserAvatar a bare userId makes it render a spinner plus literal "Loading user..." text
+  // for the whole round trip, which blows out the header's width and then collapses it.
+  if (!data) return <Avatar size="sm" radius="xl" />;
+
+  return (
+    <UserAvatar user={data} size="sm" withUsername={withUsername} linkToProfile={linkToProfile} />
+  );
+}
 
 export function CollectionCollaboratorsSummary({
   collectionId,
@@ -41,13 +70,24 @@ export function CollectionCollaboratorsSummary({
       <Popover.Target>
         <UnstyledButton>
           <Group gap={8} wrap="nowrap">
-            <Avatar.Group spacing="sm">
-              <UserAvatar userId={owner.id} size="sm" />
+            <Group gap={0} wrap="nowrap">
+              <div className={clsx(stackEntry, 'ring-[var(--mantine-color-blue-filled)]')}>
+                <UserAvatar user={owner} size="sm" />
+              </div>
               {shown.map((c) => (
-                <UserAvatar key={c.userId} userId={c.userId} size="sm" />
+                <div
+                  key={c.userId}
+                  className={clsx(stackEntry, 'ring-[var(--mantine-color-body)]')}
+                >
+                  <CollaboratorAvatar userId={c.userId} />
+                </div>
               ))}
-              {hidden > 0 && <Avatar size="sm" radius="xl">{`+${hidden}`}</Avatar>}
-            </Avatar.Group>
+              {hidden > 0 && (
+                <div className={clsx(stackEntry, 'ring-[var(--mantine-color-body)]')}>
+                  <Avatar size="sm" radius="xl">{`+${hidden}`}</Avatar>
+                </div>
+              )}
+            </Group>
             {/* The count excludes the owner by design while the stack above includes them. */}
             <Text size="sm" fw={500}>
               {owner.username}{' '}
@@ -66,14 +106,14 @@ export function CollectionCollaboratorsSummary({
             </Text>
           </Group>
           <Group gap={8} px={4} py={6} wrap="nowrap">
-            <UserAvatar userId={owner.id} withUsername size="sm" />
+            <UserAvatar user={owner} withUsername linkToProfile size="sm" />
             <Badge size="xs" variant="light" color="orange" ml="auto">
               OWNER
             </Badge>
           </Group>
           {collaborators.map((c) => (
             <Group key={c.userId} gap={8} px={4} py={6} wrap="nowrap">
-              <UserAvatar userId={c.userId} withUsername size="sm" />
+              <CollaboratorAvatar userId={c.userId} withUsername linkToProfile />
               <Badge
                 size="xs"
                 variant="light"
