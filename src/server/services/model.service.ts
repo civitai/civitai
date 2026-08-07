@@ -1082,9 +1082,7 @@ export const getModelsRaw = async ({
           }
 
           if (hidePrivateModels) {
-            modelVersions = modelVersions.filter(
-              (mv) => mv.availability === 'Public' || mv.availability === 'EarlyAccess'
-            );
+            modelVersions = modelVersions.filter((mv) => mv.availability === 'Public');
           }
 
           // Distinct base models across the visible versions — surfaced to the card
