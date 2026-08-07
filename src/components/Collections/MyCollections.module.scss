@@ -9,7 +9,11 @@
   }
 }
 
-.typeIcon {
+.rowDefault {
+  align-items: flex-start;
+}
+
+.rowIcon {
   opacity: 0.8;
   transition: opacity 150ms ease;
 
@@ -18,20 +22,7 @@
   }
 }
 
-.typeBadge {
-  opacity: 0.6;
-  transition: opacity 150ms ease;
-
-  .navLinkWrapper:hover & {
-    opacity: 0.9;
-  }
-}
-
-.nameGroup {
-  flex: 1;
-  min-width: 0;
-}
-
-.nameText {
-  flex: 1;
+.rowMeta {
+  letter-spacing: 0.04em;
+  line-height: 1.2;
 }
