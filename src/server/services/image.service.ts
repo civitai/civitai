@@ -1689,9 +1689,16 @@ export const getAllImages = async (
 
   // Filter only followed users
   // [x]
-  if (userId && followed && prefetchedUserFollows?.length) {
+  if (userId && followed) {
     isPersonalized = true; // per-user follow set
-    AND.push(Prisma.sql`i."userId" IN (${Prisma.join(prefetchedUserFollows)})`);
+    // Following nobody must return nothing rather than degrading to the unfiltered
+    // global feed under a "Following" label. Matches the BitDex path, which bails
+    // out when the follow set is empty.
+    AND.push(
+      prefetchedUserFollows?.length
+        ? Prisma.sql`i."userId" IN (${Prisma.join(prefetchedUserFollows)})`
+        : Prisma.sql`1 = 0`
+    );
   }
 
   // Filter to creators on the "new & upcoming" board. Unlike `followed` this set is
