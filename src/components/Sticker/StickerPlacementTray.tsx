@@ -130,17 +130,11 @@ export function StickerPlacementTray() {
             <StickerTopUp
               sticker={topUp}
               onCancel={() => setTopUp(null)}
-              // They pressed it to place it and hit the wall. Having paid, they
-              // should not have to find it in the row again — the draft starts
-              // centred on the image, ready to drag.
-              // Only when nothing is already positioned. Replacing a draft the
-              // placer has spent time placing, to hand them a centred one they
-              // did not ask for, loses work silently — and they can still press
-              // the sticker themselves.
-              onPurchased={() => {
-                if (!draft) begin(topUp.id, undefined, maxScale);
-                setTopUp(null);
-              }}
+              // Returns to the row rather than starting a draft. Convenient as
+              // that would be, it would put a sticker on the image with no drag
+              // — the one thing `grab` above promises cannot happen — and a
+              // purchase confirmation is not a placement gesture.
+              onPurchased={() => setTopUp(null)}
             />
           </div>
         ) : (
