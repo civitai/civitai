@@ -315,6 +315,11 @@ export const updateCreatorShopItemSchema = z.object({
   availableQuantity: z.number().int().positive().nullish(),
   // Payment term like price/quantity — editable on published items, no re-review.
   acceptsBlueBuzz: z.boolean().optional(),
+  // Resale terms, same deal: editable after publish, no re-review. Changing them
+  // only ever affects listings made from here on — creators already reselling
+  // keep the share recorded on their UserCosmeticShopItemResale row.
+  sellableByOthers: z.boolean().optional(),
+  sellerShare: z.number().int().min(0).max(70).optional(),
   // ProfileDecoration only — null clears the adjustment; treated as a content
   // change (same rules as name/description/artwork).
   offsets: cosmeticOffsetsSchema.nullish(),
@@ -358,6 +363,19 @@ export const getEarlyAccessPricesSchema = z.object({
 // your own shop — a reference, not a copy, so the original owns price/inventory.
 export type ResoldItemInput = z.infer<typeof resoldItemSchema>;
 export const resoldItemSchema = z.object({
+  shopItemId: z.number(),
+});
+
+// Storefront order of the caller's own resale listings.
+export type ReorderResoldItemsInput = z.infer<typeof reorderResoldItemsSchema>;
+export const reorderResoldItemsSchema = z.object({
+  shopItemIds: z.array(z.number()).max(500),
+});
+
+// Who resells one of your items (and on what terms) — the creator-facing view of
+// who a resale-terms change would affect.
+export type GetShopItemResellersInput = z.infer<typeof getShopItemResellersSchema>;
+export const getShopItemResellersSchema = z.object({
   shopItemId: z.number(),
 });
 
@@ -446,8 +464,6 @@ export const updateCreatorShopSettingsSchema = z.object({
   enabled: z.boolean().optional(),
   showModels: z.boolean().optional(),
   featuredItemIds: z.array(z.number()).max(CREATOR_SHOP_MAX_FEATURED).optional(),
-  // Other creators' shop items this creator resells (referenced by id).
-  resoldItemIds: z.array(z.number()).optional(),
   description: z.string().max(1000).nullish(),
   coverImageId: z.number().nullish(),
   sections: z.array(creatorShopSectionSchema).optional(),

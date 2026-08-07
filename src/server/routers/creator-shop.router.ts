@@ -11,6 +11,8 @@ import {
   getManageItemsSchema,
   getPublicShopItemsSchema,
   getReviewQueueSchema,
+  getShopItemResellersSchema,
+  reorderResoldItemsSchema,
   resoldItemSchema,
   reviewCreatorShopItemSchema,
   setCreatorShopItemListedSchema,
@@ -26,11 +28,14 @@ import {
   getCommunityCosmetics,
   getCreatorShop,
   getCreatorShopManageItems,
+  getCreatorShopResaleStats,
   getEarlyAccessModelPrices,
   addResoldItem,
   getPublicShopItemsForResale,
   getResoldItemsForManage,
+  getShopItemResellers,
   removeResoldItem,
+  reorderResoldItems,
   getCreatorShopReviewQueue,
   getCreatorShopReviewQueueCreators,
   getCreatorShopSettings,
@@ -112,6 +117,11 @@ export const creatorShopRouter = router({
       userId: ctx.user.isModerator && input.userId ? input.userId : ctx.user.id,
     })
   ),
+  getResaleStats: creatorShopProcedure.input(getManageItemsSchema).query(({ input, ctx }) =>
+    getCreatorShopResaleStats({
+      userId: ctx.user.isModerator && input.userId ? input.userId : ctx.user.id,
+    })
+  ),
   // Cross-creator selling: browse public cosmetics + list one in your own shop.
   getPublicShopItems: creatorShopProcedure.input(getPublicShopItemsSchema).query(({ input, ctx }) =>
     getPublicShopItemsForResale({
@@ -132,6 +142,17 @@ export const creatorShopRouter = router({
   removeResoldItem: creatorShopProcedure
     .input(resoldItemSchema)
     .mutation(({ input, ctx }) => removeResoldItem({ ...input, userId: ctx.user.id })),
+  reorderResoldItems: creatorShopProcedure
+    .input(reorderResoldItemsSchema)
+    .mutation(({ input, ctx }) => reorderResoldItems({ ...input, userId: ctx.user.id })),
+  // Who resells one of YOUR items — the service refuses anyone else's.
+  getItemResellers: creatorShopProcedure.input(getShopItemResellersSchema).query(({ input, ctx }) =>
+    getShopItemResellers({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    })
+  ),
   // #endregion
 
   // #region [Public: storefront]

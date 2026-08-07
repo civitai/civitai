@@ -690,6 +690,20 @@ export const purchaseCosmeticShopItem = async ({
     throw new Error('Cosmetic not found');
   }
 
+  // The resale listing this purchase is coming through, if any. Verified
+  // server-side (a row, not a claim) and loaded once here rather than again in
+  // the payout below.
+  const resaleListing =
+    shopItem.cosmetic.createdById &&
+    viaShopUserId &&
+    viaShopUserId > 0 &&
+    viaShopUserId !== shopItem.cosmetic.createdById
+      ? await dbRead.userCosmeticShopItemResale.findUnique({
+          where: { userId_shopItemId: { userId: viaShopUserId, shopItemId } },
+          select: { sellerShare: true },
+        })
+      : null;
+
   // Creator-submitted items share this table; only Published items are sellable.
   // Guards against buying Draft/PendingReview/Rejected/Archived items by id.
   if (shopItem.status !== CosmeticShopItemStatus.Published) {
@@ -697,6 +711,7 @@ export const purchaseCosmeticShopItem = async ({
   }
 
   // Delisted: still Published so it stays bundlable, but off individual sale.
+  // Resale listings don't outlive this — withdrawing the item ends them.
   if (!shopItem.listed) {
     throw new Error('Cosmetic is not available');
   }
@@ -857,14 +872,11 @@ export const purchaseCosmeticShopItem = async ({
         // Creator Shop items pay the cosmetic's creator (cosmetic.createdById)
         // their 70% share directly. When another creator (the seller = addedById)
         // lists a sellable-by-others cosmetic, that 70% pool is split by the
-        // cosmetic's sellerShare (% of price the seller keeps; creator gets the
-        // rest). Official items keep the legacy meta.paidToUserIds distribution.
+        // seller share that seller listed under (% of price they keep; creator
+        // gets the rest). Official items keep the legacy meta.paidToUserIds
+        // distribution.
         const price = shopItem.unitAmount;
         const creatorId = shopItem.cosmetic.createdById;
-        const { creatorPool, sellerAmount, creatorAmount } = computeCreatorShopSplit(
-          price,
-          meta?.sellerShare ?? 0
-        );
 
         // Cross-creator resale: when bought through another creator's shop
         // (viaShopUserId) that actually resells this sellable item, split the 70%
@@ -883,19 +895,23 @@ export const purchaseCosmeticShopItem = async ({
         // listing (no kickback — the seller share would be a self-discount).
         let resellerId: number | undefined;
         let creatorKeepsPool = false;
-        if (creatorId && meta?.sellableByOthers && viaShopUserId && viaShopUserId > 0) {
-          const viaUser = await dbRead.user.findUnique({
-            where: { id: viaShopUserId },
-            select: { settings: true },
-          });
-          const viaShop = (
-            viaUser?.settings as {
-              creatorShop?: { enabled?: boolean; resoldItemIds?: number[] };
-            } | null
-          )?.creatorShop;
+        // A reseller is paid the share recorded on their listing, not the item's
+        // current one: the creator can cut it — or withdraw resale outright —
+        // long after other creators built a storefront around the terms they
+        // were offered. The listing row is also the permission, so it outlives
+        // `sellableByOthers` going false.
+        let payoutShare = meta?.sellerShare ?? 0;
+        if (creatorId && viaShopUserId && viaShopUserId > 0) {
           if (viaShopUserId === creatorId) {
+            const viaUser = await dbRead.user.findUnique({
+              where: { id: viaShopUserId },
+              select: { settings: true },
+            });
+            const viaShop = (viaUser?.settings as { creatorShop?: { enabled?: boolean } } | null)
+              ?.creatorShop;
             creatorKeepsPool = viaShop?.enabled === true;
-          } else if (viaShop?.resoldItemIds?.includes(shopItem.id)) {
+          } else if (resaleListing) {
+            payoutShare = resaleListing.sellerShare;
             if (viaShopUserId === userId) creatorKeepsPool = true;
             else resellerId = viaShopUserId;
           }
@@ -903,6 +919,10 @@ export const purchaseCosmeticShopItem = async ({
 
         const platformResale =
           !!creatorId && !!meta?.sellableByOthers && !resellerId && !creatorKeepsPool;
+        const { creatorPool, sellerAmount, creatorAmount } = computeCreatorShopSplit(
+          price,
+          payoutShare
+        );
 
         let recipients: { userId: number; amount: number }[];
         if (creatorId) {

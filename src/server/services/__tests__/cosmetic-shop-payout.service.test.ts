@@ -1,13 +1,13 @@
 import type * as PromClient from '~/server/prom/client';
 import type * as RedisCaches from '~/server/redis/caches';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as PromClient from '~/server/prom/client';
 
 const { mocks } = vi.hoisted(() => ({
   mocks: {
     shopItemFindUnique: vi.fn(),
     shopItemUpdate: vi.fn(),
     userFindUnique: vi.fn(),
+    resaleFindUnique: vi.fn(),
     userCosmeticFindFirst: vi.fn(),
     purchasesCreate: vi.fn(),
     purchasesUpdate: vi.fn(),
@@ -24,6 +24,7 @@ vi.mock('~/server/db/client', () => ({
   dbRead: {
     cosmeticShopItem: { findUnique: mocks.shopItemFindUnique },
     user: { findUnique: mocks.userFindUnique },
+    userCosmeticShopItemResale: { findUnique: mocks.resaleFindUnique },
   },
   dbWrite: {
     cosmeticShopItem: { update: mocks.shopItemUpdate },
@@ -81,10 +82,12 @@ const shopItemRow = ({
   createdById = CREATOR_ID as number | null,
   unitAmount = PRICE,
   type = 'Badge',
+  status = 'Published',
+  listed = true,
 } = {}) => ({
   id: SHOP_ITEM_ID,
-  status: 'Published',
-  listed: true,
+  status,
+  listed,
   cosmeticId: 7,
   availableQuantity: null,
   availableFrom: null,
@@ -126,6 +129,7 @@ describe('purchaseCosmeticShopItem payouts', () => {
       chargeResponse([{ accountType: 'yellow', amount: PRICE }])
     );
     mocks.getBlockedPairIds.mockResolvedValue([]);
+    mocks.resaleFindUnique.mockResolvedValue(null); // nobody resells it by default
   });
 
   it('a block between buyer and creator rejects the purchase before any charge', async () => {
@@ -221,16 +225,16 @@ describe('purchaseCosmeticShopItem payouts', () => {
   });
 
   it('verified cross-creator resale splits the pool: creator 5000, reseller 2000, distinct external ids', async () => {
-    mocks.userFindUnique.mockResolvedValue({
-      settings: { creatorShop: { resoldItemIds: [SHOP_ITEM_ID] } },
-    });
+    mocks.resaleFindUnique.mockResolvedValue({ sellerShare: 20 });
 
     await purchase(RESELLER_ID);
 
-    expect(mocks.userFindUnique).toHaveBeenCalledWith({
-      where: { id: RESELLER_ID },
-      select: { settings: true },
+    // One indexed lookup on the resale table — no settings blob involved.
+    expect(mocks.resaleFindUnique).toHaveBeenCalledWith({
+      where: { userId_shopItemId: { userId: RESELLER_ID, shopItemId: SHOP_ITEM_ID } },
+      select: { sellerShare: true },
     });
+    expect(mocks.userFindUnique).not.toHaveBeenCalled();
     const sells = sellCalls();
     expect(sells).toHaveLength(2);
     expect(sells).toEqual(
@@ -253,9 +257,7 @@ describe('purchaseCosmeticShopItem payouts', () => {
   });
 
   it('records who was paid on the purchase row, so a takedown can reverse it exactly', async () => {
-    mocks.userFindUnique.mockResolvedValue({
-      settings: { creatorShop: { resoldItemIds: [SHOP_ITEM_ID] } },
-    });
+    mocks.resaleFindUnique.mockResolvedValue({ sellerShare: 20 });
 
     await purchase(RESELLER_ID);
 
@@ -273,10 +275,8 @@ describe('purchaseCosmeticShopItem payouts', () => {
     expect(update.data.meta.platformCut).toBe(3000);
   });
 
-  it('invalid reseller attribution (item not in their resoldItemIds) pays no seller share: creator 5000 only', async () => {
-    mocks.userFindUnique.mockResolvedValue({
-      settings: { creatorShop: { resoldItemIds: [999] } },
-    });
+  it('invalid reseller attribution (no resale listing for the item) pays no seller share: creator 5000 only', async () => {
+    mocks.resaleFindUnique.mockResolvedValue(null);
 
     await purchase(RESELLER_ID);
 
@@ -286,9 +286,7 @@ describe('purchaseCosmeticShopItem payouts', () => {
   });
 
   it('genuine self-resale (buyer resells the item) gets no kickback: creator keeps the full 7000, buyer nothing', async () => {
-    mocks.userFindUnique.mockResolvedValue({
-      settings: { creatorShop: { resoldItemIds: [SHOP_ITEM_ID] } },
-    });
+    mocks.resaleFindUnique.mockResolvedValue({ sellerShare: 20 });
 
     await purchase(BUYER_ID);
 
@@ -298,7 +296,7 @@ describe('purchaseCosmeticShopItem payouts', () => {
   });
 
   it('bogus self-attribution (buyer does NOT resell the item) is treated as unattributed: creator 5000 only', async () => {
-    mocks.userFindUnique.mockResolvedValue({ settings: { creatorShop: { resoldItemIds: [] } } });
+    mocks.resaleFindUnique.mockResolvedValue(null);
 
     await purchase(BUYER_ID);
 
@@ -341,6 +339,102 @@ describe('purchaseCosmeticShopItem payouts', () => {
     expect(mocks.createMultiTx).toHaveBeenCalledTimes(1);
     // And the payout block didn't silently blow up either.
     expect(mocks.logToAxiom).not.toHaveBeenCalled();
+  });
+
+  // The bait-and-switch these guard against: entice creators to list your
+  // cosmetic at a generous share, then cut it (or revoke resale) once they have.
+  it('pays the reseller the share on their listing after the creator cuts the item’s', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(
+      shopItemRow({ meta: { sellableByOthers: true, sellerShare: 5 } })
+    );
+    mocks.resaleFindUnique.mockResolvedValue({ sellerShare: 20 });
+
+    await purchase(RESELLER_ID);
+
+    expect(sellCalls()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ toAccountId: RESELLER_ID, amount: 2000 }),
+        expect.objectContaining({ toAccountId: CREATOR_ID, amount: 5000 }),
+      ])
+    );
+  });
+
+  // The listing row is the permission as well as the terms, so withdrawing
+  // resale can't strip someone who already listed.
+  it('keeps paying a grandfathered reseller after resale is switched off entirely', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(
+      shopItemRow({ meta: { sellableByOthers: false, sellerShare: 0 } })
+    );
+    mocks.resaleFindUnique.mockResolvedValue({ sellerShare: 20 });
+
+    await purchase(RESELLER_ID);
+
+    expect(sellCalls()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ toAccountId: RESELLER_ID, amount: 2000 }),
+        expect.objectContaining({ toAccountId: CREATOR_ID, amount: 5000 }),
+      ])
+    );
+  });
+
+  // Switching resale off has to still mean something: it stops NEW listings, and
+  // a shop that never listed gets nothing.
+  it('pays no seller share once resale is off and the shop never listed the item', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(
+      shopItemRow({ meta: { sellableByOthers: false, sellerShare: 20 } })
+    );
+    mocks.resaleFindUnique.mockResolvedValue(null);
+
+    await purchase(RESELLER_ID);
+
+    expect(sellCalls()).toEqual([
+      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 7000 }),
+    ]);
+  });
+
+  // Grandfathering is per-reseller: an unattributed sale of a still-resellable
+  // item is a platform resale at the item's CURRENT share, not anyone's terms.
+  it('leaves the platform resale split on the item’s current share', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(
+      shopItemRow({ meta: { sellableByOthers: true, sellerShare: 10 } })
+    );
+
+    await purchase(undefined);
+
+    expect(sellCalls()).toEqual([
+      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 6000 }),
+    ]);
+  });
+
+  // Withdrawing an item ends its resale listings, so a stale row must not keep
+  // selling it. Asserted here as well as at the source, because this is the path
+  // that would take a buyer's Buzz for something that's off sale.
+  it('refuses a delisted item even with a resale row still present', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ listed: false }));
+    mocks.resaleFindUnique.mockResolvedValue({ sellerShare: 20 });
+
+    await expect(purchase(RESELLER_ID)).rejects.toThrow('Cosmetic is not available');
+    await expect(purchase(undefined)).rejects.toThrow('Cosmetic is not available');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('refuses an archived item, whoever it is bought through', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ status: 'Archived', listed: false }));
+    mocks.resaleFindUnique.mockResolvedValue({ sellerShare: 20 });
+
+    await expect(purchase(RESELLER_ID)).rejects.toThrow('Cosmetic is not available');
+    await expect(purchase(CREATOR_ID)).rejects.toThrow('Cosmetic is not available');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  // Re-listing re-enters review, and a pending item is not for sale — through a
+  // reseller's shop or anywhere else.
+  it('refuses an item that is back in review after being re-listed', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ status: 'PendingReview' }));
+    mocks.resaleFindUnique.mockResolvedValue({ sellerShare: 20 });
+
+    await expect(purchase(RESELLER_ID)).rejects.toThrow('Cosmetic is not available');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 
   it('never swallows a payout mis-assertion: successful runs log nothing to axiom', async () => {

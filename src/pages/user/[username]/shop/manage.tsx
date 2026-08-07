@@ -5,6 +5,7 @@ import { Page } from '~/components/AppLayout/Page';
 import {
   useMutateCreatorShop,
   useQueryCreatorShopManage,
+  useQueryCreatorShopResaleStats,
   useQueryCreatorShopSettings,
 } from '~/components/CreatorShop/creator-shop.util';
 import { ManageEmptyState } from '~/components/CreatorShop/Manage/ManageEmptyState';
@@ -46,6 +47,7 @@ function ManageShopPage() {
 
   const { items, isLoading } = useQueryCreatorShopManage(queriesEnabled, manageUserId);
   const { settings } = useQueryCreatorShopSettings(queriesEnabled, manageUserId);
+  const { resaleStats } = useQueryCreatorShopResaleStats(queriesEnabled, manageUserId);
   const { archiveItem, setItemListed, unarchiveItem, deleteItem, updateSettings } =
     useMutateCreatorShop();
   const { status, setStatus, search, setSearch, sort, setSort, filtered, stats } =
@@ -76,7 +78,7 @@ function ManageShopPage() {
         />
       )}
 
-      {showControls && <ManageStats stats={stats} />}
+      {showControls && <ManageStats stats={stats} resaleStats={resaleStats} />}
 
       {showControls && (
         <ManageToolbar

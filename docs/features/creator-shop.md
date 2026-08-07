@@ -25,6 +25,44 @@ Submitting a cosmetic requires the creator to confirm they own — or otherwise 
 - Replacing artwork on an unpublished item re-affirms (and overwrites the record), because the stored affirmation describes the art it was made against. A moderator swapping artwork does not affirm and does not overwrite the creator's record.
 - The moderator review queue shows the affirmation alongside the automated checks.
 
+## Cross-creator resale (`UserCosmeticShopItemResale`)
+
+A creator marks an item `meta.sellableByOthers` with a `meta.sellerShare` (0–70, the reseller's cut of the creator's 70% pool). Other creators then list it — by reference, one inventory — in their own shops. Because the original creator still owns those two settings, they could advertise a 50% share, wait for others to build a storefront around it, then drop it to 0 or switch resale off entirely.
+
+**Each listing is a row**, `UserCosmeticShopItemResale (userId, shopItemId, sellerShare, index, createdAt)`, and `sellerShare` is captured when the row is created and never rewritten. The row is the record of *both* halves of the deal:
+
+- **It is the terms.** `purchaseCosmeticShopItem` pays the reseller `listing.sellerShare`, never the item's current one. A single PK lookup (`userId_shopItemId`), no settings blob.
+- **It is the permission.** The storefront selects the Resold section straight from the reseller's rows, so it no longer re-checks `sellableByOthers` at read time — an existing listing survives the creator withdrawing resale. `sellableByOthers` still gates `addResoldItem`, i.e. *new* listings.
+- `index` is the creator's storefront order (`reorderResoldItems`); `createdAt` is when they listed.
+
+### Withdrawing an item ends its resale listings
+
+Grandfathering covers the **terms**, not the item's continued existence. Delisting, archiving or taking down an item runs `endResaleListings`: the rows are deleted and every affected creator gets a `creator-shop-resale-ended` notification. Nobody is left with a card that can't sell, and nobody holds a claim to a share on something that isn't for sale.
+
+**Coming back requires a new review.** Re-listing (`setCreatorShopItemListed({ listed: true })`) and restoring from the archive (`unarchiveCreatorShopItem`) both set `PendingReview` and clear the previous verdict, rather than returning the item straight to sale. That is what keeps ending the listings fair: without it, *withdraw → re-list* would be a one-click way to clear every reseller and re-offer the item at a worse share — the exact bait-and-switch this ticket exists to prevent. Delisting itself doesn't touch the status; only the return trip does.
+
+`addResoldItem` correspondingly refuses an item that is currently off sale, so a row can only ever be created while the item was live. The resale picker still shows off-sale items (so the reseller doesn't have to hunt for them later), badged and with Add disabled.
+
+Both directions are indexed, which is why this is a table and not JSON on `User.settings`:
+
+- **"What do I resell?"** — PK prefix on `userId` (`getResoldItemsForManage`, the storefront).
+- **"Who resells my item?"** — `UserCosmeticShopItemResale_shopItemId_idx` (`getShopItemResellers`, plus a `_count` on the manage list). Answering this from the old `settings.creatorShop.resoldItemIds` array meant scanning every user's JSON.
+
+Manage-view stats (`getCreatorShopResaleStats`, one aggregate over both directions) show **Resellers** — *distinct* creators reselling your items, with the number of your items involved — and **You resell**, how many of other creators' items you list. Per-item, the manage table shows the reseller count and opens a popover of who they are and on what terms, which is what a creator wants in front of them before touching the item's resale settings.
+
+The original creator can change `sellableByOthers` / `sellerShare` at any time from the item's edit modal — they are payment terms like price and `acceptsBlueBuzz`, so the edit stays live rather than re-entering review, and a cross-lister is refused them the same way they're refused the artwork. Grandfathering is what makes that safe: the change is an offer to *future* resellers only. When the item already has resellers the modal says so, with the share they keep.
+
+Withdrawal is disclosed at the point of action: delisting or archiving asks for confirmation first, naming how many creators' listings it will end and warning that the item needs a new review to come back.
+
+Bounds of the guarantee:
+
+- **It covers the terms, not the item.** Switching resale off leaves existing resellers alone; delisting or archiving the item ends their listings (with notice, and at the cost of a re-review to undo).
+- **Withdrawing resale still works** — for everyone who had not listed the item yet. Only rows that already exist survive it.
+- **Switching resale off zeroes the item's `sellerShare`** (mirroring submit), so toggling it back on can't quietly restore a share the creator had retired.
+- **Terms are literally the ones agreed to.** A creator *raising* the share does not raise it for existing resellers either — they keep what they listed under until they relist.
+- **Removing a listing deletes the row**, so relisting later is a fresh agreement to whatever the item offers then. Deleting the shop item cascades the rows away.
+- `sellerShare` is never part of a tRPC input — `addResoldItem` reads it off the item, and `reorderResoldItems` only writes `index`, so a client can't grant itself terms.
+
 ## Screens (mockups in `designs/creator-shop.pen`)
 
 | Screen | Purpose |
@@ -93,6 +131,7 @@ Money moves are best-effort per buyer: each is retried 3× (1s apart) before it'
 
 ## Changelog
 
+- **2026-08-05** — Resale listings moved from `User.settings.creatorShop.resoldItemIds` to the `UserCosmeticShopItemResale` table (migration `20260805120000_add_cosmetic_shop_item_resale` — **apply manually**, then run `pnpm tsscript scripts/oneoffs/backfill-cosmetic-resale-listings.ts` to migrate existing resellers off the blob). Each row carries the `sellerShare` it was listed under, so lowering the item's share or turning `sellableByOthers` off no longer changes what an existing reseller is paid or removes the item from their shop; and "who resells my item?" is now an indexed lookup instead of a scan of every user's settings JSON. Creators can now also **edit** `sellableByOthers` / `sellerShare` after publishing without it reaching creators who already list the item. Withdrawing the item itself (delist / archive / takedown) *does* end their listings, with a notification, and bringing it back re-enters review so the cycle can't be used to reset resale terms.
 - **2026-08-03** — Purchases now record their payout split **and each payout's transaction id** (`UserCosmeticShopPurchases.meta`, migration `20260803220000_add_cosmetic_purchase_payout_meta` — **apply manually**), so takedowns refund those payouts directly.
 - **2026-08-03** — Takedown + refund + clawback path added (`creatorShop.takedownItem`, moderator review-queue "Take down" action).
 - **2026-08-03** — Cosmetic submissions now require (and record) a creator affirmation of the rights to sell the artwork.

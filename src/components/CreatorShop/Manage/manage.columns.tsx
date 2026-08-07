@@ -12,9 +12,12 @@ import {
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 import { CreatorShopSubmitModal } from '~/components/CreatorShop/CreatorShopSubmitModal';
-import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
-import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
+import type {
+  CreatorShopManageItem,
+  useMutateCreatorShop,
+} from '~/components/CreatorShop/creator-shop.util';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
+import { ItemResellersPopover } from '~/components/CreatorShop/Manage/ItemResellersPopover';
 import { statusMeta } from '~/components/CreatorShop/Manage/manage.constants';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -49,6 +52,9 @@ function ItemCell({ item }: { item: CreatorShopManageItem }) {
         <Text size="xs" c="dimmed">
           {getDisplayName(item.cosmetic.type)}
         </Text>
+        {item.resellerCount > 0 && (
+          <ItemResellersPopover shopItemId={item.id} count={item.resellerCount} />
+        )}
         {item.rejectionReason &&
           (item.status === CosmeticShopItemStatus.Rejected ||
             item.status === CosmeticShopItemStatus.RequestedChanges) && (
@@ -107,6 +113,31 @@ function ItemActionsMenu({
       onConfirm: () => deleteItem.mutate({ id: item.id }),
     });
 
+  // Withdrawing ends other creators' listings and sends the item back to review
+  // before it can sell again. Both are worth knowing before the click, not after.
+  const confirmWithdrawal = (action: 'Delist' | 'Archive', onConfirm: () => void) => {
+    openConfirmModal({
+      title: `${action} ${item.title}`,
+      children: (
+        <Stack gap="xs">
+          {item.resellerCount > 0 && (
+            <Text size="sm">
+              <strong>{numberWithCommas(item.resellerCount)}</strong> other creator
+              {item.resellerCount === 1 ? '' : 's'} resell this. Their listings will be removed and
+              they&apos;ll be notified.
+            </Text>
+          )}
+          <Text size="sm">
+            Putting it back on sale needs a new review, so it won&apos;t return instantly.
+          </Text>
+        </Stack>
+      ),
+      labels: { confirm: action, cancel: 'Cancel' },
+      centered: true,
+      onConfirm,
+    });
+  };
+
   return (
     <Menu withinPortal position="bottom-end">
       <Menu.Target>
@@ -121,7 +152,12 @@ function ItemActionsMenu({
             disabled={unarchiveItem.isPending}
             onClick={() => unarchiveItem.mutate({ id: item.id })}
           >
-            Restore
+            <Stack gap={2}>
+              <Text size="sm">Restore</Text>
+              <Text size="xs" c="dimmed">
+                Goes back to review before it can sell again.
+              </Text>
+            </Stack>
           </Menu.Item>
         ) : (
           <>
@@ -140,14 +176,18 @@ function ItemActionsMenu({
               <Menu.Item
                 leftSection={item.listed ? <IconEyeOff size={16} /> : <IconEye size={16} />}
                 disabled={setItemListed.isPending}
-                onClick={() => setItemListed.mutate({ id: item.id, listed: !item.listed })}
+                onClick={() => {
+                  const toggle = () => setItemListed.mutate({ id: item.id, listed: !item.listed });
+                  // Relisting takes nothing away, so it needs no warning.
+                  return item.listed ? confirmWithdrawal('Delist', toggle) : toggle();
+                }}
               >
                 <Stack gap={2}>
                   <Text size="sm">{item.listed ? 'Delist' : 'List'}</Text>
                   <Text size="xs" c="dimmed">
                     {item.listed
-                      ? 'Stops your own sales. Other creators can still bundle it.'
-                      : 'Put it back on sale in your shop.'}
+                      ? 'Stops sales and ends other creators’ listings of it.'
+                      : 'Sends it back to review before it sells again.'}
                   </Text>
                 </Stack>
               </Menu.Item>
@@ -155,12 +195,14 @@ function ItemActionsMenu({
             <Menu.Item
               leftSection={<IconArchive size={16} />}
               disabled={archiveItem.isPending}
-              onClick={() => archiveItem.mutate({ id: item.id })}
+              onClick={() =>
+                confirmWithdrawal('Archive', () => archiveItem.mutate({ id: item.id }))
+              }
             >
               <Stack gap={2}>
                 <Text size="sm">Archive</Text>
                 <Text size="xs" c="dimmed">
-                  Withdraws it completely — no sales, no bundling.
+                  Withdraws it completely. Restoring it needs a new review.
                 </Text>
               </Stack>
             </Menu.Item>

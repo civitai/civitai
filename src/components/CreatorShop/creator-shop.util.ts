@@ -30,6 +30,14 @@ export const useQueryCreatorShopManage = (enabled = true, userId?: number) => {
   return { items: data, ...rest };
 };
 
+// Cross-creator resale counts for the manage stat cards, both directions.
+// `userId` is only honored for moderators (enforced server-side); owners omit it.
+export type CreatorShopResaleStats = RouterOutput['creatorShop']['getResaleStats'];
+export const useQueryCreatorShopResaleStats = (enabled = true, userId?: number) => {
+  const { data, ...rest } = trpc.creatorShop.getResaleStats.useQuery({ userId }, { enabled });
+  return { resaleStats: data, ...rest };
+};
+
 // `userId` is only honored for moderators (enforced server-side); owners omit it.
 export const useQueryCreatorShopSettings = (enabled = true, userId?: number) => {
   const { data, ...rest } = trpc.creatorShop.getSettings.useQuery({ userId }, { enabled });
@@ -151,6 +159,10 @@ export const useMutateCreatorShop = () => {
   const updateItem = trpc.creatorShop.updateItem.useMutation({
     async onSuccess() {
       await queryUtils.creatorShop.getManageItems.invalidate();
+      // Price and resale terms both change what the resale picker offers other
+      // creators, and the storefront reads the item's price too.
+      await queryUtils.creatorShop.getPublicShopItems.invalidate();
+      await queryUtils.creatorShop.getShop.invalidate();
       showSuccessNotification({ message: 'Item updated' });
     },
     onError: onError('Failed to update item'),
@@ -200,6 +212,7 @@ export const useMutateCreatorShop = () => {
       await queryUtils.creatorShop.getShop.invalidate();
       await queryUtils.creatorShop.getResoldItems.invalidate();
       await queryUtils.creatorShop.getPublicShopItems.invalidate();
+      await queryUtils.creatorShop.getResaleStats.invalidate();
       showSuccessNotification({ message: 'Added to your shop' });
     },
     onError: onError('Failed to add item'),
@@ -211,6 +224,7 @@ export const useMutateCreatorShop = () => {
       await queryUtils.creatorShop.getShop.invalidate();
       await queryUtils.creatorShop.getResoldItems.invalidate();
       await queryUtils.creatorShop.getPublicShopItems.invalidate();
+      await queryUtils.creatorShop.getResaleStats.invalidate();
     },
     onError: onError('Failed to remove item'),
   });
@@ -226,8 +240,8 @@ export const useMutateCreatorShop = () => {
     onError: onError('Failed to save settings'),
   });
 
-  // Same endpoint as updateSettings, but quiet — reordering fires on every drop.
-  const reorderResoldItems = trpc.creatorShop.updateSettings.useMutation({
+  // Quiet — reordering fires on every drop.
+  const reorderResoldItems = trpc.creatorShop.reorderResoldItems.useMutation({
     async onSuccess() {
       await queryUtils.creatorShop.getShop.invalidate();
       await queryUtils.creatorShop.getResoldItems.invalidate();
