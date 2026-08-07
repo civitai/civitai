@@ -285,15 +285,17 @@ Nixpkgs carries exactly one playwright version per revision, so a host that driv
 playwright lines needs one pinned nixpkgs input per line and a per-project selector — the version skew is a
 property of the host, not of this repo.
 
-**Do not "fix" this by bumping the pin.** It was tried and reverted, for two independent reasons, both measured:
-(1) 1.61.1 broke the preview e2e smoke suite — **2 passed / 59 failed**, reproduced identically on a re-run of
-the same commit, while an unrelated PR passed smoke on the same infrastructure in the same window (so the
-environment was healthy and the bump is what broke those specs at runtime); and (2) CI runs some Playwright jobs
-in **version-matched container images that ship their own browsers**, so a bump here is not self-contained — the
-image tags would have to move in the same window or the e2e job hits this exact error with CI's revision
-instead of yours. A caret range is also not a pin for a package with a 1:1 browser mapping: `^1.57.0` floats
-within the 1.57 line, which is fine (Chromium build is stable across a minor line), but bumping the *minor*
-changes the revision.
+**Do not "fix" this by bumping the pin — the bump is not self-contained.** It was tried and reverted. CI runs
+some Playwright jobs in **version-matched container images that ship their own browsers** (`PLAYWRIGHT_BROWSERS_PATH`
+pointing inside the image) while executing the *workspace-local* `./node_modules/.bin/playwright`. Bumping this
+repo alone desynchronises that pair and reproduces the same bug in CI: the preview smoke suite went **2 passed /
+59 failed**, and every one of the 59 was `browserType.launch: Executable doesn't exist at
+/ms-playwright/chromium_headless_shell-1228/...` — 177 occurrences (59 × 3 retries) and **zero** assertion or
+timeout failures. Not one spec executed. So a bump needs a lockstep image-tag change owned by someone else, in
+the same window, in both directions. Adapting the host costs one person nothing and no one else anything.
+
+A caret range is also not a pin for a package with a 1:1 browser mapping: `^1.57.0` floating within the 1.57
+line is fine (the Chromium build is stable across a minor line), but bumping the *minor* changes the revision.
 
 Escape hatch if your host's bundle can't match the pin: `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=<abs path to a
 chrome/chrome-headless-shell binary>` — honoured by `vitest.config.mts`'s provider, and it bypasses the revision
