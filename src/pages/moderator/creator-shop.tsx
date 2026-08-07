@@ -20,6 +20,7 @@ import {
 } from '@mantine/core';
 import {
   IconAlertTriangle,
+  IconPackage,
   IconArrowBackUp,
   IconBan,
   IconBolt,
@@ -56,7 +57,10 @@ import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { HistoryCard } from '~/components/CreatorShop/HistoryCard';
 import { CREATOR_SHOP_BORDER } from '~/components/CreatorShop/creator-shop.constants';
-import { cosmeticTypeOptions } from '~/components/CreatorShop/Submit/submit.constants';
+import {
+  reviewQueueTypeOptions,
+  type ReviewQueueFilterType,
+} from '~/components/CreatorShop/Submit/submit.constants';
 import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -64,6 +68,7 @@ import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema'
 import type { CosmeticOffsets } from '~/server/schema/creator-shop.schema';
 import {
   CREATOR_SHOP_CREATOR_SHARE,
+  CREATOR_SHOP_PACK_SUBMISSION_FEE,
   CREATOR_SHOP_SUBMISSION_FEE,
   DECORATION_OFFSET_LIMIT,
 } from '~/server/schema/creator-shop.schema';
@@ -75,6 +80,8 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
+import { PackContentsPanel } from '~/components/CreatorShop/Pack/PackContentsPanel';
+import { PackCoverTiles } from '~/components/CreatorShop/Pack/PackCoverTiles';
 
 type StatusFilter = CosmeticShopItemStatus | 'all';
 type PreviewCosmetic = ComponentProps<typeof CosmeticPreview>['cosmetic'];
@@ -174,7 +181,7 @@ function CreatorShopReviewPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(
     CosmeticShopItemStatus.PendingReview
   );
-  const [typeFilter, setTypeFilter] = useState<CosmeticType[]>([]);
+  const [typeFilter, setTypeFilter] = useState<ReviewQueueFilterType[]>([]);
   const [selectedCreator, setSelectedCreator] = useState<{ id: number; username: string } | null>(
     null
   );
@@ -212,34 +219,37 @@ function CreatorShopReviewPage() {
     setReason(item?.rejectionReason ?? '');
     setActiveFlags(new Set());
     setModOffsets(
-      (item?.cosmetic.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? ZERO_OFFSETS
+      (item?.cosmetic?.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? ZERO_OFFSETS
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
   const selected = items.find((i) => i.id === selectedId) ?? null;
+  const isPack = !!selected && !selected.cosmetic;
+  // A pack is authored by whoever listed it; a cosmetic by whoever made it.
+  const submitter = selected?.cosmetic?.creator ?? selected?.addedBy ?? null;
   const selectedMeta = (selected?.meta ?? {}) as CosmeticShopItemMeta;
   const checks = selectedMeta.autoChecks ?? [];
   const dims = selectedMeta.imageMeta;
-  const isAnimated = !!(selected?.cosmetic.data as { animated?: boolean } | null)?.animated;
+  const isAnimated = !!(selected?.cosmetic?.data as { animated?: boolean } | null)?.animated;
   const affirmation = selectedMeta.rightsAffirmation;
   // The affirmer is normally the submitting creator, but a cross-listed item is
   // sold by someone else — don't put the creator's name on their affirmation.
   const affirmedBy =
-    affirmation && affirmation.userId === selected?.cosmetic.creator?.id
-      ? `@${selected?.cosmetic.creator?.username ?? 'unknown'}`
+    affirmation && affirmation.userId === (selected?.cosmetic?.creator?.id ?? selected?.addedBy?.id)
+      ? `@${selected?.cosmetic?.creator?.username ?? selected?.addedBy?.username ?? 'unknown'}`
       : `user #${affirmation?.userId}`;
   // The slug is user-visible text in its own right, so it needs reviewing
   // alongside the artwork — not just the image.
-  const isSticker = selected?.cosmetic.type === CosmeticType.Sticker;
+  const isSticker = selected?.cosmetic?.type === CosmeticType.Sticker;
   const stickerSlug = isSticker
-    ? (selected?.cosmetic.data as { slug?: string } | null)?.slug
+    ? (selected?.cosmetic?.data as { slug?: string } | null)?.slug
     : undefined;
   // A sticker is priced twice — the listing buys a block of uses, and the
   // per-use price is what a buyer pays to top up once they run dry. Reviewing
   // the list price alone approves half the economics.
   const stickerEconomics = isSticker
-    ? stickerEconomicsFromCosmeticData(selected?.cosmetic.data)
+    ? stickerEconomicsFromCosmeticData(selected?.cosmetic?.data)
     : undefined;
   // What a use costs when bought in the listing, for comparison: a top-up
   // priced far above the bulk rate is the thing worth questioning, and it can
@@ -251,9 +261,9 @@ function CreatorShopReviewPage() {
 
   // Fit adjustment (avatar decorations): mods can tweak the per-side pixel
   // offsets and see the in-context preview update live before saving.
-  const isDecoration = selected?.cosmetic.type === CosmeticType.ProfileDecoration;
+  const isDecoration = selected?.cosmetic?.type === CosmeticType.ProfileDecoration;
   const storedOffsets =
-    (selected?.cosmetic.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? null;
+    (selected?.cosmetic?.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? null;
   const normalizedModOffsets = Object.values(modOffsets).some((v) => v !== 0) ? modOffsets : null;
   const fitChanged =
     isDecoration && JSON.stringify(normalizedModOffsets) !== JSON.stringify(storedOffsets);
@@ -264,7 +274,10 @@ function CreatorShopReviewPage() {
   const previewCosmetic = useMemo(() => {
     if (!selected) return null;
     if (!isDecoration) return selected.cosmetic as unknown as PreviewCosmetic;
-    const { offsets: _stored, ...rest } = (selected.cosmetic.data ?? {}) as Record<string, unknown>;
+    const { offsets: _stored, ...rest } = (selected.cosmetic?.data ?? {}) as Record<
+      string,
+      unknown
+    >;
     return {
       ...selected.cosmetic,
       data: normalizedModOffsets ? { ...rest, offsets: normalizedModOffsets } : rest,
@@ -426,9 +439,9 @@ function CreatorShopReviewPage() {
           <MultiSelect
             size="sm"
             w={230}
-            data={cosmeticTypeOptions}
+            data={reviewQueueTypeOptions}
             value={typeFilter}
-            onChange={(v) => setTypeFilter(v as CosmeticType[])}
+            onChange={(v) => setTypeFilter(v as ReviewQueueFilterType[])}
             placeholder={typeFilter.length ? undefined : 'All types'}
             clearable
             comboboxProps={{ withinPortal: true }}
@@ -492,14 +505,23 @@ function CreatorShopReviewPage() {
                       }}
                     >
                       <Group gap={10} wrap="nowrap" align="center">
-                        <CosmeticThumb data={item.cosmetic.data} name={item.title} bare />
+                        {item.cosmetic ? (
+                          <CosmeticThumb data={item.cosmetic.data} name={item.title} bare />
+                        ) : (
+                          <ThemeIcon variant="light" color="gray" size={44} radius="md">
+                            <IconPackage size={22} />
+                          </ThemeIcon>
+                        )}
                         <Stack gap={2} className="min-w-0" style={{ flex: 1 }}>
                           <Text size="sm" fw={600} lineClamp={1}>
                             {item.title}
                           </Text>
                           <Text size="xs" c="dimmed" lineClamp={1}>
-                            @{item.cosmetic.creator?.username ?? 'unknown'} ·{' '}
-                            {getDisplayName(item.cosmetic.type)}
+                            @
+                            {item.cosmetic?.creator?.username ??
+                              item.addedBy?.username ??
+                              'unknown'}{' '}
+                            · {item.cosmetic ? getDisplayName(item.cosmetic.type) : 'Pack'}
                           </Text>
                         </Stack>
                         {statusFilter === 'all' && (
@@ -537,25 +559,28 @@ function CreatorShopReviewPage() {
                   <Group gap={10} align="center" wrap="wrap">
                     <Title order={3}>{selected.title}</Title>
                     <Badge variant="light" color="gray" radius="xl">
-                      Cosmetic · {getDisplayName(selected.cosmetic.type)}
+                      {selected.cosmetic
+                        ? `Cosmetic · ${getDisplayName(selected.cosmetic.type)}`
+                        : 'Pack'}
                     </Badge>
                     <Badge variant="light" radius="xl" color={statusMeta(selected.status).color}>
                       {statusMeta(selected.status).label}
                     </Badge>
                   </Group>
+                  {!selected.cosmetic && <PackContentsPanel shopItemId={selected.id} />}
                   <Group gap={6} align="center">
                     <Text size="sm" c="dimmed">
                       Submitted by
                     </Text>
-                    {selected.cosmetic.creator?.username ? (
+                    {submitter?.username ? (
                       <Anchor
                         component={NextLink}
-                        href={`/user/${selected.cosmetic.creator.username}`}
+                        href={`/user/${submitter.username}`}
                         target="_blank"
                         size="sm"
                         fw={600}
                       >
-                        @{selected.cosmetic.creator.username}
+                        @{submitter.username}
                       </Anchor>
                     ) : (
                       <Text size="sm" fw={600}>
@@ -580,12 +605,25 @@ function CreatorShopReviewPage() {
                         background: 'linear-gradient(135deg, #1A1B1E, #101113)',
                       }}
                     >
-                      {artUrl(selected.cosmetic.data) ? (
+                      {artUrl(selected.cosmetic?.data) ? (
                         <EdgeMedia
-                          src={artUrl(selected.cosmetic.data)!}
+                          src={artUrl(selected.cosmetic?.data)!}
                           width={340}
                           alt={selected.title}
                           className="max-h-[300px] max-w-[85%] object-contain"
+                        />
+                      ) : selectedMeta.coverUrl ? (
+                        <EdgeMedia
+                          src={selectedMeta.coverUrl}
+                          width={340}
+                          alt={selected.title}
+                          className="max-h-[300px] max-w-[85%] object-contain"
+                        />
+                      ) : isPack ? (
+                        <PackCoverTiles
+                          tiles={selectedMeta.coverTiles ?? []}
+                          size={240}
+                          fallbackIcon
                         />
                       ) : (
                         <Text size="sm" c="dimmed">
@@ -594,20 +632,25 @@ function CreatorShopReviewPage() {
                       )}
                     </div>
                     <Text size="xs" c="dimmed" ta="center">
-                      Submitted artwork
-                      {dims ? ` · ${dims.width}×${dims.height} PNG` : ''}
+                      {selected.cosmetic
+                        ? `Submitted artwork${dims ? ` · ${dims.width}×${dims.height} PNG` : ''}`
+                        : selectedMeta.coverUrl
+                        ? 'Pack cover'
+                        : 'Pack contents — no cover was supplied'}
                     </Text>
-                    <div>
-                      <Text size="sm" fw={600} mb={4}>
-                        In-context preview
-                      </Text>
-                      <CosmeticPreview
-                        cosmetic={
-                          previewCosmetic ?? (selected.cosmetic as unknown as PreviewCosmetic)
-                        }
-                        hideHeader
-                      />
-                    </div>
+                    {!!selected.cosmetic && (
+                      <div>
+                        <Text size="sm" fw={600} mb={4}>
+                          In-context preview
+                        </Text>
+                        <CosmeticPreview
+                          cosmetic={
+                            previewCosmetic ?? (selected.cosmetic as unknown as PreviewCosmetic)
+                          }
+                          hideHeader
+                        />
+                      </div>
+                    )}
                     {isDecoration && (
                       <Stack gap={6}>
                         <Text size="sm" fw={600}>
@@ -716,16 +759,21 @@ function CreatorShopReviewPage() {
                         </>
                       )}
                       <MoneyTile
-                        label="Creator earns"
+                        // A pack's revenue splits per member creator, with only
+                        // the residual reaching the lister — a single figure
+                        // names money nobody receives.
+                        label={isPack ? 'Creators earn (split)' : 'Creator earns'}
                         value={`${numberWithCommas(
                           Math.floor(selected.unitAmount * CREATOR_SHOP_CREATOR_SHARE)
-                        )} Buzz`}
+                        )} Buzz${isPack ? ' across members' : ''}`}
                         icon={<IconTrendingUp size={14} />}
                         iconColor="var(--mantine-color-green-5)"
                       />
                       <MoneyTile
                         label="Submission fee"
-                        value={`${numberWithCommas(CREATOR_SHOP_SUBMISSION_FEE)} · Paid`}
+                        value={`${numberWithCommas(
+                          isPack ? CREATOR_SHOP_PACK_SUBMISSION_FEE : CREATOR_SHOP_SUBMISSION_FEE
+                        )} · Paid`}
                         icon={<IconCheck size={14} />}
                         iconColor="var(--mantine-color-blue-5)"
                       />
@@ -739,72 +787,84 @@ function CreatorShopReviewPage() {
                         icon={<IconBox size={14} />}
                         iconColor="var(--mantine-color-grape-5)"
                       />
-                      <MoneyTile
-                        label="Animated"
-                        value={isAnimated ? 'Yes' : 'No'}
-                        icon={<IconSparkles size={14} />}
-                        iconColor="var(--mantine-color-pink-5)"
-                      />
+                      {!isPack && (
+                        <MoneyTile
+                          label="Animated"
+                          value={isAnimated ? 'Yes' : 'No'}
+                          icon={<IconSparkles size={14} />}
+                          iconColor="var(--mantine-color-pink-5)"
+                        />
+                      )}
                       <MoneyTile
                         label="Type"
-                        value={getDisplayName(selected.cosmetic.type)}
+                        value={selected.cosmetic ? getDisplayName(selected.cosmetic.type) : 'Pack'}
                         icon={<IconTag size={14} />}
                         iconColor="var(--mantine-color-cyan-5)"
                       />
-                      <MoneyTile
-                        label="Resale by others"
-                        value={
-                          selectedMeta.sellableByOthers
-                            ? `Allowed · seller keeps ${selectedMeta.sellerShare ?? 0}%`
-                            : 'Owner only'
-                        }
-                        icon={<IconUsers size={14} />}
-                        iconColor="var(--mantine-color-teal-5)"
-                      />
+                      {/* A pack cannot be resold by reference — the split is
+                          computed from one cosmetic's creator and a pack has
+                          several. */}
+                      {!isPack && (
+                        <MoneyTile
+                          label="Resale by others"
+                          value={
+                            selectedMeta.sellableByOthers
+                              ? `Allowed · seller keeps ${selectedMeta.sellerShare ?? 0}%`
+                              : 'Owner only'
+                          }
+                          icon={<IconUsers size={14} />}
+                          iconColor="var(--mantine-color-teal-5)"
+                        />
+                      )}
                     </SimpleGrid>
 
-                    <ChecksCard
-                      icon={<IconScan size={15} color="var(--mantine-color-dimmed)" />}
-                      title="Automated checks"
-                    >
-                      {checks.length ? (
-                        checks.map((c, i) => (
-                          <CheckRow
-                            key={c.key}
-                            state={c.passed ? 'pass' : 'fail'}
-                            label={c.label}
-                            detail={c.detail}
-                            withBorder={i < checks.length - 1}
-                          />
-                        ))
-                      ) : (
-                        <Group gap={9} px="md" py={9} align="center">
-                          <IconAlertTriangle size={16} color="var(--mantine-color-yellow-5)" />
-                          <Text size="sm" c="dimmed">
-                            No automated checks were recorded for this submission.
-                          </Text>
-                        </Group>
-                      )}
-                    </ChecksCard>
+                    {/* A pack supplies no artwork to scan, so an empty checks
+                        card reads as an anomaly rather than "not applicable". */}
+                    {!isPack && (
+                      <ChecksCard
+                        icon={<IconScan size={15} color="var(--mantine-color-dimmed)" />}
+                        title="Automated checks"
+                      >
+                        {checks.length ? (
+                          checks.map((c, i) => (
+                            <CheckRow
+                              key={c.key}
+                              state={c.passed ? 'pass' : 'fail'}
+                              label={c.label}
+                              detail={c.detail}
+                              withBorder={i < checks.length - 1}
+                            />
+                          ))
+                        ) : (
+                          <Group gap={9} px="md" py={9} align="center">
+                            <IconAlertTriangle size={16} color="var(--mantine-color-yellow-5)" />
+                            <Text size="sm" c="dimmed">
+                              {isPack
+                                ? 'Packs have no artwork to scan — each member was checked when it was submitted.'
+                                : 'No automated checks were recorded for this submission.'}
+                            </Text>
+                          </Group>
+                        )}
+                      </ChecksCard>
+                    )}
 
-                    <HistoryCard
-                      history={selectedMeta.history}
-                      creator={selected.cosmetic.creator}
-                    />
+                    <HistoryCard history={selectedMeta.history} creator={submitter} />
 
                     <Stack gap={8}>
                       <Text size="sm" fw={600}>
                         Details
                       </Text>
                       <Paper withBorder radius="md">
-                        <DetailRow
-                          label="Cosmetic name"
-                          value={
-                            <Text size="sm" fw={500}>
-                              {selected.cosmetic.name}
-                            </Text>
-                          }
-                        />
+                        {!isPack && (
+                          <DetailRow
+                            label="Cosmetic name"
+                            value={
+                              <Text size="sm" fw={500}>
+                                {selected.cosmetic?.name}
+                              </Text>
+                            }
+                          />
+                        )}
                         {!!stickerSlug && (
                           <DetailRow
                             label="Slug"
@@ -815,25 +875,27 @@ function CreatorShopReviewPage() {
                             }
                           />
                         )}
-                        <DetailRow
-                          label="Rights affirmed"
-                          value={
-                            affirmation ? (
-                              <Stack gap={2}>
-                                <Text size="sm">“{affirmation.statement}”</Text>
-                                <Text size="xs" c="dimmed">
-                                  {affirmedBy} ·{' '}
-                                  {formatDate(affirmation.affirmedAt, 'MMM D, YYYY h:mm A')} · v
-                                  {affirmation.version}
+                        {(!isPack || !!affirmation) && (
+                          <DetailRow
+                            label="Rights affirmed"
+                            value={
+                              affirmation ? (
+                                <Stack gap={2}>
+                                  <Text size="sm">“{affirmation.statement}”</Text>
+                                  <Text size="xs" c="dimmed">
+                                    {affirmedBy} ·{' '}
+                                    {formatDate(affirmation.affirmedAt, 'MMM D, YYYY h:mm A')} · v
+                                    {affirmation.version}
+                                  </Text>
+                                </Stack>
+                              ) : (
+                                <Text size="sm" c="dimmed">
+                                  Not recorded — submitted before this confirmation was required.
                                 </Text>
-                              </Stack>
-                            ) : (
-                              <Text size="sm" c="dimmed">
-                                Not recorded — submitted before this confirmation was required.
-                              </Text>
-                            )
-                          }
-                        />
+                              )
+                            }
+                          />
+                        )}
                         <DetailRow
                           label="Description"
                           last

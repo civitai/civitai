@@ -2625,7 +2625,9 @@ export interface Cosmetic {
   creator?: User | null;
   UserCosmetic?: UserCosmetic[];
   purchases?: UserCosmeticShopPurchases[];
+  purchaseComponents?: UserCosmeticShopPurchaseCosmetic[];
   cosmeticShopItems?: CosmeticShopItem[];
+  packMemberships?: CosmeticShopItemCosmetic[];
 }
 
 export interface UserCosmetic {
@@ -2660,8 +2662,8 @@ export interface CosmeticShopSection {
 
 export interface CosmeticShopItem {
   id: number;
-  cosmeticId: number;
-  cosmetic?: Cosmetic;
+  cosmeticId: number | null;
+  cosmetic?: Cosmetic | null;
   unitAmount: number;
   addedById: number | null;
   addedBy?: User | null;
@@ -2681,6 +2683,16 @@ export interface CosmeticShopItem {
   purchases?: UserCosmeticShopPurchases[];
   sections?: CosmeticShopSectionItem[];
   wishlists?: UserCosmeticShopItemWishlist[];
+  members?: CosmeticShopItemCosmetic[];
+}
+
+export interface CosmeticShopItemCosmetic {
+  shopItemId: number;
+  shopItem?: CosmeticShopItem;
+  cosmeticId: number;
+  cosmetic?: Cosmetic;
+  index: number;
+  floorAmount: number;
 }
 
 export interface UserCosmeticShopItemWishlist {
@@ -2703,14 +2715,24 @@ export interface CosmeticShopSectionItem {
 export interface UserCosmeticShopPurchases {
   userId: number;
   user?: User;
-  cosmeticId: number;
-  cosmetic?: Cosmetic;
+  cosmeticId: number | null;
+  cosmetic?: Cosmetic | null;
   shopItemId: number;
   shopItem?: CosmeticShopItem;
   unitAmount: number;
   purchasedAt: Date;
   buzzTransactionId: string;
   refunded: boolean;
+  meta: JsonValue | null;
+  components?: UserCosmeticShopPurchaseCosmetic[];
+}
+
+export interface UserCosmeticShopPurchaseCosmetic {
+  buzzTransactionId: string;
+  purchase?: UserCosmeticShopPurchases;
+  cosmeticId: number;
+  cosmetic?: Cosmetic;
+  unitAmount: number;
   meta: JsonValue | null;
 }
 

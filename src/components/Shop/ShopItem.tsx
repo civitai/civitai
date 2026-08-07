@@ -21,17 +21,22 @@ import {
   useToggleWishlistShopItem,
 } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { CosmeticShopItemPreviewModal } from '~/components/CosmeticShop/CosmeticShopItemPreviewModal';
+import { CosmeticPackPreviewModal } from '~/components/CosmeticShop/CosmeticPackPreviewModal';
+import { PackCoverTiles } from '~/components/CreatorShop/Pack/PackCoverTiles';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import type { CosmeticShopItemGetById } from '~/types/router';
+import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import classes from './ShopItem.module.scss';
@@ -67,6 +72,8 @@ export const ShopItem = ({
   const { toggleWishlist, togglingWishlist } = useToggleWishlistShopItem();
   const domain = useDomainColor();
   const itemMeta = item.meta as CosmeticShopItemMeta;
+  const stickerUses =
+    cosmetic?.type === CosmeticType.Sticker ? stickerUsesFromCosmeticData(cosmetic.data) : null;
 
   const remaining =
     item.availableQuantity !== null
@@ -78,6 +85,22 @@ export const ShopItem = ({
   const isUpcoming = item.availableFrom && isFutureDate(item.availableFrom);
   const hasDate = isUpcoming || item.availableTo;
   const outOfStock = remaining === 0;
+
+  // Both the card and the Preview button route through this: the button opened
+  // the cosmetic modal directly, and every line of that component reads
+  // `shopItem.cosmetic`, which a pack does not have.
+  const openPreview = () => {
+    if (cosmetic)
+      dialogStore.trigger({
+        component: CosmeticShopItemPreviewModal,
+        props: { shopItem: item, viaShopUserId },
+      });
+    else
+      dialogStore.trigger({
+        component: CosmeticPackPreviewModal,
+        props: { shopItemId: item.id, viaShopUserId },
+      });
+  };
 
   const isNew =
     !outOfStock &&
@@ -169,21 +192,30 @@ export const ShopItem = ({
             onClick={() => {
               if (!currentUser) return;
 
-              dialogStore.trigger({
-                component: CosmeticShopItemPreviewModal,
-                props: { shopItem: item, viaShopUserId },
-              });
+              openPreview();
             }}
             disabled={!isAvailable || outOfStock}
           >
             <div className={classes.cardHeader}>
               <div className={clsx(classes.sampleWrapper, outOfStock && classes.dim)}>
-                <CosmeticSample cosmetic={cosmetic} size="lg" />
+                {cosmetic ? (
+                  <CosmeticSample cosmetic={cosmetic} size="lg" />
+                ) : itemMeta.coverUrl ? (
+                  <EdgeMedia src={itemMeta.coverUrl} width={450} alt={item.title} />
+                ) : (
+                  <PackCoverTiles tiles={itemMeta.coverTiles ?? []} size={220} fallbackIcon />
+                )}
               </div>
               <Text size="xs" c="dimmed" px={6} component="div" className={classes.type}>
-                {getDisplayName(item.cosmetic.type)}
+                {cosmetic
+                  ? // A sticker is sold by the use, so the count is part of what
+                    // the card is offering.
+                    `${getDisplayName(cosmetic.type)}${
+                      stickerUses ? ` · ${numberWithCommas(stickerUses)} uses` : ''
+                    }`
+                  : `Pack of ${itemMeta.packMemberCount ?? 0}`}
               </Text>
-              {cosmetic.type !== CosmeticType.ContentDecoration && alreadyOwned && (
+              {cosmetic && cosmetic.type !== CosmeticType.ContentDecoration && alreadyOwned && (
                 <Overlay center>
                   <Text className="flex items-center gap-1" size="xl" fw="bold" c="gray.1">
                     <IconCheck stroke={2.5} />
@@ -234,12 +266,7 @@ export const ShopItem = ({
             <Button
               radius="xl"
               className={clsx(classes.buyButton, domain === 'green' && classes.buyButtonGreen)}
-              onClick={() => {
-                dialogStore.trigger({
-                  component: CosmeticShopItemPreviewModal,
-                  props: { shopItem: item, viaShopUserId },
-                });
-              }}
+              onClick={openPreview}
               disabled={!isAvailable || outOfStock}
             >
               Preview

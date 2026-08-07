@@ -219,7 +219,7 @@ export default function CosmeticShopMain() {
                             sectionItemCreatedAt={item.createdAt}
                             alreadyOwned={alreadyOwned}
                             wishlisted={wishlistedIds.has(shopItem.id)}
-                            creator={shopItem.cosmetic.creator}
+                            creator={shopItem.cosmetic?.creator ?? shopItem.addedBy}
                             viaShopUserId={CIVITAI_SHOP_ATTRIBUTION}
                           />
                         );
