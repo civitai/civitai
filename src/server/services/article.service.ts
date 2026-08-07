@@ -332,7 +332,11 @@ export const getArticles = async ({
       const followedUsersIds =
         followedUsers?.engagingUsers?.map(({ targetUser }) => targetUser.id) ?? [];
 
-      AND.push(Prisma.sql`a."userId" IN (${Prisma.join(followedUsersIds, ',')})`);
+      // `Prisma.join([])` throws, so a caller who follows nobody got a 500
+      // instead of an empty feed. model.service.ts guards the same clause the
+      // same way.
+      if (!followedUsersIds.length) AND.push(Prisma.sql`1 = 0`);
+      else AND.push(Prisma.sql`a."userId" IN (${Prisma.join(followedUsersIds, ',')})`);
     }
 
     const publishedAtFilter: Prisma.Sql | undefined =
