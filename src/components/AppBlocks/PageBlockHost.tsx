@@ -1318,6 +1318,26 @@ export function PageBlockHost({
         missingScopes
       );
       if (ungrantable.length === 0) return; // already-granted or no hint — drop
+      // 🔴 Tell the BLOCK, not just the viewer. The toast below renders in the
+      // HOST frame; before this push nothing came back over the bridge, so the
+      // block could not tell "the user hasn't confirmed the dialog yet" from
+      // "this environment will never grant this scope" — and its own UI went on
+      // telling the developer to retry an action that can never succeed, right
+      // next to a host toast saying the opposite. This is a fire-and-forget PUSH
+      // (REQUEST_CONSENT carries no `requestId`, so there is nothing to correlate
+      // a `*_RESULT` reply to), matching the other uncorrelated host→block pushes
+      // (`TOKEN_REFRESH`, `ROUTE_CHANGED`, `SUSPEND`/`RESUME`).
+      //
+      // Sent BEFORE the toast so the block's signal cannot be lost to a throwing
+      // notification layer. It ADDS a channel — the toast is unchanged. The
+      // BENIGN already-granted case returns above and stays silent in BOTH
+      // channels: a block that got a message there would render a
+      // permission-unavailable state over a permission that actually works.
+      //
+      // `scopes` is the host's OWN computed un-grantable set (sorted+deduped by
+      // `resolveUngrantableConsentScopes`), not the block's raw hint echoed back,
+      // and it is delivered solely to the frame that asked.
+      send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ungrantable });
       showNotification({
         color: 'yellow',
         title: 'Permission unavailable',
@@ -1331,6 +1351,7 @@ export function PageBlockHost({
     // what opened the commit→passive-effect window in the first place.
   }, [
     onMessage,
+    send,
     readGateStatus,
     missingScopes,
     grantedScopes,
