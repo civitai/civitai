@@ -75,7 +75,10 @@ vi.mock('~/server/games/daily-challenge/daily-challenge.utils', async (importOri
 import { createChallengesBatch } from '../daily-challenge-processing';
 import { dailyChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
 
-const CHALLENGE_TAG_ID = dailyChallengeConfig.challengeTagId;
+// The literal, not `dailyChallengeConfig.challengeTagId`. Reading the id from config makes the
+// assertion below `undefined === undefined` on a tree where the field doesn't exist yet — it would
+// pass against the exact code it exists to reject.
+const CHALLENGE_TAG_ID = 676575;
 
 // Routes each dbRead.$queryRaw by a fragment unique to that query.
 function routeQuery(strings: TemplateStringsArray | string[]) {
@@ -120,6 +123,10 @@ describe('daily challenge creation applies the challenge auto-tag', () => {
     mockCollectionCreate.mockResolvedValue({ id: 4242 });
     mockCreateChallengeRecord.mockResolvedValue(31337);
     mockGetChallengeConfig.mockResolvedValue(configWithJudge());
+  });
+
+  it('carries the challenge tag id in the daily config', () => {
+    expect(dailyChallengeConfig.challengeTagId).toBe(CHALLENGE_TAG_ID);
   });
 
   it('sets metadata.autoTagId to the configured challenge tag id', async () => {

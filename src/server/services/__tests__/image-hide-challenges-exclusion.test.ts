@@ -65,7 +65,10 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 import { getAllImages, getAllImagesIndex } from '../image.service';
 import { dailyChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
 
-const CHALLENGE_TAG_ID = dailyChallengeConfig.challengeTagId;
+// The literal, not `dailyChallengeConfig.challengeTagId`. Reading the id from config makes the
+// exclusion assertions compare against `undefined` on a tree where the field doesn't exist, which
+// passes for the wrong reason. The config is tied to this literal by its own test below.
+const CHALLENGE_TAG_ID = 676575;
 
 type FeedInput = Record<string, unknown>;
 
@@ -92,8 +95,8 @@ describe('hideChallenges → excludedTagIds', () => {
     vi.clearAllMocks();
   });
 
-  it('is a real tag id, not a placeholder', () => {
-    expect(CHALLENGE_TAG_ID).toBe(676575);
+  it('maps to the tag id the daily config assigns to challenge collections', () => {
+    expect(dailyChallengeConfig.challengeTagId).toBe(CHALLENGE_TAG_ID);
   });
 
   describe.each(entryPoints)('%s', (_name, run) => {
@@ -101,7 +104,9 @@ describe('hideChallenges → excludedTagIds', () => {
       const input = { ...baseInput(), hideChallenges: true };
       await run(input);
 
-      expect(input.excludedTagIds).toContain(CHALLENGE_TAG_ID);
+      // `?? []` so an unmapped flag fails as "[] does not contain 676575" rather than as an
+      // invalid-argument error about `undefined`.
+      expect(input.excludedTagIds ?? []).toContain(CHALLENGE_TAG_ID);
     });
 
     it('unions with caller-supplied excludedTagIds rather than replacing them', async () => {
