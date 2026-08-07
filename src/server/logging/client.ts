@@ -5,13 +5,22 @@
 import { TRPCError } from '@trpc/server';
 import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { createAxiomLogger, safeError } from '@civitai/axiom/client';
+import { emitOtelLog } from '@civitai/telemetry/otel-logs';
 import { env } from '~/env/server';
 
 // The build guard is a Next.js concern, so it lives here in the app shim — not in
 // the app-agnostic @civitai/axiom package. Skip the client during `next build`.
 const noopLog = async (_data: MixedObject, _datastream?: string) => {};
 
-export const logToAxiom = env.IS_BUILD ? noopLog : createAxiomLogger().logToAxiom;
+// The OTel sink is wired here, in the app shim, because the emitter is an app concern
+// (it depends on the app's OpenTelemetry setup) while @civitai/axiom stays transport-
+// agnostic. It is ADDITIVE and DARK BY DEFAULT: `emitOtelLog` no-ops unless
+// OTEL_LOGS_ENABLED === 'true', and it can neither change nor break the stderr write or
+// the Axiom dual-write. Subpath import (not the package barrel) keeps the server-only
+// OTel logs SDK out of any graph that imports @civitai/telemetry for its other helpers.
+export const logToAxiom = env.IS_BUILD
+  ? noopLog
+  : createAxiomLogger({}, { emitLog: emitOtelLog }).logToAxiom;
 export { safeError };
 
 /**

@@ -10,8 +10,8 @@ import {
   ParentBasedSampler,
   TraceIdRatioBasedSampler,
 } from '@opentelemetry/sdk-trace-node';
-import { LoggerProvider, BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { logs } from '@opentelemetry/api-logs';
+import { createOtelLoggerProvider, registerOtelShutdown } from '@civitai/telemetry/otel-logs';
 import { trace } from '@opentelemetry/api';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { registerCpuProfiler, registerEventLoopStallProfiler } from '~/server/cpu-profiler';
@@ -167,10 +167,25 @@ if (!OTEL_ENABLED) {
       url: `${OTEL_ENDPOINT}/v1/logs`,
     });
 
-    // Set up logger provider with processors in config
-    const loggerProvider = new LoggerProvider({
+    // Set up the logger provider. Construction (batch sizing + the `traceBased` hazard
+    // it must never enable) lives in @civitai/telemetry so it has one home and a test;
+    // see createOtelLoggerProvider.
+    //
+    // OTEL_LOGS_EXPORT_TIMEOUT_MS bounds a single export attempt. It must stay under the
+    // workload's termination grace period minus the pre-stop drain, because shutdown
+    // flushes synchronously with respect to that budget — the default is sized for the
+    // SHORTEST grace period any of these workloads runs with, and should only be raised
+    // where the deployment is known to allow more.
+    const parsedExportTimeout = parseInt(process.env.OTEL_LOGS_EXPORT_TIMEOUT_MS ?? '', 10);
+    const exportTimeoutMillis =
+      Number.isFinite(parsedExportTimeout) && parsedExportTimeout > 0
+        ? parsedExportTimeout
+        : undefined;
+
+    const loggerProvider = createOtelLoggerProvider({
       resource,
-      processors: [new BatchLogRecordProcessor(logExporter)],
+      exporter: logExporter,
+      exportTimeoutMillis,
     });
     logs.setGlobalLoggerProvider(loggerProvider);
 
@@ -239,10 +254,19 @@ if (!OTEL_ENABLED) {
       attributes: { service: serviceName },
     });
 
-    // Cleanup on exit
-    process.on('SIGTERM', () => {
-      loggerProvider.shutdown();
-      sdk.shutdown();
+    // Flush telemetry on termination.
+    //
+    // The previous form listened on SIGTERM only and awaited NEITHER promise, so the
+    // final batch raced process termination — immaterial while this pipeline carried one
+    // record per boot, a real loss path the moment it carries traffic. registerOtelShutdown
+    // adds SIGINT, awaits both shutdowns, and is idempotent across a second signal.
+    //
+    // The log line below is deliberate: whether the framework installs its own SIGTERM
+    // handler that exits before ours runs is NOT answerable by any test we can write, so
+    // its presence (or absence) in a terminating process's final output is the check.
+    registerOtelShutdown([loggerProvider, sdk], {
+      log: (message) => console.log(`[instrumentation.node] ${message}`),
+      onError: (reason) => console.error('[instrumentation.node] OTEL shutdown error:', reason),
     });
   } catch (error) {
     console.error('[instrumentation.node] Failed to initialize OTEL:', error);

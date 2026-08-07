@@ -156,6 +156,16 @@ export default defineNextConfig(
       'redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series',
       '@opentelemetry/sdk-node', '@opentelemetry/instrumentation', '@opentelemetry/instrumentation-http',
       '@opentelemetry/instrumentation-redis', '@prisma/instrumentation',
+      // Logs pipeline. The logs API keeps its provider registry on a globalThis symbol,
+      // so writer and reader must be the SAME module instance; bundling a second copy
+      // into another graph is the one way this pipeline can go permanently silent
+      // without erroring. Externalizing removes that class rather than surviving it.
+      // (The bridge in @civitai/telemetry also binds lazily, so a second copy is
+      // survivable — belt and braces, because neither check can see the other's failure.)
+      // NOTE: @opentelemetry/resources and /semantic-conventions are deliberately NOT
+      // here — @opentelemetry/sdk-trace-web reaches them from the client graph.
+      '@opentelemetry/api', '@opentelemetry/api-logs', '@opentelemetry/sdk-logs',
+      '@opentelemetry/exporter-logs-otlp-proto',
       '@pyroscope/nodejs', '@datadog/pprof',
     ],
     // Several entry points read markdown from src/static-content at runtime via fs
