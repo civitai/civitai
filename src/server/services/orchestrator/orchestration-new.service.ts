@@ -145,6 +145,8 @@ export type GenerationContext = {
   // idempotent on retry and lets the funnel dashboard join Generator_Submit to
   // orchestration.jobs.externalId. See civitai/civitai-orchestration#229.
   externalId?: string;
+  /** User saw a soft-block prompt warning and chose to proceed. See `auditPromptServer`. */
+  acknowledgedSoftBlock?: boolean;
 };
 
 /** Options for submitting a generation */
@@ -1453,6 +1455,7 @@ export async function generateFromGraph({
   remixOfId,
   track,
   externalId,
+  acknowledgedSoftBlock,
 }: GenerateOptions) {
   const { data, computedKeys } = validateInput(input, externalCtx);
 
@@ -1474,6 +1477,7 @@ export async function generateFromGraph({
         remixOfId,
         inputImages,
         inputVideo,
+        acknowledgedSoftBlock,
       });
     } catch (err) {
       // Legacy regex/external audit blocked the prompt. Fire-and-forget an
@@ -1513,6 +1517,7 @@ export async function generateFromGraph({
       isGreen: !!isGreen,
       isModerator,
       track,
+      acknowledgedSoftBlock,
     });
   }
 

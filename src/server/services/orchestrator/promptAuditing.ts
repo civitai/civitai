@@ -12,6 +12,7 @@ import { fetchThroughCache, bustFetchThroughCache } from '~/server/utils/cache-h
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   auditPromptEnriched,
+  isSoftBlock,
   type PromptTrigger,
   type PromptTriggerCategory,
 } from '~/utils/metadata/audit';
@@ -45,6 +46,9 @@ export interface BlockedPromptEntry {
 // have had in steady state. Keeping these in lockstep prevents the previous behavior
 // where many users effectively accumulated forever in Redis but only recovered the
 // last 24h after a wipe.
+const GREEN_SFW_REDIRECT =
+  'Civitai.com is intended for SFW content only. For NSFW content generation, please visit civitai.red where you have more freedom to generate mature content.';
+
 const BLOCKED_PROMPTS_WINDOW_DAYS = 30;
 const BLOCKED_PROMPTS_TTL = 60 * 60 * 24 * BLOCKED_PROMPTS_WINDOW_DAYS;
 const RESET_MARKER = '__RESET__';
@@ -240,6 +244,8 @@ export interface AuditPromptOptions {
   remixOfId?: number; // The original image being remixed
   inputImages?: string[]; // Base/source image URLs attached to the job
   inputVideo?: string; // Source video URL (vid2vid)
+  // Only honored when every trigger is soft — see `isSoftBlock`.
+  acknowledgedSoftBlock?: boolean;
 }
 
 /**
@@ -265,6 +271,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     remixOfId,
     inputImages,
     inputVideo,
+    acknowledgedSoftBlock,
   } = options;
 
   // Skip auditing if prompt is empty (will be caught by validation elsewhere)
@@ -300,15 +307,24 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       checkProfanity
     );
 
+    let softRegexBlock: { blockedFor: string[]; triggers: PromptTrigger[]; type: string } | null =
+      null;
+
     if (!success) {
       // Filter out allowlisted triggers before counting toward mute
       const remainingTriggers = filterAllowlistedTriggers(triggers, allowlist);
       if (remainingTriggers.length > 0) {
-        throw {
+        const regexBlock = {
           blockedFor: remainingTriggers.map((t) => t.message),
           triggers: remainingTriggers,
           type: 'regex',
         };
+        // A hard block short-circuits. A soft one must NOT — throwing here would
+        // skip the external classifier below, so appending any overridable word
+        // ("… pee") to a prompt would buy a click-through past it. Hold the block
+        // and let external moderation run first; it can only escalate.
+        if (!isSoftBlock(remainingTriggers)) throw regexBlock;
+        softRegexBlock = regexBlock;
       }
     }
 
@@ -336,17 +352,61 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
         };
       }
     }
+
+    // External moderation cleared it; now honor the held soft block.
+    if (softRegexBlock) throw softRegexBlock;
   } catch (e) {
     const error = e as { blockedFor: string[]; triggers: PromptTrigger[]; type: string };
+
+    const softBlock = isSoftBlock(error.triggers ?? []);
+
+    if (softBlock) {
+      // A soft block never counts toward the auto-mute, acknowledged or not.
+      // Counting the warning would auto-mute exactly the users this exists to help
+      // (`daughter` alone blocks 139 of them) while offering them a proceed button.
+      await reportProhibitedRequest({
+        prompt,
+        negativePrompt,
+        userId,
+        isModerator,
+        track,
+        source: error.type === 'external' ? 'External' : 'Regex',
+        count: 0,
+        remixOfId,
+        inputImages,
+        inputVideo,
+      });
+
+      // ClickHouse `source` is Enum8('Regex','External') and cannot record the
+      // override, so this is the only trail of it until a column migration lands.
+      if (acknowledgedSoftBlock) {
+        logToAxiom({
+          name: 'prompt-soft-block-override',
+          type: 'info',
+          userId,
+          details: {
+            triggers: error.triggers.map((t) => ({
+              category: t.category,
+              matchedWord: t.matchedWord,
+            })),
+          },
+        }).catch(() => null);
+        return;
+      }
+    }
 
     // Build error message based on domain
     let message: string;
 
-    if (isGreen) {
-      // SFW-only domain (civitai.com) - stricter message
-      message = `Your prompt was flagged: ${error.blockedFor.join(
-        ', '
-      )}.\n\nCivitai.com is intended for SFW content only. For NSFW content generation, please visit civitai.red where you have more freedom to generate mature content.`;
+    if (softBlock) {
+      // No escalating "sent for review" tail (not counted), and on green no
+      // "go to civitai.red" redirect. Soft means we are NOT confident this is
+      // mature — that uncertainty is the whole reason we offer a proceed button,
+      // so sending them to the adult domain would contradict it and push users
+      // there over a false positive.
+      message = `Your prompt was flagged: ${error.blockedFor.join(', ')}`;
+    } else if (isGreen) {
+      message = `Your prompt was flagged: ${error.blockedFor.join(', ')}.\n\n${GREEN_SFW_REDIRECT}`;
     } else {
       const source = error.type === 'external' ? 'External' : 'Regex';
 
@@ -395,7 +455,8 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       }
     }
 
-    throw throwBadRequestError(message);
+    // Flag rides `cause`; trpc.ts's errorFormatter lifts it onto data.softBlock.
+    throw throwBadRequestError(message, softBlock ? { softBlock: true } : undefined);
   }
 }
 
