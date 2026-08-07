@@ -158,6 +158,27 @@ export async function getComments(userId: number, limit = 25): Promise<UserComme
     .execute();
 }
 
+// Retool's segmentedControl1 split comments into "Model Comments" (`Comment`) and "Other Comments"
+// (`CommentV2` — image, article, bounty and post threads). Only the first was ported; this is the
+// other half, and it is the larger table on most accounts.
+export type UserCommentV2 = {
+  id: number;
+  createdAt: Date;
+  content: string;
+  tosViolation: boolean | null;
+  threadId: number;
+};
+
+export async function getCommentsV2(userId: number, limit = 25): Promise<UserCommentV2[]> {
+  return dbRead
+    .selectFrom('CommentV2')
+    .select(['id', 'createdAt', 'content', 'tosViolation', 'threadId'])
+    .where('userId', '=', userId)
+    .orderBy('createdAt', 'desc')
+    .limit(limit)
+    .execute();
+}
+
 // REACTIONS GIVEN, grouped by the creator whose images were reacted to (Retool's ReactionsGrouped).
 // The concentration is the signal — a normal account spreads reactions over hundreds of creators, a
 // vote-ring account puts most of them on one.

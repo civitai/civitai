@@ -8,6 +8,8 @@ import {
   BAN_REASON_CODES,
   addSocial,
   addTimedMute,
+  bulkCommentAction,
+  bulkReviewAction,
   clearProfileText,
   purgeAllContent,
   removeSocial,
@@ -45,6 +47,7 @@ const noteFail = (status: number, message: string) =>
   fail(status, { scope: 'notes' as const, error: message });
 const socialsFail = (message: string) => fail(400, { scope: 'socials' as const, error: message });
 const profileFail = (message: string) => fail(400, { scope: 'profile' as const, error: message });
+const contentFail = (message: string) => fail(400, { scope: 'content' as const, error: message });
 
 const userIdSchema = z.object({ userId: z.coerce.number().int().positive() });
 const noteSchema = z.object({ notes: z.string().trim().min(1).max(NOTE_MAX) });
@@ -262,6 +265,52 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
     if (!result.ok) return accountFail(result.error);
+    return { success: true };
+  },
+
+  // Checkbox ids arrive as repeated fields, so they are read off the raw FormData rather than the
+  // parsed object, which keeps only the last value per name.
+  contentAction: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return contentFail('Not permitted.');
+    const form = await request.formData();
+    const input = parseForm(
+      userIdSchema.extend({
+        kind: z.enum(['comments', 'reviews']),
+        op: z.enum(['delete', 'tos', 'exclude', 'include']),
+      }),
+      form
+    );
+    if (typeof input === 'string') return contentFail(input);
+
+    const ids = (name: string) =>
+      form
+        .getAll(name)
+        .map((v) => Number(v))
+        .filter((n) => Number.isInteger(n) && n > 0);
+
+    if (input.kind === 'comments') {
+      if (input.op !== 'delete' && input.op !== 'tos')
+        return contentFail('Unsupported action for comments.');
+      const result = await bulkCommentAction({
+        action: input.op === 'delete' ? 'bulkDelete' : 'removeAsTos',
+        commentIds: ids('commentIds'),
+        commentV2Ids: ids('commentV2Ids'),
+        userId: input.userId,
+        moderatorId: locals.user.id,
+      });
+      if (!result.ok) return contentFail(result.error);
+      return { success: true };
+    }
+
+    if (input.op === 'tos') return contentFail('Unsupported action for reviews.');
+    const result = await bulkReviewAction({
+      action: input.op === 'delete' ? 'delete' : 'setExclude',
+      reviewIds: ids('reviewIds'),
+      exclude: input.op === 'exclude',
+      userId: input.userId,
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return contentFail(result.error);
     return { success: true };
   },
 

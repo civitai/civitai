@@ -44,6 +44,85 @@ async function callMainApp(
   }
 }
 
+// The `/api/mod/retool/*` family authenticates with a moderator API key as a Bearer token, NOT the
+// webhook token — a different auth scheme from every other main-app call here. Retool held the key in
+// its own config; the spoke needs `CIVITAI_MOD_API_KEY` set or these actions refuse rather than fail
+// obscurely at the endpoint.
+async function callRetoolEndpoint(
+  resource: string,
+  body: Record<string, unknown>,
+  label: string
+): Promise<ActionResult> {
+  const key = env.CIVITAI_MOD_API_KEY;
+  if (!key) return { ok: false, error: 'CIVITAI_MOD_API_KEY is not configured.' };
+
+  const base = (env.CIVITAI_APP_URL || 'https://civitai.com').replace(/\/$/, '');
+  try {
+    const res = await fetch(`${base}/api/mod/retool/${resource}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) return { ok: false, error: `${label} returned ${res.status}.` };
+    return { ok: true };
+  } catch (e) {
+    console.error(`[user-actions] ${label} failed`, e);
+    return { ok: false, error: `${label} failed.` };
+  }
+}
+
+// BULK COMMENT ACTIONS (Retool's DeleteComments / ToSComments). Both tables in one call, matching the
+// endpoint's contract and Retool's Model Comments / Other Comments split.
+export async function bulkCommentAction(input: {
+  action: 'bulkDelete' | 'removeAsTos';
+  commentIds: number[];
+  commentV2Ids: number[];
+  userId: number;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  if (!input.commentIds.length && !input.commentV2Ids.length)
+    return { ok: false, error: 'Select at least one comment.' };
+
+  const result = await callRetoolEndpoint(
+    'comment',
+    {
+      action: input.action,
+      commentIds: input.commentIds,
+      commentV2Ids: input.commentV2Ids,
+    },
+    input.action === 'bulkDelete' ? 'Comment delete' : 'Comment ToS'
+  );
+  if (!result.ok) return result;
+
+  await logAction(`comments:${input.action}`, input.userId, input.moderatorId);
+  return { ok: true };
+}
+
+// BULK REVIEW ACTIONS (Retool's DeleteReview / ExcludeOrIncludeReview).
+export async function bulkReviewAction(input: {
+  action: 'delete' | 'setExclude';
+  reviewIds: number[];
+  exclude?: boolean;
+  userId: number;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  if (!input.reviewIds.length) return { ok: false, error: 'Select at least one review.' };
+
+  const body: Record<string, unknown> = { action: input.action, reviewIds: input.reviewIds };
+  if (input.action === 'setExclude') body.exclude = input.exclude ?? true;
+
+  const result = await callRetoolEndpoint(
+    'review',
+    body,
+    input.action === 'delete' ? 'Review delete' : 'Review exclude'
+  );
+  if (!result.ok) return result;
+
+  await logAction(`reviews:${input.action}`, input.userId, input.moderatorId);
+  return { ok: true };
+}
+
 // CACHE / SESSION REFRESH (Retool's ClearCache + RefreshSession). Both were recorded as blocked on an
 // API key; they are plain webhook-token endpoints and were never blocked at all. The recurring support
 // case is a user who paid and whose tier has not taken effect — this is the fix for it, and without it

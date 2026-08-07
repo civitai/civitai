@@ -1,15 +1,61 @@
 <script lang="ts">
+  import { applyAction, enhance } from '$app/forms';
+  import { invalidateAll } from '$app/navigation';
+  import type { ActionResult } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import type { Account } from './user-account';
+  import type { FormResult } from './form-result';
   import ListCard from './ListCard.svelte';
 
-  let { account, civitaiUrl }: { account: Promise<Account> | null; civitaiUrl: string } = $props();
+  let {
+    account,
+    userId,
+    canAct,
+    form,
+    civitaiUrl,
+  }: {
+    account: Promise<Account> | null;
+    userId: number;
+    canAct: boolean;
+    form: FormResult;
+    civitaiUrl: string;
+  } = $props();
+
+  const error = $derived(form?.scope === 'content' ? form.error : null);
+  let submitting = $state(false);
+
+  // Bulk actions delete rows the lists are showing, so the account fetch has to be re-run. That
+  // promise is owned by +page.svelte, so a successful write invalidates rather than bumping a local
+  // counter.
+  const afterAction =
+    () =>
+    async ({ result }: { result: ActionResult }) => {
+      await applyAction(result);
+      if (result.type === 'success') await invalidateAll();
+      submitting = false;
+    };
+
+  const onSubmit = () => {
+    submitting = true;
+    return afterAction();
+  };
 
   const modelUrl = (modelId: number | null) => (modelId ? `${civitaiUrl}/models/${modelId}` : null);
   const bountyUrl = (bountyId: number) => `${civitaiUrl}/bounties/${bountyId}`;
   const CARD = 'rounded-xl border border-dark-4 bg-dark-6 p-5';
+  const CHECKBOX = 'accent-blue-500 mr-1';
 </script>
+
+{#if error}
+  <div
+    class="mb-4 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
+    role="alert"
+  >
+    {error}
+  </div>
+{/if}
 
 <section class="mb-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
   {#await account}
@@ -20,9 +66,15 @@
     {#if result}
       <ListCard title="Reviews written" total={result.reviews.length}>
         {#snippet children(limit)}
+          <form method="POST" action="?/contentAction" use:enhance={onSubmit}>
+          <input type="hidden" name="userId" value={userId} />
+          <input type="hidden" name="kind" value="reviews" />
           <ul class="space-y-1 text-sm">
             {#each result.reviews.slice(0, limit) as r (r.id)}
               <li class="flex flex-wrap items-baseline gap-x-2">
+                {#if canAct}
+                  <input type="checkbox" name="reviewIds" value={r.id} class={CHECKBOX} />
+                {/if}
                 {#if modelUrl(r.modelId)}
                   <a href={modelUrl(r.modelId)} target="_blank" rel="noreferrer" class={LINK_CLASS}>
                     model {r.modelId}
@@ -35,6 +87,20 @@
               </li>
             {/each}
           </ul>
+          {#if canAct}
+            <div class="mt-3 flex flex-wrap gap-2">
+              <Button type="submit" name="op" value="delete" size="sm" variant="destructive" disabled={submitting}>
+                Delete selected
+              </Button>
+              <Button type="submit" name="op" value="exclude" size="sm" variant="outline" disabled={submitting}>
+                Exclude
+              </Button>
+              <Button type="submit" name="op" value="include" size="sm" variant="outline" disabled={submitting}>
+                Include
+              </Button>
+            </div>
+          {/if}
+          </form>
         {/snippet}
       </ListCard>
 
@@ -69,12 +135,18 @@
         {/snippet}
       </ListCard>
 
-      <ListCard title="Comments" total={result.comments.length}>
+      <ListCard title="Model comments" total={result.comments.length}>
         {#snippet children(limit)}
+          <form method="POST" action="?/contentAction" use:enhance={onSubmit}>
+          <input type="hidden" name="userId" value={userId} />
+          <input type="hidden" name="kind" value="comments" />
           <ul class="space-y-2 text-sm">
             {#each result.comments.slice(0, limit) as c (c.id)}
               <li>
                 <div class="flex flex-wrap items-baseline gap-x-2">
+                  {#if canAct}
+                    <input type="checkbox" name="commentIds" value={c.id} class={CHECKBOX} />
+                  {/if}
                   {#if modelUrl(c.modelId)}
                     <a href={modelUrl(c.modelId)} target="_blank" rel="noreferrer" class={LINK_CLASS}>
                       model {c.modelId}
@@ -88,6 +160,52 @@
               </li>
             {/each}
           </ul>
+          {#if canAct}
+            <div class="mt-3 flex flex-wrap gap-2">
+              <Button type="submit" name="op" value="delete" size="sm" variant="destructive" disabled={submitting}>
+                Delete selected
+              </Button>
+              <Button type="submit" name="op" value="tos" size="sm" variant="destructive" disabled={submitting}>
+                Remove as ToS
+              </Button>
+            </div>
+          {/if}
+          </form>
+        {/snippet}
+      </ListCard>
+
+      <!-- Retool's "Other Comments" half: image, article, bounty and post threads. -->
+      <ListCard title="Other comments" total={result.commentsV2.length}>
+        {#snippet children(limit)}
+          <form method="POST" action="?/contentAction" use:enhance={onSubmit}>
+            <input type="hidden" name="userId" value={userId} />
+            <input type="hidden" name="kind" value="comments" />
+            <ul class="space-y-2 text-sm">
+              {#each result.commentsV2.slice(0, limit) as c (c.id)}
+                <li>
+                  <div class="flex flex-wrap items-baseline gap-x-2">
+                    {#if canAct}
+                      <input type="checkbox" name="commentV2Ids" value={c.id} class={CHECKBOX} />
+                    {/if}
+                    <span class="text-xs text-dark-2">thread {c.threadId}</span>
+                    {#if c.tosViolation}<Badge variant="destructive">ToS</Badge>{/if}
+                    <span class="text-xs text-dark-2">{dateTime(c.createdAt)}</span>
+                  </div>
+                  <p class="line-clamp-2 text-dark-1">{c.content}</p>
+                </li>
+              {/each}
+            </ul>
+            {#if canAct}
+              <div class="mt-3 flex flex-wrap gap-2">
+                <Button type="submit" name="op" value="delete" size="sm" variant="destructive" disabled={submitting}>
+                  Delete selected
+                </Button>
+                <Button type="submit" name="op" value="tos" size="sm" variant="destructive" disabled={submitting}>
+                  Remove as ToS
+                </Button>
+              </div>
+            {/if}
+          </form>
         {/snippet}
       </ListCard>
 

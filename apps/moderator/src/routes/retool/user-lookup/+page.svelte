@@ -81,7 +81,13 @@
        would otherwise survive and end up pointed at a different account. -->
   {#key result.identity.id}
     <!-- what they did -->
-    <UserContentPanel {account} civitaiUrl={data.civitaiUrl} />
+    <UserContentPanel
+      {account}
+      userId={result.identity.id}
+      canAct={data.canAct}
+      {form}
+      civitaiUrl={data.civitaiUrl}
+    />
     <TrainingsPanel {account} civitaiUrl={data.civitaiUrl} />
     <SubscriptionPanel subscription={result.subscription} {account} />
     <BuzzHistoryPanel userId={result.identity.id} />

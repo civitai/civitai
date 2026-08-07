@@ -53,6 +53,14 @@ export type Comment = {
   modelId: number | null;
 };
 
+export type CommentV2 = {
+  id: number;
+  createdAt: string;
+  content: string;
+  tosViolation: boolean | null;
+  threadId: number;
+};
+
 export type Cosmetic = {
   /** `${cosmeticId}:${claimKey}` — the cosmetic id alone repeats across claims. */
   key: string;
@@ -104,6 +112,7 @@ export type Account = {
   reviews: Review[];
   receivedReviews: ReceivedReview[];
   comments: Comment[];
+  commentsV2: CommentV2[];
   cosmetics: Cosmetic[];
   reactions: Reactions;
   trainings: { runs: TrainingRun[]; truncated: boolean };
