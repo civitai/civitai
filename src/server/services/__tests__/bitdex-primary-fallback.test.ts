@@ -240,12 +240,16 @@ describe('BitDex primary username lookup', () => {
     expect(recordBitdexErrorMock).not.toHaveBeenCalled();
   });
 
+  // Guards the other half of the narrowing. This has to REJECT rather than resolve
+  // `{ status: 'failed' }` — a resolved failure never throws, so it would exercise the
+  // accumulation guard instead of the catch and pass no matter what the catch does.
   it('still falls through to Meili for a non-TRPC failure', async () => {
     readUserMock.mockResolvedValue({ id: 77 });
-    queryBitdexOutcomeMock.mockResolvedValue({ status: 'failed' });
+    queryBitdexOutcomeMock.mockRejectedValue(new Error('boom'));
 
     const result = await getImagesFromSearch({ ...withUsername });
 
     expect(result.source).toBe('meili');
+    expect(recordBitdexErrorMock).toHaveBeenCalled();
   });
 });
