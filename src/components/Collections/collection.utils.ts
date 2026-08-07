@@ -346,6 +346,19 @@ export const useCollection = (
   };
 };
 
+// `getAllUser` (used by MyCollections and AddToCollectionModal) selects a plain collection row
+// with no permission flags. isCollaborator/collaborationDisabled only exist on
+// getPermissionDetails' per-collection permissions object, so callers that need those flags for a
+// getAllUser list fetch them here, keyed by collection id.
+export const useCollectionsPermissionsMap = (collectionIds: number[]) => {
+  const { data = [] } = trpc.collection.getPermissionDetails.useQuery(
+    { ids: collectionIds },
+    { enabled: collectionIds.length > 0 }
+  );
+
+  return useMemo(() => new Map(data.map((c) => [c.id, c.permissions])), [data]);
+};
+
 export const contestCollectionReactionsHidden = (
   collection: Pick<NonNullable<CollectionByIdModel>, 'mode' | 'metadata'>
 ) => {

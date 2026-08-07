@@ -11,6 +11,7 @@ import {
   Text,
   ThemeIcon,
   Modal,
+  Tooltip,
 } from '@mantine/core';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import {
@@ -41,6 +42,7 @@ import {
   collectionReadPrivacyData,
   collectionTypeData,
   collectionWritePrivacyData,
+  useCollectionsPermissionsMap,
 } from './collection.utils';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -100,10 +102,15 @@ type SelectedCollection = {
   read: CollectionReadConfiguration;
 };
 
+// Collections closed to new entries render disabled here rather than being filtered out — an
+// option that silently vanishes from the picker reads as deleted, not paused.
+const COLLABORATION_CLOSED_TOOLTIP = "This collection isn't accepting new entries right now.";
+
 // Reusable collection checkbox item component
 function CollectionCheckboxItem({
   collection,
   selectedItem,
+  disabled,
   onToggle,
   onTagChange,
 }: {
@@ -114,6 +121,7 @@ function CollectionCheckboxItem({
     tags?: Array<{ id: number; name: string; filterableOnly?: boolean }>;
   };
   selectedItem?: SelectedCollection;
+  disabled?: boolean;
   onToggle: (selected: boolean) => void;
   onTagChange: (tagId: number | null) => void;
 }) {
@@ -124,23 +132,26 @@ function CollectionCheckboxItem({
 
   return (
     <Stack className={classes.contentWrap} gap={0}>
-      <Checkbox
-        classNames={classes}
-        checked={!!selectedItem}
-        onChange={() => {
-          onToggle(!!selectedItem);
-        }}
-        label={
-          <Group gap="sm" justify="space-between" w="100%" wrap="nowrap">
-            <Text lineClamp={1} inherit className={classes.collectionName}>
-              {collection.name}
-            </Text>
-            <ThemeIcon size={20} variant="light" color="gray" className={classes.privacyIcon}>
-              <Icon size={14} />
-            </ThemeIcon>
-          </Group>
-        }
-      />
+      <Tooltip label={COLLABORATION_CLOSED_TOOLTIP} disabled={!disabled} position="top-start">
+        <Checkbox
+          classNames={classes}
+          checked={!!selectedItem}
+          disabled={disabled}
+          onChange={() => {
+            onToggle(!!selectedItem);
+          }}
+          label={
+            <Group gap="sm" justify="space-between" w="100%" wrap="nowrap">
+              <Text lineClamp={1} inherit className={classes.collectionName}>
+                {collection.name}
+              </Text>
+              <ThemeIcon size={20} variant="light" color="gray" className={classes.privacyIcon}>
+                <Icon size={14} />
+              </ThemeIcon>
+            </Group>
+          }
+        />
+      </Tooltip>
       {selectedItem && availableTags.length > 0 && (
         <Select
           withAsterisk
@@ -213,6 +224,7 @@ function CollectionListForm({
     (collection) =>
       !collection.isOwner && !(includeActiveContests && collection.mode === CollectionMode.Contest)
   );
+  const permissionsByCollectionId = useCollectionsPermissionsMap(collections.map((c) => c.id));
   const features = useFeatureFlags();
 
   const addCollectionItemMutation = trpc.collection.saveItem.useMutation();
@@ -333,6 +345,7 @@ function CollectionListForm({
                           key={collection.id}
                           collection={collection}
                           selectedItem={selectedItem}
+                          disabled={permissionsByCollectionId.get(collection.id)?.collaborationDisabled}
                           onToggle={(isSelected) => {
                             if (isSelected) {
                               setSelectedCollections((curr) =>
@@ -386,6 +399,9 @@ function CollectionListForm({
                             key={collection.id}
                             collection={collection}
                             selectedItem={selectedItem}
+                            disabled={
+                              permissionsByCollectionId.get(collection.id)?.collaborationDisabled
+                            }
                             onToggle={(isSelected) => {
                               if (isSelected) {
                                 setSelectedCollections((curr) =>
@@ -439,6 +455,9 @@ function CollectionListForm({
                             key={collection.id}
                             collection={collection}
                             selectedItem={selectedItem}
+                            disabled={
+                              permissionsByCollectionId.get(collection.id)?.collaborationDisabled
+                            }
                             onToggle={(isSelected) => {
                               if (isSelected) {
                                 setSelectedCollections((curr) =>

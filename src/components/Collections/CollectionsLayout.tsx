@@ -69,9 +69,10 @@ const MyCollectionsDrawer = ({
         classNames={{ header: classes.drawerHeader, body: 'px-0' }}
       >
         <MyCollections onSelect={() => close()} sortOrder={sortOrder}>
-          {({ FilterBox, TypeFilter, Collections }) => (
+          {({ FilterBox, TypeFilter, Collections, InviteList }) => (
             <Stack gap={4}>
               <Stack gap="xs" px="sm">
+                {InviteList}
                 <Group gap="xs" wrap="nowrap">
                   <div style={{ flex: 1 }}>{FilterBox}</div>
                   <Tooltip
@@ -113,7 +114,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
   return (
     <Container fluid className={classes.container}>
       <MyCollections sortOrder={sortOrder}>
-        {({ FilterBox, TypeFilter, Collections, isLoading }) => (
+        {({ FilterBox, TypeFilter, Collections, InviteList, isLoading }) => (
           <Card
             className={classes.sidebar}
             w={300}
@@ -151,6 +152,8 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
                 </Button>
               </Group>
             </Card.Section>
+
+            {InviteList}
 
             <Card.Section p="xs" mx={0} withBorder>
               <Stack gap="xs">

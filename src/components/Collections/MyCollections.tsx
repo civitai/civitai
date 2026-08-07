@@ -17,20 +17,23 @@ import { CollectionContributorPermission, CollectionType } from '~/shared/utils/
 import { IconFilter, IconPlaylistX, IconSearch } from '@tabler/icons-react';
 import { createElement, useMemo, useState } from 'react';
 import classes from './MyCollections.module.scss';
+import { CollectionInviteList } from '~/components/Collections/CollectionCollaborators/CollectionInviteList';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { CollectionGetAllUserModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
-import { collectionTypeData } from './collection.utils';
+import { collectionTypeData, useCollectionsPermissionsMap } from './collection.utils';
 
 // Reusable collection nav link component
 function CollectionNavLink({
   collection,
   isActive,
+  isCollaborator,
   onClick,
 }: {
   collection: CollectionGetAllUserModel;
   isActive: boolean;
+  isCollaborator: boolean;
   onClick: () => void;
 }) {
   return (
@@ -56,16 +59,23 @@ function CollectionNavLink({
               {collection.name}
             </Text>
           </Group>
-          {collection.type && (
-            <Badge
-              size="xs"
-              variant="dot"
-              color={collectionTypeData[collection.type].color}
-              className={classes.typeBadge}
-            >
-              {collectionTypeData[collection.type].label}
-            </Badge>
-          )}
+          <Group gap={4} wrap="nowrap">
+            {isCollaborator && (
+              <Badge size="xs" variant="light" color="blue">
+                Shared
+              </Badge>
+            )}
+            {collection.type && (
+              <Badge
+                size="xs"
+                variant="dot"
+                color={collectionTypeData[collection.type].color}
+                className={classes.typeBadge}
+              >
+                {collectionTypeData[collection.type].label}
+              </Badge>
+            )}
+          </Group>
         </Group>
       }
     />
@@ -120,6 +130,11 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
     (collection) => !collection.isOwner
   );
 
+  // Owned rows never carry isCollaborator, so only the contributing side needs the lookup.
+  const collaboratorPermissionsMap = useCollectionsPermissionsMap(
+    contributingFilteredCollections.map((c) => c.id)
+  );
+
   const FilterBox = (
     <TextInput
       variant="unstyled"
@@ -163,6 +178,7 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
           key={c.id}
           collection={c}
           isActive={router.query?.collectionId === c.id.toString()}
+          isCollaborator={false}
           onClick={() => selectCollection(c.id)}
         />
       ))}
@@ -174,6 +190,7 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
           key={c.id}
           collection={c}
           isActive={router.query?.collectionId === c.id.toString()}
+          isCollaborator={!!collaboratorPermissionsMap.get(c.id)?.isCollaborator}
           onClick={() => selectCollection(c.id)}
         />
       ))}
@@ -197,11 +214,14 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
     </Skeleton>
   );
 
+  const InviteList = <CollectionInviteList />;
+
   if (children) {
     return children({
       FilterBox,
       TypeFilter,
       Collections,
+      InviteList,
       collections: sortedCollections,
       isLoading,
       noCollections,
@@ -210,6 +230,7 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
 
   return (
     <Stack gap={4}>
+      {InviteList}
       {FilterBox}
       {TypeFilter}
       <ScrollArea>{Collections}</ScrollArea>
@@ -224,6 +245,7 @@ type MyCollectionsProps = {
     FilterBox: React.ReactNode;
     TypeFilter: React.ReactNode;
     Collections: React.ReactNode;
+    InviteList: React.ReactNode;
     collections: CollectionGetAllUserModel[];
     isLoading: boolean;
     noCollections: boolean;

@@ -24,6 +24,7 @@ import {
   IconCloudOff,
   IconDotsVertical,
   IconInfoCircle,
+  IconLock,
   IconPhoto,
 } from '@tabler/icons-react';
 import { capitalize, truncate } from 'lodash-es';
@@ -67,6 +68,7 @@ import { ModelContextMenuProvider } from '~/components/Model/Actions/ModelCardCo
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { PostCategories } from '~/components/Post/Infinite/PostCategories';
 import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
@@ -467,6 +469,35 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
   );
 };
 
+function CollectionSubmissionsClosedNotice({ isOwner }: { isOwner: boolean }) {
+  return (
+    <Stack gap={4} maw={280} ml="auto">
+      <Group gap={6} wrap="nowrap">
+        <IconLock size={14} style={{ flexShrink: 0 }} />
+        <Text size="sm" fw={600}>
+          {isOwner ? 'Your collection has stopped accepting entries' : 'Not accepting entries'}
+        </Text>
+      </Group>
+      <Text size="xs" c="dimmed">
+        {isOwner
+          ? "Submissions are paused because your membership isn't active. Everything you've already collected is safe, and your collaborators keep their access — you just can't take in new entries until you renew."
+          : "This collection isn't accepting new entries right now."}
+      </Text>
+      {isOwner && (
+        <Button
+          component={NextLink}
+          href="/pricing"
+          size="xs"
+          radius="xl"
+          style={{ alignSelf: 'flex-start' }}
+        >
+          Renew membership
+        </Button>
+      )}
+    </Stack>
+  );
+}
+
 export function Collection({
   collectionId,
   ...containerProps
@@ -513,6 +544,8 @@ export function Collection({
     (permissions?.write || permissions?.writeReview) &&
     (!metadata.submissionStartDate || new Date(metadata.submissionStartDate) < new Date()) &&
     (!metadata.submissionEndDate || new Date(metadata.submissionEndDate) > new Date());
+  const submissionsClosed =
+    collectionType === CollectionType.Image && !!permissions?.collaborationDisabled;
 
   const submissionPeriod =
     metadata.submissionStartDate ||
@@ -726,7 +759,7 @@ export function Collection({
                               collectionId={collection.id}
                               permissions={permissions}
                             />
-                            {canAddContent && (
+                            {!submissionsClosed && canAddContent && (
                               <Tooltip label="Add from your library." position="bottom" withArrow>
                                 <LegacyActionIcon
                                   color="blue"
@@ -762,6 +795,9 @@ export function Collection({
                           </LegacyActionIcon>
                         </CollectionContextMenu>
                       </Group>
+                      {submissionsClosed && (
+                        <CollectionSubmissionsClosedNotice isOwner={!!permissions?.isOwner} />
+                      )}
                       {entryCountDetails?.max &&
                         (permissions?.write || permissions?.writeReview) &&
                         (() => {
