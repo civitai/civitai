@@ -37,9 +37,14 @@ type WorkflowResponse = {
   steps?: Array<{ $type?: string; output?: { results?: LabelResult[] } }>;
 };
 
-export function orchestratorConfig() {
-  const endpoint = process.env.ORCHESTRATOR_ENDPOINT;
-  const token = process.env.ORCHESTRATOR_ACCESS_TOKEN ?? process.env.ORCHESTRATOR_TOKEN;
+export type OrchestratorConfig = { endpoint: string; token: string };
+
+// SvelteKit reads env through `$env/dynamic/private`, not `process.env`, so a caller inside the app passes
+// its config in; the CLIs fall back to the environment.
+export function orchestratorConfig(override?: Partial<OrchestratorConfig>): OrchestratorConfig {
+  const endpoint = override?.endpoint ?? process.env.ORCHESTRATOR_ENDPOINT;
+  const token =
+    override?.token ?? process.env.ORCHESTRATOR_ACCESS_TOKEN ?? process.env.ORCHESTRATOR_TOKEN;
   if (!endpoint) throw new Error('ORCHESTRATOR_ENDPOINT not set');
   if (!token) throw new Error('ORCHESTRATOR_ACCESS_TOKEN not set');
   return { endpoint: endpoint.replace(/\/$/, ''), token };
@@ -50,8 +55,9 @@ export async function scan(args: {
   policies: LabelPolicy[];
   wait?: number;
   withReason?: boolean;
+  orchestrator?: Partial<OrchestratorConfig>;
 }): Promise<LabelResult[]> {
-  const { endpoint, token } = orchestratorConfig();
+  const { endpoint, token } = orchestratorConfig(args.orchestrator);
   const { input, policies, wait = 60, withReason = true } = args;
 
   // An empty policy string means "use whatever the live registry has", so it must not be sent as

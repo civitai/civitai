@@ -1,3 +1,5 @@
+# LOCAL DEVELOPMENT ONLY. Deployed, the lab lives in the cluster's `internal_tools` instance and this
+# file is not involved — `MODERATOR_DATABASE_URL` is what decides which one you are talking to.
 services:
   xguard-lab-db:
     image: postgres:16-alpine
