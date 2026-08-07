@@ -13,7 +13,6 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   auditPromptEnriched,
   isSoftBlock,
-  SOFT_BLOCK_ERROR_PREFIX,
   type PromptTrigger,
   type PromptTriggerCategory,
 } from '~/utils/metadata/audit';
@@ -345,16 +344,13 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
   } catch (e) {
     const error = e as { blockedFor: string[]; triggers: PromptTrigger[]; type: string };
 
-    // Overridable only on civitai.com/red. civitai.green's whole purpose is the
-    // SFW guarantee — profanity checking is enabled there precisely so it holds,
-    // so a click-through would defeat the domain rather than un-stick a user.
-    const softBlock = !isGreen && isSoftBlock(error.triggers ?? []);
+    const softBlock = isSoftBlock(error.triggers ?? []);
 
     if (softBlock && acknowledgedSoftBlock) {
-      // The user was warned and proceeded. Record it so moderators can review
-      // what the loosened gate is letting through, but deliberately do NOT run it
+      // The user was warned and proceeded. Record it so moderators can review what
+      // the loosened gate is letting through, but deliberately do NOT run it
       // through addBlockedPrompt — an override must not march the user toward an
-      // auto-mute for a category we have decided is unreliable. `count: 0` keeps
+      // auto-mute for a term we have decided is unreliable. `count: 0` keeps
       // reportProhibitedRequest below its mute threshold.
       await reportProhibitedRequest({
         prompt,
@@ -362,12 +358,28 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
         userId,
         isModerator,
         track,
-        source: error.type === 'external' ? 'External (acknowledged)' : 'Regex (acknowledged)',
+        source: error.type === 'external' ? 'External' : 'Regex',
         count: 0,
         remixOfId,
         inputImages,
         inputVideo,
       });
+
+      // The ClickHouse `source` column is Enum8('Regex','External'), so the
+      // override cannot be distinguished there without a manual column migration.
+      // Until that lands this is the only queryable trail of what the loosened
+      // gate let through — do not drop it on the assumption ClickHouse has it.
+      logToAxiom({
+        name: 'prompt-soft-block-override',
+        type: 'info',
+        userId,
+        details: {
+          triggers: error.triggers.map((t) => ({
+            category: t.category,
+            matchedWord: t.matchedWord,
+          })),
+        },
+      }).catch(() => null);
       return;
     }
 
@@ -427,7 +439,10 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       }
     }
 
-    throw throwBadRequestError(softBlock ? `${SOFT_BLOCK_ERROR_PREFIX}${message}` : message);
+    // The soft flag rides `cause`, not the message — trpc.ts's errorFormatter
+    // lifts it onto `error.data.softBlock`. Consumers that match this message with
+    // `startsWith` (EnhanceTab, App Blocks) keep working untouched.
+    throw throwBadRequestError(message, softBlock ? { softBlock: true } : undefined);
   }
 }
 

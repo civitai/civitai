@@ -5,6 +5,8 @@ import {
   type PromptTrigger,
   type PromptTriggerCategory,
 } from '~/utils/metadata/audit';
+import blockedNSFW from '~/utils/metadata/lists/blocklist-nsfw.json';
+import blockedNSFWSoft from '~/utils/metadata/lists/blocklist-nsfw-soft.json';
 
 /**
  * The generation gate lets a user proceed past the over-eager regex categories
@@ -19,12 +21,9 @@ const trigger = (category: PromptTriggerCategory, message = 'x'): PromptTrigger 
 });
 
 describe('isSoftBlock — the overridable boundary', () => {
-  it.each<PromptTriggerCategory>(['nsfw_blocklist', 'profanity', 'external'])(
-    '%s is soft',
-    (category) => {
-      expect(isSoftBlock([trigger(category)])).toBe(true);
-    }
-  );
+  it('profanity is soft', () => {
+    expect(isSoftBlock([trigger('profanity', 'damn')])).toBe(true);
+  });
 
   it.each<PromptTriggerCategory>([
     'minor_age',
@@ -32,24 +31,133 @@ describe('isSoftBlock — the overridable boundary', () => {
     'inappropriate_minor',
     'inappropriate_poi',
     'harmful_combo',
+    'external',
   ])('%s is hard', (category) => {
     expect(isSoftBlock([trigger(category)])).toBe(false);
   });
 
   it('one hard trigger poisons an otherwise soft set', () => {
-    expect(isSoftBlock([trigger('profanity'), trigger('poi')])).toBe(false);
+    expect(isSoftBlock([trigger('nsfw_blocklist', 'daughter'), trigger('poi')])).toBe(false);
   });
 
-  it('an external category naming a minor stays hard', () => {
-    expect(isSoftBlock([trigger('external', 'sexual/minors')])).toBe(false);
-    expect(isSoftBlock([trigger('external', 'harassment')])).toBe(true);
-  });
+  // `extModeration.moderatePrompt` relabels provider categories through the
+  // EXTERNAL_MODERATION_CATEGORIES env var, so the trigger message is whatever a
+  // deployment configured. No message may make an external flag overridable.
+  it.each(['sexual/minors', 'CSAM', 'underage', 'harassment', 'self-harm/instructions'])(
+    'external stays hard whatever label it arrives under: %s',
+    (label) => {
+      expect(isSoftBlock([trigger('external', label)])).toBe(false);
+    }
+  );
 
   it('an empty trigger set is hard — the over-length block reports no triggers', () => {
     expect(isSoftBlock([])).toBe(false);
     const overLength = auditPromptEnriched('a'.repeat(20001));
     expect(overLength.success).toBe(false);
     expect(isSoftBlock(overLength.triggers)).toBe(false);
+  });
+});
+
+describe('nsfw_blocklist severity is per word, not per category', () => {
+  // `blocklist-nsfw.json` is ONE flat list holding real bans next to over-eager
+  // matches, so asserting on a synthetic `trigger('nsfw_blocklist')` proves
+  // nothing about what the category contains. These assert over LITERAL entries.
+  // An earlier revision made the whole category soft; every word below was
+  // click-through-able.
+  it.each([
+    'rape',
+    'raping',
+    'statutory rape',
+    'lolita',
+    'loli',
+    'lolicon',
+    'shota',
+    'cunny',
+    'jailbait',
+    'jail bait',
+    'incest',
+    'bestiality',
+    'beastiality',
+    'necrophilia',
+    'non-consensual',
+    'nonconsensual',
+    'pedophile',
+    'paedophile',
+    'pedobear',
+    'ddlg',
+    'nigger',
+    'nigga',
+    'n1gger',
+    'chink',
+    'kike',
+    'spic',
+    'gook',
+    'coon',
+    'wetback',
+    'paki',
+    'raghead',
+    'towelhead',
+    'jigaboo',
+    'porch monkey',
+    'darkie',
+    'beaner',
+    'wop',
+    'kraut',
+    'dyke',
+    'retard',
+    'midget',
+    'mongoloid',
+    'nazi',
+    'neonazi',
+    'kkk',
+    'swastika',
+    'third reich',
+    'gas chamber',
+    'terrorist',
+    'nappy',
+    'pro-ana',
+    'pro-mia',
+  ])('hard tier: %s is NOT overridable', (word) => {
+    expect(isSoftBlock([trigger('nsfw_blocklist', word)])).toBe(false);
+  });
+
+  it.each([
+    'daughter',
+    'juvenile',
+    'puberty',
+    'puerile',
+    'shit',
+    'pee',
+    'peeing',
+    'diaper',
+    'nappies',
+    'poop',
+    'diarrhea',
+    'urine',
+    'scat',
+    'smegma',
+    'menstruation',
+    'menstrual cycle',
+    'tampon',
+    'period blood',
+    'anorexic',
+    'bulimia',
+    'disordered eating',
+  ])('soft tier: %s IS overridable', (word) => {
+    expect(isSoftBlock([trigger('nsfw_blocklist', word)])).toBe(true);
+  });
+
+  it('an unrecognised matched word defaults to hard', () => {
+    expect(isSoftBlock([trigger('nsfw_blocklist', 'some-new-term')])).toBe(false);
+    expect(isSoftBlock([{ category: 'nsfw_blocklist', message: 'x' }])).toBe(false);
+  });
+
+  // A soft entry that is not in the main blocklist can never match anything, so it
+  // is dead config that reads like coverage. Catches typos in the soft file.
+  it('every soft-tier entry exists in the main blocklist', () => {
+    const main = new Set(blockedNSFW as string[]);
+    const orphans = (blockedNSFWSoft as string[]).filter((w) => !main.has(w));
+    expect(orphans).toEqual([]);
   });
 });
 

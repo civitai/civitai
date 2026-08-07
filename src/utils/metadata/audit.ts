@@ -2,6 +2,7 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { normalizeText } from '~/utils/normalize-text';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import blockedNSFW from './lists/blocklist-nsfw.json';
+import blockedNSFWSoft from './lists/blocklist-nsfw-soft.json';
 import promptTags from './lists/prompt-tags.json';
 import nsfwPromptWords from './lists/words-nsfw-prompt.json';
 import nsfwWordsSoft from './lists/words-nsfw-soft.json';
@@ -71,34 +72,39 @@ export interface PromptTrigger {
  * overridable: "12 year old girl, swimsuit, beach", "13 year old, revealing
  * outfit", "teen, 16 years old, short skirt". Separating those from the innocent
  * matches needs a classifier, not another regex — that is the XGuard work.
+ *
+ * `external` is likewise absent. Its trigger message is not a fixed vocabulary:
+ * `extModeration.moderatePrompt` relabels each provider category through the
+ * `EXTERNAL_MODERATION_CATEGORIES` env var (`key:label` pairs), so a deployment
+ * that maps `sexual/minors` to any label of its choosing would decide, from an
+ * env string, whether an OpenAI minors flag is overridable. Severity must not
+ * hinge on runtime configuration no invariant covers. It is also not the problem
+ * this set exists to fix — a hosted classifier does not substring-match inside
+ * innocent words the way the local word lists do.
  */
-const SOFT_BLOCK_CATEGORIES = new Set<PromptTriggerCategory>([
-  'nsfw_blocklist',
-  'profanity',
-  'external',
-]);
+const SOFT_BLOCK_CATEGORIES = new Set<PromptTriggerCategory>(['nsfw_blocklist', 'profanity']);
 
 /**
- * External moderation returns provider category names (e.g. `sexual/minors`) as
- * the trigger message. Those naming a minor are hard regardless of the category
- * bucket they arrive in.
+ * `nsfw_blocklist` is NOT one severity. `blocklist-nsfw.json` is a flat list that
+ * holds real bans (`rape`, `lolita`, `incest`, `bestiality`, racial slurs) next to
+ * the over-eager matches this whole feature exists to soften (`daughter`, `pee`,
+ * `anorexic`). Severity is therefore decided per matched WORD, and the default is
+ * hard: a term is overridable only by being listed in `blocklist-nsfw-soft.json`.
+ * Adding a word to the main blocklist can never accidentally make it soft.
+ *
+ * The soft file is severity only — it does not affect what matches. Every entry
+ * must also appear in `blocklist-nsfw.json`, which `audit-soft-block.test.ts`
+ * enforces so a typo cannot create an entry that silently matches nothing.
  */
-const EXTERNAL_HARD_PATTERN = /minor/i;
+const softNsfwWords = new Set(blockedNSFWSoft);
 
 export function isSoftBlockTrigger(trigger: PromptTrigger) {
   if (!SOFT_BLOCK_CATEGORIES.has(trigger.category)) return false;
-  if (trigger.category === 'external') {
-    return !EXTERNAL_HARD_PATTERN.test(`${trigger.message} ${trigger.matchedWord ?? ''}`);
+  if (trigger.category === 'nsfw_blocklist') {
+    return trigger.matchedWord != null && softNsfwWords.has(trigger.matchedWord);
   }
   return true;
 }
-
-/**
- * Marks a generation-gate rejection the user is allowed to override. The client
- * keys the "Generate anyway" affordance off this and strips it before display,
- * so it must stay in lockstep between `auditPromptServer` and the generation form.
- */
-export const SOFT_BLOCK_ERROR_PREFIX = '[soft-block] ';
 
 /** A block is soft only when EVERY trigger is soft — one hard trigger poisons the set. */
 export function isSoftBlock(triggers: PromptTrigger[]) {

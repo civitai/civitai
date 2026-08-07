@@ -96,7 +96,6 @@ import {
 } from '~/shared/constants/generation.constants';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
-import { SOFT_BLOCK_ERROR_PREFIX } from '~/utils/metadata/audit';
 import {
   openCompatibilityConfirmModal,
   buildWorkflowPendingChange,
@@ -1021,8 +1020,8 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
 
   const generateMutation = useGenerateFromGraph({
     onError: (error) => {
-      const soft = !!error.message?.startsWith(SOFT_BLOCK_ERROR_PREFIX);
-      const message = soft ? error.message.slice(SOFT_BLOCK_ERROR_PREFIX.length) : error.message;
+      const soft = (error.data as { softBlock?: boolean } | undefined)?.softBlock === true;
+      const message = error.message;
       const isPromptBlock =
         message?.startsWith('Your prompt was flagged') || message?.includes('POI');
       if (isPromptBlock) {

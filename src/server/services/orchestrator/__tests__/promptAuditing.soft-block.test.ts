@@ -7,23 +7,30 @@ import type * as AuditModule from '~/utils/metadata/audit';
  * content. These lock the boundary and the accounting that goes with it.
  */
 
-const { mockAuditPromptEnriched, mockModeratePrompt, mockProhibited, mockSysRedis } = vi.hoisted(
-  () => ({
-    mockAuditPromptEnriched: vi.fn(),
-    mockModeratePrompt: vi.fn(async () => ({ flagged: false, categories: [] as string[] })),
-    mockProhibited: vi.fn(),
-    mockSysRedis: {
-      exists: vi.fn(async () => 1),
-      lPush: vi.fn(async () => 1),
-      lRange: vi.fn(async () => [] as string[]),
-      lRem: vi.fn(async () => 1),
-      lLen: vi.fn(async () => 1),
-      del: vi.fn(),
-      expire: vi.fn(),
-      rPush: vi.fn(),
-    },
-  })
-);
+const {
+  mockAuditPromptEnriched,
+  mockModeratePrompt,
+  mockProhibited,
+  mockSysRedis,
+  mockLogToAxiom,
+  mockUpdateUserById,
+} = vi.hoisted(() => ({
+  mockLogToAxiom: vi.fn(async () => undefined),
+  mockUpdateUserById: vi.fn(async () => undefined),
+  mockAuditPromptEnriched: vi.fn(),
+  mockModeratePrompt: vi.fn(async () => ({ flagged: false, categories: [] as string[] })),
+  mockProhibited: vi.fn(),
+  mockSysRedis: {
+    exists: vi.fn(async () => 1),
+    lPush: vi.fn(async () => 1),
+    lRange: vi.fn(async () => [] as string[]),
+    lRem: vi.fn(async () => 1),
+    lLen: vi.fn(async () => 1),
+    del: vi.fn(),
+    expire: vi.fn(),
+    rPush: vi.fn(),
+  },
+}));
 
 vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
   ...(await importOriginal<typeof AuditModule>()),
@@ -50,26 +57,34 @@ vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() })
 vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
-vi.mock('~/server/services/user.service', () => ({ updateUserById: vi.fn() }));
+vi.mock('~/server/services/user.service', () => ({ updateUserById: mockUpdateUserById }));
 vi.mock('~/server/auth/session-invalidation', () => ({ refreshSession: vi.fn() }));
 vi.mock('~/server/utils/cache-helpers', () => ({
   fetchThroughCache: vi.fn(),
   bustFetchThroughCache: vi.fn(),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
+vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 
-import {
-  SOFT_BLOCK_ERROR_PREFIX,
-  type PromptTrigger,
-  type PromptTriggerCategory,
-} from '~/utils/metadata/audit';
+import type { PromptTrigger, PromptTriggerCategory } from '~/utils/metadata/audit';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 
-const trigger = (category: PromptTriggerCategory, message = 'x'): PromptTrigger => ({
+// `daughter` is a real soft-tier blocklist entry; `rape` is a real hard-tier one.
+// nsfw_blocklist severity is per matched word, so these are not interchangeable.
+const trigger = (category: PromptTriggerCategory, message = 'daughter'): PromptTrigger => ({
   category,
   message,
   matchedWord: message,
 });
+
+/** The soft flag reaches the client as `error.data.softBlock`, via trpc.ts's errorFormatter. */
+const softFlagOf = async (promise: Promise<unknown>) => {
+  try {
+    await promise;
+    return undefined;
+  } catch (e) {
+    return (e as { cause?: { softBlock?: boolean } }).cause?.softBlock;
+  }
+};
 
 const options = {
   prompt: 'a prompt',
@@ -101,8 +116,17 @@ describe('auditPromptServer — proceeding past a soft block', () => {
   it('an acknowledged soft block is still reported for moderator review', async () => {
     flagWith(trigger('nsfw_blocklist'));
     await auditPromptServer({ ...options, acknowledgedSoftBlock: true });
-    expect(mockProhibited).toHaveBeenCalledWith(
-      expect.objectContaining({ source: 'Regex (acknowledged)' })
+    // 'Regex' — NOT a decorated variant. The ClickHouse column is
+    // Enum8('Regex','External'); anything else is rejected and swallowed, which
+    // is how an earlier revision recorded nothing at all.
+    expect(mockProhibited).toHaveBeenCalledWith(expect.objectContaining({ source: 'Regex' }));
+  });
+
+  it('an acknowledged soft block leaves an override trail', async () => {
+    flagWith(trigger('nsfw_blocklist'));
+    await auditPromptServer({ ...options, acknowledgedSoftBlock: true });
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'prompt-soft-block-override' })
     );
   });
 
@@ -111,11 +135,21 @@ describe('auditPromptServer — proceeding past a soft block', () => {
     await auditPromptServer({ ...options, acknowledgedSoftBlock: true });
     // addBlockedPrompt is the only writer of the violation counter.
     expect(mockSysRedis.lPush).not.toHaveBeenCalled();
+    // …and the `count: 0` handed to reportProhibitedRequest must stay below the
+    // mute threshold. Asserted via the consequence — `count` is not forwarded to
+    // the tracker, so asserting on the tracker call would not pin this.
+    expect(mockUpdateUserById).not.toHaveBeenCalled();
   });
 
   it('an UNacknowledged soft block still blocks, and marks itself overridable', async () => {
     flagWith(trigger('nsfw_blocklist'));
-    await expect(auditPromptServer(options)).rejects.toThrow(SOFT_BLOCK_ERROR_PREFIX);
+    expect(await softFlagOf(auditPromptServer(options))).toBe(true);
+  });
+
+  it('the soft marker never touches the user-facing message', async () => {
+    flagWith(trigger('nsfw_blocklist'));
+    // EnhanceTab and App Blocks match this message with `startsWith`.
+    await expect(auditPromptServer(options)).rejects.toThrow(/^Your prompt was flagged/);
   });
 
   it('an acknowledgement does NOT unlock a hard block', async () => {
@@ -127,8 +161,16 @@ describe('auditPromptServer — proceeding past a soft block', () => {
     expect(mockSysRedis.lPush).toHaveBeenCalled();
   });
 
+  it('an acknowledgement does NOT unlock a hard-tier blocklist word', async () => {
+    flagWith(trigger('nsfw_blocklist', 'rape'));
+    await expect(
+      auditPromptServer({ ...options, acknowledgedSoftBlock: true })
+    ).rejects.toBeDefined();
+    expect(mockSysRedis.lPush).toHaveBeenCalled();
+  });
+
   it('an acknowledgement does NOT unlock a mixed soft+hard block', async () => {
-    flagWith(trigger('profanity'), trigger('inappropriate_minor'));
+    flagWith(trigger('nsfw_blocklist'), trigger('inappropriate_minor'));
     await expect(
       auditPromptServer({ ...options, acknowledgedSoftBlock: true })
     ).rejects.toBeDefined();
@@ -136,13 +178,21 @@ describe('auditPromptServer — proceeding past a soft block', () => {
 
   it('a hard block is not marked overridable', async () => {
     flagWith(trigger('poi'));
-    await expect(auditPromptServer(options)).rejects.not.toThrow(SOFT_BLOCK_ERROR_PREFIX);
+    expect(await softFlagOf(auditPromptServer(options))).toBeUndefined();
   });
 
-  // civitai.green's whole purpose is the SFW guarantee, so there is no
-  // click-through there even for a category that is soft on .com/.red.
-  it('civitai.green has no override path', async () => {
-    flagWith(trigger('profanity'));
+  // The override applies on every domain, green included. `profanity` only ever
+  // fires on green (checkProfanity = isGreen), so this is the ONLY path that
+  // makes that category reachable at all.
+  it('civitai.green can override a profanity block', async () => {
+    flagWith(trigger('profanity', 'damn'));
+    await expect(
+      auditPromptServer({ ...options, isGreen: true, acknowledgedSoftBlock: true })
+    ).resolves.toBeUndefined();
+  });
+
+  it('civitai.green still hard-blocks a minor category', async () => {
+    flagWith(trigger('inappropriate_minor'));
     await expect(
       auditPromptServer({ ...options, isGreen: true, acknowledgedSoftBlock: true })
     ).rejects.toThrow(/SFW/);
