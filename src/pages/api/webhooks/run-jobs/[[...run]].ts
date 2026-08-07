@@ -63,6 +63,7 @@ import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
 import type { Job } from '~/server/jobs/job';
 import { jobQueueJobs } from '~/server/jobs/job-queue';
 import { newOrderJobs } from '~/server/jobs/new-order-jobs';
+import { placementJobs } from '~/server/jobs/placement-jobs';
 import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { syncEmailBlocklist } from '~/server/jobs/sync-email-blocklist';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
@@ -209,6 +210,7 @@ export const jobs: Job[] = [
   advanceReferralSubs,
   ...prepaidMembershipJobs,
   ...entityModerationJobs,
+  ...placementJobs,
   retryFailedTextModeration,
   articleIngestionReconcile,
   expireStrikesJob,

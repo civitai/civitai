@@ -65,6 +65,7 @@ import { ImageProcess } from '~/components/Image/DetailV2/ImageProcess';
 import { DownloadImage } from '~/components/Image/DownloadImage';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { StickerPlacementBar } from '~/components/Sticker/StickerPlacementBar';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
 import { NextLink } from '~/components/NextLink/NextLink';
@@ -482,6 +483,9 @@ export function ImageDetail2() {
                             }}
                           >
                             <ImageDetailReactions image={image} />
+                            {/* Inside the provider, not beside it: the bar reads
+                                the same `buttonStyling` the reactions do. */}
+                            <StickerPlacementBar imageId={image.id} className="ml-2" />
                           </ReactionSettingsProvider>
                         </div>
                         <CarouselIndicators {...carouselNavigation} />

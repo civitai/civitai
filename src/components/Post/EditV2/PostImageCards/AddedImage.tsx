@@ -1,3 +1,4 @@
+import { PlacementSpaceToggle } from '~/components/Sticker/PlacementSpaceToggle';
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
 import {
   Accordion,
@@ -1203,6 +1204,14 @@ function PostImage() {
               <Menu.Item leftSection={<IconPencil size={16} />} onClick={onEditMetaClick}>
                 Edit image
               </Menu.Item>
+            )}
+            {!isBlocked && image.id > 0 && (
+              // Inside the menu rather than on the card: it is a setting, not an
+              // action, and the card is already carrying every control the
+              // editor needs at a glance.
+              <div className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
+                <PlacementSpaceToggle level="image" entityId={image.id} />
+              </div>
             )}
             <Menu.Item
               color="red"

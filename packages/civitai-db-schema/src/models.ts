@@ -70,7 +70,7 @@ export type MetricTimeframe = "Day" | "Week" | "Month" | "Year" | "AllTime";
 
 export type AssociationType = "Suggested";
 
-export type ReportReason = "TOSViolation" | "NSFW" | "Ownership" | "AdminAttention" | "Claim" | "CSAM" | "Automated" | "Spam";
+export type ReportReason = "TOSViolation" | "NSFW" | "Ownership" | "AdminAttention" | "Claim" | "CSAM" | "Automated" | "Spam" | "StickerPlacement";
 
 export type ReportStatus = "Pending" | "Processing" | "Actioned" | "Unactioned";
 
@@ -656,6 +656,10 @@ export interface User {
   appListingReportsResolved?: AppListingReport[];
   appListingModerationEvents?: AppListingModerationEvent[];
   targetedAnnouncements?: AnnouncementUser[];
+  placementSuspension?: PlacementSuspension | null;
+  placementsReceived?: Placement[];
+  placementsMade?: Placement[];
+  placementsSold?: Placement[];
 }
 
 export interface CustomerSubscription {
@@ -5155,6 +5159,64 @@ export interface Outbox {
   createdAt: Date | null;
   details: JsonValue | null;
   attempts: number | null;
+}
+
+export interface PlacementSpace {
+  id: number;
+  surface: string;
+  entityType: string;
+  entityId: number;
+  mode: string;
+  price: number | null;
+  settings: JsonValue;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Placement {
+  id: number;
+  surface: string;
+  targetType: string;
+  targetId: number;
+  ownerId: number;
+  owner?: User;
+  placerId: number;
+  placer?: User;
+  data: JsonValue;
+  status: string;
+  removedBy: string | null;
+  amount: number;
+  sellerId: number | null;
+  seller?: User | null;
+  feeWaived: boolean;
+  createdAt: Date;
+  expiresAt: Date | null;
+  resolvedAt: Date | null;
+  resolvedById: number | null;
+  takenDownAt: Date | null;
+  takenDownById: number | null;
+  transactions?: PlacementTransaction[];
+}
+
+export interface PlacementTransaction {
+  id: number;
+  placementId: number;
+  placement?: Placement;
+  kind: string;
+  transactionId: string | null;
+  amount: number;
+  attempts: number;
+  lastAttemptAt: Date | null;
+  lastError: string | null;
+  createdAt: Date;
+}
+
+export interface PlacementSuspension {
+  userId: number;
+  user?: User;
+  reason: string | null;
+  createdAt: Date;
+  createdById: number | null;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

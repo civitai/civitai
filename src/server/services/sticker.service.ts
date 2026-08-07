@@ -76,6 +76,31 @@ export async function spendStickerUses({
   );
   if (!delta.size) return delta;
 
+  await spendStickerUsesFor({ userId, counts: delta, tx });
+
+  return delta;
+}
+
+/**
+ * The drain itself, over a map of sticker to count.
+ *
+ * Split out because placement charges a use without any rich-text content to
+ * diff — there is no token or span to count, only a chosen sticker. Giving it
+ * its own drain would have been a second path to a balance that already has
+ * rules, which is where this feature's bugs have come from.
+ */
+export async function spendStickerUsesFor({
+  userId,
+  counts,
+  tx,
+}: {
+  userId: number;
+  counts: Map<number, number>;
+  tx?: Prisma.TransactionClient;
+}) {
+  if (!counts.size) return;
+
+  const delta = counts;
   const spend = async (tx: Prisma.TransactionClient) => {
     // Sorted so concurrent submissions lock holdings in the same order. Looping
     // in content order lets two submissions sharing two stickers each take one
@@ -124,8 +149,6 @@ export async function spendStickerUses({
 
   if (tx) await spend(tx);
   else await dbWrite.$transaction(spend);
-
-  return delta;
 }
 
 /**

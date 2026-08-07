@@ -10,6 +10,7 @@ import { toCompactHiddenPreferences } from '~/shared/hidden-preferences/compact'
 import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { withSpan } from '~/server/utils/otel-helpers';
+import { logToAxiom } from '~/server/logging/client';
 import { TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 
 const HIDDEN_CACHE_EXPIRY_BASE = 60 * 60 * 4; // 4 hours
@@ -753,6 +754,60 @@ async function toggleHideUser({
   };
 }
 
+/**
+ * Blocking is the primary safety mechanism for placements, so it has to bite:
+ * a block auto-declines every pending placement between the two users, fee
+ * waived, and the escrow returns in full.
+ *
+ * **Both directions.** The spec's case is the blocker's own content, but leaving
+ * the reverse alone means the person you just blocked holds your escrow for the
+ * rest of its 48 hours and can still put your sticker on their image. Refunding
+ * in full is the reversible answer — it moves no money to anyone.
+ *
+ * Runs after the block is committed, which is the precondition
+ * `declinePlacementsOnBlock` asserts: its correctness argument is that nothing
+ * new can join the set behind it, and that only holds once the block is real.
+ *
+ * A failure here must never fail the block. The block is the protection; the
+ * refunds are recoverable by the expiry job, and a Buzz outage that also
+ * prevented someone from blocking a harasser would be the worse outcome.
+ */
+async function cascadeBlockToPlacements({
+  userId,
+  targetUserId,
+}: {
+  userId: number;
+  targetUserId: number;
+}) {
+  // Imported lazily: this module is pulled in almost everywhere, and a static
+  // edge to the escrow service would drag the Buzz client and its metrics into
+  // every one of those graphs.
+  const { declinePlacementsOnBlock } = await import(
+    '~/server/services/placement-moderation.service'
+  );
+
+  for (const { ownerId, placerId, waiveFee } of [
+    // The blocker's own content: they are refusing attention, so no fee.
+    { ownerId: userId, placerId: targetUserId, waiveFee: true },
+    // The blocker's own placements on the person they blocked: the fee stands,
+    // or blocking becomes a free undo of every submission you regret.
+    { ownerId: targetUserId, placerId: userId, waiveFee: false },
+  ]) {
+    try {
+      await declinePlacementsOnBlock({ ownerId, placerId, waiveFee });
+    } catch (error) {
+      await logToAxiom({
+        name: 'placement-moderation',
+        type: 'error',
+        message: 'block cascade failed; pending placements will fall to expiry',
+        ownerId,
+        placerId,
+        error: (error as Error).message,
+      }).catch(() => null);
+    }
+  }
+}
+
 async function toggleBlockUser({
   userId,
   targetUserId,
@@ -769,6 +824,7 @@ async function toggleBlockUser({
     where: { userId_targetUserId: { userId, targetUserId } },
     select: { type: true },
   });
+  const unblocking = engagement?.type === 'Block' && setTo !== true;
   if (!engagement)
     await dbWrite.userEngagement
       .create({
@@ -793,6 +849,8 @@ async function toggleBlockUser({
   await userFollowsCache.refresh(userId);
   await BlockedUsers.refreshCache({ userId });
   await BlockedByUsers.refreshCache({ userId: targetUserId });
+
+  if (!unblocking) await cascadeBlockToPlacements({ userId, targetUserId });
 
   return {
     added: [],
