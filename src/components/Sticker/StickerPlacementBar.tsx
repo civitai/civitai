@@ -1,6 +1,7 @@
-import { Button, Group, Text, Tooltip } from '@mantine/core';
-import { IconSticker } from '@tabler/icons-react';
+import { Button, Text, Tooltip } from '@mantine/core';
+import { IconPlus, IconSticker } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettingsProvider';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
 import {
   useImagePlacementSpace,
@@ -19,6 +20,12 @@ import { useStickerRevealStore } from '~/store/sticker-reveal.store';
  * The reveal is site-wide and sticky rather than per image — pressing it here
  * turns stickers on everywhere until you turn them off, which is why it reads
  * from the store rather than owning state.
+ *
+ * Styling comes from whatever `ReactionSettingsProvider` this is mounted under,
+ * the same way the reaction buttons get theirs, so the row stays consistent
+ * without this component knowing anything about the surface it sits on. The hook
+ * returns `{}` with no provider, so the base props below are what a surface
+ * without one — a feed card, later — would get.
  */
 export function StickerPlacementBar({
   imageId,
@@ -29,6 +36,7 @@ export function StickerPlacementBar({
 }) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
+  const { buttonStyling } = useReactionSettingsContext();
 
   const counts = useStickerPlacementCounts([imageId]);
   const count = counts[imageId] ?? 0;
@@ -55,25 +63,36 @@ export function StickerPlacementBar({
     !!currentUser &&
     currentUser.id !== space.ownerId;
 
-  if (!count && !canPlace && !pending) return null;
+  // Approved plus the viewer's own pending, which is what the toggle reveals.
+  const total = count + pending;
+
+  if (!total && !canPlace) return null;
 
   return (
     <>
-      <Group gap={4} className={clsx(className)}>
-        {(count > 0 || pending > 0) && (
+      {/* One control, not two: the count and the way to add to it are the same
+          subject, and Button.Group squares the touching corners so the divider
+          between them is the shared border rather than a drawn line. */}
+      <Button.Group className={clsx(className)}>
+        {total > 0 && (
           <Tooltip
             label={revealed ? 'Hide stickers on all images' : 'Show stickers on all images'}
             withArrow
           >
             <Button
               size="compact-sm"
-              variant={revealed ? 'filled' : 'light'}
+              radius="xl"
+              variant={revealed ? 'light' : 'subtle'}
               color="gray"
               onClick={toggle}
               leftSection={<IconSticker size={16} />}
+              // Revealed reads as `hasReacted`, so the toggle's on state borrows
+              // the same tint the row already uses for "you did this" instead of
+              // introducing a second visual language for on/off.
+              {...buttonStyling?.('AddReaction', revealed)}
             >
               <Text size="xs" fw={600}>
-                {count + pending}
+                {total} {total === 1 ? 'sticker' : 'stickers'}
               </Text>
             </Button>
           </Tooltip>
@@ -83,18 +102,21 @@ export function StickerPlacementBar({
           <Tooltip label={`Place a sticker · ${space?.price} Buzz`} withArrow>
             <Button
               size="compact-sm"
+              radius="xl"
               variant="light"
               color="yellow"
               onClick={() => openTray(imageId)}
-              leftSection={<IconSticker size={16} />}
+              aria-label="Place a sticker"
+              // A plus rather than a second sticker glyph: beside a count of
+              // stickers it reads as "add one" without a word, which is what
+              // keeps the fused control narrow enough to belong in this row.
+              {...buttonStyling?.('BuzzTip')}
             >
-              <Text size="xs" fw={600}>
-                Place
-              </Text>
+              <IconPlus size={16} stroke={2.5} />
             </Button>
           </Tooltip>
         )}
-      </Group>
+      </Button.Group>
 
       <StickerPlacementTray />
     </>

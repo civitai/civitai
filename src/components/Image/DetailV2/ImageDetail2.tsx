@@ -483,8 +483,10 @@ export function ImageDetail2() {
                             }}
                           >
                             <ImageDetailReactions image={image} />
+                            {/* Inside the provider, not beside it: the bar reads
+                                the same `buttonStyling` the reactions do. */}
+                            <StickerPlacementBar imageId={image.id} className="ml-2" />
                           </ReactionSettingsProvider>
-                          <StickerPlacementBar imageId={image.id} className="ml-2" />
                         </div>
                         <CarouselIndicators {...carouselNavigation} />
                         {/* {viewportHeight >= 1050 && (
