@@ -229,6 +229,7 @@ export async function getResourceSelectModels(
   { user }: { user: ServiceUser }
 ) {
   const { tab, query = '', sort, cursor, limit, filterTypes, filterBaseModels, tagName } = input;
+  const { canGenerate } = input;
 
   const featuredModels = tab === 'featured' ? await getFeaturedModels() : undefined;
   const tabIds = await resolveTabIds(input, user);
@@ -290,7 +291,16 @@ export async function getResourceSelectModels(
       const baseModels = input.resources
         .filter((r) => r.type === m.type)
         .flatMap((r) => r.baseModels);
-      return baseModels.length === 0 || m.versions.some((v) => baseModels.includes(v.baseModel));
+      // Mirrors the client's filterResourceVersions: ONE version has to satisfy both
+      // the base model and generatability, not one each. Checking them independently
+      // pinned models that the client then dropped, so the card never rendered —
+      // ControlNetXL (131 versions, none generatable) shipped 166,651 bytes to the
+      // front of every default checkpoint browse and was never seen.
+      return m.versions.some(
+        (v) =>
+          (baseModels.length === 0 || baseModels.includes(v.baseModel)) &&
+          (canGenerate === undefined || canGenerate === v.canGenerate)
+      );
     });
     // The Meili stream already excludes these ids, so no cross-page dupes.
     items = [...officialItems, ...items];
