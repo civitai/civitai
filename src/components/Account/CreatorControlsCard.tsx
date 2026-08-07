@@ -66,11 +66,27 @@ export function CreatorControlsCard() {
             above, which anyone may use on their own images. */}
         {flags.creatorControls && (
           <>
+            {/* Opens the gated region, so the alert underneath reads as belonging
+                to what follows rather than to the sticker controls above it. */}
+            <Divider
+              label={
+                <Group gap={4} wrap="nowrap">
+                  Metric visibility
+                  <InfoPopover size="xs" iconProps={{ size: 14 }} width={300}>
+                    <Text size="sm" maw={280} style={{ whiteSpace: 'normal' }}>
+                      You and moderators still see your real stats on model pages and cards. On
+                      search results you see the hidden state, same as the public.
+                    </Text>
+                  </InfoPopover>
+                </Group>
+              }
+            />
+
             {isActiveMember ? (
               <Alert color="blue" variant="light" icon={<IconInfoCircle size={16} />}>
                 <Text size="sm">
-                  The controls below this point are a Creator Program benefit. They apply while your
-                  membership is active and revert if it lapses.
+                  Controls below this point are for Creator Program members only. They apply while
+                  your membership is active and revert if it lapses.
                 </Text>
               </Alert>
             ) : (
@@ -116,19 +132,6 @@ export function CreatorControlsCard() {
               </div>
             )}
 
-            <Divider
-              label={
-                <Group gap={4} wrap="nowrap">
-                  Default metric privacy
-                  <InfoPopover size="xs" iconProps={{ size: 14 }} width={300}>
-                    <Text size="sm" maw={280} style={{ whiteSpace: 'normal' }}>
-                      You and moderators still see your real stats on model pages and cards. On
-                      search results you see the hidden state, same as the public.
-                    </Text>
-                  </InfoPopover>
-                </Group>
-              }
-            />
             <Switch
               name="hideModelBuzz"
               label="Hide tipped / earned Buzz"

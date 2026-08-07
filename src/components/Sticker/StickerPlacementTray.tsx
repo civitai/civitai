@@ -1,6 +1,6 @@
 import { CloseButton, Group, ScrollArea, Text } from '@mantine/core';
 import clsx from 'clsx';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { useImagePlacementSpace } from '~/components/Sticker/placement.util';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
@@ -34,6 +34,14 @@ export function StickerPlacementTray() {
   // than sending them to the shop is the point — a tray they have to leave is a
   // placement they don't make.
   const [topUp, setTopUp] = useState<ResolvedSticker | null>(null);
+  // Being dragged, but not yet on the image. The only feedback during that
+  // stretch, since nothing is drawn on the image until the pointer arrives.
+  const [dragging, setDragging] = useState<number | null>(null);
+  const endGrab = useRef<(() => void) | null>(null);
+
+  // A gesture in flight when the tray closes would leave window listeners behind
+  // and could drop a sticker onto an image nobody is looking at any more.
+  useEffect(() => () => endGrab.current?.(), []);
 
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
   const draft = useStickerPlacementDraftStore((state) => state.draft);
@@ -53,20 +61,46 @@ export function StickerPlacementTray() {
   const balanceFor = (cosmeticId: number) =>
     balances?.find((balance) => balance.cosmeticId === cosmeticId)?.remaining;
 
-  /**
-   * Press a sticker and drag it straight onto the image: the draft is created on
-   * pointer-down at the tray, then follows the pointer. Releasing over the image
-   * leaves it there, so choosing and positioning are one gesture rather than two
-   * steps with a modal in between.
-   */
   const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
 
+  /**
+   * A sticker reaches the image by being dragged onto it, and by nothing else.
+   *
+   * Pressing one creates no draft. The draft comes into existence on the first
+   * pointer move that lands inside the media box, positioned under the cursor;
+   * a press that never gets there — a plain click, or a drag released outside —
+   * leaves the image untouched. Creating it on pointer-down put a sticker in the
+   * middle of someone's work before they had chosen anywhere and then teleported
+   * it, which is the thing being fixed rather than a detail of when it renders.
+   */
   const grab = (cosmeticId: number) => (event: React.PointerEvent) => {
     event.preventDefault();
-    // Undefined when the press is outside the image, which it always is on the
-    // first grab — the draft then starts centred and follows the pointer in.
-    begin(cosmeticId, pointerOverSurface(event.clientX, event.clientY) ?? undefined, maxScale);
-    setInteraction('move');
+    endGrab.current?.();
+    setDragging(cosmeticId);
+
+    const onMove = (move: PointerEvent) => {
+      const at = pointerOverSurface(move.clientX, move.clientY);
+      if (!at) return;
+      begin(cosmeticId, at, maxScale);
+      // Handing the drag to the layer, which owns it from here. Armed only once
+      // the sticker exists on the image, so there is never a live move gesture
+      // with nothing to move.
+      setInteraction('move');
+      teardown();
+    };
+
+    const teardown = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', teardown);
+      window.removeEventListener('pointercancel', teardown);
+      endGrab.current = null;
+      setDragging(null);
+    };
+
+    endGrab.current = teardown;
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', teardown);
+    window.addEventListener('pointercancel', teardown);
   };
 
   const price = space?.price ?? 0;
@@ -131,7 +165,9 @@ export function StickerPlacementTray() {
                     onPointerDown={exhausted ? () => setTopUp(option) : grab(option.id)}
                     className={clsx(
                       'flex shrink-0 cursor-grab flex-col items-center gap-1 rounded border p-2',
-                      draft?.cosmeticId === option.id ? 'border-blue-5' : 'border-transparent',
+                      draft?.cosmeticId === option.id || dragging === option.id
+                        ? 'border-blue-5'
+                        : 'border-transparent',
                       exhausted && 'opacity-40'
                     )}
                     style={{ touchAction: 'none' }}

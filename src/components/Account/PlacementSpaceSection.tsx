@@ -151,21 +151,24 @@ export function PlacementSpaceSection() {
             </Text>
           </InfoPopover>
         </Group>
-        <Group gap="sm" wrap="nowrap" maw={320}>
-          <Slider
-            className="flex-1"
-            value={maxScale}
-            onChange={setMaxScale}
-            onChangeEnd={(value) => commit(mode, price, value)}
-            min={STICKER_PLACEMENT_MIN_SCALE}
-            max={STICKER_PLACEMENT_MAX_SCALE}
-            step={0.01}
-            label={null}
-          />
-          <Text size="sm" fw={500} w={40} ta="right">
+        <Slider
+          maw={320}
+          value={maxScale}
+          onChange={setMaxScale}
+          onChangeEnd={(value) => commit(mode, price, value)}
+          min={STICKER_PLACEMENT_MIN_SCALE}
+          max={STICKER_PLACEMENT_MAX_SCALE}
+          step={0.01}
+          label={null}
+        />
+        {/* The unit carries the explanation, so the number is not a bare
+            percentage of something the reader has to go and find. */}
+        <Text size="sm" c="dimmed">
+          <Text span fw={600} c="var(--mantine-color-text)">
             {Math.round(maxScale * 100)}%
-          </Text>
-        </Group>
+          </Text>{' '}
+          of the size of the image
+        </Text>
       </Stack>
 
       {/* The queue is otherwise unreachable: the notification links to the image,
