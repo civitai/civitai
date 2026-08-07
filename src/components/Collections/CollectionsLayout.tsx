@@ -18,8 +18,6 @@ import {
   IconLayoutSidebarLeftCollapse,
   IconLayoutSidebarLeftExpand,
   IconPlus,
-  IconSortAscending,
-  IconSortDescending,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
@@ -31,15 +29,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 
 const CollectionEditModal = dynamic(() => import('~/components/Collections/CollectionEditModal'));
 
-type SortOrder = 'asc' | 'desc';
-
-const MyCollectionsDrawer = ({
-  sortOrder,
-  setSortOrder,
-}: {
-  sortOrder: SortOrder;
-  setSortOrder: React.Dispatch<React.SetStateAction<SortOrder>>;
-}) => {
+const MyCollectionsDrawer = () => {
   const [drawerOpen, { close, toggle }] = useDisclosure();
 
   return (
@@ -68,32 +58,17 @@ const MyCollectionsDrawer = ({
         }
         classNames={{ header: classes.drawerHeader, body: 'px-0' }}
       >
-        <MyCollections onSelect={() => close()} sortOrder={sortOrder}>
-          {({ FilterBox, TypeFilter, Collections, InviteList }) => (
+        <MyCollections onSelect={() => close()}>
+          {({ FilterBox, TypeFilter, RoleFilter, ListMenu, Collections, InviteList }) => (
             <Stack gap={4}>
               <Stack gap="xs" px="sm">
                 {InviteList}
                 <Group gap="xs" wrap="nowrap">
                   <div style={{ flex: 1 }}>{FilterBox}</div>
-                  <Tooltip
-                    label={sortOrder === 'asc' ? 'Sort Z-A' : 'Sort A-Z'}
-                    position="top"
-                    withArrow
-                  >
-                    <LegacyActionIcon
-                      variant="light"
-                      size="sm"
-                      onClick={() => setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
-                    >
-                      {sortOrder === 'asc' ? (
-                        <IconSortDescending size={18} />
-                      ) : (
-                        <IconSortAscending size={18} />
-                      )}
-                    </LegacyActionIcon>
-                  </Tooltip>
+                  {ListMenu}
                 </Group>
                 {TypeFilter}
+                {RoleFilter}
               </Stack>
               <Divider />
               <ScrollArea.Autosize mah="calc(100vh - 105px)">{Collections}</ScrollArea.Autosize>
@@ -109,12 +84,11 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
   const isMobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
   const [showSidebar, setShowSidebar] = useState(true);
-  const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
 
   return (
     <Container fluid className={classes.container}>
-      <MyCollections sortOrder={sortOrder}>
-        {({ FilterBox, TypeFilter, Collections, InviteList, isLoading }) => (
+      <MyCollections>
+        {({ FilterBox, TypeFilter, RoleFilter, ListMenu, Collections, InviteList, isLoading }) => (
           <Card
             className={classes.sidebar}
             w={300}
@@ -159,25 +133,10 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
               <Stack gap="xs">
                 <Group gap="xs" wrap="nowrap">
                   <div style={{ flex: 1 }}>{FilterBox}</div>
-                  <Tooltip
-                    label={sortOrder === 'asc' ? 'Sort Z-A' : 'Sort A-Z'}
-                    position="top"
-                    withArrow
-                  >
-                    <LegacyActionIcon
-                      variant="light"
-                      size="sm"
-                      onClick={() => setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
-                    >
-                      {sortOrder === 'asc' ? (
-                        <IconSortDescending size={18} />
-                      ) : (
-                        <IconSortAscending size={18} />
-                      )}
-                    </LegacyActionIcon>
-                  </Tooltip>
+                  {ListMenu}
                 </Group>
                 {TypeFilter}
+                {RoleFilter}
               </Stack>
             </Card.Section>
             {isLoading && (
@@ -194,9 +153,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
         )}
       </MyCollections>
       <div className={classes.content}>
-        {!!currentUser && isMobile && (
-          <MyCollectionsDrawer sortOrder={sortOrder} setSortOrder={setSortOrder} />
-        )}
+        {!!currentUser && isMobile && <MyCollectionsDrawer />}
         {children}
       </div>
     </Container>

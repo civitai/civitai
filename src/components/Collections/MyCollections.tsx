@@ -15,6 +15,7 @@ import { CollectionContributorPermission, CollectionType } from '~/shared/utils/
 import { IconFilter, IconPlaylistX, IconSearch, IconUsers } from '@tabler/icons-react';
 import { createElement, useMemo, useState } from 'react';
 import { CollectionInviteList } from '~/components/Collections/CollectionCollaborators/CollectionInviteList';
+import { CollectionListMenu } from '~/components/Collections/CollectionListMenu';
 import { CollectionListRow } from '~/components/Collections/CollectionListRow';
 import {
   getMembership,
@@ -69,7 +70,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
     { enabled: features.collaborativeCollections }
   );
 
-  const { view, sort } = useCollectionListPreferences();
+  const { view, setView, sort, setSort } = useCollectionListPreferences();
 
   const grouped = useMemo(() => {
     const filtered = collections.filter((c) => {
@@ -140,6 +141,10 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
     />
   );
 
+  const ListMenu = (
+    <CollectionListMenu sort={sort} setSort={setSort} view={view} setView={setView} />
+  );
+
   const RoleFilter = features.collaborativeCollections ? (
     <Select
       placeholder="Any role"
@@ -199,6 +204,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
       FilterBox,
       TypeFilter,
       RoleFilter,
+      ListMenu,
       Collections,
       InviteList,
       collections: visibleCollections,
@@ -210,7 +216,10 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
   return (
     <Stack gap={4}>
       {InviteList}
-      {FilterBox}
+      <Group gap="xs" wrap="nowrap">
+        <div style={{ flex: 1 }}>{FilterBox}</div>
+        {ListMenu}
+      </Group>
       {TypeFilter}
       {RoleFilter}
       <ScrollArea>{Collections}</ScrollArea>
@@ -218,13 +227,12 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
   );
 }
 
-type SortOrder = 'asc' | 'desc';
-
 type MyCollectionsProps = {
   children?: (elements: {
     FilterBox: React.ReactNode;
     TypeFilter: React.ReactNode;
     RoleFilter: React.ReactNode;
+    ListMenu: React.ReactNode;
     Collections: React.ReactNode;
     InviteList: React.ReactNode;
     collections: CollectionGetAllUserModel[];
@@ -233,5 +241,4 @@ type MyCollectionsProps = {
   }) => JSX.Element;
   onSelect?: (collection: CollectionGetAllUserModel) => void;
   pathnameOverride?: string;
-  sortOrder?: SortOrder;
 };
