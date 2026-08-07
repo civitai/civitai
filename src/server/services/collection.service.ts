@@ -1866,6 +1866,15 @@ export const addContributorToCollection = async ({
     );
   }
 
+  // The upsert REPLACES the target's permissions, so without this any follower of a
+  // community collection could rewrite a manager's row and strip their MANAGE.
+  // Mirrors removeContributorFromCollection's guard.
+  if (targetUserId !== userId && !manage) {
+    throw throwAuthorizationError(
+      'You do not have permission to add contributors to this collection.'
+    );
+  }
+
   const contributorPermissions =
     permissions && permissions.length > 0 ? permissions : followPermissions;
 

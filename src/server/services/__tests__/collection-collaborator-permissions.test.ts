@@ -1,10 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockDbRead } = vi.hoisted(() => ({ mockDbRead: { $queryRaw: vi.fn() } }));
+const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
+  mockDbRead: { $queryRaw: vi.fn() },
+  mockDbWrite: { $queryRaw: vi.fn(), collectionContributor: { upsert: vi.fn() } },
+}));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: { $queryRaw: vi.fn() } }));
+vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 
-const { getUserCollectionPermissionsById } = await import('~/server/services/collection.service');
+const { addContributorToCollection, getUserCollectionPermissionsById } = await import(
+  '~/server/services/collection.service'
+);
 
 const COLLECTION_ID = 10;
 const OWNER_ID = 999;
@@ -139,5 +144,50 @@ describe('collection collaborator permissions', () => {
     });
     expect(permissions.isCollaborator).toBe(false);
     expect(permissions.writeReview).toBe(false);
+  });
+});
+
+// I2: `collection.follow` takes an optional userId and uses it as the TARGET, while the
+// upsert REPLACES that user's permissions — so on any community collection a stranger could
+// rewrite a manager's row down to the collection's follow grant.
+describe('addContributorToCollection authorization', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbWrite.collectionContributor.upsert.mockResolvedValue({});
+  });
+
+  it('refuses to write another user\'s row without manage', async () => {
+    arrange({ write: 'Public', contributorPermissions: ['VIEW', 'ADD'] });
+
+    await expect(
+      addContributorToCollection({
+        collectionId: COLLECTION_ID,
+        userId: OTHER_ID,
+        targetUserId: 555,
+      })
+    ).rejects.toThrow();
+    expect(mockDbWrite.collectionContributor.upsert).not.toHaveBeenCalled();
+  });
+
+  it('still lets a user follow on their own behalf', async () => {
+    arrange({ write: 'Public' });
+
+    await addContributorToCollection({
+      collectionId: COLLECTION_ID,
+      userId: OTHER_ID,
+      targetUserId: OTHER_ID,
+    });
+    expect(mockDbWrite.collectionContributor.upsert).toHaveBeenCalled();
+  });
+
+  it('lets a manager add someone else', async () => {
+    arrange({ write: 'Public', contributorPermissions: ['VIEW', 'ADD', 'MANAGE'] });
+
+    await addContributorToCollection({
+      collectionId: COLLECTION_ID,
+      userId: OTHER_ID,
+      targetUserId: 555,
+    });
+    expect(mockDbWrite.collectionContributor.upsert).toHaveBeenCalled();
   });
 });
