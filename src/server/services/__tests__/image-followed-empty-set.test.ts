@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as CacheHelpers from '~/server/utils/cache-helpers';
+import type * as RedisCaches from '~/server/redis/caches';
 
 // `followed` on the Postgres feed path only pushed a `userId IN (...)` clause when the
 // viewer's follow set was non-empty. A user who follows nobody therefore got the
@@ -14,12 +16,12 @@ const { queryCaptureMock, getUserFollowsMock } = vi.hoisted(() => ({
 }));
 
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/utils/cache-helpers')>();
+  const actual = await importOriginal<typeof CacheHelpers>();
   return { ...actual, queryCacheRaw: () => queryCaptureMock };
 });
 
 vi.mock('~/server/redis/caches', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/redis/caches')>();
+  const actual = await importOriginal<typeof RedisCaches>();
   return { ...actual, getUserFollows: getUserFollowsMock };
 });
 
@@ -40,7 +42,7 @@ vi.mock('~/env/server', () => ({
 }));
 
 vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn(async () => {}),
+  logToAxiom: vi.fn(async () => undefined),
   safeError: (e: unknown) => e,
 }));
 
