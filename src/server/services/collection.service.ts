@@ -79,6 +79,7 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import {
   ChallengeSource,
   CollectionContributorPermission,
+  CollectionInviteStatus,
   CollectionItemStatus,
   CollectionMode,
   CollectionReadConfiguration,
@@ -1113,12 +1114,16 @@ export const upsertCollection = async ({
       `;
     }
 
-    // Update contributors:
+    // Follow rows carry whatever the collection granted for free when they were written, so
+    // they have to be re-derived whenever that grant changes — otherwise closing a collection
+    // leaves every follower holding ADD, which both keeps them writing to it and makes them
+    // read as elevated collaborators to the roster. Compare against `currentCollection`, NOT
+    // the post-update row: `updated.write` already holds the new value, so the condition was
+    // false exactly when it needed to fire.
     if (
-      (nextWrite && nextWrite !== updated.write) ||
-      (nextRead && nextRead !== updated.read)
+      (nextWrite && nextWrite !== currentCollection.write) ||
+      (nextRead && nextRead !== currentCollection.read)
     ) {
-      // Update contributors permissions:
       const permissions: CollectionContributorPermission[] = [];
       if (updated.read !== CollectionReadConfiguration.Private) {
         permissions.push(CollectionContributorPermission.VIEW);
@@ -1132,12 +1137,17 @@ export const upsertCollection = async ({
         permissions.push(CollectionContributorPermission.ADD_REVIEW);
       }
 
+      // An invited collaborator's grant is theirs, not the collection's — resetting it here
+      // would revoke every collaborator the moment the owner touches privacy.
+      const collaborators = await dbWrite.collectionInvite.findMany({
+        where: { collectionId: updated.id, status: CollectionInviteStatus.Accepted },
+        select: { userId: true },
+      });
+
       await dbWrite.collectionContributor.updateMany({
         where: {
           collectionId: updated.id,
-          userId: {
-            not: updated.userId,
-          },
+          userId: { notIn: [updated.userId, ...collaborators.map((c) => c.userId)] },
         },
         data: {
           permissions,
