@@ -5,6 +5,7 @@ import { isEqual } from 'lodash-es';
 import { useMemo, useState } from 'react';
 import * as z from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useDebugSearchRetry } from '~/components/EndOfFeed/useSearchRetry';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
@@ -24,25 +25,6 @@ import { booleanString, numericString, numericStringArray } from '~/utils/zod-he
 
 const imageSections = ['images', 'reactions'] as const;
 export type ImageSections = (typeof imageSections)[number];
-
-// Dev helper: simulate a transient search failure on the client so the retry UI
-// can be tested without touching the backend. Enable via browser console:
-//   localStorage.debugSearchRetry = '3000'    // base delay in ms
-//   localStorage.debugSearchRetryAfter = '1'  // trigger after N successful pages
-// To disable: localStorage.removeItem('debugSearchRetry')
-//
-// When active, callers MUST block further fetches — otherwise real requests
-// keep succeeding, more images load, and the retry counter resets every cycle.
-function useDebugSearchRetry(pagesLoaded: number) {
-  if (typeof window === 'undefined') return { delayMs: 0, active: false };
-  const raw = window.localStorage.getItem('debugSearchRetry');
-  if (!raw) return { delayMs: 0, active: false };
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) return { delayMs: 0, active: false };
-  const triggerAfter = Number(window.localStorage.getItem('debugSearchRetryAfter') ?? '1');
-  if (pagesLoaded < triggerAfter) return { delayMs: 0, active: false };
-  return { delayMs: parsed, active: true };
-}
 
 // output is input to getInfiniteImagesSchema
 export type ImagesQueryParamSchema = z.infer<typeof imagesQueryParamSchema>;

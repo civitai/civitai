@@ -1,8 +1,15 @@
 import { Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
+import { getQueryKey } from '@trpc/react-query';
 import clsx from 'clsx';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
+import { SearchRetryBanner } from '~/components/EndOfFeed/SearchRetryBanner';
+import {
+  SEARCH_RETRY_MAX_ATTEMPTS,
+  useDebugSearchRetry,
+  useSearchRetry,
+} from '~/components/EndOfFeed/useSearchRetry';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -15,15 +22,28 @@ import { skipBaseModelForOwnTabs } from '~/components/ImageGeneration/Generation
 import { useResourceSelectInfinite } from './useResourceSelectInfinite';
 import { isDefined } from '~/utils/type-guards';
 
+// A page whose every model filters out client-side still advances the cursor, so keep
+// going — but stop after this many so a permanently over-filtered query can't spin.
+const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
+
 export function ResourceHitList({ query }: { query: string }) {
-  const { canGenerate, resources, selectSource, excludedIds, tab } = useResourceSelectContext();
+  const { canGenerate, resources, selectSource, excludedIds, tab, sort, filters, categoryTag } =
+    useResourceSelectContext();
 
   const { data: featured } = trpc.model.getFeaturedModels.useQuery(undefined, {
     enabled: tab === 'featured',
   });
 
-  const { items, isLoading, isFetching, isFetchingNextPage, fetchNextPage, hasNextPage } =
-    useResourceSelectInfinite({ query });
+  const {
+    items,
+    data: queryData,
+    isLoading,
+    isFetching,
+    isError,
+    refetch,
+    fetchNextPage,
+    hasNextPage,
+  } = useResourceSelectInfinite({ query });
 
   const {
     items: models,
@@ -35,6 +55,45 @@ export function ResourceHitList({ query }: { query: string }) {
   });
 
   const loading = isLoading || isFetching || loadingPreferences;
+
+  // Value-based, not identity-based: the provider rebuilds `resources` on every
+  // render, so a tuple identity here would reset the attempt counter constantly and
+  // flatten the backoff. This mirrors how React Query hashes the query key.
+  const retryResetKey = useMemo(
+    () => JSON.stringify([query, tab, sort, canGenerate, filters, categoryTag]),
+    [query, tab, sort, canGenerate, filters, categoryTag]
+  );
+  const infiniteQueryKey = useMemo(() => getQueryKey(trpc.model.getResourceSelect), []);
+  const { delayMs: debugDelayMs, active: debugRetryActive } = useDebugSearchRetry(
+    queryData?.pages.length ?? 0
+  );
+  const { isRetrying, isSlow, retryAttempt, retryDelay, countdownActive, handleRetry } =
+    useSearchRetry({
+      // Raw, pre-filter: `filtered` can be 0 on a page that loaded fine (see
+      // filterVersions below), which would stop the counter from ever resetting.
+      itemCount: items.length,
+      isFetching,
+      isError,
+      refetch,
+      fetchNextPage,
+      infiniteQueryKey,
+      resetKey: retryResetKey,
+      debugRetryActive,
+      debugDelayMs,
+    });
+
+  const retryBanner = (
+    <SearchRetryBanner
+      delayMs={retryDelay}
+      attempt={retryAttempt + 1}
+      maxAttempts={SEARCH_RETRY_MAX_ATTEMPTS}
+      onRetry={handleRetry}
+      debugMode={debugRetryActive}
+      countdownActive={countdownActive}
+      isInitialLoad={items.length === 0}
+      slow={isSlow}
+    />
+  );
 
   const filterVersions = useCallback(
     (model: TransformedModel) => {
@@ -124,6 +183,20 @@ export function ResourceHitList({ query }: { query: string }) {
     return ret;
   }, [canGenerate, featured, models, resources, tab, filterVersions]);
 
+  // Bounds the auto-continue below. Counts pages that arrived and contributed no
+  // renderable card; reset as soon as one does, or when the query changes.
+  const emptyPageStreakRef = useRef(0);
+  const lastPageCountRef = useRef(0);
+  const pageCount = queryData?.pages.length ?? 0;
+  if (filtered.length > 0) emptyPageStreakRef.current = 0;
+  else if (pageCount > lastPageCountRef.current) emptyPageStreakRef.current += 1;
+  lastPageCountRef.current = pageCount;
+  useEffect(() => {
+    emptyPageStreakRef.current = 0;
+    lastPageCountRef.current = 0;
+  }, [retryResetKey]);
+  const emptyPageStreak = emptyPageStreakRef.current;
+
   const renderCard = useCallback(
     ({ data, height }: { data: TransformedModel; height: number }) => (
       <ResourceSelectCard data={data} height={height} selectSource={selectSource} />
@@ -131,12 +204,38 @@ export function ResourceHitList({ query }: { query: string }) {
     [selectSource]
   );
 
+  // Before the loading branch, which is true during every retry (`loading` includes
+  // isFetching) — the countdown that drives the next attempt lives inside the banner,
+  // so never mounting it means never retrying. Guarded on !filtered.length so a
+  // failure on page 4 shows the banner under the grid instead of blanking it.
+  if (isRetrying && !filtered.length) return <div className="p-3 py-5">{retryBanner}</div>;
+
   if (loading && !filtered.length)
     return (
       <div className="p-3 py-5">
         <Center mt="md">
           <Loader />
         </Center>
+      </div>
+    );
+
+  // A page can load perfectly well and still render nothing: the server filter is a
+  // superset of what filterVersions and the hidden-preferences pass accept. Returning
+  // the empty state here would be terminal, because the InViewLoader below never mounts
+  // — so keep paginating instead, bounded, since a zero-height sentinel is instantly in
+  // view and would otherwise chain-fetch as fast as the server answers.
+  if (!filtered.length && hasNextPage && emptyPageStreak < MAX_CONSECUTIVE_EMPTY_PAGES)
+    return (
+      <div className="p-3 py-5">
+        {hiddenCount > 0 && (
+          <Text c="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
+        )}
+        <Center mt="md">
+          <Loader />
+        </Center>
+        <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetching}>
+          <Center style={{ height: 36 }} my="md" />
+        </InViewLoader>
       </div>
     );
 
@@ -204,13 +303,18 @@ export function ResourceHitList({ query }: { query: string }) {
         />
       </MasonryProvider>
 
-      {items.length > 0 && hasNextPage && (
-        <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetchingNextPage}>
+      {/* Unmounting the sentinel while retrying is the point: `fetchNextPage` resolves
+          rather than rejects on error, so hasNextPage stays true and the loader would
+          otherwise re-fire every 500ms forever, each fire holding a Meili slot. */}
+      {isRetrying ? (
+        retryBanner
+      ) : hasNextPage ? (
+        <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetching}>
           <Center style={{ height: 36 }} my="md">
             <Loader />
           </Center>
         </InViewLoader>
-      )}
+      ) : null}
     </div>
   );
 }
