@@ -172,3 +172,13 @@ all three and consolidates.
 
 Fix what they find, then `pnpm run check` and `pnpm run build` in `apps/moderator`. A segment with
 unresolved findings is not done, and neither is one that only typechecks — **look at the page**.
+
+### `typecheck` vs `check`
+
+`typecheck` is `svelte-check` alone and **writes nothing**. `check` prefixes it with `svelte-kit sync`,
+which regenerates ~690 files under `.svelte-kit/` — a directory the dev server watches, so running it
+in a loop with `vite dev` up makes both fight. Do not "fix" `typecheck` by adding `sync` back to it.
+
+Use `typecheck` for the edit→verify loop. Use `check` after changing the **route tree** (adding,
+removing or renaming a `+page`/`+server` file), which is the only time the generated `$types` go stale.
+`prepare` runs `sync` on install, so a fresh checkout is already covered.
