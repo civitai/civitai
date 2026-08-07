@@ -632,6 +632,7 @@ export function ImageDetail2() {
                       canAdd
                       collapsible
                       nsfwLevel={image.nsfwLevel}
+                      mediaType={image.type}
                     />
                     {post && (post.title || post.detail) && (
                       <Card className="flex flex-col gap-3 rounded-xl">
