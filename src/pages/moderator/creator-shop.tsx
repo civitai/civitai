@@ -78,6 +78,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { PackContentsPanel } from '~/components/CreatorShop/Pack/PackContentsPanel';
+import { PackCoverTiles } from '~/components/CreatorShop/Pack/PackCoverTiles';
 
 type StatusFilter = CosmeticShopItemStatus | 'all';
 type PreviewCosmetic = ComponentProps<typeof CosmeticPreview>['cosmetic'];
@@ -596,6 +597,15 @@ function CreatorShopReviewPage() {
                           alt={selected.title}
                           className="max-h-[300px] max-w-[85%] object-contain"
                         />
+                      ) : selectedMeta.coverUrl ? (
+                        <EdgeMedia
+                          src={selectedMeta.coverUrl}
+                          width={340}
+                          alt={selected.title}
+                          className="max-h-[300px] max-w-[85%] object-contain"
+                        />
+                      ) : selectedMeta.coverTiles?.length ? (
+                        <PackCoverTiles tiles={selectedMeta.coverTiles} size={240} />
                       ) : (
                         <Text size="sm" c="dimmed">
                           No artwork
@@ -603,20 +613,25 @@ function CreatorShopReviewPage() {
                       )}
                     </div>
                     <Text size="xs" c="dimmed" ta="center">
-                      Submitted artwork
-                      {dims ? ` · ${dims.width}×${dims.height} PNG` : ''}
+                      {selected.cosmetic
+                        ? `Submitted artwork${dims ? ` · ${dims.width}×${dims.height} PNG` : ''}`
+                        : selectedMeta.coverUrl
+                        ? 'Pack cover'
+                        : 'Pack contents — no cover was supplied'}
                     </Text>
-                    <div>
-                      <Text size="sm" fw={600} mb={4}>
-                        In-context preview
-                      </Text>
-                      <CosmeticPreview
-                        cosmetic={
-                          previewCosmetic ?? (selected.cosmetic as unknown as PreviewCosmetic)
-                        }
-                        hideHeader
-                      />
-                    </div>
+                    {!!selected.cosmetic && (
+                      <div>
+                        <Text size="sm" fw={600} mb={4}>
+                          In-context preview
+                        </Text>
+                        <CosmeticPreview
+                          cosmetic={
+                            previewCosmetic ?? (selected.cosmetic as unknown as PreviewCosmetic)
+                          }
+                          hideHeader
+                        />
+                      </div>
+                    )}
                     {isDecoration && (
                       <Stack gap={6}>
                         <Text size="sm" fw={600}>
