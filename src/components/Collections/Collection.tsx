@@ -698,6 +698,7 @@ export function Collection({
                     <Stack>
                       <Group gap={4} ml="auto" style={{ alignSelf: 'flex-start' }} wrap="nowrap">
                         {collection.mode === CollectionMode.Contest &&
+                        !permissions?.collaborationDisabled &&
                         // Respect the submission period and permissions:
                         (permissions?.write || permissions?.writeReview) &&
                         (!metadata.submissionEndDate ||

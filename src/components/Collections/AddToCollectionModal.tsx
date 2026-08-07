@@ -111,6 +111,7 @@ function CollectionCheckboxItem({
   collection,
   selectedItem,
   disabled,
+  disabledReason,
   onToggle,
   onTagChange,
 }: {
@@ -121,7 +122,10 @@ function CollectionCheckboxItem({
     tags?: Array<{ id: number; name: string; filterableOnly?: boolean }>;
   };
   selectedItem?: SelectedCollection;
+  // disabled also covers "not yet known" (still loading) so nothing is briefly clickable;
+  // disabledReason is true only once we know it's actually closed, for the tooltip.
   disabled?: boolean;
+  disabledReason?: boolean;
   onToggle: (selected: boolean) => void;
   onTagChange: (tagId: number | null) => void;
 }) {
@@ -132,7 +136,7 @@ function CollectionCheckboxItem({
 
   return (
     <Stack className={classes.contentWrap} gap={0}>
-      <Tooltip label={COLLABORATION_CLOSED_TOOLTIP} disabled={!disabled} position="top-start">
+      <Tooltip label={COLLABORATION_CLOSED_TOOLTIP} disabled={!disabledReason} position="top-start">
         <Checkbox
           classNames={classes}
           checked={!!selectedItem}
@@ -224,8 +228,21 @@ function CollectionListForm({
     (collection) =>
       !collection.isOwner && !(includeActiveContests && collection.mode === CollectionMode.Contest)
   );
-  const permissionsByCollectionId = useCollectionsPermissionsMap(collections.map((c) => c.id));
   const features = useFeatureFlags();
+  const { map: permissionsByCollectionId, isLoading: loadingPermissions } =
+    useCollectionsPermissionsMap(collections.map((c) => c.id), {
+      enabled: features.collaborativeCollections,
+    });
+  // While permission data for a collection is unknown, treat it as closed rather than open —
+  // it must never be briefly selectable before flipping to disabled once data arrives.
+  const getCollaborationState = (collectionId: number) => {
+    const collaborationDisabled =
+      !!permissionsByCollectionId.get(collectionId)?.collaborationDisabled;
+    return {
+      disabled: loadingPermissions || collaborationDisabled,
+      disabledReason: !loadingPermissions && collaborationDisabled,
+    };
+  };
 
   const addCollectionItemMutation = trpc.collection.saveItem.useMutation();
   const handleSubmit = () => {
@@ -345,7 +362,7 @@ function CollectionListForm({
                           key={collection.id}
                           collection={collection}
                           selectedItem={selectedItem}
-                          disabled={permissionsByCollectionId.get(collection.id)?.collaborationDisabled}
+                          {...getCollaborationState(collection.id)}
                           onToggle={(isSelected) => {
                             if (isSelected) {
                               setSelectedCollections((curr) =>
@@ -399,9 +416,7 @@ function CollectionListForm({
                             key={collection.id}
                             collection={collection}
                             selectedItem={selectedItem}
-                            disabled={
-                              permissionsByCollectionId.get(collection.id)?.collaborationDisabled
-                            }
+                            {...getCollaborationState(collection.id)}
                             onToggle={(isSelected) => {
                               if (isSelected) {
                                 setSelectedCollections((curr) =>
@@ -455,9 +470,7 @@ function CollectionListForm({
                             key={collection.id}
                             collection={collection}
                             selectedItem={selectedItem}
-                            disabled={
-                              permissionsByCollectionId.get(collection.id)?.collaborationDisabled
-                            }
+                            {...getCollaborationState(collection.id)}
                             onToggle={(isSelected) => {
                               if (isSelected) {
                                 setSelectedCollections((curr) =>
