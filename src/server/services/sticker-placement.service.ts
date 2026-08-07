@@ -286,11 +286,25 @@ export async function getStickerPlacementDetail({
       id: true,
       createdAt: true,
       status: true,
+      data: true,
       placer: { select: userWithCosmeticsSelect },
     },
   });
 
   if (!placement) throw throwNotFoundError('placement: that placement is not available');
+
+  // Read off the placement's own payload rather than joined in the query above:
+  // `data` is JSON, so the cosmetic id is not a relation Prisma can follow.
+  const cosmeticId = isStickerPlacementData(placement.data)
+    ? (placement.data as StickerPlacementData).cosmeticId
+    : null;
+
+  const cosmetic = cosmeticId
+    ? await dbRead.cosmetic.findUnique({
+        where: { id: cosmeticId },
+        select: { id: true, name: true, creator: { select: { id: true, username: true } } },
+      })
+    : null;
 
   return {
     id: placement.id,
@@ -300,6 +314,13 @@ export async function getStickerPlacementDetail({
     placedAt: placement.createdAt,
     status: placement.status as PlacementStatus,
     placer: placement.placer,
+    sticker: cosmetic
+      ? {
+          id: cosmetic.id,
+          name: cosmetic.name,
+          creator: cosmetic.creator,
+        }
+      : null,
   };
 }
 

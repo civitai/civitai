@@ -64,7 +64,9 @@ export function StickerPlacementActions({
           <Button
             size={size}
             color="red"
-            variant="light"
+            // Filled, not light. `light` is a tinted background at low contrast,
+            // which sits on top of arbitrary artwork on the image overlay and
+            // becomes unreadable against anything busy or red.
             disabled={disabled}
             onClick={() => setConfirming((open) => !open)}
           >

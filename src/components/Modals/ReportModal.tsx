@@ -37,18 +37,21 @@ import { ReportTargetProvider } from '~/components/Report/report-target.context'
 
 const reports = [
   {
+    key: 'nsfw-model',
     reason: ReportReason.NSFW,
     label: 'Mature Content',
     Element: ModelNsfwForm,
     availableFor: [ReportEntity.Model],
   },
   {
+    key: 'nsfw-image',
     reason: ReportReason.NSFW,
     label: 'Mature Content',
     Element: ImageNsfwForm,
     availableFor: [ReportEntity.Image],
   },
   {
+    key: 'nsfw-article',
     reason: ReportReason.NSFW,
     label: 'Mature Content',
     Element: ArticleNsfwForm,
@@ -63,6 +66,7 @@ const reports = [
     ],
   },
   {
+    key: 'tos',
     reason: ReportReason.TOSViolation,
     label: 'TOS Violation',
     Element: TosViolationForm,
@@ -85,6 +89,7 @@ const reports = [
     ],
   },
   {
+    key: 'admin-attention',
     reason: ReportReason.AdminAttention,
     label: 'Needs Moderator Review',
     Element: AdminAttentionForm,
@@ -108,12 +113,14 @@ const reports = [
     ],
   },
   {
+    key: 'claim',
     reason: ReportReason.Claim,
     label: 'Claim imported model',
     Element: ClaimForm,
     availableFor: [ReportEntity.Model], // TODO only available if model creator/userId === -1
   },
   {
+    key: 'ownership',
     reason: ReportReason.Ownership,
     label: 'This uses my art',
     Element: OwnershipForm,
@@ -125,12 +132,14 @@ const reports = [
     // moderator queue, for something that is a TOS violation carried out through
     // a sticker. What makes it actionable is the placement id in the details,
     // not a separate reason.
+    key: 'sticker-placement',
     reason: ReportReason.TOSViolation,
     label: 'Bad sticker placement',
     Element: StickerPlacementForm,
     availableFor: [ReportEntity.Image],
   },
   {
+    key: 'spam',
     reason: ReportReason.Spam,
     label: 'Spam',
     Element: SpamForm,
@@ -178,20 +187,20 @@ export default function ReportModal({
   // #endregion
 
   //TODO - redirect if no user is authenticated
-  const [reason, setReason] = useState<ReportReason>();
+  // Selected by `key`, not by reason. Two entries can legitimately share a
+  // reason — "Bad sticker placement" is a TOS violation delivered through a
+  // sticker — and keying on the reason silently resolved to whichever was
+  // declared first, so picking the sticker option ran the generic TOS form and
+  // filed a report with no placement id in it.
+  const [reportKey, setReportKey] = useState<string>();
   const [uploading, setUploading] = useState(false);
-  const ReportForm = useMemo(
-    () =>
-      reports.find((x) => x.reason === reason && x.availableFor.includes(entityType))?.Element ??
-      null,
-    [entityType, reason]
+  const selected = useMemo(
+    () => reports.find((x) => x.key === reportKey && x.availableFor.includes(entityType)) ?? null,
+    [entityType, reportKey]
   );
-  const title = useMemo(
-    () =>
-      reports.find((x) => x.reason === reason && x.availableFor.includes(entityType))?.label ??
-      `Report ${getDisplayName(entityType)}`,
-    [reason, entityType]
-  );
+  const reason = selected?.reason;
+  const ReportForm = selected?.Element ?? null;
+  const title = selected?.label ?? `Report ${getDisplayName(entityType)}`;
   const handleVote = useVoteForTags({ entityType: entityType as 'image' | 'model', entityId });
 
   const queryUtils = trpc.useUtils();
@@ -322,8 +331,8 @@ export default function ReportModal({
       <Stack>
         <Group justify="space-between" wrap="nowrap">
           <Group gap={4}>
-            {!!reason && (
-              <LegacyActionIcon onClick={() => setReason(undefined)}>
+            {!!selected && (
+              <LegacyActionIcon onClick={() => setReportKey(undefined)}>
                 <IconArrowLeft size={16} />
               </LegacyActionIcon>
             )}
@@ -336,10 +345,10 @@ export default function ReportModal({
             <Loader />
           </Center>
         ) : (
-          !reason && (
+          !selected && (
             <Radio.Group
-              value={reason}
-              onChange={(reason) => setReason(reason as ReportReason)}
+              value={reportKey}
+              onChange={setReportKey}
               // label="Report reason"
             >
               <Stack pb="xs">
@@ -354,8 +363,8 @@ export default function ReportModal({
                     }
                     return true;
                   }) // TEMP FIX
-                  .map(({ reason, label }, index) => (
-                    <Radio key={index} value={reason} label={label} />
+                  .map(({ key, label }) => (
+                    <Radio key={key} value={key} label={label} />
                   ))}
               </Stack>
             </Radio.Group>

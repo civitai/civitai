@@ -44,6 +44,7 @@ import { addTagVotes } from '~/server/services/tag.service';
 import {
   isPrismaUniqueViolation,
   throwAuthorizationError,
+  throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
@@ -160,6 +161,43 @@ const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
 };
 
 type CreateReportProps = CreateReportInput & { userId: number; isModerator?: boolean };
+/**
+ * A sticker report names the placement it is about, and the placement has to be
+ * on the thing being reported.
+ *
+ * Without this the id is whatever the client sent: a moderator opening the
+ * report would act on a placement from some other image, which removes an
+ * innocent person's sticker and takes their Buzz with it. The picker only ever
+ * offers placements on this image, so anything else is either a stale form or a
+ * hand-made request — and a listing that offers the right options is not a
+ * mutation that refuses the wrong ones.
+ */
+async function assertReportedPlacementIsOnEntity({
+  type,
+  entityId,
+  details,
+}: {
+  type: ReportEntity;
+  entityId: number;
+  details?: MixedObject;
+}) {
+  const placementId = (details as MixedObject | undefined)?.placementId;
+  if (placementId == null) return;
+
+  if (type !== ReportEntity.Image)
+    throw throwBadRequestError(
+      'report: a sticker placement can only be reported through its image'
+    );
+
+  const placement = await dbRead.placement.findFirst({
+    where: { id: Number(placementId), surface: 'sticker', targetType: 'image', targetId: entityId },
+    select: { id: true },
+  });
+
+  if (!placement)
+    throw throwBadRequestError('report: that sticker is not on the image being reported');
+}
+
 export const createReport = async ({
   userId,
   id,
@@ -173,6 +211,8 @@ export const createReport = async ({
 
   // only mods can create csam reports
   if (data.reason === ReportReason.CSAM && !isModerator) throw throwAuthorizationError();
+
+  await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
 
   const validReport =
     data.reason !== ReportReason.NSFW && data.reason !== ReportReason.Automated
@@ -711,7 +751,6 @@ export async function resolveEntityAppeal({
         resolvedMessage,
       },
     });
-
   }
 
   // Email each affected user once, listing every item they appealed in this

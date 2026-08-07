@@ -1,4 +1,3 @@
-import { Tooltip } from '@mantine/core';
 import clsx from 'clsx';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
@@ -42,16 +41,16 @@ export function StickerPlacementOverlay({
         const art = sticker.get(placement.data.cosmeticId);
         if (!art) return null;
 
-        // A pending placement belongs to the person who paid for it and is
-        // already filtered out for everyone else server-side. The check here is
-        // for the hover copy, not for visibility — a client-side visibility rule
+        // Pending rows only ever reach a viewer who is party to them — the
+        // server scopes them to the placer and the owner — so this decides how
+        // to present it, not whether to show it. A client-side visibility rule
         // would be a filter where a refusal is needed.
-        const isOwnPending = placement.isPending && placement.placerId === viewerId;
+        const isOwner = placement.ownerId === viewerId;
 
         const body = (
           <div
             key={placement.id}
-            className={clsx('pointer-events-auto absolute', isOwnPending && 'opacity-40')}
+            className="pointer-events-auto absolute"
             style={{
               left: `${placement.data.x * 100}%`,
               top: `${placement.data.y * 100}%`,
@@ -66,51 +65,53 @@ export function StickerPlacementOverlay({
               // rules cap a sticker's long edge at 512, so this is its natural
               // size and the element scales it down in layout.
               options={{ width: 512, anim: art.animated, optimized: true }}
+              className={clsx(placement.isPending && 'opacity-60')}
               style={{ width: '100%', height: 'auto', display: 'block' }}
             />
+
+            {/* A dashed outline rather than opacity alone. Fading is invisible
+                over busy artwork and reads as a rendering fault over plain
+                artwork, whereas a border is a deliberate mark at any size and
+                against any background. The mild fade stays as a second cue. */}
+            {placement.isPending && (
+              <span className="pointer-events-none absolute -inset-1 rounded border-2 border-dashed border-yellow-6" />
+            )}
           </div>
         );
 
-        // Your own pending sticker keeps the tooltip explaining why it is faint.
-        // Stacking the hover card on top of that would answer a question you did
-        // not ask with the one you did buried under it, and you already know who
-        // placed it.
-        // The owner is the other person who can see a pending placement, and the
-        // only one who can answer it. Deciding on the image rather than in a list
-        // is the point: a queue can say something is waiting, not whether you
-        // want it on your work.
-        if (placement.isPending && placement.ownerId === viewerId)
+        if (!placement.isPending)
           return (
-            <div key={placement.id} className="pointer-events-none">
+            <StickerPlacementHoverCard key={placement.id} placementId={placement.id}>
               {body}
-              <div
-                className="pointer-events-auto absolute z-10 -translate-x-1/2"
-                style={{
-                  left: `${placement.data.x * 100}%`,
-                  top: `calc(${placement.data.y * 100}% + ${placement.data.scale * 50}%)`,
-                }}
-              >
-                <StickerPlacementActions placementIds={[placement.id]} compact />
-              </div>
-            </div>
+            </StickerPlacementHoverCard>
           );
 
-        if (isOwnPending)
-          return (
-            <Tooltip
-              key={placement.id}
-              label="Waiting for the creator to approve this. Only you can see it."
-              withArrow
-              position="top"
-            >
-              {body}
-            </Tooltip>
-          );
-
+        // Pending, and the viewer is one of the two people who can see it. Both
+        // get the hover card — the owner needs to know who is asking before
+        // answering, and the placer gets the same detail they would once it goes
+        // live. Only the owner gets the buttons.
         return (
-          <StickerPlacementHoverCard key={placement.id} placementId={placement.id}>
-            {body}
-          </StickerPlacementHoverCard>
+          <div key={placement.id} className="pointer-events-none">
+            <StickerPlacementHoverCard placementId={placement.id} pending>
+              {body}
+            </StickerPlacementHoverCard>
+
+            <div
+              className="pointer-events-auto absolute z-10 -translate-x-1/2"
+              style={{
+                left: `${placement.data.x * 100}%`,
+                top: `calc(${placement.data.y * 100}% + ${placement.data.scale * 50}%)`,
+              }}
+            >
+              {isOwner ? (
+                <StickerPlacementActions placementIds={[placement.id]} compact />
+              ) : (
+                <span className="whitespace-nowrap rounded bg-yellow-6 px-2 py-0.5 text-[10px] font-semibold text-dark-9">
+                  Awaiting review
+                </span>
+              )}
+            </div>
+          </div>
         );
       })}
     </div>

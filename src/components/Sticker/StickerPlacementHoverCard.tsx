@@ -1,9 +1,10 @@
-import { Group, HoverCard, Skeleton, Text } from '@mantine/core';
+import { Badge, Group, HoverCard, Skeleton, Text, UnstyledButton } from '@mantine/core';
 import { IconSticker } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { ReactElement } from 'react';
 import { useState } from 'react';
-import { formatDate } from '~/utils/date-helpers';
+import { daysFromNow, formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
 // Loaded with the hover, not with the page. The creator card drags in profile
@@ -25,8 +26,22 @@ const SmartCreatorCard = dynamic(() =>
  */
 const HOVER_CARD_WIDTH = 400;
 
+const A_DAY_MS = 24 * 60 * 60 * 1000;
+
 /**
- * Who placed a sticker, and when.
+ * "3 hours ago" while it is still news, the date once it is history.
+ *
+ * A relative stamp stops being informative past a day — "2 months ago" tells you
+ * less than the date does — and an absolute one is useless in the window where
+ * people actually care, which is the hours right after someone placed it.
+ */
+const placedLabel = (placedAt: Date | string) => {
+  const value = new Date(placedAt);
+  return Date.now() - value.getTime() < A_DAY_MS ? daysFromNow(value) : formatDate(value);
+};
+
+/**
+ * Who placed a sticker, when, and what the sticker is.
  *
  * The query runs on open rather than with the placements list. A feed page can
  * hold dozens of placed stickers and almost none of them get hovered, so joining
@@ -34,9 +49,11 @@ const HOVER_CARD_WIDTH = 400;
  */
 export function StickerPlacementHoverCard({
   placementId,
+  pending = false,
   children,
 }: {
   placementId: number;
+  pending?: boolean;
   children: ReactElement;
 }) {
   const [opened, setOpened] = useState(false);
@@ -45,6 +62,8 @@ export function StickerPlacementHoverCard({
     { placementId },
     { enabled: opened, staleTime: 5 * 60_000 }
   );
+
+  const stickerCreator = data?.sticker?.creator;
 
   return (
     <HoverCard
@@ -64,11 +83,18 @@ export function StickerPlacementHoverCard({
           edge. Its border is dropped rather than the dropdown's, so there is one
           outline instead of two nested ones a pixel apart. */}
       <HoverCard.Dropdown p={0}>
-        <Group gap={6} px="sm" py={6} wrap="nowrap">
-          <IconSticker size={14} className="text-yellow-6" />
-          <Text size="xs" c="dimmed">
-            {data ? `Placed ${formatDate(data.placedAt)}` : 'Placed'}
-          </Text>
+        <Group gap={6} px="sm" py={6} wrap="nowrap" justify="space-between">
+          <Group gap={6} wrap="nowrap">
+            <IconSticker size={14} className="text-yellow-6" />
+            <Text size="xs" c="dimmed">
+              {data ? `Placed ${placedLabel(data.placedAt)}` : 'Placed'}
+            </Text>
+          </Group>
+          {pending && (
+            <Badge size="xs" color="yellow" variant="light">
+              Awaiting review
+            </Badge>
+          )}
         </Group>
 
         {/* A skeleton rather than a spinner: the card's size is known before its
@@ -80,7 +106,32 @@ export function StickerPlacementHoverCard({
             <Skeleton height={92} radius="md" />
           </div>
         ) : (
-          <SmartCreatorCard user={data.placer} withActions={false} withBorder={false} />
+          <>
+            <SmartCreatorCard user={data.placer} withActions={false} withBorder={false} />
+
+            {data.sticker && (
+              <UnstyledButton
+                component={Link}
+                href={stickerCreator ? `/user/${stickerCreator.username}/shop` : '#'}
+                // The row is the link, not just the names in it — a two-word
+                // target inside a 400px card is a needle to hit with a mouse
+                // that is already hovering something else.
+                className="block w-full border-t border-gray-3 px-3 py-2 hover:bg-gray-1 dark:border-dark-4 dark:hover:bg-dark-6"
+              >
+                <Text size="xs" lineClamp={1}>
+                  <Text span fw={600}>
+                    {data.sticker.name}
+                  </Text>
+                  {stickerCreator && (
+                    <Text span c="dimmed">
+                      {' '}
+                      by {stickerCreator.username}
+                    </Text>
+                  )}
+                </Text>
+              </UnstyledButton>
+            )}
+          </>
         )}
       </HoverCard.Dropdown>
     </HoverCard>
