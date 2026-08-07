@@ -37,7 +37,7 @@ import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
 import { BlockImageScanPoller } from './BlockImageScanPoller';
 import type { BlockImageScanResult } from './blockImageScanLogic';
-import { projectBlockInitMaturity } from './projectBlockInit';
+import { projectBlockInitMaturity, withSignedInFlag } from './projectBlockInit';
 import { sendBlockRender } from './sendBlockRender';
 import {
   computeLaunchTimings,
@@ -755,6 +755,22 @@ export function PageBlockHost({
     return '';
   }, [router.query.path]);
 
+  // 🔴 THIS CONTEXT IS NOT PROJECTED, AND THAT IS THE SECOND IDENTITY CHANNEL.
+  // `IframeHost` runs its slot context through `projectBlockInitContext`, whose
+  // allowlist DROPS `viewerUserId` / `viewerUsername`; this host emits them
+  // verbatim. So the `@deprecated` markers on `BlockInitPayload.viewer.id` /
+  // `.username` reduce unconditional identity disclosure on the model slot and by
+  // ZERO here — a full-page block learns who is looking at it from `context`
+  // whether or not it ever touches `viewer`.
+  //
+  // Deliberately left in place rather than quietly dropped: these are published
+  // SDK contract fields on `PageContext`, and the deployed-population enumeration
+  // that justifies every other keep/drop call in this payload was run for the
+  // `viewer` object, NOT for `context.viewerUserId`. Removing them needs a
+  // PAGE-SHAPED allowlist (the model allowlist would strip `slug` / `subPath` /
+  // `entityType` and break deep-linking) plus that enumeration. Tracked on the
+  // `PageContext.viewerUserId` @deprecated note; pinned as present-today by
+  // PageBlockHostInitContractV2.browser.test.tsx so the removal cannot be silent.
   const buildContext = useCallback(
     (): PageContext => ({
       slotId: 'app.page',
@@ -785,7 +801,18 @@ export function PageBlockHost({
       },
       context: buildContext(),
       settings: { publisherSettings: {}, userSettings: {} },
-      viewer,
+      // 🔴 THE SECOND PRODUCER OF THE BLOCK_INIT `viewer` OBJECT. Unlike
+      // IframeHost — which derives it from the slot context via
+      // `projectBlockInitViewer` — this host receives an ALREADY-RESOLVED
+      // `viewer` prop from the /apps/run/[slug] route and used to pass it
+      // straight through. So the v2 `signedIn` flag added inside
+      // `projectBlockInitViewer` would have reached the model-slot surface only,
+      // and every full-page app would have shipped a viewer object without it —
+      // the classic half-fleet miss this file's THEME_CHANGE comment describes.
+      // Routing through the SHARED `withSignedInFlag` helper is what makes the
+      // two surfaces incapable of drifting: neither host stamps the object by
+      // hand. `null` (anonymous) passes through as `null`.
+      viewer: withSignedInFlag(viewer),
       theme,
       renderMode: 'iframe',
       // Advisory maturity signal — server-authoritative values from the mint.
@@ -982,6 +1009,32 @@ export function PageBlockHost({
   }, [token, expiresAt, grantedScopes, send]);
 
   // Answer a block-initiated REQUEST_TOKEN.
+  //
+  // 🔴 A `TOKEN_REFRESH_RESPONSE` WITHOUT A `requestId` IS NOT A REPLY. The
+  // block side's `refresh()` awaits a response correlated STRICTLY by
+  // `requestId` — it resolves the pending promise for that id and nothing else —
+  // so an uncorrelated reply has never resolved anyone's `refresh()`. Where it
+  // appeared to work at all it was via the SDK's incidental side effect of
+  // snapshotting whatever token rides on any `TOKEN_REFRESH_RESPONSE`, while the
+  // caller's promise sat there until its own timeout.
+  //
+  // The old code spread `...(requestId ? { requestId } : {})` — a TRUTHINESS
+  // test, so it ALSO dropped an empty-string requestId, which a block can
+  // legitimately have minted and be waiting on. Now: whatever STRING the block
+  // sent is echoed back verbatim (`''` included), so a reply always correlates.
+  //
+  // And when the inbound message carried no usable requestId at all, we send a
+  // `TOKEN_REFRESH` PUSH instead of a fabricated-id reply — because that is
+  // exactly what the message semantically is: a host-initiated token rotation
+  // with nothing to correlate to. It reaches the block through the same handler
+  // as the rotation push above (which is the only path that ever actually
+  // delivered a token in this case), and it does not put an unanswerable
+  // `TOKEN_REFRESH_RESPONSE` on the wire for the SDK to discard.
+  //
+  // 🔴 IframeHost.tsx CARRIES THE SAME LOGIC AND MUST STAY IN STEP. The two
+  // hosts register their postMessage handlers by hand and share no bridge, so
+  // fixing one leaves half the fleet on the broken shape — each surface has its
+  // own browser test for this.
   useEffect(() => {
     const off = onMessage<{ requestId?: string } | undefined>('REQUEST_TOKEN', (raw) => {
       if (!token || !initSentRef.current) return;
@@ -989,10 +1042,12 @@ export function PageBlockHost({
         raw && typeof raw === 'object' && typeof raw.requestId === 'string'
           ? raw.requestId
           : undefined;
-      send('TOKEN_REFRESH_RESPONSE', {
-        ...(requestId ? { requestId } : {}),
-        token: { raw: token, scopes: grantedScopes, expiresAt: expiresAt ?? '' },
-      });
+      const wrapped = { raw: token, scopes: grantedScopes, expiresAt: expiresAt ?? '' };
+      if (requestId === undefined) {
+        send('TOKEN_REFRESH', { token: wrapped });
+        return;
+      }
+      send('TOKEN_REFRESH_RESPONSE', { requestId, token: wrapped });
     });
     return off;
   }, [token, expiresAt, grantedScopes, send, onMessage]);

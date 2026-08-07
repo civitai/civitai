@@ -132,8 +132,12 @@ function storageErrorMessage(err: unknown): string {
  *   4. RESIZE_IFRAME updates the iframe height, clamped to manifest bounds.
  *   5. Page-visibility change drives SUSPEND / RESUME.
  *   6. Token rotation triggers TOKEN_REFRESH (host-pushed) with the new
- *      wrapped token. REQUEST_TOKEN from the iframe is answered with
- *      TOKEN_REFRESH_RESPONSE so block-initiated refreshes also work.
+ *      wrapped token. A block-initiated REQUEST_TOKEN is answered CONDITIONALLY:
+ *      one carrying a STRING requestId (`''` included) gets a
+ *      TOKEN_REFRESH_RESPONSE echoing that id; one with no usable requestId gets
+ *      a TOKEN_REFRESH PUSH, because the SDK correlates strictly by requestId
+ *      and an uncorrelated response can never resolve a caller's refresh(). See
+ *      the handler's own comment for the full rationale.
  *   7. Unmount sends SUSPEND and removes listeners.
  *
  * Origin security: BLOCK_INIT is posted to `new URL(manifest.iframe.src).origin`
@@ -875,6 +879,32 @@ export function IframeHost({
   // SDK request-driven flow: iframe asks for the current token (e.g. right
   // before an expensive call) and we reply with the latest wrapped value.
   // Pairs with the push flow above — both produce the same payload shape.
+  //
+  // 🔴 A `TOKEN_REFRESH_RESPONSE` WITHOUT A `requestId` IS NOT A REPLY. The
+  // block side's `refresh()` awaits a response correlated STRICTLY by
+  // `requestId` — it resolves the pending promise for that id and nothing else —
+  // so an uncorrelated reply has never resolved anyone's `refresh()`. Where it
+  // appeared to work at all it was via the SDK's incidental side effect of
+  // snapshotting whatever token rides on any `TOKEN_REFRESH_RESPONSE`, while the
+  // caller's promise sat there until its own timeout.
+  //
+  // The old code spread `...(requestId ? { requestId } : {})` — a TRUTHINESS
+  // test, so it ALSO dropped an empty-string requestId, which a block can
+  // legitimately have minted and be waiting on. Now: whatever STRING the block
+  // sent is echoed back verbatim (`''` included), so a reply always correlates.
+  //
+  // And when the inbound message carried no usable requestId at all, we send a
+  // `TOKEN_REFRESH` PUSH instead of a fabricated-id reply — because that is
+  // exactly what the message semantically is: a host-initiated token rotation
+  // with nothing to correlate to. It reaches the block through the same handler
+  // as the H-3 rotation push above (which is the only path that ever actually
+  // delivered a token in this case), and it does not put an unanswerable
+  // `TOKEN_REFRESH_RESPONSE` on the wire for the SDK to discard.
+  //
+  // 🔴 PageBlockHost.tsx CARRIES THE SAME LOGIC AND MUST STAY IN STEP. The two
+  // hosts register their postMessage handlers by hand and share no bridge, so
+  // fixing one leaves half the fleet on the broken shape — each surface has its
+  // own browser test for this.
   useEffect(() => {
     const off = onMessage<{ requestId?: string } | undefined>('REQUEST_TOKEN', (raw) => {
       if (!token || !initSentRef.current) return;
@@ -882,15 +912,17 @@ export function IframeHost({
         raw && typeof raw === 'object' && typeof raw.requestId === 'string'
           ? raw.requestId
           : undefined;
-      send('TOKEN_REFRESH_RESPONSE', {
-        ...(requestId ? { requestId } : {}),
-        token: {
-          raw: token,
-          scopes: grantedScopes,
-          expiresAt,
-          ...(buzzBudget !== undefined ? { buzzBudget } : {}),
-        },
-      });
+      const wrapped = {
+        raw: token,
+        scopes: grantedScopes,
+        expiresAt,
+        ...(buzzBudget !== undefined ? { buzzBudget } : {}),
+      };
+      if (requestId === undefined) {
+        send('TOKEN_REFRESH', { token: wrapped });
+        return;
+      }
+      send('TOKEN_REFRESH_RESPONSE', { requestId, token: wrapped });
     });
     return off;
   }, [token, expiresAt, buzzBudget, grantedScopes, send, onMessage]);
