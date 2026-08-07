@@ -89,7 +89,13 @@
       civitaiUrl={data.civitaiUrl}
     />
     <TrainingsPanel {account} civitaiUrl={data.civitaiUrl} />
-    <SubscriptionPanel subscription={result.subscription} {account} />
+    <SubscriptionPanel
+      subscription={result.subscription}
+      {account}
+      userId={result.identity.id}
+      canAct={data.canAct}
+      {form}
+    />
     <BuzzHistoryPanel userId={result.identity.id} />
 
     <!-- what we already know -->

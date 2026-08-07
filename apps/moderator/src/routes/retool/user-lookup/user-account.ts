@@ -108,7 +108,13 @@ export type ResourceGeneration = {
 };
 
 export type Account = {
-  buzz: { balance: number; lifetimeBalance: number } | null;
+  buzz: {
+    balance: number;
+    lifetimeBalance: number;
+    /** Null when the colour-balance read failed; yellow survives on its own. */
+    blue: number | null;
+    green: number | null;
+  } | null;
   reviews: Review[];
   receivedReviews: ReceivedReview[];
   comments: Comment[];

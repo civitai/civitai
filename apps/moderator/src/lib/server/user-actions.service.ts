@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { dbWrite } from './db';
+import { getBuzz } from './buzz';
 import { getModeratorDb } from './moderator-db';
 import { recordModActivity } from './mod-activity';
 import { recordUserActivity } from './user-activity';
@@ -281,6 +282,67 @@ export async function setBanned(input: {
   if (!result.ok) return result;
 
   await logAction(input.ban ? 'ban' : 'unban', input.userId, input.moderatorId);
+  return { ok: true };
+}
+
+// BUZZ SEND / DEDUCT (Retool's BuzzSend → POST buzz.civitai.com/transaction, plus its buzzSendAction
+// and buzzType option sets). The canned presets are UI config and live with the panel.
+export const BUZZ_TYPES = ['yellow', 'blue', 'green'] as const;
+export type BuzzColor = (typeof BUZZ_TYPES)[number];
+
+/** Account 0 is Civitai's own — the counterparty for every moderator grant or deduction. */
+const CIVITAI_ACCOUNT_ID = 0;
+
+export async function sendBuzz(input: {
+  userId: number;
+  amount: number;
+  buzzType: BuzzColor;
+  action: 'send' | 'deduct';
+  description: string;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  if (!Number.isInteger(input.amount) || input.amount <= 0)
+    return { ok: false, error: 'Amount must be a positive whole number.' };
+
+  const toUser = input.action === 'send';
+  try {
+    await getBuzz().createTransaction({
+      fromAccountId: toUser ? CIVITAI_ACCOUNT_ID : input.userId,
+      toAccountId: toUser ? input.userId : CIVITAI_ACCOUNT_ID,
+      fromAccountType: toUser ? 'yellow' : input.buzzType,
+      toAccountType: toUser ? input.buzzType : 'yellow',
+      amount: input.amount,
+      description: input.description,
+      // Makes the transaction traceable to a person rather than to "a moderator tool".
+      details: { moderatorId: input.moderatorId, source: 'moderator-app/user-lookup' },
+    });
+  } catch (e) {
+    console.error('[user-actions] buzz transaction failed', e);
+    return { ok: false, error: 'Buzz transaction failed.' };
+  }
+
+  await logAction(
+    `buzz:${input.action}:${input.buzzType}:${input.amount}`,
+    input.userId,
+    input.moderatorId
+  );
+  return { ok: true };
+}
+
+// REWARDS ELIGIBILITY (Retool's UpdateBuzzEligible → /api/mod/set-rewards-eligibility).
+export async function setRewardsEligibility(input: {
+  userId: number;
+  eligibility: string;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  const result = await callMainApp(
+    '/api/mod/set-rewards-eligibility',
+    { userId: String(input.userId), eligibility: input.eligibility },
+    'Rewards eligibility'
+  );
+  if (!result.ok) return result;
+
+  await logAction(`rewardsEligibility:${input.eligibility}`, input.userId, input.moderatorId);
   return { ok: true };
 }
 

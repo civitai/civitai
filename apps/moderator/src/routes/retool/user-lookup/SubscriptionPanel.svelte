@@ -1,13 +1,75 @@
 <script lang="ts">
+  import { applyAction, enhance } from '$app/forms';
+  import { invalidateAll } from '$app/navigation';
+  import type { ActionResult } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import * as Select from '@civitai/ui/components/ui/select/index.js';
   import type { PageData } from './$types';
   import { dateTime, num } from '$lib/format';
   import type { Account } from './user-account';
+  import type { FormResult } from './form-result';
 
   type Subscription = NonNullable<PageData['result']>['subscription'];
 
-  let { subscription, account }: { subscription: Subscription; account: Promise<Account> | null } =
-    $props();
+  let {
+    subscription,
+    account,
+    userId,
+    canAct,
+    form,
+  }: {
+    subscription: Subscription;
+    account: Promise<Account> | null;
+    userId: number;
+    canAct: boolean;
+    form: FormResult;
+  } = $props();
+
+  const error = $derived(form?.scope === 'buzz' ? form.error : null);
+
+  // Retool's BuzzTransferPopulate dropdown — canned amount, colour and description per label. These
+  // exist in no query; they were widget config, and moderators use them daily.
+  const PRESETS = [
+    { label: 'Stripe Chargeback Retrieval', amount: '', buzzType: 'yellow', action: 'deduct' },
+    { label: 'Stripe Refund', amount: '', buzzType: 'yellow', action: 'deduct' },
+    { label: '1st Place Stream Bingo', amount: '5000', buzzType: 'yellow', action: 'send' },
+    { label: '2nd Place Stream Bingo', amount: '2500', buzzType: 'yellow', action: 'send' },
+    { label: '3rd Place Stream Bingo', amount: '1000', buzzType: 'yellow', action: 'send' },
+  ];
+
+  let sending = $state(false);
+  let submitting = $state(false);
+  let amount = $state('');
+  let description = $state('');
+  let buzzType = $state('yellow');
+  let action = $state('send');
+
+  const applyPreset = (p: (typeof PRESETS)[number]) => {
+    amount = p.amount;
+    description = p.label;
+    buzzType = p.buzzType;
+    action = p.action;
+  };
+
+  const afterAction =
+    () =>
+    async ({ result }: { result: ActionResult }) => {
+      await applyAction(result);
+      if (result.type === 'success') {
+        sending = false;
+        amount = '';
+        description = '';
+        await invalidateAll();
+      }
+      submitting = false;
+    };
+
+  const onSubmit = () => {
+    submitting = true;
+    return afterAction();
+  };
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -50,12 +112,24 @@
         {:else if !result.buzz}
           <p class="text-sm text-dark-2">Balance unavailable.</p>
         {:else}
-          <div class="flex gap-6">
+          <div class="flex flex-wrap gap-6">
             <div>
               <div class="text-xl font-semibold tabular-nums text-white">
                 {num(result.buzz.balance)}
               </div>
-              <div class="text-xs text-dark-2">Balance</div>
+              <div class="text-xs text-dark-2">Yellow</div>
+            </div>
+            <div>
+              <div class="text-xl font-semibold tabular-nums text-white">
+                {result.buzz.blue === null ? '—' : num(result.buzz.blue)}
+              </div>
+              <div class="text-xs text-dark-2">Blue</div>
+            </div>
+            <div>
+              <div class="text-xl font-semibold tabular-nums text-white">
+                {result.buzz.green === null ? '—' : num(result.buzz.green)}
+              </div>
+              <div class="text-xs text-dark-2">Green</div>
             </div>
             <div>
               <div class="text-xl font-semibold tabular-nums text-white">
@@ -68,6 +142,84 @@
       {:catch}
         <p class="text-sm text-red-300">Could not load Buzz balance.</p>
       {/await}
+
+      {#if canAct}
+        {#if error}
+          <div
+            class="mt-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
+            role="alert"
+          >
+            {error}
+          </div>
+        {/if}
+
+        {#if !sending}
+          <Button size="sm" variant="outline" class="mt-3" onclick={() => (sending = true)}>
+            Send / deduct Buzz
+          </Button>
+        {:else}
+          <form method="POST" action="?/sendBuzz" use:enhance={onSubmit} class="mt-3">
+            <input type="hidden" name="userId" value={userId} />
+
+            <div class="mb-2 flex flex-wrap gap-1">
+              {#each PRESETS as p (p.label)}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onclick={() => applyPreset(p)}
+                >
+                  {p.label}
+                </Button>
+              {/each}
+            </div>
+
+            <div class="flex flex-wrap items-end gap-2">
+              <Select.Root type="single" name="action" bind:value={action}>
+                <Select.Trigger class="w-28">{action}</Select.Trigger>
+                <Select.Content>
+                  <Select.Item value="send">send</Select.Item>
+                  <Select.Item value="deduct">deduct</Select.Item>
+                </Select.Content>
+              </Select.Root>
+
+              <Input
+                name="amount"
+                type="number"
+                min="1"
+                bind:value={amount}
+                placeholder="Amount"
+                class="w-32"
+                required
+              />
+
+              <Select.Root type="single" name="buzzType" bind:value={buzzType}>
+                <Select.Trigger class="w-28">{buzzType}</Select.Trigger>
+                <Select.Content>
+                  <Select.Item value="yellow">yellow</Select.Item>
+                  <Select.Item value="blue">blue</Select.Item>
+                  <Select.Item value="green">green</Select.Item>
+                </Select.Content>
+              </Select.Root>
+
+              <Input
+                name="description"
+                bind:value={description}
+                placeholder="Description"
+                class="min-w-48 flex-1"
+                required
+              />
+
+              <Button type="submit" size="sm" disabled={submitting}>
+                {submitting ? 'Working…' : 'Apply'}
+              </Button>
+              <Button type="button" size="sm" variant="outline" onclick={() => (sending = false)}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        {/if}
+      {/if}
     </div>
   </div>
 </section>

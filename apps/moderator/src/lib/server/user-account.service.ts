@@ -251,14 +251,37 @@ export async function getCosmetics(userId: number, limit = 50): Promise<UserCosm
   }));
 }
 
-// BUZZ balance (Retool's GetAccountBuzz → buzz.civitai.com/account/user/<id>). An external HTTP call, so
-// it never rides the page load. Best-effort: Buzz being down should not blank the rest of the panel.
-export type UserBuzz = { balance: number; lifetimeBalance: number } | null;
+// BUZZ balances (Retool's GetAccountBuzz + GetGenBuzz + GetGreenBuzz — three queries, three colours;
+// only yellow had been ported). An external HTTP call, so it never rides the page load. Best-effort:
+// Buzz being down should not blank the rest of the panel.
+export type UserBuzz = {
+  balance: number;
+  lifetimeBalance: number;
+  /** Blue (generation) and green. Null when that account could not be read. */
+  blue: number | null;
+  green: number | null;
+} | null;
 
 export async function getBuzzBalance(userId: number): Promise<UserBuzz> {
   try {
     const account = await getBuzz().getAccount(userId);
-    return { balance: account.balance, lifetimeBalance: account.lifetimeBalance };
+    // Colour balances are a second call and a softer failure — yellow is the one a moderator acts on,
+    // so it must not be lost when the multi-account read fails.
+    let blue: number | null = null;
+    let green: number | null = null;
+    try {
+      const accounts = await getBuzz().getUserAccounts(userId, ['blue', 'green']);
+      blue = accounts.Generation ?? accounts.blue ?? null;
+      green = accounts.Green ?? accounts.green ?? null;
+    } catch (e) {
+      console.error('[user-lookup] buzz colour balances unavailable', e);
+    }
+    return {
+      balance: account.balance,
+      lifetimeBalance: account.lifetimeBalance,
+      blue,
+      green,
+    };
   } catch (e) {
     console.error('[user-lookup] buzz balance unavailable', e);
     return null;

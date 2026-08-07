@@ -8,8 +8,11 @@ import {
   BAN_REASON_CODES,
   addSocial,
   addTimedMute,
+  BUZZ_TYPES,
   bulkCommentAction,
   bulkReviewAction,
+  sendBuzz,
+  setRewardsEligibility,
   clearProfileText,
   purgeAllContent,
   removeSocial,
@@ -48,6 +51,7 @@ const noteFail = (status: number, message: string) =>
 const socialsFail = (message: string) => fail(400, { scope: 'socials' as const, error: message });
 const profileFail = (message: string) => fail(400, { scope: 'profile' as const, error: message });
 const contentFail = (message: string) => fail(400, { scope: 'content' as const, error: message });
+const buzzFail = (message: string) => fail(400, { scope: 'buzz' as const, error: message });
 
 const userIdSchema = z.object({ userId: z.coerce.number().int().positive() });
 const noteSchema = z.object({ notes: z.string().trim().min(1).max(NOTE_MAX) });
@@ -265,6 +269,48 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
     if (!result.ok) return accountFail(result.error);
+    return { success: true };
+  },
+
+  sendBuzz: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return buzzFail('Not permitted.');
+    const input = parseForm(
+      userIdSchema.extend({
+        amount: z.coerce.number().int().positive().max(1_000_000),
+        buzzType: z.enum(BUZZ_TYPES),
+        action: z.enum(['send', 'deduct']),
+        description: z.string().trim().min(1).max(500),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return buzzFail(input);
+
+    const result = await sendBuzz({
+      userId: input.userId,
+      amount: input.amount,
+      buzzType: input.buzzType,
+      action: input.action,
+      description: input.description,
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return buzzFail(result.error);
+    return { success: true };
+  },
+
+  setRewardsEligibility: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return buzzFail('Not permitted.');
+    const input = parseForm(
+      userIdSchema.extend({ eligibility: z.enum(['Eligible', 'Ineligible', 'Protected']) }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return buzzFail(input);
+
+    const result = await setRewardsEligibility({
+      userId: input.userId,
+      eligibility: input.eligibility,
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return buzzFail(result.error);
     return { success: true };
   },
 
