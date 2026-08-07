@@ -109,17 +109,23 @@ audit does not rediscover it as a gap.
 
 ### What is actually left
 
-- **Report detail lists.** `ReportsReceived`, `ReportsSubmitted`, `ReportOnUser`, `ActionReport` — the
-  panel still shows only counts where Retool showed rows with status and who set it. **This is the
-  largest remaining gap.**
-- **`SendNotification`** — an arbitrary moderator-authored notification, separate from the strike
-  notification that now fires. `CommentsWithLinks` (a spam-detection read over comment bodies).
-- **`SubmittedReviewImageCount`**, and `GetSuccesfulPromptsUpdated` (MongoDB, no connection).
-- **Bulk Image Manager** — ticket 1.3, absent from the section nav until it has a panel.
+Every cluster is ported. What remains is not a query:
 
-Clusters A, B and C are otherwise done. The `ReToolActions` vs `ModActivity` question below is **not**
-a blocker for them and was not treated as one: this is a 1:1 port, and reconciling two audit tables is
-a separate decision. Everything written here logs to `ModActivity`.
+- **`ActionReport`** — actioning a report from the lookup. The rows are there (`ReportsReceived`,
+  `ReportsSubmitted` and `ReportOnUser` all render with status, target and who resolved them); acting
+  on one still means going to `/reports`, which owns that flow and its side effects.
+- **`GetSuccesfulPromptsUpdated`** — MongoDB. This app has no connection to it, and adding one for a
+  single read is not worth the dependency.
+- **Bulk Image Manager** — ticket 1.3, absent from the section nav until it has a panel.
+- **`CIVITAI_MOD_API_KEY` must be set**, or the bulk comment and review actions refuse: the
+  `/api/mod/retool/*` endpoints authenticate with a Bearer moderator key, not `WEBHOOK_TOKEN`.
+
+The `ReToolActions` vs `ModActivity` question below was **not** treated as a blocker: this is a 1:1
+port, and reconciling two audit tables is a separate decision. Everything written here logs to
+`ModActivity`.
+
+**Nothing in this port has been exercised against a running app.** It typechecks and builds; no panel
+has been seen rendering and no action has been fired. Treat the surface as unverified until it has.
 
 ## Classification of all 170
 
