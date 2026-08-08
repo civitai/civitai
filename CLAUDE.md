@@ -83,8 +83,27 @@ components in one command (2026-08-07); they were only recoverable because they 
 first symptom is `svelte-check` reporting props as `never`, which reads like stale `$types` and sends
 you diagnosing the wrong thing.
 
-Use `pnpm run prettier:write` — the root script has the plugin configured correctly. Ad-hoc `npx
-prettier` is fine for `.ts`/`.json`, never for `.svelte`.
+Use `pnpm run prettier:write`. Note what that does **not** cover: the root Prettier is 2.8.8 and the
+script globs `.ts`/`.tsx` only, so **no root command formats `.svelte` at all**. `apps/creator-studio`
+formats itself with its own Prettier 3 + plugin (`.prettierignore` explains why ownership has to be
+exclusive); the other SvelteKit apps' `.svelte` files are simply hand-formatted. Ad-hoc `npx prettier`
+is fine for `.ts`/`.json`, never for `.svelte`.
+
+#### Prettier runs on UNCOMMITTED files only — never the whole repo
+
+`prettier:write`/`prettier:check` are `scripts/prettier-changed.mjs`, which formats what git reports as
+dirty (modified-vs-HEAD plus untracked) and nothing else. Do not "fix" them back into a `**/*` glob,
+and do not reach for a repo-wide `npx prettier --write` instead.
+
+**The repo is not Prettier-clean and will not be until the 2→3 upgrade reformats it deliberately.**
+`.github/workflows/lint.yml` puts the number at 789 of 4,116 `src` files, and measured across the whole
+workspace it is ~1,000. So a repo-wide `--write` is not a formatting pass, it is a ~1,000-file commit
+that buries the actual change — and it rewrites **other people's uncommitted work in place**, which is
+how it was found (2026-08-08: one `pnpm run prettier:write` produced 1,085 modified files, and telling
+the reformatting apart from real edits afterwards needed a per-file diff against `prettier(HEAD)`).
+
+CI already scopes itself this way and gates only on **added** files for exactly this reason; the local
+scripts now match it.
 
 ### Testing
 ```bash
@@ -380,7 +399,7 @@ A useful tell: if you are documenting **why** a guard exists and **what it stops
 ### Before Committing
 1. Run type checking: `pnpm run typecheck`
 2. Run linting: `pnpm run lint`
-3. Format code: `pnpm run prettier:write`
+3. Format code: `pnpm run prettier:write` (uncommitted files only — see below)
 4. Run the unit suite: `pnpm run test:unit:run`
 5. If you touched `schema.full.prisma`: `pnpm run db:check-generated`
 6. Test changes locally
