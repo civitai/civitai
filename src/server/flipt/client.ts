@@ -72,6 +72,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // failure. Deliberately does NOT gate /api/admin/temp/minor-hash-sweep, so
   // rollback stays usable after the switch is thrown.
   MINOR_HASH_AUTO_FLAG = 'minor-hash-auto-flag',
+  // Arms the reaction reconciliation audit's repair path to WRITE compensating
+  // events to ClickHouse. Default-off — isFlipt returns false for an unknown flag
+  // or an unreachable Flipt, and for a path that mutates production metrics that
+  // is the safe failure. Off, the hourly path does nothing at all and the nightly
+  // one runs its diff as a dry run for visibility.
+  METRIC_REACTION_REPAIR = 'metric-reaction-repair',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;
