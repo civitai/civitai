@@ -239,6 +239,16 @@ npx eslint "<changed .ts files>"
 Typecheck and build are the real gates. If you touched anything under `src/` or `packages/`, run
 the root `pnpm run typecheck` too.
 
+**Use `typecheck`, NOT `check`, for the edit→verify loop.** They are not synonyms here: `check`
+prefixes `svelte-kit sync`, which regenerates ~690 files under `.svelte-kit/` — a directory the Vite
+dev server watches — so running it in a loop has Vite re-optimising the module graph while
+`svelte-check` loads ~9,000 files. That collision froze a whole session's worth of work before it was
+diagnosed. `typecheck` is `svelte-check` alone and writes nothing.
+
+Reach for `check` **only** after changing the route tree — adding, removing or renaming a
+`+page`/`+server`/`+layout` file — which is the only time the generated `$types` go stale. A migration
+slice does that once, at the start. (`prepare` runs `sync` on install, so a fresh checkout is covered.)
+
 **One slice, one session.** A slice is a whole Retool app — 10 to 170 queries, a dozen files, an audit
 and three review reports. Commit at the end of it and start the next slice fresh rather than carrying
 one conversation across several apps: the §2 classification and the coverage gate are written down in

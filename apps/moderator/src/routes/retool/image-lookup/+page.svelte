@@ -1,8 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
-  import { goto } from '$app/navigation';
-  import { Input } from '@civitai/ui/components/ui/input/index.js';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import LookupSearch from '$lib/components/LookupSearch.svelte';
   import type { PageData } from './$types';
   import ActivityPanel from './ActivityPanel.svelte';
   import ImageDetailPanel from './ImageDetailPanel.svelte';
@@ -10,18 +7,6 @@
   import TagsPanel from './TagsPanel.svelte';
 
   let { data }: { data: PageData } = $props();
-
-  // Local copy so typing doesn't navigate; re-synced whenever a search lands (incl. back/forward).
-  let term = $state(untrack(() => data.q));
-  $effect(() => {
-    term = data.q;
-  });
-
-  const search = (e: SubmitEvent) => {
-    e.preventDefault();
-    const value = term.trim();
-    goto(value ? `?q=${encodeURIComponent(value)}` : '?', { keepFocus: true });
-  };
 </script>
 
 <header class="page-header">
@@ -29,10 +14,7 @@
   <p>Find an image by ID or URL — what it is, how it was tagged, and who reacted to it.</p>
 </header>
 
-<form onsubmit={search} class="mb-6 flex max-w-xl gap-2">
-  <Input bind:value={term} placeholder="138967815, or a full image URL" class="flex-1" />
-  <Button type="submit">Search</Button>
-</form>
+<LookupSearch q={data.q} placeholder="138967815, or a full image URL" />
 
 {#if data.notFound}
   <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">

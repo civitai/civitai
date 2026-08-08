@@ -17,7 +17,7 @@ left worth porting) · `dropped` (agreed not to port)
 | Chat Audit | `868kn7m9r` | 20 | 50 | `/retool/chat-audit` | **built** — all 20 queries ported and reviewed, unverified in a browser, Retool still live |
 | Front Page Audit | `868kn82bf` | 16 | 19 | `/retool/front-page-audit` | not started |
 | Image Lookup | `868kn7q2v` | 10 | 21 | `/retool/image-lookup` | **built** — all 10 queries ported, unverified in a browser, Retool still live |
-| Article Lookup | `868kn7t8d` | 3 | 9 | `/retool/article-lookup` | not started |
+| Article Lookup | `868kn7t8d` | 3 | 9 | `/retool/article-lookup` | **ported, not verified** — 3/3 queries classified ([audit](../../../docs/moderator-app/retool-exports/article-lookup-audit.md)): 2 ported, 1 plumbing (`query1` is an `information_schema` scratch query with a literal `'your_table'` placeholder). Reviewed; findings fixed. **Not run against a live page, and needs granting on `/admin`.** Its export predates the option-set extractor, so the `ContainerWidget2` tab labels are unverified — re-extract to confirm nothing hides there. |
 | Workflows (2) | `868kn80u9` | — | — | cron, not a page | not started |
 
 **The exports are attached to the ClickUp subtasks of 868kkxqpn** — one subtask per app, listed above.

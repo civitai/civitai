@@ -1,15 +1,13 @@
-import { z } from 'zod';
 import type { PageServerLoad } from './$types';
-import { parseQuery } from '$lib/server/query';
+import { lookupQuerySchema, parseQuery } from '$lib/server/query';
 import { getImageLookup, resolveImageId } from '$lib/server/image-lookup.service';
 import { hasImageEvents } from '$lib/server/image-signals.service';
 
-const querySchema = z.object({ q: z.string().trim().catch('') });
 
 // Read-only. Every action Retool's Image Lookup could take lived in other apps (Bulk Image Manager,
 // User Reports); this one only ever answered questions, so there is nothing to gate beyond the page.
 export const load: PageServerLoad = async ({ url }) => {
-  const { q } = parseQuery(url, querySchema);
+  const { q } = parseQuery(url, lookupQuerySchema);
   if (!q) return { q, result: null, deletedImageId: null, notFound: false };
 
   const imageId = await resolveImageId(q);
