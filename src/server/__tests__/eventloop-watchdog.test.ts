@@ -40,16 +40,35 @@ async function loadWatchdog() {
 async function registrationsDuring(act: () => void): Promise<string[]> {
   const promClient = await import('~/server/prom/client');
   const register = vi.mocked(promClient.registerInstrumentationMetric);
-  const { registerEventLoopWatchdog, shutdownEventLoopWatchdog } = await loadWatchdog();
+  const { registerEventLoopWatchdog, shutdownEventLoopWatchdog, __getWatchdogWorkerForTests } =
+    await loadWatchdog();
 
   const before = register.mock.calls.length;
   try {
     registerEventLoopWatchdog();
     act();
   } finally {
-    shutdownEventLoopWatchdog();
+    // AWAIT the exit, don't just request it. `vi.resetModules()` gives the next test a
+    // fresh module, but a still-running worker from this one keeps the OLD module's
+    // exit handler alive — and that handler calls the same process-wide
+    // `registerInstrumentationMetric` mock, so its metrics land in the NEXT test's
+    // recording. That leak made an intentional shutdown look like a no-token death.
+    await stopAndAwaitExit(__getWatchdogWorkerForTests(), shutdownEventLoopWatchdog);
   }
   return register.mock.calls.slice(before).map((call) => String(call[0]));
+}
+
+async function stopAndAwaitExit(
+  worker: { once: (event: 'exit', cb: (code: number) => void) => void } | undefined,
+  stop: () => void
+): Promise<number | undefined> {
+  if (!worker) {
+    stop();
+    return undefined;
+  }
+  const exited = new Promise<number>((resolve) => worker.once('exit', (code) => resolve(code)));
+  stop();
+  return exited;
 }
 
 describe('watchdog config resolution', () => {
@@ -132,11 +151,12 @@ describe('watchdog config resolution', () => {
     });
 
     expect(registered).not.toContain('civitai_app_watchdog_worker_started');
+    expect(registered).not.toContain('civitai_app_watchdog_worker_exits_total');
   });
 
-  it('POSITIVE CONTROL: registers it once armed', async () => {
-    // Without this, the assertion above would pass just as happily against a gauge
-    // that is never registered at all.
+  it('POSITIVE CONTROL: registers both series once armed', async () => {
+    // Without this, the assertion above would pass just as happily against metrics
+    // that are never registered at all.
     process.env.EVENTLOOP_WATCHDOG_ENABLED = 'true';
     // Port 0 so an armed test can never collide with a real 9099 or another suite.
     process.env.WATCHDOG_METRICS_PORT = '0';
@@ -144,6 +164,88 @@ describe('watchdog config resolution', () => {
     const registered = await registrationsDuring(() => undefined);
 
     expect(registered).toContain('civitai_app_watchdog_worker_started');
+    // Registered eagerly at 0 rather than on the first death: absent and zero mean
+    // different things to an alert, and it cannot tell them apart.
+    expect(registered).toContain('civitai_app_watchdog_worker_exits_total');
+  });
+
+  /**
+   * Drive an armed watchdog and return the recorded metric calls. `WEBHOOK_TOKEN`
+   * matters: without it the worker fails closed and exits 78 before anything else can
+   * happen, which is a different scenario entirely (and one the second test uses).
+   */
+  async function armAndStop({ token }: { token: string | undefined }) {
+    process.env.EVENTLOOP_WATCHDOG_ENABLED = 'true';
+    process.env.WATCHDOG_METRICS_PORT = '0';
+    const savedToken = process.env.WEBHOOK_TOKEN;
+    if (token === undefined) delete process.env.WEBHOOK_TOKEN;
+    else process.env.WEBHOOK_TOKEN = token;
+
+    const promClient = await import('~/server/prom/client');
+    const metrics = new Map<
+      string,
+      { set: ReturnType<typeof vi.fn>; inc: ReturnType<typeof vi.fn> }
+    >();
+    vi.mocked(promClient.registerInstrumentationMetric).mockImplementation(((name: string) => {
+      if (!metrics.has(name)) metrics.set(name, { set: vi.fn(), inc: vi.fn() });
+      return metrics.get(name);
+    }) as never);
+
+    try {
+      const { registerEventLoopWatchdog, shutdownEventLoopWatchdog, __getWatchdogWorkerForTests } =
+        await loadWatchdog();
+      registerEventLoopWatchdog();
+
+      const worker = __getWatchdogWorkerForTests();
+      expect(worker, 'expected an armed worker').toBeDefined();
+
+      const exited = new Promise<number>((resolve) =>
+        worker?.once('exit', (code) => resolve(code))
+      );
+      shutdownEventLoopWatchdog();
+      const exitCode = await exited;
+
+      return {
+        exitCode,
+        startedCalls: metrics.get('civitai_app_watchdog_worker_started')!.set.mock.calls,
+        exitCalls: metrics.get('civitai_app_watchdog_worker_exits_total')!.inc.mock.calls,
+      };
+    } finally {
+      if (savedToken === undefined) delete process.env.WEBHOOK_TOKEN;
+      else process.env.WEBHOOK_TOKEN = savedToken;
+      vi.mocked(promClient.registerInstrumentationMetric).mockImplementation((() => ({
+        set: vi.fn(),
+        inc: vi.fn(),
+        dec: vi.fn(),
+        observe: vi.fn(),
+      })) as never);
+    }
+  }
+
+  it('🔴 an intentional shutdown is not counted as a death', async () => {
+    const { exitCode, startedCalls, exitCalls } = await armAndStop({ token: 'test-token' });
+
+    expect(exitCode).toBe(0);
+    // set(1) at spawn and never again — in particular never set(0) on exit.
+    expect(startedCalls).toEqual([[1]]);
+    // Only the two zero-seeds. Counting our own shutdown would make the "worker died"
+    // alert fire on every ordinary pod termination.
+    expect(exitCalls).toEqual([
+      [{ reason: 'crash' }, 0],
+      [{ reason: 'no-token' }, 0],
+    ]);
+  });
+
+  it('🔴 a missing token is counted as no-token, not as a crash', async () => {
+    // A configuration fault and a runtime death have different owners and different
+    // fixes. Without the label they share a signature, which is the gap that made the
+    // previous "died after starting" alert unfireable one layer up.
+    const { exitCode, startedCalls, exitCalls } = await armAndStop({ token: undefined });
+
+    expect(exitCode).toBe(78);
+    expect(startedCalls).toEqual([[1]]);
+    expect(exitCalls).toContainEqual([{ reason: 'no-token' }]);
+    expect(exitCalls).not.toContainEqual([{ reason: 'crash' }]);
   });
 });
 

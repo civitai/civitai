@@ -211,9 +211,12 @@ describe('event-loop watchdog worker', () => {
       });
     });
 
-    expect(exitCode).not.toBe(0);
     expect(messages).not.toContain('LISTENING');
     expect(messages.join(' ')).toContain('refusing to serve metrics');
+    // 78 (sysexits EX_CONFIG), not just "non-zero". The parent keys the exit REASON on
+    // this code, so that a configuration fault is distinguishable from a crash — the
+    // postMessage above races the exit event and cannot be relied on for that.
+    expect(exitCode).toBe(78);
   });
 
   it('404s anything that is not exactly GET /metrics', async () => {
