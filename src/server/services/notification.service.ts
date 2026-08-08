@@ -87,7 +87,16 @@ export async function getUserNotificationCount({
   unread: boolean;
   category?: NotificationCategory;
 }) {
-  return notifications.countNotifications({ userId, unread, category });
+  // Unread counts drive a polled badge, so a transient notifications-service failure must degrade to
+  // zero rather than fail the request — the next poll corrects it. Mirrors markNotificationsRead.
+  // Deliberately NOT applied to the notification LIST: an empty list misrepresents the user's data,
+  // where a stale-zero badge only under-reports for one poll interval.
+  try {
+    return await notifications.countNotifications({ userId, unread, category });
+  } catch (e) {
+    if (e instanceof NotificationsClientError) return [];
+    throw e;
+  }
 }
 
 export const markNotificationsRead = async ({
