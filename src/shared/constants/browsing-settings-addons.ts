@@ -11,13 +11,13 @@ export type BrowsingSettingsAddon = {
   type: 'all' | 'some' | 'none';
   nsfwLevels: NsfwLevel[];
   /**
-   * Limit this entry to specific surfaces. Omit for a global rule. Use this for
+   * Limit this entry to one surface. Omit for a global rule. Use this for
    * anything that should be hidden from discovery but stay visible where a user
    * asked for it by name — a global `excludedTagIds` also empties the tag's own
    * collection pages and home blocks, which fetch a fixed page and drop filtered
    * items without backfilling.
    */
-  scopes?: BrowsingAddonScope[];
+  scope?: BrowsingAddonScope;
   disablePoi?: boolean;
   disableMinor?: boolean;
   excludedTagIds?: number[];
@@ -55,15 +55,13 @@ function emptyResolvedAddons(): ResolvedBrowsingSettingsAddons {
 export function resolveBrowsingSettingsAddons(
   data: BrowsingSettingsAddon[],
   browsingLevel: number,
-  opts?: { isModerator?: boolean; scopes?: BrowsingAddonScope[] }
+  opts?: { isModerator?: boolean; scope?: BrowsingAddonScope }
 ): ResolvedBrowsingSettingsAddons {
   if (opts?.isModerator) return emptyResolvedAddons();
 
-  const activeScopes = opts?.scopes ?? [];
-
   return data.reduce((acc, elem) => {
     try {
-      if (elem.scopes?.length && !elem.scopes.some((s) => activeScopes.includes(s))) return acc;
+      if (elem.scope && elem.scope !== opts?.scope) return acc;
 
       const intersection = Flags.intersection(
         browsingLevel,

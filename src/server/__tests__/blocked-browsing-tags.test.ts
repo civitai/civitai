@@ -42,7 +42,7 @@ describe('scoped addon entries', () => {
       type: 'some',
       nsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
       excludedTagIds: [SCOPED_TAG],
-      scopes: ['newCreators'],
+      scope: 'newCreators',
     },
   ];
 
@@ -54,7 +54,7 @@ describe('scoped addon entries', () => {
 
   it('applies a scoped entry when its scope is active', () => {
     const resolved = resolveBrowsingSettingsAddons(addons, publicBrowsingLevelsFlag, {
-      scopes: ['newCreators'],
+      scope: 'newCreators',
     });
     expect(resolved.excludedTagIds).toContain(SCOPED_TAG);
     expect(resolved.excludedTagIds).toContain(GLOBAL_TAG);
