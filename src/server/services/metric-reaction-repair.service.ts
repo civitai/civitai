@@ -9,10 +9,16 @@ import { REACTION_METRICS } from '~/server/services/metric-reconciliation.servic
  * construction and this one writes to ClickHouse. The detector must stay safe to
  * run anywhere; this must not.
  *
- * Writes are gated on `METRIC_REACTION_REPAIR_ENABLED`, which defaults to false —
- * merging this cannot start mutating production. With the flag off the diff is
- * still computed and returned, so the shape and volume of what it *would* write
- * are observable before anything is enabled.
+ * Gated on `METRIC_REACTION_REPAIR_ENABLED`, which defaults to false — merging this
+ * cannot start mutating production. The gate is checked before any I/O, not just
+ * before the insert: a detection means ClickHouse is already unhealthy, so running
+ * the read load anyway would add load at the worst moment.
+ *
+ * That leaves no free preview, so callers wanting the diff without the writes must
+ * ask for it explicitly with `dryRun` — which reads normally and never inserts. The
+ * nightly job does exactly that while the flag is off (see the hook registration in
+ * `jobs/metric-reconciliation-audit`), because otherwise enabling the flag would be
+ * the first time anyone sees what it writes.
  */
 
 const REACTION_METRIC_LIST = REACTION_METRICS.map((m) => `'${m}'`).join(',');

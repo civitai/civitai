@@ -1,4 +1,5 @@
 import client from 'prom-client';
+import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { PROM_PREFIX } from '~/server/prom/client';
 import { repairReactionMetrics } from '~/server/services/metric-reaction-repair.service';
@@ -28,9 +29,12 @@ import { createJob } from './job';
  *
  *   post-fix: 27 hours across 2026-08-05/06/07, 662,531 Postgres rows
  *     coverage = 1.000000 on every hour. Zero misses. No residual, no variance.
- *   inside the outage window
+ *   inside the outage window, measured BEFORE the historical repair ran
  *     2026-02-11 14:00  coverage 0.019165  (23,849 of 24,315 rows lost)
  *     2026-05-14 03:00  coverage 0.712498  ( 6,478 of 22,532 rows lost)
+ *   those two have since been backfilled and no longer reproduce; an hour that
+ *   had not been repaired at time of writing:
+ *     2026-03-10 14:00  coverage 0.988355  (   264 of 22,670 rows lost)
  *
  * So the healthy distribution is a point mass at 1.0 and the failure signal is
  * 0.02–0.71. WARN at 0.999 sits ~1000x outside the observed noise while still
@@ -109,19 +113,30 @@ const gauges = (global.metricReconciliationGauges ??= Object.fromEntries(
 ) as Record<GaugeName, client.Gauge<string>>);
 
 /**
- * Registering the hook does not arm anything: `repairReactionMetrics` computes its
- * diff unconditionally but only inserts when `METRIC_REACTION_REPAIR_ENABLED` is
- * set, which defaults to false. With the flag off, a detection logs the additions
- * and removals it *would* have written — which is the evidence needed to decide
- * whether to turn it on.
+ * Registering the hook does not arm writes — `METRIC_REACTION_REPAIR_ENABLED`
+ * defaults to false and gates them.
+ *
+ * While it is off, the nightly path still runs the diff as a dry run so there is
+ * some production evidence of what enabling it would write. Without that, turning
+ * the flag on goes from zero observation straight to live inserts. Nightly is
+ * capped at 200 images, so the read cost is negligible. The hourly path stays
+ * fully gated: it fires on exactly the outage where extra read load is worst, and
+ * one measured outage hour flagged ~17k images.
+ *
+ * Once the flag is on, both paths repair for real.
  */
 setReactionRepairHook(async ({ imageIds, reason }) => {
-  const result = await repairReactionMetrics(imageIds);
+  const previewOnly = reason === 'nightly-exactness' && !env.METRIC_REACTION_REPAIR_ENABLED;
+  const result = await repairReactionMetrics(imageIds, { dryRun: previewOnly });
   await logToAxiom({
     type: 'metric-reconciliation',
     name: 'reaction-repair',
-    level: result.inserted ? 'info' : 'warn',
-    message: `repair ${reason}: +${result.additions} -${result.removals} inserted=${result.inserted}`,
+    // Alerting lives on the gauges, not here. The one condition needing a human is
+    // work this run dropped and nothing will pick up.
+    level: result.imagesSkippedOverCap > 0 ? 'warn' : 'info',
+    message: `repair ${reason}: +${result.additions} -${result.removals} inserted=${
+      result.inserted
+    }${result.skippedReason ? ` (${result.skippedReason})` : ''}`,
     error: JSON.stringify(result),
   }).catch(() => undefined);
 });
