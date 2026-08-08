@@ -137,10 +137,19 @@ export function resolveWatchdogPort(): number {
  *
  *                                 watchdog_up   worker_started
  *   healthy                            1              1
- *   MAIN THREAD WEDGED                 1           absent   (main can't serve /api/metrics)
+ *   MAIN THREAD WEDGED                 1           absent   (only past the scrape timeout — see below)
  *   worker died after starting     absent             1
  *   worker never spawned (threw)   absent             0
  *   pod gone                       absent          absent
+ *
+ * Row 2 is SCRAPE-TIMEOUT-BOUND, not instant. A wedged main thread does not refuse
+ * the /api/metrics request, it queues it and answers on recovery — measured in
+ * preview, the reply landed 30ms after the wedge cleared. So worker_started only goes
+ * absent once a wedge outlasts the scrape timeout, for roughly max(0, D-timeout)/interval
+ * of scrapes. A short wedge never blanks it. Row 2 is therefore a disambiguator for
+ * the long wedges this exists to catch (the real ones ran 4-5 minutes), not the
+ * detection signal — that is current_wedge_seconds off the worker's own port, which
+ * moves within one poll regardless.
  *
  * Registered lazily, INSIDE the arm path, so a disarmed pod reports the series as
  * absent rather than 0 — prom-client would otherwise export a never-set gauge as 0,

@@ -37,6 +37,11 @@
  * The response is sent AFTER the stall completes — the loop cannot serve it any
  * earlier — so the client sees a hung request for the duration. That is the
  * endpoint working, not failing.
+ *
+ * NOT SELF-DRIVABLE FROM INSIDE THE POD. Gate 1 needs the real Host, so hitting the
+ * pod IP directly renders HTML instead of reaching this route. Drive it through the
+ * ingress hostname. (Relatedly, next-server binds $HOSTNAME rather than 0.0.0.0, so
+ * 127.0.0.1:3000 is not reachable in-container either — the watchdog's own :9099 is.)
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
