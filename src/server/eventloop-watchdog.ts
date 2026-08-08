@@ -135,12 +135,27 @@ export function resolveWatchdogPort(): number {
  * tell "the watchdog is absent" from "no wedges occurred", which is the failure mode
  * the inline-source note above describes. Together they separate five states:
  *
- *                                 watchdog_up   worker_started
- *   healthy                            1              1
+ *                                 watchdog_up   worker_started   worker_exits_total
+ *   healthy                            1              1            0 (both reasons)
  *   MAIN THREAD WEDGED                 1           absent   (only past the scrape timeout — see below)
- *   worker died after starting     absent             1
- *   worker never spawned (threw)   absent             0
- *   pod gone                       absent          absent
+ *   worker crashed after starting  absent             1          >=1 {reason="crash"}
+ *   WEBHOOK_TOKEN missing          absent             1        >=1 {reason="no-token"}
+ *   worker never spawned (threw)   absent             0            0 (both reasons)
+ *   pod gone                       absent          absent            absent
+ *
+ * The counter is labelled because the fail-closed exit on a missing token is a
+ * CONFIGURATION fault and a crash is a runtime one — different owner, different fix —
+ * and without the label they share a signature. An intentional shutdown is not
+ * counted at all, or the "worker died" alert would fire on every pod termination.
+ *
+ * `worker_started` is a SPAWN fact and deliberately not a liveness fact — liveness is
+ * what watchdog_up is for. An earlier revision reset it to 0 when the worker died,
+ * which collapsed rows 3 and 4 onto the same signature and made "died after starting"
+ * indistinguishable from "never spawned". Those have different causes (a runtime
+ * crash versus the build-tracing failure this file's inline-source note is about) and
+ * different fixes, and distinguishing them was the argument for carrying two metrics
+ * at all. The exits counter makes a death positively observable rather than inferred
+ * from an absence.
  *
  * Row 2 is SCRAPE-TIMEOUT-BOUND, not instant. A wedged main thread does not refuse
  * the /api/metrics request, it queues it and answers on recovery — measured in
@@ -163,11 +178,32 @@ function workerStartedGauge() {
     () =>
       new client.Gauge({
         name: PROM_PREFIX + 'watchdog_worker_started',
-        help: 'Whether the main thread successfully spawned the event-loop watchdog worker (1) or tried and failed (0). Absent means either the watchdog is disarmed on this pod or the main thread cannot serve /api/metrics — compare against the worker-served civitai_app_watchdog_up to tell those apart.',
+        help: 'Whether the main thread successfully spawned the event-loop watchdog worker (1) or tried and failed (0). A SPAWN fact, not a liveness one — it stays 1 if the worker later dies; pair it with civitai_app_watchdog_worker_exits_total for that. Absent means either the watchdog is disarmed on this pod or the main thread cannot serve /api/metrics — compare against the worker-served civitai_app_watchdog_up to tell those apart.',
         registers: [instrumentationRegistry],
       })
   );
 }
+
+/**
+ * Deaths of a successfully-spawned worker. Registered in the arm path alongside the
+ * gauge, for the same reason: a disarmed pod should have no series at all rather than
+ * a zero that reads like a healthy armed one.
+ */
+function workerExitsCounter() {
+  return registerInstrumentationMetric(
+    PROM_PREFIX + 'watchdog_worker_exits_total',
+    () =>
+      new client.Counter({
+        name: PROM_PREFIX + 'watchdog_worker_exits_total',
+        help: 'Unintended exits of the event-loop watchdog worker after a successful spawn, by reason. `no-token` is a configuration fault (WEBHOOK_TOKEN missing, so the worker fails closed rather than serving metrics unauthenticated); `crash` is a runtime death. Non-zero with watchdog_up absent means the worker died, as opposed to never having started (watchdog_worker_started=0). An intentional shutdown does NOT count. The worker is not respawned, so any non-zero value means off-loop observability has ended for this pod.',
+        labelNames: ['reason'] as const,
+        registers: [instrumentationRegistry],
+      })
+  );
+}
+
+/** Exit code the worker uses when it refuses to serve for lack of a token. */
+const EXIT_CODE_NO_TOKEN = 78;
 
 /**
  * The worker runs as CommonJS (`eval: true` does not imply ESM) and imports nothing
@@ -267,7 +303,10 @@ if (!token) {
       message: 'refusing to serve metrics: no token configured (WEBHOOK_TOKEN unset)',
     });
   }
-  process.exit(1);
+  // 78 is sysexits' EX_CONFIG. A distinct code — not the postMessage above — is what
+  // the parent keys the exit reason on: the message and the exit event race, the code
+  // arrives with the exit itself.
+  process.exit(78);
 }
 
 function tokenAccepted(url) {
@@ -407,21 +446,33 @@ export function registerEventLoopWatchdog(): void {
       }
     });
 
+    // Neither handler touches workerStartedGauge: the spawn DID happen, and zeroing it
+    // here is what made a runtime death indistinguishable from never having started.
     worker.on('error', (err) => {
       console.error('[eventloop-watchdog] worker threw; watchdog is no longer running:', err);
-      workerStartedGauge().set(0);
+      workerExitsCounter().inc({ reason: 'crash' });
       worker = undefined;
     });
 
     worker.on('exit', (code) => {
-      if (code !== 0) {
-        console.error(`[eventloop-watchdog] worker exited unexpectedly with code ${code}`);
-      }
-      workerStartedGauge().set(0);
       worker = undefined;
+      // Code 0 is our own shutdown path; counting it would make the "worker died"
+      // alert fire during every ordinary pod termination.
+      if (code === 0) return;
+
+      const reason = code === EXIT_CODE_NO_TOKEN ? 'no-token' : 'crash';
+      console.error(
+        `[eventloop-watchdog] worker exited with code ${code} (${reason}); watchdog is no longer running`
+      );
+      workerExitsCounter().inc({ reason });
     });
 
     workerStartedGauge().set(1);
+    // Seed both label values at 0 rather than waiting for a death, so an
+    // armed-and-healthy pod reports `exits_total 0` instead of no series at all.
+    // Absent and zero mean different things and an alert cannot tell them apart.
+    workerExitsCounter().inc({ reason: 'crash' }, 0);
+    workerExitsCounter().inc({ reason: 'no-token' }, 0);
 
     // Guarded, not `once`: `once` still ADDS a listener per successful spawn, so a
     // respawn after a worker death accumulates them until the MaxListeners warning
