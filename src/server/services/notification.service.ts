@@ -87,10 +87,13 @@ export async function getUserNotificationCount({
   unread: boolean;
   category?: NotificationCategory;
 }) {
-  // Unread counts drive a polled badge, so a transient notifications-service failure must degrade to
-  // zero rather than fail the request — the next poll corrects it. Mirrors markNotificationsRead.
-  // Deliberately NOT applied to the notification LIST: an empty list misrepresents the user's data,
-  // where a stale-zero badge only under-reports for one poll interval.
+  // Last resort, for when the notifications service is unreachable entirely: degrade the badge to zero
+  // rather than fail the whole request. NOT self-correcting — the client query is staleTime/gcTime
+  // Infinity with no refetchInterval and nothing invalidates it, so a zero here persists for the rest of
+  // the session. Prefer fixing degradation INSIDE the service (it serves this count from the notif DB and
+  // only caches it in redis) so callers get the real number; this branch is what's left when even that
+  // fails. Deliberately NOT applied to the notification LIST: an empty list is a stronger false claim
+  // about the user's data than an under-reported badge.
   try {
     return await notifications.countNotifications({ userId, unread, category });
   } catch (e) {

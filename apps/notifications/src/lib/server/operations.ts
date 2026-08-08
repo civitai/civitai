@@ -156,6 +156,34 @@ export function countNotifications(input: {
   return inFlight;
 }
 
+// The unread count is DERIVED from the notif DB — the redis hash in cache.ts is only a cache in front of
+// the GROUP BY below. cache.ts's withRedisErrorCount deliberately rethrows, documented as safe because
+// "callers that already .catch() keep degrading to no-op"; that holds for the worker's fire-and-forget
+// increment/decrement, and did NOT hold here. A cache read failure took down a query that does not need
+// the cache: on 2026-08-07 that turned a redis slot-map fault into 42,036 user-facing 500s while the
+// answering query sat three lines below, unreached.
+//
+// Scoped to CACHE calls only, and never wrapped around `db.cancellableQuery` — a DB failure means we have
+// no count and must still surface. `redisErrorsTotal` is already incremented inside withRedisErrorCount,
+// so this only logs; it does not double-count.
+async function swallowCacheError<T>(
+  operation: string,
+  fn: () => Promise<T>
+): Promise<T | undefined> {
+  try {
+    return await fn();
+  } catch (err) {
+    logToAxiom({
+      type: 'warning',
+      name: 'notification.countCacheDegraded',
+      message: `Notification count cache ${operation} failed; serving from the notif DB`,
+      operation,
+      error: safeError(err),
+    }).catch(() => null);
+    return undefined;
+  }
+}
+
 async function countNotificationsImpl(input: {
   userId: number;
   unread: boolean;
@@ -181,9 +209,11 @@ async function countNotificationsImpl(input: {
   const db = await getNotifDbWithoutLag(userId);
   if (cacheable) {
     if (isWritePool(db)) {
-      await notificationCache.bustUser(userId);
+      // A failed bust is safe to ignore ONLY because this branch goes on to read the primary and
+      // repopulate below, overwriting whatever stale value survived.
+      await swallowCacheError('bustUser', () => notificationCache.bustUser(userId));
     } else {
-      const cached = await notificationCache.getUser(userId);
+      const cached = await swallowCacheError('getUser', () => notificationCache.getUser(userId));
       if (cached) return cached;
     }
   }
@@ -204,7 +234,8 @@ async function countNotificationsImpl(input: {
     params
   );
   const result = await query.result();
-  if (cacheable) await notificationCache.setUser(userId, result);
+  if (cacheable)
+    await swallowCacheError('setUser', () => notificationCache.setUser(userId, result));
   return result;
 }
 

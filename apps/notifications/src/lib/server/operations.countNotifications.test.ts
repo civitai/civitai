@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AxiomClient from './clients/axiom';
 
 // Behavioral coverage for countNotifications' per-key request coalescing (single-flight). The heaviest read
 // on the DB used to fire N concurrent identical `GROUP BY category` scans for the same user (a 43-way
@@ -49,8 +50,16 @@ vi.mock('./cache', () => ({
   },
 }));
 
+// Spread the real module and override only logToAxiom (repo rule: no wholesale module mocks). The cache
+// degradation path logs, and we assert on that log rather than letting a real Axiom call fire in tests.
+vi.mock('./clients/axiom', async (importOriginal) => ({
+  ...(await importOriginal<typeof AxiomClient>()),
+  logToAxiom: vi.fn(async () => {}),
+}));
+
 import { countNotifications, countInFlight } from './operations';
 import { notificationCache } from './cache'; // mocked above — used to assert the bust/primary path is taken
+import { logToAxiom } from './clients/axiom';
 
 // One macrotask hop flushes all currently-queued microtasks — enough to advance the count path up to its
 // pending cancellableQuery.result().
@@ -371,5 +380,74 @@ describe('cacheability gate (unread:true + no category only)', () => {
     expect(r1).toEqual(rows);
     expect(r2).toEqual(rows);
     expect(h.calls).toHaveLength(1);
+  });
+});
+
+// =========================================================================================================
+// Cache-failure degradation. The unread count is DERIVED from the notif DB; redis is only a cache in front
+// of it. cache.ts's withRedisErrorCount rethrows by design, and countNotificationsImpl did not catch — so a
+// redis fault 500'd a query that does not need redis (42,036 user-facing errors on 2026-08-07).
+//
+// Fixture discipline: every userId and every count below is distinct, so a test cannot pass by returning
+// some other case's value, and a DB result can never be mistaken for a cached one.
+describe('cache failures degrade to the notif DB (never a 500)', () => {
+  it('serves the real count from the DB when the cache READ throws', async () => {
+    h.state.getUser = async () => {
+      throw new Error("Cannot read properties of undefined (reading 'replicas')");
+    };
+    h.state.resultImpl = async () => [{ category: 'Comment', count: 7 }];
+
+    const result = await countNotifications({ userId: 91, unread: true });
+
+    expect(result).toEqual([{ category: 'Comment', count: 7 }]); // the REAL number, not [] and not a throw
+    expect(h.calls).toHaveLength(1); // the DB query actually ran
+  });
+
+  it('still returns the DB result when the cache POPULATE throws after a successful read', async () => {
+    h.state.resultImpl = async () => [{ category: 'Milestone', count: 11 }];
+    vi.mocked(notificationCache.setUser).mockRejectedValueOnce(new Error('redis down'));
+
+    const result = await countNotifications({ userId: 92, unread: true });
+
+    // The count was computed and correct; a failure to CACHE it must not discard it.
+    expect(result).toEqual([{ category: 'Milestone', count: 11 }]);
+    expect(h.calls).toHaveLength(1);
+  });
+
+  it('still reads the primary when the recent-writer cache BUST throws', async () => {
+    h.state.isWritePool = true;
+    h.state.resultImpl = async () => [{ category: 'Update', count: 13 }];
+    vi.mocked(notificationCache.bustUser).mockRejectedValueOnce(new Error('redis down'));
+
+    const result = await countNotifications({ userId: 93, unread: true });
+
+    expect(result).toEqual([{ category: 'Update', count: 13 }]);
+    expect(h.calls).toHaveLength(1);
+    expect(notificationCache.getUser).not.toHaveBeenCalled(); // write-pool branch never reads the cache
+  });
+
+  it('logs the degradation rather than failing silently', async () => {
+    h.state.getUser = async () => {
+      throw new Error('redis down');
+    };
+    h.state.resultImpl = async () => [{ category: 'System', count: 17 }];
+
+    await countNotifications({ userId: 94, unread: true });
+
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'notification.countCacheDegraded', operation: 'getUser' })
+    );
+  });
+
+  // Negative control. The swallow is scoped to CACHE calls; if it ever widens to cover the query itself we
+  // would serve a silent wrong answer instead of an error, which is worse than the bug this PR fixes.
+  it('does NOT swallow a DB error — that must still surface', async () => {
+    h.state.resultImpl = async () => {
+      throw new Error('notif db unreachable');
+    };
+
+    await expect(countNotifications({ userId: 95, unread: true })).rejects.toThrow(
+      'notif db unreachable'
+    );
   });
 });
