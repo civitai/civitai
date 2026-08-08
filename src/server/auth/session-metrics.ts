@@ -115,6 +115,26 @@ const sessionStateTokens = registerHistogram({
   buckets: [1, 10, 50, 100, 500, 1000, 4000, 10000],
 });
 
+// Per-chunk duration for the batched token-state write. The store's slowlog threshold is 10ms and a healthy
+// chunk is sub-millisecond, so the slowlog can only catch a chunk that is catastrophically oversized — it
+// cannot tell a well-sized chunk from a mildly bad one. This histogram is the finer instrument.
+const sessionStateChunkDuration = registerHistogram({
+  name: 'session_state_chunk_duration_seconds',
+  help:
+    'Duration of one chunk of the batched session-state write. A chunk is expected to be sub-millisecond; ' +
+    'sustained traffic in the upper buckets means the chunk size is too large for this store.',
+  labelNames: ['caller', 'type'] as const,
+  buckets: [0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.1],
+});
+
+export function observeSessionStateChunk(
+  caller: SessionStateCaller,
+  type: 'refresh' | 'invalid',
+  durationSeconds: number
+): void {
+  sessionStateChunkDuration.observe({ caller, type }, durationSeconds);
+}
+
 export function observeSessionStateUpdate(
   caller: SessionStateCaller,
   type: 'refresh' | 'invalid',

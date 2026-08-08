@@ -22,6 +22,12 @@ const h = vi.hoisted(() => {
   };
   const sysRedis = {
     hGetAll: async (k: string) => Object.fromEntries(hashes.get(k) ?? new Map<string, string>()),
+    // The revocation read scans for field NAMES rather than fetching every value. One page, complete scan —
+    // paging itself is covered in session-invalidation.test.ts; this suite is about the ban→revoke chain.
+    hScanNoValues: async (k: string) => ({
+      cursor: '0',
+      fields: [...(hashes.get(k)?.keys() ?? [])],
+    }),
     hSet: async (k: string, obj: Record<string, string>) => {
       const m = hashes.get(k) ?? new Map<string, string>();
       for (const [f, v] of Object.entries(obj)) m.set(f, v);

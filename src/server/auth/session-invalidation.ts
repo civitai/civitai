@@ -6,9 +6,16 @@ import { createLogger } from '~/utils/logging';
 import { signalClient } from '~/utils/signal-client';
 import { clearSessionCache } from './session-cache';
 import { sessionClient } from './session-client';
-import { observeSessionStateUpdate, type SessionStateCaller } from './session-metrics';
+import {
+  observeSessionStateChunk,
+  observeSessionStateUpdate,
+  type SessionStateCaller,
+} from './session-metrics';
 
 const DEFAULT_EXPIRATION = 60 * 60 * 24 * 30; // 30 days
+// Fields per HSCAN page. Only bounds how many field names come back per round trip; the scan is incremental
+// either way, so this trades round trips against per-command size rather than affecting correctness.
+const SCAN_PAGE = 500;
 const log = createLogger('session-invalidation', 'green');
 
 type RefreshSessionOptions = { sendSignal?: boolean; caller?: SessionStateCaller };
@@ -21,25 +28,38 @@ async function updateSessionState(
   const key = `${REDIS_KEYS.SESSION.USER_TOKENS}:${userId}`;
   const startedAt = Date.now();
 
-  // Get all tokens from hash (expired fields are automatically removed by Redis)
-  let tokenHash: Record<string, string> = {};
+  // Only the FIELD NAMES are used below, so scan for names and never fetch values. `hGetAll` pulled every
+  // value across the wire and discarded it, and it is one O(N) command: measured on the shared store at
+  // 39-43ms for the largest account, from several pods at once, blocking its single command thread each time.
+  // HSCAN is incremental, so no single command scales with the hash — which also means this read can no
+  // longer exceed the deadline below purely by being large, and therefore can no longer fail open to an
+  // empty set and silently skip the invalidation.
+  let userTokens: string[] = [];
   try {
     // Wall-clock deadline + fail-open: this read is on the user-facing
     // logout / ban / session-refresh path. A fast sysRedis DOWN would 500
-    // the request; a silent half-open would park the awaited hGetAll ~11min.
-    // On DOWN/SLOW we fail open to an empty token hash — symmetric with the
+    // the request; a silent half-open would park the awaited command ~11min.
+    // On DOWN/SLOW we fail open to an empty token list — symmetric with the
     // already-fail-open write below and the documented invalidateSession
     // posture: the invalidation doesn't take effect during the outage (retry
-    // after recovery), but the request never 500s or parks.
-    tokenHash = await withSysReadDeadline(sysRedis.hGetAll(key as any));
+    // after recovery), but the request never 500s or parks. Each page is
+    // raced separately, so the bound applies per page rather than to the
+    // whole scan.
+    let cursor = '0';
+    do {
+      const page = await withSysReadDeadline(
+        sysRedis.hScanNoValues(key as any, cursor, { COUNT: SCAN_PAGE })
+      );
+      userTokens.push(...page.fields);
+      cursor = String(page.cursor);
+    } while (cursor !== '0');
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'session-invalidation.updateSessionState read', err, {
       userId,
       type,
     });
-    tokenHash = {};
+    userTokens = [];
   }
-  const userTokens = Object.keys(tokenHash);
   // Must stay O(n): spreading the accumulator per iteration is O(n^2), which
   // blocks the event loop for minutes on the largest token hashes.
   const userTokensObj: Record<string, string> = Object.fromEntries(
@@ -66,7 +86,8 @@ async function updateSessionState(
         sysRedis,
         REDIS_SYS_KEYS.SESSION.TOKEN_STATE,
         userTokensObj,
-        DEFAULT_EXPIRATION * 1000
+        DEFAULT_EXPIRATION * 1000,
+        (durationSeconds) => observeSessionStateChunk(caller, type, durationSeconds)
       );
     } catch (err) {
       logSysRedisFailOpen('write-degraded', 'session-invalidation.updateSessionState', err, {
@@ -111,9 +132,9 @@ export async function refreshSession(
  *
  * SECURITY/IR NOTE: this path is fail-open on sysRedis unreachability
  * on BOTH the read and the write (PR #2332 round-3 audit fix for the
- * write; STEP-4 soft-dependency sweep for the read). The read (hGetAll)
- * is wrapped in `withSysReadDeadline` + try/catch and fails open to an
- * empty token hash — subtype `read-degraded`; the write (hSetMultiWithTTL)
+ * write; STEP-4 soft-dependency sweep for the read). Each scan page of the
+ * read is wrapped in `withSysReadDeadline` + try/catch and fails open to an
+ * empty token list — subtype `read-degraded`; the write (hSetMultiWithTTL)
  * swallows its error — subtype `write-degraded`. Both emit a
  * `sysredis-fail-open` Loki/Axiom event; see `updateSessionState` above.
  * During a sysRedis outage the invalidation does NOT take effect; callers

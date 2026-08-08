@@ -21,17 +21,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *                 fail-open logger is touched.
  */
 
-const { mockHSetMultiWithTTL, mockLogSysRedisFailOpen, mockHGetAll, mockWithSysReadDeadline } =
-  vi.hoisted(() => ({
-    mockHSetMultiWithTTL: vi.fn(),
-    mockLogSysRedisFailOpen: vi.fn(),
-    mockHGetAll: vi.fn(),
-    // STEP-4 soft-dependency: the hGetAll read is now wrapped in
-    // withSysReadDeadline so a SLOW/half-open sysRedis rejects (deadline)
-    // instead of parking ~11min. Transparent by default (returns the wrapped
-    // promise) — override per-test to reject to model the SLOW path.
-    mockWithSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
-  }));
+const {
+  mockHSetMultiWithTTL,
+  mockLogSysRedisFailOpen,
+  mockHScanNoValues,
+  mockWithSysReadDeadline,
+} = vi.hoisted(() => ({
+  mockHSetMultiWithTTL: vi.fn(),
+  mockLogSysRedisFailOpen: vi.fn(),
+  mockHScanNoValues: vi.fn(),
+  // STEP-4 soft-dependency: the hGetAll read is now wrapped in
+  // withSysReadDeadline so a SLOW/half-open sysRedis rejects (deadline)
+  // instead of parking ~11min. Transparent by default (returns the wrapped
+  // promise) — override per-test to reject to model the SLOW path.
+  mockWithSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
+}));
 
 vi.mock('~/server/redis/atomic', () => ({
   hSetMultiWithTTL: mockHSetMultiWithTTL,
@@ -43,7 +47,7 @@ vi.mock('~/server/redis/fail-open-log', () => ({
 
 vi.mock('~/server/redis/client', () => ({
   sysRedis: {
-    hGetAll: mockHGetAll,
+    hScanNoValues: mockHScanNoValues,
     set: vi.fn().mockResolvedValue('OK'),
   },
   REDIS_KEYS: {
@@ -83,11 +87,14 @@ vi.unmock('~/server/auth/session-invalidation');
 // Real module under test — imported AFTER the mocks are wired.
 import { refreshSession, invalidateSession } from '../session-invalidation';
 
+/** One-page HSCAN NOVALUES reply — cursor '0' means the scan is complete. */
+const onePage = (fields: string[]) => ({ cursor: '0', fields });
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockWithSysReadDeadline.mockImplementation((p) => p); // transparent by default
   // Default: user has 2 tokens in the hash.
-  mockHGetAll.mockResolvedValue({ 'token-a': 'active', 'token-b': 'active' });
+  mockHScanNoValues.mockResolvedValue(onePage(['token-a', 'token-b']));
 });
 
 describe('updateSessionState fail-open wrapper (via refreshSession)', () => {
@@ -125,7 +132,7 @@ describe('updateSessionState fail-open wrapper (via refreshSession)', () => {
   });
 
   it('skips both the helper and the fail-open logger when the user has zero tokens', async () => {
-    mockHGetAll.mockResolvedValue({});
+    mockHScanNoValues.mockResolvedValue(onePage([]));
 
     await refreshSession(42, { sendSignal: false });
 
@@ -134,22 +141,22 @@ describe('updateSessionState fail-open wrapper (via refreshSession)', () => {
   });
 });
 
-describe('updateSessionState READ fail-open wrapper (STEP-4 hGetAll)', () => {
-  it('happy path: reads the token hash through withSysReadDeadline and does not log fail-open', async () => {
+describe('updateSessionState READ fail-open wrapper (STEP-4)', () => {
+  it('happy path: scans field names through withSysReadDeadline and does not log fail-open', async () => {
     mockHSetMultiWithTTL.mockResolvedValue(undefined);
 
     await refreshSession(7, { sendSignal: false });
 
     // The read is deadline-wrapped even on the happy path.
     expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
-    expect(mockHGetAll).toHaveBeenCalledTimes(1);
+    expect(mockHScanNoValues).toHaveBeenCalledTimes(1);
     // Tokens resolved → the write ran with them.
     expect(mockHSetMultiWithTTL).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
   });
 
-  it('DOWN: hGetAll throws → fails open to an empty hash, does not throw, skips the write, logs read-degraded', async () => {
-    mockHGetAll.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+  it('DOWN: the scan throws → fails open to an empty list, does not throw, skips the write, logs read-degraded', async () => {
+    mockHScanNoValues.mockRejectedValueOnce(new Error('ECONNREFUSED'));
 
     // Must NOT throw (would otherwise 500 the logout/ban request).
     await expect(invalidateSession(99)).resolves.toBeUndefined();
@@ -163,13 +170,13 @@ describe('updateSessionState READ fail-open wrapper (STEP-4 hGetAll)', () => {
     expect(extra).toMatchObject({ userId: 99, type: 'invalid' });
   });
 
-  it('SLOW/half-open: hGetAll NEVER settles + deadline REJECTS → fails open (fail-on-revert: a bare await would hang and time out)', async () => {
-    // Model a SLOW/half-open sysRedis: hGetAll never settles (would park
+  it('SLOW/half-open: the scan NEVER settles + deadline REJECTS → fails open (fail-on-revert: a bare await would hang and time out)', async () => {
+    // Model a SLOW/half-open sysRedis: the scan never settles (would park
     // ~11min in prod), so ONLY the withSysReadDeadline race can unblock the
     // caller. This PINS the wrap — remove `withSysReadDeadline(...)` and the
-    // bare `await sysRedis.hGetAll` hangs forever → this test TIMES OUT. A
-    // resolved-hGetAll mock would pass even without the wrap.
-    mockHGetAll.mockReturnValue(new Promise(() => undefined));
+    // bare `await sysRedis.hScanNoValues` hangs forever → this test TIMES OUT.
+    // A resolved mock would pass even without the wrap.
+    mockHScanNoValues.mockReturnValue(new Promise(() => undefined));
     mockWithSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
 
     await expect(refreshSession(123, { sendSignal: false })).resolves.toBeUndefined();
@@ -201,9 +208,8 @@ describe('updateSessionState token-map build is linear', () => {
    */
   it('builds the token map in linear time', async () => {
     const tokenCount = 10_000;
-    const hugeHash: Record<string, string> = {};
-    for (let i = 0; i < tokenCount; i++) hugeHash[`token-${i}`] = 'active';
-    mockHGetAll.mockResolvedValue(hugeHash);
+    const allFields = Array.from({ length: tokenCount }, (_, i) => `token-${i}`);
+    mockHScanNoValues.mockResolvedValue(onePage(allFields));
     mockHSetMultiWithTTL.mockResolvedValue(undefined);
 
     const startedAt = performance.now();
@@ -230,5 +236,48 @@ describe('updateSessionState fail-open wrapper (via invalidateSession)', () => {
 
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen.mock.calls[0][3]).toMatchObject({ type: 'invalid' });
+  });
+});
+
+// The read only ever needed field NAMES — the previous hGetAll pulled every value across the wire and threw
+// them away, in one command whose cost scaled with the hash. Measured on the shared store at 39-43ms for the
+// largest account, from three pods inside a minute, each blocking its single command thread.
+describe('updateSessionState reads field names incrementally', () => {
+  it('never asks for values', async () => {
+    await refreshSession(42, { sendSignal: false });
+
+    expect(mockHScanNoValues).toHaveBeenCalled();
+    // The mocked client surface has no hGetAll at all, so a regression to it throws rather than silently
+    // working — but assert the intent explicitly too.
+    const [key, cursor, options] = mockHScanNoValues.mock.calls[0];
+    expect(key).toBe('session:user-tokens:42');
+    expect(cursor).toBe('0');
+    expect(options.COUNT).toBeGreaterThan(0);
+  });
+
+  it('follows the cursor to the end and unions every page', async () => {
+    mockHScanNoValues
+      .mockResolvedValueOnce({ cursor: '17', fields: ['token-a', 'token-b'] })
+      .mockResolvedValueOnce({ cursor: '42', fields: ['token-c'] })
+      .mockResolvedValueOnce({ cursor: '0', fields: ['token-d'] });
+
+    await refreshSession(42, { sendSignal: false });
+
+    expect(mockHScanNoValues).toHaveBeenCalledTimes(3);
+    expect(mockHScanNoValues.mock.calls[1][1]).toBe('17'); // cursor threaded through
+    expect(mockHScanNoValues.mock.calls[2][1]).toBe('42');
+    const [, , fieldsObj] = mockHSetMultiWithTTL.mock.calls[0];
+    expect(Object.keys(fieldsObj)).toEqual(['token-a', 'token-b', 'token-c', 'token-d']);
+  });
+
+  // Each page is raced separately, so the fail-open bound applies per page rather than to the whole scan.
+  it('deadline-wraps every page, not just the first', async () => {
+    mockHScanNoValues
+      .mockResolvedValueOnce({ cursor: '9', fields: ['token-a'] })
+      .mockResolvedValueOnce({ cursor: '0', fields: ['token-b'] });
+
+    await refreshSession(42, { sendSignal: false });
+
+    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(2);
   });
 });

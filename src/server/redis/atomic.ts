@@ -71,10 +71,7 @@
 // has deeply parameterised generic types (modules/functions/scripts/resp/
 // type-mapping) that surface no useful constraint at the call boundary.
 type EvalCapableClient = {
-  eval: (
-    script: string,
-    options: { keys: string[]; arguments: string[] }
-  ) => Promise<unknown>;
+  eval: (script: string, options: { keys: string[]; arguments: string[] }) => Promise<unknown>;
 };
 
 /**
@@ -120,7 +117,11 @@ export async function hSetWithTTL(
   // simplicity — at runtime node-redis accepts Buffer here too.
   await client.eval(script, {
     keys: [key],
-    arguments: [field, (typeof value === 'number' ? String(value) : value) as unknown as string, String(ttlMs)],
+    arguments: [
+      field,
+      (typeof value === 'number' ? String(value) : value) as unknown as string,
+      String(ttlMs),
+    ],
   });
 }
 
@@ -153,15 +154,46 @@ export async function hSetMultiWithTTL(
   client: EvalCapableClient,
   key: string,
   fields: Record<string, string | number | Buffer>,
-  ttlMs: number
+  ttlMs: number,
+  onChunk?: (durationSeconds: number, fieldCount: number) => void
 ): Promise<void> {
   // See hSetWithTTL — HPEXPIRE with 0/negative ms removes the field.
   if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
     throw new Error(`hSetMultiWithTTL: ttlMs must be a positive finite number, got ${ttlMs}`);
   }
-  const entries = Object.entries(fields);
-  if (entries.length === 0) return;
+  const allEntries = Object.entries(fields);
+  if (allEntries.length === 0) return;
 
+  // Chunked, and the chunk size is a SAFETY property rather than a tuning knob — see HSET_MULTI_CHUNK.
+  // Sequential await, deliberately not Promise.all: the point is that the store interleaves other clients'
+  // commands between these scripts. Batching them back together reproduces the stall in a different shape.
+  for (let i = 0; i < allEntries.length; i += HSET_MULTI_CHUNK) {
+    const startedAt = Date.now();
+    await evalHSetMultiChunk(client, key, allEntries.slice(i, i + HSET_MULTI_CHUNK), ttlMs);
+    onChunk?.((Date.now() - startedAt) / 1000, Math.min(HSET_MULTI_CHUNK, allEntries.length - i));
+  }
+}
+
+/**
+ * Fields per EVAL. Load-bearing, not a tuning knob: Lua's `unpack` is bounded by LUAI_MAXCSTACK (8000), and
+ * the HSET call unpacks `1 + 2n` arguments, so this must stay well under n=4000. At 1000 the binding call
+ * carries 2001 arguments — a 4x headroom — and the script measures in the low single-digit milliseconds
+ * against a ~1 µs/field cost, comfortably below the store's 10 ms slowlog threshold.
+ *
+ * 🔴 Raising this is not a performance win. Beyond the unpack bound the script aborts BEFORE HSET runs, so
+ * nothing is written at all, and the caller's fail-open swallows it — a write that reports success and lands
+ * nothing. Below that bound but still large, a single script monopolises the store's one command thread for
+ * its whole duration, which stalls every app sharing it rather than just the caller. Lower it if it ever
+ * shows up in the slowlog; do not raise it.
+ */
+const HSET_MULTI_CHUNK = 1000;
+
+async function evalHSetMultiChunk(
+  client: EvalCapableClient,
+  key: string,
+  entries: Array<[string, string | number | Buffer]>,
+  ttlMs: number
+): Promise<void> {
   const fieldNames = entries.map(([f]) => f);
   // ARGV layout:
   //   [0]      = ttlMs
