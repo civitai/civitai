@@ -1,5 +1,5 @@
-import { env } from '~/env/server';
 import { pgDbRead } from '~/server/db/pgDb';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { REACTION_METRICS } from '~/server/services/metric-reconciliation.service';
 
 /**
@@ -9,10 +9,11 @@ import { REACTION_METRICS } from '~/server/services/metric-reconciliation.servic
  * construction and this one writes to ClickHouse. The detector must stay safe to
  * run anywhere; this must not.
  *
- * Gated on `METRIC_REACTION_REPAIR_ENABLED`, which defaults to false — merging this
- * cannot start mutating production. The gate is checked before any I/O, not just
- * before the insert: a detection means ClickHouse is already unhealthy, so running
- * the read load anyway would add load at the worst moment.
+ * Gated on the `metric-reaction-repair` Flipt flag, which is off unless someone
+ * turns it on (and reads false when Flipt is unreachable) — merging this cannot
+ * start mutating production. The gate is checked before any I/O, not just before
+ * the insert: a detection means ClickHouse is already unhealthy, so running the
+ * read load anyway would add load at the worst moment.
  *
  * That leaves no free preview, so callers wanting the diff without the writes must
  * ask for it explicitly with `dryRun` — which reads normally and never inserts. The
@@ -102,7 +103,8 @@ export async function repairReactionMetrics(
    * writes are disabled is the worst time to be adding load. `dryRun` is the
    * explicit operator opt-in for measuring the diff without arming writes.
    */
-  if (!env.METRIC_REACTION_REPAIR_ENABLED && !dryRun) return done({ skippedReason: 'disabled' });
+  if (!dryRun && !(await isFlipt(FLIPT_FEATURE_FLAGS.METRIC_REACTION_REPAIR)))
+    return done({ skippedReason: 'disabled' });
   if (!imageIds.length) return done({ skippedReason: 'no-changes' });
 
   const { clickhouse } = await import('~/server/clickhouse/client');

@@ -1,5 +1,5 @@
 import client from 'prom-client';
-import { env } from '~/env/server';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { PROM_PREFIX } from '~/server/prom/client';
 import { repairReactionMetrics } from '~/server/services/metric-reaction-repair.service';
@@ -113,8 +113,8 @@ const gauges = (global.metricReconciliationGauges ??= Object.fromEntries(
 ) as Record<GaugeName, client.Gauge<string>>);
 
 /**
- * Registering the hook does not arm writes — `METRIC_REACTION_REPAIR_ENABLED`
- * defaults to false and gates them.
+ * Registering the hook does not arm writes — the `metric-reaction-repair` Flipt
+ * flag gates them, and reads false until someone turns it on.
  *
  * While it is off, the nightly path still runs the diff as a dry run so there is
  * some production evidence of what enabling it would write. Without that, turning
@@ -126,7 +126,8 @@ const gauges = (global.metricReconciliationGauges ??= Object.fromEntries(
  * Once the flag is on, both paths repair for real.
  */
 setReactionRepairHook(async ({ imageIds, reason }) => {
-  const previewOnly = reason === 'nightly-exactness' && !env.METRIC_REACTION_REPAIR_ENABLED;
+  const repairEnabled = await isFlipt(FLIPT_FEATURE_FLAGS.METRIC_REACTION_REPAIR);
+  const previewOnly = reason === 'nightly-exactness' && !repairEnabled;
   const result = await repairReactionMetrics(imageIds, { dryRun: previewOnly });
   await logToAxiom({
     type: 'metric-reconciliation',
