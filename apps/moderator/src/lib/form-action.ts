@@ -13,11 +13,14 @@ export function writeEnhancer(opts: {
   /** Runs only on success — bump the refresh counter, close the form, clear local state. */
   onSuccess?: () => void;
   busy?: (value: boolean) => void;
+  /** Set ONLY when the page's own `load` data changes — a report queue, an identity row. Panels fed
+   *  by `/api/*` must leave this off, or every write re-runs the whole page load behind them. */
+  reload?: boolean;
 }): SubmitFunction {
   return () => {
     opts.busy?.(true);
     return async ({ result, update }) => {
-      await update({ reset: true, invalidateAll: false });
+      await update({ reset: true, invalidateAll: opts.reload ?? false });
       if (result.type === 'success') opts.onSuccess?.();
       opts.busy?.(false);
     };

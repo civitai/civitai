@@ -111,6 +111,46 @@ export async function getReports({
   return { items, totalItems, page, limit };
 }
 
+// Who has been working a queue (Retool's ReportHistory), so two moderators do not action the same
+// subject twice. Lives here rather than beside a page: it is keyed on nothing page-specific, and every
+// report surface eventually wants it.
+export type ReportHistoryRow = {
+  id: number;
+  statusSetAt: Date | null;
+  status: ReportStatus;
+  moderator: string | null;
+  entityId: number | null;
+};
+
+export async function getReportHistory(
+  type: ReportEntity,
+  limit = 100
+): Promise<{ items: ReportHistoryRow[]; truncated: boolean }> {
+  const join = reportEntityJoin[type];
+  const entityId = sql<number | null>`(select er.${sql.ref(join.fk)} from ${sql.table(
+    join.table
+  )} er where er."reportId" = "Report"."id" limit 1)`;
+
+  const rows = (await dbRead
+    .selectFrom('Report')
+    // LEFT, not INNER: a report resolved by an account since deleted still belongs in the history —
+    // dropping it makes the queue look less worked than it was.
+    .leftJoin('User', 'User.id', 'Report.statusSetBy')
+    .select(['Report.id', 'Report.statusSetAt', 'Report.status', 'User.username as moderator'])
+    .select(entityId.as('entityId'))
+    .where(
+      sql<boolean>`exists (select 1 from ${sql.table(
+        join.table
+      )} er where er."reportId" = "Report"."id")`
+    )
+    .where('Report.statusSetAt', 'is not', null)
+    .orderBy('Report.statusSetAt', 'desc')
+    .limit(limit + 1)
+    .execute()) as ReportHistoryRow[];
+
+  return { items: rows.slice(0, limit), truncated: rows.length > limit };
+}
+
 // Counted with the same filters the report pages land on, so a sub-nav badge matches the rows you get when
 // you click it.
 export async function getReportCounts(): Promise<Record<string, number>> {
@@ -125,7 +165,10 @@ export async function getReportCounts(): Promise<Record<string, number>> {
       from ${sql.table(join.table)} er
       join open_reports o on o."id" = er."reportId"`
   );
-  const { rows } = await sql<{ type: string; count: number }>`with open_reports as materialized (${open})
+  const { rows } = await sql<{
+    type: string;
+    count: number;
+  }>`with open_reports as materialized (${open})
     ${sql.join(branches, sql` union all `)}`.execute(dbRead);
 
   return Object.fromEntries(
@@ -144,6 +187,17 @@ export async function setReportStatus({
   userId: number;
   ip?: string;
 }) {
+  // A stale tab or a forged id must not report success. The UPDATE is deliberately a no-op when the
+  // report is ALREADY in the requested status (that guard protects the reward path), so "nothing
+  // changed" and "no such report" have to be told apart before answering — otherwise a moderator gets
+  // a green result and a ModActivity `review` row for a report they never touched.
+  const exists = await dbWrite
+    .selectFrom('Report')
+    .select('id')
+    .where('id', '=', id)
+    .executeTakeFirst();
+  if (!exists) return { ok: false as const, error: 'That report no longer exists. Reload.' };
+
   const updated = await dbWrite
     .updateTable('Report')
     .set({
@@ -169,6 +223,8 @@ export async function setReportStatus({
     const reporterIds = [updated.userId, ...(updated.alsoReportedBy ?? [])];
     await rewardReportReporters({ reportId: id, reporterIds, ip });
   }
+
+  return { ok: true as const, changed: !!updated };
 }
 
 export async function updateReportNotes({

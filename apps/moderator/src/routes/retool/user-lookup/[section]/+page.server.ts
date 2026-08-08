@@ -2,6 +2,7 @@ import { error, fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess } from '$lib/server/access';
+import { parseForm, userIdSchema } from '$lib/server/query';
 import { isSection } from '../sections';
 import {
   addUserNote,
@@ -56,14 +57,7 @@ const buzzFail = (message: string) => fail(400, { scope: 'buzz' as const, error:
 const shopFail = (message: string) => fail(400, { scope: 'shop' as const, error: message });
 const notifyFail = (message: string) => fail(400, { scope: 'notify' as const, error: message });
 
-const userIdSchema = z.object({ userId: z.coerce.number().int().positive() });
 const noteSchema = z.object({ notes: z.string().trim().min(1).max(NOTE_MAX) });
-
-/** zod over FormData, with the first message rather than the full issue tree. */
-function parseForm<T extends z.ZodType>(schema: T, form: FormData): z.infer<T> | string {
-  const parsed = schema.safeParse(Object.fromEntries(form));
-  return parsed.success ? parsed.data : (parsed.error.issues[0]?.message ?? 'Invalid input.');
-}
 
 export const actions: Actions = {
   addNote: async ({ request, locals }) => {

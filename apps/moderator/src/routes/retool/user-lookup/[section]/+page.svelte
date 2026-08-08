@@ -2,7 +2,7 @@
   import { browser } from '$app/environment';
   import type { PageData } from './$types';
   import type { FormResult } from '../form-result';
-  import { writeEnhancer } from '../form-action';
+  import { writeEnhancer } from '$lib/form-action';
   import { fetchAccount } from '../user-account';
   import { fetchSignals } from '../signals';
   import AccountActionsPanel from '../AccountActionsPanel.svelte';

@@ -11,14 +11,18 @@ export const SYSTEM_USER_ID = -1;
  *  rather than missing, so a pasted snowflake or a double-pasted id 500s the page instead of finding
  *  nothing. Every id that reaches a query is bounded by this. */
 export const MAX_INT4 = 2_147_483_647;
-export const isInt4Id = (value: number) => Number.isInteger(value) && value > 0 && value <= MAX_INT4;
+export const isInt4Id = (value: number) =>
+  Number.isInteger(value) && value > 0 && value <= MAX_INT4;
 
 export type UserSearchResult = { id: number; username: string | null; image: string | null };
 
 export type UserSummary = {
   username: string | null;
   bannedAt: Date | null;
+  /** The BOOLEAN, not `mutedAt`. A scheduled-but-inactive timed mute sets the timestamp without the
+   *  flag, so testing the timestamp badges accounts as muted that every other surface shows as not. */
   muted: boolean | null;
+  deletedAt: Date | null;
 };
 
 // Rows from ClickHouse and from aggregate queries carry user ids and no names; four places were each
@@ -30,11 +34,14 @@ export async function usersByIds(ids: number[]): Promise<Map<number, UserSummary
 
   const rows = await dbRead
     .selectFrom('User')
-    .select(['id', 'username', 'bannedAt', 'muted'])
+    .select(['id', 'username', 'bannedAt', 'muted', 'deletedAt'])
     .where('id', 'in', unique)
     .execute();
   return new Map(
-    rows.map((r) => [r.id, { username: r.username, bannedAt: r.bannedAt, muted: r.muted }])
+    rows.map((r) => [
+      r.id,
+      { username: r.username, bannedAt: r.bannedAt, muted: r.muted, deletedAt: r.deletedAt },
+    ])
   );
 }
 

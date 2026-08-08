@@ -99,6 +99,7 @@ export const NAVIGATION: NavLink[] = [
       { path: '/retool/user-lookup', label: 'User Lookup' },
       { path: '/retool/image-lookup', label: 'Image Lookup' },
       { path: '/retool/article-lookup', label: 'Article Lookup' },
+      { path: '/retool/user-reports', label: 'User Reports' },
       { path: '/retool/chat-audit', label: 'Chat Audit' },
     ],
   },
