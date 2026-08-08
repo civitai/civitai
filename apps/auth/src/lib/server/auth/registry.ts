@@ -5,6 +5,7 @@ import {
 } from '@civitai/auth';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { getSysRedis } from '../redis';
+import { logToAxiom } from '../axiom';
 
 // Cross-app session revocation. The redis CLIENT is built from @civitai/redis; the KEY STRINGS
 // come from @civitai/redis's registry — so a logout/ban here is seen by every app on the same
@@ -39,6 +40,17 @@ function registry(): SessionRegistry {
       tokenState: REDIS_SYS_KEYS.SESSION.TOKEN_STATE,
       all: REDIS_SYS_KEYS.SESSION.ALL,
       userTokens: REDIS_KEYS.SESSION.USER_TOKENS,
+    },
+    // An eviction means an account crossed the per-user session ceiling — the signal that used to exist
+    // only as an api-primary event-loop wedge. Log it so the ceiling is observable without one.
+    onEvict: ({ userId, evicted, total }) => {
+      logToAxiom({
+        name: 'session-token-ceiling-evict',
+        type: 'info',
+        userId,
+        evicted,
+        total,
+      }).catch(() => undefined);
     },
   }));
 }

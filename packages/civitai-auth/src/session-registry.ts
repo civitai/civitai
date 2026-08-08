@@ -16,6 +16,8 @@ export interface SessionRegistryRedis {
   /** Required only for invalidateUserSessions (reads a user's tracked token ids). */
   hGetAll?(key: string): Promise<Record<string, unknown>>;
   hExpire?(key: string, field: string, seconds: number): Promise<unknown>;
+  /** Required only for the per-user token ceiling; without it trackToken never evicts. */
+  hLen?(key: string): Promise<number>;
   get(key: string): Promise<string | null | undefined>;
   set(key: string, value: string, opts?: { EX?: number }): Promise<unknown>;
 }
@@ -40,6 +42,12 @@ export interface SessionRegistryConfig {
   onInvalidate?: (info: InvalidateInfo) => void | Promise<void>;
   /** Clock injection (tests). */
   now?: () => number;
+  /** Max tracked sessions per user before the oldest are evicted-and-revoked (default 500). */
+  maxTokensPerUser?: number;
+  /** Cap on evictions in a single trackToken call, so draining a huge legacy hash can't burst (default 50). */
+  maxEvictionsPerTrack?: number;
+  /** Called when tokens are evicted for exceeding the ceiling — wire to a metric. */
+  onEvict?: (info: { userId: number; evicted: number; total: number }) => void;
 }
 
 export interface SessionRegistry {
@@ -58,10 +66,19 @@ export interface SessionRegistry {
 }
 
 const DEFAULT_TTL = 30 * 24 * 60 * 60;
+// 500 is ~87x the observed mean tracked-token count and above 99.9% of accounts, while leaving an 8x margin
+// under the ~4000 field count at which the multi-field token-state write exceeds Lua's unpack limit and
+// silently lands nothing (see src/server/redis/atomic.ts).
+const DEFAULT_MAX_TOKENS_PER_USER = 500;
+const DEFAULT_MAX_EVICTIONS_PER_TRACK = 50;
+// Concurrency bound for the ban fan-out (individual commands, not a Lua batch).
+const INVALIDATE_BATCH = 100;
 
 export function createSessionRegistry(config: SessionRegistryConfig): SessionRegistry {
   const { keys } = config;
   const ttl = config.ttlSeconds ?? DEFAULT_TTL;
+  const maxTokens = config.maxTokensPerUser ?? DEFAULT_MAX_TOKENS_PER_USER;
+  const maxEvictions = config.maxEvictionsPerTrack ?? DEFAULT_MAX_EVICTIONS_PER_TRACK;
   const now = config.now ?? (() => Date.now());
   const { redis } = config;
   const userTokensKey = (userId: number) => `${keys.userTokens}:${userId}`;
@@ -72,8 +89,43 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
   }
 
   async function trackToken(tokenId: string, userId: number) {
+    await evictOverCeiling(userId);
     await redis.hSet(userTokensKey(userId), tokenId, now());
     if (redis.hExpire) await redis.hExpire(userTokensKey(userId), tokenId, ttl);
+  }
+
+  /**
+   * Keep a user's tracked-token hash bounded, by EVICTING AND REVOKING the oldest entries.
+   *
+   * Refusing to track would be the simpler shape and is wrong: trackToken runs AFTER the token is signed
+   * and returned, so an untracked session is one no ban can ever find. Evicting alone has a smaller version
+   * of the same flaw — an evicted jti stays validly signed for the rest of `ttl` — so each eviction writes
+   * `invalid` to the token-state hash that isRevoked consults. The evicted session dies rather than escaping.
+   *
+   * Bounded on both sides: it only reads the hash once it is already over the ceiling (so the ordinary case
+   * costs one HLEN), and it evicts at most `maxEvictionsPerTrack` per call, so draining a hash that grew to
+   * tens of thousands under the old unbounded behaviour happens over many logins instead of in one burst.
+   */
+  async function evictOverCeiling(userId: number) {
+    if (!redis.hLen || !redis.hGetAll || maxTokens <= 0) return;
+    const key = userTokensKey(userId);
+    const total = await redis.hLen(key);
+    if (total < maxTokens) return;
+
+    const entries = Object.entries(await redis.hGetAll(key));
+    // Values are the creation/last-touch epoch-ms trackToken writes, so ascending = oldest first. A
+    // non-numeric value sorts as 0, i.e. evicted first — the safe direction for an entry we can't date.
+    entries.sort((a, b) => (Number(a[1]) || 0) - (Number(b[1]) || 0));
+    const evicting = entries
+      .slice(0, Math.min(total - maxTokens + 1, maxEvictions))
+      .map(([field]) => field);
+    if (!evicting.length) return;
+
+    for (const evictedId of evicting) {
+      await setState(evictedId, 'invalid');
+      await redis.hDel(key, evictedId);
+    }
+    config.onEvict?.({ userId, evicted: evicting.length, total });
   }
 
   async function invalidateToken(tokenId: string, userId?: number) {
@@ -85,8 +137,22 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
   async function invalidateUserSessions(userId: number) {
     if (!redis.hGetAll)
       throw new Error('[@civitai/auth] invalidateUserSessions requires redis.hGetAll');
-    const tokenIds = Object.keys(await redis.hGetAll(userTokensKey(userId)));
-    await Promise.all(tokenIds.map((t) => setState(t, 'invalid')));
+    const key = userTokensKey(userId);
+    const tokenIds = Object.keys(await redis.hGetAll(key));
+    // Batched rather than one Promise.all over every token: this issues individual commands (no Lua, so no
+    // unpack ceiling), and an unbounded fan-out on an account with tens of thousands of tracked tokens would
+    // put that many concurrent commands on the shared auth store in one go.
+    for (let i = 0; i < tokenIds.length; i += INVALIDATE_BATCH) {
+      await Promise.all(
+        tokenIds.slice(i, i + INVALIDATE_BATCH).map(async (tokenId) => {
+          // Order matters: the revocation marker must land BEFORE the tracking entry goes. A token dropped
+          // from the hash without an `invalid` marker is one no later ban can find — still validly signed for
+          // the rest of its TTL, and now invisible. Awaiting setState first means a throw skips the hDel.
+          await setState(tokenId, 'invalid');
+          await redis.hDel(key, tokenId);
+        })
+      );
+    }
     await config.onInvalidate?.({ scope: 'user', userId });
   }
 
