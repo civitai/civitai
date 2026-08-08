@@ -904,8 +904,8 @@ describe('prepaid-membership-jobs', () => {
 
       await cancelExpiredPrepaidMemberships.run().result;
 
-      expect(mockRefreshSession).toHaveBeenCalledWith(1);
-      expect(mockRefreshSession).toHaveBeenCalledWith(2);
+      expect(mockRefreshSession).toHaveBeenCalledWith(1, { caller: 'job' });
+      expect(mockRefreshSession).toHaveBeenCalledWith(2, { caller: 'job' });
       expect(mockRefreshSession).toHaveBeenCalledTimes(2);
     });
 

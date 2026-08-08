@@ -140,7 +140,7 @@ export const userRestrictionRouter = router({
           message: (error as Error).message,
         })
       );
-      await refreshSession(restriction.userId);
+      await refreshSession(restriction.userId, { caller: 'moderation' });
     } else if (status === UserRestrictionStatus.Overturned) {
       // Unmute the user and reset their violation count
       await updateUserById({
@@ -157,7 +157,7 @@ export const userRestrictionRouter = router({
         })
       );
       await resetProhibitedRequestCount(restriction.userId);
-      await refreshSession(restriction.userId);
+      await refreshSession(restriction.userId, { caller: 'moderation' });
     }
 
     // Send notification to the user

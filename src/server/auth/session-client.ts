@@ -3,7 +3,8 @@ import { createSessionClient, createSessionTokenClient, sessionCookieName } from
 import { setSessionCookie, clearLegacyCookies, type CookieWritable } from './civ-cookie';
 import { isRevoked } from './session-verifier';
 import { decodeTokenClaim } from './token-claims';
-import { observeSessionLeg } from './session-metrics';
+import { observeSessionLeg, observeLegacyUpgrade } from './session-metrics';
+import { logToAxiom } from '~/server/logging/client';
 
 // The main app's handle to the centralized auth hub (thin-session model — docs/main-app-auth-cutover.md).
 // Validation routes through this client (getHubSession) instead of next-auth's jwt()/session(); refresh +
@@ -16,13 +17,15 @@ import { observeSessionLeg } from './session-metrics';
 // them to prom-client here.
 export const sessionClient = createSessionClient({
   isRevoked,
-  onIdentityLeg: (outcome, durationSeconds) => observeSessionLeg('identity', outcome, durationSeconds),
+  onIdentityLeg: (outcome, durationSeconds) =>
+    observeSessionLeg('identity', outcome, durationSeconds),
   onJwksLeg: (outcome, durationSeconds) => observeSessionLeg('jwks', outcome, durationSeconds),
   // The API-key/OAuth by-id read + the hub write paths hairpin too (bearer-token.ts, App Blocks, ban/logout) —
   // now internally routed + bounded by hubFetch; instrument them under their own leg labels.
   onIdentityByIdLeg: (outcome, durationSeconds) =>
     observeSessionLeg('identity-by-id', outcome, durationSeconds),
-  onHubWriteLeg: (outcome, durationSeconds) => observeSessionLeg('hub-write', outcome, durationSeconds),
+  onHubWriteLeg: (outcome, durationSeconds) =>
+    observeSessionLeg('hub-write', outcome, durationSeconds),
 });
 // Session-token lifecycle (rolling refresh / revoke) — the hub contract lives in the package, not inline here.
 const sessionTokenClient = createSessionTokenClient();
@@ -106,7 +109,18 @@ export async function maybeUpgradeLegacySession(
     // and so never appeared in the account switcher.
     const result = await sessionTokenClient.exchangeLegacy(legacyToken, { deviceCookie });
     const fresh = result?.token;
-    if (!fresh) return;
+    if (!fresh) {
+      observeLegacyUpgrade('no-token');
+      return;
+    }
+    // Each upgrade mints a NEW jti. A client that doesn't persist the cookie we set below re-enters this path
+    // on its very next request, so a sustained rate here is the session-hash growth driver — and nothing in
+    // redis can measure it (both the tracked value and its TTL are last-touch, not creation).
+    observeLegacyUpgrade('minted');
+    logToAxiom(
+      { name: 'legacy-session-upgraded', type: 'info', userId: decodeTokenClaim(fresh, 'sub') },
+      'auth'
+    ).catch(() => undefined);
     // Set the civ-token + the device cookie (the hub's reused-or-minted device id) in lockstep — this also
     // clears the legacy SESSION cookie.
     setSessionCookie(res, fresh, { host, deviceCookie: result?.deviceId });
@@ -122,6 +136,7 @@ export async function maybeUpgradeLegacySession(
     all.push(...clearLegacyCookies(host));
     res.setHeader('Set-Cookie', all);
   } catch {
+    observeLegacyUpgrade('failed');
     // best-effort — the legacy session is still valid; the user is unaffected and the next request retries
   }
 }

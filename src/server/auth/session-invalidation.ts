@@ -6,12 +6,20 @@ import { createLogger } from '~/utils/logging';
 import { signalClient } from '~/utils/signal-client';
 import { clearSessionCache } from './session-cache';
 import { sessionClient } from './session-client';
+import { observeSessionStateUpdate, type SessionStateCaller } from './session-metrics';
 
 const DEFAULT_EXPIRATION = 60 * 60 * 24 * 30; // 30 days
 const log = createLogger('session-invalidation', 'green');
 
-async function updateSessionState(userId: number, type: 'refresh' | 'invalid') {
+type RefreshSessionOptions = { sendSignal?: boolean; caller?: SessionStateCaller };
+
+async function updateSessionState(
+  userId: number,
+  type: 'refresh' | 'invalid',
+  caller: SessionStateCaller
+) {
   const key = `${REDIS_KEYS.SESSION.USER_TOKENS}:${userId}`;
+  const startedAt = Date.now();
 
   // Get all tokens from hash (expired fields are automatically removed by Redis)
   let tokenHash: Record<string, string> = {};
@@ -68,6 +76,7 @@ async function updateSessionState(userId: number, type: 'refresh' | 'invalid') {
       });
     }
   }
+  observeSessionStateUpdate(caller, type, userTokens.length, (Date.now() - startedAt) / 1000);
   return userTokens;
 }
 
@@ -84,8 +93,11 @@ async function sendSessionSignal(userId: number, type: 'refresh' | 'invalid') {
   }
 }
 
-export async function refreshSession(userId: number, { sendSignal = true } = {}) {
-  const userTokens = await updateSessionState(userId, 'refresh');
+export async function refreshSession(
+  userId: number,
+  { sendSignal = true, caller = 'unspecified' }: RefreshSessionOptions = {}
+) {
+  const userTokens = await updateSessionState(userId, 'refresh', caller);
   if (sendSignal) {
     await sendSessionSignal(userId, 'refresh');
   }
@@ -115,8 +127,11 @@ export async function refreshSession(userId: number, { sendSignal = true } = {})
  * not have prevented the session from staying alive; it would only have
  * 500'd the user-facing request that triggered the invalidation.
  */
-export async function invalidateSession(userId: number) {
-  const userTokens = await updateSessionState(userId, 'invalid');
+export async function invalidateSession(
+  userId: number,
+  caller: SessionStateCaller = 'unspecified'
+) {
+  const userTokens = await updateSessionState(userId, 'invalid', caller);
   await sendSessionSignal(userId, 'invalid');
 
   log(`Invalidated session for user ${userId} and ${userTokens.length} token(s)`);

@@ -36,7 +36,7 @@ export default WebhookEndpoint(async function (req: AxiomAPIRequest, res: NextAp
 
   for (const userId of userIds) {
     try {
-      await refreshSession(userId);
+      await refreshSession(userId, { caller: 'admin' });
       refreshed.push(userId);
     } catch (error) {
       failed.push({ userId, error: error instanceof Error ? error.message : 'unknown' });
