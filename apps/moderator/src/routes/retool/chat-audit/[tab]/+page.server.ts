@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import { MAX_INT4 } from '$lib/server/users.service';
-import { ReportEntity } from '$lib/reports';
+import { DEFAULT_REPORT_STATUSES, ReportEntity, reportReasons } from '$lib/reports';
 import { getReports } from '$lib/server/reports.service';
 import {
   chatExists,
@@ -22,6 +22,11 @@ import { TABS } from '../tabs';
 // `chat` is bounded to int4: Chat.id is a Postgres integer, and a larger value ERRORS the comparison
 // rather than missing, which took the whole page down with a 500.
 const REPORTS_PER_PAGE = 20;
+
+// Retool's ChatReport carried `reason != 'Automated'`: system-generated reports drown the human queue.
+// Without the statuses filter this queue counted every chat report in history while the panel called
+// them open.
+const QUEUE_REASONS = reportReasons.filter((r) => r !== 'Automated');
 
 const querySchema = z.object({
   q: z.string().trim().catch(''),
@@ -45,6 +50,8 @@ export const load: PageServerLoad = async ({ url, params }) => {
     // previously disagreed, so a report actioned on /reports stayed in this queue forever.
     const reports = await getReports({
       type: ReportEntity.Chat,
+      statuses: DEFAULT_REPORT_STATUSES,
+      reasons: QUEUE_REASONS,
       page: rpage,
       limit: REPORTS_PER_PAGE,
     });
@@ -68,7 +75,9 @@ export const load: PageServerLoad = async ({ url, params }) => {
     chat ? getChatMembers(chat) : null,
     // Retool's UserDetails: what the account actually SAID, across every chat. The chat list answers
     // who they talked to; this answers what they said, which is the question when the term was a name.
-    q && classifySearch(q.trim()) === 'user' ? getUserMessages(q.trim()) : null,
+    // `getUserMessages` returns null for a non-existent username, which is the same fall-through
+    // `searchChats` applies — so a spam term that looks like a username still lands on content search.
+    q && classifySearch(q.trim()) !== 'chat' ? getUserMessages(q.trim()) : null,
   ]);
 
   return {

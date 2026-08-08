@@ -86,8 +86,16 @@ export async function searchChats(rawTerm: string): Promise<ChatSearch | null> {
   const term = rawTerm.trim();
   if (!term) return null;
 
-  const mode = classifySearch(term);
-  const { ids, truncated } = await findChatIds(mode, term);
+  let mode = classifySearch(term);
+  let { ids, truncated } = await findChatIds(mode, term);
+
+  // `discord.gg`, `telegram`, `onlyfans` all satisfy USERNAME_SHAPE, so the commonest spam strings
+  // classified as usernames, matched no account, and reported "No chats matched" — while the same term
+  // matches thousands of messages. A username search that finds nothing falls through to content.
+  if (mode === 'user' && !ids.length && !term.startsWith('@') && !(await usernameExists(term))) {
+    mode = 'content';
+    ({ ids, truncated } = await findChatIds(mode, term));
+  }
 
   return {
     mode,

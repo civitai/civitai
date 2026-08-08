@@ -81,8 +81,9 @@
     </p>
   {:else}
     <p class="mb-3 text-xs text-dark-2">
-      Every action is recorded against your account. Banning also purges media and models and notifies
-      the user.
+      Every action is recorded against your account. Banning unpublishes their models and notifies
+      them. It does <strong>not</strong> block their images unless the reason is Sexual Minor — remove
+      those separately in Bulk Image Manager.
     </p>
 
     <div class="flex flex-wrap gap-2">
@@ -178,8 +179,8 @@
         >
           <p class="mb-2 text-sm text-white">
             {#if confirming === 'ban'}
-              Ban <strong>{identity.username ?? identity.id}</strong>? This removes their media and
-              models and notifies them.
+              Ban <strong>{identity.username ?? identity.id}</strong>? Unpublishes their models and
+              notifies them. Images stay up unless the reason is Sexual Minor.
             {:else}
               Unban <strong>{identity.username ?? identity.id}</strong>?
             {/if}
