@@ -88,6 +88,41 @@ describe('scoped addon entries', () => {
       expect(input.excludedTagIds ?? []).not.toContain(SCOPED_TAG);
       expect(input.excludedTagIds).toContain(GLOBAL_TAG);
     });
+
+    it('excludes the scoped tag on a new-creators MODEL feed', async () => {
+      const input: { browsingLevel: number; newCreators?: boolean; excludedTagIds?: number[] } = {
+        browsingLevel: publicBrowsingLevelsFlag,
+        newCreators: true,
+      };
+      await enforceBlockedBrowsingTagsForModels(input, { id: 1 });
+      expect(input.excludedTagIds).toContain(SCOPED_TAG);
+    });
+
+    it('leaves the scoped tag alone on an ordinary model feed', async () => {
+      const input: { browsingLevel: number; newCreators?: boolean; excludedTagIds?: number[] } = {
+        browsingLevel: publicBrowsingLevelsFlag,
+      };
+      await enforceBlockedBrowsingTagsForModels(input, { id: 1 });
+      expect(input.excludedTagIds ?? []).not.toContain(SCOPED_TAG);
+    });
+  });
+
+  it('drops an entry whose scope is not a known surface, and says so', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const typo = [
+      { ...addons[1], scope: 'newCreator' as BrowsingSettingsAddon['scope'] },
+    ] as BrowsingSettingsAddon[];
+
+    const resolved = resolveBrowsingSettingsAddons(typo, publicBrowsingLevelsFlag, {
+      scope: 'newCreators',
+    });
+
+    expect(resolved.excludedTagIds).not.toContain(SCOPED_TAG);
+    expect(consoleError).toHaveBeenCalledWith(
+      'Unrecognized browsing settings addon scope:',
+      'newCreator'
+    );
+    consoleError.mockRestore();
   });
 });
 

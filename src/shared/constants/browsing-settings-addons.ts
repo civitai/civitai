@@ -2,10 +2,15 @@ import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 
 /**
- * Surfaces an addon entry can be limited to. An entry with no `scopes` applies
+ * Surfaces an addon entry can be limited to. An entry with no `scope` applies
  * everywhere, which is what every entry did before scopes existed.
+ *
+ * Kept as a runtime list, not just a type: the live entries are hand-edited JSON
+ * in redis and parsed without a schema, so the type checks nothing at that
+ * boundary.
  */
-export type BrowsingAddonScope = 'newCreators';
+export const BROWSING_ADDON_SCOPES = ['newCreators'] as const;
+export type BrowsingAddonScope = (typeof BROWSING_ADDON_SCOPES)[number];
 
 export type BrowsingSettingsAddon = {
   type: 'all' | 'some' | 'none';
@@ -61,7 +66,16 @@ export function resolveBrowsingSettingsAddons(
 
   return data.reduce((acc, elem) => {
     try {
-      if (elem.scope && elem.scope !== opts?.scope) return acc;
+      if (elem.scope) {
+        // A misspelled scope matches no surface, so the entry silently stops
+        // applying anywhere. Say so — nothing validates the redis payload, and
+        // moderators resolve to no addons at all, so nobody can spot it by eye.
+        if (!BROWSING_ADDON_SCOPES.includes(elem.scope)) {
+          console.error('Unrecognized browsing settings addon scope:', elem.scope);
+          return acc;
+        }
+        if (elem.scope !== opts?.scope) return acc;
+      }
 
       const intersection = Flags.intersection(
         browsingLevel,

@@ -2,10 +2,7 @@ import {
   onlySelectableLevels,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import type {
-  BrowsingAddonScope,
-  ResolvedBrowsingSettingsAddons,
-} from '~/shared/constants/browsing-settings-addons';
+import type { ResolvedBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { isBlockedTagName, stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
@@ -17,8 +14,6 @@ type AddonTarget = {
   userId?: number;
   username?: string;
   browsingLevel?: number;
-  // Read here rather than taken from callers so a new query path can't skip a
-  // scoped addon rule: every path already routes through this enforcement.
   newCreators?: boolean;
 };
 
@@ -63,11 +58,7 @@ function applyAddonExclusions(
   }
 }
 
-async function loadBlockedBrowsingContext(
-  browsingLevel: number | undefined,
-  viewer: Viewer,
-  scope: BrowsingAddonScope | undefined
-) {
+async function loadBlockedBrowsingContext(input: AddonTarget, viewer: Viewer) {
   const [blocked, addons] = await Promise.all([
     getBlockedBrowsingTags(),
     getBrowsingSettingAddons(),
@@ -76,10 +67,11 @@ async function loadBlockedBrowsingContext(
   // entry and silently disable every exclusion. Same guard for a Blocked-only
   // level collapsing to 0 after onlySelectableLevels.
   const level =
-    onlySelectableLevels(browsingLevel || publicBrowsingLevelsFlag) || publicBrowsingLevelsFlag;
+    onlySelectableLevels(input.browsingLevel || publicBrowsingLevelsFlag) ||
+    publicBrowsingLevelsFlag;
   const resolved = resolveBrowsingSettingsAddons(addons, level, {
     isModerator: viewer.isModerator,
-    scope,
+    scope: input.newCreators ? 'newCreators' : undefined,
   });
   return { blocked, resolved };
 }
@@ -98,11 +90,7 @@ export async function enforceBlockedBrowsingTags(
   input: AddonTarget & { tags?: number[] },
   viewer: Viewer
 ): Promise<{ emptyResult: boolean }> {
-  const { blocked, resolved } = await loadBlockedBrowsingContext(
-    input.browsingLevel,
-    viewer,
-    input.newCreators ? 'newCreators' : undefined
-  );
+  const { blocked, resolved } = await loadBlockedBrowsingContext(input, viewer);
 
   const strip = stripBlockedTagIds(
     input.tags,
@@ -125,11 +113,7 @@ export async function enforceBlockedBrowsingTagsForModels(
   viewer: Viewer,
   opts?: EnforcementOptions
 ): Promise<{ emptyResult: boolean }> {
-  const { blocked, resolved } = await loadBlockedBrowsingContext(
-    input.browsingLevel,
-    viewer,
-    input.newCreators ? 'newCreators' : undefined
-  );
+  const { blocked, resolved } = await loadBlockedBrowsingContext(input, viewer);
 
   const requestedTagName = input.tagname ?? input.tag;
   if (
