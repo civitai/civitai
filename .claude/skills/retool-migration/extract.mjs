@@ -91,12 +91,34 @@ for (const p of plugins) {
       .flat()
       .filter((v) => typeof v === 'string' && v.trim());
 
+    // Nesting lives in position2, NOT in the empty top-level `container` field: `container` there is
+    // the parent widget's id and `subcontainer` is which tab PANE of it this widget sits in. A tab bar
+    // (TabsWidget2) then joins the two: `_values[i]` is the label of the pane `_ids[i]` inside
+    // `targetContainerId`. Without this the inventory records that seven tab groups existed and
+    // nothing about what was in them.
+    const pos = conv(p.position2)?.v ?? {};
+
     widgets.push({
       ...base,
       type: p.type,
       label: tpl.label ?? tpl.text ?? tpl.title ?? null,
       options: [...new Set(options)],
       dataBindings: [...new Set([...bindings(tpl.data), ...bindings(tpl.value)])],
+      parent: pos.container || null,
+      pane: pos.subcontainer || null,
+      rowGroup: pos.rowGroup || null,
+      row: typeof pos.row === 'number' ? pos.row : 0,
+      col: typeof pos.col === 'number' ? pos.col : 0,
+      hidden: tpl.hidden === true || undefined,
+      // Panes are defined on the CONTAINER (`_ids` ↔ `position2.subcontainer`), not on the tab bar
+      // that drives it — a TabsWidget2's own `_values` are usually still "Tab 1/2/3". `_hiddenByIndex`
+      // is the per-pane visibility condition, and it is where role gates hide: one pane here is
+      // `{{!(current_user.groups.some(i => i.name === "Senior Mod"))}}`, which appears in no query.
+      targetContainerId: tpl.targetContainerId ?? null,
+      paneIds: Array.isArray(tpl._ids) ? tpl._ids : null,
+      paneKeys: Array.isArray(tpl._viewKeys) ? tpl._viewKeys : null,
+      paneLabels: Array.isArray(tpl._labels) ? tpl._labels : null,
+      paneHidden: Array.isArray(tpl._hiddenByIndex) ? tpl._hiddenByIndex : null,
     });
   }
 }
@@ -114,7 +136,7 @@ console.log(`resources: ${[...new Set(queries.map((q) => q.resource).filter(Bool
 if (!queriesOnly) {
   const bySub = {};
   for (const w of widgets) bySub[w.subtype] = (bySub[w.subtype] ?? 0) + 1;
-  console.log(`\n## component types (layout is NOT ported — this is only a scale signal)`);
+  console.log(`\n## component types (scale signal; the structure itself is below)`);
   Object.entries(bySub)
     .sort((a, b) => b[1] - a[1])
     .forEach(([k, c]) => console.log(`  ${k}: ${c}`));
@@ -133,6 +155,79 @@ if (!queriesOnly) {
       console.log(`\n### ${w.id}   [${w.subtype}]`);
       for (const o of w.options) console.log(`    - ${o}`);
     }
+  }
+
+  // LAYOUT. Moderators navigate by shape, not by query: a section that was three tabs in Retool and is
+  // one scrolling page here reads as "the new tool lost things", even when every query is ported.
+  // Emitted so a port can keep the same shape — tab groups as sub-pages, modals as dialogs.
+  const byParent = new Map();
+  for (const w of widgets) {
+    if (!w.parent) continue;
+    if (!byParent.has(w.parent)) byParent.set(w.parent, []);
+    byParent.get(w.parent).push(w);
+  }
+  const inReadingOrder = (a, b) => a.row - b.row || a.col - b.col;
+  const describe = (w) =>
+    `${w.id} [${w.subtype}]${w.label ? ` "${String(w.label).replace(/\s+/g, ' ').slice(0, 60)}"` : ''}${w.hidden ? ' (hidden by default)' : ''}`;
+
+  const driverOf = new Map(
+    widgets.filter((w) => w.targetContainerId).map((w) => [w.targetContainerId, w.id])
+  );
+  const modals = widgets.filter((w) => /Modal/i.test(w.subtype));
+  // Containers only: a SelectWidget2's `_ids` are its dropdown OPTIONS, not panes, and they are
+  // already reported under "tabs & option sets".
+  const paneOwners = widgets.filter((w) => w.paneIds?.length && /Container|Frame/i.test(w.subtype));
+
+  console.log(`\n## layout — panes, containers and modals`);
+  console.log(`  Retool's shape. A container with several PANES is a tab group: port it as SUB-PAGES,`);
+  console.log(`  one route per pane, not as one long page — a moderator who had tabs and now scrolls`);
+  console.log(`  reports the tool as broken. A modal is a dialog, not an inlined panel.`);
+  console.log(`  "only visible when" is a role/state gate that appears in NO query — port it too.`);
+
+  const claimed = new Set();
+  for (const c of paneOwners) {
+    const kids = byParent.get(c.id) ?? [];
+    const multi = c.paneIds.length > 1;
+    if (!kids.length && !multi) continue;
+    console.log(
+      `\n### ${c.id}   [${c.subtype}] — ${c.paneIds.length} pane(s)` +
+        `${driverOf.get(c.id) ? `, tab bar ${driverOf.get(c.id)}` : ''}` +
+        `${c.parent ? `  (inside ${c.parent})` : ''}`
+    );
+    c.paneIds.forEach((paneId, i) => {
+      const name = c.paneLabels?.[i] || c.paneKeys?.[i] || `(pane ${i + 1})`;
+      const gate = c.paneHidden?.[i];
+      const members = kids.filter((w) => w.pane === paneId).sort(inReadingOrder);
+      members.forEach((m) => claimed.add(m.id));
+      const when =
+        typeof gate === 'string' && gate.trim() ? `   — only visible when NOT: ${gate.trim()}` : '';
+      console.log(`  - "${name}"  [${paneId}]${members.length ? '' : '  — empty'}${when}`);
+      for (const m of members) console.log(`      ${describe(m)}`);
+    });
+    const loose = kids.filter((w) => !claimed.has(w.id)).sort(inReadingOrder);
+    for (const m of loose) {
+      claimed.add(m.id);
+      console.log(`      ${describe(m)}   (not in a pane)`);
+    }
+  }
+
+  for (const m of modals) {
+    const members = (byParent.get(m.id) ?? []).filter((x) => !claimed.has(x.id)).sort(inReadingOrder);
+    if (!members.length) continue;
+    members.forEach((x) => claimed.add(x.id));
+    console.log(`\n### ${m.id}   [${m.subtype}] — MODAL${m.label ? ` "${m.label}"` : ''}`);
+    for (const x of members) console.log(`    ${describe(x)}`);
+  }
+
+  const orphans = widgets.filter((w) => w.parent && !claimed.has(w.id));
+  const byOrphanParent = new Map();
+  for (const w of orphans) {
+    if (!byOrphanParent.has(w.parent)) byOrphanParent.set(w.parent, []);
+    byOrphanParent.get(w.parent).push(w);
+  }
+  for (const [parent, kids] of byOrphanParent) {
+    console.log(`\n### ${parent}   (${kids.length})`);
+    for (const x of kids.sort(inReadingOrder)) console.log(`    ${describe(x)}`);
   }
 }
 

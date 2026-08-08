@@ -3,7 +3,7 @@
 queries: 170   components: 433
 resources: REST-WithoutResource, Clickhouse, Replicated_Read_Prod, Clickhouse - protection disabled, BuzzTemp, retool_db, Prod, JavascriptQuery, MongoDB, Notifications DB
 
-## component types (layout is NOT ported — this is only a scale signal)
+## component types (scale signal; the structure itself is below)
   TextWidget2: 119
   ButtonWidget2: 85
   TableWidget2: 46
@@ -221,6 +221,460 @@ resources: REST-WithoutResource, Clickhouse, Replicated_Read_Prod, Clickhouse - 
     - Tab 1
     - Tab 2
     - Tab 3
+
+## layout — panes, containers and modals
+  Retool's shape. A container with several PANES is a tab group: port it as SUB-PAGES,
+  one route per pane, not as one long page — a moderator who had tabs and now scrolls
+  reports the tool as broken. A modal is a dialog, not an inlined panel.
+  "only visible when" is a role/state gate that appears in NO query — port it too.
+
+### container15   [ContainerWidget2] — 1 pane(s)  (inside MainContentContainer)
+  - "View 1"  [b70f2]
+      text120 [TextWidget2]
+      text122 [TextWidget2]
+      text121 [TextWidget2]
+      text123 [TextWidget2]
+      containerTitle20 [TextWidget2]   (not in a pane)
+
+### container17   [ContainerWidget2] — 1 pane(s)  (inside MainContentContainer)
+  - "View 1"  [b70f2]
+      text82 [TextWidget2]
+      text93 [TextWidget2]
+      text171 [TextWidget2]
+      text81 [TextWidget2]
+      text91 [TextWidget2]
+      text83 [TextWidget2]
+      text84 [TextWidget2]
+      text85 [TextWidget2]
+      text94 [TextWidget2]
+      text87 [TextWidget2]
+      text92 [TextWidget2]
+      text89 [TextWidget2]
+      text90 [TextWidget2]
+      text88 [TextWidget2]
+      text86 [TextWidget2]
+      divider3 [DividerWidget]
+      text79 [TextWidget2]
+      text156 [TextWidget2]
+      text158 [TextWidget2]
+      text164 [TextWidget2]
+      text154 [TextWidget2]
+      text163 [TextWidget2]
+      text80 [TextWidget2]
+      text155 [TextWidget2]
+      text157 [TextWidget2]
+      text159 [TextWidget2]
+      containerTitle22 [TextWidget2]   (not in a pane)
+
+### container18   [ContainerWidget2] — 1 pane(s)  (inside MainContentContainer)
+  - "View 1"  [b70f2]
+      text153 [TextWidget2]
+      text126 [TextWidget2]
+      text127 [TextWidget2]
+      text132 [TextWidget2]
+      text128 [TextWidget2]
+      text134 [TextWidget2]
+      text125 [TextWidget2]
+      text129 [TextWidget2]
+      text130 [TextWidget2]
+      text133 [TextWidget2]
+      text131 [TextWidget2]
+      text135 [TextWidget2]
+      containerTitle23 [TextWidget2]   (not in a pane)
+
+### container19   [ContainerWidget2] — 1 pane(s)  (inside MainContentContainer)
+  - "View 1"  [b70f2]
+      text160 [TextWidget2]
+      text161 [TextWidget2]
+      text162 [TextWidget2]
+      text137 [TextWidget2]
+      text139 [TextWidget2]
+      text141 [TextWidget2]
+      containerTitle24 [TextWidget2]   (not in a pane)
+
+### container22   [ContainerWidget2] — 1 pane(s)  (inside MainContentContainer)
+  - "View 1"  [f37a7]
+      socialTypeInsert [SelectWidget2] "Link Type"
+      socialURLInsert [TextInputWidget2] "URL"
+      button37 [ButtonWidget2] "Remove Selected"
+      button38 [ButtonWidget2] "Add New"
+      containerTitle29 [TextWidget2]   (not in a pane)
+
+### container23   [ContainerWidget2] — 1 pane(s)  (inside MainContentContainer)
+  - "View 1"  [e6a13]
+      icon1 [IconWidget]
+      text181 [TextWidget2]
+      text182 [TextWidget2]
+      containerTitle30 [TextWidget2]   (not in a pane)
+
+### container24   [ContainerWidget2] — 1 pane(s)  (inside MainContentContainer)
+  - "View 1"  [e6a13]
+      icon3 [IconWidget]
+      text183 [TextWidget2]
+      text184 [TextWidget2]
+      containerTitle31 [TextWidget2]   (not in a pane)
+
+### container25   [ContainerWidget2] — 1 pane(s)  (inside MainContentContainer)
+  - "View 1"  [e6a13]
+      icon2 [IconWidget]
+      text185 [TextWidget2]
+      text186 [TextWidget2]
+      containerTitle32 [TextWidget2]   (not in a pane)
+
+### container26   [ContainerWidget2] — 1 pane(s)  (inside MainContentContainer)
+  - "View 1"  [e6a13]
+      icon4 [IconWidget]
+      text187 [TextWidget2]
+      text188 [TextWidget2]
+      containerTitle33 [TextWidget2]   (not in a pane)
+
+### container27   [ContainerWidget2] — 1 pane(s)  (inside MainContentContainer)
+  - "View 1"  [e6a13]
+      icon5 [IconWidget]
+      text189 [TextWidget2]
+      text190 [TextWidget2]
+      containerTitle34 [TextWidget2]   (not in a pane)
+
+### container28   [ContainerWidget2] — 1 pane(s)  (inside MainContentContainer)
+  - "View 1"  [e6a13]
+      icon6 [IconWidget]
+      text191 [TextWidget2]
+      text192 [TextWidget2]
+      containerTitle35 [TextWidget2]   (not in a pane)
+
+### tabbedContainer8   [ContainerWidget2] — 2 pane(s), tab bar tabs7  (inside MainContentContainer)
+  - "Submitted Reviews"  [64ee2]
+      button115 [ButtonWidget2] "Include"
+      review_conf_window [ModalWidget]
+      button114 [ButtonWidget2] "Exclude"
+      select24 [SelectWidget2] "TOS Violation?"
+      select23 [SelectWidget2] "NSFW?"
+      select22 [SelectWidget2] "Excluded?"
+      select25 [SelectWidget2] "Review Rating"
+      textInput1 [TextInputWidget2] "Search Review Content"
+      reviews [TableWidget2]
+  - "Received Reviews"  [65c4d]
+      select41 [SelectWidget2] "Review Rating"
+      table41 [TableWidget2]
+      tabs7 [TabsWidget2]   (not in a pane)
+
+### tabbedContainer9   [ContainerWidget2] — 2 pane(s), tab bar tabs8  (inside MainContentContainer)
+  - "Bounties"  [b6dd8]
+      select29 [SelectWidget2] "Type"
+      select30 [SelectWidget2] "Complete"
+      textInput8 [TextInputWidget2] "Name Contains"
+      textInput9 [TextInputWidget2] "Description Contains"
+      button109 [ButtonWidget2] "Check Bounties"
+      table26 [TableWidget2]
+  - "Bounty Entries"  [94c47]
+      table42 [TableWidget2]
+      tabs8 [TabsWidget2]   (not in a pane)
+
+### tabbedContainer10   [ContainerWidget2] — 2 pane(s), tab bar tabs9  (inside MainContentContainer)
+  - "Reports Received"  [2b88f]
+      select46 [SelectWidget2] "Status"
+      button57 [ButtonWidget2] "Check Reports"
+      table43 [TableWidget2]
+  - "Reports Submitted"  [b6dd8]
+      select47 [SelectWidget2]
+      select13 [SelectWidget2]
+      select12 [SelectWidget2]
+      table12 [TableWidget2]
+      tabs9 [TabsWidget2]   (not in a pane)
+
+### group1   [ContainerWidget2] — 1 pane(s)
+  - "View 1"  [79439]
+      textArea3 [TextAreaWidget] "Notification Message"
+      textArea2 [TextAreaWidget] "Strike Reason"
+      button69 [ButtonWidget2] "Strike User"
+      button67 [ButtonWidget2] "Send Notification"
+
+### tabbedContainer12   [ContainerWidget2] — 2 pane(s), tab bar tabs11  (inside MainContentContainer)
+  - "View Buzz"  [e22e4]
+      button75 [ButtonWidget2] "Check Buzz"
+      buzzDateTime [DateTimeWidget] "After date"
+      divider6 [DividerWidget]
+      text195 [TextWidget2]
+      text196 [TextWidget2]
+      select37 [SelectWidget2] "Payment Type"
+      select35 [SelectWidget2] "Receipt Type"
+      textInput10 [TextInputWidget2] "Description"
+      table23 [TableWidget2]
+      table24 [TableWidget2]
+      table54 [TableWidget2]
+      table53 [TableWidget2]
+  - "Buzz Transaction"  [9e62d]   — only visible when NOT: {{!(current_user.groups.some(i => i.name === "Senior Mod"))}}
+      buzzSendAction [SelectWidget2] "Action"
+      buzzSendType [SelectWidget2] "Reason"
+      container30 [ContainerWidget2]
+      container29 [ContainerWidget2]
+      buzzType [SelectWidget2] "Type of Buzz"
+      buzzSendAmount [NumberInputWidget] "Amount"
+      buzzSendDescription [TextInputWidget2] "Description"
+      buzzSendDetails [ContainerWidget2]
+      button79 [ButtonWidget2] "{{buzzSendAction.value === 'deduct' ? 'Deduct' : 'Send' }} B"
+      text214 [TextWidget2]   (not in a pane)
+      text213 [TextWidget2]   (not in a pane)
+      text220 [TextWidget2]   (not in a pane)
+      text219 [TextWidget2]   (not in a pane)
+      text230 [TextWidget2]   (not in a pane)
+      text231 [TextWidget2]   (not in a pane)
+      tabs11 [TabsWidget2]   (not in a pane)
+
+### buzzSendDetails   [ContainerWidget2] — 1 pane(s)  (inside tabbedContainer12)
+  - "View 1"  [18593]
+      buzzSendEntityType [SelectWidget2] "EntityType"
+      buzzSendEntityId [NumberInputWidget] "EntityId"
+
+### tabbedContainer13   [ContainerWidget2] — 1 pane(s), tab bar tabs12  (inside MainContentContainer)
+  - "Reactions Given"  [698e0]
+      button82 [ButtonWidget2] "Check Reactions"
+      table59 [TableWidget2]
+      table60 [TableWidget2]
+      tabs12 [TabsWidget2]   (not in a pane)
+
+### tabbedContainer14   [ContainerWidget2] — 3 pane(s), tab bar tabs13
+  - "1. Find Account"  [1615e]
+      textInput15 [TextInputWidget2] "Enter Paddle Customer Id"
+      table71 [TableWidget2]
+  - "2. Remove an old paddleCustomerId account"  [7db07]
+      textInput14 [TextInputWidget2] "Enter User Id"
+      button95 [ButtonWidget2] "Remove Link"
+  - "3. Link Paddle Account"  [5ce8c]
+      textInput12 [TextInputWidget2] "Enter Paddle Customer Id"
+      button90 [ButtonWidget2] "Update Link on {{ userIdVar.value }}"
+      tabs13 [TabsWidget2]   (not in a pane)
+
+### MainContentContainer   [ContainerWidget2] — 21 pane(s), tab bar tabs14
+  - "basic"  [5ee9a]
+      container33 [ContainerWidget2]
+      form1 [FormWidget2]
+      button111 [ButtonWidget2] "Check Stats"
+      table72 [TableWidget2]
+      ContentCounts2 [TableWidget2]
+      table73 [TableWidget2]
+      table74 [TableWidget2]
+      table75 [TableWidget2]
+  - "content"  [52a54]
+      container15 [ContainerWidget2]
+      container19 [ContainerWidget2]
+      container17 [ContainerWidget2]
+      container18 [ContainerWidget2]
+  - "buzz"  [6ac7c]
+      tabbedContainer12 [ContainerWidget2]
+  - "cosmetic"  [1e370]
+      text215 [TextWidget2]
+      button80 [ButtonWidget2] "Remove Cosmetic and Shop Receipt"
+      button105 [ButtonWidget2] "Check Purchases"
+      shopPurchases [TableWidget2]
+  - "imagegen"  [97f52]
+      button78 [ButtonWidget2] "Check Generation Stats"
+      textInput11 [TextInputWidget2] "Number of days to look back"
+      table56 [TableWidget2]
+  - "loratrain"  [fa5e8]
+      text197 [TextWidget2]
+      button108 [ButtonWidget2] "Check Lora Trainings"
+      table76 [TableWidget2]
+  - "bounties"  [c6d76]
+      tabbedContainer9 [ContainerWidget2]
+  - "comments"  [a0565]
+      button116 [ButtonWidget2] "Check Comments"
+      button40 [ButtonWidget2] "Delete Comments"
+      text206 [TextWidget2]
+      button113 [ButtonWidget2] "ToS Comments"
+      segmentedControl1 [SegmentedControlWidget] "Label"
+      CombinedComments [TableWidget2]
+      textInput2 [TextInputWidget2]
+      table69 [TableWidget2]
+  - "leaderboard"  [8cb0b]
+      text194 [TextWidget2]
+      button110 [ButtonWidget2] "Check Leaderboard"
+      container25 [ContainerWidget2]
+      container27 [ContainerWidget2]
+      container24 [ContainerWidget2]
+      container28 [ContainerWidget2]
+      container26 [ContainerWidget2]
+      container23 [ContainerWidget2]
+  - "socials"  [d1853]
+      button42 [ButtonWidget2] "Purge Bio"
+      image3 [ImageWidget2]
+      image5 [ImageWidget2]
+      button41 [ButtonWidget2] "Look at Cover Image"
+      button99 [ButtonWidget2] "Look at PFP"
+      bioInput [TextAreaWidget] "Bio"
+      messageInput [TextAreaWidget] "Message"
+      locationInput [TextInputWidget2] "Location"
+      button107 [ButtonWidget2] "Check Bio and Socials"
+      container22 [ContainerWidget2]
+      UserSocialViewtbl [TableWidget2]
+  - "reports"  [ec7cd]
+      tabbedContainer10 [ContainerWidget2]
+  - "reviews"  [d0fd4]
+      button76 [ButtonWidget2] "Check Reviews"
+      tabbedContainer8 [ContainerWidget2]
+  - "activity"  [5542d]  — empty
+  - "reactions"  [73f3b]
+      tabbedContainer13 [ContainerWidget2]
+  - "moderationactivity"  [06327]
+      text199 [TextWidget2]
+      select39 [SelectWidget2] "Action"
+      select40 [SelectWidget2] "Type"
+      table37 [TableWidget2]
+      textArea4 [TextAreaWidget] "Label"
+  - "chat"  [c0455]
+      button106 [ButtonWidget2] "Check Chat Messages"
+      table40 [TableWidget2]
+  - "civitaiscore"  [babcc]
+      text218 [TextWidget2]
+      button104 [ButtonWidget2] "Check Score"
+      table64 [TableWidget2]
+      table65 [TableWidget2]
+      table66 [TableWidget2]
+  - "admin"  [666c1]
+      modal2 [ModalWidget]
+      modal4 [ModalWidget]
+      button18 [ButtonWidget2] "{{UserContent?.data?.isModerator[0] == true ? 'Deactivate Mo"
+      button83 [ButtonWidget2] "Remove Buzz-Block"
+      button84 [ButtonWidget2] "Add Buzz-Block"
+      button85 [ButtonWidget2] "Generator Buzz Earnings"
+  - "notifications"  [8b154]
+      textInput16 [TextInputWidget2] "Number of Notifs"
+      button94 [ButtonWidget2] "Check Notifications"
+      button25 [ButtonWidget2] "Delete Notification"
+      table70 [TableWidget2]
+      notificationInsert [FormWidget2]
+  - "timedmute"  [2a5a4]
+      muteStart [DateTimeWidget] "Mute Start (UTC)"
+      muteEnd [DateTimeWidget] "Mute End (UTC)"
+      currentUTCTimeDisplay [TimeWidget] "Current UTC Time"
+      muteReason [TextAreaWidget] "Mute Reason"
+      button28 [ButtonWidget2] "🔃"
+      presetMutes [SelectWidget2] "Pre-Set Mute Period"
+      button36 [ButtonWidget2] "Notify User (Notification)"
+      button26 [ButtonWidget2] "Activate Timed Mute"
+      button27 [ButtonWidget2] "Revoke Timed Mute"
+      tblviewMutes [TableWidget2]
+  - "promptaudit"  [dba13]
+      text200 [TextWidget2]
+      button112 [ButtonWidget2] "Check Blocked Prompts"
+      table35 [TableWidget2]
+      promptFilter [TextInputWidget2] "Filter Prompt"
+      promptAmount [NumberInputWidget] "# of Prompts"
+      table61 [TableWidget2]
+      tabs14 [TabsWidget2]   (not in a pane)
+
+### container29   [ContainerWidget2] — 1 pane(s)  (inside tabbedContainer12)
+  - "View 1"  [c4ac1]
+      table58 [TableWidget2]
+      containerTitle36 [TextWidget2]   (not in a pane)
+
+### container30   [ContainerWidget2] — 1 pane(s)  (inside tabbedContainer12)
+  - "View 1"  [c4ac1]
+      splitButton1 [SplitButtonWidget]
+      containerTitle37 [TextWidget2]   (not in a pane)
+
+### container32   [ContainerWidget2] — 1 pane(s)  (inside form1)
+  - "View 1"  [c4ac1]
+      UserNotesInput [TextAreaWidget] "{{SelectUserNotes.data.notes.length > 0 ? 'Note 1 of ' + Sel"
+      button62 [ButtonWidget2] "Open Notes"
+      containerTitle39 [TextWidget2]   (not in a pane)
+
+### container33   [ContainerWidget2] — 1 pane(s)  (inside MainContentContainer)
+  - "View 1"  [c4ac1]
+      button93 [ButtonWidget2] "Freshdesk"
+      button70 [ButtonWidget2] "Refresh Session"
+      button81 [ButtonWidget2] "{{ Array.from(new Set(formatDataAsArray(SimilarIps.data).map"
+      button14 [ButtonWidget2] "{{UserContent?.data?.muted[0] == true ? 'Unmute' : 'Mute' }}"
+      modal7 [ModalWidget]
+      button117 [ButtonWidget2] "Profile"
+      button102 [ButtonWidget2] "Clear Cache"
+      containerTitle40 [TextWidget2]   (not in a pane)
+
+### container34   [ContainerWidget2] — 1 pane(s)  (inside form1)
+  - "View 1"  [c4ac1]
+      subscriberForm2 [TextInputWidget2] "Subscriber Until"
+      textInput13 [TextInputWidget2] "Paddle Customer ID"
+      button72 [ButtonWidget2] "Paddle"
+      button92 [ButtonWidget2] "Stripe"
+      containerTitle41 [TextWidget2]   (not in a pane)
+
+### container35   [ContainerWidget2] — 1 pane(s)  (inside form1)
+  - "View 1"  [c4ac1]
+      text225 [TextWidget2]
+      bannedAtForm2 [TextInputWidget2] "Banned Date"
+      modal6 [ModalWidget]
+      text229 [TextWidget2]
+      containerTitle42 [TextWidget2]   (not in a pane)
+
+### container36   [ContainerWidget2] — 1 pane(s)  (inside form1)
+  - "View 1"  [c4ac1]
+      text212 [TextWidget2]
+      mutedForm [CheckboxWidget2] "Muted"
+      checkbox2 [CheckboxWidget2] "Banned"
+      isModeratorForm [CheckboxWidget2] "Moderator"
+      acceptedTOSForm [CheckboxWidget2] "Accepted TOS"
+      FrontPageCuratorForm4 [CheckboxWidget2] "Excluded Leaderboards"
+      FrontPageCuratorForm7 [CheckboxWidget2] "Buzz-Blocked"
+      FrontPageCuratorForm2 [CheckboxWidget2] "FP Curator"
+      alert1 [AlertWidget] "Comment Spammer"
+      containerTitle43 [TextWidget2]   (not in a pane)
+
+### review_conf_window   [ModalWidget] — MODAL
+    text147 [TextWidget2]
+    button2 [ButtonWidget2] "Cancel"
+    button1 [ButtonWidget2] "Delete"
+
+### modal2   [ModalWidget] — MODAL
+    text168 [TextWidget2]
+    cosmeticUnlockWindow [ModalWidget]
+    text170 [TextWidget2]
+    tblAvailableCosmetics [TableWidget2]
+    cosmeticDeleteWindow [ModalWidget]
+    text169 [TextWidget2]
+    tblUnlockedCosmetics [TableWidget2]
+
+### modal6   [ModalWidget] — MODAL
+    text166 [TextWidget2]
+    banReason [SelectWidget2] "Reason for ban"
+    button98 [ButtonWidget2] "{{!UserContent.data?.bannedAt[0] ? "Ban with no Reason" : "U"
+    button20 [ButtonWidget2] "{{!UserContent.data?.bannedAt[0] ? "Ban with Reason" : "Unba"
+
+### modal7   [ModalWidget] — MODAL
+    text167 [TextWidget2]
+    button21 [ButtonWidget2] "Purge Content"
+
+### cosmeticUnlockWindow   [ModalWidget] — MODAL
+    text172 [TextWidget2]
+    button29 [ButtonWidget2] "Give Badges"
+    button30 [ButtonWidget2] "Cancel"
+
+### cosmeticDeleteWindow   [ModalWidget] — MODAL
+    text177 [TextWidget2]
+    button34 [ButtonWidget2] "Remove Badges"
+    button35 [ButtonWidget2] "Cancel"
+
+### form1   (15)
+    deletedAtForm2 [TextInputWidget2] "Deleted Date"
+    mutedAtForm2 [TextInputWidget2] "Muted Date"
+    accountCreatedForm2 [TextInputWidget2] "Account Created At"
+    enableEditsSwitch [SwitchWidget2] "Enable Edits"
+    container36 [ContainerWidget2]
+    formButton1 [ButtonWidget2] "Save"
+    usernameForm2 [TextInputWidget2] "Username"
+    userid6 [TextInputWidget2] "UserID"
+    fullNameForm2 [TextInputWidget2] "Full Name"
+    emailForm2 [TextInputWidget2] "Email"
+    emailVerifiedForm2 [TextInputWidget2] "Email Verified Date"
+    divider4 [DividerWidget]
+    container32 [ContainerWidget2]
+    container34 [ContainerWidget2]
+    container35 [ContainerWidget2]
+
+### notificationInsert   (4)
+    notificationLink [TextInputWidget2] "Notification Link"
+    formTitle1 [TextWidget2]
+    notificationMessage [TextAreaWidget] "Notification Message"
+    formButton2 [ButtonWidget2] "Send Notification"
 
 ## queries
 

@@ -109,6 +109,25 @@ Status: **[x] fixed · [ ] open**. Nothing here is verified in a browser.
       future cover thumbnail silently renders blank
 - [ ] `Article.metadata` dropped; unverified whether anything moderation-bearing lives there
 
+## Layout parity (from the extractor's new `## layout` section, 2026-08-08)
+
+The extractor now emits Retool's structure — containers, their panes, and modals. Not yet actioned on
+any existing slice; recorded here so it is not re-derived. **User Lookup's real tab groups:**
+
+- [ ] `tabbedContainer8` — **"Submitted Reviews" / "Received Reviews"** (two tabs, plus filters
+      `Excluded?`, `NSFW?`, `TOS Violation?`, `Review Rating`, `Search Review Content`)
+- [ ] `tabbedContainer9` — **"Bounties" / "Bounty Entries"** (filters `Type`, `Complete`,
+      `Name Contains`, `Description Contains`)
+- [ ] `tabbedContainer10` — **"Reports Received" / …**
+- [ ] `tabbedContainer12` — **"View Buzz" / "Buzz Transaction"**, and the second pane is gated on
+      `current_user.groups.some(i => i.name === "Senior Mod")`. **This gate exists in no query.** If
+      buzz sending is reachable by every moderator here, it is a capability that was senior-only in
+      Retool.
+- [ ] `tabbedContainer14` — 3 panes
+
+Each is a candidate sub-page rather than a scrolling section. Only the top-level nav
+(`MainContentContainer`'s 21 view keys → `sections.ts`) was honoured; these nested groups were not.
+
 ## Cross-cutting
 
 1. **Report `details` is dropped on every page that shows reports** — User Lookup, User Reports, Chat

@@ -224,6 +224,22 @@ grep "^### " docs/moderator-app/retool-exports/<app>.md | sed 's/^### //' | awk 
 
 Diff that against your classification. Anything unaccounted for is a gap, not a judgement call.
 
+**Keep Retool's shape — moderators navigate by layout, not by query.** The inventory's `## layout`
+section lists every container, its panes and its modals. Read it before designing the page:
+
+- **A container with several panes is a tab group. Port it as SUB-PAGES — one route per pane**
+  (`[section]`/`[tab]`, as User Lookup and Chat Audit already do), not as one long scrolling page.
+  A moderator who had "Submitted Reviews / Received Reviews" as two tabs and now scrolls past both
+  reports the tool as broken, even when both queries are ported. Use our own styles and `@civitai/ui`
+  primitives inside them — matching the shape is not matching the skin.
+- **A modal is a dialog, not an inlined panel.**
+- **`only visible when` on a pane is a role or state gate that appears in NO query.** User Lookup's
+  "Buzz Transaction" pane is `current_user.groups.some(i => i.name === "Senior Mod")` — porting the
+  pane without the gate hands every moderator a capability that was restricted to seniors.
+
+Pane names also carry filter widgets (`"TOS Violation?"`, `"Review Rating"`, `"Search Review
+Content"`). Those are entry points; a table you ported without its filter row is not the same tool.
+
 **Being NAMED in the classification is not being COVERED, and this is the failure that survives every
 other check.** Bulk Image Manager's audit named all 40 queries and still shipped four real gaps
 (2026-08-08), because a row can absorb a query whose behaviour it does not carry:
