@@ -295,7 +295,13 @@ describe('updateSessionState scan is bounded in aggregate', () => {
     mockHScanNoValues.mockImplementation(async () => {
       pages++;
       now += 1900; // just under a 2s per-page deadline
-      return { cursor: String(pages), fields: [`token-${pages}`] }; // never returns to '0'
+      // The fake MUST terminate on its own. Without the budget under test this is an infinite loop of
+      // immediately-resolved awaits — a pure microtask loop, which starves the macrotask queue, so vitest's
+      // setTimeout-based testTimeout never fires and CI hangs instead of failing. Measured: 4.19M iterations
+      // in 4s with a 300ms setTimeout that never ran. A regression must fail legibly, not wedge the runner —
+      // same reasoning as the n=10k cap on the linear-map test below.
+      if (pages > 50) return { cursor: '0', fields: [] };
+      return { cursor: String(pages), fields: [`token-${pages}`] }; // otherwise never returns to '0'
     });
 
     await refreshSession(42, { sendSignal: false });
@@ -314,6 +320,7 @@ describe('updateSessionState scan is bounded in aggregate', () => {
     mockHScanNoValues.mockImplementation(async () => {
       pages++;
       now += 1900;
+      if (pages > 50) return { cursor: '0', fields: [] }; // see above — the fake must terminate on its own
       return { cursor: String(pages), fields: [`token-${pages}`] };
     });
 
