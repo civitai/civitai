@@ -3,7 +3,6 @@ import { lookupQuerySchema, parseQuery } from '$lib/server/query';
 import { getImageLookup, resolveImageId } from '$lib/server/image-lookup.service';
 import { hasImageEvents } from '$lib/server/image-signals.service';
 
-
 // Read-only. Every action Retool's Image Lookup could take lived in other apps (Bulk Image Manager,
 // User Reports); this one only ever answered questions, so there is nothing to gate beyond the page.
 export const load: PageServerLoad = async ({ url }) => {

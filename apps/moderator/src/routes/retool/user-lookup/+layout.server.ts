@@ -3,7 +3,6 @@ import { canAccess } from '$lib/server/access';
 import { lookupQuerySchema, parseQuery } from '$lib/server/query';
 import { getUserLookup, resolveUserId } from '$lib/server/user-lookup.service';
 
-
 // The lookup itself lives in the LAYOUT so it survives moving between sections: switching from Buzz
 // to Reports must not re-resolve the account or lose the search term.
 export const load: LayoutServerLoad = async ({ url, locals }) => {
