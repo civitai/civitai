@@ -16,6 +16,12 @@ const DEFAULT_EXPIRATION = 60 * 60 * 24 * 30; // 30 days
 // Fields per HSCAN page. Only bounds how many field names come back per round trip; the scan is incremental
 // either way, so this trades round trips against per-command size rather than affecting correctness.
 const SCAN_PAGE = 500;
+// 🔴 Aggregate bound for the scan. `withSysReadDeadline` bounds ONE page, and a bounded primitive repeated an
+// unbounded number of times is not bounded: the largest account is 108 pages at this COUNT, so a sysRedis
+// degraded enough that every page returns just under its own deadline would hang a logout or ban request for
+// minutes while the per-page fail-open never trips. This caps the whole scan instead. Exceeding it yields a
+// PARTIAL token list, which is reported distinctly rather than as a normal read — see below.
+const SCAN_BUDGET_MS = 3000;
 const log = createLogger('session-invalidation', 'green');
 
 type RefreshSessionOptions = { sendSignal?: boolean; caller?: SessionStateCaller };
@@ -35,6 +41,7 @@ async function updateSessionState(
   // longer exceed the deadline below purely by being large, and therefore can no longer fail open to an
   // empty set and silently skip the invalidation.
   let userTokens: string[] = [];
+  let truncated = false;
   try {
     // Wall-clock deadline + fail-open: this read is on the user-facing
     // logout / ban / session-refresh path. A fast sysRedis DOWN would 500
@@ -45,14 +52,22 @@ async function updateSessionState(
     // after recovery), but the request never 500s or parks. Each page is
     // raced separately, so the bound applies per page rather than to the
     // whole scan.
+    // HSCAN may return the same field twice across pages when the hash rehashes mid-scan. The write dedupes
+    // structurally, but the COUNT feeding the log line and the histogram would over-report without this.
+    const seen = new Set<string>();
     let cursor = '0';
     do {
       const page = await withSysReadDeadline(
         sysRedis.hScanNoValues(key as any, cursor, { COUNT: SCAN_PAGE })
       );
-      userTokens.push(...page.fields);
+      for (const field of page.fields) seen.add(field);
       cursor = String(page.cursor);
+      if (cursor !== '0' && Date.now() - startedAt > SCAN_BUDGET_MS) {
+        truncated = true;
+        break;
+      }
     } while (cursor !== '0');
+    userTokens = [...seen];
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'session-invalidation.updateSessionState read', err, {
       userId,
@@ -60,12 +75,25 @@ async function updateSessionState(
     });
     userTokens = [];
   }
+  if (truncated) {
+    // Distinct from both a clean read and a failed one: we have SOME tokens and will mark them, but this
+    // user is not fully revoked and the caller must be able to tell. Marking the ones we did read is still
+    // strictly better than marking none.
+    logSysRedisFailOpen(
+      'read-degraded',
+      'session-invalidation.updateSessionState read (truncated)',
+      new Error(`scan exceeded ${SCAN_BUDGET_MS}ms budget`),
+      { userId, type, tokensRead: userTokens.length }
+    );
+  }
   // Must stay O(n): spreading the accumulator per iteration is O(n^2), which
   // blocks the event loop for minutes on the largest token hashes.
   const userTokensObj: Record<string, string> = Object.fromEntries(
     userTokens.map((token) => [token, type] as const)
   );
 
+  let chunksWritten = 0;
+  let chunksTotal = 0;
   await clearSessionCache(userId);
   if (userTokens.length > 0) {
     // Atomic multi-field set+TTL — single EVAL replaces the sequential
@@ -87,13 +115,22 @@ async function updateSessionState(
         REDIS_SYS_KEYS.SESSION.TOKEN_STATE,
         userTokensObj,
         DEFAULT_EXPIRATION * 1000,
-        (durationSeconds) => observeSessionStateChunk(caller, type, durationSeconds)
+        ({ durationSeconds, chunkIndex, chunkTotal }) => {
+          observeSessionStateChunk(caller, type, durationSeconds);
+          chunksWritten = chunkIndex + 1;
+          chunksTotal = chunkTotal;
+        }
       );
     } catch (err) {
+      // chunksWritten vs chunksTotal is the difference between "revoked none of them" and "revoked 29 of
+      // 54" — without it a partial write and a total failure produce identical log lines, and a moderator
+      // reads success either way.
       logSysRedisFailOpen('write-degraded', 'session-invalidation.updateSessionState', err, {
         userId,
         type,
         tokenCount: userTokens.length,
+        chunksWritten,
+        chunksTotal,
       });
     }
   }

@@ -281,3 +281,93 @@ describe('updateSessionState reads field names incrementally', () => {
     expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(2);
   });
 });
+
+// 🔴 A bounded primitive repeated an unbounded number of times is not bounded. withSysReadDeadline bounds ONE
+// page; the largest production account is 108 pages, so a sysRedis degraded enough that every page returns
+// just under its own deadline would hang a logout or ban for minutes while the per-page fail-open never
+// trips. Reported by charlie on #3756.
+describe('updateSessionState scan is bounded in aggregate', () => {
+  it('stops scanning once the total budget is exceeded, instead of following the cursor forever', async () => {
+    // Every page returns just under a per-page deadline that therefore never fires.
+    let now = 1_000_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    let pages = 0;
+    mockHScanNoValues.mockImplementation(async () => {
+      pages++;
+      now += 1900; // just under a 2s per-page deadline
+      return { cursor: String(pages), fields: [`token-${pages}`] }; // never returns to '0'
+    });
+
+    await refreshSession(42, { sendSignal: false });
+    nowSpy.mockRestore();
+
+    // Without an aggregate bound this loops until the mock stops, i.e. forever.
+    expect(pages).toBeLessThan(5);
+    // What it did read is still marked — a partial revocation beats none.
+    expect(mockHSetMultiWithTTL).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a truncated scan DISTINCTLY, so a partial read is not read as a clean one', async () => {
+    let now = 1_000_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    let pages = 0;
+    mockHScanNoValues.mockImplementation(async () => {
+      pages++;
+      now += 1900;
+      return { cursor: String(pages), fields: [`token-${pages}`] };
+    });
+
+    await refreshSession(42, { sendSignal: false });
+    nowSpy.mockRestore();
+
+    expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
+    const [subtype, fn, , extra] = mockLogSysRedisFailOpen.mock.calls[0];
+    expect(subtype).toBe('read-degraded');
+    expect(fn).toContain('truncated');
+    expect(extra).toMatchObject({ userId: 42, type: 'refresh' });
+  });
+
+  it('does not report truncation on a scan that completes normally', async () => {
+    await refreshSession(42, { sendSignal: false });
+    expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
+  });
+
+  // HSCAN can return the same field twice when the hash rehashes mid-scan. The write dedupes structurally,
+  // but the count feeding the log line and the histogram would over-report.
+  it('counts each field once when the scan returns duplicates', async () => {
+    mockHScanNoValues
+      .mockResolvedValueOnce({ cursor: '5', fields: ['token-a', 'token-b'] })
+      .mockResolvedValueOnce({ cursor: '0', fields: ['token-b', 'token-c'] });
+
+    await refreshSession(42, { sendSignal: false });
+
+    const [, , fieldsObj] = mockHSetMultiWithTTL.mock.calls[0];
+    expect(Object.keys(fieldsObj)).toEqual(['token-a', 'token-b', 'token-c']);
+  });
+});
+
+// A partial write and a total failure previously produced byte-identical log lines, so "revoked 29 of 54"
+// and "revoked 0 of 54" were indistinguishable to whoever read them.
+describe('updateSessionState distinguishes a partial write from a total one', () => {
+  it('logs how many chunks landed before the throw', async () => {
+    mockHSetMultiWithTTL.mockImplementation(async (_c, _k, _f, _ttl, onChunk) => {
+      onChunk?.({ durationSeconds: 0.001, fieldCount: 1000, chunkIndex: 0, chunkTotal: 3 });
+      onChunk?.({ durationSeconds: 0.001, fieldCount: 1000, chunkIndex: 1, chunkTotal: 3 });
+      throw new Error("READONLY You can't write against a read only replica.");
+    });
+
+    await expect(refreshSession(42, { sendSignal: false })).resolves.toBeUndefined();
+
+    const [subtype, , , extra] = mockLogSysRedisFailOpen.mock.calls[0];
+    expect(subtype).toBe('write-degraded');
+    expect(extra).toMatchObject({ chunksWritten: 2, chunksTotal: 3 });
+  });
+
+  it('reports zero chunks written when the very first one throws', async () => {
+    mockHSetMultiWithTTL.mockRejectedValueOnce(new Error('boom'));
+
+    await expect(refreshSession(42, { sendSignal: false })).resolves.toBeUndefined();
+
+    expect(mockLogSysRedisFailOpen.mock.calls[0][3]).toMatchObject({ chunksWritten: 0 });
+  });
+});

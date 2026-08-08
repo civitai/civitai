@@ -155,7 +155,12 @@ export async function hSetMultiWithTTL(
   key: string,
   fields: Record<string, string | number | Buffer>,
   ttlMs: number,
-  onChunk?: (durationSeconds: number, fieldCount: number) => void
+  onChunk?: (progress: {
+    durationSeconds: number;
+    fieldCount: number;
+    chunkIndex: number;
+    chunkTotal: number;
+  }) => void
 ): Promise<void> {
   // See hSetWithTTL — HPEXPIRE with 0/negative ms removes the field.
   if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
@@ -167,10 +172,21 @@ export async function hSetMultiWithTTL(
   // Chunked, and the chunk size is a SAFETY property rather than a tuning knob — see HSET_MULTI_CHUNK.
   // Sequential await, deliberately not Promise.all: the point is that the store interleaves other clients'
   // commands between these scripts. Batching them back together reproduces the stall in a different shape.
+  //
+  // 🔴 Chunking makes a PARTIAL write possible: a throw on chunk 30 of 54 leaves 29 committed. Per-chunk
+  // atomicity is unchanged, and this is strictly better than the previous behaviour of writing nothing at
+  // all above the unpack bound — but callers must not log a partial write identically to a total one. The
+  // chunk index is reported so they can tell the two apart; see session-invalidation.ts.
+  const chunkTotal = Math.ceil(allEntries.length / HSET_MULTI_CHUNK);
   for (let i = 0; i < allEntries.length; i += HSET_MULTI_CHUNK) {
     const startedAt = Date.now();
     await evalHSetMultiChunk(client, key, allEntries.slice(i, i + HSET_MULTI_CHUNK), ttlMs);
-    onChunk?.((Date.now() - startedAt) / 1000, Math.min(HSET_MULTI_CHUNK, allEntries.length - i));
+    onChunk?.({
+      durationSeconds: (Date.now() - startedAt) / 1000,
+      fieldCount: Math.min(HSET_MULTI_CHUNK, allEntries.length - i),
+      chunkIndex: i / HSET_MULTI_CHUNK,
+      chunkTotal,
+    });
   }
 }
 

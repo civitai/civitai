@@ -231,12 +231,35 @@ describe('hSetMultiWithTTL chunking', () => {
     });
     const chunkSizes: number[] = [];
 
-    await hSetMultiWithTTL(client, 'k', manyFields(2500), 30_000, (_d, fieldCount) =>
+    await hSetMultiWithTTL(client, 'k', manyFields(2500), 30_000, ({ fieldCount }) =>
       chunkSizes.push(fieldCount)
     );
 
     expect(maxInFlight).toBe(1);
     expect(chunkSizes).toHaveLength(client.eval.mock.calls.length);
     expect(chunkSizes.reduce((a, b) => a + b, 0)).toBe(2500);
+  });
+
+  // Chunking makes a PARTIAL write possible, and the caller can only distinguish "landed 2 of 3" from
+  // "landed none" if it knows how far the loop got before the throw.
+  it('reports chunk index and total so a partial write is attributable', async () => {
+    const client = mockClient();
+    const seen: Array<{ chunkIndex: number; chunkTotal: number }> = [];
+    client.eval
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(1)
+      .mockRejectedValueOnce(new Error('READONLY'));
+
+    await expect(
+      hSetMultiWithTTL(client, 'k', manyFields(2500), 30_000, ({ chunkIndex, chunkTotal }) =>
+        seen.push({ chunkIndex, chunkTotal })
+      )
+    ).rejects.toThrow('READONLY');
+
+    // Two chunks landed before the third threw; the caller can report 2 of 3 rather than 0 of 3.
+    expect(seen).toEqual([
+      { chunkIndex: 0, chunkTotal: 3 },
+      { chunkIndex: 1, chunkTotal: 3 },
+    ]);
   });
 });
