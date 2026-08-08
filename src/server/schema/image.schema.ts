@@ -20,6 +20,7 @@ import {
 import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel, ViolationType } from './../common/enums';
 import { usernameSchema } from '~/shared/zod/username.schema';
+import { normalizeMetadataToolNames } from '~/utils/metadata/declared-tools.metadata';
 
 const stringToNumber = z.coerce.number().optional();
 
@@ -124,6 +125,7 @@ export const imageGenerationSchema = z.object({
   external: externalMetaSchema.optional(),
   effects: z.record(z.string(), z.any()).optional(),
   engine: z.string().optional(),
+  tools: z.unknown().transform(normalizeMetadataToolNames).optional(),
   version: z.string().optional(),
   process: z.string().optional(),
   type: z.string().optional(),

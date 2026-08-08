@@ -54,9 +54,9 @@ import {
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
+import { resolveImageToolIds } from '~/server/services/image-tool.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getTechniqueByName } from '~/server/services/technique.service';
-import { getToolByAlias, getToolByDomain, getToolByName } from '~/server/services/tool.service';
 import type {
   getCosmeticsForUsers,
   getProfilePicturesForUsers,
@@ -1166,21 +1166,7 @@ export const addPostImage = async ({
     }
   }
 
-  let toolId: number | undefined;
-  const { name: sourceName, homepage: sourceHomepage } = meta?.external?.source ?? {};
-  if (meta && 'engine' in meta) {
-    toolId = (await getToolByAlias(meta.engine as string))?.id;
-    if (!toolId) {
-      toolId = (await getToolByName(meta.engine as string))?.id;
-    }
-  } else if (sourceName || sourceHomepage) {
-    if (sourceName) {
-      toolId = (await getToolByName(sourceName))?.id;
-    }
-    if (sourceHomepage && !toolId) {
-      toolId = (await getToolByDomain(sourceHomepage))?.id;
-    }
-  }
+  const toolIds = await resolveImageToolIds(meta);
 
   let techniqueId: number | undefined;
   if (meta && 'engine' in meta) {
@@ -1237,7 +1223,7 @@ export const addPostImage = async ({
     ...props,
     meta,
     userId: user.id,
-    toolIds: toolId ? [toolId] : undefined,
+    toolIds,
     techniqueIds: techniqueId ? [techniqueId] : undefined,
     skipIngestion: collectionMeta.judgesApplyBrowsingLevel,
   });
