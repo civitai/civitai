@@ -1,9 +1,23 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 
+/**
+ * Surfaces an addon entry can be limited to. An entry with no `scopes` applies
+ * everywhere, which is what every entry did before scopes existed.
+ */
+export type BrowsingAddonScope = 'newCreators';
+
 export type BrowsingSettingsAddon = {
   type: 'all' | 'some' | 'none';
   nsfwLevels: NsfwLevel[];
+  /**
+   * Limit this entry to specific surfaces. Omit for a global rule. Use this for
+   * anything that should be hidden from discovery but stay visible where a user
+   * asked for it by name — a global `excludedTagIds` also empties the tag's own
+   * collection pages and home blocks, which fetch a fixed page and drop filtered
+   * items without backfilling.
+   */
+  scopes?: BrowsingAddonScope[];
   disablePoi?: boolean;
   disableMinor?: boolean;
   excludedTagIds?: number[];
@@ -41,12 +55,16 @@ function emptyResolvedAddons(): ResolvedBrowsingSettingsAddons {
 export function resolveBrowsingSettingsAddons(
   data: BrowsingSettingsAddon[],
   browsingLevel: number,
-  opts?: { isModerator?: boolean }
+  opts?: { isModerator?: boolean; scopes?: BrowsingAddonScope[] }
 ): ResolvedBrowsingSettingsAddons {
   if (opts?.isModerator) return emptyResolvedAddons();
 
+  const activeScopes = opts?.scopes ?? [];
+
   return data.reduce((acc, elem) => {
     try {
+      if (elem.scopes?.length && !elem.scopes.some((s) => activeScopes.includes(s))) return acc;
+
       const intersection = Flags.intersection(
         browsingLevel,
         Flags.arrayToInstance(elem.nsfwLevels)
