@@ -89,7 +89,7 @@ export function observeLegacyDecode(): void {
   legacyDecodeCounter.inc();
 }
 
-export type LegacyUpgradeOutcome = 'minted' | 'no-token' | 'failed';
+export type LegacyUpgradeOutcome = 'minted' | 'deduped' | 'no-token' | 'failed';
 
 const legacyUpgradeCounter = registerCounterWithLabels({
   name: 'session_legacy_upgrade_total',

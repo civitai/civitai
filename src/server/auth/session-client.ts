@@ -1,4 +1,6 @@
+import { createHash } from 'crypto';
 import type { Session } from '~/types/session';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { createSessionClient, createSessionTokenClient, sessionCookieName } from '@civitai/auth';
 import { setSessionCookie, clearLegacyCookies, type CookieWritable } from './civ-cookie';
 import { isRevoked } from './session-verifier';
@@ -86,6 +88,31 @@ export async function maybeRollHubCookie(
   }
 }
 
+// One upgrade per legacy cookie per window, instead of one per REQUEST. Upgrading mints a NEW jti, and the
+// only thing that stopped it repeating was the client persisting the cookie we set — so a client that ignores
+// Set-Cookie (a scripted integration, a cookie-less HTTP client) re-minted on every request indefinitely, with
+// no age gate and no rate limit. Contrast maybeRollHubCookie above, which is both age-gated and jti-preserving.
+//
+// Skipping is safe: the caller already resolved this request's session from the legacy decode, so a skipped
+// upgrade costs the user nothing — the migration just happens on a later request. We key on a HASH of the
+// cookie and store no value, so the marker is not a credential.
+const LEGACY_UPGRADE_WINDOW_SECONDS = 10 * 60;
+
+async function claimLegacyUpgrade(legacyToken: string): Promise<boolean> {
+  try {
+    const fingerprint = createHash('sha256').update(legacyToken).digest('base64url');
+    const key = `${REDIS_SYS_KEYS.SESSION.LEGACY_UPGRADE_LOCK}:${fingerprint}` as const;
+    const claimed = await withSysReadDeadline(
+      sysRedis.set(key as never, '1', { NX: true, EX: LEGACY_UPGRADE_WINDOW_SECONDS })
+    );
+    return claimed !== null;
+  } catch {
+    // Fail OPEN: a sysRedis blip must not block migration off the legacy cookie. The pre-existing behaviour
+    // was to upgrade on every request, so degrading to that is not a regression.
+    return true;
+  }
+}
+
 /**
  * Upgrade-on-read (migration window): when a request authenticated via the LEGACY next-auth cookie, ask the hub
  * to exchange that cookie for a fresh civ-token and set it on this response — so the legacy user migrates to the
@@ -103,6 +130,10 @@ export async function maybeUpgradeLegacySession(
   host?: string
 ): Promise<void> {
   if (!HUB_ORIGIN || !legacyToken || typeof res.setHeader !== 'function') return;
+  if (!(await claimLegacyUpgrade(legacyToken))) {
+    observeLegacyUpgrade('deduped');
+    return;
+  }
   try {
     // Forward any existing civ-device so the hub reuses this browser's device set; for a pure legacy user (no
     // civ-device yet) the hub mints one and returns it. Without this, the upgraded session had NO civ-device
