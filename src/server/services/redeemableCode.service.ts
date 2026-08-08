@@ -276,7 +276,7 @@ export async function consumeRedeemableCode({
       throw new Error('Code does not exist or has been redeemed');
     }
     // let's clear user session just in case.
-    await refreshSession(userId);
+    await refreshSession(userId, { caller: 'membership' });
 
     // Calculate Buzz value and get matching gift notices even for already-redeemed codes
     const tierName =

@@ -55,3 +55,72 @@ export function observeSessionLeg(
   durationHistogram.observe({ leg, outcome }, durationSeconds);
   if (outcome === 'timeout') timeoutsCounter.inc({ leg });
 }
+
+// --- Session-token MINT rate ------------------------------------------------------------------------------
+// The store records only LAST TOUCH: `trackToken` writes the field value AND re-arms the field TTL on every
+// call, including the rolling refresh, so neither the value nor `30d - HTTL` is a creation time. No query
+// against session:user-tokens2 can recover a mint rate for any account — this counter is the only instrument
+// that can. See _local/docs/plans/session-system-audit-2026-08-08.md.
+
+export type LegacyUpgradeOutcome = 'minted' | 'no-token' | 'failed';
+
+const legacyUpgradeCounter = registerCounterWithLabels({
+  name: 'session_legacy_upgrade_total',
+  help:
+    'Legacy next-auth cookie → civ-token upgrade-on-read attempts. Each `minted` is a NEW jti tracked in ' +
+    'session:user-tokens2, so a sustained rate means clients are re-minting rather than persisting the ' +
+    'returned cookie. Bounded outcome label only — per-user attribution goes to the Axiom event.',
+  labelNames: ['outcome'] as const,
+});
+
+export function observeLegacyUpgrade(outcome: LegacyUpgradeOutcome): void {
+  legacyUpgradeCounter.inc({ outcome });
+}
+
+// --- Session-state fan-out (refreshSession / invalidateSession) -------------------------------------------
+// `updateSessionState` reads a user's whole token hash and writes one token-state field per token, so its
+// cost scales with the account's session count. SLOWLOG can't see this below its 10ms threshold, which is
+// where the persistent offenders sit — hence a duration histogram rather than a count.
+
+export type SessionStateCaller =
+  | 'ban'
+  | 'strike'
+  | 'subscription'
+  | 'membership'
+  | 'email-verification'
+  | 'browsing-mode'
+  | 'profile'
+  | 'moderation'
+  | 'admin'
+  | 'job'
+  | 'unspecified';
+
+const sessionStateDuration = registerHistogram({
+  name: 'session_state_update_duration_seconds',
+  help:
+    'Duration of updateSessionState (read the user token hash + mark every token). Labeled by caller and ' +
+    'type (refresh|invalid). The read is a shared-store cost that scales with the account session count.',
+  labelNames: ['caller', 'type'] as const,
+  buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5],
+});
+
+// Bucket edges bracket the operational thresholds this path is held to; traffic in the upper buckets is
+// out-of-band and worth investigating, not just large.
+const sessionStateTokens = registerHistogram({
+  name: 'session_state_tokens',
+  help:
+    'Number of tracked tokens touched by one updateSessionState call. The upper buckets are out-of-band ' +
+    'and worth investigating.',
+  labelNames: ['caller', 'type'] as const,
+  buckets: [1, 10, 50, 100, 500, 1000, 4000, 10000],
+});
+
+export function observeSessionStateUpdate(
+  caller: SessionStateCaller,
+  type: 'refresh' | 'invalid',
+  tokenCount: number,
+  durationSeconds: number
+): void {
+  sessionStateDuration.observe({ caller, type }, durationSeconds);
+  sessionStateTokens.observe({ caller, type }, tokenCount);
+}

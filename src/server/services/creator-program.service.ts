@@ -308,7 +308,7 @@ export async function joinCreatorsProgram(userId: number) {
 
   userUpdateCounter?.inc({ location: 'creator-program.service:completeOnboarding' });
 
-  await refreshSession(userId);
+  await refreshSession(userId, { caller: 'membership' });
 }
 
 async function getPoolValue(month?: Date) {

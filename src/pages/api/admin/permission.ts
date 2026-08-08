@@ -48,7 +48,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   }
 
   // Invalidate their sessions
-  for (const user of users) await refreshSession(user.id);
+  for (const user of users) await refreshSession(user.id, { caller: 'admin' });
 
   return res.status(200).json({
     keys,
