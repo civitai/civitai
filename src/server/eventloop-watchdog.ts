@@ -228,7 +228,7 @@ function render() {
   gauge('civitai_app_watchdog_wedge_longest_seconds', 'Longest completed wedge observed in this process lifetime, seconds.', longestSeconds);
   gauge('civitai_app_watchdog_started_timestamp_seconds', 'Unix timestamp at which the watchdog worker started.', Math.floor(startedAt / 1000));
   gauge('civitai_app_watchdog_threshold_ms', 'Configured heartbeat-staleness threshold for declaring a wedge, ms.', thresholdMs);
-  gauge('civitai_app_watchdog_heartbeat_interval_ms', 'Configured main-thread heartbeat interval, ms.', heartbeatIntervalMs);
+  gauge('civitai_app_watchdog_heartbeat_interval_ms', 'EFFECTIVE main-thread heartbeat interval, ms — the value actually in use after the threshold/beat ratio clamp, which may be lower than the configured one.', heartbeatIntervalMs);
 
   out.push('# HELP civitai_app_watchdog_wedge_total Total completed event-loop wedges detected off-loop.');
   out.push('# TYPE civitai_app_watchdog_wedge_total counter');
@@ -246,8 +246,22 @@ function render() {
   return out.join('\n') + '\n';
 }
 
+// FAIL CLOSED. The listener binds 0.0.0.0 (Prometheus scrapes the pod IP), so with no
+// token the port is cluster-readable and the whole containment story collapses to
+// "it isn't on a Service" — a property of the scrape config, not of this code. A
+// watchdog that refuses to expose metrics is a visible failure; one that exposes them
+// unauthenticated is an invisible one. Exiting here surfaces as worker_started=0.
+if (!token) {
+  if (parentPort) {
+    parentPort.postMessage({
+      type: 'error',
+      message: 'refusing to serve metrics: no token configured (WEBHOOK_TOKEN unset)',
+    });
+  }
+  process.exit(1);
+}
+
 function tokenAccepted(url) {
-  if (!token) return true;
   let given = '';
   try {
     given = new URL(url, 'http://localhost').searchParams.get('token') || '';
@@ -261,7 +275,8 @@ function tokenAccepted(url) {
 
 const server = http.createServer(function (req, res) {
   const url = req.url || '';
-  if (req.method !== 'GET' || !url.split('?')[0].endsWith('/metrics')) {
+  // Exact path, not endsWith, so a nested path like /anything/metrics cannot serve.
+  if (req.method !== 'GET' || url.split('?')[0] !== '/metrics') {
     res.writeHead(404);
     res.end();
     return;
@@ -304,6 +319,7 @@ if (parentPort) {
 `;
 
 let worker: Worker | undefined;
+let sigtermHooked = false;
 
 /** Test-only accessor for the live worker. */
 export function __getWatchdogWorkerForTests(): Worker | undefined {
@@ -398,7 +414,13 @@ export function registerEventLoopWatchdog(): void {
 
     workerStartedGauge().set(1);
 
-    process.once('SIGTERM', shutdownEventLoopWatchdog);
+    // Guarded, not `once`: `once` still ADDS a listener per successful spawn, so a
+    // respawn after a worker death accumulates them until the MaxListeners warning
+    // fires and shutdown runs twice.
+    if (!sigtermHooked) {
+      sigtermHooked = true;
+      process.on('SIGTERM', shutdownEventLoopWatchdog);
+    }
   } catch (err) {
     workerStartedGauge().set(0);
     console.error('[eventloop-watchdog] failed to arm; continuing without it:', err);

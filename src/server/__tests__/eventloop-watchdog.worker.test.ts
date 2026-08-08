@@ -80,6 +80,17 @@ afterEach(async () => {
 });
 
 describe('event-loop watchdog worker', () => {
+  it('the source carries no backtick or ${ that would break out of its template', () => {
+    // The source lives inside a String.raw template, so a single backtick anywhere in
+    // it — including in a comment — silently TERMINATES the literal and turns the rest
+    // into TypeScript. That happened once already: a comment reading /anything/metrics
+    // in backticks broke the worker, prettier reformatted the wreckage, and every
+    // spawn died with `ReferenceError: anything is not defined`. It is a whole class
+    // of damage available to an innocuous comment edit, and it costs one assertion.
+    expect(WATCHDOG_WORKER_SOURCE).not.toContain('`');
+    expect(WATCHDOG_WORKER_SOURCE).not.toContain('${');
+  });
+
   it('serves its metrics while the heartbeat is fresh', async () => {
     const h = await startWorker();
     h.beat.set([BigInt(Date.now())]);
@@ -161,18 +172,58 @@ describe('event-loop watchdog worker', () => {
     expect((await h.scrape()).status).toBe(200);
   });
 
-  it('serves unauthenticated only when no token is configured', async () => {
-    const h = await startWorker({ token: '' });
+  it('FAILS CLOSED: refuses to listen at all when no token is configured', async () => {
+    // The listener binds 0.0.0.0, so serving unauthenticated would make the port
+    // cluster-readable and reduce containment to "it isn't on a Service" — a property
+    // of the scrape config rather than of this code. Refusing is a visible failure
+    // (worker_started=0); serving unauthenticated is an invisible one.
+    const sab = new SharedArrayBuffer(8);
+    Atomics.store(new BigInt64Array(sab), 0, BigInt(Date.now()));
 
-    const res = await fetch(`http://127.0.0.1:${h.port}/metrics`);
-    expect(res.status).toBe(200);
+    const worker = new Worker(WATCHDOG_WORKER_SOURCE, {
+      eval: true,
+      workerData: {
+        sab,
+        thresholdMs: 300,
+        port: 0,
+        token: '',
+        heartbeatIntervalMs: 50,
+        pollMs: 25,
+      },
+    });
+
+    const messages: string[] = [];
+    worker.on('message', (msg: { type?: string; message?: string }) => {
+      if (msg?.type === 'error' && msg.message) messages.push(msg.message);
+      // A 'listening' message here would mean it bound the port anyway.
+      if (msg?.type === 'listening') messages.push('LISTENING');
+    });
+
+    const exitCode = await new Promise<number>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('worker never exited')), 10_000);
+      worker.once('exit', (code) => {
+        clearTimeout(timeout);
+        resolve(code);
+      });
+      worker.once('error', (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+
+    expect(exitCode).not.toBe(0);
+    expect(messages).not.toContain('LISTENING');
+    expect(messages.join(' ')).toContain('refusing to serve metrics');
   });
 
-  it('404s anything that is not GET /metrics', async () => {
+  it('404s anything that is not exactly GET /metrics', async () => {
     const h = await startWorker();
 
-    const notMetrics = await fetch(`http://127.0.0.1:${h.port}/`);
-    expect(notMetrics.status).toBe(404);
+    expect((await fetch(`http://127.0.0.1:${h.port}/`)).status).toBe(404);
+    // Not endsWith: a nested path must not serve.
+    expect((await fetch(`http://127.0.0.1:${h.port}/anything/metrics?token=${TOKEN}`)).status).toBe(
+      404
+    );
 
     const wrongMethod = await fetch(`http://127.0.0.1:${h.port}/metrics?token=${TOKEN}`, {
       method: 'POST',
