@@ -10,9 +10,8 @@
  * request to that pod — including its own response — stops until the stall ends.
  *
  * Three gates, in the order a request meets them:
- *   1. Host must be a preview host (route guard, see middleware/testing-route-access).
- *      Convenience only — the Host header is client-controlled, so this is not a
- *      boundary.
+ *   1. Host must be a non-production host (route guard, see
+ *      middleware/testing-route-access). A routing check, not a boundary.
  *   2. EVENTLOOP_WATCHDOG_STALL_ENDPOINT === 'true', read at MODULE LOAD. This is the
  *      one that matters: without it no handler is constructed at all, so the route is
  *      a bare 404 with no auth path and no reachable stall code.

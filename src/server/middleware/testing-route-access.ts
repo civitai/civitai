@@ -14,19 +14,20 @@
 // cleanly, and change nothing, while presenting as "the fix didn't work" rather than
 // "the fix isn't there". `request.nextUrl.hostname` is genuinely runtime.
 //
-// 🔴 THIS IS NOT AN AUTHENTICATION BOUNDARY. The hostname comes from the Host header,
-// which the client controls, so anything able to reach a pod directly can satisfy it.
-// What keeps the stall endpoint out of production is that
-// EVENTLOOP_WATCHDOG_STALL_ENDPOINT is unset there, so the route module never
-// constructs a handler and a spoofed Host reaches a bare 404. This check is
-// convenience and defence in depth; do not add a route here on the strength of it
-// alone.
+// 🔴 THIS IS A ROUTING CHECK, NOT AN AUTHENTICATION BOUNDARY. It is defence in depth.
+// What keeps the stall endpoint out of production is EVENTLOOP_WATCHDOG_STALL_ENDPOINT
+// being unset there: the route module then constructs no handler at all, so the path
+// is a bare 404 regardless of how a request reached the pod. Never add a route to the
+// set below on the strength of the hostname check alone.
 
-const PREVIEW_HOST_SUFFIX = '.civitaic.com';
+// The whole non-production family domain, not just ephemeral PR previews — several
+// long-lived non-prod services share it. Narrowness therefore comes from the path set
+// below, not from this suffix.
+const NON_PROD_HOST_SUFFIX = '.civitaic.com';
 
-// Exact paths, never prefixes. Each one must be independently safe to reach on a
-// preview host by anyone holding the WEBHOOK_TOKEN.
-const PREVIEW_REACHABLE_TESTING_PATHS = new Set(['/api/testing/eventloop-stall']);
+// Exact paths, never prefixes. Each one must be independently safe to reach on any
+// non-production host by anyone holding the WEBHOOK_TOKEN.
+const NON_PROD_REACHABLE_TESTING_PATHS = new Set(['/api/testing/eventloop-stall']);
 
 export function canAccessTestingRoute({
   pathname,
@@ -38,5 +39,5 @@ export function canAccessTestingRoute({
   isProduction: boolean;
 }): boolean {
   if (!isProduction) return true;
-  return PREVIEW_REACHABLE_TESTING_PATHS.has(pathname) && hostname.endsWith(PREVIEW_HOST_SUFFIX);
+  return NON_PROD_REACHABLE_TESTING_PATHS.has(pathname) && hostname.endsWith(NON_PROD_HOST_SUFFIX);
 }

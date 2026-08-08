@@ -17,7 +17,7 @@ describe('canAccessTestingRoute', () => {
     }
   });
 
-  it('allows the stall endpoint on a preview host', () => {
+  it('allows the stall endpoint on a non-production host', () => {
     for (const hostname of ['pr-1.civitaic.com', 'pr-3752.civitaic.com', 'a.b.civitaic.com']) {
       expect(
         canAccessTestingRoute({ pathname: STALL, hostname, isProduction: true }),
@@ -35,7 +35,7 @@ describe('canAccessTestingRoute', () => {
     }
   });
 
-  it('🔴 refuses hostnames that merely resemble a preview host', () => {
+  it('🔴 refuses hostnames that merely resemble a non-production host', () => {
     // `civitaic.com` and `civitai.com` differ by one character, and the suffix match
     // has to be anchored on the dot or a lookalike registration would satisfy it.
     for (const hostname of [
@@ -53,7 +53,7 @@ describe('canAccessTestingRoute', () => {
     }
   });
 
-  it('🔴 does NOT widen any other testing route on a preview host', () => {
+  it('🔴 does NOT widen any other testing route on a non-production host', () => {
     // The whole argument for touching this shared guard was that it opens exactly one
     // path. If this ever fails, the blast radius of the change is no longer what was
     // reviewed.
