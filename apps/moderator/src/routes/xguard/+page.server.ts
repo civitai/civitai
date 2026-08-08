@@ -1,7 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { requireAccess } from '$lib/server/access';
-import { labDb } from '$lib/server/xguard-lab';
+import { getLabDb } from '$lib/server/xguard-lab';
 
 // Review queue for the XGuard label lab. One item is one (sample, label) pair the current
 // reviewer has not judged yet, shown with whatever the AI rater decided so the reviewer only
@@ -52,13 +52,13 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
   // Independent queries, so they go out together. Sequential awaits cost a full round trip each,
   // which is invisible against a local lab DB and very much not once this moves to the cluster.
-  const labelsQuery = labDb
+  const labelsQuery = getLabDb()
     .selectFrom('label_def')
     .select(['name', 'description'])
     .orderBy('name')
     .execute();
 
-  let itemQuery = labDb
+  let itemQuery = getLabDb()
     .selectFrom('machine_judgement as m')
     .innerJoin('sample as s', 's.id', 'm.sample_id')
     .select([...selection])
@@ -88,14 +88,14 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     if (skipped.length) itemQuery = itemQuery.where('m.sample_id', 'not in', skipped);
   }
 
-  const countsQuery = labDb
+  const countsQuery = getLabDb()
     .selectFrom('machine_judgement as m')
     .select(({ fn }) => [fn.countAll<string>().as('rated')])
     .where('m.label', '=', label)
     .where('m.source', '=', 'ai')
     .executeTakeFirst();
 
-  const reviewedQuery = labDb
+  const reviewedQuery = getLabDb()
     .selectFrom('human_judgement')
     .select(({ fn }) => [
       fn.countAll<string>().as('total'),
@@ -109,7 +109,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
   // Confirmed positives across every reviewer, because that is what makes recall measurable - one
   // reviewer's own tally does not answer "can this label be evaluated yet".
-  const labelPositivesQuery = labDb
+  const labelPositivesQuery = getLabDb()
     .selectFrom('human_judgement')
     .select(({ fn }) => [fn.count<string>('sample_id').distinct().as('positives')])
     .where('label', '=', label)
@@ -117,7 +117,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     .where('excluded_reason', 'is', null)
     .executeTakeFirst();
 
-  const lastReviewedQuery = labDb
+  const lastReviewedQuery = getLabDb()
     .selectFrom('human_judgement')
     .select(['sample_id as sampleId'])
     .where('label', '=', label)
@@ -129,7 +129,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     .executeTakeFirst();
 
   const existingQuery = pinnedSampleId
-    ? labDb
+    ? getLabDb()
         .selectFrom('human_judgement')
         .select(['agreed', 'verdict', 'note'])
         .where('label', '=', label)
@@ -151,7 +151,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
   // Highlight vocabulary for this label. Lives in `label_term` rather than a constant so it can be
   // edited per label without a deploy.
-  const terms = await labDb
+  const terms = await getLabDb()
     .selectFrom('label_term')
     .select(['label', 'term', 'kind'])
     .where('label', '=', label)
@@ -200,7 +200,7 @@ export const actions: Actions = {
 
     if (!sampleId || !label) return fail(400, { message: 'Missing sample or label' });
 
-    await labDb
+    await getLabDb()
       .insertInto('human_judgement')
       .values({
         sample_id: sampleId,

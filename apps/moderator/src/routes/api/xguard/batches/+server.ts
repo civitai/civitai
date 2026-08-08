@@ -1,6 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { defineWebhookEndpoint } from '$lib/server/api-endpoint';
-import { labDb } from '$lib/server/xguard-lab';
+import { getLabDb } from '$lib/server/xguard-lab';
 
 export const GET = defineWebhookEndpoint({
   summary: 'Sampling batches with rating and review coverage per label.',
@@ -12,7 +12,7 @@ export const GET = defineWebhookEndpoint({
   handler: async () => {
 
     const [batches, coverage] = await Promise.all([
-      labDb
+      getLabDb()
         .selectFrom('sample')
         .select(({ fn }) => [
           'batch',
@@ -25,7 +25,7 @@ export const GET = defineWebhookEndpoint({
         .execute(),
       // One pass over both judgement tables per (batch, label) — a join between them would multiply rows
       // whenever a sample has several reviewers.
-      labDb
+      getLabDb()
         .selectFrom('sample as s')
         .innerJoin('machine_judgement as m', 'm.sample_id', 's.id')
         .select(({ fn }) => [

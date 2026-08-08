@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { z } from 'zod';
 import { defineWebhookEndpoint } from '$lib/server/api-endpoint';
-import { labDb } from '$lib/server/xguard-lab';
+import { getLabDb } from '$lib/server/xguard-lab';
 import { clickhouseEnv, idOf, labConnectionString } from '$lib/server/xguard-api';
 import { sampleBatch } from '../../../../../xguard-lab/sample-core';
 
@@ -39,7 +39,7 @@ export const GET = defineWebhookEndpoint({
     'Everything sampled so far comes from prompts XGuard already flagged, so absolute recall is not measurable from it.',
   ],
   handler: async ({ batch, label, reviewed, aiVerdict, limit, offset }) => {
-    let query = labDb
+    let query = getLabDb()
       .selectFrom('sample as s')
       .select([
         's.id',
@@ -88,7 +88,7 @@ export const GET = defineWebhookEndpoint({
 
     const ratings =
       label && rows.length
-        ? await labDb
+        ? await getLabDb()
             .selectFrom('machine_judgement')
             .select(['sample_id as sampleId', 'verdict', 'reason', 'model'])
             .where('label', '=', label)

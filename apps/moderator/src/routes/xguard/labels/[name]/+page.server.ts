@@ -1,7 +1,7 @@
 import { error, fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { requireAccess } from '$lib/server/access';
-import { labDb } from '$lib/server/xguard-lab';
+import { getLabDb } from '$lib/server/xguard-lab';
 import { env } from '$env/dynamic/private';
 import { runEvaluation } from '../../../../../xguard-lab/eval-core';
 
@@ -11,7 +11,7 @@ import { runEvaluation } from '../../../../../xguard-lab/eval-core';
 export const load: PageServerLoad = async ({ locals, url, params }) => {
   requireAccess(locals.user, '/xguard');
 
-  const label = await labDb
+  const label = await getLabDb()
     .selectFrom('label_def')
     .select(['name', 'description', 'status'])
     .where('name', '=', params.name)
@@ -19,13 +19,13 @@ export const load: PageServerLoad = async ({ locals, url, params }) => {
   if (!label) error(404, `No label named ${params.name}`);
 
   const [versions, runs, truth] = await Promise.all([
-    labDb
+    getLabDb()
       .selectFrom('label_policy')
       .select(['id', 'version', 'policy', 'threshold', 'action', 'note', 'created_at as createdAt'])
       .where('label', '=', params.name)
       .orderBy('version', 'desc')
       .execute(),
-    labDb
+    getLabDb()
       .selectFrom('eval_run')
       .select([
         'id',
@@ -45,7 +45,7 @@ export const load: PageServerLoad = async ({ locals, url, params }) => {
       .orderBy('started_at', 'desc')
       .limit(15)
       .execute(),
-    labDb
+    getLabDb()
       .selectFrom('human_judgement')
       .select(({ fn }) => [
         fn.count<string>('sample_id').distinct().as('confirmed'),
@@ -87,14 +87,14 @@ export const actions: Actions = {
       return fail(400, { message: 'Threshold must be between 0 and 1' });
     }
 
-    const next = await labDb
+    const next = await getLabDb()
       .selectFrom('label_policy')
       .select(({ fn }) => fn.max<number>('version').as('v'))
       .where('label', '=', params.name)
       .executeTakeFirst();
     const version = (next?.v ?? 0) + 1;
 
-    await labDb
+    await getLabDb()
       .insertInto('label_policy')
       .values({ label: params.name, version, policy, threshold, action, note })
       .execute();

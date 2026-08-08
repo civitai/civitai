@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { z } from 'zod';
 import { defineWebhookEndpoint } from '$lib/server/api-endpoint';
-import { labDb } from '$lib/server/xguard-lab';
+import { getLabDb } from '$lib/server/xguard-lab';
 import { idOf } from '$lib/server/xguard-api';
 
 export const GET = defineWebhookEndpoint({
@@ -11,7 +11,7 @@ export const GET = defineWebhookEndpoint({
   }),
   returns: 'label, versions (newest first, with full policy prose), terms, groundTruth counts.',
   handler: async ({ name }) => {
-    const label = await labDb
+    const label = await getLabDb()
       .selectFrom('label_def')
       .select(['name', 'description', 'status'])
       .where('name', '=', name)
@@ -19,7 +19,7 @@ export const GET = defineWebhookEndpoint({
     if (!label) error(404, `No label named ${name}`);
 
     const [versions, terms, truth] = await Promise.all([
-      labDb
+      getLabDb()
         .selectFrom('label_policy')
         .select([
           'id',
@@ -33,13 +33,13 @@ export const GET = defineWebhookEndpoint({
         .where('label', '=', name)
         .orderBy('version', 'desc')
         .execute(),
-      labDb
+      getLabDb()
         .selectFrom('label_term')
         .select(['term', 'kind', 'note'])
         .where('label', '=', name)
         .orderBy('term')
         .execute(),
-      labDb
+      getLabDb()
         .selectFrom('human_judgement')
         .select(({ fn }) => [
           fn.count<string>('sample_id').distinct().as('confirmed'),

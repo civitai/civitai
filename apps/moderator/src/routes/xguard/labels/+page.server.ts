@@ -1,6 +1,6 @@
 import type { PageServerLoad } from './$types';
 import { requireAccess } from '$lib/server/access';
-import { labDb } from '$lib/server/xguard-lab';
+import { getLabDb } from '$lib/server/xguard-lab';
 
 // Per-label state of the lab: how much data exists, how much of it is confirmed, and what the last
 // evaluation said.
@@ -12,7 +12,7 @@ import { labDb } from '$lib/server/xguard-lab';
 export const load: PageServerLoad = async ({ locals, url }) => {
   requireAccess(locals.user, url.pathname);
 
-  const labels = await labDb
+  const labels = await getLabDb()
     .selectFrom('label_def as l')
     .select((eb) => [
       'l.name',
@@ -55,7 +55,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
   // Latest completed run per label. One query, then matched up in memory - a lateral join for a
   // handful of labels is not worth the SQL.
-  const runs = await labDb
+  const runs = await getLabDb()
     .selectFrom('eval_run')
     .select([
       'id',

@@ -1,5 +1,5 @@
 import { defineWebhookEndpoint } from '$lib/server/api-endpoint';
-import { labDb } from '$lib/server/xguard-lab';
+import { getLabDb } from '$lib/server/xguard-lab';
 
 export const GET = defineWebhookEndpoint({
   summary:
@@ -13,18 +13,18 @@ export const GET = defineWebhookEndpoint({
   handler: async () => {
 
     const [labels, rated, confirmed, versions] = await Promise.all([
-      labDb
+      getLabDb()
         .selectFrom('label_def')
         .select(['name', 'description', 'status'])
         .orderBy('name')
         .execute(),
-      labDb
+      getLabDb()
         .selectFrom('machine_judgement')
         .select(({ fn }) => ['label', fn.countAll<string>().as('n')])
         .where('source', '=', 'ai')
         .groupBy('label')
         .execute(),
-      labDb
+      getLabDb()
         .selectFrom('human_judgement')
         .select(({ fn }) => [
           'label',
@@ -34,7 +34,7 @@ export const GET = defineWebhookEndpoint({
         .where('excluded_reason', 'is', null)
         .groupBy('label')
         .execute(),
-      labDb
+      getLabDb()
         .selectFrom('label_policy')
         .select(({ fn }) => [
           'label',

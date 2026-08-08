@@ -2,7 +2,7 @@ import { error } from '@sveltejs/kit';
 import { z } from 'zod';
 import { defineWebhookEndpoint } from '$lib/server/api-endpoint';
 import { ok } from '$lib/server/api-guard';
-import { labDb } from '$lib/server/xguard-lab';
+import { getLabDb } from '$lib/server/xguard-lab';
 import { idOf } from '$lib/server/xguard-api';
 
 // Saving is always a NEW version, never an update in place: `eval_run.policy_id` points at a specific
@@ -17,7 +17,7 @@ export const GET = defineWebhookEndpoint({
   input: label,
   returns: 'Every saved version with its prose, threshold, action and note.',
   handler: async ({ name }) => {
-    const versions = await labDb
+    const versions = await getLabDb()
       .selectFrom('label_policy')
       .select(['id', 'version', 'policy', 'threshold', 'action', 'note', 'created_at as createdAt'])
       .where('label', '=', name)
@@ -50,21 +50,21 @@ export const POST = defineWebhookEndpoint({
     'Thresholds do not transfer between scanners. A threshold tuned against XGuard means nothing to another one.',
   ],
   handler: async ({ name, policy, threshold, action, note }) => {
-    const known = await labDb
+    const known = await getLabDb()
       .selectFrom('label_def')
       .select(['name'])
       .where('name', '=', name)
       .executeTakeFirst();
     if (!known) error(404, `No label named ${name}`);
 
-    const latest = await labDb
+    const latest = await getLabDb()
       .selectFrom('label_policy')
       .select(({ fn }) => fn.max<number>('version').as('v'))
       .where('label', '=', name)
       .executeTakeFirst();
     const version = (latest?.v ?? 0) + 1;
 
-    const created = await labDb
+    const created = await getLabDb()
       .insertInto('label_policy')
       .values({ label: name, version, policy, threshold, action, note: note ?? null })
       .returning(['id'])

@@ -2,7 +2,7 @@ import { error } from '@sveltejs/kit';
 import { z } from 'zod';
 import { sql } from '@civitai/db/kysely';
 import { defineWebhookEndpoint } from '$lib/server/api-endpoint';
-import { labDb } from '$lib/server/xguard-lab';
+import { getLabDb } from '$lib/server/xguard-lab';
 import { precisionOf, recallOf } from '$lib/eval-metrics';
 import { idOf } from '$lib/server/xguard-api';
 
@@ -44,7 +44,7 @@ export const GET = defineWebhookEndpoint({
   handler: async ({ id, bucket, limit }) => {
     const wanted = bucketsFor(bucket);
 
-    const run = await labDb
+    const run = await getLabDb()
       .selectFrom('eval_run')
       .select([
         'id',
@@ -70,7 +70,7 @@ export const GET = defineWebhookEndpoint({
     if (!run) error(404, `No run ${id}`);
 
     const [results, tally] = await Promise.all([
-      labDb
+      getLabDb()
         .selectFrom('eval_result as r')
         .innerJoin('sample as s', 's.id', 'r.sample_id')
         .select([
@@ -92,7 +92,7 @@ export const GET = defineWebhookEndpoint({
         .orderBy(sql`r.score desc nulls last`)
         .limit(limit + 1)
         .execute(),
-      labDb
+      getLabDb()
         .selectFrom('eval_result')
         .select(({ fn }) => ['bucket', fn.countAll<string>().as('n')])
         .where('run_id', '=', id)

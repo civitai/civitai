@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { z } from 'zod';
 import { defineWebhookEndpoint } from '$lib/server/api-endpoint';
-import { labDb } from '$lib/server/xguard-lab';
+import { getLabDb } from '$lib/server/xguard-lab';
 import { idOf } from '$lib/server/xguard-api';
 
 export const GET = defineWebhookEndpoint({
@@ -16,7 +16,7 @@ export const GET = defineWebhookEndpoint({
     'Human judgements are readable here and writable only in the browser — see the docs page for why.',
   ],
   handler: async ({ id }) => {
-    const sample = await labDb
+    const sample = await getLabDb()
       .selectFrom('sample')
       .select([
         'id',
@@ -34,7 +34,7 @@ export const GET = defineWebhookEndpoint({
     if (!sample) error(404, `No sample ${id}`);
 
     const [machine, human] = await Promise.all([
-      labDb
+      getLabDb()
         .selectFrom('machine_judgement')
         .select([
           'id',
@@ -50,7 +50,7 @@ export const GET = defineWebhookEndpoint({
         .where('sample_id', '=', id)
         .orderBy('created_at')
         .execute(),
-      labDb
+      getLabDb()
         .selectFrom('human_judgement')
         .select([
           'id',

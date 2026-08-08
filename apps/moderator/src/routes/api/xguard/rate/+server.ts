@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineWebhookEndpoint } from '$lib/server/api-endpoint';
-import { labDb } from '$lib/server/xguard-lab';
+import { getLabDb } from '$lib/server/xguard-lab';
 import { labConnectionString, openrouterKey } from '$lib/server/xguard-api';
 import { rateBatch } from '../../../../../xguard-lab/rate-core';
 import { LABELS, type LabName } from '../../../../../xguard-lab/labels';
@@ -50,7 +50,7 @@ export const POST = defineWebhookEndpoint({
     });
 
     // Counted rather than inferred from `rated === limit`, which is wrong on any pass where a row failed.
-    const unrated = await labDb
+    const unrated = await getLabDb()
       .selectFrom('sample as s')
       .select(({ fn }) => fn.countAll<string>().as('n'))
       .where('s.batch', '=', batch)

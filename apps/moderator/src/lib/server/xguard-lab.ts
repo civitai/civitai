@@ -1,4 +1,5 @@
 import { createKyselyClients, type Generated } from '@civitai/db/kysely';
+import type { Kysely } from 'kysely';
 import { env } from '$env/dynamic/private';
 
 // The XGuard label lab's tables, in the MODERATOR database - separate from Civitai's Postgres,
@@ -131,9 +132,22 @@ function isLocalHost(url: string): boolean {
   }
 }
 
+// Lazy: the build imports every route module to read its prerender config, so constructing this at
+// module scope makes an unset MODERATOR_DATABASE_URL fail the build instead of the request.
+let client: Kysely<LabDB> | undefined;
+
 // No replica; reads and writes both go to the single instance.
-export const { dbWrite: labDb } = createKyselyClients<LabDB>({
-  connectionString: labUrl(),
-  replicaConnectionString: labUrl(),
-  sslNoVerify: !isLocalHost(labUrl()),
-});
+function createLabDb(): Kysely<LabDB> {
+  const url = labUrl();
+  const { dbWrite } = createKyselyClients<LabDB>({
+    connectionString: url,
+    replicaConnectionString: url,
+    sslNoVerify: !isLocalHost(url),
+  });
+  return dbWrite;
+}
+
+export function getLabDb(): Kysely<LabDB> {
+  if (!client) client = createLabDb();
+  return client;
+}

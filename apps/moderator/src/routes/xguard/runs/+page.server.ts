@@ -1,7 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import type { PageServerLoad } from './$types';
 import { requireAccess } from '$lib/server/access';
-import { labDb } from '$lib/server/xguard-lab';
+import { getLabDb } from '$lib/server/xguard-lab';
 
 // Evaluation run history, and the per-sample outcomes behind any one run.
 //
@@ -28,7 +28,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   const runParam = url.searchParams.get('run');
   const bucketFilter = url.searchParams.get('bucket') ?? 'wrong';
 
-  let runsQuery = labDb
+  let runsQuery = getLabDb()
     .selectFrom('eval_run')
     .select([
       'id',
@@ -57,7 +57,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
   const [runRows, labels] = await Promise.all([
     runsQuery.execute(),
-    labDb.selectFrom('label_def').select(['name']).orderBy('name').execute(),
+    getLabDb().selectFrom('label_def').select(['name']).orderBy('name').execute(),
   ]);
 
   // @civitai/db registers a process-global INT8 parser, so bigint ids arrive as JS numbers even
@@ -90,7 +90,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   const wanted = bucketsFor(bucketFilter);
 
   const [results, tally] = await Promise.all([
-    labDb
+    getLabDb()
       .selectFrom('eval_result as r')
       .innerJoin('sample as s', 's.id', 'r.sample_id')
       .select([
@@ -113,7 +113,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       .orderBy(sql`r.score desc nulls last`)
       .limit(RESULT_LIMIT + 1)
       .execute(),
-    labDb
+    getLabDb()
       .selectFrom('eval_result')
       .select(({ fn }) => ['bucket', fn.countAll<string>().as('n')])
       .where('run_id', '=', selected.id)
@@ -126,7 +126,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
   // Every label's terms: a run list can span labels, and a prompt is worth highlighting for
   // vocabulary the label under test does not own.
-  const terms = await labDb.selectFrom('label_term').select(['label', 'term', 'kind']).execute();
+  const terms = await getLabDb().selectFrom('label_term').select(['label', 'term', 'kind']).execute();
 
   return {
     label,

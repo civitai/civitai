@@ -1,7 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import { defineWebhookEndpoint } from '$lib/server/api-endpoint';
-import { labDb } from '$lib/server/xguard-lab';
+import { getLabDb } from '$lib/server/xguard-lab';
 import { precisionOf, recallOf } from '$lib/eval-metrics';
 import { idOf, labConnectionString, orchestratorEnv } from '$lib/server/xguard-api';
 import { runEvaluation } from '../../../../../xguard-lab/eval-core';
@@ -28,7 +28,7 @@ export const GET = defineWebhookEndpoint({
     'Precision and recall are derived, never read from the stored columns — early rows have a literal 0 there.',
   ],
   handler: async ({ label, limit }) => {
-    let query = labDb
+    let query = getLabDb()
       .selectFrom('eval_run')
       .select([
         'id',
