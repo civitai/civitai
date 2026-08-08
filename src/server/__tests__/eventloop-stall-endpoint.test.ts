@@ -100,6 +100,35 @@ describe('synthetic stall endpoint gating', () => {
     );
   });
 
+  it('enforces a cooldown so repeat calls cannot pin the loop continuously', async () => {
+    // The per-request clamp bounds one stall. Without this, a caller looping the
+    // endpoint pins the loop indefinitely and crosses the liveness threshold — a
+    // bounded primitive that is unbounded in aggregate is not bounded.
+    process.env[GATE] = 'true';
+    const mod = await import('~/pages/api/testing/eventloop-stall');
+
+    const first = mockRes();
+    await mod.default(
+      { query: {}, body: { durationMs: 30, mode: 'spin' } } as never,
+      first as never
+    );
+    expect(first.status).toHaveBeenCalledWith(200);
+
+    const second = mockRes();
+    const startedAt = Date.now();
+    await mod.default(
+      { query: {}, body: { durationMs: 5000, mode: 'spin' } } as never,
+      second as never
+    );
+    const elapsed = Date.now() - startedAt;
+
+    expect(second.status).toHaveBeenCalledWith(429);
+    // Refused, not queued: the second 5s stall must not have run.
+    expect(elapsed).toBeLessThan(1000);
+    const payload = second.json.mock.calls[0]?.[0] as { retryAfterMs: number };
+    expect(payload.retryAfterMs).toBeGreaterThan(0);
+  });
+
   it('clamps the requested duration into [1, 10000] without rejecting', async () => {
     // Purely on the resolver. Driving this through the handler would mean actually
     // hard-locking the thread for the clamped ceiling, which is a 10s test that also

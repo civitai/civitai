@@ -11,9 +11,9 @@
  * It is gated TWICE: the module only builds a real handler when
  * EVENTLOOP_WATCHDOG_STALL_ENDPOINT === 'true' (otherwise this route is a bare 404
  * with no auth path and no reachable stall code), and when it is enabled it still
- * requires the WEBHOOK_TOKEN. The duration is clamped server-side regardless of
- * what is asked for, so the worst case is bounded even if both gates are somehow
- * open.
+ * requires the WEBHOOK_TOKEN. The duration is clamped server-side regardless of what
+ * is asked for, and a cooldown is enforced between stalls, so even with both gates
+ * open a caller cannot hold the loop pinned continuously.
  *
  * Usage:
  *   POST /api/testing/eventloop-stall?token=$WEBHOOK_TOKEN
@@ -41,6 +41,10 @@ const MAX_DURATION_MS = 10_000;
 const MIN_DURATION_MS = 1;
 const DEFAULT_DURATION_MS = 3000;
 const BURN_BATCH = 100_000;
+// Enforced after each stall, so a caller looping the endpoint cannot hold the loop
+// pinned continuously. Generous relative to the 10s ceiling: the point is to make
+// sustained pinning impossible, not to make repeat testing painful.
+const COOLDOWN_MS = 30_000;
 
 // Resolved at module load. When false, nothing below this line is reachable: the
 // default export is a 404 that never consults a token and never calls stall().
@@ -98,6 +102,12 @@ export function stall(durationMs: number, mode: 'spin' | 'alloc'): number {
   return iterations;
 }
 
+// The per-request clamp bounds ONE stall; it does nothing about a caller looping the
+// endpoint, which pins the loop indefinitely and would cross the liveness threshold.
+// Defence in depth — it needs both gates open to matter — but a bounded primitive that
+// is unbounded in aggregate is not really bounded.
+let cooldownUntil = 0;
+
 const buildHandler = () =>
   WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
     const parsed = resolveStallRequest({ ...req.query, ...(req.body ?? {}) });
@@ -105,7 +115,19 @@ const buildHandler = () =>
       return res.status(400).json({ error: parsed.error.flatten() });
     }
 
+    const now = Date.now();
+    if (now < cooldownUntil) {
+      return res.status(429).json({
+        error: 'stall cooling down',
+        retryAfterMs: cooldownUntil - now,
+      });
+    }
+
     const { durationMs, mode } = parsed.value;
+    // Set BEFORE stalling. The loop is blocked for the whole stall, so no concurrent
+    // request can be serviced anyway; what this bounds is the next one, and it must
+    // already be in place when the loop starts serving again.
+    cooldownUntil = now + durationMs + COOLDOWN_MS;
     const startedAt = Date.now();
     console.warn(
       `[eventloop-stall] SYNTHETIC STALL starting: ${durationMs}ms mode=${mode} — this pod is ` +

@@ -75,9 +75,9 @@ describe('watchdog config resolution', () => {
   });
 
   it('clamps a too-small threshold UP to the floor rather than throwing', async () => {
-    // A threshold near the noise level would fire on ordinary GC. Measured loop lag
-    // on these pools already reaches 7.46s max, so a 5ms threshold is a
-    // fat-fingered value, not an intent.
+    // A threshold near the noise level would fire on ordinary GC. Baseline loop lag
+    // already reaches multiple seconds at max, so a 5ms threshold is a fat-fingered
+    // value, not an intent.
     const { resolveWatchdogThresholdMs } = await loadWatchdog();
     process.env.EVENTLOOP_WATCHDOG_THRESHOLD_MS = '5';
     expect(resolveWatchdogThresholdMs()).toBe(250);

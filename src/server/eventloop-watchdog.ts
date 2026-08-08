@@ -4,9 +4,9 @@
 // of them are blind to the thing they are named after. The `loopstall-*`
 // self-trigger in cpu-profiler.ts reads its lag histogram from a setInterval that
 // cannot fire while the loop is pinned, and `/api/metrics` is served by the same
-// pinned loop, so a wedged pod reports nothing at all. Measured over six hours,
-// `nodejs_eventloop_lag_max_seconds` peaked at 7.46s while real wedges ran 4-5
-// minutes.
+// pinned loop, so a wedged pod reports nothing at all. Measured over six hours, the
+// scraped event-loop-lag metric peaked several seconds below the shortest real wedge
+// in the same window — wedges run minutes, and the scrape cannot report during one.
 //
 // This module puts the observer somewhere the wedge cannot reach it. The main
 // thread stores a millisecond timestamp into a SharedArrayBuffer; a worker thread
@@ -53,9 +53,9 @@ const PROM_PREFIX = 'civitai_app_';
 
 const DEFAULT_THRESHOLD_MS = 1000;
 // Floor, not a default. A threshold near the noise level fires on ordinary GC:
-// measured loop lag on these pools already reaches 7.46s (api-primary) and 15.62s
-// (SSR) at max, and real wedges last minutes, so sub-second detection latency buys
-// nothing worth the false positives.
+// measured baseline loop lag already reaches multiple seconds at max, and real
+// wedges last minutes, so sub-second detection latency buys nothing worth the false
+// positives.
 const MIN_THRESHOLD_MS = 250;
 
 const DEFAULT_HEARTBEAT_MS = 100;
