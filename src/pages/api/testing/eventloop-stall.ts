@@ -8,12 +8,19 @@
  *
  * 🔴 This endpoint deliberately hard-locks the Node process serving it. Every
  * request to that pod — including its own response — stops until the stall ends.
- * It is gated TWICE: the module only builds a real handler when
- * EVENTLOOP_WATCHDOG_STALL_ENDPOINT === 'true' (otherwise this route is a bare 404
- * with no auth path and no reachable stall code), and when it is enabled it still
- * requires the WEBHOOK_TOKEN. The duration is clamped server-side regardless of what
- * is asked for, and a cooldown is enforced between stalls, so even with both gates
- * open a caller cannot hold the loop pinned continuously.
+ *
+ * Three gates, in the order a request meets them:
+ *   1. Host must be a preview host (route guard, see middleware/testing-route-access).
+ *      Convenience only — the Host header is client-controlled, so this is not a
+ *      boundary.
+ *   2. EVENTLOOP_WATCHDOG_STALL_ENDPOINT === 'true', read at MODULE LOAD. This is the
+ *      one that matters: without it no handler is constructed at all, so the route is
+ *      a bare 404 with no auth path and no reachable stall code.
+ *   3. WEBHOOK_TOKEN.
+ *
+ * The duration is clamped server-side regardless of what is asked for, and a cooldown
+ * is enforced between stalls, so even with all three open a caller cannot hold the
+ * loop pinned continuously.
  *
  * Usage:
  *   POST /api/testing/eventloop-stall?token=$WEBHOOK_TOKEN

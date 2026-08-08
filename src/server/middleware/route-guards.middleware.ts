@@ -2,14 +2,23 @@ import type { NextRequest } from 'next/server';
 import { createMiddleware } from '~/server/middleware/middleware-utils';
 import { pathToRegexp } from 'path-to-regexp';
 import { isProd } from '~/env/other';
+import { canAccessTestingRoute } from '~/server/middleware/testing-route-access';
 
 // The session-based PAGE guards (/moderator, /testing) moved to _app getInitialProps — the edge runtime can't
 // resolve the thin hub civ-token to a full user. What's left here is the sessionless /api/testing gate (those
 // debug endpoints are non-prod only), so no getToken is needed.
 const routeGuards: RouteGuard[] = [];
+// Modifying this guard rather than adding a permissive one is forced: the middleware
+// below evaluates EVERY matching guard and redirects if ANY of them denies, so a new
+// guard can only ever be additive in the deny direction.
 addRouteGuard({
   matcher: ['/api/testing/:path*'],
-  canAccess: () => !isProd,
+  canAccess: ({ request }) =>
+    canAccessTestingRoute({
+      pathname: request.nextUrl.pathname,
+      hostname: request.nextUrl.hostname,
+      isProduction: isProd,
+    }),
 });
 //#region Logic
 
