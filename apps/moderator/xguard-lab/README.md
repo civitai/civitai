@@ -29,22 +29,26 @@ pnpm exec tsx --env-file=.env apps/moderator/xguard-lab/rate.ts \
 pnpm dev:moderator
 ```
 
-The route needs `moderator:senior` and a signed-in session, so the auth hub has to be running too.
+The route needs a signed-in session and a `/xguard` grant, made on `/admin`, so the auth hub has to be
+running too. Access is per-page in Postgres rather than a role tier, so until somebody makes that grant
+only `moderator:admin` can open the lab.
 
 ## Driving it from an agent
 
-Everything above except reviewing is also an HTTP endpoint under `/api/xguard/*`, authenticated with a
-personal Civitai API key on `Authorization: Bearer`. The key resolves to its user and gets that user's
-permissions — there is no lab-specific credential, so revoking the mod role revokes agent access.
+Everything above except reviewing is also an HTTP endpoint under `/api/xguard/*`, authenticated with the
+shared `XGUARD_API_TOKEN` on `Authorization: Bearer`. There is no user behind it: calls are not
+attributed to anybody, and revoking access means rotating the token for everyone holding it.
 
 `/xguard/docs` is the operator guide, and its endpoint list is generated from the routes rather than
 written down. Read it there; a copy here would be the version that goes stale.
 
-**Agents cannot write `human_judgement`.** API keys authenticate `/api/*` only, and reviewing is a form
-action on a page route, so the ban holds without every future endpoint author having to remember it. If
-it ever needs relaxing, add a column recording that a row came from a key and exclude those from ground
-truth by default — the point of the table is that a person confirmed what a model proposed, and rows
-that break that rule must not be indistinguishable from rows that don't.
+**Agents cannot write `human_judgement`.** The token authenticates `/api/xguard/*` only, and reviewing is
+a form action on a page route, so the ban holds without every future endpoint author having to remember
+it. This matters more under a shared secret than it did under per-user keys: a row written through the
+API could not even name who was behind it. If it ever needs relaxing, add a column recording that a row
+came from the API and exclude those from ground truth by default — the point of the table is that a
+person confirmed what a model proposed, and rows that break that rule must not be indistinguishable from
+rows that don't.
 
 ## Why stratified sampling
 

@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { requireApiAccess, ok, readJson, type EndpointDoc } from '$lib/server/api-guard';
+import { requireXguardToken, ok, readJson, type EndpointDoc } from '$lib/server/api-guard';
 import { labDb } from '$lib/server/xguard-lab';
 import { idOf } from '$lib/server/xguard-api';
 
@@ -37,7 +37,7 @@ export const _doc: EndpointDoc = {
 };
 
 export const GET: RequestHandler = async (event) => {
-  requireApiAccess(event, '/xguard');
+  requireXguardToken(event.request);
   const versions = await labDb
     .selectFrom('label_policy')
     .select(['id', 'version', 'policy', 'threshold', 'action', 'note', 'created_at as createdAt'])
@@ -51,7 +51,7 @@ export const GET: RequestHandler = async (event) => {
 };
 
 export const POST: RequestHandler = async (event) => {
-  requireApiAccess(event, '/xguard');
+  requireXguardToken(event.request);
   const name = event.params.name;
 
   const label = await labDb

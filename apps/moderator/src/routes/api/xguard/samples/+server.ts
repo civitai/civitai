@@ -1,5 +1,5 @@
 import type { RequestHandler } from './$types';
-import { requireApiAccess, ok, readJson, intParam, type EndpointDoc } from '$lib/server/api-guard';
+import { requireXguardToken, ok, readJson, intParam, type EndpointDoc } from '$lib/server/api-guard';
 import { labDb } from '$lib/server/xguard-lab';
 import { clickhouseEnv, idOf, labConnectionString, requireName } from '$lib/server/xguard-api';
 import { sampleBatch } from '../../../../../xguard-lab/sample-core';
@@ -48,7 +48,7 @@ export const _doc: EndpointDoc = {
 };
 
 export const GET: RequestHandler = async (event) => {
-  requireApiAccess(event, '/xguard');
+  requireXguardToken(event.request);
   const url = event.url;
   const batch = url.searchParams.get('batch');
   const label = url.searchParams.get('label');
@@ -139,7 +139,7 @@ export const GET: RequestHandler = async (event) => {
 };
 
 export const POST: RequestHandler = async (event) => {
-  requireApiAccess(event, '/xguard');
+  requireXguardToken(event.request);
   const body = await readJson<Record<string, unknown>>(event);
   const clickhouse = clickhouseEnv();
 

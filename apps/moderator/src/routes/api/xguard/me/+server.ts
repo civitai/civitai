@@ -1,20 +1,15 @@
 import type { RequestHandler } from './$types';
-import { requireApiAccess, ok, type EndpointDoc } from '$lib/server/api-guard';
-import { appRoles } from '@civitai/auth';
-import { APP } from '$lib/server/access';
+import { requireXguardToken, ok, type EndpointDoc } from '$lib/server/api-guard';
 
 export const _doc: EndpointDoc = {
-  summary: 'Who the key resolves to. Call this first — it is the cheapest way to prove auth works.',
-  returns: 'id, username and the moderator roles the key inherits.',
+  summary: 'Confirms the token is accepted. Call this first — it is the cheapest way to prove auth works.',
+  returns: 'What the token may do. There is no user behind it, so there is nobody to report.',
 };
 
-export const GET: RequestHandler = (event) => {
-  const { user, viaApiKey } = requireApiAccess(event, '/xguard');
+export const GET: RequestHandler = ({ request }) => {
+  requireXguardToken(request);
   return ok({
-    id: user.id,
-    username: user.username,
-    roles: appRoles(user, APP),
-    viaApiKey,
+    authenticated: true,
     // Stated rather than implied: the endpoint list has no way to write ground truth, and this is the
     // field a caller should assert on if it ever thinks it does.
     canWriteGroundTruth: false,

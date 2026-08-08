@@ -6,12 +6,9 @@ declare global {
     // interface Error {}
     interface Locals {
       // Non-optional: the hooks.server.ts guard redirects login/forbidden before any handler runs, so
-      // route code always has a moderator. (Public paths skip the guard but don't read this.) The
-      // API-key path holds the same invariant by answering 401 in the hook rather than continuing
-      // without a user.
+      // route code always has a moderator. (Public and secret-authed paths skip the guard, and must not
+      // read this — they have no user.)
       user: SessionUser;
-      /** True when the user was resolved from an API key rather than a session cookie. Only ever set on `/api/*`. */
-      viaApiKey?: boolean;
     }
     // interface PageData {}
     // interface PageState {}

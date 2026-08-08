@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { sql } from '@civitai/db/kysely';
 import type { RequestHandler } from './$types';
-import { requireApiAccess, ok, intParam, type EndpointDoc } from '$lib/server/api-guard';
+import { requireXguardToken, ok, intParam, type EndpointDoc } from '$lib/server/api-guard';
 import { labDb } from '$lib/server/xguard-lab';
 import { precisionOf, recallOf } from '$lib/eval-metrics';
 import { idOf, requireId } from '$lib/server/xguard-api';
@@ -36,7 +36,7 @@ function bucketsFor(filter: string | null): Bucket[] {
 }
 
 export const GET: RequestHandler = async (event) => {
-  requireApiAccess(event, '/xguard');
+  requireXguardToken(event.request);
   const id = requireId(event.params.id);
   const limit = intParam(event.url, 'limit', 100, 1, 1000);
   const wanted = bucketsFor(event.url.searchParams.get('bucket'));

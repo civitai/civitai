@@ -1,7 +1,8 @@
+import { timingSafeEqual } from 'node:crypto';
 import { error, json } from '@sveltejs/kit';
 import type { RequestEvent } from '@sveltejs/kit';
-import type { SessionUser } from '@civitai/auth';
-import { canAccess, requireAccess } from './access';
+import { env } from '$env/dynamic/private';
+import { requireAccess } from './access';
 
 // `/api/*` is exempt from the global route gate in hooks.server.ts, so every endpoint carries its own
 // check. Sharing it keeps the page path in one place: it is spelled as a literal, and `/retool/*` is a
@@ -37,23 +38,24 @@ export const requireUserIdParam = (
 // The helpers above serve the app's own panels, fetched by a signed-in browser. The ones below serve
 // callers that are not a browser, so they answer in JSON.
 //
-// A request carrying NO credentials at all never reaches here: it has no bearer, so the hook falls
-// through to the cookie guard and is redirected to the hub login. For a script that 302 is a 200 with
-// HTML attached, which is the failure mode this file otherwise avoids — open question for review,
-// since answering 401 there would change the existing `/api/*` routes too.
+// `/api/xguard/*` is authenticated by a SHARED SECRET rather than a session, so hooks.server.ts bypasses
+// the session guard for that prefix and each endpoint must check the token itself. There is no person
+// behind the token: nothing it can reach may record a human judgement, and nothing may attribute a write.
 
-export type ApiActor = { user: SessionUser; viaApiKey: boolean };
+export function requireXguardToken(request: Request): void {
+  const expected = env.XGUARD_API_TOKEN;
+  // Fails CLOSED — an unset secret makes the API unreachable rather than unguarded. 503 rather than 401
+  // so an operator reading logs sees a deployment problem, not a caller presenting a bad token.
+  if (!expected) error(503, 'The XGuard API is not configured on this deployment.');
 
-/**
- * @param pagePath the page whose access this endpoint borrows — `/xguard` for everything in the lab.
- *                 Endpoints do not get their own grant; one reachable by someone who cannot open the
- *                 corresponding page is a permission fork waiting to drift.
- */
-export function requireApiAccess(event: RequestEvent, pagePath: string): ApiActor {
-  const user = event.locals.user;
-  if (!user) error(401, 'Send a Civitai API key as `Authorization: Bearer <key>`, or sign in.');
-  if (!canAccess(user, pagePath)) error(403, `Your account does not have access to ${pagePath}.`);
-  return { user, viaApiKey: event.locals.viaApiKey === true };
+  const header = (request.headers.get('authorization') ?? '').trim();
+  const scheme = header.slice(0, 7).toLowerCase();
+  const provided = Buffer.from(scheme === 'bearer ' ? header.slice(7).trim() : '');
+  const secret = Buffer.from(expected);
+  // Length is compared first because timingSafeEqual throws on a mismatch; it leaks only the token's
+  // length, which is fixed and not the secret.
+  if (provided.length !== secret.length || !timingSafeEqual(provided, secret))
+    error(401, 'Send the XGuard API token as `Authorization: Bearer <token>`.');
 }
 
 /** Describes one endpoint for `/xguard/docs`. Read off the module itself so the page cannot drift from the API. */

@@ -43,7 +43,7 @@
   <section class="rounded-xl border border-red-8/40 bg-red-8/10 p-5">
     <h2 class="mb-1 text-base font-semibold text-red-2">Agents cannot record judgements</h2>
     <p class="text-sm text-dark-1">
-      An API key can read everything, sample, rate, edit policies and run evaluations — the whole tuning
+      The token can read everything, sample, rate, edit policies and run evaluations — the whole tuning
       loop. It cannot write <code class="font-mono">human_judgement</code>. That table is what a
       <em>person</em> confirmed, and if a model could write to it the ground truth would become a model
       agreeing with itself, in rows indistinguishable from real ones. Reviewing is done in the browser,
@@ -55,19 +55,19 @@
     <h2 class="mb-1 text-base font-semibold text-white">Getting access</h2>
     <ol class="ml-4 list-decimal text-sm text-dark-2">
       <li class="mb-1">
-        Your Civitai account needs the <code class="font-mono text-dark-1">moderator:senior</code> role.
-        Ask a moderator admin — the same role opens these pages in a browser.
+        Ask a moderator admin for the XGuard API token. It is a single shared secret held in the
+        moderator app's environment, not a per-person credential.
       </li>
       <li class="mb-1">
-        Create a personal API key in your Civitai account settings. OAuth application tokens are refused
-        here on purpose: consenting to an app must not hand that app moderator tooling.
+        Send it as <code class="font-mono text-dark-1">Authorization: Bearer &lt;token&gt;</code> on any
+        <code class="font-mono text-dark-1">/api/xguard/*</code> request.
       </li>
       <li>
-        Send it as <code class="font-mono text-dark-1">Authorization: Bearer &lt;key&gt;</code>. The key
-        acts as you, with your roles — so losing the role ends the agent's access too.
+        There is no user behind it. Nothing you do through the API is attributed to a person, and the
+        only way to revoke access is to rotate the token for everyone.
       </li>
     </ol>
-    <pre class="mt-3 overflow-x-auto rounded-lg bg-dark-8 p-3 font-mono text-xs text-dark-1">curl -H "Authorization: Bearer $CIVITAI_API_KEY" \
+    <pre class="mt-3 overflow-x-auto rounded-lg bg-dark-8 p-3 font-mono text-xs text-dark-1">curl -H "Authorization: Bearer $XGUARD_API_TOKEN" \
   https://moderator.civitai.com/api/xguard/me</pre>
   </section>
 

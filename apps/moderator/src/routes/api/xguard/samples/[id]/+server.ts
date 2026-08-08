@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { requireApiAccess, ok, type EndpointDoc } from '$lib/server/api-guard';
+import { requireXguardToken, ok, type EndpointDoc } from '$lib/server/api-guard';
 import { labDb } from '$lib/server/xguard-lab';
 import { idOf, requireId } from '$lib/server/xguard-api';
 
@@ -15,7 +15,7 @@ export const _doc: EndpointDoc = {
 };
 
 export const GET: RequestHandler = async (event) => {
-  requireApiAccess(event, '/xguard');
+  requireXguardToken(event.request);
   const id = requireId(event.params.id);
 
   const sample = await labDb

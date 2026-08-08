@@ -1,5 +1,5 @@
 import type { RequestHandler } from './$types';
-import { requireApiAccess, ok, type EndpointDoc } from '$lib/server/api-guard';
+import { requireXguardToken, ok, type EndpointDoc } from '$lib/server/api-guard';
 import { labDb } from '$lib/server/xguard-lab';
 
 export const _doc: EndpointDoc = {
@@ -14,7 +14,7 @@ export const _doc: EndpointDoc = {
 };
 
 export const GET: RequestHandler = async (event) => {
-  requireApiAccess(event, '/xguard');
+  requireXguardToken(event.request);
 
   const [labels, rated, confirmed, versions] = await Promise.all([
     labDb

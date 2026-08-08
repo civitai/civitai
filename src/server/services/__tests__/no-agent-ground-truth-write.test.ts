@@ -4,15 +4,15 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * `human_judgement` is the XGuard lab's ground truth: what a HUMAN confirmed about what a model
- * proposed. If an API key could write it, the ground truth would become a model agreeing with itself,
+ * proposed. If the agent API could write it, the ground truth would become a model agreeing with itself,
  * in rows indistinguishable from real ones — and every number derived from it would look fine.
  *
  * Two structural properties keep that from happening, and both are one careless edit away from being
  * lost silently. This test is the thing that notices.
  *
  *   1. No `/api/*` route writes the table.
- *   2. API-key auth is wired into `hooks.server.ts` only, so page routes (where reviewing happens, as
- *      a form action) stay cookie-and-human only.
+ *   2. The shared XGuard token is checked by every `/api/xguard/*` route and reachable from nowhere else,
+ *      so page routes (where reviewing happens, as a form action) stay cookie-and-human only.
  */
 
 const MODERATOR_SRC = path.resolve(process.cwd(), 'apps/moderator/src');
@@ -51,22 +51,32 @@ describe('agents cannot write XGuard ground truth', () => {
 
     expect(
       offenders.map((f) => path.relative(process.cwd(), f)),
-      'Ground truth is human-only. Reviewing happens in the browser; an API key must never record a verdict.'
+      'Ground truth is human-only. Reviewing happens in the browser; the agent API must never record a verdict.'
     ).toEqual([]);
   });
 
-  it('resolves API keys in hooks.server.ts only', () => {
-    const hooks = path.join(MODERATOR_SRC, 'hooks.server.ts');
-    expect(fs.existsSync(hooks), `${hooks} does not exist`).toBe(true);
-    expect(fs.readFileSync(hooks, 'utf8')).toContain('userFromApiKey');
+  it('checks the shared token in every /api/xguard route', () => {
+    const xguard = path.join(API_ROUTES, 'xguard');
+    expect(fs.existsSync(xguard), `${xguard} does not exist`).toBe(true);
 
-    const elsewhere = filesUnder(path.join(MODERATOR_SRC, 'routes')).filter((file) =>
-      /from\s+['"][^'"]*api-auth['"]/.test(fs.readFileSync(file, 'utf8'))
+    const unguarded = filesUnder(xguard).filter(
+      (file) => !/requireXguardToken\(/.test(fs.readFileSync(file, 'utf8'))
     );
 
     expect(
-      elsewhere.map((f) => path.relative(process.cwd(), f)),
-      'Bearer auth belongs to /api/* via hooks.server.ts. A route importing it directly can authenticate a page, and page form actions write ground truth.'
+      unguarded.map((f) => path.relative(process.cwd(), f)),
+      'hooks.server.ts exempts /api/xguard/* from the session guard, so an endpoint that does not check the token itself is public.'
+    ).toEqual([]);
+  });
+
+  it('never lets the shared token authenticate a page', () => {
+    const offenders = filesUnder(path.join(MODERATOR_SRC, 'routes'))
+      .filter((file) => !file.includes(path.join('api', 'xguard')))
+      .filter((file) => /requireXguardToken/.test(fs.readFileSync(file, 'utf8')));
+
+    expect(
+      offenders.map((f) => path.relative(process.cwd(), f)),
+      'The token has no user behind it. A page authenticated by it could reach the review form action, which writes ground truth.'
     ).toEqual([]);
   });
 });

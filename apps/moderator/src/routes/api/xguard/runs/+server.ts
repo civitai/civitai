@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { requireApiAccess, ok, readJson, intParam, type EndpointDoc } from '$lib/server/api-guard';
+import { requireXguardToken, ok, readJson, intParam, type EndpointDoc } from '$lib/server/api-guard';
 import { labDb } from '$lib/server/xguard-lab';
 import { precisionOf, recallOf } from '$lib/eval-metrics';
 import { idOf, labConnectionString, orchestratorEnv, requireName } from '$lib/server/xguard-api';
@@ -49,7 +49,7 @@ export const _doc: EndpointDoc = {
 };
 
 export const GET: RequestHandler = async (event) => {
-  requireApiAccess(event, '/xguard');
+  requireXguardToken(event.request);
   const label = event.url.searchParams.get('label');
   const limit = intParam(event.url, 'limit', 25, 1, 100);
 
@@ -91,7 +91,7 @@ export const GET: RequestHandler = async (event) => {
 };
 
 export const POST: RequestHandler = async (event) => {
-  requireApiAccess(event, '/xguard');
+  requireXguardToken(event.request);
   const body = await readJson<Record<string, unknown>>(event);
 
   const label = requireName(body.label, 'label');

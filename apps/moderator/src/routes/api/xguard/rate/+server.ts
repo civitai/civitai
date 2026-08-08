@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { requireApiAccess, ok, readJson, type EndpointDoc } from '$lib/server/api-guard';
+import { requireXguardToken, ok, readJson, type EndpointDoc } from '$lib/server/api-guard';
 import { labDb } from '$lib/server/xguard-lab';
 import { labConnectionString, openrouterKey, requireName } from '$lib/server/xguard-api';
 import { rateBatch } from '../../../../../xguard-lab/rate-core';
@@ -50,7 +50,7 @@ export const _doc: EndpointDoc = {
 };
 
 export const POST: RequestHandler = async (event) => {
-  requireApiAccess(event, '/xguard');
+  requireXguardToken(event.request);
   const body = await readJson<Record<string, unknown>>(event);
 
   const batch = requireName(body.batch, 'batch');
