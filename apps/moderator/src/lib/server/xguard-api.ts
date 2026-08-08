@@ -36,16 +36,3 @@ export function openrouterKey(): string {
 export function idOf(value: string | number): string {
   return String(value);
 }
-
-/** A batch/label name reaches SQL as a value, but it also names a resource — reject junk early and clearly. */
-export function requireName(value: unknown, field: string): string {
-  const name = typeof value === 'string' ? value.trim() : '';
-  if (!name) error(400, `${field} is required`);
-  if (name.length > 120) error(400, `${field} is too long`);
-  return name;
-}
-
-export function requireId(value: string): string {
-  if (!/^\d+$/.test(value)) error(400, 'id must be numeric');
-  return value;
-}

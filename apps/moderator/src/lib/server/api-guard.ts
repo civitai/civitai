@@ -1,5 +1,4 @@
 import { error, json } from '@sveltejs/kit';
-import type { RequestEvent } from '@sveltejs/kit';
 import { requireAccess } from './access';
 
 // `/api/*` is exempt from the global route gate in hooks.server.ts, so every endpoint carries its own
@@ -34,11 +33,10 @@ export const requireUserIdParam = (
 
 // ─── Script-facing helpers ────────────────────────────────────────────────────────────────────────
 // The helpers above serve the app's own panels, fetched by a signed-in browser. The ones below serve
-// callers that are not a browser, so they answer in JSON. Their AUTH is not here: token-guarded prefixes
-// are authenticated in hooks.server.ts ($lib/server/token-auth), so an endpoint cannot publish itself by
-// forgetting a check.
+// callers that are not a browser. New endpoints should use $lib/server/api-endpoint, which authenticates
+// them and derives this doc shape from the schema rather than restating it.
 
-/** Describes one endpoint for `/xguard/docs`. Read off the module itself so the page cannot drift from the API. */
+/** The rendered shape of an endpoint's docs. Built from a schema by `specToDoc`. */
 export type EndpointDoc = {
   summary: string;
   /** Query-string or JSON-body params, in the order a caller cares about. */
@@ -48,33 +46,6 @@ export type EndpointDoc = {
   notes?: string[];
 };
 
-/** Parse a JSON request body, turning a malformed one into a 400 rather than a 500. */
-export async function readJson<T>(event: RequestEvent): Promise<T> {
-  try {
-    return (await event.request.json()) as T;
-  } catch {
-    return error(400, 'Request body must be JSON.');
-  }
-}
-
 export function ok<T>(body: T, status = 200): Response {
   return json(body as unknown as Record<string, unknown>, { status });
-}
-
-/**
- * Read a bounded integer out of a query string. Out-of-range is clamped rather than rejected, but junk
- * (`limit=all`) is an error — silently treating it as the default would hide a broken caller loop.
- */
-export function intParam(
-  url: URL,
-  name: string,
-  fallback: number,
-  min: number,
-  max: number
-): number {
-  const raw = url.searchParams.get(name);
-  if (raw === null || raw === '') return fallback;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) error(400, `${name} must be a number`);
-  return Math.min(max, Math.max(min, Math.trunc(n)));
 }

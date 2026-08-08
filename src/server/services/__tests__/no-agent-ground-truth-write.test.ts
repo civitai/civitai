@@ -63,7 +63,11 @@ describe('agents cannot write XGuard ground truth', () => {
     ).toEqual([path.relative(process.cwd(), REVIEW_ACTION)]);
   });
 
-  it('wraps EVERY exported handler of a token-callable route in WebhookEndpoint', () => {
+  // The only two ways to define a service-authenticated handler. defineEndpoint (no prefix) is the
+  // MODERATOR-session builder and is deliberately absent: an endpoint here must not be session-gated.
+  const GUARDS = ['WebhookEndpoint(', 'defineWebhookEndpoint('];
+
+  it('defines EVERY exported handler of a token-callable route through a guard', () => {
     // Per HANDLER, not per file. A guard checked once per file passes as soon as any one handler has it,
     // so adding a second method to an existing route file was the way to publish an unauthenticated
     // endpoint while this suite stayed green.
@@ -81,14 +85,14 @@ describe('agents cannot write XGuard ground truth', () => {
         if (at === -1) continue;
         handlers++;
         const rhs = source.slice(source.indexOf('=', at) + 1).trimStart();
-        if (!rhs.startsWith('WebhookEndpoint('))
+        if (!GUARDS.some((guard) => rhs.startsWith(guard)))
           bare.push(path.relative(process.cwd(), file) + ' (' + method + ')');
       }
     }
     expect(handlers, 'matched no handlers — the declaration shape changed').toBeGreaterThan(0);
     expect(
       bare,
-      'hooks.server.ts lets a token-carrying /api/* request past the session guard without authenticating it, so an unwrapped handler here is reachable with any token at all.'
+      'hooks.server.ts lets a VERIFIED token past the session guard, so a handler defined without one of these wrappers accepts any valid token rather than opting in.'
     ).toEqual([]);
   });
 
