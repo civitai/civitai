@@ -10,10 +10,12 @@ const h = vi.hoisted(() => ({
 vi.mock('~/server/prom/client', () => ({
   registerHistogram: vi.fn(() => h.histogram),
   registerCounterWithLabels: vi.fn(() => h.counter),
+  registerCounter: vi.fn(() => h.counter),
 }));
 
 import {
   observeSessionLeg,
+  observeLegacyDecode,
   observeLegacyUpgrade,
   observeSessionStateUpdate,
 } from '../session-metrics';
@@ -93,5 +95,25 @@ describe('observeSessionStateUpdate — caller attribution + size', () => {
       { caller: 'subscription', type: 'refresh' },
       3
     );
+  });
+});
+
+// 🔴 The legacy-decode counter must be UNLABELLED. A labelled counter registers each child lazily at the
+// first .inc(), so an empty result cannot be told apart from "not deployed" or "module never imported" —
+// which is exactly the ambiguity it exists to resolve. Unlabelled, it emits an observable 0 from module
+// load, so `0` means the path is genuinely dead and an ABSENT series means the instrument is broken.
+describe('observeLegacyDecode — zero must be observable, not absent', () => {
+  it('registers through the UNLABELLED counter helper, not the labelled one', async () => {
+    const prom = await import('~/server/prom/client');
+    const unlabelled = vi.mocked(prom.registerCounter).mock.calls.map(([cfg]) => cfg.name);
+    const labelled = vi.mocked(prom.registerCounterWithLabels).mock.calls.map(([cfg]) => cfg.name);
+
+    expect(unlabelled).toContain('session_legacy_decode_total');
+    expect(labelled).not.toContain('session_legacy_decode_total');
+  });
+
+  it('increments without any label, so there is exactly one series', () => {
+    observeLegacyDecode();
+    expect(h.counter.inc).toHaveBeenCalledWith();
   });
 });
