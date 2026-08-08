@@ -56,7 +56,7 @@ Present the list and ask before applying fixes, unless the invoking request alre
 After the fixes:
 
 ```bash
-cd apps/moderator && pnpm run check && pnpm run build
+cd apps/moderator && pnpm run check
 ```
 
 Then **look at the page** in a browser (`/dev-server` skill). Typecheck and build pass on plenty of

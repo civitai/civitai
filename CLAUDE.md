@@ -66,9 +66,15 @@ Reach for `check` **only** after changing the route tree — adding, removing or
 needing it: `Cannot find module './$types'`, or component props resolving to `never`. `prepare` runs
 `sync` on install, so a fresh checkout is already covered.
 
-**`build` runs `svelte-kit sync` as well** (`svelte-kit sync && vite build`), so it carries the same
-cost. Run it **once, at the end of a slice** — not after each fix. Verifying with `typecheck` and
-building once is the whole loop; a build after every edit is three sync storms per slice.
+**`build` runs `svelte-kit sync` too** (`svelte-kit sync && vite build`), so it carries the same cost —
+and it is **not** part of the verify loop here. `typecheck` during the work and one `check` when the
+slice is done is the whole gate.
+
+**Read `svelte-check`'s WARNING lines, not just ERROR.** It reports Svelte compiler warnings, and
+`state_referenced_locally` — `let x = $state(data.foo)` capturing only the first value, so the UI
+silently shows stale data after a navigation — is a real bug that appears there and nowhere else in
+the loop. Filtering output to `ERROR` hides it and makes a build look like the only thing that catches
+it. It isn't.
 
 #### Never run `npx prettier --plugin=prettier-plugin-svelte` on `.svelte` files
 

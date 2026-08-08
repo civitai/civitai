@@ -230,11 +230,17 @@ Every slice reviewed so far has come back with findings, several of them the kin
 believe something false about a user. Then:
 
 ```bash
-pnpm --filter ./apps/moderator run typecheck
-pnpm --filter ./apps/moderator run build
+pnpm --filter ./apps/moderator run typecheck   # during the work — reads WARNINGs too
+pnpm --filter ./apps/moderator run check       # ONCE, when the slice is done
 npx prettier --check "<changed .ts files>"
 npx eslint "<changed .ts files>"
 ```
+
+**Do not run `build` as a check.** It is `svelte-kit sync && vite build` — the sync half writes ~690
+files into the directory the dev server watches, and it catches nothing `svelte-check` doesn't.
+**Read the WARNING lines**, not just ERROR: `state_referenced_locally` (`let x = $state(data.foo)`
+capturing only the first value, so the page shows stale data after a navigation) is a real bug that
+shows up there and nowhere else in the loop.
 
 Typecheck and build are the real gates. If you touched anything under `src/` or `packages/`, run
 the root `pnpm run typecheck` too.

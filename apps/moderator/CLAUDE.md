@@ -170,8 +170,12 @@ Three agents, run **in parallel**, on the diff for the segment:
 Or invoke the [`moderator-review`](../../.claude/skills/moderator-review/SKILL.md) skill, which fans out
 all three and consolidates.
 
-Fix what they find, then `pnpm run check` and `pnpm run build` in `apps/moderator`. A segment with
+Fix what they find, then `pnpm run check` in `apps/moderator` — once, at the end. A segment with
 unresolved findings is not done, and neither is one that only typechecks — **look at the page**.
+
+`build` is not a check: it is `svelte-kit sync && vite build`, and it catches nothing `svelte-check`
+doesn't. Read `svelte-check`'s WARNING lines as well as its errors — `state_referenced_locally` is a
+real bug (stale UI after a navigation) and it only appears there.
 
 ### `typecheck` vs `check`
 
