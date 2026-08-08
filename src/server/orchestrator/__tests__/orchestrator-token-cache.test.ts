@@ -137,8 +137,12 @@ describe('orchestrator-token-cache — env-driven module init', () => {
     // Drop the prior module instance's LRUCache + inflight before the
     // next dynamic-import test. Without this, each `vi.resetModules()`
     // leaves a ttlAutopurge-timer-anchored LRUCache reachable until its
-    // 50ms TTL drains — the round-4 audit measured ~6 leaked instances
-    // across this describe block.
+    // TTL drains — the round-4 audit measured ~6 leaked instances across
+    // this describe block. This became MORE load-bearing when the
+    // cache-hit test moved to a 5-minute TTL: `destroy()` is what cancels
+    // those long autopurge timers (they are `unref()`ed by lru-cache, so
+    // they cannot hold the event loop open, but they do anchor the
+    // instance).
     try {
       const mod = await import('../orchestrator-token-cache');
       mod.__testing.destroy();
@@ -151,14 +155,48 @@ describe('orchestrator-token-cache — env-driven module init', () => {
     vi.useRealTimers();
   });
 
-  it('expires cached entries after the configured TTL (re-mints on next call)', async () => {
-    // Short real TTL is more reliable than mocking `performance.now()`,
-    // which lru-cache v11 reads via the `defaultPerf` time source — that
-    // path is not always intercepted by vi.useFakeTimers({ toFake: [...] })
-    // and the contract risks silently regressing on lru-cache upgrades.
-    // 50ms is long enough to be deterministic on CI, short enough to keep
-    // the suite snappy.
-    process.env.ORCHESTRATOR_TOKEN_CACHE_TTL_MS = '50';
+  // ---------------------------------------------------------------------
+  // The TTL contract is asserted in TWO tests, split BY DIRECTION, because
+  // the two directions have OPPOSITE sensitivity to a scheduler stall and
+  // no single TTL value is safe for both.
+  //
+  // The cache measures elapsed time in REAL time (see the fake-timer note
+  // below), so the wall-clock gap between two adjacent `await`s is not
+  // bounded by anything the test controls — a GC pause or CI contention
+  // can insert an arbitrary delay there.
+  //
+  //   - EXPIRY ("after the TTL, re-mint") is stall-SAFE. The sleep is a
+  //     LOWER bound on elapsed time; a longer stall only makes the entry
+  //     MORE expired. It can use a short TTL and stay deterministic.
+  //
+  //   - CACHE HIT ("within the TTL, do NOT re-mint") is stall-VULNERABLE.
+  //     It needs elapsed time to stay UNDER the TTL, and the test cannot
+  //     stop the clock. These two statements used to share one test with
+  //     `TTL_MS = 50`, so any stall >50ms between the first and second
+  //     call expired the entry, re-minted, and failed with
+  //     `expected 'token-2' to be 'token-1'` — observed intermittently in
+  //     CI's `preview / unit-tests`. No amount of tuning makes a 50ms
+  //     real-time budget safe; the fix is to give the cache-hit direction
+  //     a TTL a plausible stall cannot cross.
+  //
+  // Why not fake timers? lru-cache v11 reads elapsed time through its
+  // `defaultPerf` time source (`performance.now()`, captured at module
+  // load — verified in lru-cache 11.2.2, `this.#perf.now()`), which is
+  // not reliably intercepted by `vi.useFakeTimers({ toFake: [...] })`,
+  // and pinning it would risk silently regressing on an lru-cache
+  // upgrade. Both tests below therefore run on REAL time.
+  // ---------------------------------------------------------------------
+
+  it('serves a second call from cache within the configured TTL (no re-mint)', async () => {
+    // 5 minutes. This test never sleeps — the two calls below are adjacent
+    // awaits — so a long TTL costs zero wall-clock time, and the value is
+    // chosen to make the flake STRUCTURALLY unreachable rather than merely
+    // unlikely: it is 5x the unit project's 60s `testTimeout`
+    // (vitest.config.mts), so any stall long enough to expire this entry
+    // would have already blown the per-test timeout and been reported as a
+    // hang. The wrong-token failure mode this assertion can produce is
+    // therefore bounded by the harness's own hang detector, not by tuning.
+    process.env.ORCHESTRATOR_TOKEN_CACHE_TTL_MS = '300000';
     vi.resetModules();
     const mod = await import('../orchestrator-token-cache');
 
@@ -175,12 +213,37 @@ describe('orchestrator-token-cache — env-driven module init', () => {
     expect(second).toBe('token-1');
     expect(mint).toHaveBeenCalledTimes(1);
 
+    // And it stays a hit — repeat reads must not re-mint either.
+    const third = await mod.getOrMintCachedToken(userId, mint);
+    expect(third).toBe('token-1');
+    expect(mint).toHaveBeenCalledTimes(1);
+
+    mod.__testing.clear();
+  });
+
+  it('expires cached entries after the configured TTL (re-mints on next call)', async () => {
+    // Short real TTL: this direction is stall-safe (see the block comment
+    // above), so 50ms is deterministic here — the 75ms sleep is a LOWER
+    // bound on elapsed time and a stall only widens the margin. Short
+    // enough to keep the suite snappy.
+    process.env.ORCHESTRATOR_TOKEN_CACHE_TTL_MS = '50';
+    vi.resetModules();
+    const mod = await import('../orchestrator-token-cache');
+
+    let mintCalls = 0;
+    const mint = vi.fn(async () => `token-${++mintCalls}`);
+
+    const userId = 1;
+    const first = await mod.getOrMintCachedToken(userId, mint);
+    expect(first).toBe('token-1');
+    expect(mint).toHaveBeenCalledTimes(1);
+
     // Wait past the TTL boundary.
     await new Promise((r) => setTimeout(r, 75));
 
     // After TTL: cache miss, mint runs again.
-    const third = await mod.getOrMintCachedToken(userId, mint);
-    expect(third).toBe('token-2');
+    const second = await mod.getOrMintCachedToken(userId, mint);
+    expect(second).toBe('token-2');
     expect(mint).toHaveBeenCalledTimes(2);
 
     mod.__testing.clear();
@@ -189,7 +252,7 @@ describe('orchestrator-token-cache — env-driven module init', () => {
   it('rejects with timeout error when mint never settles (default behaviour with short MINT_TIMEOUT_MS)', async () => {
     // 50ms timeout: tight enough to keep the test fast, long enough to
     // be deterministic on CI even under jitter. We deliberately don't
-    // use vi.useFakeTimers() — the existing TTL test above documents
+    // use vi.useFakeTimers() — the TTL block comment above documents
     // that fake timers don't intercept lru-cache's perf source, and
     // mixing real + fake timers makes the race semantics nondeterministic.
     process.env.ORCHESTRATOR_TOKEN_CACHE_MINT_TIMEOUT_MS = '50';
