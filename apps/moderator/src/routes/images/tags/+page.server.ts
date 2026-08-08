@@ -2,7 +2,7 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import { env } from '$env/dynamic/private';
 import type { Actions, PageServerLoad } from './$types';
-import { parseQuery } from '$lib/server/query';
+import { parseIdList, parseQuery } from '$lib/server/query';
 import { getImageTagReviewQueue, moderateImageTags } from '$lib/server/image-tags.service';
 
 const querySchema = z.object({
@@ -28,7 +28,8 @@ export const actions: Actions = {
     const tagId = rawTagId != null && rawTagId !== '' ? Number(rawTagId) : undefined;
 
     if (!imageId) return fail(400, { error: 'Missing image id.' });
-    if (tagId !== undefined && !Number.isFinite(tagId)) return fail(400, { error: 'Invalid tag id.' });
+    if (tagId !== undefined && !Number.isFinite(tagId))
+      return fail(400, { error: 'Invalid tag id.' });
 
     const { tagIds } = await moderateImageTags({
       imageId,
@@ -43,10 +44,7 @@ export const actions: Actions = {
   bulkModerate: async ({ request, locals }) => {
     const form = await request.formData();
     const disable = form.get('disable') === 'true';
-    const imageIds = String(form.get('imageIds') ?? '')
-      .split(',')
-      .map(Number)
-      .filter((n) => Number.isInteger(n) && n > 0);
+    const imageIds = parseIdList(String(form.get('imageIds') ?? ''));
 
     await Promise.all(
       imageIds.map((imageId) => moderateImageTags({ imageId, disable, userId: locals.user.id }))

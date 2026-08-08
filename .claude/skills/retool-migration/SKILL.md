@@ -224,10 +224,41 @@ grep "^### " docs/moderator-app/retool-exports/<app>.md | sed 's/^### //' | awk 
 
 Diff that against your classification. Anything unaccounted for is a gap, not a judgement call.
 
+**Being NAMED in the classification is not being COVERED, and this is the failure that survives every
+other check.** Bulk Image Manager's audit named all 40 queries and still shipped four real gaps
+(2026-08-08), because a row can absorb a query whose behaviour it does not carry:
+
+- `UserQuery5000` was listed as covered by `resolveUserId`. It resolves an identifier to an id; the
+  query's actual content was `WHERE i."nsfwLevel" = 32` — *the images already removed from this
+  account*, i.e. the entire restore workflow. Absent from the build.
+- `RemoveArrayOfImages`/`RestoreArrayOfImages` were mapped to `/api/mod/remove-images`. That names the
+  **endpoint** and drops the **entry point** — a pasted list of image ids, which is how a ticket or a
+  script hands work over. Absent from the build.
+- `nukeUser` was mapped to `purgeAllContent`. It actually POSTs `remove-images` (images only), while
+  `purgeAllContent` also takes models, posts, articles and comments — a *larger* blast radius under
+  the same label.
+- Columns selected by every finder (`prompt`, `poi`, `minor`) reached the DOM nowhere, so moderators
+  set POI from a thumbnail with the prompt and the current flag state both invisible.
+
+So for each query, read its **SQL body**, not its name: what does the WHERE filter, what columns does
+it select, and where does its input come from? A query whose input is a widget you did not build is
+not ported, whatever endpoint you mapped it to.
+
 **Then run the [`moderator-review`](../moderator-review/SKILL.md) skill.** It
 fans out three review agents — correctness, Svelte 5 + UI conventions, abstraction — over the segment.
 Every slice reviewed so far has come back with findings, several of them the kind that make a moderator
-believe something false about a user. Then:
+believe something false about a user.
+
+**Then run a FOURTH review, export-vs-build.** The three above compare the code to itself and to this
+app's conventions; none of them opens the export, so all three pass cleanly over a faithful
+implementation of the wrong thing. Give an agent the inventory (`<app>.md`, which carries each query's
+SQL), the audit, and the built files, and ask one question: *walk the export query by query — is each
+behaviour present, and does it match?* On Bulk Image Manager the three code reviews returned 14
+findings and missed all four gaps above; the fidelity pass found them in one run. Verify its claims
+against the inventory yourself before acting — it will also produce plausible-but-false ones (it called
+`TOSImages` a dismissed mutation; the export says `//doesnt run anywhere, just a test`).
+
+Then:
 
 ```bash
 pnpm --filter ./apps/moderator run typecheck   # during the work — reads WARNINGs too

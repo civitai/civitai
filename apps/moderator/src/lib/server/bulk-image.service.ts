@@ -1,4 +1,5 @@
 import { sql } from '@civitai/db/kysely';
+import { NsfwLevel } from '@civitai/shared';
 import { dbRead } from './db';
 import type { MediaType } from '$lib/media/edge-url';
 
@@ -24,8 +25,12 @@ export type BulkImage = {
   needsReview: string | null;
   userId: number;
   postId: number | null;
+  poi: boolean;
+  minor: boolean;
   prompt: string | null;
   negativePrompt: string | null;
+  isProfilePicture: boolean;
+  hasConnection: boolean;
 };
 
 const IMAGE_COLUMNS = [
@@ -40,11 +45,21 @@ const IMAGE_COLUMNS = [
   'i.needsReview',
   'i.userId',
   'i.postId',
+  'i.poi',
+  'i.minor',
 ] as const;
 
-const promptColumns = [
+// EXISTS, not Retool's LEFT JOINs: an image attached to two ImageConnection rows came back twice
+// there, doubling it in the grid and in any count taken off the same query.
+const extraColumns = [
   sql<string | null>`i."meta" ->> 'prompt'`.as('prompt'),
   sql<string | null>`i."meta" ->> 'negativePrompt'`.as('negativePrompt'),
+  sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u."profilePictureId" = i."id")`.as(
+    'isProfilePicture'
+  ),
+  sql<boolean>`EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."entityId" = i."id")`.as(
+    'hasConnection'
+  ),
 ];
 
 /**
@@ -55,41 +70,32 @@ const promptColumns = [
  */
 export type BulkBatch = { items: BulkImage[]; total: number; truncated: boolean };
 
-async function batchFrom(
-  build: (limit: number) => Promise<unknown[]>,
-  count: () => Promise<number>,
-  limit: number
-): Promise<BulkBatch> {
-  const [rows, total] = await Promise.all([build(limit + 1), count()]);
+const imageBase = () => dbRead.selectFrom('Image as i');
+type ImageBase = ReturnType<typeof imageBase>;
+
+/**
+ * Rows and count derived from ONE already-filtered builder. A predicate added to the rows but not the
+ * count renders "150 of 300" next to "The whole set."
+ */
+async function batchFrom(base: ImageBase, limit: number): Promise<BulkBatch> {
+  const [rows, total] = await Promise.all([
+    base
+      .select([...IMAGE_COLUMNS, ...extraColumns])
+      .orderBy('i.id', 'desc')
+      .limit(limit + 1)
+      .execute(),
+    base.select((eb) => eb.fn.countAll<string>().as('c')).executeTakeFirst(),
+  ]);
+
   return {
-    items: rows.slice(0, limit) as BulkImage[],
-    total,
+    items: rows.slice(0, limit),
+    total: Number(total?.c ?? 0),
     truncated: rows.length > limit,
   };
 }
 
 export async function getImagesForPost(postId: number, limit = 200): Promise<BulkBatch> {
-  return batchFrom(
-    (l) =>
-      dbRead
-        .selectFrom('Image as i')
-        .select([...IMAGE_COLUMNS, ...promptColumns])
-        .where('i.postId', '=', postId)
-        .orderBy('i.id', 'desc')
-        .limit(l)
-        .execute(),
-    async () =>
-      Number(
-        (
-          await dbRead
-            .selectFrom('Image')
-            .select((eb) => eb.fn.countAll<string>().as('c'))
-            .where('postId', '=', postId)
-            .executeTakeFirst()
-        )?.c ?? 0
-      ),
-    limit
-  );
+  return batchFrom(imageBase().where('i.postId', '=', postId), limit);
 }
 
 /** Every image across every VERSION of a model — Retool's three chained queries as one join. */
@@ -101,27 +107,7 @@ export async function getImagesForModel(modelId: number, limit = 200): Promise<B
       eb.selectFrom('ModelVersion').select('id').where('modelId', '=', modelId)
     );
 
-  return batchFrom(
-    (l) =>
-      dbRead
-        .selectFrom('Image as i')
-        .select([...IMAGE_COLUMNS, ...promptColumns])
-        .where('i.postId', 'in', posts)
-        .orderBy('i.id', 'desc')
-        .limit(l)
-        .execute(),
-    async () =>
-      Number(
-        (
-          await dbRead
-            .selectFrom('Image')
-            .select((eb) => eb.fn.countAll<string>().as('c'))
-            .where('postId', 'in', posts)
-            .executeTakeFirst()
-        )?.c ?? 0
-      ),
-    limit
-  );
+  return batchFrom(imageBase().where('i.postId', 'in', posts), limit);
 }
 
 export async function getImagesForModelVersion(
@@ -130,80 +116,46 @@ export async function getImagesForModelVersion(
 ): Promise<BulkBatch> {
   const posts = dbRead.selectFrom('Post').select('id').where('modelVersionId', '=', modelVersionId);
 
-  return batchFrom(
-    (l) =>
-      dbRead
-        .selectFrom('Image as i')
-        .select([...IMAGE_COLUMNS, ...promptColumns])
-        .where('i.postId', 'in', posts)
-        .orderBy('i.id', 'desc')
-        .limit(l)
-        .execute(),
-    async () =>
-      Number(
-        (
-          await dbRead
-            .selectFrom('Image')
-            .select((eb) => eb.fn.countAll<string>().as('c'))
-            .where('postId', 'in', posts)
-            .executeTakeFirst()
-        )?.c ?? 0
-      ),
-    limit
-  );
+  return batchFrom(imageBase().where('i.postId', 'in', posts), limit);
 }
 
 export async function getImagesForCollection(
   collectionId: number,
   limit = 200
 ): Promise<BulkBatch> {
-  return batchFrom(
-    (l) =>
-      dbRead
-        .selectFrom('CollectionItem as ci')
-        .innerJoin('Image as i', 'i.id', 'ci.imageId')
-        .select([...IMAGE_COLUMNS, ...promptColumns])
-        .where('ci.collectionId', '=', collectionId)
-        .orderBy('i.id', 'desc')
-        .limit(l)
-        .execute(),
-    async () =>
-      Number(
-        (
-          await dbRead
-            .selectFrom('CollectionItem')
-            .select((eb) => eb.fn.countAll<string>().as('c'))
-            .where('collectionId', '=', collectionId)
-            .where('imageId', 'is not', null)
-            .executeTakeFirst()
-        )?.c ?? 0
-      ),
-    limit
-  );
+  // IN over the collection's image ids rather than a join: a collection holding two items for one
+  // image would otherwise emit it twice, and a duplicate key takes the grid out at runtime.
+  const imageIds = dbRead
+    .selectFrom('CollectionItem')
+    .select('imageId')
+    .where('collectionId', '=', collectionId)
+    .where('imageId', 'is not', null);
+
+  return batchFrom(imageBase().where('i.id', 'in', imageIds), limit);
 }
 
-export async function getImagesForUser(userId: number, limit = 200): Promise<BulkBatch> {
-  return batchFrom(
-    (l) =>
-      dbRead
-        .selectFrom('Image as i')
-        .select([...IMAGE_COLUMNS, ...promptColumns])
-        .where('i.userId', '=', userId)
-        .orderBy('i.id', 'desc')
-        .limit(l)
-        .execute(),
-    async () =>
-      Number(
-        (
-          await dbRead
-            .selectFrom('Image')
-            .select((eb) => eb.fn.countAll<string>().as('c'))
-            .where('userId', '=', userId)
-            .executeTakeFirst()
-        )?.c ?? 0
-      ),
-    limit
-  );
+/**
+ * `removedOnly` is Retool's `UserQuery5000` — `nsfwLevel = 32` is what `handleBlockImages` sets, so it
+ * lists what has ALREADY been removed from an account. That is the restore path: confirm a purge
+ * landed, or pull back one that went too wide.
+ */
+export async function getImagesForUser(
+  userId: number,
+  limit = 200,
+  removedOnly = false
+): Promise<BulkBatch> {
+  const base = imageBase().where('i.userId', '=', userId);
+  return batchFrom(removedOnly ? base.where('i.nsfwLevel', '=', NsfwLevel.Blocked) : base, limit);
+}
+
+/**
+ * Retool's `textArea5` path: a list of image ids pasted straight in. A ticket, a CSAM report or a
+ * script hands over ids, not a post — without this the moderator has to find each one's post or owner
+ * and re-reach it through another source.
+ */
+export async function getImagesByIds(imageIds: number[], limit = 200): Promise<BulkBatch> {
+  if (!imageIds.length) return { items: [], total: 0, truncated: false };
+  return batchFrom(imageBase().where('i.id', 'in', imageIds), limit);
 }
 
 /**

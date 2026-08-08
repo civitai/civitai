@@ -5,6 +5,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
+  import { cn } from '@civitai/ui/utils.js';
   import { num } from '$lib/format';
 
   let {
@@ -25,12 +26,23 @@
   let confirming = $state<'remove' | null>(null);
   let notifying = $state(false);
   let flagging = $state(false);
+
+  // The selection empties on a successful write and on a new batch. An open panel outliving either
+  // leaves an armed destructive submit that would post an empty `imageIds`.
+  $effect(() => {
+    if (count === 0) {
+      confirming = null;
+      notifying = false;
+      flagging = false;
+    }
+  });
 </script>
 
 <section
-  class="mb-4 rounded-xl border p-5 {count > 0
-    ? 'border-blue-500/40 bg-blue-500/5'
-    : 'border-dark-4 bg-dark-6'}"
+  class={cn(
+    'mb-4 rounded-xl border p-5',
+    count > 0 ? 'border-blue-500/40 bg-blue-500/5' : 'border-dark-4 bg-dark-6'
+  )}
 >
   <div class="flex flex-wrap items-center justify-between gap-3">
     <p class="text-sm text-dark-2">
@@ -46,7 +58,7 @@
       {/if}
     </p>
 
-    {#if count > 0 && !confirming && !notifying}
+    {#if count > 0 && !confirming && !notifying && !flagging}
       <div class="flex flex-wrap gap-2">
         <Button size="sm" variant="destructive" onclick={() => (confirming = 'remove')}>
           Remove selected
@@ -62,8 +74,6 @@
   </div>
 
   {#if confirming === 'remove'}
-    <!-- Removal is the destructive one and spans accounts, so it states the blast radius before the
-         click rather than after. -->
     <form method="POST" action="?/remove" use:enhance={onSubmit} class="mt-3">
       <input type="hidden" name="imageIds" value={ids} />
       <div class="rounded-md border border-red-500/40 bg-red-500/10 p-3">
@@ -89,8 +99,7 @@
     <form method="POST" action="?/setFlag" use:enhance={onSubmit} class="mt-3">
       <input type="hidden" name="imageIds" value={ids} />
       <p class="mb-2 text-xs text-dark-2">
-        Retool could only ever SET poi. Both flags and both directions are available here, so one
-        applied in error can be cleared.
+        POI marks a real person; minor marks a depicted minor. Setting either restricts the image.
       </p>
       <!-- One field carries both, because a submit button contributes a single name/value pair. -->
       <div class="flex flex-wrap gap-2">

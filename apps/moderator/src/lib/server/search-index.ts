@@ -1,15 +1,19 @@
 import { env } from '$env/dynamic/private';
 
-// HARD RULE: spoke→main callbacks are a closed set of THREE, each for a capability the spoke
-// fundamentally lacks — (1) this Meilisearch enqueue (main owns the search-index client), (2) the KoNO
-// finalize in `kono.ts` (main owns the new-order game engine + WebSocket signals), and (3) `ban-user` in
-// `user-actions.service.ts` (one ban fans out to media purge, model unpublish, notifications and cache
-// busting across systems the spoke does not own; reimplementing it would be a second source of truth for
-// what banning means).
+// HARD RULE: a spoke→main callback is allowed ONLY where main owns a fan-out the spoke cannot
+// reproduce without becoming a second source of truth. Port everything else as a direct Kysely
+// mutation. The full set, each with the capability that justifies it:
 //
-// Do NOT add a fourth: port the logic here as a direct Kysely mutation instead. If you believe you have a
-// genuine exception, it belongs in this list with its reason — not added silently, which is how the set
-// went from two to three.
+//   1. this Meilisearch enqueue          — main owns the search-index client
+//   2. `kono.ts` finalize                — main owns the new-order game engine + WebSocket signals
+//   3. `ban-user`                        — fans out to media purge, model unpublish, notifications, caches
+//   4. `/api/mod/retool/*` (comments,    — endpoint-side transactions the spoke would have to re-derive
+//      reviews, buzz, purge)
+//   5. remove/restore/flag images        — `handleBlockImages`/`handleUnblockImages` re-sync the search
+//                                          index, recompute nsfwLevel and write ClickHouse tracking
+//
+// Adding to this list requires writing the capability next to it. An entry that cannot name one is a
+// port that was skipped.
 export async function syncSearchIndex(entity: {
   entityType: string;
   entityId: number;

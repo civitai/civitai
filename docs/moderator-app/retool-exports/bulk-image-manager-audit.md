@@ -25,10 +25,19 @@ builds media URLs through `$lib/media/edge-url` and entity links through `$lib/e
 
 ## Classification of all 40
 
-### port (9)
+### port (12)
 
 `PostQuery`, `FindModelVersions`, `FindPosts`, `FindmagesFromPosts`, `MVFindPost`, `MVFindImages`,
 `CollectionQuery` — the five finders above.
+
+`UserQuery5000` — **not** covered by `resolveUserId`, which resolves an identifier to an id and
+carries none of this query's `WHERE i."nsfwLevel" = 32`. That value is what `handleBlockImages` sets,
+so the query lists what has already been REMOVED from an account: the restore path. Ported as the
+`userRemoved` source.
+
+`RemoveArrayOfImages`, `RestoreArrayOfImages`, `query39` — the `textArea5` path, a pasted list of
+image ids. Classifying these under the remove/restore endpoints named the endpoint but dropped the
+ENTRY POINT: a ticket or a script hands over ids, not a post. Ported as the `imageIds` source.
 
 `TogglePoIMakeSureToEdit` — the POI flag toggle. Its Retool name is a warning that it was edited in
 place and easy to get wrong; ported as an explicit action.
@@ -40,12 +49,13 @@ affected user rather than one per image.
 
 | Query | Covered by |
 | --- | --- |
-| `RemoveImages`, `RemoveImages2`, `RemoveArrayOfImages` | `/api/mod/remove-images` (a `WebhookEndpoint`), which owns the block side effects |
-| `RestoreImages`, `RestoreArrayOfImages` | `/api/mod/restore-images` |
-| `nukeUser`, `nukeUser3` | `purgeAllContent` → `/api/mod/remove-all-content`, ported in cluster B |
+| `RemoveImages`, `RemoveImages2` | `/api/mod/remove-images` (a `WebhookEndpoint`), which owns the block side effects |
+| `RestoreImages` | `/api/mod/restore-images` |
+| `nukeUser` | `/api/mod/remove-images` with `userId` and no `imageIds` — images only. **Do not confuse with `nukeUser3`/`purgeAllContent`**, which also removes models, posts, articles and comments. |
+| `nukeUser3` | `purgeAllContent` → `/api/mod/remove-all-content`, ported in cluster B |
 | `InsertStrike`, `LogStrike`, `UserStrikes` | `addUserStrike` / `getUserStrikes` |
 | `SendNotification2`, `PostNotification`, `SendCorrectNotif` | `sendModNotification` |
-| `UserQuery`, `UsernameQuery`, `UserQuery5000` | `resolveUserId` resolves id / username / email in one |
+| `UserQuery`, `UsernameQuery` | `resolveUserId` resolves id / username / email in one |
 | `ReportOnUser` | `getReportsOnUser` (`user-reports.service.ts`) |
 | `LogTos`, `LogRestore` | `ModActivity` via `recordModActivity`, as every ported action does |
 
@@ -72,6 +82,27 @@ tool.
 
 **Notifications are per affected user, not per image.** `GetBulkRemoveImageUserIdsForNotifs` exists
 precisely because a 300-image removal spanning 40 accounts must not send 300 notifications.
+
+## Known gaps, deliberately left open
+
+**The image-only "nuke this account" is not available here.** `nukeUser` POSTs `remove-images` with a
+`userId` and no `imageIds`, so the endpoint blocks every image the account owns in one call. The port
+always sends an id list, and the user source caps at 200 — so an account with 5,000 images cannot be
+cleared from this page. Not added because an unbounded mass-delete behind one button is the single
+most dangerous thing this page could grow, and it has never been exercised here. The
+`userRemoved` source makes the aftermath auditable, which is the half that was missing. **Decide
+before mods rely on it:** either add it with its own confirmation, or point them at User Lookup's
+purge (which is broader — it also takes models, posts, articles and comments).
+
+**Remove/restore counts are rows FOUND, not rows CHANGED.** `handleBlockImages` returns its `findMany`
+result, so re-removing an already-blocked batch reports "Removed 300 images." The zero-check only
+fires on ids that do not exist. Fixing it properly means changing the main-app endpoint to report
+rows affected — out of scope for a spoke migration.
+
+**The combined "remove + strike the owner" action is not ported.** Retool's `UnselectAll` reset a
+`strikeCheckbox` alongside the selection, so a removal could strike in the same gesture. Strikes live
+on User Lookup and User Reports here; from a batch spanning several accounts the moderator has to
+visit each owner. The owner list on this page is the input for that.
 
 ## Note on the export
 

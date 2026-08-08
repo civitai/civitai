@@ -2,7 +2,7 @@ import { error, fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import { env } from '$env/dynamic/private';
 import type { Actions, PageServerLoad } from './$types';
-import { parseQuery } from '$lib/server/query';
+import { parseIdList, parseQuery } from '$lib/server/query';
 import {
   getImageReviewQueue,
   getReportedImageQueue,
@@ -31,11 +31,7 @@ const querySchema = z.object({
   level: z.coerce.number().int().min(0).catch(allBrowsingLevelsWithBlockedFlag),
 });
 
-const parseIds = (v: unknown): number[] =>
-  String(v ?? '')
-    .split(',')
-    .map(Number)
-    .filter((n) => Number.isInteger(n) && n > 0);
+const parseIds = (v: unknown): number[] => parseIdList(String(v ?? ''));
 
 async function withModel3d<T extends { id: number }>(items: T[]) {
   const model3ds = await getModel3DsByThumbnailImageIds(items.map((i) => i.id));

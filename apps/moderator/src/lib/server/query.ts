@@ -13,6 +13,15 @@ export const userIdSchema = z.object({
   userId: z.coerce.number().int().positive().max(MAX_INT4),
 });
 
+/** A comma-separated id list from a hidden input. Same int4 bound as `userIdSchema`, and for the same
+ *  reason. */
+export const parseIdList = (value: string, max = 5000): number[] =>
+  value
+    .split(',')
+    .map(Number)
+    .filter((n) => Number.isInteger(n) && n > 0 && n <= MAX_INT4)
+    .slice(0, max);
+
 /** zod over FormData, with the first message rather than the full issue tree. The form-side twin of
  *  `parseQuery`. */
 export function parseForm<T extends z.ZodType>(schema: T, form: FormData): z.infer<T> | string {

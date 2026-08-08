@@ -16,8 +16,8 @@
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
-  // Local mirrors so typing doesn't navigate, re-synced when a search lands (incl. back/forward).
-  // Without the effect these hold the values from first mount and the picker lies about what is shown.
+  // Local mirrors so typing doesn't navigate. The effect re-syncs them on back/forward, where the
+  // component is not remounted.
   let source = $state(untrack(() => data.source));
   let term = $state(untrack(() => data.q));
   $effect(() => {
@@ -33,6 +33,11 @@
     data.batch;
     selected.clear();
   });
+
+  const ownerOfImage = $derived(new Map((data.batch?.items ?? []).map((i) => [i.id, i.userId])));
+  const selectedOwnerCount = $derived(
+    new Set([...selected].map((id) => ownerOfImage.get(Number(id))).filter((id) => id != null)).size
+  );
 
   let submitting = $state(false);
   const onSubmit = writeEnhancer({
@@ -85,6 +90,22 @@
   >
     {form.warning}
   </div>
+{:else if form?.success}
+  <!-- The server's count, not the submitted one: a partial removal must not read as a full one. -->
+  <div
+    class="mb-4 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200"
+    role="status"
+  >
+    {#if 'removed' in form && form.removed != null}
+      Removed {num(form.removed)} images.
+    {:else if 'restored' in form && form.restored != null}
+      Restored {num(form.restored)} images.
+    {:else if 'flagged' in form && form.flagged != null}
+      Updated flags on {num(form.flagged)} images.
+    {:else if 'notified' in form && form.notified != null}
+      Notified {num(form.notified)} owners.
+    {/if}
+  </div>
 {/if}
 
 {#if data.notFound}
@@ -126,7 +147,7 @@
   </section>
 
   {#if data.canAct}
-    <BulkActionBar {selected} {onSubmit} {submitting} ownerCount={data.owners.length} />
+    <BulkActionBar {selected} {onSubmit} {submitting} ownerCount={selectedOwnerCount} />
   {/if}
 
   <ImageQueueGrid
@@ -135,6 +156,7 @@
     {selected}
     card={imageCard}
     empty="No images in this batch."
+    endLabel={batch.truncated ? null : 'End of batch.'}
   />
 {/if}
 
@@ -143,12 +165,38 @@
   blockedFor?: string | null;
   needsReview?: string | null;
   createdAt?: Date;
+  poi?: boolean;
+  minor?: boolean;
+  prompt?: string | null;
+  isProfilePicture?: boolean;
+  hasConnection?: boolean;
 })}
-  <div class="flex flex-wrap items-baseline gap-x-2 p-2 text-xs text-dark-2">
-    {#if img.ingestion === 'Blocked'}
-      <Badge variant="destructive">blocked{img.blockedFor ? `: ${img.blockedFor}` : ''}</Badge>
+  <div class="flex flex-col gap-1.5 p-2 text-xs text-dark-2">
+    <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+      {#if img.ingestion === 'Blocked'}
+        <Badge variant="destructive">blocked{img.blockedFor ? `: ${img.blockedFor}` : ''}</Badge>
+      {/if}
+      {#if img.needsReview}<Badge variant="secondary">{img.needsReview}</Badge>{/if}
+      {#if img.poi}<Badge variant="secondary">POI</Badge>{/if}
+      {#if img.minor}<Badge variant="secondary">minor</Badge>{/if}
+      <span>{dateTime(img.createdAt ?? null)}</span>
+    </div>
+
+    <!-- Removing either of these breaks something the owner did not upload: an account's avatar, or
+         the image backing a bounty entry. -->
+    {#if img.isProfilePicture || img.hasConnection}
+      <div class="flex flex-wrap gap-1">
+        {#if img.isProfilePicture}
+          <span class="rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-300">profile picture</span>
+        {/if}
+        {#if img.hasConnection}
+          <span class="rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-300">attached to entity</span>
+        {/if}
+      </div>
     {/if}
-    {#if img.needsReview}<Badge variant="secondary">{img.needsReview}</Badge>{/if}
-    <span>{dateTime(img.createdAt ?? null)}</span>
+
+    {#if img.prompt}
+      <p class="line-clamp-3 wrap-break-word text-dark-2" title={img.prompt}>{img.prompt}</p>
+    {/if}
   </div>
 {/snippet}

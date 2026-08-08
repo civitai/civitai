@@ -2,7 +2,7 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess } from '$lib/server/access';
-import { parseForm, parseQuery } from '$lib/server/query';
+import { parseForm, parseIdList, parseQuery } from '$lib/server/query';
 import { BULK_SOURCES } from './sources';
 import { MAX_INT4, usersByIds } from '$lib/server/users.service';
 import { resolveUserId } from '$lib/server/user-lookup.service';
@@ -10,6 +10,7 @@ import { removeImages, restoreImages, setImageFlag } from '$lib/server/user-acti
 import { sendModNotification } from '$lib/server/moderation-memory.service';
 import {
   getBatchOwners,
+  getImagesByIds,
   getImagesForCollection,
   getImagesForModel,
   getImagesForModelVersion,
@@ -31,8 +32,18 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 
   if (!q) return { source, q, canAct, batch: null, notFound: false, owners: [] };
 
-  // Only the user source takes a non-numeric term; everything else is an id.
-  const id = source === 'user' ? await resolveUserId(q) : /^\d+$/.test(q) ? Number(q) : null;
+  // The id-list source is the one that isn't a single id — Retool took it as newlines, and a pasted
+  // column from a spreadsheet arrives that way, so both separators are accepted.
+  if (source === 'imageIds') {
+    const ids = parseIdList(q.replace(/[\s\n]+/g, ','));
+    const batch = await getImagesByIds(ids);
+    const ownerIds = [...new Set(batch.items.map((i) => i.userId))];
+    const owners = [...(await usersByIds(ownerIds))].map(([id, u]) => ({ id, ...u }));
+    return { source, q, canAct, batch, notFound: batch.items.length === 0, owners };
+  }
+
+  const byUser = source === 'user' || source === 'userRemoved';
+  const id = byUser ? await resolveUserId(q) : /^\d+$/.test(q) ? Number(q) : null;
   if (!id || id > MAX_INT4) return { source, q, canAct, batch: null, notFound: true, owners: [] };
 
   const batch: BulkBatch =
@@ -44,7 +55,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       ? await getImagesForModelVersion(id)
       : source === 'collection'
       ? await getImagesForCollection(id)
-      : await getImagesForUser(id);
+      : await getImagesForUser(id, 200, source === 'userRemoved');
 
   // Whose content this batch actually is. A model's images belong to whoever posted them, which is
   // often not the model's owner — so a removal here can touch accounts the moderator did not look up.
@@ -59,12 +70,7 @@ const actionFail = (message: string) => fail(400, { error: message });
 const idsSchema = z.object({
   imageIds: z
     .string()
-    .transform((s) =>
-      s
-        .split(',')
-        .map(Number)
-        .filter((n) => Number.isInteger(n) && n > 0)
-    )
+    .transform((s) => parseIdList(s, 5001))
     .refine((ids) => ids.length > 0, 'Select at least one image.')
     .refine((ids) => ids.length <= 5000, 'Too many images in one batch — narrow the selection.'),
 });
@@ -84,7 +90,7 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
     if (!result.ok) return actionFail(result.error);
-    return { success: true, removed: input.imageIds.length };
+    return { success: true, removed: result.count };
   },
 
   restore: async ({ request, locals }) => {
@@ -97,7 +103,7 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
     if (!result.ok) return actionFail(result.error);
-    return { success: true, restored: input.imageIds.length };
+    return { success: true, restored: result.count };
   },
 
   // Retool's TogglePoIMakeSureToEdit. It hardcoded poi/true; both are choices here, so a flag set in

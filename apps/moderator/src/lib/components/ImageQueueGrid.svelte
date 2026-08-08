@@ -28,6 +28,7 @@
     card,
     selected,
     empty = 'Nothing to review in this queue.',
+    endLabel = 'End of queue.',
   }: {
     items: T[];
     civitaiUrl: string;
@@ -39,6 +40,9 @@
     /** Pass a set to enable multiselect; once anything is selected an image click toggles instead of navigating. */
     selected?: SvelteSet<string | number>;
     empty?: string;
+    /** `null` suppresses the terminator — for a capped batch, where "End of queue." would contradict
+     *  the page's own truncation warning. */
+    endLabel?: string | null;
   } = $props();
 
   const key = (item: T) => keyOf?.(item) ?? item.id;
@@ -115,11 +119,13 @@
     {/each}
   </div>
 
-  <div class="mt-6 flex justify-center">
-    {#if nextCursor}
-      <Button size="lg" onclick={goNext}>Next</Button>
-    {:else}
-      <span class="text-sm text-muted-foreground">End of queue.</span>
-    {/if}
-  </div>
+  {#if nextCursor || endLabel}
+    <div class="mt-6 flex justify-center">
+      {#if nextCursor}
+        <Button size="lg" onclick={goNext}>Next</Button>
+      {:else}
+        <span class="text-sm text-dark-2">{endLabel}</span>
+      {/if}
+    </div>
+  {/if}
 {/if}

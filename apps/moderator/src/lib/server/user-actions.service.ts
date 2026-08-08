@@ -51,34 +51,57 @@ async function callMainApp(
 // webhook token — a different auth scheme from every other main-app call here. Retool held the key in
 // its own config; the spoke needs `CIVITAI_MOD_API_KEY` set or these actions refuse rather than fail
 // obscurely at the endpoint.
-async function callRetoolEndpoint(
-  resource: string,
-  body: Record<string, unknown>,
-  label: string
-): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false; error: string }> {
-  const key = env.CIVITAI_MOD_API_KEY;
-  if (!key) return { ok: false, error: 'CIVITAI_MOD_API_KEY is not configured.' };
+type JsonResult = { ok: true; body: Record<string, unknown> } | { ok: false; error: string };
 
+/** The one JSON poster. Two auth schemes because the endpoint families disagree, not because the
+ *  callers do — everything else about them was identical and drifted independently. */
+async function postJson(opts: {
+  path: string;
+  body: Record<string, unknown>;
+  label: string;
+  auth: 'webhook' | 'modKey';
+  timeoutMs: number;
+}): Promise<JsonResult> {
   const base = (env.CIVITAI_APP_URL || 'https://civitai.com').replace(/\/$/, '');
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  let url = `${base}${opts.path}`;
+
+  if (opts.auth === 'modKey') {
+    const key = env.CIVITAI_MOD_API_KEY;
+    if (!key) return { ok: false, error: 'CIVITAI_MOD_API_KEY is not configured.' };
+    headers.authorization = `Bearer ${key}`;
+  } else {
+    const token = env.WEBHOOK_TOKEN;
+    if (!token) return { ok: false, error: 'WEBHOOK_TOKEN is not configured.' };
+    url += `?token=${encodeURIComponent(token)}`;
+  }
+
   try {
-    const res = await fetch(`${base}/api/mod/retool/${resource}`, {
+    const res = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30_000),
+      headers,
+      body: JSON.stringify(opts.body),
+      signal: AbortSignal.timeout(opts.timeoutMs),
     });
-    if (!res.ok) return { ok: false, error: `${label} returned ${res.status}.` };
-    // The endpoints return the affected counts and they are the only way to tell a real deletion from
+    if (!res.ok) return { ok: false, error: `${opts.label} returned ${res.status}.` };
+    // The endpoints return the affected counts and they are the only way to tell a real mutation from
     // a no-op — a stale panel or a second moderator re-submitting gets a 200 having changed nothing.
     return {
       ok: true,
       body: ((await res.json().catch(() => ({}))) ?? {}) as Record<string, unknown>,
     };
   } catch (e) {
-    console.error(`[user-actions] ${label} failed`, e);
-    return { ok: false, error: `${label} failed.` };
+    console.error(`[user-actions] ${opts.label} failed`, e);
+    return { ok: false, error: `${opts.label} failed.` };
   }
 }
+
+const callRetoolEndpoint = (
+  resource: string,
+  body: Record<string, unknown>,
+  label: string
+): Promise<JsonResult> =>
+  postJson({ path: `/api/mod/retool/${resource}`, body, label, auth: 'modKey', timeoutMs: 30_000 });
 
 const countOf = (body: Record<string, unknown>, keys: string[]) =>
   keys.reduce((sum, k) => sum + (typeof body[k] === 'number' ? (body[k] as number) : 0), 0);
@@ -488,45 +511,59 @@ export async function grantCosmetic(input: {
 //
 // Both endpoints take a JSON body, unlike the query-string mod endpoints, so they do not go through
 // `callMainApp`.
-async function postMainAppJson(
+// A large batch takes real time on the other side; the 30s used elsewhere would abort a removal that
+// is actually succeeding, and a retry would then double-notify the owners.
+const postMainAppJson = (
   path: string,
   body: Record<string, unknown>,
   label: string
-): Promise<ActionResult> {
-  const token = env.WEBHOOK_TOKEN;
-  if (!token) return { ok: false, error: 'WEBHOOK_TOKEN is not configured.' };
+): Promise<JsonResult> => postJson({ path, body, label, auth: 'webhook', timeoutMs: 120_000 });
 
-  const base = (env.CIVITAI_APP_URL || 'https://civitai.com').replace(/\/$/, '');
-  try {
-    const res = await fetch(`${base}${path}?token=${encodeURIComponent(token)}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-      // A large batch takes real time on the other side; the 15s used elsewhere would abort a
-      // removal that is actually succeeding, and a retry would then double-notify the owners.
-      signal: AbortSignal.timeout(120_000),
-    });
-    if (!res.ok) return { ok: false, error: `${label} returned ${res.status}.` };
-    return { ok: true };
-  } catch (e) {
-    console.error(`[user-actions] ${label} failed`, e);
-    return { ok: false, error: `${label} failed.` };
+export type CountResult = { ok: true; count: number } | { ok: false; error: string };
+
+/**
+ * Retool chunked these ten at a time; one 5000-id call is a single point of failure. `handleBlockImages`
+ * keeps working after the socket drops, so a timeout on one big call renders "failed" over a removal
+ * that is in fact completing — and the moderator re-submits, double-writing ModActivity and possibly
+ * double-notifying. Chunked, a timeout costs one chunk and the count reports what really landed.
+ */
+const CHUNK = 100;
+
+async function inChunks(
+  imageIds: number[],
+  send: (chunk: number[]) => Promise<JsonResult>
+): Promise<CountResult> {
+  let affected = 0;
+  for (let i = 0; i < imageIds.length; i += CHUNK) {
+    const result = await send(imageIds.slice(i, i + CHUNK));
+    if (!result.ok)
+      return affected > 0
+        ? { ok: false, error: `${result.error} ${affected} images were already actioned — reload.` }
+        : result;
+    affected += countOf(result.body, ['images']);
   }
+  return { ok: true, count: affected };
 }
 
 export async function removeImages(input: {
   imageIds: number[];
   reason?: string;
   moderatorId: number;
-}): Promise<ActionResult> {
+}): Promise<CountResult> {
   if (!input.imageIds.length) return { ok: false, error: 'Select at least one image.' };
 
-  const result = await postMainAppJson(
-    '/api/mod/remove-images',
-    { imageIds: input.imageIds, moderatorId: input.moderatorId, reason: input.reason },
-    'Image removal'
+  const result = await inChunks(input.imageIds, (chunk) =>
+    postMainAppJson(
+      '/api/mod/remove-images',
+      { imageIds: chunk, moderatorId: input.moderatorId, reason: input.reason },
+      'Image removal'
+    )
   );
   if (!result.ok) return result;
+
+  const affected = result.count;
+  if (affected === 0)
+    return { ok: false, error: 'Nothing changed — those images may already be gone. Reload.' };
 
   // One row per image: ModActivity keys on content id, so a single "removed 300" row would leave 299
   // images with no record of who removed them.
@@ -540,21 +577,29 @@ export async function removeImages(input: {
       })
     )
   );
-  return { ok: true };
+  return { ok: true, count: affected };
 }
 
 export async function restoreImages(input: {
   imageIds: number[];
   moderatorId: number;
-}): Promise<ActionResult> {
+}): Promise<CountResult> {
   if (!input.imageIds.length) return { ok: false, error: 'Select at least one image.' };
 
-  const result = await postMainAppJson(
-    '/api/mod/restore-images',
-    { imageIds: input.imageIds },
-    'Image restore'
+  const result = await inChunks(input.imageIds, (chunk) =>
+    postMainAppJson(
+      '/api/mod/restore-images',
+      // `userId` is the ClickHouse actor on the Restore event; without it the restore is
+      // unattributable on that side even though ModActivity records it locally.
+      { imageIds: chunk, userId: input.moderatorId },
+      'Image restore'
+    )
   );
   if (!result.ok) return result;
+
+  const affected = result.count;
+  if (affected === 0)
+    return { ok: false, error: 'Nothing changed — those images may already be gone. Reload.' };
 
   await Promise.all(
     input.imageIds.map((id) =>
@@ -566,7 +611,7 @@ export async function restoreImages(input: {
       })
     )
   );
-  return { ok: true };
+  return { ok: true, count: affected };
 }
 
 // IMAGE FLAGS (Retool's TogglePoIMakeSureToEdit — its name is a warning that it was edited in place
