@@ -152,9 +152,13 @@ describe('synthetic stall endpoint gating', () => {
   it('stalls for AT LEAST the requested duration in both modes', async () => {
     const { stall } = await import('~/pages/api/testing/eventloop-stall');
 
+    // Deliberately short. This is the only test in the repo that pins a core on
+    // purpose, and it runs inside an 885-file parallel suite alongside tests whose
+    // `vi.waitFor` budgets are as low as 1s. 50ms proves the property just as well as
+    // 120ms and takes less from everyone else.
     for (const mode of ['spin', 'alloc'] as const) {
       const startedAt = Date.now();
-      const iterations = stall(120, mode);
+      const iterations = stall(50, mode);
       const elapsed = Date.now() - startedAt;
 
       // REGRESSION: spin mode used to count with its own `|0` accumulator, which is
@@ -164,8 +168,8 @@ describe('synthetic stall endpoint gating', () => {
       // endpoint could report a negative iteration count to its caller.
       expect(iterations, mode).toBeGreaterThan(0);
       expect(Number.isSafeInteger(iterations), `${mode} iterations=${iterations}`).toBe(true);
-      // 10ms of slack for coarse timer granularity.
-      expect(elapsed, mode).toBeGreaterThanOrEqual(110);
+      // A little slack for coarse timer granularity.
+      expect(elapsed, mode).toBeGreaterThanOrEqual(45);
     }
   });
 
