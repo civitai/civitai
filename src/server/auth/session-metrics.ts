@@ -104,14 +104,13 @@ const sessionStateDuration = registerHistogram({
   buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5],
 });
 
-// Bucket edges bracket the operational thresholds: 500 is the mint ceiling, 4000 the Lua unpack ceiling
-// above which the write silently lands nothing.
+// Bucket edges bracket the operational thresholds this path is held to; traffic in the upper buckets is
+// out-of-band and worth investigating, not just large.
 const sessionStateTokens = registerHistogram({
   name: 'session_state_tokens',
   help:
-    'Number of tracked tokens touched by one updateSessionState call. Above ~4000 the multi-field write ' +
-    'exceeds the Lua unpack limit and lands NOTHING while reporting success, so the upper buckets are a ' +
-    'revocation-failure indicator, not just a size one.',
+    'Number of tracked tokens touched by one updateSessionState call. The upper buckets are out-of-band ' +
+    'and worth investigating.',
   labelNames: ['caller', 'type'] as const,
   buckets: [1, 10, 50, 100, 500, 1000, 4000, 10000],
 });
