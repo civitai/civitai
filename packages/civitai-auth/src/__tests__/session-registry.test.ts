@@ -288,6 +288,31 @@ describe('createSessionRegistry', () => {
         expect(await reg.isRevoked({ jti: 'ancient', signedAt: 1 })).toBe(true);
       });
 
+      // The floor's whole guarantee is that it outlasts the spokes' rolling-refresh interval. That was a
+      // docstring requirement across an app boundary — AUTH_SESSION_UPDATE_AGE lives in the main app, the
+      // floor default lives here — so lengthening the interval would have silently made live sessions
+      // evictable again with no error and no failing test. It is now enforced.
+      it('raises the floor to outlast a longer refresh interval, ignoring a too-small configured floor', async () => {
+        const redis = makeRedis();
+        const clock = 1_000_000_000_000;
+        const reg = createSessionRegistry({
+          redis,
+          keys: KEYS,
+          maxTokensPerUser: 2,
+          now: () => clock,
+          minEvictionAgeSeconds: 60, // would make a 4-day-old live session evictable…
+          refreshIntervalSeconds: 7 * 24 * 3600, // …but the deployment refreshes only weekly
+        });
+        await redis.hSet('session:user-tokens2:7', 'refreshed-4d-ago', clock - 4 * 24 * HOUR);
+        await redis.hSet('session:user-tokens2:7', 'refreshed-6d-ago', clock - 6 * 24 * HOUR);
+
+        await reg.trackToken('new', 7);
+
+        expect(redis._hashes.get('session:user-tokens2:7')?.has('refreshed-4d-ago')).toBe(true);
+        expect(redis._hashes.get('session:user-tokens2:7')?.has('refreshed-6d-ago')).toBe(true);
+        expect(await reg.isRevoked({ jti: 'refreshed-6d-ago', signedAt: 1 })).toBe(false);
+      });
+
       // charlie also noted the committed page-local test used a 3-entry hash a single page covers, so it never
       // exercised a global-oldest sitting OUTSIDE the page. This does.
       it('is safe when the global oldest is outside the scanned page', async () => {

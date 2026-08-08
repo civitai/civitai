@@ -4,6 +4,7 @@ import {
   type SessionRegistryRedis,
 } from '@civitai/auth';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
+import { env } from '$env/dynamic/private';
 import { getSysRedis } from '../redis';
 import { logToAxiom } from '../axiom';
 
@@ -41,6 +42,10 @@ function registry(): SessionRegistry {
       all: REDIS_SYS_KEYS.SESSION.ALL,
       userTokens: REDIS_KEYS.SESSION.USER_TOKENS,
     },
+    // Pass the deployment's real rolling-refresh interval so the registry can hold its eviction floor above
+    // it. Without this it falls back to the documented default, and a deployment that lengthened the interval
+    // would silently make live sessions evictable.
+    refreshIntervalSeconds: Number(env.AUTH_SESSION_UPDATE_AGE) || undefined,
     // An eviction means an account crossed the per-user session ceiling — the signal that used to exist
     // only as an api-primary event-loop wedge. Log it so the ceiling is observable without one.
     onEvict: ({ userId, evicted, total }) => {
