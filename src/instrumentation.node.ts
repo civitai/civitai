@@ -17,6 +17,7 @@ import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { registerCpuProfiler, registerEventLoopStallProfiler } from '~/server/cpu-profiler';
 import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
 import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
+import { registerEventLoopWatchdog } from '~/server/eventloop-watchdog';
 import { registerPyroscope } from '~/server/pyroscope';
 import { registerEnumArrayTypeParsers } from '@civitai/db/kysely';
 import { pgDbWrite } from '~/server/db/pgDb';
@@ -86,6 +87,17 @@ registerEventLoopLongTaskDetector();
 // because it's served by the same saturated loop. See liveness-heartbeat.ts and
 // the liveness history in datapacket-talos deployment-api.yaml.
 registerLivenessHeartbeat();
+
+// Spawn the off-loop event-loop wedge detector. Everything else that watches the
+// loop — the loopstall self-trigger above, the long-task detector, /api/metrics —
+// runs ON the loop and therefore cannot report while it is pinned. This puts the
+// observer in a worker thread that reads a SharedArrayBuffer heartbeat and serves
+// its own metrics port, so a wedged main thread is still visible from outside.
+// Registered AFTER the heartbeat so the first beat is already stored when the
+// worker starts polling. DISARMED by default (no worker, no port, nothing
+// installed) unless EVENTLOOP_WATCHDOG_ENABLED='true'.
+// See src/server/eventloop-watchdog.ts.
+registerEventLoopWatchdog();
 
 // Kick the in-process route warmer (fire-and-forget). Next standalone
 // lazy-require()s each route on first hit; the dependency-only readiness probe
