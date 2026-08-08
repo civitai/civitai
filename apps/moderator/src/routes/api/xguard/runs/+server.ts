@@ -1,6 +1,7 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { requireXguardToken, ok, readJson, intParam, type EndpointDoc } from '$lib/server/api-guard';
+import { WebhookEndpoint } from '$lib/server/webhook-endpoint';
+import { ok, readJson, intParam, type EndpointDoc } from '$lib/server/api-guard';
 import { labDb } from '$lib/server/xguard-lab';
 import { precisionOf, recallOf } from '$lib/eval-metrics';
 import { idOf, labConnectionString, orchestratorEnv, requireName } from '$lib/server/xguard-api';
@@ -48,8 +49,7 @@ export const _doc: EndpointDoc = {
   ],
 };
 
-export const GET: RequestHandler = async (event) => {
-  requireXguardToken(event.request);
+export const GET: RequestHandler = WebhookEndpoint(async (event) => {
   const label = event.url.searchParams.get('label');
   const limit = intParam(event.url, 'limit', 25, 1, 100);
 
@@ -88,10 +88,9 @@ export const GET: RequestHandler = async (event) => {
       recall: recallOf(r),
     })),
   });
-};
+});
 
-export const POST: RequestHandler = async (event) => {
-  requireXguardToken(event.request);
+export const POST: RequestHandler = WebhookEndpoint(async (event) => {
   const body = await readJson<Record<string, unknown>>(event);
 
   const label = requireName(body.label, 'label');
@@ -133,4 +132,4 @@ export const POST: RequestHandler = async (event) => {
   }
 
   return ok({ runId, label, status: 'running', poll: `/api/xguard/runs/${runId}` }, 202);
-};
+});

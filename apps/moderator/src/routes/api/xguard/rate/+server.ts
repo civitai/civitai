@@ -1,6 +1,7 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { requireXguardToken, ok, readJson, type EndpointDoc } from '$lib/server/api-guard';
+import { WebhookEndpoint } from '$lib/server/webhook-endpoint';
+import { ok, readJson, type EndpointDoc } from '$lib/server/api-guard';
 import { labDb } from '$lib/server/xguard-lab';
 import { labConnectionString, openrouterKey, requireName } from '$lib/server/xguard-api';
 import { rateBatch } from '../../../../../xguard-lab/rate-core';
@@ -49,8 +50,7 @@ export const _doc: EndpointDoc = {
   ],
 };
 
-export const POST: RequestHandler = async (event) => {
-  requireXguardToken(event.request);
+export const POST: RequestHandler = WebhookEndpoint(async (event) => {
   const body = await readJson<Record<string, unknown>>(event);
 
   const batch = requireName(body.batch, 'batch');
@@ -95,4 +95,4 @@ export const POST: RequestHandler = async (event) => {
     .executeTakeFirst();
 
   return ok({ ...summary, limit, remaining: Number(unrated?.n ?? 0) });
-};
+});

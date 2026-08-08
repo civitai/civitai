@@ -3,6 +3,7 @@ import { env } from '$env/dynamic/private';
 import { guard } from '$lib/server/auth';
 import { applyGrants, canAccess } from '$lib/server/access';
 import { loadPageAccessGrants } from '$lib/server/page-access';
+import { authenticateWebhookToken } from '$lib/server/webhook-endpoint';
 
 // Where authenticated-but-not-a-moderator users get sent. A 403 would be a dead end (re-login can't
 // grant the role); bounce them to the main site instead. Overridable via env for non-prod hosts.
@@ -19,17 +20,21 @@ const NON_MODERATOR_REDIRECT = env.CIVITAI_APP_URL || 'https://civitai.com';
 // where there is no cookie). Everything else is gated.
 const PUBLIC_PATHS = new Set(['/favicon.svg']);
 
-// Service-to-service ingress, bypassing the session guard because these carry a shared secret rather than
-// a moderator cookie — each endpoint self-authenticates.
-//   /api/mod/*    — the main app POSTs here to delegate moderator mutations the spoke owns (WEBHOOK_TOKEN)
-//   /api/xguard/* — the XGuard lab's agent API (XGUARD_API_TOKEN, checked by requireXguardToken)
-// Only these two prefixes bypass it. Everything else, PAGES ESPECIALLY, stays cookie-gated: reviewing is a
-// page form action, and a shared secret must never be able to record a human judgement.
-const SECRET_AUTHED_PREFIXES = ['/api/mod/', '/api/xguard/'];
-
 export const handle: Handle = async ({ event, resolve }) => {
   if (PUBLIC_PATHS.has(event.url.pathname)) return resolve(event);
-  if (SECRET_AUTHED_PREFIXES.some((p) => event.url.pathname.startsWith(p))) return resolve(event);
+  // An /api/* request presenting a credential of its own is verified HERE and never redirected to the hub
+  // login — a script needs a status code, not an HTML login page. Verifying in the hook means an invalid
+  // token cannot reach a handler at all; WebhookEndpoint then decides which endpoints accept a verified
+  // one. `user` is deliberately left unset: there is nobody behind a token, so nothing reached this way
+  // can attribute a write.
+  if (event.url.pathname.startsWith('/api/')) {
+    const token = authenticateWebhookToken(event);
+    if (token instanceof Response) return token;
+    if (token === 'webhook') {
+      event.locals.tokenClient = token;
+      return resolve(event);
+    }
+  }
 
   const result = await guard.check(event.request.headers.get('cookie') ?? '', event.url.href);
 

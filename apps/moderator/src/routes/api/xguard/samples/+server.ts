@@ -1,5 +1,6 @@
 import type { RequestHandler } from './$types';
-import { requireXguardToken, ok, readJson, intParam, type EndpointDoc } from '$lib/server/api-guard';
+import { WebhookEndpoint } from '$lib/server/webhook-endpoint';
+import { ok, readJson, intParam, type EndpointDoc } from '$lib/server/api-guard';
 import { labDb } from '$lib/server/xguard-lab';
 import { clickhouseEnv, idOf, labConnectionString, requireName } from '$lib/server/xguard-api';
 import { sampleBatch } from '../../../../../xguard-lab/sample-core';
@@ -47,8 +48,7 @@ export const _doc: EndpointDoc = {
   ],
 };
 
-export const GET: RequestHandler = async (event) => {
-  requireXguardToken(event.request);
+export const GET: RequestHandler = WebhookEndpoint(async (event) => {
   const url = event.url;
   const batch = url.searchParams.get('batch');
   const label = url.searchParams.get('label');
@@ -136,10 +136,9 @@ export const GET: RequestHandler = async (event) => {
       };
     }),
   });
-};
+});
 
-export const POST: RequestHandler = async (event) => {
-  requireXguardToken(event.request);
+export const POST: RequestHandler = WebhookEndpoint(async (event) => {
   const body = await readJson<Record<string, unknown>>(event);
   const clickhouse = clickhouseEnv();
 
@@ -154,7 +153,7 @@ export const POST: RequestHandler = async (event) => {
   });
 
   return ok(summary, 201);
-};
+});
 
 function clamp(raw: unknown, fallback: number, min: number, max: number): number {
   if (raw === undefined || raw === null || raw === '') return fallback;

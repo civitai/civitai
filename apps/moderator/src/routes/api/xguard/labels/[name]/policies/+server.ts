@@ -1,6 +1,7 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { requireXguardToken, ok, readJson, type EndpointDoc } from '$lib/server/api-guard';
+import { WebhookEndpoint } from '$lib/server/webhook-endpoint';
+import { ok, readJson, type EndpointDoc } from '$lib/server/api-guard';
 import { labDb } from '$lib/server/xguard-lab';
 import { idOf } from '$lib/server/xguard-api';
 
@@ -36,8 +37,7 @@ export const _doc: EndpointDoc = {
   ],
 };
 
-export const GET: RequestHandler = async (event) => {
-  requireXguardToken(event.request);
+export const GET: RequestHandler = WebhookEndpoint(async (event) => {
   const versions = await labDb
     .selectFrom('label_policy')
     .select(['id', 'version', 'policy', 'threshold', 'action', 'note', 'created_at as createdAt'])
@@ -48,10 +48,9 @@ export const GET: RequestHandler = async (event) => {
     label: event.params.name,
     versions: versions.map((v) => ({ ...v, id: idOf(v.id) })),
   });
-};
+});
 
-export const POST: RequestHandler = async (event) => {
-  requireXguardToken(event.request);
+export const POST: RequestHandler = WebhookEndpoint(async (event) => {
   const name = event.params.name;
 
   const label = await labDb
@@ -92,4 +91,4 @@ export const POST: RequestHandler = async (event) => {
     .executeTakeFirstOrThrow();
 
   return ok({ label: name, version, id: idOf(created.id) }, 201);
-};
+});

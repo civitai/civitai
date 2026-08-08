@@ -1,6 +1,7 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { requireXguardToken, ok, type EndpointDoc } from '$lib/server/api-guard';
+import { WebhookEndpoint } from '$lib/server/webhook-endpoint';
+import { ok, type EndpointDoc } from '$lib/server/api-guard';
 import { labDb } from '$lib/server/xguard-lab';
 import { idOf } from '$lib/server/xguard-api';
 
@@ -12,8 +13,7 @@ export const _doc: EndpointDoc = {
   returns: 'label, versions (newest first, with full policy prose), terms, groundTruth counts.',
 };
 
-export const GET: RequestHandler = async (event) => {
-  requireXguardToken(event.request);
+export const GET: RequestHandler = WebhookEndpoint(async (event) => {
   const name = event.params.name;
 
   const label = await labDb
@@ -56,4 +56,4 @@ export const GET: RequestHandler = async (event) => {
       positives: Number(truth?.positives ?? 0),
     },
   });
-};
+});

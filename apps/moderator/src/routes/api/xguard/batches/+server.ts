@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import type { RequestHandler } from './$types';
-import { requireXguardToken, ok, type EndpointDoc } from '$lib/server/api-guard';
+import { WebhookEndpoint } from '$lib/server/webhook-endpoint';
+import { ok, type EndpointDoc } from '$lib/server/api-guard';
 import { labDb } from '$lib/server/xguard-lab';
 
 export const _doc: EndpointDoc = {
@@ -12,8 +13,7 @@ export const _doc: EndpointDoc = {
   ],
 };
 
-export const GET: RequestHandler = async (event) => {
-  requireXguardToken(event.request);
+export const GET: RequestHandler = WebhookEndpoint(async (event) => {
 
   const [batches, coverage] = await Promise.all([
     labDb
@@ -67,4 +67,4 @@ export const GET: RequestHandler = async (event) => {
         })),
     })),
   });
-};
+});
