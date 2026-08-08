@@ -98,28 +98,39 @@ export function stall(durationMs: number, mode: 'spin' | 'alloc'): number {
   return iterations;
 }
 
-const handler = WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
-  const parsed = resolveStallRequest({ ...req.query, ...(req.body ?? {}) });
-  if (!parsed.ok) {
-    return res.status(400).json({ error: parsed.error.flatten() });
-  }
+const buildHandler = () =>
+  WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
+    const parsed = resolveStallRequest({ ...req.query, ...(req.body ?? {}) });
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error.flatten() });
+    }
 
-  const { durationMs, mode } = parsed.value;
-  const startedAt = Date.now();
-  console.warn(
-    `[eventloop-stall] SYNTHETIC STALL starting: ${durationMs}ms mode=${mode} — this pod is ` +
-      `intentionally wedged and will not serve any request until it ends`
-  );
+    const { durationMs, mode } = parsed.value;
+    const startedAt = Date.now();
+    console.warn(
+      `[eventloop-stall] SYNTHETIC STALL starting: ${durationMs}ms mode=${mode} — this pod is ` +
+        `intentionally wedged and will not serve any request until it ends`
+    );
 
-  const iterations = stall(durationMs, mode);
-  const actualMs = Date.now() - startedAt;
+    const iterations = stall(durationMs, mode);
+    const actualMs = Date.now() - startedAt;
 
-  console.warn(`[eventloop-stall] synthetic stall complete after ${actualMs}ms`);
-  return res.status(200).json({ requestedMs: durationMs, actualMs, mode, iterations });
-});
+    console.warn(`[eventloop-stall] synthetic stall complete after ${actualMs}ms`);
+    return res.status(200).json({ requestedMs: durationMs, actualMs, mode, iterations });
+  });
 
 const notFound = (_req: NextApiRequest, res: NextApiResponse) => {
   res.status(404).end();
 };
 
-export default stallEndpointEnabled ? handler : notFound;
+// Selection happens ONCE, at module load, and the disabled build never even
+// constructs the stall handler — `buildHandler()` is not called, so no token check
+// and no route to `stall()` exists to be reached. This is deliberately not a runtime
+// `if` inside a live handler: an authenticated endpoint whose job is to hard-lock an
+// app server is a DoS primitive, and a runtime refusal leaves the path present and
+// one bug away from reachable.
+//
+// Honest limit of that claim: `stall` is exported for the unit test, so the function
+// remains in the bundle and importable in-process. Nothing imports it outside the
+// test. What is absent in a disabled build is any way to reach it over HTTP.
+export default stallEndpointEnabled ? buildHandler() : notFound;

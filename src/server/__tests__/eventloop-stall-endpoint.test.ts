@@ -5,8 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // itself, per the pattern in
 // src/server/utils/__tests__/public-endpoint-maxage.test.ts. The gate under test
 // here is the module-load env check, which sits in front of the wrapper.
+const webhookEndpoint = vi.fn((handler: unknown) => handler);
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  WebhookEndpoint: (handler: unknown) => handler,
+  WebhookEndpoint: (handler: unknown) => webhookEndpoint(handler),
 }));
 
 const GATE = 'EVENTLOOP_WATCHDOG_STALL_ENDPOINT';
@@ -47,6 +48,28 @@ describe('synthetic stall endpoint gating', () => {
     // stall path is unreachable, not just unauthorised.
     expect(elapsed).toBeLessThan(1000);
     expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it('never even CONSTRUCTS the stall handler when disabled', async () => {
+    // The gate has to be module-level absence, not a runtime refusal. An
+    // authenticated endpoint whose job is to hard-lock an app server is a DoS
+    // primitive, and a live handler that checks a flag and returns 403 leaves the
+    // path present and one bug away from reachable. If `WebhookEndpoint` was never
+    // called, there is no wrapped stall handler in this build at all.
+    webhookEndpoint.mockClear();
+
+    await import('~/pages/api/testing/eventloop-stall');
+
+    expect(webhookEndpoint).not.toHaveBeenCalled();
+  });
+
+  it('POSITIVE CONTROL: constructs it when the gate is on', async () => {
+    webhookEndpoint.mockClear();
+    process.env[GATE] = 'true';
+
+    await import('~/pages/api/testing/eventloop-stall');
+
+    expect(webhookEndpoint).toHaveBeenCalledTimes(1);
   });
 
   it('404s for every value of the gate except the exact string "true"', async () => {
