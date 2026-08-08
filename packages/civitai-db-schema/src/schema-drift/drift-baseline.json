@@ -596,6 +596,17 @@
       "field": "updatedAt"
     },
     {
+      "fingerprint": "nullability|CosmeticShopItem|cosmeticId|CosmeticShopItem|cosmeticId|optional",
+      "kind": "nullability",
+      "tier": "enforced",
+      "table": "CosmeticShopItem",
+      "columns": [
+        "cosmeticId"
+      ],
+      "model": "CosmeticShopItem",
+      "field": "cosmeticId"
+    },
+    {
       "fingerprint": "nullability|ModelMetric|updatedAt|ModelMetric|updatedAt|required",
       "kind": "nullability",
       "tier": "enforced",
@@ -649,6 +660,17 @@
       ],
       "model": "TagMetric",
       "field": "updatedAt"
+    },
+    {
+      "fingerprint": "nullability|UserCosmeticShopPurchases|cosmeticId|UserCosmeticShopPurchases|cosmeticId|optional",
+      "kind": "nullability",
+      "tier": "enforced",
+      "table": "UserCosmeticShopPurchases",
+      "columns": [
+        "cosmeticId"
+      ],
+      "model": "UserCosmeticShopPurchases",
+      "field": "cosmeticId"
     },
     {
       "fingerprint": "nullability|UserMetric|updatedAt|UserMetric|updatedAt|required",

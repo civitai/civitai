@@ -180,20 +180,23 @@ pnpm --filter @civitai/db-schema drift \
 ```
 
 ```
-declared owning-side relations : 476
+declared owning-side relations : 485
 checked against the database   : 445
-skipped (view / absent table)  : 31
+skipped (view / absent table)  : 40
 MISSING foreign key            : 37
 wrong referential action       : 0   <- see below
 MISSING column                 : 12
 nullability checked            : 2383
-nullability drift              : 11
+nullability drift              : 13
 uniqueness declarations checked: 122
 missing unique index           : 1
 ```
 
-61 findings in total. The 11 nullability findings are `Purchase.userId`,
-`ChallengeEvent.createdById`, and nine `*Metric.updatedAt` columns. The 12 missing columns are
+63 findings in total. The 13 nullability findings are `Purchase.userId`,
+`ChallengeEvent.createdById`, nine `*Metric.updatedAt` columns, and
+`CosmeticShopItem.cosmeticId` / `UserCosmeticShopPurchases.cosmeticId`. Those last two are
+artefacts of the snapshot's age, not live drift: the packs migration made them nullable on
+2026-08-04 and the database has it. A recapture drops them. The 12 missing columns are
 `ModelFlag.sfwOnly`, `UserCosmeticShopPurchases.meta`, and ten
 `UserRank.thumbs{Up,Down}Count*Rank`. The single uniqueness finding is
 `ImageResource(modelVersionId, name, imageId)`.
@@ -317,11 +320,11 @@ signal, not an interlock. Adding `Schema drift gate` to the required checks is w
 
 ### Why a baseline and not `--strict`
 
-`--strict` fails on any finding, and there are 61 on `main` today. A gate red on every run
+`--strict` fails on any finding, and there are 63 on `main` today. A gate red on every run
 teaches everyone to click through it, so it would be switched off within a week — the same
 reasoning behind the report-only ESLint and Prettier steps in `.github/workflows/lint.yml`.
 
-`drift-baseline.json`, next to this README, records those 61 as accepted. The gate reports
+`drift-baseline.json`, next to this README, records those 63 as accepted. The gate reports
 only what is **not** in it. The baseline is committed, so accepting new drift is a reviewable
 act: the gate tells you the exact command, and the resulting diff shows a reviewer precisely
 which constraint the change gave up on.
