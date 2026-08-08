@@ -396,6 +396,10 @@ export const serverSchema = z
     // loudly at boot instead.
     IMAGE_SCANNING_MAX_PER_RUN: z.coerce.number().int().positive().default(1000),
     IMAGE_SCANNER_NEW: zc.booleanString.default(false),
+    // Arms the reaction reconciliation audit's repair path to WRITE compensating
+    // events to ClickHouse. Off, the hourly path does nothing at all and the
+    // nightly one runs its diff as a dry run for visibility.
+    METRIC_REACTION_REPAIR_ENABLED: zc.booleanString.default(false),
     DELIVERY_WORKER_ENDPOINT: z.string().optional(),
     DELIVERY_WORKER_TOKEN: z.string().optional(),
     STORAGE_RESOLVER_ENDPOINT: z.string().optional(), // URL for storage-resolver microservice
