@@ -13,7 +13,7 @@ left worth porting) · `dropped` (agreed not to port)
 | User Lookup v2 | `868kn6x1b` | 170 | 433 | `/retool/user-lookup` | **partial** — everything unblocked is built (unverified in a browser); what is left is blocked, not pending: see below |
 | Moderation Status | `868kn5zg1` | 77 | 197 | `/retool/moderation-status` | not started |
 | Bulk Image Manager | `868kn76au` | 40 | 60 | `/retool/bulk-image-manager` | not started |
-| User Reports | `868kn78hc` | 34 | 57 | `/retool/user-reports` | not started |
+| User Reports | `868kn78hc` | 34 | 57 | `/retool/user-reports` | **ported, not verified** — 34/34 classified ([audit](../../../docs/moderator-app/retool-exports/user-reports-audit.md)): 4 ported, 14 already shipped elsewhere, 16 Retool glue. Reviewed by all three agents; findings fixed. **Not run against a live page, and needs granting on `/admin`.** Export predates the option-set extractor and 17 of its 57 components are buttons — re-extract before trusting the action set. |
 | Chat Audit | `868kn7m9r` | 20 | 50 | `/retool/chat-audit` | **built** — all 20 queries ported and reviewed, unverified in a browser, Retool still live |
 | Front Page Audit | `868kn82bf` | 16 | 19 | `/retool/front-page-audit` | not started |
 | Image Lookup | `868kn7q2v` | 10 | 21 | `/retool/image-lookup` | **built** — all 10 queries ported, unverified in a browser, Retool still live |

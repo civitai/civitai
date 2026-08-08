@@ -39,6 +39,37 @@ predate this session; verify rather than assume they are already applied.
 - [ ] `20260807120000_report_open_reason_index` — partial index on `Report (reason, id)` for open
       statuses. The Reports sub-nav count query was seq-scanning ~2.4M rows (~300ms) without it.
 
+## 2b. Grant the new pages on `/admin`
+
+A new page has **no `AppPageAccess` rows**, so only `moderator:admin` can reach it until someone ticks
+the boxes. Three pages need granting before mods can review them:
+
+- [ ] `/retool/article-lookup`
+- [ ] `/retool/user-reports`
+- [ ] Confirm the existing Retool pages still carry the grants you expect after the User Lookup
+      restructure — its sections moved to `/retool/user-lookup/[section]`, and `canAccess`
+      longest-prefix matches.
+
+## 2c. Re-extract the remaining Retool exports
+
+**`extract.mjs` only learned to emit widget option sets on 2026-08-07.** Every export taken before
+that — `user-reports`, `bulk-image-manager`, `front-page-audit`, `moderation-status`,
+`article-lookup` — has no "tabs & option sets" section, which is where tab labels, dropdown presets
+and canned workflows live. That blind spot is what left 97 User Lookup queries unported.
+
+It matters most for **User Reports** (17 of 57 components are buttons) and **Bulk Image Manager**.
+
+The ClickUp skill is not configured locally (`accounts.json`/`.env` missing in
+`.claude/skills/clickup/`), so this needs either those credentials or the raw exports dropped into
+`~/Downloads/Retool/`. Then:
+
+```bash
+node .claude/skills/retool-migration/extract.mjs "<export.json>"
+```
+
+- [ ] Re-extract `user-reports` and re-check its audit against the surfaced option sets
+- [ ] Re-extract the three not-yet-started apps before their slices begin
+
 ## 3. Nothing has been run
 
 **No panel in this migration has been seen rendering, and no action has been fired.** It typechecks
@@ -53,7 +84,14 @@ and builds; that is all that is established. Before any of it is trusted in prod
       reports failure rather than false success.
 - [ ] **Purge all content**, on a throwaway account only.
 - [ ] **Issue strike** — confirm the user is notified, and that a notification failure still reports
-      the strike as recorded.
+      the strike as recorded. **Exercise this first on User Reports**: a review found that the partial
+      failure previously left the form armed, and a second click writes a second strike for one
+      offence. Strike counts drive bans.
+- [ ] **User Reports queue** — action / dismiss / claim a report, confirm the queue refreshes and the
+      count matches the sidebar badge (they previously disagreed, which is why the queue now uses the
+      shared `getReports`).
+- [ ] **The suspect grid** — confirm a reported account's **videos** render as video. They were going
+      through the image pipeline before the review caught it.
 
 ## 4. Known-open, decided or deferred
 

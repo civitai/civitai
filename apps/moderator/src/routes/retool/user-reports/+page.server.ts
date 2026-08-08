@@ -84,12 +84,15 @@ export const actions: Actions = {
     );
     if (typeof input === 'string') return scopedFail('report', input);
 
-    await setReportStatus({
+    const result = await setReportStatus({
       id: input.id,
       status: input.status,
       userId: locals.user.id,
       ip: getClientAddress(),
     });
+    // Without this a stale tab acting on a since-deleted report gets the green path AND a ModActivity
+    // `review` row for a report nobody touched.
+    if (!result.ok) return scopedFail('report', result.error);
     return { success: true };
   },
 
