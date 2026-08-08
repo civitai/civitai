@@ -150,6 +150,13 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
    * the minting closes that, which is why the upgrade-on-read fix is sequenced with this rather than after it.
    * Do not read "bounded" here as "safe at any mint rate".
    *
+   * Note the two dials are coupled: because the floor is clamped up to twice `refreshIntervalSeconds`,
+   * LENGTHENING the refresh interval also raises the floor, and so raises the (mint rate x floor) bound.
+   * Inert on defaults (2 x 24h is under the default floor), but anyone raising the refresh interval for an
+   * unrelated reason is moving both. It is not avoidable — with a long refresh interval and a fast minter you
+   * cannot both protect live sessions and bound the hash tightly, and protecting the session is the right
+   * side to pick.
+   *
    * Bounded three ways, because this runs on the login hot path against a single-threaded shared store:
    *   - one HLEN in the ordinary case; the hash is not read at all below the ceiling;
    *   - the read is ONE BOUNDED HSCAN PAGE, never the whole hash. A full read costs ~1 µs/field server-side,
