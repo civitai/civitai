@@ -206,17 +206,316 @@ function workerExitsCounter() {
 const EXIT_CODE_NO_TOKEN = 78;
 
 /**
+ * Wedge capture, appended to the worker source below.
+ *
+ * WHY THE INSPECTOR SERVER AND NOT connectToMainThread(): the two paths behave
+ * differently against a pinned loop, and the difference decides the design.
+ * `connectToMainThread()` is an in-process channel whose `Profiler.enable`/`start`
+ * need main-thread dispatch — measured, they return nothing useful when the loop is
+ * already blocked (2 samples, top frame anonymous), and against a partially-saturated
+ * loop `enable` never settles at all. The inspector SERVER runs on its own thread:
+ * arming 8s into a 20s pin gave enable 1ms / start 11ms / stop 2ms and 5,677 samples
+ * with 97.3% on the pinning frame, verified in a production pod on Node 24.19.
+ *
+ * So the trigger fires SIGUSR1 from this thread, which opens the inspector without
+ * the main thread's help, and drives CDP over loopback.
+ *
+ * 🔴 NOTHING HERE MAY REPORT VIA parentPort.postMessage. That queue is drained by the
+ * main thread, so during a wedge every message buffers until recovery and is lost if
+ * the pod dies first — the reporting path would share the resource being blocked,
+ * which is the exact failure this project exists to end. Capture results go into the
+ * counters served on the worker's own port, and the profile goes straight out over
+ * the worker's own socket.
+ *
+ * `inspector.close()` is main-thread-only, so the port stays open on loopback until
+ * the loop recovers. Bounded to the incident and loopback-only, but real.
+ */
+const WATCHDOG_CAPTURE_SOURCE = String.raw`
+const zlib = require('node:zlib');
+const https = require('node:https');
+const nodeUrl = require('node:url');
+
+// Defaulted, not required: a malformed or absent capture config must never stop the
+// DETECTOR from running. Capture is the optional half, and the detector is not.
+const capCfg =
+  cap && typeof cap === 'object'
+    ? cap
+    : { enabled: false, backoffStartMs: 300000, backoffMaxMs: 3600000, maxPerHour: 0 };
+const s3Cfg = s3 && typeof s3 === 'object' ? s3 : {};
+
+let captureInFlight = false;
+let captureBackoffUntil = 0;
+let captureBackoffMs = capCfg.backoffStartMs;
+let capturesThisHour = 0;
+let capturesHourStart = Date.now();
+const captureResults = Object.create(null);
+const uploadResults = Object.create(null);
+let uploadBytes = 0;
+let lastCaptureAt = 0;
+
+function tallyCapture(result) {
+  captureResults[result] = (captureResults[result] || 0) + 1;
+}
+function tallyUpload(result) {
+  uploadResults[result] = (uploadResults[result] || 0) + 1;
+}
+
+function hmac(key, data) {
+  return crypto.createHmac('sha256', key).update(data, 'utf8').digest();
+}
+function sha256Hex(data) {
+  return crypto.createHash('sha256').update(data).digest('hex');
+}
+
+// Minimal SigV4 for a single S3 PUT. Hand-rolled because the worker may not import a
+// bare specifier: an eval'd worker in the standalone image has no reliable module
+// resolution, which is the same reason the source is inlined at all.
+function signPut(opts) {
+  const amzDate = opts.now.toISOString().replace(/[:-]|\.\d{3}/g, '');
+  const dateStamp = amzDate.slice(0, 8);
+  const payloadHash = sha256Hex(opts.body);
+  const canonicalHeaders =
+    'host:' + opts.host + '\n' +
+    'x-amz-content-sha256:' + payloadHash + '\n' +
+    'x-amz-date:' + amzDate + '\n';
+  const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
+  const canonicalRequest = [
+    'PUT',
+    opts.path,
+    '',
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash,
+  ].join('\n');
+  const scope = dateStamp + '/' + opts.region + '/s3/aws4_request';
+  const stringToSign = [
+    'AWS4-HMAC-SHA256',
+    amzDate,
+    scope,
+    sha256Hex(canonicalRequest),
+  ].join('\n');
+  const signingKey = hmac(hmac(hmac(hmac('AWS4' + opts.secretKey, dateStamp), opts.region), 's3'), 'aws4_request');
+  const signature = crypto.createHmac('sha256', signingKey).update(stringToSign, 'utf8').digest('hex');
+  return {
+    amzDate: amzDate,
+    payloadHash: payloadHash,
+    authorization:
+      'AWS4-HMAC-SHA256 Credential=' + opts.accessKeyId + '/' + scope +
+      ', SignedHeaders=' + signedHeaders + ', Signature=' + signature,
+  };
+}
+
+function putObject(key, body) {
+  return new Promise(function (resolve) {
+    let parsed;
+    try {
+      parsed = new nodeUrl.URL(s3Cfg.endpoint);
+    } catch (err) {
+      return resolve({ ok: false, reason: 'bad-endpoint' });
+    }
+    const path = '/' + s3Cfg.bucket + '/' + key;
+    const signed = signPut({
+      now: new Date(),
+      host: parsed.host,
+      path: path,
+      region: s3Cfg.region,
+      accessKeyId: s3Cfg.accessKeyId,
+      secretKey: s3Cfg.secretKey,
+      body: body,
+    });
+    const mod = parsed.protocol === 'https:' ? https : http;
+    const req = mod.request(
+      {
+        method: 'PUT',
+        hostname: parsed.hostname,
+        port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+        path: path,
+        headers: {
+          host: parsed.host,
+          'x-amz-date': signed.amzDate,
+          'x-amz-content-sha256': signed.payloadHash,
+          authorization: signed.authorization,
+          'content-length': body.length,
+          'content-type': 'application/gzip',
+        },
+        timeout: capCfg.uploadTimeoutMs,
+      },
+      function (res) {
+        res.resume();
+        res.on('end', function () {
+          resolve(
+            res.statusCode >= 200 && res.statusCode < 300
+              ? { ok: true }
+              : { ok: false, reason: 'http-' + res.statusCode }
+          );
+        });
+      }
+    );
+    req.on('timeout', function () {
+      req.destroy();
+      resolve({ ok: false, reason: 'timeout' });
+    });
+    req.on('error', function () {
+      resolve({ ok: false, reason: 'network' });
+    });
+    req.end(body);
+  });
+}
+
+function cdp(ws, method, params) {
+  return new Promise(function (resolve, reject) {
+    const id = ws.__nextId++;
+    ws.__pending.set(id, resolve);
+    const timer = setTimeout(function () {
+      ws.__pending.delete(id);
+      reject(new Error('cdp timeout: ' + method));
+    }, capCfg.cdpTimeoutMs);
+    ws.__timers.set(id, timer);
+    ws.send(JSON.stringify({ id: id, method: method, params: params }));
+  });
+}
+
+function openInspectorSocket() {
+  return new Promise(function (resolve, reject) {
+    // SIGUSR1 is handled off the main thread, so this opens the inspector even while
+    // the loop is pinned. It is the only reason a trigger-on-detection design works
+    // at all.
+    try {
+      process.kill(process.pid, 'SIGUSR1');
+    } catch (err) {
+      return reject(new Error('sigusr1 failed: ' + err.message));
+    }
+    const deadline = Date.now() + capCfg.inspectorWaitMs;
+    (function attempt() {
+      fetch('http://127.0.0.1:' + capCfg.inspectorPort + '/json/list')
+        .then(function (r) { return r.json(); })
+        .then(function (list) {
+          const target = list && list[0] && list[0].webSocketDebuggerUrl;
+          if (!target) throw new Error('no debugger target');
+          const ws = new WebSocket(target);
+          ws.__nextId = 1;
+          ws.__pending = new Map();
+          ws.__timers = new Map();
+          ws.onmessage = function (ev) {
+            let msg;
+            try { msg = JSON.parse(ev.data); } catch (err) { return; }
+            if (msg.id && ws.__pending.has(msg.id)) {
+              clearTimeout(ws.__timers.get(msg.id));
+              ws.__timers.delete(msg.id);
+              const fn = ws.__pending.get(msg.id);
+              ws.__pending.delete(msg.id);
+              fn(msg.result);
+            }
+          };
+          ws.onopen = function () { resolve(ws); };
+          ws.onerror = function () { reject(new Error('websocket failed')); };
+        })
+        .catch(function (err) {
+          if (Date.now() > deadline) return reject(err);
+          setTimeout(attempt, 100);
+        });
+    })();
+  });
+}
+
+function captureAllowed(now) {
+  if (!capCfg.enabled) return 'disabled';
+  if (captureInFlight) return 'in-flight';
+  if (now < captureBackoffUntil) return 'backoff';
+  if (now - capturesHourStart >= 3600000) {
+    capturesHourStart = now;
+    capturesThisHour = 0;
+  }
+  if (capturesThisHour >= capCfg.maxPerHour) return 'hourly-cap';
+  return 'ok';
+}
+
+async function captureWedge(wedgeStartMs) {
+  captureInFlight = true;
+  capturesThisHour++;
+  let ws;
+  try {
+    ws = await openInspectorSocket();
+    await cdp(ws, 'Profiler.enable');
+    await cdp(ws, 'Profiler.setSamplingInterval', { interval: capCfg.samplingIntervalUs });
+    await cdp(ws, 'Profiler.start');
+    await new Promise(function (r) { setTimeout(r, capCfg.captureMs); });
+    const stopped = await cdp(ws, 'Profiler.stop');
+    const wedgeMs = Math.round(Date.now() - wedgeStartMs);
+    const body = zlib.gzipSync(Buffer.from(JSON.stringify(stopped.profile)));
+    // The image tag here is the RUNTIME tag. The published source-map artifact shares
+    // its sha but carries a different timestamp, so a resolver keyed on the whole tag
+    // 404s — resolve maps by sha.
+    const key =
+      capCfg.keyPrefix + capCfg.pool + '/' + capCfg.pod + '/' +
+      new Date().toISOString().replace(/[:.]/g, '-') + '-' + wedgeMs + 'ms-' + capCfg.imageTag +
+      '.cpuprofile.gz';
+    tallyCapture('ok');
+    lastCaptureAt = Date.now();
+    const put = await putObject(key, body);
+    if (put.ok) {
+      tallyUpload('ok');
+      uploadBytes += body.length;
+    } else {
+      tallyUpload(put.reason);
+    }
+  } catch (err) {
+    tallyCapture('error');
+  } finally {
+    if (ws) { try { ws.close(); } catch (err) { /* already gone */ } }
+    captureInFlight = false;
+    // Exponential, per pod. A sustained wave would otherwise capture the same stack
+    // repeatedly and upload near-identical multi-MB artifacts.
+    captureBackoffUntil = Date.now() + captureBackoffMs;
+    captureBackoffMs = Math.min(captureBackoffMs * 2, capCfg.backoffMaxMs);
+  }
+}
+
+function maybeCaptureWedge(wedgeStartMs) {
+  const verdict = captureAllowed(Date.now());
+  if (verdict !== 'ok') {
+    if (verdict !== 'disabled') tallyCapture('skipped-' + verdict);
+    return;
+  }
+  captureWedge(wedgeStartMs);
+}
+
+function renderCaptureMetrics(out) {
+  out.push('# HELP civitai_app_watchdog_capture_total Wedge CPU-profile captures attempted, by result. skipped-* results mean the trigger fired but was refused by backoff or the hourly capCfg.');
+  out.push('# TYPE civitai_app_watchdog_capture_total counter');
+  const captureKeys = ['ok', 'error', 'skipped-in-flight', 'skipped-backoff', 'skipped-hourly-cap'];
+  for (const k of captureKeys) {
+    out.push('civitai_app_watchdog_capture_total{result="' + k + '"} ' + (captureResults[k] || 0));
+  }
+  out.push('# HELP civitai_app_watchdog_upload_total Profile uploads attempted, by result.');
+  out.push('# TYPE civitai_app_watchdog_upload_total counter');
+  const uploadKeys = Object.keys(uploadResults);
+  if (uploadKeys.indexOf('ok') === -1) uploadKeys.push('ok');
+  for (const k of uploadKeys) {
+    out.push('civitai_app_watchdog_upload_total{result="' + k + '"} ' + (uploadResults[k] || 0));
+  }
+  out.push('# HELP civitai_app_watchdog_upload_bytes_total Compressed profile bytes uploaded.');
+  out.push('# TYPE civitai_app_watchdog_upload_bytes_total counter');
+  out.push('civitai_app_watchdog_upload_bytes_total ' + uploadBytes);
+  out.push('# HELP civitai_app_watchdog_last_capture_timestamp_seconds Unix time of the last successful capture, 0 if none.');
+  out.push('# TYPE civitai_app_watchdog_last_capture_timestamp_seconds gauge');
+  out.push('civitai_app_watchdog_last_capture_timestamp_seconds ' + Math.floor(lastCaptureAt / 1000));
+}
+`;
+
+/**
  * The worker runs as CommonJS (`eval: true` does not imply ESM) and imports nothing
  * but node: builtins — no prom-client, so there is no bare-specifier resolution to
  * go wrong inside an eval'd worker in the standalone image. The Prometheus text is
  * hand-formatted for the same reason.
  */
-export const WATCHDOG_WORKER_SOURCE = String.raw`
+export const WATCHDOG_WORKER_SOURCE =
+  String.raw`
 const { workerData, parentPort } = require('node:worker_threads');
 const http = require('node:http');
 const crypto = require('node:crypto');
 
-const { sab, thresholdMs, port, token, heartbeatIntervalMs, pollMs } = workerData;
+const { sab, thresholdMs, port, token, heartbeatIntervalMs, pollMs, cap, s3 } = workerData;
 const beat = new BigInt64Array(sab);
 
 const BUCKETS = [1, 2, 5, 10, 30, 60, 120, 300, 600];
@@ -248,7 +547,12 @@ setInterval(function () {
   if (wedgeStartedAt === 0) {
     // Date the wedge from the last beat, not from detection, so the reported
     // duration does not silently exclude the threshold.
-    if (age >= thresholdMs) wedgeStartedAt = lastBeat;
+    if (age >= thresholdMs) {
+      wedgeStartedAt = lastBeat;
+      // Fire-and-forget: the capture must not delay the next poll, or the worker
+      // stops being able to report the wedge it is capturing.
+      maybeCaptureWedge(wedgeStartedAt);
+    }
   } else if (age < thresholdMs) {
     observeWedge((now - wedgeStartedAt) / 1000);
     wedgeStartedAt = 0;
@@ -287,6 +591,8 @@ function render() {
   out.push('civitai_app_watchdog_wedge_duration_seconds_bucket{le="+Inf"} ' + wedgeCount);
   out.push('civitai_app_watchdog_wedge_duration_seconds_sum ' + wedgeSumSeconds);
   out.push('civitai_app_watchdog_wedge_duration_seconds_count ' + wedgeCount);
+
+  renderCaptureMetrics(out);
 
   return out.join('\n') + '\n';
 }
@@ -364,7 +670,60 @@ if (parentPort) {
     }
   });
 }
-`;
+` + WATCHDOG_CAPTURE_SOURCE;
+
+/**
+ * Capture is a SEPARATE gate from the watchdog itself. Detection is cheap and safe to
+ * run everywhere; capture opens an inspector, drives CDP and uploads, so it stays off
+ * until deliberately turned on per pool.
+ */
+export function resolveCaptureConfig() {
+  const enabled = process.env.EVENTLOOP_WATCHDOG_CAPTURE_ENABLED === 'true';
+  return {
+    enabled,
+    captureMs: clamp(
+      parsePositiveInt(process.env.EVENTLOOP_WATCHDOG_CAPTURE_MS) ?? 10_000,
+      1000,
+      30_000
+    ),
+    // 100Hz, matching the continuous profiler's rate. The old in-process path sampled
+    // at 1kHz and produced 41-46MB profiles on SSR.
+    samplingIntervalUs: clamp(
+      parsePositiveInt(process.env.EVENTLOOP_WATCHDOG_CAPTURE_INTERVAL_US) ?? 10_000,
+      1000,
+      100_000
+    ),
+    maxPerHour: clamp(
+      parsePositiveInt(process.env.EVENTLOOP_WATCHDOG_CAPTURE_MAX_PER_HOUR) ?? 3,
+      1,
+      60
+    ),
+    backoffStartMs: 5 * 60_000,
+    backoffMaxMs: 60 * 60_000,
+    inspectorPort: parsePositiveInt(process.env.EVENTLOOP_WATCHDOG_INSPECTOR_PORT) ?? 9229,
+    inspectorWaitMs: 5000,
+    cdpTimeoutMs: 15_000,
+    uploadTimeoutMs: 30_000,
+    keyPrefix: process.env.CPU_PROFILE_S3_KEY_PREFIX ?? 'cpu-profiles/',
+    pool: process.env.SERVICE_NAME ?? 'unknown',
+    pod: resolvePodName(),
+    imageTag: process.env.APP_VERSION ?? process.env.IMAGE_TAG ?? 'unknown',
+  };
+}
+
+function resolveS3Config() {
+  return {
+    endpoint: process.env.CPU_PROFILE_S3_ENDPOINT ?? '',
+    bucket: process.env.CPU_PROFILE_S3_BUCKET ?? '',
+    region: process.env.CPU_PROFILE_S3_REGION ?? 'us-east-1',
+    accessKeyId: process.env.CPU_PROFILE_S3_ACCESS_KEY_ID ?? '',
+    secretKey: process.env.CPU_PROFILE_S3_SECRET_ACCESS_KEY ?? '',
+  };
+}
+
+function resolvePodName(): string {
+  return process.env.PODNAME ?? process.env.HOSTNAME ?? 'unknown';
+}
 
 let worker: Worker | undefined;
 let sigtermHooked = false;
@@ -414,6 +773,23 @@ export function registerEventLoopWatchdog(): void {
     const thresholdMs = resolveWatchdogThresholdMs();
     const heartbeatIntervalMs = resolveWatchdogHeartbeatMs();
     const port = resolveWatchdogPort();
+    const captureConfig = resolveCaptureConfig();
+
+    // Fail LOUDLY at boot rather than during the first wedge, when nobody is reading
+    // logs for a capture that silently never happened.
+    if (captureConfig.enabled) {
+      const s3 = resolveS3Config();
+      const missing = (['endpoint', 'bucket', 'accessKeyId', 'secretKey'] as const).filter(
+        (k) => !s3[k]
+      );
+      if (missing.length) {
+        console.error(
+          `[eventloop-watchdog] capture is ENABLED but S3 config is incomplete (missing ${missing.join(
+            ', '
+          )}); wedges will be captured and the upload will fail`
+        );
+      }
+    }
 
     recordWatchdogHeartbeat();
 
@@ -428,6 +804,10 @@ export function registerEventLoopWatchdog(): void {
         token: process.env.WEBHOOK_TOKEN ?? '',
         heartbeatIntervalMs,
         pollMs: Math.min(DEFAULT_POLL_MS, heartbeatIntervalMs),
+        // Resolved on the MAIN thread at spawn, so a missing credential is a boot-time
+        // fact rather than something discovered during the first wedge.
+        cap: captureConfig,
+        s3: resolveS3Config(),
       },
       // The watchdog must never be the reason the process stays up.
       stdout: false,
