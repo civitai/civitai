@@ -4,7 +4,7 @@
 import { clickhouse } from '~/server/clickhouse/client';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
-import requestIp from 'request-ip';
+import { resolveClientIp } from '~/server/utils/client-ip';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import type { NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
@@ -244,7 +244,23 @@ export class Tracker {
     if (req && res) {
       this.req = req;
       this.res = res;
-      this.actor.ip = requestIp.getClientIp(req) ?? this.actor.ip;
+      // ATTRIBUTION surface: this value becomes the `ip` column on every event
+      // this Tracker writes. It is a record of who acted, not a gate on whether
+      // they may — so it takes the derivation that always yields a label, not
+      // the fail-closed one, which would collapse every non-edge caller onto a
+      // shared hop and destroy exactly the distinction these rows exist to keep.
+      //
+      // `resolveClientIp` is total and already answers `'unknown'` when nothing
+      // resolves, which is the same value this field is initialised to — so the
+      // `?? this.actor.ip` coalesce it replaces has no remaining case to cover.
+      //
+      // ⚠️ SEAM: this column is READ back by `fetchDownloadCount` under a
+      // different derivation. That seam — how far this change narrows it and
+      // what remains — is described ONCE, in `~/server/utils/download-count`,
+      // which owns the read half. Do not restate it here; two copies of a
+      // seam description drift, and the read side is where the gap is
+      // actionable.
+      this.actor.ip = resolveClientIp(req);
       this.actor.userAgent = req.headers['user-agent'] ?? this.actor.userAgent;
     }
     if (session !== undefined) {
