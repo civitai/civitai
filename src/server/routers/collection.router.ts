@@ -228,7 +228,6 @@ export const collectionRouter = router({
   inviteCollaborator: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(inviteCollaboratorInput)
-    .use(isFlagProtected('collaborativeCollections'))
     .mutation(({ input, ctx }) =>
       inviteCollaborator({
         ...input,
@@ -240,19 +239,16 @@ export const collectionRouter = router({
   respondToInvite: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(respondToInviteInput)
-    .use(isFlagProtected('collaborativeCollections'))
     .mutation(({ input, ctx }) => respondToInvite({ ...input, userId: ctx.user.id })),
   removeCollaborator: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(removeCollaboratorInput)
-    .use(isFlagProtected('collaborativeCollections'))
     .mutation(({ input, ctx }) =>
       removeCollaborator({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
   getCollaborators: publicProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .input(getByIdSchema)
-    .use(isFlagProtected('collaborativeCollections'))
     .query(({ input, ctx }) =>
       getCollaborators({
         collectionId: input.id,
@@ -262,6 +258,5 @@ export const collectionRouter = router({
     ),
   getMyInvites: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
-    .use(isFlagProtected('collaborativeCollections'))
     .query(({ ctx }) => getMyInvites({ userId: ctx.user.id })),
 });

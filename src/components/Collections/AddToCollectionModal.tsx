@@ -230,9 +230,7 @@ function CollectionListForm({
   );
   const features = useFeatureFlags();
   const { map: permissionsByCollectionId, isLoading: loadingPermissions } =
-    useCollectionsPermissionsMap(collections.map((c) => c.id), {
-      enabled: !!features.collaborativeCollections,
-    });
+    useCollectionsPermissionsMap(collections.map((c) => c.id));
   // While permission data for a collection is unknown, treat it as closed rather than open —
   // it must never be briefly selectable before flipping to disabled once data arrives. A lapse
   // keeps write for the owner and for elevated collaborators, so it only closes the picker for

@@ -1,7 +1,6 @@
 import { Avatar, Badge, Group, Popover, Stack, Text, UnstyledButton } from '@mantine/core';
 import clsx from 'clsx';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { Collaborator } from '~/server/services/collection-collaborator.service';
 import { CollectionCollaboratorRole } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
@@ -50,8 +49,7 @@ export function CollectionCollaboratorsSummary({
   collaborators: Collaborator[];
   supportsCollaborators: boolean;
 }) {
-  const features = useFeatureFlags();
-  const enabled = !!features.collaborativeCollections && supportsCollaborators && owner.id > 0;
+  const enabled = supportsCollaborators && owner.id > 0;
 
   // The system account owns Featured sets and never gets an avatar or a profile link.
   if (!enabled || !collaborators.length) {

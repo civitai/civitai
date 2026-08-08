@@ -4,7 +4,7 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { INVITE_EXPIRY_DAYS } from '~/server/services/collection-invite.utils';
 import { CollectionCollaboratorRole, MediaType } from '~/shared/utils/prisma/enums';
 import type { CollectionMyInvite } from '~/types/router';
@@ -24,9 +24,11 @@ function inviterLabel(invitedBy: CollectionMyInvite['invitedBy']) {
 }
 
 export function CollectionInviteList() {
-  const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
+  // The collections sidebar renders for signed-out visitors too, and getMyInvites is protected —
+  // firing it anonymously surfaces the load-failure alert to someone who has no invites to load.
   const { data: invites, isError } = trpc.collection.getMyInvites.useQuery(undefined, {
-    enabled: features.collaborativeCollections,
+    enabled: !!currentUser,
   });
   const utils = trpc.useUtils();
 
@@ -44,8 +46,6 @@ export function CollectionInviteList() {
         error: new Error(error.message),
       }),
   });
-
-  if (!features.collaborativeCollections) return null;
 
   if (isError) {
     return (

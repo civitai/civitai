@@ -329,7 +329,7 @@ export function CollectionContextMenu({
             </Menu.Item>
           </Link>
         )}
-        {supportsCollaborators && features.collaborativeCollections && permissions?.read && (
+        {supportsCollaborators && permissions?.read && (
           <Menu.Item
             leftSection={<IconUsers size={14} stroke={1.5} />}
             onClick={(e: React.MouseEvent) => {

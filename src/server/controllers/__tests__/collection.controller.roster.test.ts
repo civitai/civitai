@@ -71,14 +71,8 @@ function arrangePermissions({ manage = false }: { manage?: boolean } = {}) {
   });
 }
 
-function makeCtx({ flagOn = true }: { flagOn?: boolean } = {}) {
-  return {
-    user: { id: VIEWER_ID, isModerator: false },
-    features: { collaborativeCollections: flagOn ? true : undefined },
-  } as unknown as Context;
-}
-
-function callHandler(ctx = makeCtx()) {
+function callHandler() {
+  const ctx = { user: { id: VIEWER_ID, isModerator: false } } as unknown as Context;
   return getCollectionByIdHandler({ ctx, input: { id: COLLECTION_ID } });
 }
 
@@ -125,16 +119,6 @@ describe('collection.getById roster — collections that must never publish one'
     expect(mockDbRead.collectionInvite.findMany).not.toHaveBeenCalled();
   });
 
-  it('withholds the roster when the collaborativeCollections flag is off, issuing no extra queries', async () => {
-    stageRosterRowsThatWouldLeak();
-
-    const result = await callHandler(makeCtx({ flagOn: false }));
-
-    expect(result.collaborators).toEqual([]);
-    expect(mockDbRead.collectionContributor.findMany).not.toHaveBeenCalled();
-    expect(mockDbRead.collectionInvite.findMany).not.toHaveBeenCalled();
-  });
-
   it('withholds the roster from a caller with no read permission', async () => {
     mockGetPermissions.mockResolvedValue({
       collectionId: COLLECTION_ID,
@@ -153,9 +137,9 @@ describe('collection.getById roster — collections that must never publish one'
     expect(mockDbRead.collectionContributor.findMany).not.toHaveBeenCalled();
   });
 
-  // Without this the four cases above would all pass against a handler that never returns a
+  // Without this the three cases above would all pass against a handler that never returns a
   // roster at all.
-  it('does publish a roster for an eligible collection with the flag on', async () => {
+  it('does publish a roster for an eligible collection', async () => {
     stageRosterRowsThatWouldLeak();
 
     const result = await callHandler();

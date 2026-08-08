@@ -248,13 +248,6 @@ const featureFlags = createFeatureFlags({
   },
   alternateHome: ['public'],
   collections: ['public'],
-  // `availability: []` = DARK by default and FAILS CLOSED (empty availability → static eval
-  // false when Flipt is absent/down), so the Flipt `collaborative-collections` threshold is the
-  // ONLY on-switch. NOT `['public']`: that fails OPEN (true for 100% of users) whenever the key
-  // is missing or unreachable — and Flipt is GitOps-only here, so the key does not exist until
-  // it is pushed, meaning a `['public']` flag would ship the invite flow and the public
-  // collaborator roster to everyone on deploy with no way to turn them off.
-  collaborativeCollections: { availability: [], fliptKey: 'collaborative-collections' },
   collectionAiReview: { availability: ['mod'], fliptKey: 'collection-ai-review' },
   air: {
     toggleable: true,

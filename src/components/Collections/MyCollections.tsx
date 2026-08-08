@@ -24,7 +24,6 @@ import {
 } from '~/components/Collections/collection-list.utils';
 import { useCollectionListPreferences } from '~/components/Collections/useCollectionListPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { CollectionGetAllUserModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
@@ -49,7 +48,6 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
   const [roleFilter, setRoleFilter] = useState<string | null>(null);
   const [debouncedQuery] = useDebouncedValue(query, 300);
   const currentUser = useCurrentUser();
-  const features = useFeatureFlags();
   const router = useRouter();
   const { data: collections = [], isLoading } = trpc.collection.getAllUser.useQuery(
     { permission: CollectionContributorPermission.VIEW },
@@ -65,10 +63,8 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
     () => collections.filter((c) => !c.isOwner).map((c) => c.id),
     [collections]
   );
-  const { map: permissionsMap, isLoading: permissionsLoading } = useCollectionsPermissionsMap(
-    nonOwnedIds,
-    { enabled: !!features.collaborativeCollections }
-  );
+  const { map: permissionsMap, isLoading: permissionsLoading } =
+    useCollectionsPermissionsMap(nonOwnedIds);
 
   const { view, setView, sort, setSort } = useCollectionListPreferences();
 
@@ -131,7 +127,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
     <CollectionListMenu sort={sort} setSort={setSort} view={view} setView={setView} />
   );
 
-  const RoleFilter = features.collaborativeCollections ? (
+  const RoleFilter = (
     <Select
       placeholder="Any role"
       value={roleFilter}
@@ -141,7 +137,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
       size="xs"
       leftSection={<IconUsers size={14} />}
     />
-  ) : null;
+  );
 
   const Collections = (
     <Skeleton visible={isLoading || permissionsLoading} animate>

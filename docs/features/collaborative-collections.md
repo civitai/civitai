@@ -125,15 +125,24 @@ never to the submitter. `collection-invite-received` goes to the invitee. Both a
 unlike `contest-collection-item-status-change`, which is not, because a submitter must learn the
 outcome of their own entry.
 
-## Feature flag
+## Visibility
 
-`collaborativeCollections`, `fliptKey: 'collaborative-collections'`. It ships **dark**
-(`availability: []`) and ramps via Flipt. `availability: ['public']` would fail *open* whenever the
-Flipt key is missing or unreachable, which for a GitOps-only Flipt means "until someone pushes it".
+There is no feature flag. Collaboration is on for everyone, so each of the guards below is the sole
+thing standing between a collection and a published roster — none of them has a second gate behind
+it:
 
-Every entry point must check the flag, not just the procedures. A menu entry gated only on read
-access opens a panel whose queries 403, and a panel that branches only on `isLoading`/`data` then
-renders an empty roster — indistinguishable from a collection that genuinely has no collaborators.
+- The roster on `collection.getById` is returned only to a caller with `read` permission.
+- `getCollaborators` and `getCollectionRoster` return nothing for a curated collection
+  (`mode !== null`) or a system-owned one (`userId <= 0`). Curated sets carry staff `ADD`/`MANAGE`
+  rows, which are an internal roster and not collaboration.
+- A contributor row that only mirrors what the collection already grants everyone belongs to a
+  follower, not a collaborator, and is excluded — see "`CollectionContributor` is also the follow
+  table" above.
+
+The same exclusions have to hold in the UI. A menu entry or summary gated only on read access will
+open a panel for a collection that has no roster to show, and a panel that branches only on
+`isLoading`/`data` renders an empty roster — indistinguishable from a collection that genuinely has
+no collaborators.
 
 ## Key files
 
