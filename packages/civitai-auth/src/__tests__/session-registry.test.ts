@@ -33,6 +33,14 @@ function makeRedis() {
     async hLen(key) {
       return hashes.get(key)?.size ?? 0;
     },
+    // Models the real client closely enough for the ceiling: COUNT bounds the page, and insertion order
+    // stands in for redis's bucket order — neither is guaranteed to be value-ordered, which is the property
+    // the eviction logic must not depend on.
+    async hScan(key, _cursor, options) {
+      const all = [...(hashes.get(key) ?? [])].map(([field, value]) => ({ field, value }));
+      const page = all.slice(0, options?.COUNT ?? all.length);
+      return { cursor: page.length < all.length ? 1 : 0, tuples: page };
+    },
     async get(key) {
       return strings.get(key) ?? null;
     },
@@ -175,6 +183,35 @@ describe('createSessionRegistry', () => {
 
       expect(redis._hashes.get('session:user-tokens2:7')?.size).toBe(99); // 100 - 2 evicted + 1 new
       expect(onEvict).toHaveBeenCalledWith({ userId: 7, evicted: 2, total: 100 });
+    });
+
+    // The read is on the login hot path against a single-threaded shared store. Reading the whole hash would
+    // cost ~54ms server-side on the largest real account (53,877 fields at ~1 µs/field) and repeat on every
+    // login until it drained. The page must stay bounded by the ceiling regardless of hash size.
+    it('reads only a BOUNDED PAGE, never the whole hash', async () => {
+      const redis = makeRedis();
+      const scan = vi.spyOn(redis, 'hScan');
+      const reg = createSessionRegistry({ redis, keys: KEYS, maxTokensPerUser: 5 });
+      await seed(redis, 7, 5000);
+      await reg.trackToken('new', 7);
+
+      expect(scan).toHaveBeenCalledTimes(1);
+      expect(scan.mock.calls[0][2]).toMatchObject({ COUNT: 5 });
+    });
+
+    it('evicts the least-recently-touched within the page, not whatever the page yields first', async () => {
+      const redis = makeRedis();
+      const reg = createSessionRegistry({ redis, keys: KEYS, maxTokensPerUser: 3 });
+      // Insertion order deliberately disagrees with recency: the FIRST field scanned is the freshest.
+      await redis.hSet('session:user-tokens2:7', 'fresh', 9000);
+      await redis.hSet('session:user-tokens2:7', 'stale', 1000);
+      await redis.hSet('session:user-tokens2:7', 'mid', 5000);
+      await reg.trackToken('new', 7);
+
+      const hash = redis._hashes.get('session:user-tokens2:7')!;
+      expect(hash.has('stale')).toBe(false);
+      expect(hash.has('fresh')).toBe(true);
+      expect(await reg.isRevoked({ jti: 'stale', signedAt: 1 })).toBe(true);
     });
 
     it('never evicts when the redis surface lacks hLen', async () => {

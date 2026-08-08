@@ -18,6 +18,12 @@ export interface SessionRegistryRedis {
   hExpire?(key: string, field: string, seconds: number): Promise<unknown>;
   /** Required only for the per-user token ceiling; without it trackToken never evicts. */
   hLen?(key: string): Promise<number>;
+  /** Ditto — the ceiling reads a BOUNDED PAGE, never the whole hash (it runs on the login hot path). */
+  hScan?(
+    key: string,
+    cursor: number,
+    options?: { COUNT?: number }
+  ): Promise<{ cursor: number; tuples: Array<{ field: string; value: string }> }>;
   get(key: string): Promise<string | null | undefined>;
   set(key: string, value: string, opts?: { EX?: number }): Promise<unknown>;
 }
@@ -102,23 +108,36 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
    * of the same flaw — an evicted jti stays validly signed for the rest of `ttl` — so each eviction writes
    * `invalid` to the token-state hash that isRevoked consults. The evicted session dies rather than escaping.
    *
-   * Bounded on both sides: it only reads the hash once it is already over the ceiling (so the ordinary case
-   * costs one HLEN), and it evicts at most `maxEvictionsPerTrack` per call, so draining a hash that grew to
-   * tens of thousands under the old unbounded behaviour happens over many logins instead of in one burst.
+   * Bounded three ways, because this runs on the login hot path against a single-threaded shared store:
+   *   - one HLEN in the ordinary case; the hash is not read at all below the ceiling;
+   *   - the read is ONE BOUNDED HSCAN PAGE, never the whole hash. A full read would cost ~1 µs/field
+   *     server-side, so a hash that grew to 53k under the old unbounded behaviour would block sysRedis ~54 ms
+   *     per login — and repeat it on every login until the hash drained, which is the drain mechanism's cost
+   *     scaling with the problem it is draining;
+   *   - at most `maxEvictionsPerTrack` evictions per call, so an oversized hash drains over many logins.
+   *
+   * Page size is the ceiling itself, which makes the ordering EXACT in the steady state (at ~500 fields one
+   * page is the whole hash) and approximate only for a hash still oversized from before this existed. That
+   * degradation is safe: the values are LAST-TOUCH times (trackToken re-writes the value on every call,
+   * including the rolling refresh), so this is LRU, not FIFO — an actively-used old session keeps a fresh
+   * value and survives. Evicting page-locally can only pick a less-recently-used entry than the global
+   * oldest, never an active one over an idle one within the page.
    */
   async function evictOverCeiling(userId: number) {
-    if (!redis.hLen || !redis.hGetAll || maxTokens <= 0) return;
+    if (!redis.hLen || !redis.hScan || maxTokens <= 0) return;
     const key = userTokensKey(userId);
     const total = await redis.hLen(key);
     if (total < maxTokens) return;
 
-    const entries = Object.entries(await redis.hGetAll(key));
-    // Values are the creation/last-touch epoch-ms trackToken writes, so ascending = oldest first. A
-    // non-numeric value sorts as 0, i.e. evicted first — the safe direction for an entry we can't date.
-    entries.sort((a, b) => (Number(a[1]) || 0) - (Number(b[1]) || 0));
+    const page = await redis.hScan(key, 0, { COUNT: maxTokens });
+    // Ascending by last-touch = least-recently-used first. A non-numeric value sorts as 0, i.e. goes first —
+    // the safe direction for an entry we cannot date.
+    const entries = page.tuples
+      .slice()
+      .sort((a, b) => (Number(a.value) || 0) - (Number(b.value) || 0));
     const evicting = entries
       .slice(0, Math.min(total - maxTokens + 1, maxEvictions))
-      .map(([field]) => field);
+      .map(({ field }) => field);
     if (!evicting.length) return;
 
     for (const evictedId of evicting) {
