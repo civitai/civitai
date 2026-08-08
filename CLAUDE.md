@@ -4,29 +4,29 @@
 We use markdown documents to discuss plans. Documentation goes in the `docs/` folder.
 
 ### Inline Comments
-Occasionally, we comment back and forth as we make plans. Comments from us, are marked with `@dev:` and you can leave comments as well with `@ai:`. Please make comments inline in the document. If there are actions are requested in my comments, please take them.
-
-**New Comment Marking**: When you add new comments, use an asterisk after the mention (e.g., `@justin:*` or `@meta:*`). Once you reply or acknowledge a comment, remove the asterisk so that I know it's been seen. Note: Sometimes I might forget to add the asterisk to my new comments, so please check all comments regardless of marking.
-
-**Example**
-```
-@dev: This comment has been processed (asterisk removed)
-@ai: Of course
-@dev:* This is a new comment that needs attention
-```
+Comments from us are marked with `@dev:` and you can leave comments as well with `@ai:`.
 
 ## Tech Stack Overview
 
 ### Core Technologies
-- **Framework**: Next.js 14 with TypeScript
+- **Framework**: Next.js 16 with TypeScript
 - **UI Library**: Mantine v7
 - **Styling**: Tailwind CSS + SCSS Modules
 - **Database**: PostgreSQL with Prisma ORM
 - **API**: tRPC
 - **State Management**: Zustand
-- **Authentication**: NextAuth
+- **Authentication**: `@civitai/auth` — hub-driven `civ-token`. **NextAuth is fully removed**; `src/providers/SessionProvider.tsx` and `src/types/session.ts` are first-party replacements for `next-auth/react`. Remaining `next-auth` mentions in `src/` are comments about the cutover, not imports.
 - **Search**: Meilisearch
 - **Image Processing**: Sharp
+
+### Monorepo Layout
+This is a pnpm workspace, not just the Next.js app:
+- `src/` — the main civitai.com app (everything below unless stated otherwise)
+- `apps/` — sibling apps: `auth`, `creator-studio`, `event-engine`, `moderator`, `notifications`, `orchestrator-gateway`, `storage`. Each has its own `dev`/`release` script (`pnpm dev:auth`, `pnpm release:moderator`, …).
+- `packages/civitai-*` — shared workspace packages consumed as `workspace:*` (`civitai-auth`, `civitai-db`, `civitai-db-schema`, `civitai-redis`, `civitai-ui`, `civitai-shared`, …).
+- `event-engine-common/` — a git **submodule**. It doesn't come with a fresh worktree; see Git Worktrees below.
+
+To add a new app, use the `scaffold-civitai-app` skill and follow `docs/packages/new-app-integration.md`.
 
 ### Additional Libraries
 - React Query (Tanstack Query) for data fetching
@@ -78,9 +78,14 @@ prettier` is fine for `.ts`/`.json`, never for `.svelte`.
 
 ### Testing
 ```bash
-pnpm test                 # Run Playwright tests
-pnpm run test:ui          # Run tests with UI
+pnpm run test:unit:run    # Vitest unit suite (the one you almost always want)
+pnpm run test:component   # Vitest component suite (browser mode — see Git Worktrees for NixOS)
+pnpm run test:lint-rules  # Convention guards (see below)
+pnpm test                 # Playwright e2e
+pnpm run test:ui          # Playwright with UI
 ```
+
+Both vitest suites are projects in `vitest.config.mts` (`--project unit` / `--project component`).
 
 #### Never put unit tests under `src/pages`
 Next.js 16 treats **every** `.ts`/`.tsx` file under `src/pages` (incl. nested `__tests__/`) as a route, and `next build` runs a route-type validator over it. A Vitest test file there fails the build with `Type '...test' does not satisfy the constraint 'ApiRouteConfig'. Property 'default' is missing` — and **only `next build` catches it**: `pnpm typecheck`, `pnpm test`/vitest, and the CI typecheck/unit/component tasks all pass, so it sneaks through to the preview `build-image` step. Keep handler tests in a `__tests__/` dir **outside** `src/pages` (e.g. `src/server/__tests__/`) and import the handler via the `~/pages/...` alias. (Bit us on PR #2653.)
@@ -97,10 +102,31 @@ Use a top-level `import type * as PromClient` — an inline `typeof import('...'
 
 **Before widening a mock, check whether the import edge is needed at all.** A failing suite may be telling you the code pulled in a dependency it doesn't want, not that the mock is too narrow, and widening it would hide that. (Bit us twice in one day, Aug 2026, on two branches; one of those three suites was fixed by extracting the helpers into their own module instead.)
 
+#### Convention guards run as tests
+Several repo conventions are enforced by tests, not by eslint — `pnpm run test:lint-rules` runs all of them:
+`no-wholesale-module-mock` (the `importOriginal` rule above), `no-io-in-transaction`, `no-module-scope-cache`, `no-unloadable-image-fixture`. They live in `src/server/services/__tests__/`. If one fails, fix the code — don't add an exemption without saying why.
+
+#### Never `await` a browser-test state that DELETES ITSELF
+`expect.element` polls — first attempt immediate, then every **50 ms** — against the test's remaining budget (browser-mode `testTimeout` defaults to **15 s**, and the `component` project does not override it). Awaiting a state to **arrive** is safe: load only makes it arrive later and the matcher keeps polling. Awaiting a state that will **leave** — a spinner on a ceiling, a debounce window, anything a component tears down on a timer — is a race the matcher cannot win: once the state is gone it never comes back, so every remaining poll is also too late. Such a test is green on a quiet box, red on a busy one, and has no PR to blame.
+
+Fix it structurally, in this order:
+1. **Make the state absorbing** — drive the component so nothing can take the state away (e.g. `rerender` with a window so large the timer can never fire), *then* assert it. Add a negative control proving the prop change alone did not produce the state.
+2. **Don't assert the transient at all** — await the absorbing end-state, and pin that the intermediate step happened via a non-DOM observable (a mock call count).
+
+🔴 Do **not** widen the matcher budget, add a `retry`, or enlarge the component's own timeout instead. Those convert a fast failure into a slow one and leave the race unwinnable whenever the machine is slow enough — which is exactly when CI runs.
+
+⚠️ **A ~15 s failing test is a candidate filter, NOT a diagnosis.** It means only that some `expect.element` was never satisfied: four *non-race* mutations all failed at 14.97–15.09 s, and two **healthy, passing** tests legitimately run 15.06 s / 15.26 s waiting out a real 15 s product timeout. To tell a self-deleting state from one that never arrived, read the observable **synchronously right after the action** (present-then-gone vs never-present), or **enlarge the component's own window** and see whether the failure disappears — diagnostic only, since shipping that widening is what this rule forbids.
+
+Worked examples of both fixes: the two retry tests in `src/components/Apps/AppsSubmitEditView.browser.test.tsx`. Measurements behind every number above: `claudedocs/rca-appblocks-component-suite-flake-2026-08-05.md` (PR #3645).
+
 ### Database
 ```bash
-pnpm run db:migrate:empty  # Create an empty migration file
+pnpm run db:migrate:empty    # Create an empty migration file
+pnpm run db:generate         # Regenerate the slim schema + Prisma client
+pnpm run db:check-generated  # Fail if the committed generated client is stale
 ```
+
+**`schema.full.prisma` is the only schema you edit.** `packages/civitai-db-schema/prisma/schema.full.prisma` is the single tracked schema. `pnpm run db:generate` runs `scripts/generate-slim-schema.js`, which strips `@no-type` models/enums to produce `packages/civitai-db-schema/prisma/schema.prisma` (what `package.json`'s `prisma.schema` points at), then runs `prisma generate`. Both `schema.prisma` files — that one **and** the leftover `prisma/schema.prisma` at the repo root — are gitignored build artifacts; editing either is silently overwritten on the next generate. `pnpm run db:check-generated` regenerates and diffs `packages/civitai-db-schema/src`, so a forgotten regen fails there.
 
 **CRITICAL: We do NOT use `prisma migrate deploy`. Migrations are applied manually.**
 - Migration files in `packages/civitai-db-schema/prisma/migrations/` exist for review/history but are never auto-run. That is the only directory Prisma reads — the `prisma/migrations/` path at the repo root predates the monorepo, no longer exists, and CI blocks re-creating it.
@@ -119,20 +145,20 @@ pnpm run release:major    # Major release (x.0.0)
 
 ## Server-Side Architecture Map
 
-`src/server/` holds the most-edited (and largest) code in the repo. Read the *specific* file before changing it — several are huge, so grep within them rather than reading end-to-end (`services/image.service.ts` is ~7.9K lines).
+`src/server/` holds the most-edited (and largest) code in the repo. Read the *specific* file before changing it — several are huge, so grep within them rather than reading end-to-end (`services/image.service.ts` is 8K+ lines).
 
-- **tRPC API** — `trpc.ts` (root router + procedure helpers), `createContext.ts`, `middleware.trpc.ts`, `routers/` (~93 per-domain routers), `controllers/`, `schema/` (zod input contracts), `selectors/` (Prisma `select` fragments).
-- **Images** — `services/image.service.ts` (**~7.9K lines**; the hot feed path — `getInfiniteImages`, `getAllImages`, NSFW/own-content merge). API surface `src/pages/api/v1/images/index.ts`; index sync `search-index/images.search-index.ts`.
+- **tRPC API** — `trpc.ts` (root router + procedure helpers), `createContext.ts`, `middleware.trpc.ts`, `routers/` (~100 per-domain routers), `controllers/`, `schema/` (zod input contracts), `selectors/` (Prisma `select` fragments).
+- **Images** — `services/image.service.ts` (**8K+ lines**; the hot feed path — `getInfiniteImages`, `getAllImages`, NSFW/own-content merge). API surface `src/pages/api/v1/images/index.ts`; index sync `search-index/images.search-index.ts`.
 - **Models** — `services/model.service.ts`, `search-index/models.search-index.ts`.
 - **Search (Meilisearch)** — `meilisearch/client.ts` (tags requests with `X-Search-Actor`), `meilisearch/cleanup.ts`, `search-index/base.search-index.ts` (shared sync engine).
 - **Redis / caching** — `redis/client.ts` (clients incl. sysRedis), `redis/caches.ts` (`createCachedObject` defs + TTLs, e.g. `imageMetaCache`, `tagIdsForImagesCache`), `utils/cache-helpers.ts`.
 - **Orchestrator (generation)** — `orchestrator/get-orchestrator-token.ts` (`getOrchestratorToken`), `services/orchestrator/orchestrator.service.ts`.
-- **Auth** — `auth/next-auth-options.ts`, `auth/session-user.ts`, `auth/token-refresh.ts`.
+- **Auth** — `auth/get-server-auth-session.ts`, `auth/session-verifier.ts` + `auth/session-cache.ts` + `auth/session-invalidation.ts`, `auth/token-claims.ts`, `auth/civ-cookie.ts`, `auth/oauth-bridge.ts`, `auth/route-guard.ts`, `auth/bearer-token.ts`. Shared logic lives in `packages/civitai-auth`; the hub itself is `apps/auth`.
 - **Jobs (cron)** — `jobs/job.ts` (runner) + individual jobs `jobs/*.ts` (e.g. `entity-moderation.ts`, `search-index-sync.ts`).
 - **Metrics / analytics** — `metrics/*.metrics.ts` (ClickHouse-backed entity metrics), `clickhouse/`.
-- **DB** — `db/db-helpers.ts` (raw pg-pool config: `connectionTimeoutMillis`, labeled pool gauges), Prisma client; schema `prisma/schema.prisma`. **Migrations are applied manually — see the Database rule above.**
+- **DB** — `db/db-helpers.ts` (raw pg-pool config: `connectionTimeoutMillis`, labeled pool gauges), Prisma client. **Schema is `packages/civitai-db-schema/prisma/schema.full.prisma`, and migrations are applied manually — see the Database rule above.**
 - **Telemetry** — `src/instrumentation.node.ts` (OTEL: Prisma/Redis/HTTP auto-instrumentation + custom `withSpan()` from `utils/otel-helpers.ts`), `schema/track.schema.ts` (ClickHouse action/event tags), `prom/client.ts`.
-- **Health** — `src/pages/api/health.ts` runs sub-checks under `Promise.all`; a single slow check (e.g. `searchMetrics`) can exceed the kubelet probe budget. `HEALTHCHECK_TIMEOUT` env gates it.
+- **Health** — `src/pages/api/health.ts` runs sub-checks concurrently, each raced at `HEALTHCHECK_TIMEOUT` and the whole set raced against an overall deadline, reporting partial results as checks settle. Checks can be suppressed or demoted to non-critical via the `HEALTHCHECK_DISABLED` env var and the Redis-backed `DISABLED_HEALTHCHECKS` / `NON_CRITICAL_HEALTHCHECKS` keys.
 - **Other server domains** — `games/` (new-order/ratings), `webhooks/`, `paddle/` + `coinbase/` (payments), `notifications/`, `signals/`, `rewards/`; S3 helpers at `src/utils/s3-utils.ts`.
 
 ## Component Standards
@@ -264,12 +290,40 @@ get system Node instead of the flake's pinned version. Measured: system Node **2
 whose cwd was set to a different repo lost two suites to collection failures and **77 tests silently never ran**
 (10849 → 10772) while the output otherwise looked entirely normal.
 
-**Browser/component tests on NixOS need help — there is no `chromium` on `PATH`.** Two routes are known to work,
-and which one works has varied between attempts: `steam-run` plus an `LD_LIBRARY_PATH` carrying nss/nspr (in that
-attempt the documented `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` route hung), or `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`
-pointed at a nix chromium together with `--browser.api.host=127.0.0.1 --browser.api.port=63501` (reached after a
-bare `--project component` hung for ~18 minutes). Before blaming either route: **a stale `node_modules/.vite`
-cache — typical after a `kill -9` — hangs for minutes at near-zero CPU. Clear it first**, then pick a route.
+**Browser/component tests on NixOS: the host's browser bundle must match this repo's playwright pin — fix the
+host, not `package.json`.**
+The failure is *not* "no `chromium` on `PATH`" — a NixOS host that sets `PLAYWRIGHT_BROWSERS_PATH` (nixpkgs
+`playwright-driver.browsers`) already has Chromium. Playwright pins **one exact Chromium build per release** and
+looks it up by revision under that path, so a driver/bundle mismatch fails with
+`browserType.launch: Executable doesn't exist at .../chromium_headless_shell-<rev>/...` — and the whole
+`component` project then reports **`Test Files (130)` / `Tests no tests`**, i.e. 0 of 130 executed. That reads
+like a broken suite, not a missing browser.
+
+**The repo pin is `^1.57.0` and stays there — adapt the host to it.** `playwright` / `@playwright/test` resolve
+to **1.57.0**, which wants Chromium revision **1200**. Before running, check the two numbers that have to be
+equal: `node_modules/playwright/../playwright-core/browsers.json` (the revision playwright will look for) against
+`ls $PLAYWRIGHT_BROWSERS_PATH` (the revisions the bundle actually has). If they differ, point
+`PLAYWRIGHT_BROWSERS_PATH` at a `playwright-driver` bundle of the *matching* version instead of bumping the repo.
+Nixpkgs carries exactly one playwright version per revision, so a host that drives several repos on different
+playwright lines needs one pinned nixpkgs input per line and a per-project selector — the version skew is a
+property of the host, not of this repo.
+
+**Do not "fix" this by bumping the pin — the bump is not self-contained.** It was tried and reverted. CI runs
+some Playwright jobs in **version-matched container images that ship their own browsers** (`PLAYWRIGHT_BROWSERS_PATH`
+pointing inside the image) while executing the *workspace-local* `./node_modules/.bin/playwright`. Bumping this
+repo alone desynchronises that pair and reproduces the same bug in CI: the preview smoke suite went **2 passed /
+59 failed**, and every one of the 59 was `browserType.launch: Executable doesn't exist at
+/ms-playwright/chromium_headless_shell-1228/...` — 177 occurrences (59 × 3 retries) and **zero** assertion or
+timeout failures. Not one spec executed. So a bump needs a lockstep image-tag change owned by someone else, in
+the same window, in both directions. Adapting the host costs one person nothing and no one else anything.
+
+A caret range is also not a pin for a package with a 1:1 browser mapping: `^1.57.0` floating within the 1.57
+line is fine (the Chromium build is stable across a minor line), but bumping the *minor* changes the revision.
+
+Escape hatch if your host's bundle can't match the pin: `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=<abs path to a
+chrome/chrome-headless-shell binary>` — honoured by `vitest.config.mts`'s provider, and it bypasses the revision
+lookup entirely. Before blaming any of this: **a stale `node_modules/.vite` cache — typical after a `kill -9` —
+hangs for minutes at near-zero CPU. Clear it first.**
 
 ## Important Notes
 
@@ -284,19 +338,42 @@ cache — typical after a `kill -9` — hangs for minutes at near-zero CPU. Clea
 ### Performance
 - Use dynamic imports for heavy components
 - Implement virtual scrolling for large lists
-- Optimize images with Next.js Image component
+- Serve images through `EdgeImage`/`EdgeMedia`, not `next/image` — see Image Handling
 
 ### Security
-- Never commit secrets or API keys
-- Use environment variables
-- Sanitize user input with sanitize-html
-- Follow authentication best practices
+
+**This repository is PUBLIC and permanently world-readable — including `docs/`, `claudedocs/`, `.claude/skills/`, and every commit in history. Write all of it for strangers.**
+
+- Never commit secrets or API keys. Use environment variables; keep `.env.example` values placeholder-only.
+- Sanitize user input with sanitize-html.
+- Follow authentication best practices.
+
+#### Do not commit these — they belong in the private infra repo
+
+1. **Unfixed vulnerabilities.** No security review, audit, threat model, or handoff that lists an OPEN finding — especially not with `file:line`. A findings list is a to-do list for an attacker.
+2. **Content-safety internals.** Classifier policy text, thresholds, trigger or carve-out term lists, per-label false-positive rates, documented blind spots. Describing the *architecture* is fine; publishing the *decision rules* is an evasion guide.
+3. **Paths to production.** Bastion hosts, SSH forwards, kubectl contexts, namespaces, deployment names, port-forwards, connection recipes, canary rollback thresholds. Write "ask an infra owner for the connection recipe" instead.
+4. **Private-repo contents.** Names and internal paths of the infra/GitOps/orchestrator/flag-state repos, especially any secret file path.
+5. **Auth posture of internal services.** Never write down that a service has weak or no authentication, or which single header or secret is the only control in front of it.
+6. **People and customers.** Staff names tied to owned systems, internal ticket IDs, private DM or ticket contents, and any named user's earnings, moderation status, or content classification.
+7. **Bulk production data.** Arrays of real user IDs, emails, or account attributes — including inside one-shot `admin/temp` backfill scripts. Load them from a file at runtime; don't inline them.
+8. **Secret inventories annotated with what they unlock.** Variable names alone are fine; "this one is the salt for every API key" is not.
+
+#### Before committing a doc
+
+Ask: *if a stranger read only this file, what could they do that they couldn't before?* If the answer is anything other than "understand the product or contribute code," it goes in the private repo. Write the architecture publicly and the operational specifics privately.
+
+A useful tell: if you are documenting **why** a guard exists and **what it stops**, you are one sentence away from naming the bypass. Say what the control does, not what defeats it.
+
+**Removal is not remediation.** Git history is public and permanent. Anything already committed must be treated as disclosed — fixed and rotated on that assumption, not merely deleted.
 
 ### Before Committing
 1. Run type checking: `pnpm run typecheck`
 2. Run linting: `pnpm run lint`
 3. Format code: `pnpm run prettier:write`
-4. Test changes locally
+4. Run the unit suite: `pnpm run test:unit:run`
+5. If you touched `schema.full.prisma`: `pnpm run db:check-generated`
+6. Test changes locally
 
 ### Stacked PRs — don't
 - **NEVER use stacked PRs** — base every PR directly on the integration branch (`main`, or a feature integration branch like `feat/...`), never on another open PR's branch. Stacked PRs silently mis-merge: a squash-merged parent doesn't retarget the child, so the child lands on the orphaned parent branch instead of the real base and its changes go missing.
@@ -313,7 +390,7 @@ Use Mantine modals with proper accessibility and keyboard handling.
 
 #### Dialog Registry System
 The project uses a dialog-registry system for managing modals:
-- Register dialogs in `src/components/Dialog/dialog-registry.ts` or `dialog-registry2.ts`
+- Register dialogs in `src/components/Dialog/dialog-registry2.ts` (URL-routed ones in `routed-dialog-registry.ts`)
 - Use `DialogProvider` for context-based modal management
 - `RoutedDialogProvider` for URL-based modal state
 - Access dialogs through the registry for consistent modal handling across the app
@@ -341,7 +418,9 @@ Use EdgeImage component for optimized image loading with CDN support.
 
 ## Feature Documentation
 
-Feature-specific documentation lives in `docs/features/`. Before implementing a feature, check if documentation exists:
+Feature-specific documentation lives in `docs/features/`. Before implementing a feature, check if documentation exists.
+
+Operational runbooks, security reviews, incident handoffs, and content-policy records do **not** live in `docs/` — this repo is public. See the Security section above.
 
 ### Core Systems Reference
 | System | Documentation |
@@ -349,8 +428,9 @@ Feature-specific documentation lives in `docs/features/`. Before implementing a 
 | Image Resources | [docs/features/image-resources.md](docs/features/image-resources.md) |
 | NSFW Filtering | [docs/features/nsfw-filtering.md](docs/features/nsfw-filtering.md) |
 | Buzz Accounts | [docs/features/buzz-accounts.md](docs/features/buzz-accounts.md) |
+| Monetization rules (paid access / fees / donation goals) | [docs/features/monetization-rules.md](docs/features/monetization-rules.md) |
 | Notifications | [docs/features/notifications.md](docs/features/notifications.md) |
-| Metrics/Analytics | [docs/features/metrics-analytics.md](docs/features/metrics-analytics.md) |
+| Metrics/Analytics | [docs/features/entity-metrics.md](docs/features/entity-metrics.md) |
 | Bitwise Flags | [docs/features/bitwise-flags.md](docs/features/bitwise-flags.md) |
 | Civitai LLM Client | [docs/features/civitai-llm-client.md](docs/features/civitai-llm-client.md) |
 | Challenge Platform | [docs/features/challenge-platform.md](docs/features/challenge-platform.md) |
@@ -373,3 +453,13 @@ pnpm run dev-debug  # Includes --max_old_space_size=8192
 1. Check connection string
 2. Apply pending migrations manually (we do NOT use `prisma migrate deploy` — see Database section above)
 3. Regenerate client: `pnpm run db:generate`
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

@@ -1,15 +1,28 @@
-import { AspectRatio, Box, Button, Group, Skeleton, Stack, Title } from '@mantine/core';
-import { IconArrowRight } from '@tabler/icons-react';
+import {
+  Anchor,
+  AspectRatio,
+  Box,
+  Button,
+  Group,
+  Popover,
+  Skeleton,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core';
+import { IconArrowRight, IconInfoCircle } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { ImageCard } from '~/components/Cards/ImageCard';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import type { FeedBlockItems } from '~/server/services/home-block.service';
+import { shuffle } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 
@@ -36,13 +49,56 @@ const FeedHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
 
   const rows = metadata.feed?.rows ?? 2;
   const feedItems = homeBlock?.feedItems;
+  const currentUser = useCurrentUser();
+  const title = metadata.title ?? 'Feed';
 
+  // Description lives in the info popover next to the title, matching Featured Models
+  // and Featured Images. Signed-out visitors get it inline instead, since the header
+  // is the only place that context can land for them.
   const header = (
     <Stack gap="sm">
       <Group gap="xs" justify="space-between" className={classes.header}>
-        <Title className={classes.title} order={1} lineClamp={1}>
-          {metadata.title ?? 'Feed'}
-        </Title>
+        <Group wrap="nowrap">
+          <Title className={classes.title} order={1} lineClamp={1}>
+            {title}{' '}
+          </Title>
+          {currentUser && metadata.description && (
+            <Popover withArrow width={380}>
+              <Popover.Target>
+                <Box
+                  role="button"
+                  tabIndex={0}
+                  aria-label="About this section"
+                  display="inline-block"
+                  style={{ lineHeight: 0.3, cursor: 'pointer' }}
+                  color="white"
+                >
+                  <IconInfoCircle size={20} />
+                </Box>
+              </Popover.Target>
+              <Popover.Dropdown maw="100%">
+                <Text fw={500} size="lg" mb="xs">
+                  {title}
+                </Text>
+                <Text component="div" size="sm" mb="xs">
+                  <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
+                    {metadata.description}
+                  </CustomMarkdown>
+                </Text>
+                {metadata.link && (
+                  <Link legacyBehavior href={metadata.link} passHref>
+                    <Anchor size="sm">
+                      <Group gap={4}>
+                        <Text inherit>{metadata.linkText ?? 'View All'}</Text>
+                        <IconArrowRight size={16} />
+                      </Group>
+                    </Anchor>
+                  </Link>
+                )}
+              </Popover.Dropdown>
+            </Popover>
+          )}
+        </Group>
         {metadata.link && (
           <Link legacyBehavior href={metadata.link} passHref>
             <Button
@@ -56,7 +112,7 @@ const FeedHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
           </Link>
         )}
       </Group>
-      {metadata.description && (
+      {metadata.description && !currentUser && (
         <div className="text-base">
           <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
             {metadata.description}
@@ -104,6 +160,17 @@ const FeedSkeleton = ({ rows }: { rows: number }) => (
   </div>
 );
 
+/**
+ * Rotate the fetched pool so the shelf isn't identical on every visit, matching how
+ * Collection and Featured Models blocks behave.
+ *
+ * Copies before shuffling: `shuffle` sorts in place, and the array here belongs to the
+ * React Query cache.
+ */
+function useShuffled<T>(items: T[]) {
+  return useMemo(() => shuffle([...items]), [items]);
+}
+
 /** Trim to the visible slice, capping how many items one creator can contribute. */
 function useCappedItems<T extends { id: number; user?: { id: number } }>(
   items: T[],
@@ -139,9 +206,10 @@ function ImageFeedGrid({
   rows,
   maxPerUser,
 }: GridProps<Extract<FeedBlockItems, { entity: 'images' }>['items']>) {
+  const rotated = useShuffled(items);
   const { loadingPreferences, items: filtered } = useApplyHiddenPreferences({
     type: 'images',
-    data: items,
+    data: rotated,
   });
   const visible = useCappedItems(filtered, rows, maxPerUser);
 
@@ -165,9 +233,10 @@ function ModelFeedGrid({
   rows,
   maxPerUser,
 }: GridProps<Extract<FeedBlockItems, { entity: 'models' }>['items']>) {
+  const rotated = useShuffled(items);
   const { loadingPreferences, items: filtered } = useApplyHiddenPreferences({
     type: 'models',
-    data: items,
+    data: rotated,
   });
   const visible = useCappedItems(filtered, rows, maxPerUser);
 

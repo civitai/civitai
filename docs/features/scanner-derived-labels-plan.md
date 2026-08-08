@@ -5,8 +5,7 @@ Pre-write transform that takes raw XGuard label results and produces a derived s
 Status: **proposal**. Not yet implemented. Owner pending.
 
 Related context:
-- [scanner-policy-changes-2026-05.md](scanner-policy-changes-2026-05.md) — original pass with the `csam = young AND sexual` decomposition decision.
-- [scanner-policy-changes-2026-05-pass2.md](scanner-policy-changes-2026-05-pass2.md) — pass 2, which introduced Suggestive + Explicit (hierarchical), Incest, NonConsent, Gore.
+- The May 2026 scanner policy passes, which set the current label roster and the per-label decision rules. Those records live in the private infra repo — see the Security section of `CLAUDE.md` for why they are not in this repository.
 - [wildcard-category-audit.service.ts](../../src/server/services/wildcard-category-audit.service.ts) — existing per-consumer synthetic-CSAM derivation; this proposal generalizes/replaces it.
 
 ## Why

@@ -116,7 +116,7 @@ export function UserAvatarSimple({
             {username}
           </Text>
           {badge?.data.url && (
-            <Tooltip color="dark" label={badge.name} withArrow withinPortal>
+            <Tooltip label={badge.name} withArrow withinPortal>
               <div style={{ display: 'flex', width: 28 }}>
                 <EdgeMedia
                   src={badge.data.url}

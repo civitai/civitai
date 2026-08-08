@@ -6,6 +6,7 @@ import {
   Code,
   Container,
   Group,
+  HoverCard,
   Loader,
   Stack,
   Tabs,
@@ -443,6 +444,22 @@ function AutoFlaggedTable() {
   );
 }
 
+function AppealDetailPanel({ row }: { row: MinorFlagAppealRow }) {
+  return (
+    <Stack gap="xs">
+      <Stack gap={2} maw={900} className="px-2 pt-2">
+        <Text size="xs" fw={600}>
+          Their reason · requested {formatDate(row.appealCreatedAt)}
+        </Text>
+        <Text size="sm" className="whitespace-pre-wrap">
+          {row.appealMessage}
+        </Text>
+      </Stack>
+      <AutoFlaggedDetailPanel row={row} />
+    </Stack>
+  );
+}
+
 // Every minor-flagged model whose owner has asked for a review, whether the flag
 // came from the scan hook or a moderator's own Set-as-Minor — the Auto-flagged
 // tab covers neither manual flags nor ones that have aged out of its window.
@@ -558,10 +575,32 @@ function AppealsTable() {
         header: 'Their reason',
         accessorKey: 'appealMessage',
         size: 320,
+        // The cell defaults to a single nowrap line, which cuts most appeals off
+        // mid-sentence; the row-height cost of three lines is worth the context.
+        mantineTableBodyCellProps: { style: { whiteSpace: 'normal' } },
         Cell: ({ row: { original } }) => (
-          <Text size="xs" lineClamp={3}>
-            {original.appealMessage}
-          </Text>
+          <HoverCard
+            width={420}
+            shadow="md"
+            withArrow
+            openDelay={200}
+            position="left"
+            // The theme turns portalling off for every Popover, and MRT's cells are
+            // overflow:hidden — inline, the dropdown is clipped to nothing.
+            withinPortal
+            zIndex={400}
+          >
+            <HoverCard.Target>
+              <Text size="xs" lineClamp={3} className="cursor-help">
+                {original.appealMessage}
+              </Text>
+            </HoverCard.Target>
+            <HoverCard.Dropdown mah={320} className="overflow-y-auto">
+              <Text size="xs" className="whitespace-pre-wrap">
+                {original.appealMessage}
+              </Text>
+            </HoverCard.Dropdown>
+          </HoverCard>
         ),
       },
       {
@@ -606,7 +645,7 @@ function AppealsTable() {
         enableGlobalFilter
         enableFacetedValues
         layoutMode="grid"
-        renderDetailPanel={({ row }) => <AutoFlaggedDetailPanel row={row.original} />}
+        renderDetailPanel={({ row }) => <AppealDetailPanel row={row.original} />}
         renderEmptyRowsFallback={() => (
           <Text p="xl" ta="center" c="dimmed">
             No review requests awaiting a decision.

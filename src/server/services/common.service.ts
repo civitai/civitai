@@ -150,9 +150,8 @@ export const hasEntityAccess = async ({
   // Moderators bypass gating entirely → skip the PaidAccess fetch below.
   if (isModerator) return grantAll();
 
-  // Gated-ness for model versions comes from PaidAccess, not `availability`, so a version stays
-  // behind the permission check once the EarlyAccess enum value is retired (Phase 2). During Phase 1
-  // a PaidAccess row exists iff availability='EarlyAccess' & active, so this is behavior-preserving.
+  // Gated-ness for model versions comes from PaidAccess, not `availability`. No model version carries
+  // availability='EarlyAccess' any more, so the availability test below only ever excludes Private.
   const paidGatedIds = new Set<number>();
   if (entityType === 'ModelVersion') {
     const paid = await getPaidAccess('ModelVersion', entityIds);
@@ -165,7 +164,7 @@ export const hasEntityAccess = async ({
   const isOpenAccess = (entityId: number, availability: Availability) =>
     OPEN_ACCESS_AVAILABILITY.some((a) => a === availability) && !paidGatedIds.has(entityId);
 
-  // Private, EarlyAccess, and any PaidAccess-gated version require a permission check.
+  // Private and any PaidAccess-gated version require a permission check.
   const privateRecords = matched.filter((d) => !isOpenAccess(d.entityId, d.availability));
 
   // All entities are public. Access granted to everyone.

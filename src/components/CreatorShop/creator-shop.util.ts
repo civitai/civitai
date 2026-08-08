@@ -111,7 +111,7 @@ export const useQueryCreatorShopReviewQueue = ({
   status?: CosmeticShopItemStatus | undefined;
   username?: string;
   userId?: number;
-  cosmeticTypes?: CosmeticType[];
+  cosmeticTypes?: (CosmeticType | 'Pack')[];
   enabled?: boolean;
 } = {}) =>
   trpc.creatorShop.getReviewQueue.useInfiniteQuery(
@@ -154,6 +154,23 @@ export const useMutateCreatorShop = () => {
       showSuccessNotification({ message: 'Item updated' });
     },
     onError: onError('Failed to update item'),
+  });
+
+  const submitPack = trpc.creatorShop.submitPack.useMutation({
+    async onSuccess() {
+      await queryUtils.creatorShop.getManageItems.invalidate();
+      showSuccessNotification({ message: 'Pack submitted for review' });
+    },
+    onError: onError('Failed to submit pack'),
+  });
+
+  const updatePack = trpc.creatorShop.updatePack.useMutation({
+    async onSuccess() {
+      await queryUtils.creatorShop.getManageItems.invalidate();
+      await queryUtils.creatorShop.getPack.invalidate();
+      showSuccessNotification({ message: 'Pack updated' });
+    },
+    onError: onError('Failed to update pack'),
   });
 
   const archiveItem = trpc.creatorShop.archiveItem.useMutation({
@@ -263,6 +280,16 @@ export const useMutateCreatorShop = () => {
           failed
             ? ` ${failed} Buzz transfer${failed === 1 ? '' : 's'} failed — finish by hand.`
             : ''
+        }${
+          // A pack's split can't be re-derived without a payout record, so the
+          // amount is only knowable here. Telling the moderator to finish by
+          // hand without telling them how much leaves them the one person who
+          // can act and can't see the number.
+          result.unrecoveredPackPool
+            ? ` ${numberWithCommas(
+                result.unrecoveredPackPool
+              )} Buzz of pack payouts could not be reversed.`
+            : ''
         }`,
       });
     },
@@ -272,6 +299,8 @@ export const useMutateCreatorShop = () => {
   return {
     submitItem,
     updateItem,
+    submitPack,
+    updatePack,
     archiveItem,
     setItemListed,
     unarchiveItem,

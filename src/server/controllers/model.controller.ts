@@ -368,7 +368,7 @@ export const getModelHandler = async ({
     const hideIf = (hidden: boolean, value: number) => (hidden ? null : value);
 
     const mappedVersions = filteredVersions.map((version) => {
-      const { paidAccess, licensingFee } = monetizationByVersion[version.id];
+      const { paidAccess, licensingFee, effectiveLicensingFee } = monetizationByVersion[version.id];
       const eaDonationGoal = donationGoalsByVersion[version.id] ?? null;
       const paidAccessGated =
         features.earlyAccessModel && !!paidAccess && isPaidAccessActive(paidAccess);
@@ -434,6 +434,7 @@ export const getModelHandler = async ({
       return {
         ...version,
         licensingFee,
+        effectiveLicensingFee,
         metrics: undefined,
         hiddenMetrics: versionHidden,
         rank: {

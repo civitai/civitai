@@ -26,9 +26,15 @@
   background-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-3));
 }
 
+.stickerOnlyMessage {
+  background-color: transparent;
+  padding: 0;
+  max-width: 100%;
+}
+
 .highlightRow {
   &:hover {
-    >button {
+    > button {
       display: initial;
     }
   }

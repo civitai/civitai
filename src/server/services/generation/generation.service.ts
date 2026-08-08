@@ -945,7 +945,12 @@ export function getResourceCanGenerate({
     (resource.covered || explicitCoveredModelVersionIds.includes(resource.id)) && !isUnavailable;
 
   const validGenerationStatuses = ['Draft', 'Training', 'Published'];
-  const hasValidStatus = validGenerationStatuses.includes(resource.status);
+  // Moderators additionally get 'Scheduled' so a release can be exercised end to
+  // end before its publish time - without it, a scheduled launch is untestable
+  // by anyone until the cron flips it.
+  const hasValidStatus =
+    validGenerationStatuses.includes(resource.status) ||
+    (resource.status === 'Scheduled' && !!user.isModerator);
   const isPrivate =
     resource.availability === 'Private' || ['Draft', 'Training'].includes(resource.status);
 

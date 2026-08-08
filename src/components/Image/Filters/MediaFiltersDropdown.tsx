@@ -59,6 +59,7 @@ export function MediaFiltersDropdown({
   // toggle would be a no-op for them. Only logged-in users actually have
   // PG-13 access to opt in/out of.
   const showPG13Toggle = isGreen && !!currentUser;
+  const showChallengeToggle = filterType !== 'modelImages';
 
   const { filters, setFilters } = useFiltersContext((state) => ({
     filters: state[filterType],
@@ -99,6 +100,7 @@ export function MediaFiltersDropdown({
       baseModels: undefined,
       remixesOnly: undefined,
       nonRemixesOnly: undefined,
+      hideChallenges: undefined,
       disablePoi: undefined,
       disableMinor: undefined,
       poiOnly: undefined,
@@ -123,12 +125,21 @@ export function MediaFiltersDropdown({
       });
   }, [onChange, setFilters, filterType]);
 
-  const { opened, toggle, close, mergedFilters, isDirty, patchPending, apply, reset, clearAndClose } =
-    useStagedFilters({
-      committed: committedFilters,
-      onApply: handleApply,
-      onClear: handleClear,
-    });
+  const {
+    opened,
+    toggle,
+    close,
+    mergedFilters,
+    isDirty,
+    patchPending,
+    apply,
+    reset,
+    clearAndClose,
+  } = useStagedFilters({
+    committed: committedFilters,
+    onApply: handleApply,
+    onClear: handleClear,
+  });
 
   // maybe have individual filter length with labels next to them
 
@@ -147,6 +158,7 @@ export function MediaFiltersDropdown({
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
     (!hideBaseModels ? mergedFilters.baseModels?.length ?? 0 : 0) +
     (!!mergedFilters.remixesOnly || !!mergedFilters.nonRemixesOnly ? 1 : 0) +
+    (showChallengeToggle && mergedFilters.hideChallenges ? 1 : 0) +
     (mergedFilters.poiOnly ? 1 : 0) +
     (mergedFilters.minorOnly ? 1 : 0) +
     (isModerator && mergedFilters.disablePoi ? 1 : 0) +
@@ -166,12 +178,7 @@ export function MediaFiltersDropdown({
       disabled={!filterLength}
       inline
     >
-      <FilterButton
-        {...buttonProps}
-        icon={IconFilter}
-        onClick={toggle}
-        active={opened}
-      >
+      <FilterButton {...buttonProps} icon={IconFilter} onClick={toggle} active={opened}>
         Filters
       </FilterButton>
     </Indicator>
@@ -275,6 +282,16 @@ export function MediaFiltersDropdown({
           >
             <span>Remixes Only</span>
           </FilterChip>
+          {showChallengeToggle && (
+            <FilterChip
+              checked={mergedFilters.hideChallenges}
+              onChange={(checked) => handleChange({ hideChallenges: checked })}
+            >
+              <Tooltip label="Hide entries submitted to daily challenges">
+                <span>Hide challenge entries</span>
+              </Tooltip>
+            </FilterChip>
+          )}
         </div>
 
         {filterType === 'modelImages' && (

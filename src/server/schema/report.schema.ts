@@ -33,6 +33,28 @@ export const reportAdminAttentionDetailsSchema = baseDetailSchema.extend({
 
 export const reportSpamDetailsSchema = baseDetailSchema;
 
+/**
+ * A sticker someone paid to place on this image.
+ *
+ * `placementId` is required, not optional. An image can carry several
+ * placements, and a report that does not say which one leaves a moderator
+ * guessing — or removing the wrong person's sticker, which costs them money.
+ */
+export const reportStickerPlacementDetailsSchema = baseDetailSchema.extend({
+  // Coerced, because a radio group hands back a string and there is nothing on
+  // the form path that converts it. `z.number()` typechecks clean here — `Radio`
+  // takes `string | number` — and then rejects at submit, so the report can be
+  // filled in and never sent.
+  // The message matters: with no placements on the image the field renders with
+  // no options, and `z.coerce.number()` on an absent value is `Number(undefined)`
+  // — NaN — so the default text reads "expected number, received NaN" at the one
+  // moment a reporter needs to be told what to do.
+  placementId: z.coerce
+    .number({ error: 'Choose which sticker you are reporting.' })
+    .int()
+    .positive(),
+});
+
 export const reportAutomatedDetailsSchema = baseDetailSchema.extend({
   externalId: z.string(),
   externalType: z.enum(ExternalModerationType),
@@ -96,6 +118,11 @@ export const reportAutomatedSchema = baseSchema.extend({
   details: reportAutomatedDetailsSchema,
 });
 
+export const reportStickerPlacementSchema = baseSchema.extend({
+  reason: z.literal(ReportReason.StickerPlacement),
+  details: reportStickerPlacementDetailsSchema,
+});
+
 // #endregion
 
 export type CreateReportInput = z.infer<typeof createReportInputSchema>;
@@ -108,6 +135,7 @@ export const createReportInputSchema = z.discriminatedUnion('reason', [
   reportCsamSchema,
   reportAutomatedSchema,
   reportSpamSchema,
+  reportStickerPlacementSchema,
 ]);
 
 export type GetReportCountInput = z.infer<typeof getReportCount>;

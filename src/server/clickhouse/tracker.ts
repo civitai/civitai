@@ -72,10 +72,12 @@ export type ModelActivty =
   | 'Transfer';
 export type ResourceReviewType = 'Create' | 'Delete' | 'Exclude' | 'Include' | 'Update';
 export type ReactionType =
-  | 'Images_Create'
-  | 'Images_Delete'
+  | 'Image_Create'
+  | 'Image_Delete'
   | 'Comment_Create'
   | 'Comment_Delete'
+  | 'CommentV2_Create'
+  | 'CommentV2_Delete'
   | 'Review_Create'
   | 'Review_Delete'
   | 'Question_Create'

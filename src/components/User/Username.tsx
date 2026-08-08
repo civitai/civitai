@@ -67,7 +67,6 @@ export const BadgeDisplay = ({
 
   return (
     <Tooltip
-      color="dark"
       label={
         <div style={{ textAlign: 'center', padding: 4 }}>
           <div>{badge.name}</div>

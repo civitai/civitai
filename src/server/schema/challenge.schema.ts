@@ -419,7 +419,10 @@ export const challengeJudgingCategorySchema = challengeJudgingCategoryInputSchem
 });
 export type ChallengeJudgingCategory = z.infer<typeof challengeJudgingCategorySchema>;
 
-const judgingCategoryRefinements = (cats: { key: string; weight: number }[], ctx: z.RefinementCtx) => {
+const judgingCategoryRefinements = (
+  cats: { key: string; weight: number }[],
+  ctx: z.RefinementCtx
+) => {
   if (cats.filter((c) => c.key === 'theme').length !== 1)
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Theme is required exactly once' });
   const keys = cats.map((c) => c.key);

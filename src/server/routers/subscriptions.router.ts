@@ -1,8 +1,10 @@
+import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import {
   getPlansSchema,
   getUserSubscriptionSchema,
   claimPrepaidTokenSchema,
+  purchaseMembershipWithBuzzSchema,
 } from '~/server/schema/subscriptions.schema';
 import {
   getPlansHandler,
@@ -15,8 +17,17 @@ import {
   claimAllPrepaidTokens,
   unlockTokensForUser,
   getHistoricalPrepaidDeliveries,
+  purchaseMembershipWithBuzz,
 } from '~/server/services/subscriptions.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
+
+const buzzMembershipProcedure = protectedProcedure
+  .meta({ requiredScope: TokenScope.UserWrite })
+  .use(({ ctx, next }) => {
+    if (!ctx.features.buzzMemberships) throw new TRPCError({ code: 'FORBIDDEN' });
+    return next();
+  });
 
 export const subscriptionsRouter = router({
   getPlans: publicProcedure
@@ -35,6 +46,19 @@ export const subscriptionsRouter = router({
     .input(claimPrepaidTokenSchema)
     .mutation(async ({ input, ctx }) => {
       return claimPrepaidToken({ tokenId: input.tokenId, userId: ctx.user.id });
+    }),
+  purchaseWithBuzz: buzzMembershipProcedure
+    .input(purchaseMembershipWithBuzzSchema)
+    .mutation(async ({ input, ctx }) => {
+      // Domain decides the currency: green on .com, yellow on .red. Resolved here rather
+      // than accepted as input so a crafted request can't spend the other colour.
+      const [buzzType] = getAllowedAccountTypes(ctx.features);
+
+      return purchaseMembershipWithBuzz({
+        priceId: input.priceId,
+        buzzType,
+        userId: ctx.user.id,
+      });
     }),
   claimAllPrepaidTokens: protectedProcedure
     .meta({ requiredScope: TokenScope.UserWrite })

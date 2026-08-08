@@ -72,6 +72,10 @@ export default defineNextConfig(
     // emits those warnings — an empty config just acknowledges we're on Turbopack
     // and silences Next's "webpack config with no turbopack config" build error.
     turbopack: {},
+    // Per-branch build dir. Turbopack's dev filesystem cache (~8GB) is invalidated
+    // wholesale by an in-place branch switch, so the dev daemon points each branch at
+    // its own dir and keeps them warm instead of purging. Unset -> stock `.next`.
+    distDir: process.env.NEXT_DIST_DIR || '.next',
     allowedDevOrigins: ['civitai-dev.green', 'civitai-dev.blue', 'civitai-dev.red'],
     // Retained for the `next build --webpack` fallback path; ignored under Turbopack.
     webpack: (config) => {
@@ -203,7 +207,10 @@ export default defineNextConfig(
       // Trade: ~72% fewer emitted server chunks and roughly half the server chunk bytes,
       // in exchange for ~+8% CI build time and ~+33% peak builder RSS. Measurements live
       // in the PR rather than here, so they don't rot when Next's chunker changes.
-      turbopackServerSideNestedAsyncChunking: true,
+      //
+      // Build only. It buys nothing in dev — chunk size is irrelevant to a dev server — and
+      // the walk over dynamic-import paths is paid on a graph that `_app` already makes large.
+      turbopackServerSideNestedAsyncChunking: isProd,
       optimizePackageImports: [
         '@civitai/client',
         './src/libs/form',

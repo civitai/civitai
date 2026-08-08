@@ -1,6 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from '~/types/session';
-import requestIp from 'request-ip';
 import * as z from 'zod';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
@@ -10,6 +9,7 @@ import type { VaultItemFilesSchema } from '~/server/schema/vault.schema';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getVaultWithStorage } from '~/server/services/vault.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { getTrustedClientIp, parseIpBlocklist } from '~/server/utils/client-ip';
 import { isRequestFromBrowser } from '~/server/utils/request-helpers';
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
@@ -35,22 +35,25 @@ export default AuthedEndpoint(
       return onError(500, 'We cannot serve vault downloads at this time.');
     }
 
-    // Get ip so that we can block exploits we catch
-    const ip = requestIp.getClientIp(req);
-    const ipBlacklist = (
-      ((await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ??
-      ''
-    ).split(',');
+    // Get ip so that we can block exploits we catch. Derived via getTrustedClientIp
+    // (edge-attested or transport peer only) — an enforcement control must not key
+    // on an address the caller supplies. Do not swap this for an inline resolver.
+    //
+    // Operator note before you add an entry to `ip-blacklist`: a request that did
+    // not transit the Cloudflare edge is attributed to the transport peer, so
+    // where that peer is a shared hop, listing its address blocks all such
+    // traffic to every download route at once rather than one abuser. See
+    // `parseIpBlocklist`.
+    const ip = getTrustedClientIp(req);
+    const ipBlacklist = parseIpBlocklist(
+      (await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value
+    );
     if (ip && ipBlacklist.includes(ip)) return onError(403, 'Forbidden');
 
-    // Check if user has a concerning number of downloads
     if (!user) {
       // All vault items require authorization
       return onError(401, 'Unauthorized');
     }
-
-    const userKey = user.id.toString() ?? ip;
-    if (!userKey) return onError(403, 'Forbidden');
 
     // Validate query params
 

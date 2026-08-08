@@ -497,6 +497,7 @@ export const miscModelTypes: ModelType[] = [
   'Poses',
   'Wildcards',
   'Workflows',
+  'ComfyWorkflows',
   'Detection',
   'VisionLanguage',
   'CLIP',

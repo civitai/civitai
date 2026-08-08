@@ -1,3 +1,4 @@
+import { PlacementSpaceToggle } from '~/components/Sticker/PlacementSpaceToggle';
 import type { TooltipProps } from '@mantine/core';
 import {
   Alert,
@@ -308,12 +309,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       {params.model3dId ? <PostingToModel3DCard model3dId={params.model3dId} /> : null}
 
       {isUnpublishedByParent && (
-        <Alert
-          color="yellow"
-          icon={<IconAlertCircle size={16} />}
-          radius="sm"
-          className="shrink-0"
-        >
+        <Alert color="yellow" icon={<IconAlertCircle size={16} />} radius="sm" className="shrink-0">
           <Stack gap="xs">
             <Text size="sm" fw={600}>
               Post unpublished
@@ -324,8 +320,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
               </Text>
             )}
             <Text size="xs">
-              This post is hidden because its parent model or version was unpublished. Republish
-              the parent to bring this post back — the original publish date will be preserved.
+              This post is hidden because its parent model or version was unpublished. Republish the
+              parent to bring this post back — the original publish date will be preserved.
             </Text>
             {parentModelHref && (
               <Text size="xs">
@@ -440,6 +436,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         </Button>
       )}
 
+      <PlacementSpaceToggle level="post" entityId={post.id} />
+
       <DeletePostButton postId={post.id}>
         {({ onClick, isLoading }) => (
           <Button
@@ -467,4 +465,3 @@ const tooltipProps: Partial<TooltipProps> = {
   position: 'bottom',
   withArrow: true,
 };
-

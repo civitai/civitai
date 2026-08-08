@@ -90,9 +90,11 @@ import {
   capMediaType,
   effectivePaidAccessPrice,
   isPermanentGate,
+  acceptsBlueBuzz,
   generationPrice,
   isPaidAccessActive,
   isTimedGateActive,
+  migrateTermsForUsageControl,
   paidAccessCharges,
   paidGenerationGrant,
 } from '@civitai/buzz';
@@ -141,6 +143,7 @@ import { deleteModelFileObjects } from '~/utils/s3-utils';
 import { deregisterFileLocations } from '~/utils/storage-resolver';
 import { purgeCache } from '~/server/cloudflare/client';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { paidAccessPayoutAccount } from '~/server/utils/buzz-helpers';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
@@ -326,6 +329,33 @@ export async function assertUserEarlyAccessLimits({
   versionId?: number;
 }) {
   if (!timeframeDays || isModerator) return;
+
+  // A timed window can't be STARTED on a version that has ever been published: it's meant to precede
+  // release, and on expiry process-ending-early-access bumps `publishedAt`, which would resurface an old
+  // model as New. `initialPublishedAt` is the test — `publishedAt` is what that job rewrites, and a
+  // Scheduled version carries a FUTURE anchor, so only a date that has passed counts.
+  //
+  // Lives here rather than in the REST endpoint because both write paths (the endpoint and tRPC
+  // `modelVersion.upsert`) already call this, and enforcing in one of the two left the other open.
+  // Editing a window a version already has stays allowed.
+  if (versionId) {
+    const existing = await dbRead.modelVersion.findUnique({
+      where: { id: versionId },
+      select: { initialPublishedAt: true, status: true },
+    });
+    const everPublished =
+      (!!existing?.initialPublishedAt && existing.initialPublishedAt <= new Date()) ||
+      existing?.status === ModelStatus.Published;
+    if (everPublished) {
+      const gate = (await getPaidAccess('ModelVersion', [versionId]))[versionId];
+      const hasActiveTimedGate =
+        !!gate && gate.timeframeDays != null && (gate.endsAt == null || gate.endsAt > new Date());
+      if (!hasActiveTimedGate)
+        throw throwBadRequestError(
+          "Early access can't be started on a version that has already been published."
+        );
+    }
+  }
 
   if (timeframeDays > getMaxEarlyAccessDays({ userMeta, features })) {
     throw throwBadRequestError('Early access days exceeds user limit');
@@ -547,11 +577,12 @@ export const upsertModelVersion = async ({
   ) {
     throw throwBadRequestError('Paid access is not available for this version’s usage control.');
   }
-  if (data.usageControl !== ModelUsageControl.Download && !!paidAccess?.terms.download) {
-    throw throwBadRequestError(
-      'Cannot charge for download if downloads are disabled for this model version'
-    );
-  }
+  // Migrate rather than refuse — same rule Creator Studio applies (see docs/features/monetization-rules.md).
+  if (paidAccess?.terms)
+    paidAccess.terms = migrateTermsForUsageControl(
+      paidAccess.terms,
+      data.usageControl !== ModelUsageControl.Download
+    ) as typeof paidAccess.terms;
 
   assertPaidAccessInput(paidAccess);
 
@@ -878,11 +909,11 @@ export const updateModelVersionPaidAccess = async ({
     throw throwBadRequestError('Paid access is not available for this version’s usage control.');
   }
 
-  if (existingVersion.usageControl !== ModelUsageControl.Download && !!paidAccess?.terms.download) {
-    throw throwBadRequestError(
-      'Cannot charge for download if downloads are disabled for this model version'
-    );
-  }
+  if (paidAccess?.terms)
+    paidAccess.terms = migrateTermsForUsageControl(
+      paidAccess.terms,
+      existingVersion.usageControl !== ModelUsageControl.Download
+    ) as typeof paidAccess.terms;
 
   assertPaidAccessInput(paidAccess);
 
@@ -1953,10 +1984,6 @@ export const earlyAccessPurchase = async ({
   type: 'generation' | 'download';
   buzzType: BuzzSpendType;
 }) => {
-  if (buzzType === 'blue') {
-    throw throwBadRequestError('You cannot use Blue Buzz for early access purchases.');
-  }
-
   const permission =
     type === 'generation'
       ? EntityAccessPermission.EarlyAccessGeneration
@@ -1999,12 +2026,21 @@ export const earlyAccessPurchase = async ({
   const terms = paidAccess.terms as ModelVersionTerms;
   const generationTier = paidGenerationGrant(terms);
 
+  if (buzzType === 'blue' && !acceptsBlueBuzz(terms)) {
+    throw throwBadRequestError('This model version does not accept Blue Buzz.');
+  }
+
   // The EA donation goal is the forward relation (DonationGoal entity target), not a config back-link.
   // Only an active goal receives the purchase's donation record. We use the raw owner accessor (not the
   // public getDonationGoals, whose display filters would drop the goal for permanent/opted-out gates) —
   // safe on this buyer path because we only read `.id`/`.active` internally to attach the donation and
   // trip completion; the goal is never returned to the purchaser.
-  const ownerGoal = (await getOwnerDonationGoals('ModelVersion', [modelVersionId]))[modelVersionId];
+  // A completed goal ends the early-access window early, so a blue purchase must not advance one:
+  // blue is granted by rewards, which would let farmed credit close a paid window for everyone.
+  const ownerGoal =
+    buzzType === 'blue'
+      ? null
+      : (await getOwnerDonationGoals('ModelVersion', [modelVersionId]))[modelVersionId];
   const earlyAccessDonationGoal = ownerGoal?.active ? ownerGoal : null;
 
   if (modelVersion.status !== ModelStatus.Published) {
@@ -2080,6 +2116,7 @@ export const earlyAccessPurchase = async ({
       details: { modelVersionId, type, earlyAccessPurchase: true, permanent },
       externalTransactionIdPrefix: externalTransactionIdPrefix,
       fromAccountTypes: [buzzType],
+      toAccountType: paidAccessPayoutAccount(buzzType),
     });
 
     if (data?.transactionCount === 0)

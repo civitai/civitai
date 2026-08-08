@@ -352,6 +352,9 @@ export const getInfiniteImagesSchema = baseQuerySchema
     // board id is resolved server-side from this flag plus the request domain —
     // the client never supplies a user list.
     newCreators: z.boolean().optional(),
+    // Hide daily-challenge entries. The server resolves this to the challenge
+    // tag id and unions it into `excludedTagIds` — the client never sends tag ids.
+    hideChallenges: z.boolean().optional(),
     // view: z.enum(['categories', 'feed']),
     withMeta: z.boolean().default(false),
     requiringMeta: z.boolean().optional(),

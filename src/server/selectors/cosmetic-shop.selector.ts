@@ -22,5 +22,8 @@ export const cosmeticShopItemSelect = Prisma.validator<Prisma.CosmeticShopItemSe
     },
   },
   cosmeticId: true,
+  addedById: true,
+  // A pack has no cosmetic, so cards attribute it to its lister instead.
+  addedBy: { select: userWithCosmeticsSelect },
   meta: true,
 });

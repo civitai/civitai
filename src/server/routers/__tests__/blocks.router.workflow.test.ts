@@ -42,6 +42,8 @@ const {
   mockLogToAxiom,
   mockSysRedis,
   mockResolveCanGenerateForVersions,
+  mockGetResourceData,
+  mockGetHighestTierSubscription,
   mockRecordSpendAttribution,
   mockDbWriteUserFindUnique,
 } = vi.hoisted(() => ({
@@ -129,6 +131,10 @@ const {
   // out of the test and we can drive canGenerate per-test. Default = a Map
   // saying the version IS generatable; FORBIDDEN tests override to false / miss.
   mockResolveCanGenerateForVersions: vi.fn(),
+  // The customComfy INLINE arm's entitlement belt calls these two directly.
+  // Stubbed as the belt's DATA SOURCE only — the belt itself runs for real.
+  mockGetResourceData: vi.fn(),
+  mockGetHighestTierSubscription: vi.fn(),
   // W3 flow A — the spend-attribution write the submit path fires
   // best-effort after a resolved submit. Mocked at the module boundary so
   // the test asserts exact (server-derived) args + that a throw here never
@@ -434,8 +440,19 @@ vi.mock('~/server/services/buzz.service', () => ({
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: (...args: unknown[]) => mockCheckBlockCatalogRateLimit(...args),
 }));
+// 🔴 `getResourceData` IS HERE ON PURPOSE, AND IS NOT MOCKED AWAY AT THE SERVICE
+// BOUNDARY. The customComfy INLINE arm's entitlement belt
+// (`services/blocks/inline-comfy.service`) is deliberately left REAL in this
+// suite, with only its data source stubbed. Mocking the belt itself would reduce
+// every inline test below to "the router called a function I replaced", which is
+// exactly the seam a per-component test cannot see: the belt can be perfectly
+// correct in isolation and simply not wired in.
 vi.mock('~/server/services/generation/generation.service', () => ({
   resolveCanGenerateForVersions: (...args: unknown[]) => mockResolveCanGenerateForVersions(...args),
+  getResourceData: (...args: unknown[]) => mockGetResourceData(...args),
+}));
+vi.mock('~/server/services/subscriptions.service', () => ({
+  getHighestTierSubscription: (...args: unknown[]) => mockGetHighestTierSubscription(...args),
 }));
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: (...args: unknown[]) => mockLogToAxiom(...args),
@@ -617,6 +634,8 @@ beforeEach(() => {
     mockSysRedis.expire,
     mockSysRedis.ttl,
     mockResolveCanGenerateForVersions,
+    mockGetResourceData,
+    mockGetHighestTierSubscription,
     mockRecordSpendAttribution,
     mockDbWriteUserFindUnique,
     mockIsAppBlocksAuthorEnabled,
@@ -6153,6 +6172,706 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockSettleCustomComfySpend).toHaveBeenCalledWith({
         workflowId: 'wf_cc_1',
         actualCost: 12,
+      });
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 THE INLINE ARM, AT THE ROUTER SEAM.
+  //
+  // `inline-comfy.service.test.ts` proves the belt is CORRECT. These prove it is
+  // WIRED — a distinction that matters, because a belt can be hermetically
+  // tested, mutation-swept and audit-clean and simply never called. The belt runs
+  // FOR REAL here (only `getResourceData` / `getHighestTierSubscription` are
+  // stubbed), so a router that forgot to call it fails these.
+  //
+  // The other half is the money path: an inline body must be bounded by the SAME
+  // belt the recipe arm uses, with `maxBuzz` as the ceiling.
+  // ───────────────────────────────────────────────────────────────────────────
+  describe('INLINE arm (mode: inline)', () => {
+    const INLINE_LORA_AIR = 'urn:air:sdxl:lora:civitai:118025@136251';
+
+    function inlineBody(over: Record<string, unknown> = {}) {
+      return {
+        kind: 'customComfy' as const,
+        mode: 'inline' as const,
+        workflow: {
+          '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'sd_xl.safetensors' } },
+          '2': { class_type: 'CLIPTextEncode', inputs: { text: 'a serene lake', clip: ['1', 1] } },
+        },
+        resources: [],
+        maxBuzz: 60,
+        ...over,
+      };
+    }
+
+    function happyInline() {
+      happyUser();
+      mockGetResourceData.mockResolvedValue([
+        { id: 136251, name: 'a lora', canGenerate: true, availability: 'Public' },
+      ]);
+      mockGetHighestTierSubscription.mockResolvedValue(null);
+      happySubmit();
+    }
+
+    it('estimate quotes the declared maxBuzz as the ceiling, with no orchestrator round-trip', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyUser();
+      const result = await caller().estimateWorkflow({
+        blockToken: 'tok',
+        body: inlineBody({ maxBuzz: 77 }),
+      });
+      expect(result.snapshot).toMatchObject({ status: 'pending', cost: { total: 77 } });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('happy path: reserves the declared maxBuzz as the CEILING and stamps it as the step timeout', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      await caller().submitWorkflow({ blockToken: 'tok', body: inlineBody({ maxBuzz: 90 }) });
+      // The whole post-paid spend belt is REUSED — same per-app reservation call
+      // the recipe arm makes, with the declared ceiling.
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 90);
+      const step = mockSubmitWorkflow.mock.calls[0][0].body.steps[0];
+      expect(step.$type).toBe('customComfy');
+      // maxBuzz === stepTimeoutSeconds, BY CONSTRUCTION: 90s → '00:01:30'.
+      expect(step.timeout).toBe('00:01:30');
+    });
+
+    it('🔴 the emitted step input carries ONLY resources/trace/workflow — the body is never spread', async () => {
+      // If the router ever spreads the app's body into the step input, an app
+      // gets `sessionOwnerApiToken` (a Civitai API token forwarded to the
+      // claiming worker) and `comfyImage` (an arbitrary container). The wire
+      // schema's `.strict()` is the first belt; this is the second.
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      await caller().submitWorkflow({ blockToken: 'tok', body: inlineBody() });
+      const input = mockSubmitWorkflow.mock.calls[0][0].body.steps[0].input;
+      expect(Object.keys(input).sort()).toEqual(['resources', 'trace', 'workflow']);
+      expect(input.trace).toBe('binary');
+    });
+
+    it('🔴 GATE 1 IS WIRED: an undeclared AIR in the graph is rejected, with NO reserve and NO submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({
+            workflow: {
+              '1': { class_type: 'LoraLoader', inputs: { lora_name: INLINE_LORA_AIR } },
+            },
+            resources: [],
+          }),
+        })
+      ).rejects.toThrow(/not declared in resources/);
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('🔴 GATE 1 IS WIRED: entitlement runs over the app-supplied resources — a non-generatable version is FORBIDDEN', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      mockGetResourceData.mockResolvedValue([
+        { id: 136251, name: 'a lora', canGenerate: false, availability: 'Public' },
+      ]);
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({ resources: [INLINE_LORA_AIR] }),
+        })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      // The REAL belt ran, with the version id parsed out of the app's AIR.
+      expect(mockGetResourceData).toHaveBeenCalledWith([136251], expect.anything());
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    // 🔴 THE PRIVATE-SUBSCRIPTION BRANCH IS NOT REACHABLE AT THIS SEAM TODAY, AND
+    // THAT IS RECORDED RATHER THAN FORCED. App Blocks is moderator-only
+    // pre-GA (`assertViewerIsModerator` — see the "NON-MOD token → 401" tests
+    // above), so every viewer who can reach a submit is a moderator; and the
+    // belt deliberately exempts moderators from the subscription requirement,
+    // matching the onsite belt it is ported from. A router-level test for it
+    // would therefore be green for the wrong reason (the mod exemption), not
+    // because the gate fired. It IS exercised, over both a subscriber and a
+    // non-subscriber, in `inline-comfy.service.test.ts`.
+    //
+    // This becomes reachable the moment App Blocks opens past mod-only; add the
+    // router-level case then, with a non-moderator subject.
+    it('the belt exempts a MODERATOR from the Private subscription requirement (the live path)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      mockGetResourceData.mockResolvedValue([
+        { id: 136251, name: 'a lora', canGenerate: true, availability: 'Private' },
+      ]);
+      mockGetHighestTierSubscription.mockResolvedValue(null);
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: inlineBody({ resources: [INLINE_LORA_AIR] }),
+      });
+      expect(mockSubmitWorkflow).toHaveBeenCalled();
+      // The exemption is what made it pass — the subscription was never queried.
+      expect(mockGetHighestTierSubscription).not.toHaveBeenCalled();
+    });
+
+    // 🔴 INVERTED, NOT DELETED — see `inline-comfy.service.test.ts`. This case has
+    // now been pointed both ways: it asserted REJECT while the kill switch was
+    // off, ACCEPT while #3663 had it on, and REJECT again now that #3663 is
+    // reverted. Keeping one case that flips with the constant, rather than
+    // deleting and re-adding coverage, is what makes the flag a genuine one-line
+    // switch in both directions.
+    //
+    // 🔴 THE REVERT'S REASON IS THAT THE FLAG GRANTS THE WRONG SPELLING, NOT A
+    // SAFETY POSTURE — AND THAT IS WHY THIS IS A ROUTER TEST AND NOT ONLY A
+    // SERVICE TEST. Measured live against production: a bare `comfy:nodepack`
+    // AIR passes civitai's allowlist and is then 400'd by the ORCHESTRATOR,
+    // which prescribes `comfy:nodepacklayer`. Letting the submit through bought
+    // nothing except a worse error one round-trip later. What this case pins is
+    // that the refusal happens HERE, before any orchestrator call:
+    // `mockSubmitWorkflow` must not be reached at all.
+    it('🔴 a nodepack URN is REJECTED at the router, and never reaches the orchestrator', async () => {
+      const NODEPACK = 'urn:air:comfy:nodepack:comfyregistry:kijai/comfyui-kjnodes@1.4.0';
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({ resources: [NODEPACK] }),
+        })
+      ).rejects.toThrow(/nodepack resources are not permitted/);
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('🔴 …and so is the LAYER spelling the orchestrator prescribes — one voice, not a circle', async () => {
+      // 🔴 THIS REFUSAL IS CIVITAI'S ALONE — the orchestrator ACCEPTS the layer
+      // AIR. Before the revert a developer who followed the orchestrator's
+      // advice landed on the type allowlist's generic `resource AIR type
+      // 'nodepacklayer' is not permitted` and had no way to tell whose gate that
+      // was. Both spellings now take the same informative guard, which says
+      // which side refuses which; this asserts it end-to-end through the router
+      // rather than only at the service. When the layer form is eventually
+      // allowlisted, THIS is the case that should go red and be inverted.
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({
+            resources: ['urn:air:comfy:nodepacklayer:comfyregistry:comfyui-kjnodes@1.0.0'],
+          }),
+        })
+      ).rejects.toThrow(/nodepack resources are not permitted/);
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('🔴 an OCI container-image AIR is rejected at the router too — unchanged by the revert', async () => {
+      // The control that keeps the two cases above honest: `image` was never
+      // keyed off the nodepack flag in either direction, so its rejection must
+      // survive the revert unchanged. Asserting the TYPE guard's own token rather
+      // than the shared tail, because the source guard's message ends in the same
+      // words and would otherwise stand in for it.
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({ resources: ['urn:air:oci:image:ghcr:evil/comfy@v1'] }),
+        })
+      ).rejects.toThrow(/AIR type 'image' is not permitted in an inline workflow/);
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('🔴 GATE 2 IS WIRED: the audited text is the SWEPT GRAPH, not the declared prompt', async () => {
+      // The failure this pins is silent: audit the declared field only, and an
+      // inline graph's real prompt is never moderated while every gate stays
+      // green. Assert the audit was handed the graph's leaf text.
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: inlineBody({
+          prompt: 'a clean declared prompt',
+          workflow: {
+            '2': { class_type: 'CLIPTextEncode', inputs: { text: 'GRAPH_PROMPT_XYZ' } },
+          },
+        }),
+      });
+      expect(mockAuditPromptServer).toHaveBeenCalledTimes(1);
+      const audited = mockAuditPromptServer.mock.calls[0][0].prompt as string;
+      expect(audited).toContain('GRAPH_PROMPT_XYZ');
+      expect(audited).toContain('a clean declared prompt');
+    });
+
+    it('🔴 GATE 2 IS WIRED: a flagged GRAPH prompt blocks the submit even when the declared prompt is clean', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      mockAuditPromptServer.mockRejectedValueOnce(
+        new TRPCError({ code: 'BAD_REQUEST', message: 'Your prompt was flagged' })
+      );
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({
+            prompt: 'a clean declared prompt',
+            workflow: { '2': { class_type: 'CLIPTextEncode', inputs: { text: 'bad' } } },
+          }),
+        })
+      ).rejects.toThrow(/flagged/);
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('the static budget gate still bounds an inline body against the token budget', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ buzzBudget: 50 }));
+      happyInline();
+      const result = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: inlineBody({ maxBuzz: 200 }),
+      });
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(/insufficient buzz budget/);
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('the settle record carries the constant inline labels, not an app-derived one', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      await caller().submitWorkflow({ blockToken: 'tok', body: inlineBody({ maxBuzz: 42 }) });
+      expect(mockPersistCustomComfySettle).toHaveBeenCalledWith(
+        expect.objectContaining({ ceiling: 42, engine: 'inline', recipe: '__inline__' })
+      );
+    });
+
+    it('an inline body is still PAGE-ONLY and still developer-gated', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims()); // model token
+      happyInline();
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: inlineBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('REGRESSION: the RECIPE arm is unaffected — it still runs the recipe entitlement gate', async () => {
+      // The inline belt must not have displaced the recipe path's own gate.
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+      expect(mockResolveCanGenerateForVersions).toHaveBeenCalled();
+      // …and the inline belt was NOT consulted for a recipe body.
+      expect(mockGetResourceData).not.toHaveBeenCalled();
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🔴 ARM ROUTING — the recipe arm has THREE legal spellings, not one.
+    //
+    // `blockCustomComfyBodySchema` declares `mode: z.literal('recipe').optional()`,
+    // so `{…, mode:'recipe', …}` and `{…, mode:undefined, …}` are BOTH valid
+    // recipe bodies, and both leave `mode` as an OWN KEY on the parsed object the
+    // router receives (measured against the repo's zod, not assumed — the parse
+    // output own-keys are `kind,mode,params,recipe` for both). A router that
+    // narrowed on PRESENCE (`'mode' in body`) therefore sent a valid RECIPE body
+    // down the INLINE path: submit died in the graph walk (no `workflow` field →
+    // a 500 on the block's submit) and estimate silently returned
+    // `cost:{total: undefined}` instead of the recipe's estimate. `undefined`
+    // survives the wire (superjson), so an SDK spreading an optional `mode`
+    // variable reaches this — it is not a hand-crafted body.
+    //
+    // Each case below asserts the RECIPE path was taken by something only the
+    // recipe path produces (the recipe's own estimate; the recipe entitlement
+    // gate + a reserve), never by the absence of an error.
+    // ─────────────────────────────────────────────────────────────────────────
+    describe("🔴 recipe-arm routing — an explicit `mode` must NOT reach the inline path", () => {
+      // The three legal recipe spellings, exercised identically. `no mode` is the
+      // control: it was already covered and must stay green.
+      const RECIPE_SPELLINGS: Array<[string, Record<string, unknown>]> = [
+        ['no `mode` key (every deployed body)', {}],
+        ["explicit `mode:'recipe'`", { mode: 'recipe' }],
+        ['`mode: undefined` (an SDK spreading an unset optional)', { mode: undefined }],
+      ];
+
+      for (const [label, modeSpelling] of RECIPE_SPELLINGS) {
+        it(`estimate — ${label} quotes the RECIPE estimate, not an inline ceiling`, async () => {
+          mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+          happyUser();
+          const result = await caller().estimateWorkflow({
+            blockToken: 'tok',
+            body: ccBody(modeSpelling),
+          });
+          // 20 = the zimage-turbo DISPLAY estimate. The inline path would have
+          // read `body.maxBuzz` — absent on a recipe body — and quoted
+          // `{ total: undefined }`, so this is the recipe branch's own output.
+          expect(result.snapshot.cost).toEqual({ total: 20 });
+          expect(typeof result.snapshot.cost.total).toBe('number');
+        });
+
+        it(`submit — ${label} runs the RECIPE gates and reserves normally`, async () => {
+          mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+          happyCcResources();
+          happySubmit();
+          await caller().submitWorkflow({ blockToken: 'tok', body: ccBody(modeSpelling) });
+          // Recipe path: the recipe entitlement gate ran over the recipe's pinned
+          // versions, and the inline entitlement belt was never consulted.
+          expect(mockResolveCanGenerateForVersions).toHaveBeenCalled();
+          expect(mockGetResourceData).not.toHaveBeenCalled();
+          // …and the spend belt reserved the RECIPE's per-engine CEILING (90 for
+          // zimage-turbo). The inline path reserves the body's declared `maxBuzz`,
+          // which a recipe body does not carry — it could never produce 90.
+          expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 90);
+          // The recipe path stamps the NAMED recipe + its engine on the settle
+          // record; the inline path stamps the constants `__inline__` / `inline`.
+          // This is the tell the inline branch cannot fake.
+          expect(mockPersistCustomComfySettle).toHaveBeenCalledWith(
+            expect.objectContaining({
+              ceiling: 90,
+              engine: 'zimage-turbo',
+              recipe: 'seamless-pano-360',
+            })
+          );
+        });
+      }
+    });
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // 🔴 ARM-AWARE REJECTION MESSAGES — the wire's ANSWER, not its verdict.
+    //
+    // These assert the TEXT a developer gets back when a `customComfy` body is
+    // bounced, at the REAL router seam (tRPC's `.input()` parse), because that is
+    // the only surface a developer ever sees. The verdict is unchanged and is
+    // pinned separately by `workflow.schema.inline-comfy.test.ts`'s accept/reject
+    // boundary table — nothing here relaxes `.strict()`.
+    //
+    // WHY THIS IS WORTH TESTS. In a blind dogfood a capable developer holding a
+    // ComfyUI graph guessed `{kind:'customComfy', recipe:'…', graph:{…}, params}`,
+    // got back `Unrecognized key: "graph"`, and concluded the inline arm did not
+    // exist on the wire. It does. The union knows both of its arms at rejection
+    // time; the message now says so, matching how every other rejection on this
+    // platform enumerates what IS valid.
+    //
+    // 🔴 AND THE ENUMERATION MUST NOT BECOME A DISCLOSURE. `CustomComfyInput`
+    // carries fields an app must never set; `.strict()` is what refuses them. The
+    // arm key lists are derived from the arms' own shapes, so they cannot name
+    // one — `NEVER_APP_SETTABLE` below is the guard that says so out loud.
+    // ───────────────────────────────────────────────────────────────────────────
+    describe('🔴 customComfy rejection messages name the arm and enumerate the alternative', () => {
+      // The orchestrator-side `CustomComfyInput` fields the wire deliberately
+      // REJECTS rather than strips. None may appear in a message we emit.
+      // Same list as `workflow.schema.inline-comfy.test.ts`'s forbidden table.
+      const NEVER_APP_SETTABLE = [
+        'sessionOwnerApiToken',
+        'comfyImage',
+        'minVramGb',
+        'sessionId',
+        'useSageAttention',
+        'minimumDurationSeconds',
+        'trace',
+      ];
+
+      /** Submit a body and return the developer-visible error text, or throw if it parsed. */
+      async function rejectionText(body: unknown): Promise<string> {
+        mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+        happyCcResources();
+        happySubmit();
+        try {
+          await caller().submitWorkflow({ blockToken: 'tok', body: body as never });
+        } catch (err) {
+          // tRPC stringifies the ZodError's issues into `message`; that JSON is
+          // literally what came back over the wire in the dogfood.
+          return String((err as Error).message);
+        }
+        throw new Error('expected the body to be REJECTED, but it parsed');
+      }
+
+      /**
+       * The same rejection, parsed back into the issue array tRPC serialised.
+       *
+       * Asserting on the PARSED issue lets a test pin one issue's whole `message`
+       * instead of fishing for substrings in a JSON blob where every `"` is
+       * backslash-escaped. It also fails loudly if the wire shape stops being a
+       * JSON issue array at all, which no substring assertion would notice.
+       */
+      async function rejectionIssues(
+        body: unknown
+      ): Promise<Array<{ code?: string; path?: unknown[]; message?: string }>> {
+        const text = await rejectionText(body);
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          throw new Error(`expected tRPC to return a JSON issue array, got: ${text}`);
+        }
+        if (!Array.isArray(parsed)) {
+          throw new Error(`expected tRPC to return a JSON issue ARRAY, got: ${text}`);
+        }
+        return parsed as Array<{ code?: string; path?: unknown[]; message?: string }>;
+      }
+
+      /** The one `unrecognized_keys` issue's message — asserts there is exactly one. */
+      function soleUnrecognizedKeysMessage(
+        issues: Array<{ code?: string; path?: unknown[]; message?: string }>
+      ): string {
+        const hits = issues.filter((i) => i.code === 'unrecognized_keys');
+        expect(hits.map((h) => h.message)).toHaveLength(1);
+        expect(hits[0].path).toEqual(['body']);
+        return String(hits[0].message);
+      }
+
+      // ─────────────────────────────────────────────────────────────────────────
+      // 🔴 THE ARM BLURBS, PINNED WHOLE — and deliberately NOT derived from the
+      // schema.
+      //
+      // Every message below is ONE concatenated string carrying BOTH arms'
+      // blurbs, so a `toContain` on it sees the UNION of the two key sets and can
+      // never attribute a key to an arm. Under `toContain`, SWAPPING the two arms'
+      // key lists — a message that tells a developer `mode:"recipe"` accepts
+      // `workflow, resources, prompt, negativePrompt, maxBuzz` — is green. That
+      // inversion is precisely the "the message misleads a developer" failure this
+      // whole change exists to remove, so the assertions have to be able to see
+      // it. Same for the echoed key: the static blurb spells the word "graph"
+      // itself, so `toContain('graph')` is satisfied by the blurb whether or not
+      // the rejected key was echoed at all.
+      //
+      // 🔴 ACCEPTED TRADE, DO NOT LOOSEN THIS BACK TO `toContain`. Pinning the
+      // whole string means a purely COSMETIC reword of the message turns these
+      // red. That is the correct trade here — the text IS the deliverable, it is
+      // what a developer reads instead of reading the schema, and a reword should
+      // be a deliberate, reviewed edit rather than something that slips through a
+      // green suite. Rewording? Update these two constants. Adding a public key to
+      // an arm? That is a WIRE CONTRACT change and updating the expected list here
+      // is the point, not friction.
+      //
+      // Written by reading the rendered output, not by re-deriving the template:
+      // `Object.keys(shape)` order is the arms' declaration order in
+      // `workflow.schema.ts`.
+      // ─────────────────────────────────────────────────────────────────────────
+      const RECIPE_ARM =
+        'mode:"recipe" (the default when `mode` is omitted) runs a server-registered recipe by id' +
+        ' and accepts only: kind, mode, recipe, params';
+      const INLINE_ARM =
+        'mode:"inline" carries the ComfyUI graph itself — the graph goes under `workflow` —' +
+        ' and accepts only: kind, mode, workflow, resources, prompt, negativePrompt, maxBuzz';
+
+      // 🔴 THE MOTIVATING BODY, verbatim. `recipe` present pins the RECIPE arm and
+      // `.strict()` refuses `graph` — correct, and previously the whole answer.
+      it('the exact recipe+graph body names the recipe arm AND points at mode:"inline" / `workflow`', async () => {
+        const issues = await rejectionIssues({
+          kind: 'customComfy',
+          recipe: 'starter-comfy-txt2img',
+          graph: { '1': { class_type: 'CheckpointLoaderSimple', inputs: {} } },
+          params: { prompt: 'a cat' },
+        });
+        // The WHOLE message, pinned. In order: the ECHOED offending key (`"graph"`
+        // — not the word "graph" that the inline blurb happens to spell), the arm
+        // the body landed on, that arm's own key list, then the other arm's.
+        expect(soleUnrecognizedKeysMessage(issues)).toBe(
+          'Unrecognized key on a `customComfy` recipe body: "graph"' +
+            ' — a `customComfy` body has two forms.' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+        // It never reached a handler — this is a wire rejection, as before.
+        expect(mockReserveAppSpend).not.toHaveBeenCalled();
+        expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      });
+
+      it('a bare unknown key on a body with NO `mode` still enumerates both arms', async () => {
+        const issues = await rejectionIssues({
+          kind: 'customComfy',
+          recipe: 'starter-comfy-txt2img',
+          params: { prompt: 'a cat' },
+          stpes: 20, // a typo, not a graph — the generic case
+        });
+        // `"stpes"` appears NOWHERE in the static blurbs, so this one also
+        // independently proves the echo is real rather than blurb spill-over.
+        expect(soleUnrecognizedKeysMessage(issues)).toBe(
+          'Unrecognized key on a `customComfy` recipe body: "stpes"' +
+            ' — a `customComfy` body has two forms.' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+      });
+
+      // The other likely guess: drop `recipe`, keep the graph under the wrong key,
+      // and omit `mode` entirely. Lands on the recipe arm too (its `mode` is
+      // `.optional()`), so the same enumeration has to carry the developer.
+      it('a graph-shaped body with NEITHER `mode` nor `recipe` is still told about mode:"inline"', async () => {
+        const issues = await rejectionIssues({
+          kind: 'customComfy',
+          graph: { '1': { class_type: 'CheckpointLoaderSimple', inputs: {} } },
+          maxBuzz: 60,
+        });
+        // TWO unknown keys here, so this row also pins the plural ("keys") and the
+        // echo ORDER — `"graph", "maxBuzz"`, the body's own key order.
+        expect(soleUnrecognizedKeysMessage(issues)).toBe(
+          'Unrecognized keys on a `customComfy` recipe body: "graph", "maxBuzz"' +
+            ' — a `customComfy` body has two forms.' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+        // The pre-existing per-field diagnostics are intact alongside it: the arm
+        // error map returns `undefined` for every other code, so zod's own
+        // messages still arrive at their own paths.
+        expect(issues.filter((i) => i.code !== 'unrecognized_keys').map((i) => i.path)).toEqual([
+          ['body', 'recipe'],
+          ['body', 'params'],
+        ]);
+      });
+
+      it('an unrecognized key on an INLINE body names the inline arm and points back at mode:"recipe"', async () => {
+        const issues = await rejectionIssues(
+          inlineBody({ graph: { '1': { class_type: 'X', inputs: {} } } })
+        );
+        // 🔴 THE MIRROR OF THE RECIPE ROW, and the reason both are pinned whole:
+        // the arm label AND the blurb ORDER invert here (own arm first, other
+        // second). A `toContain` sweep is byte-for-byte identical between this
+        // case and the recipe case above, so it cannot tell them apart at all.
+        expect(soleUnrecognizedKeysMessage(issues)).toBe(
+          'Unrecognized key on a `customComfy` inline body: "graph"' +
+            ' — a `customComfy` body has two forms.' +
+            ` ${INLINE_ARM}. ${RECIPE_ARM}.`
+        );
+      });
+
+      it('an unknown `mode` value names the value it got and enumerates both arms', async () => {
+        const issues = await rejectionIssues({
+          kind: 'customComfy',
+          mode: 'graph',
+          workflow: { '1': { class_type: 'X', inputs: {} } },
+          resources: [],
+          maxBuzz: 60,
+        });
+        // 🔴 NAMING THE VALUE IS THE ENTIRE IMPROVEMENT over zod's bare
+        // `Invalid input` here, so it is the one thing that must not be asserted
+        // by a substring the static blurbs also spell — and `"graph"` is exactly
+        // such a word. Pinned whole.
+        expect(issues).toHaveLength(1);
+        expect(issues[0].code).toBe('invalid_union');
+        expect(issues[0].path).toEqual(['body', 'mode']);
+        expect(issues[0].message).toBe(
+          'Invalid `customComfy` mode: "graph" — expected "recipe" or "inline".' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+      });
+
+      // 🔴 A SECOND PROBE VALUE THAT THE BLURBS DO NOT SPELL. The row above uses
+      // `'graph'` because that is the real dogfood guess, but `'graph'` also
+      // appears in the inline blurb — so on its own it cannot separate "the value
+      // was echoed" from "the blurb happened to contain it". `'reciep'` appears
+      // nowhere in either blurb, which makes the echo the ONLY thing that can put
+      // it in the message.
+      it('an unknown `mode` value the blurbs never spell is still echoed verbatim', async () => {
+        const issues = await rejectionIssues({
+          kind: 'customComfy',
+          mode: 'reciep',
+          recipe: 'starter-comfy-txt2img',
+          params: { prompt: 'a cat' },
+        });
+        expect(issues).toHaveLength(1);
+        expect(issues[0].message).toBe(
+          'Invalid `customComfy` mode: "reciep" — expected "recipe" or "inline".' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+      });
+
+      // A NON-STRING `mode` takes the other branch of the `typeof raw === 'string'`
+      // ternary (`JSON.stringify(raw ?? null)`), which no other row exercises —
+      // so an inverted or dropped branch there is otherwise invisible.
+      it('a NON-STRING `mode` is echoed through the JSON branch, not quoted as a string', async () => {
+        const issues = await rejectionIssues({
+          kind: 'customComfy',
+          mode: 7,
+          recipe: 'starter-comfy-txt2img',
+          params: { prompt: 'a cat' },
+        });
+        expect(issues[0].message).toBe(
+          'Invalid `customComfy` mode: 7 — expected "recipe" or "inline".' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+      });
+
+      // 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — green before this change and
+      // after. A genuinely bad value on a DECLARED inline field is raised by that
+      // field's own schema, not by the object, so the arm error map must not
+      // swallow it: the precise path and zod's own bound message have to survive.
+      //
+      // 🔴 CORRECTION, MEASURED: this does NOT cover the map's
+      // `if (iss.code !== 'unrecognized_keys') return undefined;` early return, and
+      // an earlier version of this comment claimed it did. Deleting that line
+      // leaves this test green — a per-FIELD issue is raised by the FIELD's schema
+      // and never reaches the object's error map, so there is nothing here for the
+      // map to swallow in the first place. The one issue an object schema raises
+      // itself besides `unrecognized_keys` is `invalid_type` on a non-object, which
+      // the outer `kind` discriminator rejects before any arm sees it — so that
+      // line is unreachable from the router entirely. It is pinned where it IS
+      // reachable, on a direct arm parse, in `workflow.schema.inline-comfy.test.ts`.
+      it('INVARIANT: a bad value on a declared inline field keeps its precise per-field message', async () => {
+        const text = await rejectionText(inlineBody({ maxBuzz: 9999 }));
+        expect(text).toContain('maxBuzz');
+        expect(text).toContain('Too big');
+        expect(text).toContain('250');
+        // Not replaced by the arm blurb — this issue is the field's, not the arm's.
+        expect(text).not.toContain('accepts only');
+      });
+
+      // 🔴 THE DISCLOSURE GUARD. A message that enumerates the valid surface is one
+      // edit away from enumerating the invalid one. Every emitted message is
+      // checked against the full never-app-settable list, on whole-word
+      // boundaries so a substring cannot make this pass by accident.
+      it('🔴 no server-only `CustomComfyInput` field name appears in any emitted message', async () => {
+        const texts = [
+          await rejectionText({
+            kind: 'customComfy',
+            recipe: 'starter-comfy-txt2img',
+            graph: {},
+            params: {},
+          }),
+          await rejectionText(inlineBody({ graph: {} })),
+          await rejectionText({
+            kind: 'customComfy',
+            mode: 'graph',
+            workflow: {},
+            resources: [],
+            maxBuzz: 1,
+          }),
+          await rejectionText({ kind: 'customComfy', graph: {}, maxBuzz: 60 }),
+        ];
+        expect(texts).toHaveLength(4);
+        for (const text of texts) {
+          for (const field of NEVER_APP_SETTABLE) {
+            expect(new RegExp(`\\b${field}\\b`).test(text), `"${field}" leaked into: ${text}`).toBe(
+              false
+            );
+          }
+        }
+      });
+
+      // 🔴 POSITIVE CONTROL for the guard above. Without it, a `rejectionText`
+      // helper that silently returned '' — or a regex that can never match —
+      // would make the disclosure guard pass while testing nothing.
+      it('POSITIVE CONTROL: the leak detector DOES fire on a string containing a forbidden name', () => {
+        const planted = 'accepts only: kind, mode, workflow, sessionOwnerApiToken, maxBuzz';
+        const hits = NEVER_APP_SETTABLE.filter((f) => new RegExp(`\\b${f}\\b`).test(planted));
+        expect(hits).toEqual(['sessionOwnerApiToken']);
+      });
+
+      // 🔴 THE ACCEPT SIDE. A message change that also relaxed the gate would look
+      // identical in every assertion above. This is the live proof that a VALID
+      // recipe body with NO `mode` — the shape every deployed app and every
+      // published `@civitai/app-sdk` body sends — still parses AND still submits.
+      it('REGRESSION: a valid recipe body with NO `mode` still parses and reaches the recipe path', async () => {
+        mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+        happyCcResources();
+        happySubmit();
+        await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+        expect(mockResolveCanGenerateForVersions).toHaveBeenCalled();
+        expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 90);
+        expect(mockSubmitWorkflow).toHaveBeenCalled();
+      });
+
+      it('REGRESSION: a valid INLINE body still parses and reaches the inline path', async () => {
+        mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+        happyInline();
+        await caller().submitWorkflow({ blockToken: 'tok', body: inlineBody({ maxBuzz: 90 }) });
+        expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 90);
+        expect(mockSubmitWorkflow).toHaveBeenCalled();
       });
     });
   });

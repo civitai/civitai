@@ -10,6 +10,7 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
+import { resolveClientIp } from '~/server/utils/client-ip';
 import { getRequestBoardDomainColor, getRequestDomainColor } from '~/server/utils/server-domain';
 import type { SessionUser } from '~/types/session';
 import { withSpan } from '~/server/utils/otel-helpers';
@@ -176,7 +177,22 @@ export function rateLimit<TInput = any>(
     // quota; otherwise key on the tRPC path.
     const keyName = options?.sharedKey ?? path.replace('.', ':');
     const cacheKey = `${REDIS_KEYS.TRPC.LIMIT.BASE}:${keyName}` as const;
-    const hashKey = ctx.user?.id?.toString() ?? ctx.ip;
+    // Anonymous callers bucket by client IP, authenticated ones by user id. The
+    // IP comes from the SHARED predicate in `~/server/utils/client-ip` rather
+    // than the general-purpose `ctx.ip`, so this limiter and the public REST
+    // limiter derive the bucket the same way — see that module's doc for which
+    // predicate suits which surface.
+    //
+    // NAMESPACE THE FIELD. User ids and addresses are two different namespaces
+    // and both are written into one hash, where equal strings are one bucket.
+    // The prefix makes the two key spaces disjoint by construction rather than
+    // by whichever values happen not to overlap. Same shape as the public REST
+    // limiter (`~/server/utils/public-api-rate-limit`), deliberately.
+    // `!= null` and not a truthiness test: it must match the nullish semantics of
+    // the `??` this replaced, or a user id of 0 would silently route to the IP
+    // branch. Pinned by the id-0 case in
+    // `src/server/__tests__/middleware.trpc.rate-limit-key.test.ts`.
+    const hashKey = ctx.user?.id != null ? `user:${ctx.user.id}` : `ip:${resolveClientIp(ctx.req)}`;
     const attempts = (await redis.packed.hGet<number[]>(cacheKey, hashKey)) ?? [];
 
     // Check if user can proceed and find the failing limit

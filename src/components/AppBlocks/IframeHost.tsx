@@ -132,8 +132,12 @@ function storageErrorMessage(err: unknown): string {
  *   4. RESIZE_IFRAME updates the iframe height, clamped to manifest bounds.
  *   5. Page-visibility change drives SUSPEND / RESUME.
  *   6. Token rotation triggers TOKEN_REFRESH (host-pushed) with the new
- *      wrapped token. REQUEST_TOKEN from the iframe is answered with
- *      TOKEN_REFRESH_RESPONSE so block-initiated refreshes also work.
+ *      wrapped token. A block-initiated REQUEST_TOKEN is answered CONDITIONALLY:
+ *      one carrying a STRING requestId (`''` included) gets a
+ *      TOKEN_REFRESH_RESPONSE echoing that id; one with no usable requestId gets
+ *      a TOKEN_REFRESH PUSH, because the SDK correlates strictly by requestId
+ *      and an uncorrelated response can never resolve a caller's refresh(). See
+ *      the handler's own comment for the full rationale.
  *   7. Unmount sends SUSPEND and removes listeners.
  *
  * Origin security: BLOCK_INIT is posted to `new URL(manifest.iframe.src).origin`
@@ -608,6 +612,17 @@ export function IframeHost({
   // used everywhere else modelCtx.slotId is read in this component.
   const slotId = modelCtx.slotId ?? 'model.sidebar_top';
 
+  // The viewer's ACTIVE color scheme, as one value.
+  //
+  // 🔴 ONE PLACE, on purpose. This used to be `modelCtx.theme ?? 'light'`
+  // open-coded at each of its two readers (the init-fragment fields and the
+  // BLOCK_INIT payload); the THEME_CHANGE push below is a THIRD reader, and
+  // three copies of a defaulting expression is how they drift. It is a plain
+  // derived value (ModelVersionDetails threads a live `useComputedColorScheme`
+  // down through the slot context), so it re-renders this component on a toggle
+  // — which is exactly what makes the effect below fire.
+  const activeTheme: 'light' | 'dark' = modelCtx.theme ?? 'light';
+
   // The publisher's declared src. The rendered `src` adds the init-fragment
   // fast path on top ONLY when this block is gated on for it (see
   // blockInitFragmentGate.ts — off by default for every block). The ORIGIN is
@@ -617,7 +632,7 @@ export function IframeHost({
   const iframeSrc = useBlockIframeSrc(
     baseIframeSrc,
     {
-      theme: modelCtx.theme ?? 'light',
+      theme: activeTheme,
       renderMode: install.renderMode,
       blockInstanceId: install.blockInstanceId,
     },
@@ -783,7 +798,7 @@ export function IframeHost({
     // id/username/status are exposed to the iframe. Built via the same pure
     // projection module so the allowlist lives in one tested place.
     viewer: projectBlockInitViewer(context),
-    theme: modelCtx.theme ?? 'light',
+    theme: activeTheme,
     renderMode: install.renderMode,
     // Advisory maturity signal — server-authoritative values from the mint.
     ...projectBlockInitMaturity({ domain, maxBrowsingLevel }),
@@ -827,9 +842,69 @@ export function IframeHost({
     });
   }, [token, expiresAt, buzzBudget, grantedScopes, send]);
 
+  // 🔴 DECLARED BEFORE THE INIT-HANDSHAKE EFFECT ON PURPOSE, and PageBlockHost
+  // places it the same way. React runs effects in declaration order, so on the
+  // FIRST commit this must run while `initSentRef` is still false — otherwise
+  // the gate in it is INERT on mount and the host emits a redundant
+  // THEME_CHANGE immediately after its own BLOCK_INIT (measured on the page
+  // host, where this effect originally sat after the init effect). Reordering
+  // silently re-creates that, which is why
+  // `IframeHostThemeChange.browser.test.tsx` asserts the mount sequence.
+  // Push a THEME_CHANGE when the viewer toggles light/dark WHILE the block is
+  // mounted. Without it the block keeps its mount-time theme until reloaded:
+  // BLOCK_INIT is deduped SDK-side (only the first is honored) and
+  // `useBlockIframeSrc` deliberately FREEZES the URL fragment at mount, so
+  // neither existing channel can carry a later value.
+  //
+  // 🔴 THE SAME WIRING MUST EXIST IN PageBlockHost.tsx. The two hosts do NOT
+  // share a bridge — each registers its own postMessage handlers by hand (the
+  // gotcha-#73 class `hostHandlerParity.ts` documents) — so wiring one surface
+  // and not the other leaves half the blocks stuck. `hostHandlerParity` cannot
+  // catch this one: its INVENTORY covers block→host messages, and this is a
+  // host→block push. The per-surface browser tests are the coverage.
+  //
+  // Gated on `initSentRef` for the same reason TOKEN_REFRESH is: before the FIRST
+  // BLOCK_INIT post there is nothing to talk to. (Note the guard flips on that
+  // POST, not on BLOCK_READY — so a toggle between the post and the ack does
+  // push, into a frame that may not be listening yet. That is harmless and NOT
+  // the safety net: `buildInitPayload` reads `activeTheme` fresh on every retry
+  // tick, so the BLOCK_INIT the block finally accepts carries the current theme
+  // regardless of whether any push was heard.) Deps are [activeTheme, send] only
+  // — this must fire on a THEME change, never on an unrelated re-render.
+  useEffect(() => {
+    if (!initSentRef.current) return;
+    send('THEME_CHANGE', { theme: activeTheme });
+  }, [activeTheme, send]);
+
   // SDK request-driven flow: iframe asks for the current token (e.g. right
   // before an expensive call) and we reply with the latest wrapped value.
   // Pairs with the push flow above — both produce the same payload shape.
+  //
+  // 🔴 A `TOKEN_REFRESH_RESPONSE` WITHOUT A `requestId` IS NOT A REPLY. The
+  // block side's `refresh()` awaits a response correlated STRICTLY by
+  // `requestId` — it resolves the pending promise for that id and nothing else —
+  // so an uncorrelated reply has never resolved anyone's `refresh()`. Where it
+  // appeared to work at all it was via the SDK's incidental side effect of
+  // snapshotting whatever token rides on any `TOKEN_REFRESH_RESPONSE`, while the
+  // caller's promise sat there until its own timeout.
+  //
+  // The old code spread `...(requestId ? { requestId } : {})` — a TRUTHINESS
+  // test, so it ALSO dropped an empty-string requestId, which a block can
+  // legitimately have minted and be waiting on. Now: whatever STRING the block
+  // sent is echoed back verbatim (`''` included), so a reply always correlates.
+  //
+  // And when the inbound message carried no usable requestId at all, we send a
+  // `TOKEN_REFRESH` PUSH instead of a fabricated-id reply — because that is
+  // exactly what the message semantically is: a host-initiated token rotation
+  // with nothing to correlate to. It reaches the block through the same handler
+  // as the H-3 rotation push above (which is the only path that ever actually
+  // delivered a token in this case), and it does not put an unanswerable
+  // `TOKEN_REFRESH_RESPONSE` on the wire for the SDK to discard.
+  //
+  // 🔴 PageBlockHost.tsx CARRIES THE SAME LOGIC AND MUST STAY IN STEP. The two
+  // hosts register their postMessage handlers by hand and share no bridge, so
+  // fixing one leaves half the fleet on the broken shape — each surface has its
+  // own browser test for this.
   useEffect(() => {
     const off = onMessage<{ requestId?: string } | undefined>('REQUEST_TOKEN', (raw) => {
       if (!token || !initSentRef.current) return;
@@ -837,15 +912,17 @@ export function IframeHost({
         raw && typeof raw === 'object' && typeof raw.requestId === 'string'
           ? raw.requestId
           : undefined;
-      send('TOKEN_REFRESH_RESPONSE', {
-        ...(requestId ? { requestId } : {}),
-        token: {
-          raw: token,
-          scopes: grantedScopes,
-          expiresAt,
-          ...(buzzBudget !== undefined ? { buzzBudget } : {}),
-        },
-      });
+      const wrapped = {
+        raw: token,
+        scopes: grantedScopes,
+        expiresAt,
+        ...(buzzBudget !== undefined ? { buzzBudget } : {}),
+      };
+      if (requestId === undefined) {
+        send('TOKEN_REFRESH', { token: wrapped });
+        return;
+      }
+      send('TOKEN_REFRESH_RESPONSE', { requestId, token: wrapped });
     });
     return off;
   }, [token, expiresAt, buzzBudget, grantedScopes, send, onMessage]);

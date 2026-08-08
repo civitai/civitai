@@ -16,6 +16,7 @@
     capFor,
     title,
     perLabel,
+    expanded = false,
   }: {
     value: number | null | undefined;
     cap: number;
@@ -24,6 +25,9 @@
     title: string;
     /** Denominator for a ratio-domain cap, e.g. '10 generations'. Omitted for flat prices. */
     perLabel?: string;
+    /** Show the tiers inline instead of behind the trigger — for a creator already over their cap, who
+     * shouldn't have to click to find out what they'd earn. */
+    expanded?: boolean;
   } = $props();
 
   const show = $derived(shouldUpsellCap({ value, cap, tier: capTier }));
@@ -36,34 +40,42 @@
         : `${n.toLocaleString()} ⚡`;
 </script>
 
-{#if show}
+{#snippet capRows()}
+  <p class="mb-2 text-sm font-medium text-white">{title}</p>
+  <table class="w-full border-collapse text-xs">
+    <tbody>
+      {#each rows as row (row.tier)}
+        {@const isCurrent = row.tier === capTier}
+        <tr class={isCurrent ? 'font-semibold text-white' : 'text-dark-2'}>
+          <td class="py-1">
+            {row.label}
+            {#if isCurrent}<span class="ml-1 font-normal text-blue-4">· you</span>{/if}
+          </td>
+          <td class="py-1 text-right tabular-nums">{fmt(row.cap)}</td>
+        </tr>
+      {/each}
+    </tbody>
+  </table>
+  <Button
+    href={`${CIVITAI_MEMBERSHIP_URL}?buzzType=green`}
+    target="_blank"
+    variant="secondary"
+    size="sm"
+    class="mt-3 w-full">See membership options</Button
+  >
+{/snippet}
+
+{#if expanded}
+  <div class="w-full rounded-lg border border-dark-4 bg-dark-7 p-3">
+    {@render capRows()}
+  </div>
+{:else if show}
   <Popover.Root>
     <Popover.Trigger class="text-xs text-blue-4 underline-offset-2 hover:underline">
       Want to charge more?
     </Popover.Trigger>
     <Popover.Content class="w-72 border-dark-4 bg-dark-7 p-3 text-sm text-white">
-      <p class="mb-2 text-sm font-medium text-white">{title}</p>
-      <table class="w-full border-collapse text-xs">
-        <tbody>
-          {#each rows as row (row.tier)}
-            {@const isCurrent = row.tier === capTier}
-            <tr class={isCurrent ? 'font-semibold text-white' : 'text-dark-2'}>
-              <td class="py-1">
-                {row.label}
-                {#if isCurrent}<span class="ml-1 font-normal text-blue-4">· you</span>{/if}
-              </td>
-              <td class="py-1 text-right tabular-nums">{fmt(row.cap)}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-      <Button
-        href={`${CIVITAI_MEMBERSHIP_URL}?buzzType=green`}
-        target="_blank"
-        variant="secondary"
-        size="sm"
-        class="mt-3 w-full">See membership options</Button
-      >
+      {@render capRows()}
     </Popover.Content>
   </Popover.Root>
 {/if}

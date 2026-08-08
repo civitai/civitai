@@ -255,24 +255,43 @@ export const grantCosmetics = async ({
 export async function revokeCosmeticsFromUsers({
   userIds,
   cosmeticIds,
+  claimKeys,
 }: {
   userIds: number[];
   cosmeticIds: number[];
+  /**
+   * Restricts the revoke to holdings obtained through specific grants. A pack
+   * takedown needs this: the same cosmetic may also have been bought on its own,
+   * and that purchase is not what was taken down.
+   *
+   * An EMPTY array means "no grant matches", which revokes nothing. Treating it
+   * as absent would widen a scoped revoke into an unscoped one — for a pack that
+   * never sold, every holder of every member.
+   */
+  claimKeys?: string[];
 }) {
+  if (claimKeys && !claimKeys.length) return { revoked: 0 };
+
   const uniqueUserIds = [...new Set(userIds)];
   const uniqueCosmeticIds = [...new Set(cosmeticIds)];
+  const claimKeyFilter = claimKeys ? { claimKey: { in: [...new Set(claimKeys)] } } : {};
 
   const equipped = await dbWrite.userCosmetic.findMany({
     where: {
       userId: { in: uniqueUserIds },
       cosmeticId: { in: uniqueCosmeticIds },
+      ...claimKeyFilter,
       equippedToId: { not: null },
     },
     select: { equippedToId: true, equippedToType: true },
   });
 
   const { count } = await dbWrite.userCosmetic.deleteMany({
-    where: { userId: { in: uniqueUserIds }, cosmeticId: { in: uniqueCosmeticIds } },
+    where: {
+      userId: { in: uniqueUserIds },
+      cosmeticId: { in: uniqueCosmeticIds },
+      ...claimKeyFilter,
+    },
   });
 
   await userCosmeticCache.refresh(uniqueUserIds);

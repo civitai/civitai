@@ -136,6 +136,12 @@ import {
   snapshotFromWorkflow,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
 } from '~/server/services/blocks/workflow.service';
+import { projectModelSubstitutions } from '~/shared/data-graph/generation/model-substitution';
+import {
+  assertInlineGraphAirsDeclared,
+  assertViewerEntitledToInlineResources,
+  collectInlineAuditText,
+} from '~/server/services/blocks/inline-comfy.service';
 // App Blocks customComfy bridge (v1). The recipe registry is the code-reviewed
 // trust root; the schema already gated `recipe` to a registered id, so `getRecipe`
 // never returns undefined for a schema-valid body (defensively re-checked).
@@ -458,12 +464,30 @@ function resolveBlockMaturity(claims: { maxBrowsingLevel?: number }): {
 //
 // SCOPE — what this gate does NOT cover: early-access `hasAccess` and the
 // availability=Private subscription requirement are NOT checked here.
-// `resolveCanGenerateForVersions` deliberately omits both. They are enforced
-// downstream by the orchestrator resource belt in `getGenerationResourceData`
-// (server/services/orchestrator/common.ts): `getResourceData` folds
-// `canGenerate = hasAccess && canGenerate` and the Private-resource path
-// throws without an active subscription — and BOTH the whatIf (estimate) and
-// the real (submit) steps run through that belt BEFORE any Buzz reservation.
+// `resolveCanGenerateForVersions` deliberately omits both.
+//
+// 🔴 NAMES CORRECTED. This paragraph used to point at "the orchestrator resource
+// belt in `getGenerationResourceData` (server/services/orchestrator/common.ts)".
+// MEASURED: that file does not exist and that function does not exist anywhere
+// in `src` — the name appeared only in this comment and two copies of it. The
+// belt IS real, so the instruction below still stands; only the address was
+// wrong, and a wrong address on a "DO NOT remove that belt" note is how a
+// maintainer concludes there is no belt to preserve.
+//
+// The belt, by its real names: `validateAndEnrichResources`
+// (server/services/orchestrator/orchestration-new.service) calls
+// `getResourceData` (server/services/generation/generation.service), which folds
+// `applyPaidAccessGating` internally — and that sets
+// `canGenerate = hasAccess && canGenerate` — then throws without an active
+// subscription for a Private/epoch resource. BOTH the whatIf (estimate) and the
+// real (submit) steps run through it BEFORE any Buzz reservation.
+//
+// 🔴 THAT BELT IS ON THE GENERATION-GRAPH PATH ONLY. It runs for `textToImage`,
+// which is what this gate serves. It does NOT run for a raw `customComfy` step,
+// whose `resources` AIR array goes to the orchestrator directly — see
+// `services/blocks/inline-comfy.service`, which is the equivalent belt for the
+// inline arm, and `services/blocks/recipes/index.ts` for the recipe arm.
+//
 // DO NOT remove that belt assuming this pre-spend gate already covers
 // early-access / Private — it does not.
 //
@@ -939,12 +963,35 @@ function isRedCapableRequest(ctx: { req?: { headers?: { host?: string } } }): bo
 /**
  * Manifest-level variant of {@link assertLaunchSlotForCaller} for the
  * subscription path, where the slot isn't an input — it's implied by the app's
- * manifest targets. A model-slot app (the only kind that takes a subscription;
- * page apps are stateless and never subscribed) is non-launch, so a non-mod is
- * rejected. A moderator is grandfathered. An app is launch-eligible iff it
- * declares a page AND `app.page` is a launch slot (mirrors the service's
- * isAppLaunchEligible / the public-read filter, keeping the allowlist the single
- * source of truth).
+ * manifest. A moderator is grandfathered. Everyone else passes iff the app is
+ * launch-eligible: it declares a page AND `app.page` is a launch slot (mirrors
+ * the service's isAppLaunchEligible / the public-read filter, keeping the
+ * allowlist the single source of truth).
+ *
+ * 🔴 WHAT THIS DOES NOT DO — read before relying on it. An earlier version of
+ * this comment claimed a non-mod is "always rejected" here, on the reasoning
+ * that only a MODEL-slot app takes a subscription and model slots are
+ * non-launch. That is not what the code does. `app.page` IS in
+ * `LAUNCH_SLOT_IDS`, so `isLaunchSlot(PAGE_SLOT_ID)` is a compile-time-constant
+ * `true` and the predicate below reduces to `if (declaresPage) return`. Every
+ * approved app in production declares `page.path`, so this gate ADMITS all of
+ * them for a non-mod caller.
+ *
+ * That is currently harmless only because `enforceAppBlocksFlag` is mod-only —
+ * the flag, not this function, is what keeps non-mods off the path. Neither
+ * this gate nor `BlockRegistry.upsertSubscription` (which applies no slot check
+ * at all) stops a `block_user_subscriptions` row being written against a PAGE
+ * app, which is stateless by decision (`src/pages/apps/run/[slug]/
+ * [[...path]].tsx` — "STATELESS (Decision 2): no `block_user_subscriptions`
+ * row, no migration") and has no UI for managing one. So widening
+ * `app-blocks-enabled` past moderators would start writing invisible
+ * subscription rows for stateless apps unless a slot check is added first.
+ *
+ * Behaviour is deliberately UNCHANGED here — this is a comment correction plus
+ * the test that pins what actually happens (`blocks.router.subscriptions.test.
+ * ts`, "non-mod + PAGE app → ADMITTED"). If you intend to close the hole, the
+ * fix is a `hasInstallSlot(manifest)` check on the subscription path, not an
+ * edit to this doc block.
  */
 function assertLaunchAppForCaller(
   ctx: { user?: { id: number; isModerator?: boolean } },
@@ -1044,9 +1091,7 @@ async function createBlockTextToImageStep(opts: {
   // object — so it describes THIS submit and no one else's. Behaviour is
   // unchanged; the caller folds this into the snapshot so the block can detect
   // that it was billed for a model it did not ask for.
-  const modelSubstitutions = externalCtx.modelSubstitutions
-    ?.list()
-    .map(({ requested, applied, reason }) => ({ requested, applied, reason }));
+  const modelSubstitutions = projectModelSubstitutions(externalCtx.modelSubstitutions);
 
   // 🔴 PERSIST it on the workflow's own metadata, not only on the submit reply.
   // A block renders from the TERMINAL POLL (the only snapshot carrying
@@ -2988,11 +3033,14 @@ export const blocksRouter = router({
       if (block.status !== 'approved') {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'App block is not approved' });
       }
-      // PAGE-ONLY LAUNCH GATE: a subscription only ever attaches a MODEL-slot
-      // app (page apps are stateless — Decision 2 — and never subscribed), so
-      // for the public (non-mod) audience this is always a non-launch app and is
-      // rejected. Moderators are grandfathered. Resolves launch-eligibility from
-      // the app's manifest (declares a page) since the slot isn't an input here.
+      // PAGE-ONLY LAUNCH GATE: resolves launch-eligibility from the app's
+      // manifest (declares a page) since the slot isn't an input here.
+      // Moderators are grandfathered; a non-mod is rejected for a MODEL-slot
+      // app. It does NOT reject a non-mod for a page app — see the 🔴 note on
+      // assertLaunchAppForCaller, and note that nothing below applies a slot
+      // check either, so a page app CAN take a subscription row today. What
+      // keeps non-mods off this path is `enforceAppBlocksFlag` (mod-only), not
+      // this call.
       assertLaunchAppForCaller(ctx, block.manifest);
       // Manifest-driven settings validation. The 4KB cap from the router-
       // level settingsSchema has already fired; this pass enforces the
@@ -5339,16 +5387,32 @@ export const blocksRouter = router({
     //     requested scope against `ALL_SCOPES` on purpose (clamping to Full would drop
     //     a legitimately-requested opt-in bit), so a token's ceiling is its client's
     //     `allowedScopes | UserRead`, not Full.
-    //   - The one client exceeding Full (civitai-cli, 100663297) was written by a RAW SQL
-    //     migration, which no zod schema governs.
+    //   - The one client exceeding Full (civitai-cli, now 100777985) was written by RAW SQL
+    //     MIGRATIONS, which no zod schema governs.
     //   - `appblk-*` clients get `allowedScopes` written directly by
     //     publish-request.service (also bypassing zod). Safe by construction, not by cap:
     //     `deriveOauthBitmaskFromBlockScopes` maps only bits below 25, and those clients
     //     carry `grants: []` so they cannot mint an account bearer token at all.
-    // 100663297 is not a superset of Full (it carries bit 0 and none of 1..24), so the
-    // flip is unreachable — but that last part rests on INSPECTION of that migration,
-    // not on a cap. If a future migration grants a client `Full | <some opt-in bit>`,
-    // this gate flips for it and no test will catch it.
+    // 100777985 is not a superset of Full: it carries bits 0, 14, 15, 16, 25 and 26 —
+    // UserRead, AIServicesRead, AIServicesWrite, BuzzRead, AppBlocksSubmit,
+    // AppBlocksDevTunnel — and NONE of 1..13 or 17..24, so it does not contain Full
+    // (33554431) and the flip stays unreachable for it. (Bits 14/15/16 were added by
+    // `20260806140000_widen_civitai_cli_oauth_client_ai_services_scopes` so the
+    // `civitai login` token can run `civitai generate` — issue #3681.)
+    // 🔴 That last part NO LONGER rests on inspection alone. The migration surface is
+    // now pinned by `src/server/services/oauth/__tests__/oauth-client-scope-grants.test.ts`,
+    // which enumerates every migration whose LIVE SQL writes `"OauthClient"."allowedScopes"`
+    // off the tree, reconciles the set against a declared table, pins each grant's whole
+    // statement verbatim, folds the grants per client — SEEDED FROM THE COLUMN DEFAULT
+    // (Full), not from 0 — and fails if any client would hold a STRICT superset of Full.
+    // The seed is what makes the claim real: the likely way this gate flips is a migration
+    // that ORs one opt-in bit onto a row created with the column default, landing on
+    // `Full | <bit>`; folding from 0 read that same migration as granting just `<bit>` and
+    // passed clean. Verified by planting exactly that migration and watching the guard go
+    // red on `allowedScopes=100663295`.
+    // What that guard still cannot see is a grant written OUTSIDE a migration (a hand-run
+    // UPDATE against a database), and it cannot prove what any environment's row actually
+    // holds — these migrations are manual-apply.
     //
     // Scope provisioning: the civitai-cli client's allowedScopes migration sets bit 25
     // and the login token requests it, so no NEW migration is needed here. Note the
@@ -5527,8 +5591,15 @@ export const blocksRouter = router({
       const { addCollaborator } = await import('~/server/services/blocks/forgejo.service');
 
       const { forgejoUsername, token } = await ensureForgejoIdentity(ctx.user!.id);
-      // Idempotent: grants write on this slug's repo (no-op if already a
-      // collaborator). The repo lives under civitai-apps/<slug>.
+      // Grants AT LEAST write on this slug's repo — `addCollaborator` reads the
+      // current level first and does not lower it, so an existing admin/owner is
+      // left untouched. This is NOT "idempotent" in the Forgejo sense the old
+      // comment claimed: the underlying PUT is a SET that applies DOWNGRADES
+      // too (measured on 15.0.6), which is precisely why the read-before-write
+      // lives in the service. That read-then-write is NOT atomic — see the
+      // TOCTOU note on `addCollaborator` — so "does not lower it" describes the
+      // sequential case, not this proc racing the CLI one.
+      // The repo lives under civitai-apps/<slug>.
       await addCollaborator({ slug, username: forgejoUsername, permission: 'write' });
 
       // Browser-facing host (clone via Cloudflare → oauth2-proxy is bypassed by
@@ -5994,8 +6065,19 @@ export const blocksRouter = router({
       );
       const { addCollaborator } = await import('~/server/services/blocks/forgejo.service');
       const { forgejoUsername, token } = await ensureForgejoIdentity(ctx.user!.id);
-      // Read is enough to pull/sync; grant `read` (idempotent). getMyAppRepo
-      // grants `write` for the push flow — the CLI `pull` only needs read.
+      // Read is enough to pull/sync, so `read` is what this asks for. It is a
+      // grant-AT-LEAST, not a set: `addCollaborator` reads the current level and
+      // skips the PUT when it is already higher, so an author who got `write`
+      // from getMyAppRepo's push flow keeps it. That is load-bearing rather than
+      // defensive — the raw PUT this replaced answered 204 for a DOWNGRADE just
+      // as it does for a grant (measured on Forgejo 15.0.6), so `civitai app
+      // pull` silently stripped push access from the author's own repo and no
+      // status code distinguished it from success. Measured with the
+      // `write:repository` PAT this flow mints: at `read` a clone succeeds but a
+      // push is rejected, so the downgrade genuinely broke authors' pushes.
+      // The old comment called that "idempotent"; the API has no such property.
+      // The read-then-write is not atomic, so a call racing getMyAppRepo can
+      // still land on `read` — see the TOCTOU note on `addCollaborator`.
       await addCollaborator({ slug, username: forgejoUsername, permission: 'read' });
 
       const publicHost = env.FORGEJO_PUBLIC_URL.replace(/^https?:\/\//, '').replace(/\/$/, '');
@@ -6130,6 +6212,46 @@ async function getBlockSessionUser(userId: number): Promise<SessionUser> {
 
 type BlockClaims = NonNullable<Awaited<ReturnType<typeof verifyBlockToken>>>;
 type CustomComfyBody = Extract<BlockWorkflowBody, { kind: 'customComfy' }>;
+/** The INLINE arm (`mode:'inline'`) — carries the ComfyUI graph itself. */
+type CustomComfyInlineBody = Extract<CustomComfyBody, { mode: 'inline' }>;
+/** The RECIPE arm — names a server-authored graph. Unchanged from v1. */
+type CustomComfyRecipeBody = Exclude<CustomComfyBody, CustomComfyInlineBody>;
+
+/**
+ * Narrow a `customComfy` body to its INLINE arm, or `null` for the recipe arm.
+ *
+ * 🔴 KEYED ON THE VALUE, NOT ON PRESENCE — `'mode' in body` IS WRONG HERE, AND
+ * THE DIFFERENCE IS A 500. The recipe arm declares `mode: z.literal('recipe')
+ * .optional()` (see `blockCustomComfyBodySchema`), so it is NOT a mode-less arm:
+ * `mode` is a legal read across the union, and THREE bodies parse as recipes —
+ * `{kind,recipe,params}` (no key), `{…, mode:'recipe', …}` and
+ * `{…, mode:undefined, …}`. The latter two set `mode` as an OWN key, so a
+ * presence test routes a valid RECIPE body down the inline path: submit then
+ * dies in the graph walk (the inline body's `workflow` is absent) and estimate
+ * silently quotes `cost.total: undefined` instead of the recipe's estimate.
+ * `undefined` survives the wire (superjson), so an SDK spreading an optional
+ * `mode` variable reaches this. Pinned by the `mode:'recipe'` / `mode:undefined`
+ * routing tests in `blocks.router.workflow.test.ts`.
+ *
+ * The `.optional()` on the recipe arm is itself load-bearing and cannot be
+ * dropped — see the union comment in `schema/blocks/workflow.schema.ts` for why
+ * `.default('recipe')` rejects every deployed body.
+ */
+function isInlineComfyBody(body: CustomComfyBody): body is CustomComfyInlineBody {
+  return body.mode === 'inline';
+}
+
+/**
+ * The settle-time observability labels for an inline submit.
+ *
+ * Constant, NOT derived from the app or the block — `civitai_app_block_customcomfy_*`
+ * is labelled by these, and labelling by `appBlockId` would make the metric's
+ * cardinality grow with the app catalogue. An inline graph has no engine and no
+ * recipe, so both read as the same constant and every inline job aggregates
+ * together, which is the only honest grouping available.
+ */
+const INLINE_RECIPE_LABEL = '__inline__';
+const INLINE_ENGINE_LABEL = 'inline';
 
 /**
  * Resolve the recipe from the (schema-gated) `recipe` id. The wire schema's
@@ -6137,7 +6259,7 @@ type CustomComfyBody = Extract<BlockWorkflowBody, { kind: 'customComfy' }>;
  * union, so this never returns undefined for a schema-valid body — the guard is
  * defense-in-depth against a registry/schema desync. Fail closed.
  */
-function resolveCustomComfyRecipe(body: CustomComfyBody) {
+function resolveCustomComfyRecipe(body: CustomComfyRecipeBody) {
   const recipe = getRecipe(body.recipe);
   if (!recipe) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'unknown recipe' });
@@ -6168,6 +6290,30 @@ async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: Cu
   }
   await assertAppBlocksEnabledForTokenUser(userId);
   await assertViewerIsAppDeveloper(userId);
+
+  // ── INLINE arm. There is NO honest per-graph number to quote and no way to
+  // derive one: the orchestrator forwards the graph opaquely and cannot price
+  // it, and a real whatIf returns 0 for customComfy anyway. The declared
+  // `maxBuzz` ceiling IS the honest answer, because it is PHYSICALLY enforced —
+  // the server stamps `stepTimeoutSeconds = maxBuzz` as the step timeout, the
+  // job is cancelled there, and settle-to-actual refunds the difference. The
+  // user is quoted a true upper bound and charged the real cost.
+  //
+  // 🔴 SURFACE THIS AS "UP TO N BUZZ", NOT AS A PRICE. `cost.total` is the same
+  // field the txt2img path fills with a whatIf estimate, so a UI that renders it
+  // as a definite price will overstate an inline job's cost. That is a copy
+  // change in `@civitai/app-sdk` / the block, tracked separately — nothing here
+  // edits another repo.
+  if (isInlineComfyBody(body)) {
+    return {
+      snapshot: {
+        workflowId: 'wf_estimate',
+        status: 'pending' as const,
+        cost: { total: body.maxBuzz },
+      },
+    };
+  }
+
   const recipe = resolveCustomComfyRecipe(body);
   // Parse through the recipe's OWN `.strict()` schema so the engine (which drives
   // the per-engine display estimate) is validated/bounded; an invalid param
@@ -6230,16 +6376,49 @@ async function submitCustomComfyWorkflow(opts: {
   await assertAppBlocksEnabledForTokenUser(userId);
   await assertViewerIsAppDeveloper(userId);
 
-  const recipe = resolveCustomComfyRecipe(body);
+  // Narrow ONCE, into two mutually-exclusive locals. Exactly one is non-null for
+  // any schema-valid body, which is what lets the shared belt below stay a single
+  // code path instead of two forked copies of the spend logic.
+  const inlineBody = isInlineComfyBody(body) ? body : null;
+  const recipeBody = isInlineComfyBody(body) ? null : body;
+  const recipe = recipeBody ? resolveCustomComfyRecipe(recipeBody) : null;
   // The recipe's OWN `.strict()` schema is the real param contract (the wire
   // schema only gated `recipe`); an invalid param throws → fail-closed.
-  const params = recipe.paramSchema.parse(body.params);
+  const params = recipe && recipeBody ? recipe.paramSchema.parse(recipeBody.params) : null;
 
   const user = await getBlockSessionUser(userId);
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
   // Honor a money-page account pick (preferred-first, domain-clamped) as txt2img;
-  // absent → Auto.
-  const currencies = resolveBlockCurrenciesForAccount(isGreen, params.accountType);
+  // absent → Auto. An inline body carries no account pick (its `.strict()` wire
+  // schema has no `accountType`), so it always resolves to Auto.
+  const currencies = resolveBlockCurrenciesForAccount(isGreen, params?.accountType);
+
+  // ── INLINE arm: replace CODE REVIEW with three mechanical gates, in the same
+  // slots the recipe arm uses. Order matters and matches the recipe arm exactly:
+  // every one of these runs BEFORE the orchestrator token, before any spend
+  // reservation and before the submit, so a rejection costs nothing and has
+  // nothing to refund. All three THROW; none returns a verdict a caller can
+  // forget to read. Full reasoning in `services/blocks/inline-comfy.service`.
+  let inlineAuditText = '';
+  if (inlineBody) {
+    // (a) CONTAINMENT — every AIR in the graph must be declared in `resources`,
+    //     which is what makes gating that flat array sufficient.
+    assertInlineGraphAirsDeclared(inlineBody.workflow, inlineBody.resources);
+    // (b) ENTITLEMENT — the real belt (early-access `hasAccess` + Private
+    //     subscription + anti-drop + anti-substitute) over the declared AIRs.
+    await assertViewerEntitledToInlineResources({
+      airs: inlineBody.resources,
+      user: { id: userId, isModerator: !!user.isModerator },
+    });
+    // (c) The MODERATION SWEEP — collected here, audited in the shared audit call
+    //     below. An inline graph carries its prompts inside `CLIPTextEncode`
+    //     nodes, so auditing a declared field alone would make moderation a
+    //     silent no-op.
+    inlineAuditText = collectInlineAuditText({
+      prompt: inlineBody.prompt,
+      graph: inlineBody.workflow,
+    });
+  }
 
   // ── Entitlement gate (plan §6). A raw customComfy step submits its `resources`
   // AIR array DIRECTLY, bypassing the generation-graph path's automatic
@@ -6249,8 +6428,8 @@ async function submitCustomComfyWorkflow(opts: {
   // point at a gated / early-access / Private / unpublished version without the
   // belt catching it. The huggingface staticAirs carry no civitai entitlement
   // (exempt-by-construction). checkpointPolicy:'pinned' → no user checkpoint in v1.
-  const versionIds = recipeCivitaiVersionIds(recipe);
-  if (versionIds.length > 0) {
+  const versionIds = recipe ? recipeCivitaiVersionIds(recipe) : [];
+  if (recipe && versionIds.length > 0) {
     const gates: ReturnType<typeof buildGateVersion>[] = [];
     for (const versionId of versionIds) {
       const resolvedVersion = await resolvePageResourceContext(versionId);
@@ -6271,9 +6450,19 @@ async function submitCustomComfyWorkflow(opts: {
   // quality suffix only INSIDE the builder, AFTER this read) with the
   // domain-derived isGreen strictness, exactly like txt2img, before any
   // orchestrator call.
+  //
+  // 🔴 ON THE INLINE ARM `prompt` IS THE SWEPT GRAPH TEXT, NOT A DECLARED FIELD.
+  // `auditPromptServer` reads exactly one string, and on the recipe arm that
+  // string is guaranteed to be what generates because the recipe's `.strict()`
+  // schema owns the prompt. An inline graph carries its prompts as leaf strings
+  // inside `CLIPTextEncode` nodes, so a declared-field-only audit would scan a
+  // value the generation never uses and moderation would silently become a
+  // no-op — with every gate green. `collectInlineAuditText` (above) joins the
+  // declared prompt AND every distinct string leaf in the graph, so a clean
+  // declared prompt cannot launder a graph prompt.
   await auditPromptServer({
-    prompt: params.prompt,
-    negativePrompt: recipe.negativePrompt,
+    prompt: inlineBody ? inlineAuditText : params!.prompt,
+    negativePrompt: inlineBody ? inlineBody.negativePrompt : recipe!.negativePrompt,
     userId,
     isGreen,
     isModerator: !!user.isModerator,
@@ -6285,7 +6474,17 @@ async function submitCustomComfyWorkflow(opts: {
   // stepTimeoutSeconds)` (enforced per-engine at registry load): the step
   // `timeout` physically caps the job at this many Buzz, so the reservation below
   // and the timeout stamped on the step MUST come from the same budget.
-  const { maxBuzz: ceiling, stepTimeoutSeconds } = recipe.budgetFor(params);
+  //
+  // 🔴 THE INLINE ARM PRESERVES THAT INVARIANT BY CONSTRUCTION. There is no
+  // recipe to declare a per-engine budget, so the app declares ONE number and
+  // the server derives the timeout from it: `stepTimeoutSeconds = maxBuzz`.
+  // `maxBuzz === ceil(stepTimeoutSeconds)` therefore cannot be violated — not
+  // "is asserted at load", but "there is only one number". Everything downstream
+  // (static gate, both reservations, dev-session backstop, settle-to-actual) only
+  // ever consumed `ceiling`, so the entire spend belt is reused UNTOUCHED.
+  const { maxBuzz: ceiling, stepTimeoutSeconds } = inlineBody
+    ? { maxBuzz: inlineBody.maxBuzz, stepTimeoutSeconds: inlineBody.maxBuzz }
+    : recipe!.budgetFor(params);
 
   // Resolve the engine + recipe id purely for per-engine settle-time
   // OBSERVABILITY (persisted in the settle record, read at terminal to emit
@@ -6297,8 +6496,13 @@ async function submitCustomComfyWorkflow(opts: {
   // (engine ∈ 3, recipe ∈ 1) → cardinality-safe. Never affects spend. The
   // `?? 'unknown'` stays as truly-unreachable defense (resolveEngine always
   // returns a bounded engine id).
-  const engine: string = recipe.resolveEngine(params) ?? 'unknown';
-  const recipeId: string = recipe.id;
+  // An inline graph has no engine and no recipe, so both labels are the same
+  // CONSTANT for every inline job — never derived from the app or the block, so
+  // the metric's cardinality cannot grow with the app catalogue.
+  const engine: string = inlineBody
+    ? INLINE_ENGINE_LABEL
+    : recipe!.resolveEngine(params) ?? 'unknown';
+  const recipeId: string = inlineBody ? INLINE_RECIPE_LABEL : recipe!.id;
 
   // (1) STATIC pre-submit gate — the post-paid analog of the txt2img whatIf
   // `cost > buzzBudget` gate. Because the timeout caps the job at `maxBuzz` and we
@@ -6478,13 +6682,29 @@ async function submitCustomComfyWorkflow(opts: {
   // submit→terminal-observation (incl. GPU queue-wait). Observability-only.
   const submittedAt = Date.now();
   try {
-    const stepInput = buildCustomComfyWorkflowInput(recipe, body.params, {});
+    // 🔴 THE STEP INPUT IS CONSTRUCTED SERVER-SIDE FROM AN ALLOWLISTED SET OF
+    // FIELDS — the app's body is NEVER spread into it. `CustomComfyInput` also
+    // carries `sessionOwnerApiToken` (a Civitai API token forwarded to the
+    // claiming worker), `comfyImage` (an arbitrary OCI container), `minVramGb`
+    // (changes the worker tier, and therefore the Buzz/second rate the whole
+    // ceiling argument rests on), `sessionId`, `useSageAttention` and
+    // `minimumDurationSeconds`. A spread would hand every one of those to the
+    // app. Only these three keys are ever emitted; the wire schema's `.strict()`
+    // is the second belt, rejecting a body that names any of them at all.
+    const stepInput = inlineBody
+      ? {
+          resources: inlineBody.resources,
+          trace: 'binary' as const,
+          workflow: inlineBody.workflow,
+        }
+      : buildCustomComfyWorkflowInput(recipe!, recipeBody!.params, {});
     // Stamp the SAME per-engine timeout the ceiling above was reserved against —
-    // the timeout is the physical cap for that reservation (v1.1).
+    // the timeout is the physical cap for that reservation (v1.1). For an inline
+    // body that timeout IS the declared `maxBuzz`.
     const step = createBlockCustomComfyStep(stepInput, stepTimeoutSeconds);
     // Parameterized tags: emit the recipe id + 'customComfy' (NOT 'txt2img'),
     // preserving the `app-block:*` provenance tags the subqueue read depends on.
-    const tags = buildWorkflowTags(claims, recipe.id, 'customComfy');
+    const tags = buildWorkflowTags(claims, recipeId, 'customComfy');
     const submitted = await submitWorkflow({
       token,
       body: {

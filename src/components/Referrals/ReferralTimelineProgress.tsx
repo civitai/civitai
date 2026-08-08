@@ -90,7 +90,6 @@ export function ReferralTimelineProgress({ grant }: { grant: ReferralGrant | nul
               return (
                 <Tooltip
                   key={`${segment.tier}-${index}`}
-                  color="dark"
                   label={
                     <Stack gap={4}>
                       <Text size="sm" fw={500} tt="capitalize">

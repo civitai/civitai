@@ -55,6 +55,7 @@ import {
 import {
   calculateWeightedCategoryScore,
   FIXED_JUDGING_CATEGORIES,
+  normalizeJudgeScore,
 } from '~/server/games/daily-challenge/daily-challenge-scoring';
 import {
   getIsSafeBrowsingLevel,
@@ -338,6 +339,7 @@ async function createChallengeFromSelection(
         challengeDate,
         maxItemsPerUser: config.entryPrizeRequirement * 2,
         endsAt,
+        autoTagId: config.challengeTagId,
         disableTagRequired: true,
         disableFollowOnSubmission: true,
       },
@@ -587,7 +589,8 @@ export async function reviewEntries() {
       logToAxiom({
         type: 'warning',
         name: 'daily-challenge-process-entries',
-        message: 'Active challenge count hit the batch ceiling; excess challenges roll to the next tick',
+        message:
+          'Active challenge count hit the batch ceiling; excess challenges roll to the next tick',
         count: activeChallenges.length,
       });
     }
@@ -990,7 +993,10 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
 
       // Add tag and score note to collection item (include judgeId for tracking)
       const note = JSON.stringify({
-        score: review.score,
+        // Never persist a non-object score. `review.score` is whatever the model returned (the
+        // response is cast, not parsed), and a safety-rejected entry comes back as null; stored
+        // raw it reaches every ranking path and takes the whole challenge's winner-pick down.
+        score: normalizeJudgeScore(review.score),
         summary: review.summary,
         judgeId: judgingConfig.judgeId,
         ...(review.aestheticFlaws?.length && { aestheticFlaws: review.aestheticFlaws }),
@@ -1577,7 +1583,8 @@ export async function pickWinnersForChallenge(
         await logToAxiom({
           type: 'info',
           name: 'challenge-partial-winner-residual',
-          message: 'User challenge completed with fewer winners than prize places; buzz not paid out',
+          message:
+            'User challenge completed with fewer winners than prize places; buzz not paid out',
           challengeId: currentChallenge.challengeId,
           residualBuzz,
           winnersCount: winningEntries.length,

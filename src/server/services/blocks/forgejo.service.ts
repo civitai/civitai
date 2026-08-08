@@ -19,6 +19,7 @@
 
 import { randomBytes } from 'crypto';
 import { env } from '~/env/server';
+import { logToAxiom } from '~/server/logging/client';
 import { MAX_FILES_IN_BUNDLE } from '~/server/schema/blocks/publish-request.schema';
 
 export const FORGEJO_ORG = 'civitai-apps';
@@ -172,24 +173,235 @@ export async function getRepo(slug: string): Promise<ForgejoRepo> {
   return unwrap<ForgejoRepo>(res);
 }
 
-/** Grant a Forgejo username write access to the repo. */
+/**
+ * Collaborator access levels, LOW → HIGH. This ordering is what makes
+ * `addCollaborator` a GRANT-AT-LEAST rather than a SET: a caller asking for a
+ * level at or below what the user already holds is a no-op, never a downgrade.
+ *
+ * Every string here was MEASURED against Forgejo `15.0.6+gitea-1.22.0` — the
+ * version `GET /api/v1/version` reports for the deployed instance — as a value
+ * `GET …/collaborators/{user}/permission` actually returns:
+ *   - `none`  is what a NON-collaborator reads back **on a PRIVATE repo**. That
+ *             endpoint answers 200 with `permission: "none"`, NOT 404, so "not
+ *             a collaborator yet" is an ordinary reading, not an error.
+ *             🔴 On a PUBLIC repo the same read answers `"read"` instead
+ *             (measured), because everyone can read it. Canonical app repos are
+ *             created `private: true` (`createRepoFromTemplate`, above), so this
+ *             is not live today — but this file already records one visibility
+ *             regression (the `#3498` note on the review-repo helpers below), and
+ *             if a canonical repo ever went public the CLI-pull `read` grant
+ *             would rank as already-satisfied and become a permanent no-op, so
+ *             no collaborator row would ever be created.
+ *   - `owner` is what an org owner reads back. Adding an org owner as a
+ *             collaborator creates a row but still reads `owner` (measured), so
+ *             the short-circuit below is correct for them.
+ * Only `read` / `write` / `admin` are grantable by PUT: a PUT of `owner`
+ * answers 204 and changes nothing, and the match is case-SENSITIVE — an
+ * uppercase `WRITE` from a `read` baseline is a 204 no-op (measured).
+ */
+const COLLABORATOR_PERMISSION_RANK = {
+  none: 0,
+  read: 1,
+  write: 2,
+  admin: 3,
+  owner: 4,
+} as const;
+
+export type CollaboratorPermission = keyof typeof COLLABORATOR_PERMISSION_RANK;
+export type GrantablePermission = 'read' | 'write' | 'admin';
+
+function permissionRank(value: string): number | null {
+  return Object.prototype.hasOwnProperty.call(COLLABORATOR_PERMISSION_RANK, value)
+    ? COLLABORATOR_PERMISSION_RANK[value as CollaboratorPermission]
+    : null;
+}
+
+/**
+ * Three-valued on purpose — but for OBSERVABILITY, not correctness. Be precise
+ * about this, because the obvious stronger claim is false and a maintainer who
+ * tests it will (correctly) conclude the distinction is dead weight and delete
+ * it.
+ *
+ * What it does NOT buy: collapsing `unknown` or `unreadable` into `none` would
+ * NOT change one byte of HTTP. Both already fall through to the PUT — that is
+ * the fail-toward-access design below — and rank 0 falls through too, so the
+ * requests sent and the resulting permission are identical either way. Measured:
+ * with both collapses applied, the outgoing URLs, methods and bodies and the
+ * final permission are byte-identical to HEAD.
+ *
+ * What it DOES buy: `none` is a MEASUREMENT ("we asked; they hold nothing")
+ * while the other two are the ABSENCE of one. Only the distinction lets the
+ * warning below fire, and that warning is the sole signal that a grant went out
+ * blind. Fold them together and blind grants become indistinguishable from
+ * observed ones — a fabricated zero of exactly the kind this codebase keeps
+ * paying for elsewhere.
+ */
+type PermissionRead =
+  | { kind: 'known'; permission: CollaboratorPermission }
+  | { kind: 'unknown'; raw: string }
+  | { kind: 'unreadable'; reason: string };
+
+async function readCollaboratorPermission(slug: string, username: string): Promise<PermissionRead> {
+  try {
+    const res = await fjFetch(
+      `/api/v1/repos/${FORGEJO_ORG}/${slug}/collaborators/${encodeURIComponent(
+        username
+      )}/permission`
+    );
+    if (!res.ok) {
+      // 404 here means the USER or the REPO does not exist (measured) — never
+      // "is not a collaborator", which reads back 200 + `none`. Either way we
+      // cannot rank what we did not read.
+      return { kind: 'unreadable', reason: `HTTP ${res.status}` };
+    }
+    const body = (await res.json().catch(() => null)) as { permission?: unknown } | null;
+    const raw = body?.permission;
+    if (typeof raw !== 'string') return { kind: 'unreadable', reason: 'no permission field' };
+    if (permissionRank(raw) === null) return { kind: 'unknown', raw };
+    return { kind: 'known', permission: raw as CollaboratorPermission };
+  } catch (error) {
+    return { kind: 'unreadable', reason: (error as Error)?.message ?? 'read threw' };
+  }
+}
+
+export type AddCollaboratorResult = {
+  requested: GrantablePermission;
+  /** What we read before deciding, or null when the read was unobservable. */
+  existing: CollaboratorPermission | null;
+  /**
+   * `kept`   — already at or above `requested`; no PUT was sent.
+   * `granted` — the read succeeded and `requested` was strictly higher.
+   * `granted-unobserved` — the read failed or returned an unrankable string, so
+   *   the grant went out WITHOUT knowing whether it lowers anything.
+   */
+  outcome: 'kept' | 'granted' | 'granted-unobserved';
+};
+
+/**
+ * Grant a Forgejo username AT LEAST `permission` on the repo — never less.
+ *
+ * The bare PUT this replaced was a SET, not a grant: Forgejo applies whatever
+ * level the body names, in both directions. Measured on 15.0.6+gitea-1.22.0,
+ * every one of first-grant / same-level re-grant / upgrade / DOWNGRADE answers
+ * `204 No Content` with an empty body, and a read-back confirms the downgrade
+ * landed. So `civitai app pull` (which asks for `read`) silently stripped push
+ * access from an author who had `write` from the web flow, and no status code
+ * distinguished that from success.
+ *
+ * The downgrade was not cosmetic. Measured with a `write:repository` PAT — the
+ * exact scope `dev-git-access.service.ts` mints — against a private repo:
+ * no collaborator row → `git clone` FAILS (`Repository not found`); `read` →
+ * clone succeeds but `git push` is REJECTED (`not allowed to push to branch
+ * 'main'`); `write` → both succeed. So the read/write split between the two call
+ * sites buys real least-privilege rather than being decorative, and the bug it
+ * enabled genuinely broke authors' pushes.
+ *
+ * Read-before-write closes it: rank the current level, and skip the PUT whenever
+ * it is already at or above what the caller asked for. `admin` and `owner` are
+ * therefore unreachable by either call site.
+ *
+ * 🔴 NOT ATOMIC. Forgejo offers no compare-and-set here, so the read and the
+ * write are two round trips, and the two procedures that call this run on
+ * separate connections. A concurrent web call and CLI call can interleave —
+ * both read `none`, the web one PUTs `write`, the CLI one then PUTs `read` —
+ * reproducing the original downgrade inside a one-round-trip window. That
+ * window is strictly narrower than the unconditional overwrite this replaced,
+ * so it is an improvement rather than a regression, but "never lowers" above is
+ * a claim about the SEQUENTIAL case. Closing it needs a lock or a server-side
+ * CAS.
+ *
+ * WHEN THE READ IS UNOBSERVABLE we still send the grant (`granted-unobserved`)
+ * and log it. Why proceeding beats skipping: both failure modes are real —
+ * skipping denies access, and the denial is total (measured above: with no
+ * collaborator row the clone fails outright) — but a denial is LOUD and
+ * SELF-HEALING, since the read failure is transient by hypothesis and both call
+ * sites re-run on the user's next attempt, whereas a downgrade is SILENT and
+ * PERSISTENT, sticking until someone notices they can no longer push. Prefer
+ * the failure the user can see and retry past.
+ *
+ * A third option was considered and REJECTED: on an unobservable read, grant
+ * `write` (the ceiling `getMyAppRepo` already asks for) instead of the requested
+ * level. It does not do what it promises. It still downgrades an existing
+ * `admin` — measured, `admin` → `write` answers 204 and lowers — so it narrows
+ * the window rather than closing it, and it pays for that by silently and
+ * PERMANENTLY handing push access to a CLI-pull caller who asked only for
+ * `read`, triggered by an infrastructure hiccup. Trading a silent persistent
+ * downgrade for a silent persistent ESCALATION is not an improvement; it is the
+ * same bug mirrored.
+ */
 export async function addCollaborator(opts: {
   slug: string;
   username: string;
-  permission?: 'read' | 'write' | 'admin';
-}): Promise<void> {
+  permission?: GrantablePermission;
+}): Promise<AddCollaboratorResult> {
+  const requested = opts.permission ?? 'write';
+  const requestedRank = COLLABORATOR_PERMISSION_RANK[requested];
+
+  const current = await readCollaboratorPermission(opts.slug, opts.username);
+
+  if (current.kind === 'known') {
+    const currentRank = COLLABORATOR_PERMISSION_RANK[current.permission];
+    if (currentRank >= requestedRank) {
+      if (currentRank > requestedRank) {
+        // A downgrade we actively refused. Logged because it is the ONLY
+        // evidence in production that the guard fires at all.
+        logToAxiom(
+          {
+            name: 'forgejo-add-collaborator',
+            type: 'info',
+            message: 'kept higher existing permission',
+            slug: opts.slug,
+            username: opts.username,
+            requested,
+            existing: current.permission,
+          },
+          'webhooks'
+        ).catch(() => undefined);
+      }
+      return { requested, existing: current.permission, outcome: 'kept' };
+    }
+  } else {
+    // The blind-grant signal. Honest about its reach: nothing consumes
+    // `forgejo-add-collaborator` today — no alert, no dashboard, no saved query
+    // — and `logToAxiom` here is fire-and-forget (unawaited, errors swallowed),
+    // so a logging outage drops it without a trace. It makes a blind grant
+    // DISCOVERABLE by someone who goes looking; it does not make anyone look.
+    // If this path ever matters operationally, wire an alert on this name — do
+    // not assume emitting the event is the same as being told.
+    logToAxiom(
+      {
+        name: 'forgejo-add-collaborator',
+        type: 'warning',
+        message: 'granting without observing the current permission',
+        slug: opts.slug,
+        username: opts.username,
+        requested,
+        reason: current.kind === 'unknown' ? `unrankable "${current.raw}"` : current.reason,
+      },
+      'webhooks'
+    ).catch(() => undefined);
+  }
+
   const res = await fjFetch(
     `/api/v1/repos/${FORGEJO_ORG}/${opts.slug}/collaborators/${encodeURIComponent(opts.username)}`,
     {
       method: 'PUT',
-      body: JSON.stringify({ permission: opts.permission ?? 'write' }),
+      body: JSON.stringify({ permission: requested }),
     }
   );
-  // 204 No Content on success; 422 if already a collaborator with the same level.
-  if (!res.ok && res.status !== 204 && res.status !== 422) {
+  // Measured: 204 No Content for first grant, same-level re-grant, upgrade AND
+  // downgrade alike. The 422 tolerance predates this change and is kept as a
+  // defensive allowance only — the "already a collaborator at the same level"
+  // explanation it used to carry was measured FALSE (that case is a 204).
+  if (!res.ok && res.status !== 422) {
     const body = await res.text().catch(() => '');
     throw new Error(`Forgejo addCollaborator ${res.status}: ${body.slice(0, 240)}`);
   }
+  return {
+    requested,
+    existing: current.kind === 'known' ? current.permission : null,
+    outcome: current.kind === 'known' ? 'granted' : 'granted-unobserved',
+  };
 }
 
 /**
@@ -489,9 +701,7 @@ export async function getBlobContent(slug: string, sha: string): Promise<Buffer>
   const res = await fjFetch(`/api/v1/repos/${FORGEJO_ORG}/${slug}/git/blobs/${sha}`);
   const blob = await unwrap<{ content: string; encoding: string }>(res);
   if (blob.encoding !== 'base64') {
-    throw new Error(
-      `Forgejo blob ${sha} returned unexpected encoding ${blob.encoding}`
-    );
+    throw new Error(`Forgejo blob ${sha} returned unexpected encoding ${blob.encoding}`);
   }
   return Buffer.from(blob.content, 'base64');
 }
@@ -678,10 +888,9 @@ export async function getForgejoUser(username: string): Promise<ForgejoUser> {
  * gone) is treated as success.
  */
 export async function deleteForgejoUser(username: string): Promise<void> {
-  const res = await fjFetch(
-    `/api/v1/admin/users/${encodeURIComponent(username)}?purge=true`,
-    { method: 'DELETE' }
-  );
+  const res = await fjFetch(`/api/v1/admin/users/${encodeURIComponent(username)}?purge=true`, {
+    method: 'DELETE',
+  });
   if (!res.ok && res.status !== 204 && res.status !== 404) {
     const body = await res.text().catch(() => '');
     throw new Error(`Forgejo deleteUser ${res.status}: ${body.slice(0, 240)}`);
@@ -836,9 +1045,7 @@ export async function listReviewRepos(
  * Scoped to the in-review org on purpose: nothing here should ever be able to
  * mutate the visibility of a canonical `civitai-apps/<slug>` repo.
  */
-export async function setReviewRepoPrivate(
-  slug: string
-): Promise<'updated' | 'missing'> {
+export async function setReviewRepoPrivate(slug: string): Promise<'updated' | 'missing'> {
   const res = await fjFetch(`/api/v1/repos/${FORGEJO_REVIEW_ORG}/${encodeURIComponent(slug)}`, {
     method: 'PATCH',
     body: JSON.stringify({ private: true }),

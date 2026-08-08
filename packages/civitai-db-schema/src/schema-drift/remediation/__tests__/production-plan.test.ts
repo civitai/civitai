@@ -1,0 +1,335 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+import { parsePrismaSchema } from '../../parse-prisma-schema';
+import { buildRemediationPlan } from '../plan';
+import { formatPlan } from '../report';
+import type { RemediationCatalog } from '../types';
+import { countDeletes, countUpdates, planSql, relation } from './helpers';
+
+/**
+ * The headline test: plan the real schema against the committed production catalog.
+ *
+ * 🔴 THE ASSERTION THIS SUITE EXISTS FOR is `emits UPDATEs and zero DELETEs for the SetNull
+ * relations`. Its predecessor, hardcoded to DELETE, would have destroyed roughly 23,500
+ * live rows across these relations — 610 articles, 519 user accounts, 591 user profiles,
+ * 21,815 threads — where the schema asks only for a reference to be cleared.
+ *
+ * A zero on its own would be worthless. The Cascade suite below is the positive control:
+ * the SAME plan, the SAME helper, the SAME catalog, reporting a non-zero DELETE count. The
+ * pair is the evidence; neither half is.
+ *
+ * WHY CONTAINMENT ASSERTIONS AND NOT PINNED TOTALS. The catalog snapshot is frozen and the
+ * schema is not, so the pair decays — a relation added to the schema tomorrow has no table
+ * in a catalog captured today. Naming the relations survives schema growth and still fails
+ * if one of them stops being handled, which is the regression that matters. The one place
+ * an exact number IS pinned is the DELETE count for the SetNull selection, because there
+ * the only defensible value is zero.
+ */
+const here = fileURLToPath(new URL('.', import.meta.url));
+const schemaSource = readFileSync(join(here, '../../../../prisma/schema.full.prisma'), 'utf8');
+const catalog = JSON.parse(
+  readFileSync(join(here, '../../__tests__/fixtures/catalog-production-2026-08-03.json'), 'utf8')
+) as RemediationCatalog;
+const schema = parsePrismaSchema(schemaSource);
+
+/**
+ * The declared-SetNull relations with no foreign key in production, minus the ones on the
+ * exclusion list (`Article.coverId`) and the one refused for a NOT NULL column
+ * (`ChallengeEvent.createdById`, which has its own test below).
+ *
+ * Every entry is a relation whose orphan rows carry real user data. `Thread.imageId` alone
+ * is 21,815 rows.
+ */
+const SET_NULL_RELATIONS = [
+  'Challenge.eventId',
+  'Club.avatarId',
+  'Club.coverImageId',
+  'Club.headerImageId',
+  'ClubPost.coverImageId',
+  'ClubTier.coverImageId',
+  'Collection.imageId',
+  'CosmeticShopSection.imageId',
+  'PurchasableReward.coverImageId',
+  'Thread.challengeId',
+  'Thread.imageId',
+  'User.profilePictureId',
+  'UserProfile.coverImageId',
+];
+
+/** Declared-Cascade relations with no foreign key, minus the exclusion list. */
+// NOTE `ImageConnection.imageId` was here and has been REMOVED. It is not a remediation
+// target: `20240307231126_nsfw_level_update_queue` drops its foreign key deliberately, in
+// the same statement block as the four `CollectionItem` keys whose restoration started
+// this campaign. Pinning it as an intended DELETE target meant the tests were blessing a
+// plan that would revert a 2024 architectural decision — precisely the error recorded
+// against the CollectionItem fix. It is now on the exclusion list.
+const CASCADE_RELATIONS = [
+  'DownloadHistory.modelVersionId',
+  'ImageEngagement.imageId',
+  'ImageRatingRequest.imageId',
+  'ImageResourceNew.imageId',
+  'ImageTagForReview.imageId',
+  'ImageTechnique.imageId',
+  'ImageTool.imageId',
+  'ModelBaseModelMetric.modelId',
+  'TagsOnImageVote.imageId',
+];
+
+/** Orphan counts stand in for a live measurement so the plan reaches its statements. */
+function counts(keys: readonly string[]): Record<string, number> {
+  return Object.fromEntries(keys.map((k) => [k, 100]));
+}
+
+describe('the whole schema, against the production catalog', () => {
+  const plan = buildRemediationPlan(schema, catalog, {});
+
+  it('considered the whole schema (positive control on every zero in this file)', () => {
+    // A plan that considered nothing produces the same clean numbers as a plan that found
+    // nothing to do.
+    expect(plan.counts.relationsConsidered).toBeGreaterThan(400);
+    expect(plan.unmatchedSelectors).toEqual([]);
+
+    // 🔴 `satisfied` is ZERO against this catalog, and that is the correct answer.
+    //
+    // The snapshot predates `convalidated`, so it cannot establish that a single one of
+    // the ~408 existing constraints actually enforces the rows that predate it. They are
+    // counted as `validityUnknown` instead. This assertion previously read
+    // `satisfied > 300` and was passing while the report told the operator that 408
+    // constraints were "already enforced (no action)" on the strength of a catalog that
+    // says nothing of the kind — blocker 2's failure mode relocated to the `--catalog`
+    // path. The pair below is the point: nothing certified, everything accounted for.
+    expect(plan.counts.satisfied).toBe(0);
+    expect(plan.counts.validityUnknown).toBeGreaterThan(300);
+  });
+
+  it('finds both strategies in use — neither set is empty', () => {
+    expect(plan.counts.deleteStrategy).toBeGreaterThan(0);
+    expect(plan.counts.nullStrategy).toBeGreaterThan(0);
+  });
+});
+
+describe('🔴 the SetNull relations', () => {
+  const plan = buildRemediationPlan(schema, catalog, {
+    only: SET_NULL_RELATIONS,
+    orphanCounts: counts(SET_NULL_RELATIONS),
+  });
+  const sql = planSql(plan);
+
+  it('matched every relation it was asked for', () => {
+    // Without this, a renamed relation would silently shrink the population and the zero
+    // below would be a zero about nothing.
+    expect(plan.unmatchedSelectors).toEqual([]);
+    expect(plan.counts.relationsConsidered).toBe(SET_NULL_RELATIONS.length);
+  });
+
+  it('resolves every one of them to SetNull, read from the schema', () => {
+    for (const key of SET_NULL_RELATIONS) {
+      expect(relation(plan, key).onDelete, key).toBe('SetNull');
+    }
+  });
+
+  it('emits an UPDATE for every one of them', () => {
+    expect(countUpdates(sql)).toBe(SET_NULL_RELATIONS.length);
+    expect(plan.counts.nullStrategy).toBe(SET_NULL_RELATIONS.length);
+  });
+
+  it('emits ZERO DELETEs', () => {
+    expect(countDeletes(sql)).toBe(0);
+    expect(plan.counts.deleteStrategy).toBe(0);
+  });
+
+  it('clears the declared column, and only that column', () => {
+    expect(sql).toContain('UPDATE "User" t SET "profilePictureId" = NULL');
+    expect(sql).toContain('UPDATE "Thread" t SET "imageId" = NULL');
+    expect(sql).toContain('UPDATE "UserProfile" t SET "coverImageId" = NULL');
+  });
+
+  it('writes ON DELETE SET NULL into each constraint', () => {
+    expect(sql).toContain(
+      'ALTER TABLE "Thread" ADD CONSTRAINT "Thread_imageId_fkey"\n' +
+        '  FOREIGN KEY ("imageId") REFERENCES "Image"("id")\n' +
+        '  ON UPDATE CASCADE ON DELETE SET NULL NOT VALID;'
+    );
+  });
+});
+
+describe('the Cascade relations — the POSITIVE control for the zero above', () => {
+  const plan = buildRemediationPlan(schema, catalog, {
+    only: CASCADE_RELATIONS,
+    orphanCounts: counts(CASCADE_RELATIONS),
+  });
+  const sql = planSql(plan);
+
+  it('matched every relation it was asked for', () => {
+    expect(plan.unmatchedSelectors).toEqual([]);
+    expect(plan.counts.relationsConsidered).toBe(CASCADE_RELATIONS.length);
+  });
+
+  it('emits a DELETE for every one of them — the same harness, a non-zero count', () => {
+    expect(countDeletes(sql)).toBe(CASCADE_RELATIONS.length);
+    expect(plan.counts.deleteStrategy).toBe(CASCADE_RELATIONS.length);
+  });
+
+  it('emits ZERO UPDATEs', () => {
+    expect(countUpdates(sql)).toBe(0);
+    expect(plan.counts.nullStrategy).toBe(0);
+  });
+
+  it('backs the rows up in the same statement that deletes them', () => {
+    // Not "backs up first". A separate preceding INSERT can be interrupted between the two
+    // statements; a DELETE ... RETURNING feeding an INSERT cannot.
+    expect(sql).toContain('RETURNING t.*');
+    expect(sql).toContain('INSERT INTO "fk_remediation_backup"."ImageTool_imageId_orphans"');
+  });
+});
+
+describe('relations refused on the real catalog', () => {
+  const plan = buildRemediationPlan(schema, catalog, {});
+
+  it('refuses ChallengeEvent.createdById: declared SetNull, column is NOT NULL', () => {
+    // The live evidence for this guard. Migration 20260211192726 was committed in Feb 2026
+    // and never applied, so production has neither the foreign key nor the DROP NOT NULL.
+    // A SetNull constraint on a NOT NULL column errors at DELETE time, not at creation.
+    const target = relation(plan, 'ChallengeEvent.createdById');
+    expect(target.outcome).toBe('refused');
+    expect(target.refusals.map((r) => r.code)).toContain('set-null-on-not-null-column');
+    expect(target.statements.every((s) => s.writes === false)).toBe(true);
+  });
+
+  it.each([
+    'TagsOnImageNew.imageId',
+    'Article.coverId',
+    'ArticleRank.articleId',
+    'BountyRank.bountyId',
+    'TagRank.tagId',
+    'ClubRank.clubId',
+    'BountyEntryRank.bountyEntryId',
+    'CollectionRank.collectionId',
+    'UserRank.userId',
+  ])('refuses %s as excluded, and would run nothing for it', (key) => {
+    const target = relation(plan, key);
+    expect(target.outcome).toBe('refused');
+    expect(target.refusals.map((r) => r.code)).toContain('excluded');
+    expect(target.strategy).toBeNull();
+    expect(target.statements.every((s) => s.writes === false)).toBe(true);
+  });
+
+  it('the whole-schema plan emits no write for any refused relation', () => {
+    const refusedSql = plan.relations
+      .filter((r) => r.outcome === 'refused')
+      .flatMap((r) => r.statements)
+      .filter((s) => s.writes);
+    expect(refusedSql).toEqual([]);
+    // Positive control on that empty array: the refused set is not itself empty.
+    expect(plan.counts.refused).toBeGreaterThan(0);
+  });
+});
+
+describe('index coverage, read from the real catalog', () => {
+  const plan = buildRemediationPlan(schema, catalog, {});
+
+  it('finds ImageTagForReview.imageId covered by its (imageId, tagId) primary key', () => {
+    expect(relation(plan, 'ImageTagForReview.imageId').indexCoverage).toBe('covered');
+  });
+
+  it('does NOT find ImageEngagement.imageId covered — its unique index leads with userId', () => {
+    // (userId, imageId) cannot serve a lookup on imageId. This snapshot carries no general
+    // index list, so the honest answer is `unknown` rather than `not-covered` — and both
+    // block. What must not happen is `covered`.
+    expect(relation(plan, 'ImageEngagement.imageId').indexCoverage).not.toBe('covered');
+    expect(relation(plan, 'ImageEngagement.imageId').outcome).toBe('blocked');
+  });
+
+  it('does NOT find Collection.imageId covered — 16.9M rows with no index on imageId', () => {
+    expect(relation(plan, 'Collection.imageId').indexCoverage).not.toBe('covered');
+    expect(relation(plan, 'Collection.imageId').outcome).toBe('blocked');
+  });
+});
+
+describe('🔴 the report does not call an unverifiable constraint "already enforced"', () => {
+  const plan = buildRemediationPlan(schema, catalog, {});
+  const text = formatPlan(plan);
+
+  it('separates validated from validity-not-established in the summary', () => {
+    expect(text).toContain('already enforced (validated)   : 0');
+    expect(text).toMatch(/VALIDITY NOT ESTABLISHED\s*:\s*\d+/);
+  });
+
+  it('does not print a non-zero "already enforced" count for this catalog', () => {
+    // The regression: 408 relations were reported as enforced against a catalog carrying
+    // zero `convalidated` entries, in default, --verbose and --json alike.
+    expect(text).not.toMatch(/already enforced \(validated\)\s*:\s*[1-9]/);
+  });
+
+  it('POSITIVE control: the summary block is actually present', () => {
+    // Otherwise the two assertions above pass on an empty string.
+    expect(text).toContain('relations considered');
+    expect(text).toContain('Orphan remediation, derived from');
+  });
+
+  it('surfaces the unknown-validity state in the SUMMARY, and its detail under --verbose', () => {
+    // plan.ts claims the unknown state is "surfaced ... so it appears in the report rather
+    // than being swallowed by a reassuring satisfied". It is — at the granularity the
+    // condition actually has.
+    //
+    // `constraint-validity-unknown` is a property of the CATALOG, true of all 408 existing
+    // constraints or none, so the summary is where it belongs; a per-relation block for
+    // each of them made the default report identical to --verbose and buried the ~68
+    // relations an operator has to choose between. Listing it per relation is still
+    // available, behind the flag.
+    const withPrereq = plan.relations.find(
+      (r) => r.outcome === 'satisfied' && r.prerequisites.length > 0
+    );
+    expect(withPrereq).toBeDefined();
+    expect(text).toMatch(/VALIDITY NOT ESTABLISHED\s*:\s*[1-9]\d*/);
+    expect(formatPlan(plan, { verbose: true })).toContain(withPrereq!.key);
+  });
+});
+
+describe('the default report stays a survey, and --verbose still means something', () => {
+  const plan = buildRemediationPlan(schema, catalog, {});
+  const dflt = formatPlan(plan).split('\n');
+  const verbose = formatPlan(plan, { verbose: true }).split('\n');
+
+  it('default is materially SHORTER than --verbose', () => {
+    // The N2 fix regressed this: every one of the ~408 validity-unknown relations carried
+    // a prerequisite, none were hidden, and the default report became byte-identical to
+    // --verbose — burying the ~68 relations an operator actually chooses between.
+    expect(dflt.length).toBeLessThan(verbose.length / 2);
+  });
+
+  it('POSITIVE control: --verbose really does list the hidden ones', () => {
+    // Otherwise "default is shorter" would be satisfied by a --verbose that prints nothing.
+    expect(verbose.length).toBeGreaterThan(2000);
+  });
+
+  it('still states the validity-unknown count LOUDLY in the default summary', () => {
+    // Hiding the per-relation detail is only defensible because the summary says it. This
+    // is the assertion that keeps N2 fixed while A is also fixed.
+    expect(dflt.join('\n')).toMatch(/VALIDITY NOT ESTABLISHED\s*:\s*[1-9]\d*/);
+  });
+
+  it('still shows every relation that is refused or blocked by default', () => {
+    const actionable = plan.relations.filter(
+      (r) => r.outcome === 'refused' || r.outcome === 'blocked'
+    );
+    expect(actionable.length).toBeGreaterThan(30); // positive control on the population
+    for (const r of actionable) {
+      expect(dflt.join('\n'), `${r.key} must be visible without --verbose`).toContain(r.key);
+    }
+  });
+
+  it('hides ONLY relations whose sole issue is the catalog-wide unknown validity', () => {
+    const hidden = plan.relations.filter((r) => !dflt.join('\n').includes(r.key));
+    expect(hidden.length).toBeGreaterThan(300); // positive control: something IS hidden
+    for (const r of hidden) {
+      expect(r.refusals, `${r.key} is refused and must not be hidden`).toEqual([]);
+      expect(
+        r.prerequisites.every((p) => p.code === 'constraint-validity-unknown'),
+        `${r.key} carries a relation-specific prerequisite and must not be hidden`
+      ).toBe(true);
+    }
+  });
+});

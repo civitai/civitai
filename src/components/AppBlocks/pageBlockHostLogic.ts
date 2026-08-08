@@ -4,14 +4,32 @@
 // collects `*.test.ts`). Mirrors the IframeHost `hostRenderDecision` pattern.
 
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
+import type { HostStatus } from './openBuzzPurchaseGate';
 
-export type PageHostStatus =
-  | 'loading'
-  | 'ready'
-  | 'timeout'
-  | 'fatal'
-  | 'no_token'
-  | 'error';
+export type PageHostStatus = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
+
+/**
+ * Collapse PageBlockHost's local `Status` onto the shared `HostStatus` union the
+ * status-gated message handlers speak: `resolveRequestConsent`,
+ * `resolveBuzzPurchaseRequest`, `resolveRequestSignIn`, the inline
+ * OPEN_IMAGE_UPLOAD gate, and NAVIGATE.
+ *
+ * PageBlockHost carries one extra terminal variant — `'error'`, a hard mint
+ * failure — that the shared union does not model. Every gate opens ONLY on
+ * `'ready'` and `'error'` is a disjoint terminal state (the iframe isn't even
+ * rendered), so mapping it to another non-ready sentinel is semantics-preserving:
+ * the gate would return null either way. This just satisfies the union type.
+ *
+ * ONE RULE, ONE PLACE. This shim used to be open-coded at four of those call
+ * sites (NAVIGATE hand-rolled a fifth, slightly different comparison). N copies of
+ * a predicate is N chances to fix N−1 of them; it is centralised here so the
+ * mapping is unit-testable and can only ever be changed in one place. Callers read
+ * it through PageBlockHost's `readGateStatus`, which additionally sources the
+ * status from a render-body-updated ref rather than a stale effect closure.
+ */
+export function toHostGateStatus(status: PageHostStatus): HostStatus {
+  return status === 'error' ? 'no_token' : status;
+}
 
 /**
  * #3/#6: the scopes the minted page JWT ACTUALLY carries — the page manifest's
@@ -57,9 +75,7 @@ export function resolveUngrantableConsentScopes(
   missingScopes: string[] | undefined
 ): string[] {
   if (!Array.isArray(rawScopesHint)) return [];
-  const requested = rawScopesHint.filter(
-    (s): s is string => typeof s === 'string' && s.length > 0
-  );
+  const requested = rawScopesHint.filter((s): s is string => typeof s === 'string' && s.length > 0);
   if (requested.length === 0) return [];
   const granted = new Set<string>(grantedScopes);
   const missing = new Set<string>(missingScopes ?? []);
@@ -289,7 +305,11 @@ export function resolveResourcePickerRequest(raw: unknown): ResourcePickerReques
       ? obj.baseModelGroup
       : undefined;
 
-  return { requestId: obj.requestId, resourceType: canonical, ...(baseModelGroup ? { baseModelGroup } : {}) };
+  return {
+    requestId: obj.requestId,
+    resourceType: canonical,
+    ...(baseModelGroup ? { baseModelGroup } : {}),
+  };
 }
 
 // ── OPEN_CHECKPOINT_PICKER (parity with the model-slot IframeHost) ────────────
@@ -463,9 +483,7 @@ export function resolveGetImagesByIdsRequest(raw: unknown): GetImagesByIdsReques
   const obj = raw as Record<string, unknown>;
   if (typeof obj.requestId !== 'string' || obj.requestId.length === 0) return null;
   const imageIds = Array.isArray(obj.imageIds)
-    ? obj.imageIds.filter(
-        (n): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0
-      )
+    ? obj.imageIds.filter((n): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0)
     : [];
   return { requestId: obj.requestId, imageIds };
 }
@@ -617,9 +635,7 @@ export function worstReachableLaunchMs(): number {
 
 /** Terminal statuses a bounded auto-retry may attempt to recover from. */
 export function isAutoRetryableStatus(status: PageHostStatus): boolean {
-  return (
-    status === 'timeout' || status === 'fatal' || status === 'no_token' || status === 'error'
-  );
+  return status === 'timeout' || status === 'fatal' || status === 'no_token' || status === 'error';
 }
 
 /**

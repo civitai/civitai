@@ -15,19 +15,29 @@ const { mocks } = vi.hoisted(() => ({
     refundMultiAccountTransaction: vi.fn(),
     refundTransaction: vi.fn(),
     revokeCosmeticsFromUsers: vi.fn(),
+    shopItemFindFirst: vi.fn(),
+    shopItemUpdateMany: vi.fn(),
+    packMemberFindMany: vi.fn(),
     createNotification: vi.fn(),
   },
 }));
 
 vi.mock('~/server/db/client', () => ({
   dbRead: {
-    cosmeticShopItem: { findUnique: mocks.shopItemFindUnique },
+    // findFirst + cosmeticShopItemCosmetic are the pack delist cascade's reads.
+    // Takedown reaches them through delistPacksContaining.
+    cosmeticShopItem: { findUnique: mocks.shopItemFindUnique, findFirst: mocks.shopItemFindFirst },
+    cosmeticShopItemCosmetic: { findMany: mocks.packMemberFindMany },
     userCosmeticShopPurchases: { findMany: mocks.purchaseFindMany },
     userCosmetic: { findMany: mocks.userCosmeticFindMany },
     user: { findUnique: mocks.userFindUnique },
   },
   dbWrite: {
-    cosmeticShopItem: { findUnique: mocks.shopItemFindUnique, update: mocks.shopItemUpdate },
+    cosmeticShopItem: {
+      findUnique: mocks.shopItemFindUnique,
+      update: mocks.shopItemUpdate,
+      updateMany: mocks.shopItemUpdateMany,
+    },
     cosmeticShopSectionItem: { deleteMany: mocks.sectionItemDeleteMany },
     // Sales and ownership are read off the primary during a takedown — replica
     // lag would mean refunding fewer buyers than we strip the cosmetic from.
@@ -109,6 +119,10 @@ describe('takedownCosmeticShopItem', () => {
       { userId: 11 }, // the creator's own grant
     ]);
     mocks.userFindUnique.mockResolvedValue({ settings: {} });
+    // The delist cascade: no surviving listing, no packs bundling this cosmetic.
+    mocks.shopItemFindFirst.mockResolvedValue(null);
+    mocks.packMemberFindMany.mockResolvedValue([]);
+    mocks.shopItemUpdateMany.mockResolvedValue({ count: 0 });
     mocks.logToAxiom.mockResolvedValue(undefined);
     mocks.refundMultiAccountTransaction.mockResolvedValue(yellowRefund(1000));
     mocks.createBuzzTransaction.mockResolvedValue({ transactionId: 'tx' });

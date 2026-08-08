@@ -98,6 +98,7 @@ export const imagesQueryParamSchema = z
     disableMinor: booleanString(),
     remixesOnly: booleanString(),
     nonRemixesOnly: booleanString(),
+    hideChallenges: booleanString(),
   })
   .partial();
 

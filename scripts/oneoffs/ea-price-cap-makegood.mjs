@@ -15,9 +15,8 @@
  *   node scripts/oneoffs/ea-price-cap-makegood.mjs --json         # dry run, machine-readable
  *   node scripts/oneoffs/ea-price-cap-makegood.mjs --only 2043827,13261
  *
- * Prod access: BUZZ_ENDPOINT reaches the prod buzz service over the bastion tunnel
- * (LocalForward 28080 -> civitai-buzz-prod). Bring it up first:
- *   node ~/.claude/skills/db-tunnel/tunnel.mjs
+ * Prod access: BUZZ_ENDPOINT reaches the prod buzz service over an SSH tunnel.
+ * Ask an infra owner for the connection recipe and bring the tunnel up first.
  *
  * Idempotent: one credit per creator PER MODEL VERSION, keyed on externalTransactionId. Splitting
  * by version means each credit names the model it is replacing income for, so a creator can
