@@ -113,7 +113,7 @@ export type ResourceGeneration = {
 export type ShopPurchase = {
   /** The purchase PK, and also the claimKey on the granted cosmetic row. */
   buzzTransactionId: string;
-  cosmeticId: number;
+  cosmeticId: number | null;
   title: string;
   unitAmount: number;
   purchasedAt: string;

@@ -34,6 +34,7 @@ export const reportReasonLabels: Record<ReportReason, string> = {
   CSAM: 'CSAM',
   Automated: 'Automated',
   Spam: 'Spam',
+  StickerPlacement: 'Sticker Placement',
 };
 
 export const DEFAULT_REPORT_REASONS: ReportReason[] = [
@@ -91,7 +92,8 @@ const entityBySlug = new Map(
   Object.entries(reportEntitySlugs).map(([entity, slug]) => [slug, entity as ReportEntity])
 );
 
-export const reportEntityForSlug = (slug: string): ReportEntity | undefined => entityBySlug.get(slug);
+export const reportEntityForSlug = (slug: string): ReportEntity | undefined =>
+  entityBySlug.get(slug);
 
 export const reportPath = (entity: ReportEntity) => `/reports/${reportEntitySlugs[entity]}`;
 

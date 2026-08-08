@@ -1,0 +1,131 @@
+<script lang="ts">
+  import type { SvelteSet } from 'svelte/reactivity';
+  import { enhance } from '$app/forms';
+  import type { SubmitFunction } from '@sveltejs/kit';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
+  import { num } from '$lib/format';
+
+  let {
+    selected,
+    onSubmit,
+    submitting,
+    ownerCount,
+  }: {
+    selected: SvelteSet<string | number>;
+    onSubmit: SubmitFunction;
+    submitting: boolean;
+    ownerCount: number;
+  } = $props();
+
+  const ids = $derived([...selected].join(','));
+  const count = $derived(selected.size);
+
+  let confirming = $state<'remove' | null>(null);
+  let notifying = $state(false);
+  let flagging = $state(false);
+</script>
+
+<section
+  class="mb-4 rounded-xl border p-5 {count > 0
+    ? 'border-blue-500/40 bg-blue-500/5'
+    : 'border-dark-4 bg-dark-6'}"
+>
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <p class="text-sm text-dark-2">
+      {#if count === 0}
+        Select images to act on them.
+      {:else}
+        <span class="font-semibold text-white">{num(count)}</span> selected
+        {#if ownerCount > 1}
+          <span class="text-amber-300">
+            · spanning {ownerCount} accounts
+          </span>
+        {/if}
+      {/if}
+    </p>
+
+    {#if count > 0 && !confirming && !notifying}
+      <div class="flex flex-wrap gap-2">
+        <Button size="sm" variant="destructive" onclick={() => (confirming = 'remove')}>
+          Remove selected
+        </Button>
+        <form method="POST" action="?/restore" use:enhance={onSubmit}>
+          <input type="hidden" name="imageIds" value={ids} />
+          <Button type="submit" size="sm" disabled={submitting}>Restore selected</Button>
+        </form>
+        <Button size="sm" onclick={() => (notifying = true)}>Notify owners</Button>
+        <Button size="sm" variant="outline" onclick={() => (flagging = !flagging)}>Flags</Button>
+      </div>
+    {/if}
+  </div>
+
+  {#if confirming === 'remove'}
+    <!-- Removal is the destructive one and spans accounts, so it states the blast radius before the
+         click rather than after. -->
+    <form method="POST" action="?/remove" use:enhance={onSubmit} class="mt-3">
+      <input type="hidden" name="imageIds" value={ids} />
+      <div class="rounded-md border border-red-500/40 bg-red-500/10 p-3">
+        <p class="mb-2 text-sm text-white">
+          Remove <strong>{num(count)}</strong> images
+          {#if ownerCount > 1}across <strong>{ownerCount}</strong> accounts{/if}? Their owners are not
+          notified unless you also send a message.
+        </p>
+        <Input name="reason" placeholder="Reason (optional, recorded with the removal)" class="mb-2" />
+        <div class="flex gap-2">
+          <Button type="submit" size="sm" variant="destructive" disabled={submitting}>
+            {submitting ? 'Removing…' : `Remove ${num(count)}`}
+          </Button>
+          <Button type="button" size="sm" variant="outline" onclick={() => (confirming = null)}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+    </form>
+  {/if}
+
+  {#if flagging}
+    <form method="POST" action="?/setFlag" use:enhance={onSubmit} class="mt-3">
+      <input type="hidden" name="imageIds" value={ids} />
+      <p class="mb-2 text-xs text-dark-2">
+        Retool could only ever SET poi. Both flags and both directions are available here, so one
+        applied in error can be cleared.
+      </p>
+      <!-- One field carries both, because a submit button contributes a single name/value pair. -->
+      <div class="flex flex-wrap gap-2">
+        {#each [['poi:true', 'Set POI'], ['poi:false', 'Clear POI'], ['minor:true', 'Set minor'], ['minor:false', 'Clear minor']] as [value, label] (value)}
+          <Button
+            type="submit"
+            name="flagValue"
+            {value}
+            size="sm"
+            variant="outline"
+            disabled={submitting}
+          >
+            {label}
+          </Button>
+        {/each}
+        <Button type="button" size="sm" variant="outline" onclick={() => (flagging = false)}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  {/if}
+
+  {#if notifying}
+    <form method="POST" action="?/notifyOwners" use:enhance={onSubmit} class="mt-3">
+      <input type="hidden" name="imageIds" value={ids} />
+      <p class="mb-2 text-xs text-dark-2">
+        One notification per affected account, not per image.
+      </p>
+      <Textarea name="message" rows={2} placeholder="What should these users be told?" required />
+      <div class="mt-2 flex gap-2">
+        <Button type="submit" size="sm" disabled={submitting}>Send</Button>
+        <Button type="button" size="sm" variant="outline" onclick={() => (notifying = false)}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  {/if}
+</section>

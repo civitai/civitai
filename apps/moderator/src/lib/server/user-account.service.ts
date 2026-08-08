@@ -369,7 +369,7 @@ export async function getBuzzBalance(userId: number): Promise<UserBuzz> {
 export type ShopPurchase = {
   /** The purchase PK, and also the `claimKey` on the granted UserCosmetic row. */
   buzzTransactionId: string;
-  cosmeticId: number;
+  cosmeticId: number | null;
   title: string;
   unitAmount: number;
   purchasedAt: Date;

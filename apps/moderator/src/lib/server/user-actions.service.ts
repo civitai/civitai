@@ -70,7 +70,10 @@ async function callRetoolEndpoint(
     if (!res.ok) return { ok: false, error: `${label} returned ${res.status}.` };
     // The endpoints return the affected counts and they are the only way to tell a real deletion from
     // a no-op — a stale panel or a second moderator re-submitting gets a 200 having changed nothing.
-    return { ok: true, body: ((await res.json().catch(() => ({}))) ?? {}) as Record<string, unknown> };
+    return {
+      ok: true,
+      body: ((await res.json().catch(() => ({}))) ?? {}) as Record<string, unknown>,
+    };
   } catch (e) {
     console.error(`[user-actions] ${label} failed`, e);
     return { ok: false, error: `${label} failed.` };
@@ -228,7 +231,11 @@ export async function unmuteAndClearTimed(input: {
   userId: number;
   moderatorId: number;
 }): Promise<ActionResult> {
-  const result = await setMuted({ userId: input.userId, muted: false, moderatorId: input.moderatorId });
+  const result = await setMuted({
+    userId: input.userId,
+    muted: false,
+    moderatorId: input.moderatorId,
+  });
   if (!result.ok) return result;
 
   await getModeratorDb()
@@ -474,6 +481,125 @@ export async function grantCosmetic(input: {
   return { ok: true };
 }
 
+// BULK IMAGE ACTIONS (Retool's RemoveImages / RemoveImages2 / RemoveArrayOfImages / RestoreImages /
+// RestoreArrayOfImages). These go to the main app rather than Kysely: `handleBlockImages` and
+// `handleUnblockImages` behind them re-sync the search index, recompute nsfwLevel and write ClickHouse
+// tracking. A local implementation would be a second source of truth for the destructive path.
+//
+// Both endpoints take a JSON body, unlike the query-string mod endpoints, so they do not go through
+// `callMainApp`.
+async function postMainAppJson(
+  path: string,
+  body: Record<string, unknown>,
+  label: string
+): Promise<ActionResult> {
+  const token = env.WEBHOOK_TOKEN;
+  if (!token) return { ok: false, error: 'WEBHOOK_TOKEN is not configured.' };
+
+  const base = (env.CIVITAI_APP_URL || 'https://civitai.com').replace(/\/$/, '');
+  try {
+    const res = await fetch(`${base}${path}?token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      // A large batch takes real time on the other side; the 15s used elsewhere would abort a
+      // removal that is actually succeeding, and a retry would then double-notify the owners.
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!res.ok) return { ok: false, error: `${label} returned ${res.status}.` };
+    return { ok: true };
+  } catch (e) {
+    console.error(`[user-actions] ${label} failed`, e);
+    return { ok: false, error: `${label} failed.` };
+  }
+}
+
+export async function removeImages(input: {
+  imageIds: number[];
+  reason?: string;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  if (!input.imageIds.length) return { ok: false, error: 'Select at least one image.' };
+
+  const result = await postMainAppJson(
+    '/api/mod/remove-images',
+    { imageIds: input.imageIds, moderatorId: input.moderatorId, reason: input.reason },
+    'Image removal'
+  );
+  if (!result.ok) return result;
+
+  // One row per image: ModActivity keys on content id, so a single "removed 300" row would leave 299
+  // images with no record of who removed them.
+  await Promise.all(
+    input.imageIds.map((id) =>
+      recordModActivity({
+        userId: input.moderatorId,
+        entityType: 'image',
+        entityId: id,
+        activity: 'bulkRemove',
+      })
+    )
+  );
+  return { ok: true };
+}
+
+export async function restoreImages(input: {
+  imageIds: number[];
+  moderatorId: number;
+}): Promise<ActionResult> {
+  if (!input.imageIds.length) return { ok: false, error: 'Select at least one image.' };
+
+  const result = await postMainAppJson(
+    '/api/mod/restore-images',
+    { imageIds: input.imageIds },
+    'Image restore'
+  );
+  if (!result.ok) return result;
+
+  await Promise.all(
+    input.imageIds.map((id) =>
+      recordModActivity({
+        userId: input.moderatorId,
+        entityType: 'image',
+        entityId: id,
+        activity: 'bulkRestore',
+      })
+    )
+  );
+  return { ok: true };
+}
+
+// IMAGE FLAGS (Retool's TogglePoIMakeSureToEdit — its name is a warning that it was edited in place
+// and easy to get wrong). The endpoint takes `flag=poi|minor`; Retool hardcoded poi and value=true, so
+// there was no way to UNSET one from the app. Both are parameters here.
+export async function setImageFlag(input: {
+  imageIds: number[];
+  flag: 'poi' | 'minor';
+  value: boolean;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  if (!input.imageIds.length) return { ok: false, error: 'Select at least one image.' };
+
+  const result = await callMainApp(
+    '/api/mod/update-image-flag',
+    { flag: input.flag, value: String(input.value), ids: input.imageIds.join(',') },
+    'Image flag update'
+  );
+  if (!result.ok) return result;
+
+  await Promise.all(
+    input.imageIds.map((id) =>
+      recordModActivity({
+        userId: input.moderatorId,
+        entityType: 'image',
+        entityId: id,
+        activity: `${input.flag}:${input.value}`,
+      })
+    )
+  );
+  return { ok: true };
+}
+
 // PURGE ALL CONTENT (Retool's PURGEAPI). Irreversible from here: the endpoint deletes models, images,
 // posts, articles and comments for the account. The confirmation lives in the UI; this only refuses to
 // act on an id that does not resolve, so a mistyped id cannot reach the endpoint.
@@ -652,7 +778,10 @@ export async function getTimedMutes(userId: number): Promise<TimedMute[]> {
     .execute();
 
   const now = new Date();
-  return rows.map(({ isMuted, ...row }) => ({ ...row, active: isActive({ ...row, isMuted }, now) }));
+  return rows.map(({ isMuted, ...row }) => ({
+    ...row,
+    active: isActive({ ...row, isMuted }, now),
+  }));
 }
 
 /** Does the user still have any timed mute in force? Used to decide whether lifting one should lift the

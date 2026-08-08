@@ -66,6 +66,10 @@ Reach for `check` **only** after changing the route tree — adding, removing or
 needing it: `Cannot find module './$types'`, or component props resolving to `never`. `prepare` runs
 `sync` on install, so a fresh checkout is already covered.
 
+**`build` runs `svelte-kit sync` as well** (`svelte-kit sync && vite build`), so it carries the same
+cost. Run it **once, at the end of a slice** — not after each fix. Verifying with `typecheck` and
+building once is the whole loop; a build after every edit is three sync storms per slice.
+
 #### Never run `npx prettier --plugin=prettier-plugin-svelte` on `.svelte` files
 
 It **empties every file it touches to zero bytes**, and reports success on each one. It took out 28
