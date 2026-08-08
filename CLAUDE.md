@@ -53,6 +53,29 @@ pnpm run prettier:check   # Check Prettier formatting
 pnpm run prettier:write   # Auto-fix Prettier formatting
 ```
 
+#### In SvelteKit apps (`apps/moderator`, `apps/auth`): use `typecheck`, never `check`
+
+They are **not** synonyms. `typecheck` is `svelte-check` alone and writes nothing. `check` prefixes it
+with `svelte-kit sync`, which regenerates ~690 files under `.svelte-kit/` — a directory the Vite dev
+server watches — so running it in an edit→verify loop has Vite re-optimising the module graph while
+`svelte-check` loads ~9,000 files. That collision froze an entire day's work before it was diagnosed
+(2026-08-07), and it does not reproduce in the main app because `tsc --noEmit` emits nothing.
+
+Reach for `check` **only** after changing the route tree — adding, removing or renaming a
+`+page`/`+server`/`+layout` file — which is the only time the generated `$types` go stale. Symptom of
+needing it: `Cannot find module './$types'`, or component props resolving to `never`. `prepare` runs
+`sync` on install, so a fresh checkout is already covered.
+
+#### Never run `npx prettier --plugin=prettier-plugin-svelte` on `.svelte` files
+
+It **empties every file it touches to zero bytes**, and reports success on each one. It took out 28
+components in one command (2026-08-07); they were only recoverable because they were committed. The
+first symptom is `svelte-check` reporting props as `never`, which reads like stale `$types` and sends
+you diagnosing the wrong thing.
+
+Use `pnpm run prettier:write` — the root script has the plugin configured correctly. Ad-hoc `npx
+prettier` is fine for `.ts`/`.json`, never for `.svelte`.
+
 ### Testing
 ```bash
 pnpm run test:unit:run    # Vitest unit suite (the one you almost always want)

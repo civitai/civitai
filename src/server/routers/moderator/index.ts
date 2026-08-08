@@ -6,7 +6,6 @@ import {
   handleDenyTrainingData,
 } from '~/server/controllers/training.controller';
 import { getByIdSchema, getByIdsSchema } from '~/server/schema/base.schema';
-import { getModeratorArticlesSchema } from '~/server/schema/article.schema';
 import {
   modCashAdjustmentSchema,
   updateCashWithdrawalSchema,
@@ -26,7 +25,6 @@ import {
   getMinorHashMatchesSchema,
   resolveMinorFlagAppealSchema,
 } from '~/server/schema/minor-hash.schema';
-import { getModeratorArticles } from '~/server/services/article.service';
 import {
   getCash,
   getWithdrawalHistory,
@@ -54,8 +52,6 @@ import {
   revertMinorHashAutoFlag,
 } from '~/server/services/minor-hash.service';
 import { moderatorProcedure, protectedProcedure, router, isFlagProtected } from '~/server/trpc';
-import { throwDbError } from '~/server/utils/errorHandling';
-import type { ModerationRule } from '~/shared/utils/prisma/models';
 
 const trainingModerationProcedure = protectedProcedure.use(
   isFlagProtected('trainingModelsModeration')
@@ -123,11 +119,6 @@ export const modRouter = router({
       .input(queryModelVersionsSchema)
       .query(queryModelVersionsForModeratorHandler),
   }),
-  articles: router({
-    query: moderatorProcedure
-      .input(getModeratorArticlesSchema)
-      .query(({ input }) => getModeratorArticles({ ...input, limit: input.limit ?? 50 })),
-  }),
   trainingData: router({
     approve: moderatorProcedure.input(getByIdSchema).mutation(handleApproveTrainingData),
     deny: moderatorProcedure.input(getByIdSchema).mutation(handleDenyTrainingData),
@@ -145,25 +136,6 @@ export const modRouter = router({
     updateWithdrawal: cashManagementProcedure
       .input(updateCashWithdrawalSchema)
       .mutation(({ input }) => updateCashWithdrawal(input)),
-  }),
-  rules: router({
-    getById: moderatorProcedure
-      .input(getByIdSchema.extend({ entityType: z.enum(['Model', 'Image']) }))
-      .query(async ({ input }) => {
-        const { id, entityType } = input;
-        let modRule: Pick<ModerationRule, 'id' | 'action' | 'definition'> | undefined;
-
-        if (entityType === 'Model') {
-          const modelModRules = await getModelModRules();
-          modRule = modelModRules.find((rule) => rule.id === id);
-        } else {
-          const imageModRules = await getImagesModRules();
-          modRule = imageModRules.find((rule) => rule.id === id);
-        }
-
-        if (!modRule) throw throwDbError('Rule not found');
-        return modRule;
-      }),
   }),
 });
 

@@ -20,11 +20,9 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type {
   AdjustTagsSchema,
   DeleteTagsSchema,
-  GetTagsForReviewInput,
   GetTagsInput,
   GetVotableTagsSchema,
   GetVotableTagsSchema2,
-  ModerateTagsSchema,
 } from '~/server/schema/tag.schema';
 import { getCategoryTags, getReplacedTagIds, getSystemTags } from '~/server/services/system-cache';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
@@ -885,37 +883,6 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
   }
 };
 
-export const moderateTags = async ({ entityIds, entityType, disable }: ModerateTagsSchema) => {
-  if (entityType === 'model') {
-    // We aren't doing user model tagging quite yet...
-    throw new Error('Not implemented');
-    // await dbWrite.$executeRawUnsafe(`
-    //   UPDATE "TagsOnModels"
-    //   SET "disabled" = ${disable}, "needsReview" = false
-    //   WHERE "needsReview" = true AND "modelId" IN (${entityIds.join(', ')})
-    // `);
-  } else if (entityType === 'image') {
-    const toUpdate = await dbWrite.$queryRawUnsafe<{ imageId: number; tagId: number }[]>(`
-      SELECT "imageId", "tagId"
-      FROM "TagsOnImageDetails"
-      WHERE "needsReview" = true
-        AND "imageId" IN (${entityIds.join(', ')});
-    `);
-
-    await upsertTagsOnImageNew(
-      toUpdate.map(({ imageId, tagId }) => ({
-        imageId,
-        tagId,
-        automated: false,
-        disabled: disable,
-        needsReview: false,
-      }))
-    );
-
-    await imageTagsCache.bust(entityIds);
-  }
-};
-
 export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
   const isTagIds = typeof tags[0] === 'number';
   // Explicit cast to number[] or string[] to avoid type errors
@@ -1003,29 +970,3 @@ export const getTypeCategories = async ({
   return categories;
 };
 
-export async function getTagsForReview({ limit, page, reviewType }: GetTagsForReviewInput) {
-  const pagination = getPagination(limit, page);
-  const fromClause = Prisma.sql`
-    FROM "ImageTagForReview" it
-      JOIN "Tag" t ON it."tagId" = t.id
-      JOIN "Image" i ON it."imageId" = i.id
-    WHERE i."needsReview" = ${reviewType}
-  `;
-
-  const [tags, { count }] = await dbRead.$transaction([
-    dbRead.$queryRaw<{ id: number; name: string }[]>`
-      SELECT DISTINCT ON (t.name)
-        t.id, t.name
-      ${fromClause}
-      ORDER BY t.name
-      LIMIT ${pagination.take} OFFSET ${pagination.skip}
-    `,
-    dbRead.$queryRaw<{ count: number }>`
-      SELECT
-        COUNT(DISTINCT t.id) AS count
-      ${fromClause}
-    `,
-  ]);
-
-  return getPagingData({ items: tags, count }, pagination.take, page);
-}

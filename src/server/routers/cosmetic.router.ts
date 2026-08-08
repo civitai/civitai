@@ -3,7 +3,6 @@ import {
   equipCosmeticSchema,
   getStickerCosmeticsSchema,
   getPaginatedCosmeticsSchema,
-  grantCosmeticsToUsersSchema,
   purchaseStickerUsesSchema,
 } from '~/server/schema/cosmetic.schema';
 import {
@@ -11,8 +10,6 @@ import {
   getStickerCosmetics,
   getPaginatedCosmetics,
   equipCosmeticToEntity,
-  grantCosmeticsToUsers,
-  revokeCosmeticsFromUsers,
   unequipCosmetic,
 } from '~/server/services/cosmetic.service';
 import { getStickerBalances, purchaseStickerUses } from '~/server/services/sticker.service';
@@ -62,12 +59,6 @@ export const cosmeticRouter = router({
   getPaged: moderatorProcedure.input(getPaginatedCosmeticsSchema).query(({ input }) => {
     return getPaginatedCosmetics(input);
   }),
-  grantToUsers: moderatorProcedure
-    .input(grantCosmeticsToUsersSchema)
-    .mutation(({ input }) => grantCosmeticsToUsers(input)),
-  revokeFromUsers: moderatorProcedure
-    .input(grantCosmeticsToUsersSchema)
-    .mutation(({ input }) => revokeCosmeticsFromUsers(input)),
   equipContentDecoration: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(equipCosmeticSchema)

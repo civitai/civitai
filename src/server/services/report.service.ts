@@ -15,7 +15,6 @@ import type {
   CreateEntityAppealInput,
   CreateReportInput,
   GetRecentAppealsInput,
-  GetReportsInput,
   ResolveAppealInput,
 } from '~/server/schema/report.schema';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -418,45 +417,6 @@ export const createReport = async ({
   return createdReport;
 };
 
-// TODO - add reports for questions/answers
-// get report by category (model, review, comment)
-export const getReports = async <TSelect extends Prisma.ReportSelect>({
-  page,
-  type,
-  limit = 20,
-  select,
-  filters,
-  sort,
-}: GetReportsInput & {
-  select: TSelect;
-}) => {
-  const { take, skip } = getPagination(limit, page);
-
-  const where: Prisma.ReportWhereInput = {
-    [type]: { isNot: null },
-  };
-
-  for (const { id, value } of filters ?? []) {
-    if (id === 'status') {
-      const statuses = value as ReportStatus[];
-      if (statuses.length > 0) where.status = { in: statuses };
-    } else if (id === 'reason') {
-      const reasons = value as ReportReason[];
-      if (reasons.length > 0) where.reason = { in: reasons };
-    } else if (id === 'reportedBy') where.user = { username: { startsWith: value as string } };
-  }
-
-  const items = await dbRead.report.findMany({
-    take,
-    skip,
-    select,
-    where,
-    orderBy: [{ id: 'desc' }],
-  });
-  const count = await dbRead.report.count({ where });
-  return getPagingData({ items, count }, take, page);
-};
-
 export const getReportByIds = <TSelect extends Prisma.ReportSelect>({
   ids,
   select,
@@ -465,13 +425,6 @@ export const getReportByIds = <TSelect extends Prisma.ReportSelect>({
   select: TSelect;
 }) => {
   return dbRead.report.findMany({ where: { id: { in: ids } }, select });
-};
-
-export const updateReportById = ({
-  id,
-  data,
-}: GetByIdInput & { data: Prisma.ReportUpdateArgs['data'] }) => {
-  return dbWrite.report.update({ where: { id }, data });
 };
 
 export async function bulkSetReportStatus({

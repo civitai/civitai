@@ -634,18 +634,6 @@ export class Tracker {
     return this.track('articleRatingReviews', values);
   }
 
-  public articleRatingReviewResolved(values: {
-    reviewId: number;
-    articleId: number;
-    status: 'Actioned' | 'Unactioned';
-    // `null` (not 0) when no level was applied — 0 is a valid bitwise
-    // nsfwLevel slot and would skew approval metrics.
-    appliedLevel: number | null;
-    moderatorId: number;
-  }) {
-    return this.track('articleRatingReviewsResolved', values);
-  }
-
   public tagEngagement(values: { type: TagEngagementType; tagId: number }) {
     return this.track('tagEngagements', values);
   }

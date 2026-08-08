@@ -142,9 +142,6 @@ export const constants = {
   tagFilterDefaults: {
     trendingTagsLimit: 20,
   },
-  reportingFilterDefaults: {
-    limit: 50,
-  },
   modelFileOrder: {
     Model: 0,
     'Pruned Model': 1,

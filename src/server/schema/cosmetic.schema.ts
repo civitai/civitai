@@ -12,12 +12,6 @@ export const getPaginatedCosmeticsSchema = paginationSchema.merge(
   })
 );
 
-export type GrantCosmeticsToUsersInput = z.infer<typeof grantCosmeticsToUsersSchema>;
-export const grantCosmeticsToUsersSchema = z.object({
-  cosmeticIds: z.array(z.number()).min(1).max(100),
-  userIds: z.array(z.number()).min(1).max(100),
-});
-
 export type GetStickerCosmeticsInput = z.infer<typeof getStickerCosmeticsSchema>;
 export const getStickerCosmeticsSchema = z.object({
   ids: z.array(z.number().int().positive()).min(1).max(100),

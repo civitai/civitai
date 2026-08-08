@@ -1,6 +1,9 @@
 import type { Handle } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { guard } from '$lib/server/auth';
+import { applyGrants, canAccess } from '$lib/server/access';
+import { loadPageAccessGrants } from '$lib/server/page-access';
+import { authenticateWebhookToken } from '$lib/server/webhook-endpoint';
 
 // Where authenticated-but-not-a-moderator users get sent. A 403 would be a dead end (re-login can't
 // grant the role); bounce them to the main site instead. Overridable via env for non-prod hosts.
@@ -19,6 +22,19 @@ const PUBLIC_PATHS = new Set(['/favicon.svg']);
 
 export const handle: Handle = async ({ event, resolve }) => {
   if (PUBLIC_PATHS.has(event.url.pathname)) return resolve(event);
+  // An /api/* request presenting a credential of its own is verified HERE and never redirected to the hub
+  // login — a script needs a status code, not an HTML login page. Verifying in the hook means an invalid
+  // token cannot reach a handler at all; WebhookEndpoint then decides which endpoints accept a verified
+  // one. `user` is deliberately left unset: there is nobody behind a token, so nothing reached this way
+  // can attribute a write.
+  if (event.url.pathname.startsWith('/api/')) {
+    const token = authenticateWebhookToken(event);
+    if (token instanceof Response) return token;
+    if (token === 'webhook') {
+      event.locals.tokenClient = token;
+      return resolve(event);
+    }
+  }
 
   const result = await guard.check(event.request.headers.get('cookie') ?? '', event.url.href);
 
@@ -30,5 +46,23 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   event.locals.user = result.user;
+
+  applyGrants(await loadPageAccessGrants());
+
+  // Global role-tier gate — one place covering loads, actions, and endpoints. Keyed on the concrete
+  // pathname (not route.id) so a dynamic route like /images/[slug] gates per-slug: /images/csam →
+  // senior, /images/minor → staff. canAccess's prefix match resolves `__data.json` data requests and
+  // sub-path endpoints to the right nav entry too. The `route.id &&` guard keeps static assets ungated.
+  // A matched route above the user's tier bounces to the dashboard; unmatched routes fall through to 404.
+  // `/api/*` endpoints are exempt: they aren't NAVIGATION paths (canAccess would deny them), they're
+  // already moderator-authenticated by the guard above, and any that need a finer tier self-check.
+  if (
+    event.route.id &&
+    !event.url.pathname.startsWith('/api/') &&
+    !canAccess(result.user, event.url.pathname)
+  ) {
+    return new Response(null, { status: 303, headers: { location: '/' } });
+  }
+
   return resolve(event);
 };

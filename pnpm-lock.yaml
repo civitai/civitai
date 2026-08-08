@@ -58,6 +58,9 @@ importers:
       '@civitai/db-schema':
         specifier: workspace:*
         version: link:packages/civitai-db-schema
+      '@civitai/moderation':
+        specifier: workspace:*
+        version: link:packages/civitai-moderation
       '@civitai/next-axiom':
         specifier: ^0.17.0
         version: 0.17.0(next@16.3.0(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))
@@ -1124,24 +1127,60 @@ importers:
       '@civitai/brand':
         specifier: workspace:*
         version: link:../../packages/civitai-brand
+      '@civitai/buzz':
+        specifier: workspace:*
+        version: link:../../packages/civitai-buzz
       '@civitai/clickhouse':
         specifier: workspace:*
         version: link:../../packages/civitai-clickhouse
+      '@civitai/client':
+        specifier: 0.2.0-beta.78
+        version: 0.2.0-beta.78
       '@civitai/db':
         specifier: workspace:*
         version: link:../../packages/civitai-db
+      '@civitai/db-queries':
+        specifier: workspace:*
+        version: link:../../packages/civitai-db-queries
       '@civitai/db-schema':
         specifier: workspace:*
         version: link:../../packages/civitai-db-schema
+      '@civitai/email':
+        specifier: workspace:*
+        version: link:../../packages/civitai-email
+      '@civitai/mod-utils':
+        specifier: workspace:*
+        version: link:../../packages/civitai-mod-utils
+      '@civitai/moderation':
+        specifier: workspace:*
+        version: link:../../packages/civitai-moderation
+      '@civitai/notifications':
+        specifier: workspace:*
+        version: link:../../packages/civitai-notifications
+      '@civitai/redis':
+        specifier: workspace:*
+        version: link:../../packages/civitai-redis
+      '@civitai/shared':
+        specifier: workspace:*
+        version: link:../../packages/civitai-shared
+      '@civitai/storage':
+        specifier: workspace:*
+        version: link:../../packages/civitai-storage
       '@civitai/ui':
         specifier: workspace:*
         version: link:../../packages/civitai-ui
       '@tabler/icons-svelte':
         specifier: ^3.28.1
         version: 3.44.0(svelte@5.56.3(@typescript-eslint/types@8.60.1))
+      kysely:
+        specifier: ^0.28.7
+        version: 0.28.17
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@sveltejs/adapter-node':
         specifier: ^5.3.2
@@ -1441,6 +1480,18 @@ importers:
       '@types/nodemailer':
         specifier: ^6.4.7
         version: 6.4.17
+
+  packages/civitai-mod-utils: {}
+
+  packages/civitai-moderation:
+    dependencies:
+      zod:
+        specifier: ^4.0.17
+        version: 4.4.3
+    devDependencies:
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.0.18)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(lightningcss@1.32.0)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)
 
   packages/civitai-notifications:
     dependencies:

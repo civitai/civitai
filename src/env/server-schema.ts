@@ -362,6 +362,9 @@ export const serverSchema = z
     JOB_TOKEN: z.string(),
     WEBHOOK_URL: z.url().optional(),
     WEBHOOK_TOKEN: z.string(),
+    // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
+    // here via the moderator catchall page during the transition.
+    MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),
     UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
     UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
     LOGGING: commaDelimitedStringArray(),

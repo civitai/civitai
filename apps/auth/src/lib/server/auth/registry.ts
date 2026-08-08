@@ -1,9 +1,9 @@
 import {
+  SESSION_REGISTRY_KEYS,
   createSessionRegistry,
   type SessionRegistry,
   type SessionRegistryRedis,
 } from '@civitai/auth';
-import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { getSysRedis } from '../redis';
 
 // Cross-app session revocation. The redis CLIENT is built from @civitai/redis; the KEY STRINGS
@@ -35,11 +35,7 @@ function registry(): SessionRegistry {
     // sysRedis's methods are typed to the known-key union; the registry is namespace-agnostic
     // (plain string keys), so cast at this boundary — the main app does the same on these calls.
     redis: sysRedis as unknown as SessionRegistryRedis,
-    keys: {
-      tokenState: REDIS_SYS_KEYS.SESSION.TOKEN_STATE,
-      all: REDIS_SYS_KEYS.SESSION.ALL,
-      userTokens: REDIS_KEYS.SESSION.USER_TOKENS,
-    },
+    keys: SESSION_REGISTRY_KEYS,
   }));
 }
 

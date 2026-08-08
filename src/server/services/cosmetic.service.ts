@@ -16,7 +16,6 @@ import type {
   EquipCosmeticInput,
   GetStickerCosmeticsInput,
   GetPaginatedCosmeticsInput,
-  GrantCosmeticsToUsersInput,
 } from '~/server/schema/cosmetic.schema';
 import {
   articlesSearchIndex,
@@ -245,66 +244,21 @@ export const grantCosmetics = async ({
   await refreshOwnedStickerCache([userId]);
 };
 
-/**
- * Grant multiple cosmetics to multiple users (moderator tool). Grants the full
- * cross product (every cosmetic to every user). Validates that all cosmetic and
- * user IDs exist, reporting which are missing rather than silently skipping.
- *
- * The underlying insert is idempotent (ON CONFLICT DO NOTHING), so pairs the
- * user already owns are skipped by the database; we count the existing rows
- * beforehand to report newly granted vs already owned.
- */
-export async function grantCosmeticsToUsers({ userIds, cosmeticIds }: GrantCosmeticsToUsersInput) {
-  const uniqueUserIds = [...new Set(userIds)];
-  const uniqueCosmeticIds = [...new Set(cosmeticIds)];
-
-  const cosmetics = await dbRead.cosmetic.findMany({
-    where: { id: { in: uniqueCosmeticIds } },
-    select: { id: true },
-  });
-  const missingCosmeticIds = uniqueCosmeticIds.filter((id) => !cosmetics.some((c) => c.id === id));
-  if (missingCosmeticIds.length)
-    throw new Error(`These cosmetics don't exist: ${missingCosmeticIds.join(', ')}`);
-
-  const users = await dbRead.user.findMany({
-    where: { id: { in: uniqueUserIds } },
-    select: { id: true },
-  });
-  const missingUserIds = uniqueUserIds.filter((id) => !users.some((u) => u.id === id));
-  if (missingUserIds.length)
-    throw new Error(`These users don't exist: ${missingUserIds.join(', ')}`);
-
-  const alreadyOwned = await dbWrite.userCosmetic.count({
-    where: {
-      userId: { in: uniqueUserIds },
-      cosmeticId: { in: uniqueCosmeticIds },
-      claimKey: 'claimed',
-    },
-  });
-
-  for (const userId of uniqueUserIds) {
-    await grantCosmetics({ userId, cosmeticIds: uniqueCosmeticIds });
-  }
-
-  const totalPairs = uniqueUserIds.length * uniqueCosmeticIds.length;
-  return {
-    totalPairs,
-    alreadyOwned,
-    newlyGranted: totalPairs - alreadyOwned,
-  };
-}
+// NOTE(moderator-migration): grantCosmeticsToUsers (the moderator cross-product grant) now lives in the
+// spoke app (apps/moderator, Kysely). The shared grantCosmetics helper above stays (payments/referrals).
 
 /**
- * Revoke cosmetics from users (moderator tool) — the inverse of
- * grantCosmeticsToUsers. Deletes every UserCosmetic row for the cross product,
- * including equipped ones; equipped placements are captured first so entity
- * caches and search indexes can be refreshed after the rows are gone.
+ * Revoke cosmetics from users across the cross product. Deletes every UserCosmetic row for the pairs,
+ * including equipped ones — equipped placements are captured first so entity caches and search indexes
+ * can be refreshed once the rows are gone.
  */
 export async function revokeCosmeticsFromUsers({
   userIds,
   cosmeticIds,
   claimKeys,
-}: GrantCosmeticsToUsersInput & {
+}: {
+  userIds: number[];
+  cosmeticIds: number[];
   /**
    * Restricts the revoke to holdings obtained through specific grants. A pack
    * takedown needs this: the same cosmetic may also have been bought on its own,

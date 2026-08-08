@@ -11,7 +11,6 @@ export function ModerationNav() {
   const menuItems = useMemo(
     () =>
       [
-        { label: 'Reports', href: '/moderator/reports' },
         { label: 'Strikes', href: '/moderator/strikes', hidden: !features.strikes },
         { label: 'Images', href: '/moderator/images' },
         { label: 'Image Tags', href: '/moderator/image-tags' },
@@ -31,6 +30,8 @@ export function ModerationNav() {
           href: '/moderator/review/training-data',
           hidden: !features.reviewTrainingData,
         },
+        // Migrated to the moderator app — the /moderator/* route redirects there (see the moderator
+        // catchall page). Kept in nav during the transition.
         { label: 'Articles', href: '/moderator/articles' },
         // { label: 'Tags', href: '/moderator/tags' },
         {
@@ -49,6 +50,7 @@ export function ModerationNav() {
         // { label: 'Sanity Images', href: '/moderator/research/rater-sanity' },
         { label: 'Metadata Tester', href: '/testing/metadata-test' },
         { label: 'Ratings Review', href: '/moderator/image-rating-review' },
+        // Migrated to the moderator app (redirects via the moderator catchall page).
         { label: 'Article Ratings Review', href: '/moderator/article-rating-review' },
         { label: 'Downleveled Review', href: '/moderator/downleveled-review' },
         { label: 'Ingestion Errors', href: '/moderator/ingestion-error-review' },
