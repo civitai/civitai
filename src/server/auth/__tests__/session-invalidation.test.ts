@@ -178,7 +178,43 @@ describe('updateSessionState READ fail-open wrapper (STEP-4 hGetAll)', () => {
     expect(mockHSetMultiWithTTL).not.toHaveBeenCalled();
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('read-degraded');
-    expect(mockLogSysRedisFailOpen.mock.calls[0][3]).toMatchObject({ userId: 123, type: 'refresh' });
+    expect(mockLogSysRedisFailOpen.mock.calls[0][3]).toMatchObject({
+      userId: 123,
+      type: 'refresh',
+    });
+  });
+});
+
+describe('updateSessionState token-map build is linear', () => {
+  /**
+   * The map was built with `tokens.reduce((acc, t) => ({ ...acc, [t]: type }), {})`,
+   * which shallow-copies the accumulator every iteration: O(n^2) property copies,
+   * synchronous, with no yield point.
+   *
+   * Scope: this covers the in-process map build only — `hSetMultiWithTTL` is
+   * mocked here, so a pass says nothing about whether a hash this size can be
+   * written. The budget is deliberately loose (measured: 5.6ms linear vs 21138ms
+   * quadratic at this n), so a slow machine cannot flip it. n is capped at 10k
+   * because the quadratic form blocks the loop, so vitest's timeout cannot fire
+   * until it finishes — a revert must fail on the assertion rather than wedge
+   * the runner.
+   */
+  it('builds the token map in linear time', async () => {
+    const tokenCount = 10_000;
+    const hugeHash: Record<string, string> = {};
+    for (let i = 0; i < tokenCount; i++) hugeHash[`token-${i}`] = 'active';
+    mockHGetAll.mockResolvedValue(hugeHash);
+    mockHSetMultiWithTTL.mockResolvedValue(undefined);
+
+    const startedAt = performance.now();
+    await refreshSession(42, { sendSignal: false });
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(elapsedMs).toBeLessThan(1000);
+
+    const [, , fieldsObj] = mockHSetMultiWithTTL.mock.calls[0];
+    expect(fieldsObj['token-0']).toBe('refresh');
+    expect(fieldsObj[`token-${tokenCount - 1}`]).toBe('refresh');
   });
 });
 

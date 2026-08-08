@@ -32,13 +32,14 @@ async function updateSessionState(userId: number, type: 'refresh' | 'invalid') {
     tokenHash = {};
   }
   const userTokens = Object.keys(tokenHash);
-  const userTokensObj = userTokens.reduce<Record<string, string>>(
-    (acc, token) => ({ ...acc, [token]: type }),
-    {}
+  // Must stay O(n): spreading the accumulator per iteration is O(n^2), which
+  // blocks the event loop for minutes on the largest token hashes.
+  const userTokensObj: Record<string, string> = Object.fromEntries(
+    userTokens.map((token) => [token, type] as const)
   );
 
   await clearSessionCache(userId);
-  if (Object.keys(userTokensObj).length > 0) {
+  if (userTokens.length > 0) {
     // Atomic multi-field set+TTL — single EVAL replaces the sequential
     // hSet (multi-field) + hExpire (multi-field). The previous pair could
     // leave a subset of fields no-TTL if the second call failed; here all
