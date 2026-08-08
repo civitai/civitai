@@ -29,6 +29,29 @@ const NON_PROD_HOST_SUFFIX = '.civitaic.com';
 // non-production host by anyone holding the WEBHOOK_TOKEN.
 const NON_PROD_REACHABLE_TESTING_PATHS = new Set(['/api/testing/eventloop-stall']);
 
+/**
+ * The host the request actually arrived at.
+ *
+ * `nextUrl.hostname` is derived from the request as the runtime sees it, and behind a
+ * CDN and an ingress proxy there is no guarantee it carries the public host. The
+ * forwarded headers are what is on the wire, so prefer them and keep `nextUrl` only as
+ * a fallback. Normalised because each source can carry a port, a comma-separated
+ * chain, or mixed case, and the suffix test is exact.
+ *
+ * This does not change the trust story: `x-forwarded-host` is no more attacker-
+ * controlled than `Host` was, and neither is a boundary — see the header note above.
+ */
+export function resolveRequestHost(request: {
+  headers: { get: (name: string) => string | null };
+  nextUrl: { hostname: string };
+}): string {
+  const raw =
+    request.headers.get('x-forwarded-host') ??
+    request.headers.get('host') ??
+    request.nextUrl.hostname;
+  return (raw ?? '').split(',')[0].trim().split(':')[0].toLowerCase();
+}
+
 export function canAccessTestingRoute({
   pathname,
   hostname,
@@ -40,4 +63,15 @@ export function canAccessTestingRoute({
 }): boolean {
   if (!isProduction) return true;
   return NON_PROD_REACHABLE_TESTING_PATHS.has(pathname) && hostname.endsWith(NON_PROD_HOST_SUFFIX);
+}
+
+/**
+ * True when a path is one this module is willing to open on a non-production host.
+ * Exported so the guard can tell "denied a route that is meant to be reachable here"
+ * apart from "denied a route that is never reachable in production", and log only the
+ * former. Without that distinction the diagnostic would fire on every ordinary
+ * production probe of /api/testing/*.
+ */
+export function isNonProdReachableTestingPath(pathname: string): boolean {
+  return NON_PROD_REACHABLE_TESTING_PATHS.has(pathname);
 }

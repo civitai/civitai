@@ -18,9 +18,16 @@ vi.mock('~/env/other', () => ({
 
 type Redirected = { redirectedTo: string } | undefined;
 
-function requestFor(url: string) {
+function requestFor(url: string, headerOverrides: Record<string, string> = {}) {
   const nextUrl = new URL(url);
-  return { nextUrl, url } as never;
+  // Default to the realistic shape: the proxy forwards the public host in a header
+  // while the runtime's own view of the URL may be something internal.
+  const headers: Record<string, string> = { host: nextUrl.hostname, ...headerOverrides };
+  return {
+    nextUrl,
+    url,
+    headers: { get: (name: string) => headers[name.toLowerCase()] ?? null },
+  } as never;
 }
 
 async function run(url: string): Promise<Redirected> {
@@ -68,6 +75,25 @@ describe('route guard wiring for the synthetic stall endpoint (isProd = true)', 
         redirectedTo: '/',
       });
     }
+  });
+
+  it('🔴 allows when only the FORWARDED host is the preview host', async () => {
+    // The live failure this was written for: `nextUrl.hostname` is whatever the
+    // runtime resolved behind the proxy, which need not be the public host. If the
+    // guard read `nextUrl.hostname` alone, this case redirects and the endpoint is
+    // unreachable in preview while every unit test still passes.
+    const { routeGuardsMiddleware } = await import('~/server/middleware/route-guards.middleware');
+    const request = requestFor(`https://internal-service.local${STALL}`, {
+      host: 'internal-service.local',
+      'x-forwarded-host': 'pr-3752.civitaic.com',
+    });
+
+    const response = await routeGuardsMiddleware.handler({
+      request,
+      redirect: (() => ({ status: 307 })) as never,
+    });
+
+    expect(response).toBeUndefined();
   });
 
   it('carries the query string without affecting the decision', async () => {

@@ -1,5 +1,51 @@
 import { describe, expect, it } from 'vitest';
-import { canAccessTestingRoute } from '~/server/middleware/testing-route-access';
+import {
+  canAccessTestingRoute,
+  resolveRequestHost,
+} from '~/server/middleware/testing-route-access';
+
+function req(headers: Record<string, string>, nextUrlHostname = 'internal.invalid') {
+  return {
+    headers: { get: (name: string) => headers[name.toLowerCase()] ?? null },
+    nextUrl: { hostname: nextUrlHostname },
+  };
+}
+
+describe('resolveRequestHost', () => {
+  // `nextUrl.hostname` is derived from the request as the runtime sees it, and behind
+  // a CDN and an ingress proxy nothing guarantees it carries the public host. These
+  // pin the precedence and the normalisation the suffix test depends on.
+  it('prefers x-forwarded-host, then host, then nextUrl', () => {
+    expect(resolveRequestHost(req({ 'x-forwarded-host': 'pr-1.civitaic.com', host: 'svc' }))).toBe(
+      'pr-1.civitaic.com'
+    );
+    expect(resolveRequestHost(req({ host: 'pr-1.civitaic.com' }))).toBe('pr-1.civitaic.com');
+    expect(resolveRequestHost(req({}, 'pr-1.civitaic.com'))).toBe('pr-1.civitaic.com');
+  });
+
+  it('normalises port, case, and a forwarded chain', () => {
+    expect(resolveRequestHost(req({ host: 'PR-1.CivitaiC.com:3000' }))).toBe('pr-1.civitaic.com');
+    expect(resolveRequestHost(req({ 'x-forwarded-host': 'pr-1.civitaic.com, internal.svc' }))).toBe(
+      'pr-1.civitaic.com'
+    );
+    expect(resolveRequestHost(req({ host: '  pr-1.civitaic.com  ' }))).toBe('pr-1.civitaic.com');
+  });
+
+  it('normalisation cannot manufacture a match', () => {
+    // Everything above trims and lowercases; none of it may turn a non-preview host
+    // into one.
+    for (const host of ['civitai.com:443', 'EVIL-CIVITAIC.COM', 'civitaic.com']) {
+      expect(
+        canAccessTestingRoute({
+          pathname: '/api/testing/eventloop-stall',
+          hostname: resolveRequestHost(req({ host })),
+          isProduction: true,
+        }),
+        host
+      ).toBe(false);
+    }
+  });
+});
 
 // The exemption this covers exists so a preview environment can trigger a synthetic
 // event-loop stall. The endpoint's job is to hard-lock an app server, so the guard is

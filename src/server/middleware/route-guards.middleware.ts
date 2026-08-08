@@ -2,7 +2,11 @@ import type { NextRequest } from 'next/server';
 import { createMiddleware } from '~/server/middleware/middleware-utils';
 import { pathToRegexp } from 'path-to-regexp';
 import { isProd } from '~/env/other';
-import { canAccessTestingRoute } from '~/server/middleware/testing-route-access';
+import {
+  canAccessTestingRoute,
+  isNonProdReachableTestingPath,
+  resolveRequestHost,
+} from '~/server/middleware/testing-route-access';
 
 // The session-based PAGE guards (/moderator, /testing) moved to _app getInitialProps — the edge runtime can't
 // resolve the thin hub civ-token to a full user. What's left here is the sessionless /api/testing gate (those
@@ -13,12 +17,27 @@ const routeGuards: RouteGuard[] = [];
 // guard can only ever be additive in the deny direction.
 addRouteGuard({
   matcher: ['/api/testing/:path*'],
-  canAccess: ({ request }) =>
-    canAccessTestingRoute({
-      pathname: request.nextUrl.pathname,
-      hostname: request.nextUrl.hostname,
-      isProduction: isProd,
-    }),
+  canAccess: ({ request }) => {
+    const pathname = request.nextUrl.pathname;
+    const hostname = resolveRequestHost(request);
+    const allowed = canAccessTestingRoute({ pathname, hostname, isProduction: isProd });
+
+    // Only fires when a route that is SUPPOSED to be reachable on a non-production
+    // host is refused — i.e. the exact state where the gate looks broken. Everything
+    // needed to tell which term was false is here, because working that out from
+    // outside cost two people an afternoon: a relative `location:` header made curl
+    // resolve the redirect against the request URL, which looked like evidence about
+    // the app's own view of the host and was not.
+    if (!allowed && isNonProdReachableTestingPath(pathname)) {
+      console.warn(
+        `[route-guards] refused ${pathname} — resolvedHost=${hostname} ` +
+          `nextUrlHostname=${request.nextUrl.hostname} ` +
+          `host=${request.headers.get('host') ?? '(none)'} ` +
+          `xForwardedHost=${request.headers.get('x-forwarded-host') ?? '(none)'}`
+      );
+    }
+    return allowed;
+  },
 });
 //#region Logic
 
