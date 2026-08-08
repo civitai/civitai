@@ -18,11 +18,38 @@ export const REACTION_METRICS = ['Like', 'Heart', 'Laugh', 'Cry'] as const;
 export type ReactionMetric = (typeof REACTION_METRICS)[number];
 
 /**
+ * The reaction rename landed in Nov 2025 (2025-10: 34.0M legacy / 3 short;
+ * 2025-12: 0 legacy / 20.9M short), and `entityMetricEvents_month` still holds
+ * both spellings. `entityMetricUserState_v3` is canonical-only, so only the event
+ * table needs the legacy names — reading it with short names alone would see 14 of
+ * 54,272 rows on a pre-rename hour and report ~0.0003 coverage, which is
+ * indistinguishable from total CDC loss on an hour where nothing was lost.
+ */
+const LEGACY_REACTION_METRICS = [
+  'ReactionLike',
+  'ReactionHeart',
+  'ReactionLaugh',
+  'ReactionCry',
+] as const;
+
+/**
  * `clickhouse.$query` interpolates rather than binds, and its array branch joins
  * with `,` and no quoting — a string array would render as bare identifiers.
  * Numeric arrays are fine inline; string lists have to arrive pre-quoted.
  */
-const REACTION_METRIC_LIST = REACTION_METRICS.map((m) => `'${m}'`).join(',');
+const quoteList = (values: readonly string[]) => values.map((v) => `'${v}'`).join(',');
+/** `entityMetricUserState_v3` — canonical names only. */
+const REACTION_METRIC_LIST = quoteList(REACTION_METRICS);
+/** `entityMetricEvents_month` — spans the rename, so both spellings. */
+const EVENT_METRIC_LIST = quoteList([...REACTION_METRICS, ...LEGACY_REACTION_METRICS]);
+
+/** Folds legacy spellings onto canonical ones. Mirrors `entityMetricDirty_v3_mv`. */
+const CANONICAL_METRIC_SQL = `multiIf(
+  metricType = 'ReactionLike', 'Like',
+  metricType = 'ReactionHeart', 'Heart',
+  metricType = 'ReactionLaugh', 'Laugh',
+  metricType = 'ReactionCry', 'Cry',
+  metricType)`;
 
 const CH_MEMORY_LIMIT = 4_000_000_000;
 
@@ -135,23 +162,43 @@ const key = (imageId: number, userId: number, reaction: string) =>
  */
 const toPgTimestamp = (date: Date) => date.toISOString();
 
-/** Smallest id whose createdAt >= ts. Each probe is a pkey index scan. */
-async function findIdAtOrAfter(ts: string, lo: number, hi: number) {
+/**
+ * Smallest id at which the table has reached `ts`. Each probe is a pkey index scan.
+ *
+ * The probe deliberately looks *backwards* (`id <= mid ORDER BY id DESC`). Probing
+ * forwards returns the smallest existing id >= mid, which for sparse ids can be
+ * >= `hi` — and `hi = thatId` then moves nothing, `lo` moves nothing, `mid`
+ * recomputes identically, and the loop spins forever issuing the same query.
+ * `ImageReaction` ids are sparse because un-reactions delete rows, so that is the
+ * ordinary case, not an edge: the forwards form stalled on 2 of 10 consecutive
+ * recent hours. Looking backwards keeps `mid < hi` invariant, so every branch
+ * strictly moves a bound and termination is structural.
+ */
+async function findIdAtOrAfter(ts: string, lo: number, hi: number, checkCanceled?: () => void) {
+  // Structural termination is the guarantee; this only converts a future
+  // regression into a loud failure instead of a silent spin.
+  const maxIterations = Math.ceil(Math.log2(Math.max(2, hi - lo))) + 2;
+  let iterations = 0;
   while (lo < hi) {
+    checkCanceled?.();
+    if (++iterations > maxIterations) {
+      throw new Error(
+        `findIdAtOrAfter exceeded ${maxIterations} iterations (lo=${lo} hi=${hi} ts=${ts}) — binary search is not converging`
+      );
+    }
     const mid = Math.floor((lo + hi) / 2);
-    const { rows } = await pgDbRead.query<{ id: number; reached: boolean }>(
-      `SELECT id, ("createdAt" >= $2::timestamp) AS reached
-         FROM "ImageReaction" WHERE id >= $1 ORDER BY id LIMIT 1`,
+    const { rows } = await pgDbRead.query<{ reached: boolean }>(
+      `SELECT ("createdAt" >= $2::timestamp) AS reached
+         FROM "ImageReaction" WHERE id <= $1 ORDER BY id DESC LIMIT 1`,
       [mid, ts]
     );
-    if (!rows.length) hi = mid;
-    else if (!rows[0].reached) lo = rows[0].id + 1;
-    else hi = rows[0].id;
+    if (rows.length && rows[0].reached) hi = mid;
+    else lo = mid + 1;
   }
   return lo;
 }
 
-async function readPgReactionsForHour(hourStart: Date) {
+async function readPgReactionsForHour(hourStart: Date, checkCanceled?: () => void) {
   const start = toPgTimestamp(hourStart);
   const end = toPgTimestamp(new Date(hourStart.getTime() + 3_600_000));
   const { rows: maxRows } = await pgDbRead.query<{ max: string | null }>(
@@ -160,8 +207,8 @@ async function readPgReactionsForHour(hourStart: Date) {
   const maxId = Number(maxRows[0]?.max ?? 0);
   if (!maxId) return [];
 
-  const loId = Math.max(1, (await findIdAtOrAfter(start, 1, maxId)) - ID_PAD);
-  const hiId = Math.min(maxId, (await findIdAtOrAfter(end, loId, maxId)) + ID_PAD);
+  const loId = Math.max(1, (await findIdAtOrAfter(start, 1, maxId, checkCanceled)) - ID_PAD);
+  const hiId = Math.min(maxId, (await findIdAtOrAfter(end, loId, maxId, checkCanceled)) + ID_PAD);
 
   const { rows } = await pgDbRead.query<{ imageId: number; userId: number; reaction: string }>(
     `SELECT "imageId", "userId", reaction::text AS reaction
@@ -178,18 +225,21 @@ async function readPgReactionsForHour(hourStart: Date) {
  * ClickHouse. Healthy is exactly 1.0 — see the job for the measured
  * distribution and the threshold derived from it.
  */
-export async function auditReactionHour(hourStart: Date): Promise<HourlyCoverageResult> {
+export async function auditReactionHour(
+  hourStart: Date,
+  { checkCanceled }: { checkCanceled?: () => void } = {}
+): Promise<HourlyCoverageResult> {
   const startedAt = Date.now();
   const { clickhouse } = await import('~/server/clickhouse/client');
   if (!clickhouse) throw new Error('clickhouse client unavailable');
 
-  const pgRows = await readPgReactionsForHour(hourStart);
+  const pgRows = await readPgReactionsForHour(hourStart, checkCanceled);
 
   const chRows = await clickhouse.$query<{ entityId: number; userId: number; metricType: string }>`
-    SELECT entityId, userId, metricType
+    SELECT entityId, userId, ${CANONICAL_METRIC_SQL} AS metricType
       FROM entityMetricEvents_month
      WHERE entityType = 'Image'
-       AND metricType IN (${REACTION_METRIC_LIST})
+       AND metricType IN (${EVENT_METRIC_LIST})
        AND metricValue > 0
        AND createdAt >= ${hourStart} - INTERVAL ${BOUNDARY_MARGIN_MINUTES} MINUTE
        AND createdAt <  ${hourStart} + INTERVAL 1 HOUR + INTERVAL ${BOUNDARY_MARGIN_MINUTES} MINUTE
@@ -240,19 +290,26 @@ export async function auditReactionHour(hourStart: Date): Promise<HourlyCoverage
 export async function auditReactionExactness({
   sampleSize = 200,
   lookbackHours = 24,
-}: { sampleSize?: number; lookbackHours?: number } = {}): Promise<ExactnessResult> {
+  seed = 0,
+}: { sampleSize?: number; lookbackHours?: number; seed?: number } = {}): Promise<ExactnessResult> {
   const startedAt = Date.now();
   const { clickhouse } = await import('~/server/clickhouse/client');
   if (!clickhouse) throw new Error('clickhouse client unavailable');
 
+  /**
+   * `ORDER BY cityHash64(entityId)` is a stable ordering, not a random draw — the
+   * same seed over the same candidate set returns the same images. `seed` is what
+   * makes a run reproducible (and what lets a caller sweep several samples); the
+   * nightly job varies it by day so successive nights cover different images.
+   */
   const sampled = await clickhouse.$query<{ entityId: number }>`
     SELECT entityId
       FROM entityMetricEvents_month
      WHERE entityType = 'Image'
-       AND metricType IN (${REACTION_METRIC_LIST})
+       AND metricType IN (${EVENT_METRIC_LIST})
        AND createdAt > now() - INTERVAL ${lookbackHours} HOUR
      GROUP BY entityId
-     ORDER BY cityHash64(entityId)
+     ORDER BY cityHash64(entityId + ${seed})
      LIMIT ${sampleSize}
     SETTINGS max_memory_usage = ${CH_MEMORY_LIMIT}
   `;

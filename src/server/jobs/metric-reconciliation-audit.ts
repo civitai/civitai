@@ -45,8 +45,9 @@ import { createJob } from './job';
  *
  * The nightly exactness check needs its own split. Sampling by image pulls each
  * image's ENTIRE reaction history, so its headline coverage is dominated by
- * un-repaired outage residue rather than by current health. Same 200-image
- * sample, 7 seeds, 2026-08-07:
+ * un-repaired outage residue rather than by current health. 200 images per sample,
+ * `seed` 0..6, 2026-08-07 — the sample is a stable hash ordering rather than a
+ * random draw, so passing the same seed reproduces the same images and figures:
  *
  *   headline coverage   0.9559 – 0.9929   (mean ~0.978)
  *   reactions <24h old  1.0000, 1.0000, 0.9974
@@ -134,9 +135,11 @@ function floorToHour(date: Date) {
 export const reactionVolumeAuditJob = createJob(
   'reaction-volume-audit',
   '10 * * * *',
-  async () => {
+  async (jobContext) => {
     const hourStart = floorToHour(new Date(Date.now() - AUDIT_LAG_HOURS * 3_600_000));
-    const result = await auditReactionHour(hourStart);
+    const result = await auditReactionHour(hourStart, {
+      checkCanceled: jobContext.checkIfCanceled,
+    });
 
     gauges.hourly_missing_rows.set(result.missing);
     gauges.hourly_unmapped_rows.set(
@@ -190,7 +193,10 @@ export const reactionExactnessAuditJob = createJob(
   'reaction-exactness-audit',
   '40 4 * * *',
   async () => {
-    const result = await auditReactionExactness({ sampleSize: 200, lookbackHours: 24 });
+    // The sample is a stable hash ordering, not a random draw, so a fixed seed
+    // would inspect the same images every night. Vary it by day.
+    const seed = Math.floor(Date.now() / 86_400_000);
+    const result = await auditReactionExactness({ sampleSize: 200, lookbackHours: 24, seed });
 
     if (result.recentCoverage !== null)
       gauges.exactness_recent_coverage_ratio.set(result.recentCoverage);
