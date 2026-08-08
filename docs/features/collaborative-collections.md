@@ -151,6 +151,7 @@ no collaborators.
 | Permission resolution, `isCollaborator` | `src/server/services/collection.service.ts` (`getUserCollectionPermissionsByIds`) |
 | Invites, roster, caps | `src/server/services/collection-collaborator.service.ts` |
 | Shared seat definition | `src/server/services/collection-invite.utils.ts` |
+| Collaborator-row rule, free-grant baseline | `src/server/services/collection-permission.utils.ts` |
 | Lapse reconciler | `src/server/jobs/reconcile-collection-collaboration.ts` |
 | tRPC surface | `src/server/routers/collection.router.ts` |
 | Roster UI | `src/components/Collections/CollectionCollaborators/` |
