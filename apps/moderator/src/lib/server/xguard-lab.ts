@@ -2,16 +2,8 @@ import { createKyselyClients, type Generated } from '@civitai/db/kysely';
 import type { Kysely } from 'kysely';
 import { env } from '$env/dynamic/private';
 
-// The XGuard label lab's tables, in the MODERATOR database - separate from Civitai's Postgres,
-// with no foreign keys into it.
-//
-// MERGE NOTE: PR #3573 adds `moderator-db.ts` exposing `getModeratorDb()` over this same
-// connection string, plus a `ModeratorDB` type. When that lands, fold `LabDB` into `ModeratorDB`
-// and delete this module - one database should not have two clients. Kept separate only because
-// that PR is unmerged and this branch cannot import a file it does not have.
-//
-// Schema lives in apps/moderator/xguard-lab/schema.sql. Kept as a hand-written interface rather
-// than generated types because it is small and changes with the label work, not with the app.
+// The XGuard label lab's tables, in the MODERATOR database — no foreign keys into Civitai's Postgres.
+// Schema is applied by hand from apps/moderator/xguard-lab/schema.sql; nothing generates this interface.
 
 export interface LabDB {
   sample: {
@@ -132,8 +124,8 @@ function isLocalHost(url: string): boolean {
   }
 }
 
-// Lazy: the build imports every route module to read its prerender config, so constructing this at
-// module scope makes an unset MODERATOR_DATABASE_URL fail the build instead of the request.
+// Lazy: /xguard/docs imports every /api/xguard endpoint module to build its catalog, so constructing
+// this at module scope takes that page down too whenever MODERATOR_DATABASE_URL is unset.
 let client: Kysely<LabDB> | undefined;
 
 // No replica; reads and writes both go to the single instance.

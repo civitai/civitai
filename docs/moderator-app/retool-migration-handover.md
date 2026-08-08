@@ -24,9 +24,13 @@ Written 2026-08-07. Delete items as they are done.
 - [ ] **`FRESHDESK_DOMAIN` includes a scheme** (`https://civitai.freshdesk.com`). The service builds a
       URL from it and `.env.example` has it bare. Check it is not producing `https://https://…`.
 
-- [ ] **`MODERATOR_DATABASE_URL` is defined twice in `.env.example`** (lines 44 and 54) with different
-      values — the local xguard-lab one and the Retool one. Last-wins happens to give the intended
-      Retool value, but it should not be ambiguous.
+- [x] **`MODERATOR_DATABASE_URL` was defined twice in `.env.example`** with different values — the
+      xguard-lab one and the Retool one. Split: `MODERATOR_DATABASE_URL` is the internal_tools instance
+      (XGuard lab), `RETOOL_DATABASE_URL` is Retool's Postgres behind `getModeratorDb()`.
+
+      **Deployed environments need `RETOOL_DATABASE_URL` set.** Prod already had
+      `MODERATOR_DATABASE_URL` pointing at internal_tools for the lab, so until this is set every
+      `UserNotes` / `UserStrikes` / `TimedMutes` read and write was aimed at the wrong database.
 
 ## 2. Database migrations — none are auto-applied
 
