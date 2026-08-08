@@ -6,6 +6,11 @@ import { instrumentationRegistry } from '~/server/prom/client';
 // Side-effect import: registers the challenge state gauges (collect()-based) on the default
 // registry so they are present + scraped even before the first challenge op runs this session.
 import '~/server/prom/challenge.metrics';
+// Side-effect import: registers the session-resolution metrics, including the UNLABELLED
+// session_legacy_decode_total. Unlabelled counters only carry their "healthy is an observable 0" meaning if
+// the module is loaded — otherwise an absent series looks like a dead code path rather than an unloaded one,
+// which is the exact ambiguity that counter exists to remove.
+import '~/server/auth/session-metrics';
 // Same reason (#3665): seeds all 12 (reason, surface) series of
 // civitai_generation_model_substitutions_total at 0. Without this call the
 // counter is registered only by the FIRST substitution on this pod, so
