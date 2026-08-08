@@ -38,6 +38,12 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
   const user = await getOrProduceSessionUser(userId);
   if (!user) return json({ error: 'not_found' }, { status: 404 });
 
+  // Upgrade-on-read is SILENT and repeats on every request from a client that ignores Set-Cookie, so it is the
+  // one mint path a ban must stop: otherwise a banned automated client keeps minting and tracking a token per
+  // request, growing the very hash the ban has to walk. Deliberately NOT applied to interactive login — a
+  // banned user still needs a session to be shown why they were banned and to appeal.
+  if (user.bannedAt || user.deletedAt) return json({ error: 'account_disabled' }, { status: 403 });
+
   const token = await mintUserSession(user);
 
   // Establish this browser in the device set so the upgraded session gets an account-switcher entry, exactly
