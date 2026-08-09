@@ -116,15 +116,36 @@ const ALIASES = readAliasMap();
  * invariant held only because call sites happen to spell it `@civitai/auth/client`, something
  * the guard could not see and a one-word edit would undo.
  */
-function readWorkspacePackages(): { name: string; dir: string; exports: Record<string, string> }[] {
+/**
+ * An `exports` value is a path, or a conditions object (`{ import, require, default }`).
+ * Returning null rather than throwing on an unrecognised shape matters: this runs at module
+ * scope, so a throw here fails COLLECTION, and a file that collects nothing reads as a pass.
+ */
+type ExportTarget = string | Record<string, unknown> | undefined;
+
+function exportTargetToPath(target: ExportTarget): string | null {
+  if (typeof target === 'string') return target;
+  if (!target || typeof target !== 'object') return null;
+  for (const condition of ['default', 'import', 'require', 'node']) {
+    const value = target[condition];
+    if (typeof value === 'string') return value;
+  }
+  return null;
+}
+
+function readWorkspacePackages(): {
+  name: string;
+  dir: string;
+  exports: Record<string, ExportTarget>;
+}[] {
   const packagesDir = path.join(REPO_ROOT, 'packages');
-  const out: { name: string; dir: string; exports: Record<string, string> }[] = [];
+  const out: { name: string; dir: string; exports: Record<string, ExportTarget> }[] = [];
   for (const entry of fs.readdirSync(packagesDir)) {
     const manifest = path.join(packagesDir, entry, 'package.json');
     if (!fs.existsSync(manifest)) continue;
     const json = JSON.parse(fs.readFileSync(manifest, 'utf8')) as {
       name?: string;
-      exports?: Record<string, string>;
+      exports?: Record<string, ExportTarget>;
     };
     if (!json.name) continue;
     out.push({ name: json.name, dir: path.join(packagesDir, entry), exports: json.exports ?? {} });
@@ -140,9 +161,31 @@ function resolveWorkspace(spec: string): string | null {
     if (spec !== pkg.name && !spec.startsWith(pkg.name + '/')) continue;
     const rest = spec === pkg.name ? '' : spec.slice(pkg.name.length + 1);
     const subpath = rest ? `./${rest}` : '.';
-    const target = pkg.exports[subpath];
-    if (target) return resolveFile(path.join(pkg.dir, target));
-    // `@civitai/buzz` ships no exports map at all; fall back to the source layout.
+
+    const exact = exportTargetToPath(pkg.exports[subpath]);
+    if (exact) return resolveFile(path.join(pkg.dir, exact));
+
+    // Wildcard keys, longest-prefix-wins per the exports spec. `@civitai/ui` maps
+    // `./components/*` at `./src/lib/components/*` — without this the subpath misses the map
+    // and the source-layout fallback guesses `src/components/*`, which does not exist, so the
+    // module becomes a silent external leaf: the exact blindness this guard exists to prevent.
+    let best: string | null = null;
+    let bestPrefix = -1;
+    for (const [key, value] of Object.entries(pkg.exports)) {
+      const star = key.indexOf('*');
+      if (star === -1) continue;
+      const prefix = key.slice(0, star);
+      const suffix = key.slice(star + 1);
+      if (!subpath.startsWith(prefix) || !subpath.endsWith(suffix)) continue;
+      if (prefix.length <= bestPrefix) continue;
+      const target = exportTargetToPath(value);
+      if (!target) continue;
+      best = target.replace('*', subpath.slice(prefix.length, subpath.length - suffix.length));
+      bestPrefix = prefix.length;
+    }
+    if (best) return resolveFile(path.join(pkg.dir, best));
+
+    // Six packages ship no `exports` map at all (buzz, redis, axiom, ...); use their layout.
     return resolveFile(path.join(pkg.dir, 'src', rest || 'index'));
   }
   return null;
@@ -279,6 +322,31 @@ function formatViolation(file: string): string {
   const lines = chain.map((hop, i) => (i === 0 ? `    ${hop}` : `      -> ${hop}`));
   return `  ${file}\n${lines.join('\n')}`;
 }
+
+describe('workspace export resolution', () => {
+  // Every manifest ships flat string targets today, so the conditions form is unexercised by
+  // the walk above. It still has to be handled here rather than in review: `path.join` throws
+  // on a non-string, and this resolver runs at MODULE SCOPE, so the first package to adopt
+  // `{ "import": ..., "require": ... }` would fail COLLECTION — which reports as no tests
+  // rather than as red.
+  it('reads a path out of a conditional export instead of throwing', () => {
+    expect(exportTargetToPath({ import: './src/a.ts', require: './dist/a.cjs' })).toBe(
+      './src/a.ts'
+    );
+    expect(exportTargetToPath({ default: './src/b.ts', import: './src/c.ts' })).toBe('./src/b.ts');
+    expect(exportTargetToPath('./src/d.ts')).toBe('./src/d.ts');
+    expect(exportTargetToPath(undefined)).toBeNull();
+    expect(exportTargetToPath({ types: './a.d.ts' })).toBeNull();
+  });
+
+  it('resolves a wildcard subpath to the package layout it actually declares', () => {
+    // `@civitai/ui` maps `./components/*` at `./src/lib/components/*`. Exact-key lookup misses,
+    // and the source-layout fallback would guess `src/components/*` and resolve nothing.
+    const resolved = resolveWorkspace('@civitai/ui/utils');
+    expect(resolved, '@civitai/ui/utils should resolve via its exports map').not.toBeNull();
+    expect(resolved!.replace(/\\/g, '/')).toContain('packages/civitai-ui/src/lib/utils.ts');
+  });
+});
 
 describe('no server infrastructure in the _app client graph', () => {
   it('walks a non-trivial graph', () => {
