@@ -19,9 +19,8 @@ export const MEDIA_LABELS: Record<(typeof SWEEP_MEDIA)[number], string> = {
  * The ratings a sweep can target. `Blocked` is absent: it is a TOS action, not a rating, and an image
  * carrying it is not on the front page to audit.
  *
- * ⚠️ Retool's rating vocabulary lived in a `RadioGroupWidget2`, and that export predates the
- * option-set extractor — so this set is inferred from the SQL (`nsfwLevel = <param>`), not read from
- * the app. Re-extract to confirm Retool offered all five.
+ * Confirmed against a screenshot of the live app (2026-08-09): its rating bar and filter offer exactly
+ * PG / PG-13 / R / X / XXX. No re-extract needed.
  */
 export const SWEEP_LEVELS = [
   { value: NsfwLevel.PG, label: 'PG' },

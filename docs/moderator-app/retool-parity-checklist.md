@@ -183,34 +183,90 @@ in the same screen instead of having to click around a bunch."*
 - [ ] 🎥 **Expose all the columns.** *"you can expose all the columns. Maybe you want to look into the
       hashes or the meta… ingestion, all this stuff."* Retool used `SELECT *`; ours drops `meta` (the
       **prompt**), `hideMeta`, `analysis`, `scanJobs`, `hash`, `pHash`.
-- [ ] Report `details` fetched and never rendered.
+- [ ] 🔴 **It could WRITE, and our code says otherwise.** A screenshot shows **Toggle Minor ON** and
+      **Toggle Poi ON** beside the image data. The export has no mutation query, so it is stale against
+      that screen — and `+page.server.ts` asserted "Read-only. Every action … lived in other apps",
+      which would have stopped anyone noticing. Comment corrected 2026-08-09; the two actions are still
+      unported.
+- [ ] Report `details` fetched and never rendered (Retool's reports table has an explicit **Details**
+      column).
 - [ ] `hasImageEvents` is an unguarded ClickHouse call in `load`, so ClickHouse being down turns "no
       image matches" into an error page.
+- [ ] `ImageReaction.updatedAt` and the image row's `updatedAt` are dropped.
 
 ## 5. Chat Audit
 
 - [x] Content search reachable for spam terms; "Open reports" actually filtered (both fixed 2026-08-09).
 - [ ] The reporter's `details->>'comment'` is fetched and never rendered — for a chat report that
       comment is the entire substance.
-- [ ] `TopChatters` capped at 25 where Retool showed 50.
+- [ ] `TopChatters` capped at 25 where Retool showed 50 (surfaced, so not silent).
+- [ ] **A sixth tab, "Send Mod Chat"** — a moderator-initiated DM from this screen. In no export, no
+      build and no list; the screenshot is the only record. Needs a re-extract to size.
+- [x] **"SPAM Detector" is already built** — it is `SpamGroupsPanel` on the stats tab. Recorded so
+      nobody builds it from the screenshot.
+- [ ] Retool also had **Ban Reason + "Ban and Set Note"** here. Deliberately delegated to User Lookup —
+      listed so the decision reads as considered rather than missed.
 
 ## 6. Article Lookup
 
 - [ ] `unlisted` is selected and rendered nowhere — an unlisted article looks identical to a public one.
-- [ ] `Article.metadata` dropped; confirm nothing moderation-bearing lives in it.
+      Retool's data table shows an **Unlisted** column.
+- [ ] `Article.metadata` dropped (Retool showed a **Metadata** column); confirm nothing
+      moderation-bearing lives in it — that half needs the column's live contents.
+- [ ] `coverId` is declared on `ArticleRow`, never selected, and `as unknown as ArticleRow` hides it.
+- [x] **No hidden tab.** The audit doc guessed the container tabs were "Article / Metrics"; the
+      screenshot shows a single **Article Info** tab with Data and Stats stacked below. Re-extract
+      request closed.
 
 ## 7. Front Page Audit
 
 - [ ] **Confirm this is still wanted before finishing it.** 🎥 *"We are reviewing all PG videos. I'm not
-      sure if we need to do this anymore… she only does a few a day."* Built, but three pieces are
-      unported pending schemas (`FrontPageTimers` resume point, `RatingChanges`, `research_ratings`).
-      **Ask before spending more on it.**
+      sure if we need to do this anymore… she only does a few a day."* **Split the three unported
+      pieces rather than deciding them together:**
+      - `FrontPageTimers` (shared resume point) is **arguably moot at that volume** — its whole value is
+        stopping two moderators re-checking the same images. The URL sharing already there may suffice.
+      - `RatingChanges` and `research_ratings` are an audit log and a research dataset — **independent
+        of volume**, so decide them on their own merits.
+- [ ] **The tag chips are a fixed votable vocabulary, not the image's tags.** Every card in the
+      screenshot carries the same 11 moderation tags regardless of content, so a moderator could **add**
+      a missing tag. Ours renders only tags already assigned, so it can correct one but never add one.
+- [ ] Display toggles (*Show Tags*, *Show Ratings*, *Vertical Style*), a Refresh, and the
+      "*\<mod\> used the button N hours ago*" readout.
+- [ ] 🎥 **Defaults face the wrong way**: the live use is PG **videos**; ours defaults to PG-13 images.
+- [x] The rating vocabulary (PG / PG-13 / R / X / XXX) is **confirmed correct** by screenshot — the
+      re-extract request for it is closed and the warning comment removed.
 
 ## 8. Moderation Status → `/retool/image-help`
 
-- [ ] `ReviewGrouped` and `GetSplitQueue` — the two queries never matched to an existing page.
-- [ ] Its help queue is fed by three producers (`GetMinors`/`GetPoI`/`GetReported` → `Store*`) that are
-      cron-shaped and not yet scheduled anywhere, so the queue will not fill on its own.
+- [ ] 🔴 **`/retool/image-help` ships a queue that cannot fill.** `ModerationImageHelp` appears in the
+      app only as two reads and one update — **nothing writes a row.** The three producers
+      (`GetMinors`/`GetPoI`/`GetReported` → `Store*`) are cron-shaped and scheduled nowhere. The page
+      gates, renders and resolves over a table that will stay empty. Either schedule the producers or
+      say the page is inert.
+- [x] `GetSplitQueue` — **closed, not a queue.** It is
+      `SELECT "lastCheckedAt" FROM "FrontPageTimers" WHERE username = 'splitQueue'`, consumed by
+      `ImageSfwDataCatchup` as a time bound. Group-E backfill plumbing; there was never a page.
+- [ ] `ReviewGrouped` — **not an unmatched query: it is the dashboard.** `COUNT(*) GROUP BY needsReview`
+      plus a pending-report count, i.e. the *Content Needing Review* block. Moved to the Dashboard
+      section below.
+- [ ] **`image-help` gates on `/images`**, a group node whose grant is the union of its children — the
+      same hazard Front Page Audit documents as its reason for gating on its own path. A moderator
+      granted only `/images/to-ingest` gets action rights here.
+
+## 8b. Dashboard — absent from every list until now
+
+Retool's board is the triage entry point, and the walkthrough's colour quote lands here.
+
+- [ ] 🎥 **Per-queue severity colour with per-queue thresholds** — *"green indicates this is fine, four
+      images in POI, but 400 reported images is more of an emergency."* Ours renders every count in the
+      same style, which is exactly what the colour exists to prevent.
+- [ ] **Who last worked each queue, and how long ago** (staleness).
+- [ ] **An "Urgent Content (N)" banner** — a lot of reports on a recent image.
+- [ ] **Per-entity report breakdown across all 11 types** (models, comments, commentV2, reviews,
+      articles, posts, users, collections, bounties, bountyEntries, chats), each with colour and
+      staleness. Ours covers 6 types app-wide.
+- [ ] **A Front Page block** reading "N hours behind" with a Split control, and **Special Queues**
+      (Blocked Images, Civitai Models, Training Data, Appeals).
 
 ## 9. Workflows (cron)
 

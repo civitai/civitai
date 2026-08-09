@@ -3,8 +3,9 @@ import { lookupQuerySchema, parseQuery } from '$lib/server/query';
 import { getImageLookup, resolveImageId } from '$lib/server/image-lookup.service';
 import { hasImageEvents } from '$lib/server/image-signals.service';
 
-// Read-only. Every action Retool's Image Lookup could take lived in other apps (Bulk Image Manager,
-// User Reports); this one only ever answered questions, so there is nothing to gate beyond the page.
+// Read-only — but NOT because Retool's was. A screenshot of the live app shows `Toggle Minor ON` and
+// `Toggle Poi ON` beside the image data, so it could write; the export carries no mutation query and is
+// stale against that screen. Porting those two actions is an open parity item, not a settled decision.
 export const load: PageServerLoad = async ({ url }) => {
   const { q } = parseQuery(url, lookupQuerySchema);
   if (!q) return { q, result: null, deletedImageId: null, notFound: false };
