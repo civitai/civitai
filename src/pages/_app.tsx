@@ -117,7 +117,7 @@ type CustomAppProps = {
   following?: number[];
   seed: number;
   settings: UserContentSettings;
-  browsingSettingsAddons: BrowsingSettingsAddon[];
+  browsingSettingsAddons?: BrowsingSettingsAddon[];
   liveNow: boolean;
   // SSR-seeded `chat.getUserSettings` (logged-in only) — the per-user chat
   // settings (mute sounds / bad-word filter / acknowledged). Derived from the
@@ -421,6 +421,11 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     tosMeta?: TosMeta;
     announcements?: AnnouncementsSeed;
     following?: number[];
+    // Absent on the degraded path. `browsingSettingsAddons` must stay possibly-
+    // undefined all the way to the provider — see the endpoint for why `[]` is
+    // not a safe substitute.
+    browsingSettingsAddons?: BrowsingSettingsAddon[];
+    liveNow?: boolean;
     session: Session | null;
   };
   let settingsBootstrap: SettingsBootstrap;
@@ -473,49 +478,31 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       tosMeta: undefined,
       announcements: undefined,
       following: undefined,
+      browsingSettingsAddons: undefined,
+      liveNow: undefined,
       session: null,
     };
   }
-  const { settings, session, tosMeta, announcements, following } = settingsBootstrap;
-  // Pass these via the request so we can use them in SSR. Resolve the per-user
-  // feature flags and the global (redis-cached, identical-for-all-users) browsing
-  // setting addons in PARALLEL — neither depends on the other and both sit on
-  // every full render's critical path. SSR-injecting the addons keeps the
-  // `system.getBrowsingSettingAddons` round-trip off api-primary (it becomes
-  // `initialData` for the client provider).
-  const [
-    { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay },
-    { getBrowsingSettingAddons, getLiveNow },
-  ] = await Promise.all([
-    import('~/server/services/feature-flags.service'),
-    import('~/server/services/system-cache'),
-  ]);
-  const [flags, browsingSettingsAddons] = await Promise.all([
-    getFeatureFlagsAsync({
-      user: session?.user,
-      host: request?.headers.host,
-      req: request,
-    }),
-    getBrowsingSettingAddons(),
-  ]);
-
-  // SSR-seed the global `system.getLiveNow` boolean (a single `redis.get`,
-  // identical for every user) so the ambient `useIsLive` client query reads a
-  // primed cache and never fires on bootstrap (~26 req/s off api-primary).
-  // Fail open to `false` (the "not live" default): `getLiveNow` has no internal
-  // try/catch, and an uncaught redis throw here would 500 every page render —
-  // so a degraded sysRedis must degrade to "not live", never to an error. The
-  // client query still self-heals on its 5-minute refetch interval.
-  let liveNow = false;
-  try {
-    liveNow = await getLiveNow();
-  } catch (e) {
-    console.warn(
-      `[_app] getLiveNow bootstrap failed, defaulting to not-live: ${
-        e instanceof Error ? e.message : String(e)
-      }`
-    );
-  }
+  const {
+    settings,
+    session,
+    tosMeta,
+    announcements,
+    following,
+    browsingSettingsAddons,
+    // Fail closed to "not live": the endpoint already swallows a degraded
+    // sysRedis into `false`, and this covers the case where the bootstrap fetch
+    // itself failed. The client query self-heals on its 5-minute refetch.
+    liveNow = false,
+  } = settingsBootstrap;
+  const { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay } = await import(
+    '~/server/services/feature-flags.service'
+  );
+  const flags = await getFeatureFlagsAsync({
+    user: session?.user,
+    host: request?.headers.host,
+    req: request,
+  });
 
   const domain = getRequestDomainColor(request);
 
