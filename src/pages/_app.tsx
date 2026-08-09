@@ -521,7 +521,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   //   ToS content only changes on a deploy (never mid-session). The show/hide
   //   decision is computed client-side in `useToSUpdateModal` against the seeded
   //   `user.getSettings`, so there is no tRPC query to seed here — `tosMeta` just
-  //   rides down through pageProps to AppProvider (its `lastmod` is revived there).
+  //   rides down through pageProps to AppProvider as-is.
   let userFeatureFlags: FeatureAccess | undefined;
   if (session?.user && settings) {
     userFeatureFlags = computeUserFeatureFlagsOverlay(settings.features, flags);
