@@ -267,11 +267,6 @@ export async function removePlacementByModerator({
  * ones refund the placer in full, because the placer is a holder of the revoked
  * cosmetic and is being made whole for it everywhere else.
  *
- * ⚠️ That full refund goes through `removeByOwner`, which is the only settle
- * action whose payout returns the whole escrow — so the row records
- * `removedBy: 'owner'` for something a moderator did. The money is right and the
- * label is wrong; fixing the label means a third `PlacementRemovedBy` value and
- * a payout branch for it, which is a migration.
  */
 export async function removePlacementsByCosmetic({
   cosmeticIds,
@@ -300,7 +295,7 @@ export async function removePlacementsByCosmetic({
 
   const pending = await byStatus('pending');
   const settled = await settleEach(pending, (id) =>
-    settlePlacement({ placementId: id, action: 'removeByOwner', actorId })
+    settlePlacement({ placementId: id, action: 'removeByCosmeticTakedown', actorId })
   );
 
   const approved = await byStatus('approved');

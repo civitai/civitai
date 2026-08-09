@@ -1,10 +1,14 @@
-import { Anchor, Badge, Group, HoverCard, Skeleton, Text } from '@mantine/core';
-import { IconSticker } from '@tabler/icons-react';
+import { Anchor, Badge, Group, HoverCard, Skeleton, Text, Tooltip } from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
+import { IconSticker, IconTrash } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { ReactElement } from 'react';
 import { useState } from 'react';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { daysFromNow, formatDate } from '~/utils/date-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 // Loaded with the hover, not with the page. The creator card drags in profile
@@ -133,6 +137,7 @@ export function StickerPlacementHoverCard({
               Awaiting review
             </Badge>
           )}
+          <ModeratorRemove placementId={placementId} />
         </Group>
 
         {/* A skeleton rather than a spinner: the card's size is known before its
@@ -148,5 +153,66 @@ export function StickerPlacementHoverCard({
         )}
       </HoverCard.Dropdown>
     </HoverCard>
+  );
+}
+
+/**
+ * A moderator taking a sticker off the content it was placed on, from the
+ * sticker itself.
+ *
+ * The report queue is the route for something a user complained about; this is
+ * the route for a moderator who is looking at the image and can see the problem.
+ * Same mutation either way, so the two cannot drift into different rules about
+ * what removal means.
+ *
+ * Nothing else happens: no refund, and nobody is notified (Justin, 2026-08-08).
+ * The escrow on a live placement was paid to a content owner who did not choose
+ * the sticker, and clawing it back would charge them for someone else's problem.
+ *
+ * Rendered for moderators only, which is convenience — `removePlacement` is a
+ * `moderatorProcedure`, so the refusal is on the mutation and stays there.
+ */
+function ModeratorRemove({ placementId }: { placementId: number }) {
+  const currentUser = useCurrentUser();
+  const utils = trpc.useUtils();
+
+  const remove = trpc.placement.removePlacement.useMutation({
+    onSuccess: async () => {
+      showSuccessNotification({ message: 'Placement removed.' });
+      await utils.placement.invalidate();
+    },
+    onError: (error) =>
+      showErrorNotification({ title: "Couldn't remove it", error: new Error(error.message) }),
+  });
+
+  if (!currentUser?.isModerator) return null;
+
+  return (
+    <Tooltip label="Remove this sticker from the content" withArrow>
+      <LegacyActionIcon
+        color="red"
+        variant="subtle"
+        size="sm"
+        className="shrink-0"
+        aria-label="Remove placement"
+        loading={remove.isPending}
+        onClick={() =>
+          openConfirmModal({
+            title: 'Remove this placement',
+            children: (
+              <Text size="sm">
+                The sticker comes off this content for everyone. No Buzz moves and nobody is
+                notified.
+              </Text>
+            ),
+            labels: { confirm: 'Remove', cancel: 'Cancel' },
+            confirmProps: { color: 'red' },
+            onConfirm: () => remove.mutate({ placementId }),
+          })
+        }
+      >
+        <IconTrash size={14} />
+      </LegacyActionIcon>
+    </Tooltip>
   );
 }

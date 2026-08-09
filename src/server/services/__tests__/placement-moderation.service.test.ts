@@ -389,8 +389,8 @@ describe('removing every placement made with a revoked cosmetic', () => {
 
   // The placer is a holder of the revoked cosmetic and is refunded for it
   // everywhere else, so forfeiting their escrow here would punish them for the
-  // maker's abuse. removeByOwner is the only action that returns the whole
-  // escrow — see the label caveat on the service.
+  // maker's abuse. Its own action rather than removeByOwner, which pays the same
+  // and would record a moderator's takedown as the owner's doing.
   it('refunds a pending placement in full rather than forfeiting it', async () => {
     rows([4403], []);
     placementUpdateMany.mockResolvedValue({ count: 0 });
@@ -399,7 +399,7 @@ describe('removing every placement made with a revoked cosmetic', () => {
 
     expect(settlePlacement.mock.calls[0][0]).toMatchObject({
       placementId: 4403,
-      action: 'removeByOwner',
+      action: 'removeByCosmeticTakedown',
       actorId: MODERATOR,
     });
   });

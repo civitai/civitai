@@ -24,12 +24,16 @@ export type PlacementStatus = 'pending' | 'approved' | 'declined' | 'expired' | 
 /**
  * Who removed a placement, stored alongside `status: 'removed'`.
  *
- * The two removals have opposite money outcomes — an owner removing an
+ * The removals have different money outcomes — an owner removing an
  * auto-approved placement refunds in full, a moderator removing an abusive one
- * refunds nothing — so `removed` alone cannot tell a reconcile or a retry which
- * one happened.
+ * refunds nothing, and a cosmetic takedown refunds in full because the abuse was
+ * the artwork's maker's rather than the placer's — so `removed` alone cannot
+ * tell a reconcile or a retry which one happened.
+ *
+ * The column is TEXT, not a database enum, so a new value here is a code change
+ * and not a migration.
  */
-export type PlacementRemovedBy = 'owner' | 'moderator';
+export type PlacementRemovedBy = 'owner' | 'moderator' | 'cosmeticTakedown';
 
 /**
  * Every movement of money a placement can make, one row each in the ledger.
@@ -245,7 +249,8 @@ export type PlacementOutcome =
   | 'declined'
   | 'expired'
   | 'removedByOwner'
-  | 'removedByModerator';
+  | 'removedByModerator'
+  | 'removedByCosmeticTakedown';
 
 export type PlacementSplitInput = {
   /** Integer Buzz the placer paid into escrow. */
@@ -310,8 +315,15 @@ export function splitPlacementPayment(input: PlacementSplitInput): PlacementSpli
     // Neither cost the owner any attention, so neither pays a fee. Removing an
     // auto-approved placement pays nothing on purpose: a fee there would reward
     // accepting placements, banking the money and sweeping them off later.
+    // The cosmetic itself was revoked as abusive, which makes the placer a
+    // holder of it rather than the offender — they are refunded for it
+    // everywhere else, so forfeiting their escrow here would charge them for the
+    // maker's abuse. Its own outcome rather than reusing `removedByOwner`: the
+    // money is the same and the record is not, and the record is what a
+    // reconcile reads to explain why.
     case 'expired':
     case 'removedByOwner':
+    case 'removedByCosmeticTakedown':
       return { ...nothing, toPlacer: amount };
     // Not returned — the placement was abusive. It is forfeit rather than paid
     // to the owner, so a removal no one benefits from stays uninteresting to game.
@@ -344,6 +356,7 @@ export function placementOutcomeFromStatus(
     case 'removed':
       if (removedBy === 'owner') return 'removedByOwner';
       if (removedBy === 'moderator') return 'removedByModerator';
+      if (removedBy === 'cosmeticTakedown') return 'removedByCosmeticTakedown';
       throw new Error('placement outcome: a removed placement must record who removed it');
     case 'pending':
       throw new Error('placement outcome: a pending placement has no settled outcome');
