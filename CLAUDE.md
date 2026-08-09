@@ -53,6 +53,14 @@ pnpm run prettier:check   # Check Prettier formatting
 pnpm run prettier:write   # Auto-fix Prettier formatting
 ```
 
+#### SvelteKit apps have their own standard
+
+`apps/moderator`, `apps/auth` and `apps/creator-studio` are SvelteKit 5 + Kysely + shadcn-svelte +
+Tailwind v4 — none of the Mantine/tRPC/Prisma guidance above applies to them. Their shared conventions
+live in **[`docs/svelte-app-standard.md`](docs/svelte-app-standard.md)**, and each app's `CLAUDE.md`
+records only its deltas. Review a segment there with `svelte-correctness-review`,
+`svelte-idiom-review` and `svelte-abstraction-review`.
+
 #### In SvelteKit apps (`apps/moderator`, `apps/auth`, `apps/creator-studio`): use `typecheck`, never `check`
 
 They are **not** synonyms. `typecheck` is `svelte-check` alone and writes nothing. `check` prefixes it
