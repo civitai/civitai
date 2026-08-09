@@ -490,9 +490,10 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     announcements,
     following,
     browsingSettingsAddons,
-    // Fail closed to "not live": the endpoint already swallows a degraded
-    // sysRedis into `false`, and this covers the case where the bootstrap fetch
-    // itself failed. The client query self-heals on its 5-minute refetch.
+    // Fail closed to "not live". `getLiveNow` reads the main redis with no internal
+    // catch and no deadline race, so the endpoint's own `.catch` is what turns a
+    // degraded read into `false`; this default covers the bootstrap fetch failing
+    // outright. The client query self-heals on its 5-minute refetch.
     liveNow = false,
   } = settingsBootstrap;
   const { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay } = await import(

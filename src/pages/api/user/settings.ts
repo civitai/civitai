@@ -14,11 +14,10 @@ export default PublicEndpoint(
       // Use the content-settings view so SSR initialData matches the tRPC
       // getSettings response shape (JSON settings + User-column toggles).
       const settings = await getUserContentSettings(session?.user?.id ?? -1);
-      // tosMeta + announcements + following are computed concurrently to keep this
-      // hot per-bootstrap route off the critical path. announcements + following
-      // swallow their own errors (`.catch`) so they can never reject the Promise.all
-      // and drop the critical settings/session payload; tosMeta (static, no user
-      // input) can still throw to the outer catch (preserving prior behaviour).
+      // Concurrent, to keep this hot per-bootstrap route off the critical path.
+      // EVERY member swallows its own errors: a single rejection diverts the whole
+      // payload to the outer catch, which `_app` reads as "endpoint degraded" — so
+      // one blip would drop the session seed and the browsing-settings addons too.
       const domainColor = getRequestDomainColor(req);
       const [tosMeta, announcements, following, browsingSettingsAddons, liveNow] =
         await Promise.all([
@@ -29,7 +28,9 @@ export default PublicEndpoint(
           // against the seeded `user.getSettings`, so this is user-independent and we
           // can resolve it for everyone (it's cheap + cached). Domain fallback matches
           // createContext's `getRequestDomainColor(req) ?? 'blue'`.
-          getTosMeta({ domainColor: domainColor ?? 'blue' }),
+          // `undefined` on failure: `useToSUpdateModal` guards on it and simply
+          // doesn't prompt, which beats degrading the whole payload.
+          getTosMeta({ domainColor: domainColor ?? 'blue' }).catch(() => undefined),
           // SSR-seed the ambient `announcement.getAnnouncements` query (fires on every
           // bootstrap, anon + authed). Computed here — NOT in `_app` getInitialProps —
           // because `announcement.service` is server-only and importing it into `_app`
@@ -54,12 +55,16 @@ export default PublicEndpoint(
           // `~/server/redis/client` into `_app`'s CLIENT-bundled module graph, since
           // getInitialProps also runs in the browser on client-side transitions.
           //
-          // `undefined` — NOT `[]` — is the failure value. The client provider passes
-          // this straight to `useQuery({ initialData, staleTime: Infinity })`: an empty
-          // array is VALID seed data, so it would pin the browsing-settings addons to
-          // "no restrictions" for the whole session and never refetch. `undefined`
-          // leaves the query unseeded, so it falls back to
-          // DEFAULT_BROWSING_SETTINGS_ADDONS and self-heals on the next fetch.
+          // `getBrowsingSettingAddons` fails OPEN internally — a redis reject, a
+          // `withSysReadDeadline` timeout and corrupt JSON all RETURN
+          // DEFAULT_BROWSING_SETTINGS_ADDONS rather than throwing. So on degraded
+          // sysRedis the client is seeded with the defaults, and because the provider
+          // passes this to `useQuery({ initialData, staleTime: Infinity })` they are
+          // pinned for the session; the live config is only picked up on the next
+          // bootstrap. Telling "live config" apart from "failed open" would need a
+          // sentinel out of system-cache. The `.catch` below is unreachable today and
+          // kept only so a future refactor that lets this reject can't seed `[]` —
+          // which react-query would treat as valid data and pin as "no restrictions".
           getBrowsingSettingAddons().catch(() => undefined),
           getLiveNow().catch(() => false),
         ]);
