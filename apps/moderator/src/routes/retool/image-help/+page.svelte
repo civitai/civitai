@@ -80,12 +80,27 @@
           </div>
 
           {#if data.canAct}
-            <form method="POST" action="?/resolve" use:enhance={onSubmit}>
-              <input type="hidden" name="requestId" value={selected.id} />
-              <Button type="submit" size="sm" disabled={submitting}>
-                {submitting ? 'Marking…' : 'Mark handled'}
-              </Button>
-            </form>
+            <div class="flex flex-wrap gap-2">
+              {#if data.images.length}
+                <!-- Acting on the batch reuses Bulk Image Manager's reviewed destructive path rather
+                     than growing a second one here. Retool had no action on this queue at all. -->
+                <Button
+                  href="/retool/bulk-image-manager?source=imageIds&q={data.images
+                    .map((i) => i.id)
+                    .join(',')}"
+                  variant="outline"
+                  size="sm"
+                >
+                  Act on these {data.images.length} in Bulk Image Manager
+                </Button>
+              {/if}
+              <form method="POST" action="?/resolve" use:enhance={onSubmit}>
+                <input type="hidden" name="requestId" value={selected.id} />
+                <Button type="submit" size="sm" disabled={submitting}>
+                  {submitting ? 'Marking…' : 'Mark handled'}
+                </Button>
+              </form>
+            </div>
           {/if}
         </div>
 

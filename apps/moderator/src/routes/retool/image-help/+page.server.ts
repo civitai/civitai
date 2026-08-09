@@ -28,6 +28,8 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     images,
     canAct: canAccess(locals.user, '/images'),
     civitaiUrl: env.CIVITAI_APP_URL ?? 'https://civitai.com',
+    // Queue left, the request's images right — two columns need the full content width.
+    wide: true,
   };
 };
 

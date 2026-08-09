@@ -15,9 +15,29 @@ which are already largely built.
 | D. Rating / tag review | 12 | Largely shipped |
 | E. Backfill jobs and timers | 35 | **Not UI** — Retool workflows, cron decision |
 
-## A. Help requests — port (3)
+## A. Help requests — port (9)
 
 The only group with no counterpart anywhere in the app.
+
+**Corrected 2026-08-09.** This was first written as 3 queries, with `GetMinors`/`GetPoI`/`GetReported`
+and `StoreMinors`/`StorePoI`/`StoreReported` filed under group E as backfill jobs. They are not: they
+are the **producers** of this queue. Each `Get*` selects a batch of image ids and its `Store*` files
+them into `ModerationImageHelp`, which is why that table has four GUI-mode writers rather than one:
+
+| Producer | Batch it files |
+| --- | --- |
+| `GetMinors` → `StoreMinors` | `Image WHERE needsReview = 'minor' AND ingestion IS NOT NULL` |
+| `GetPoI` → `StorePoI` | `Image WHERE needsReview = 'poi' AND ingestion IS NOT NULL` |
+| `GetReported` → `StoreReported` | `ImageReport ⋈ Report WHERE r.status = 'Pending'` |
+
+So `ModerationImageHelp.type` is which of those three raised it, and most rows are **machine-raised
+batches needing a rating or a flag decision**, not a colleague's ad-hoc question. That is the missing
+context for what the page is for — a queue of "these images need a second pair of eyes", grouped by
+why.
+
+The three producers are cron-shaped (a timer scoops the batch), so they belong to the same
+Workflows/cron decision as group E — but they are *not* backfills, and the queue they feed is a live
+moderator surface.
 
 | Query | Notes |
 | --- | --- |
@@ -51,8 +71,8 @@ dashboard is missing that view, and as dashboard cards, not a new page.
 
 ## C. Report triage — equivalent (6)
 
-`Reports`, `OLDReports`, `RecentReports`, `RecentReportImage`, `UrgentReports`, `GetReported`,
-`StoreReported`, `ActionReport`, `ActionAllPostReports`.
+`Reports`, `OLDReports`, `RecentReports`, `RecentReportImage`, `UrgentReports`, `ActionReport`,
+`ActionAllPostReports`. (`GetReported`/`StoreReported` moved to group A — they feed the help queue.)
 
 `/reports/*` and the dashboard's "Most reported" own this. `UrgentReports` is already shipped.
 `ActionReport`/`ActionAllPostReports` remain deliberately un-ported — actioning lives on `/reports`,
@@ -72,7 +92,7 @@ match to an existing page from the SQL alone.
 
 `MinorInsert`, `PoIInsert`, `ModelInsert`, `CivitModelInsert`, `newUserInsert`, `newUserTimer`,
 `ImageSfwData`, `ImageSfwDataCatchup`, `ImagePG13Data`, `pg`, `pg13`, `pg_catchup`, `r`, `x`, `xxx`,
-`FPATaskTimers_catchup`, `TagTimerCatchup`, `StoreMinors`, `StorePoI`, `GetMinors`, `GetPoI`,
+`FPATaskTimers_catchup`, `TagTimerCatchup`,
 `FindSHA`, `LogSHA256`, `BlockedImagesTask`, `TaskCheckerBlocked`, `AutoBlockedUsers`,
 `CivitModelCheck`, `CivitModelsData`, `HolidayPostsBulbs`, `ComicReview`, `ModelReview`,
 `ArticleReview`, `blockedTagTimer`, and the remaining `*_catchup` variants.
