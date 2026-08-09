@@ -6,7 +6,21 @@ import { useStickerRevealStore } from '~/store/sticker-reveal.store';
 
 type Box = { width: number; height: number; left: number; top: number };
 
-const CARD_ARTWORK_WIDTH = 128;
+/**
+ * What a card asks the CDN for, against 512 on the detail view.
+ *
+ * A card is 450px wide and a sticker is capped at 0.25 of it by default (0.4 if
+ * the creator raises it), so it draws at ~112 CSS px — but a DPR-2 display wants
+ * 225 device px for that, and most laptops and phones are DPR 2+. 256 covers the
+ * default ceiling on retina and is still a quarter of 512's pixels. The band
+ * between 0.28 and the 0.4 maximum stays slightly soft, which is a creator
+ * opt-in.
+ *
+ * The first version of this was 128, from arithmetic that left device pixel
+ * ratio out and would have upscaled a default-size sticker by 1.8x — soft
+ * artwork a creator was paid for.
+ */
+const CARD_ARTWORK_WIDTH = 256;
 
 const same = (a: Box | null, b: Box) =>
   !!a && a.width === b.width && a.height === b.height && a.left === b.left && a.top === b.top;
@@ -126,9 +140,6 @@ export function CardStickerOverlay({ imageId }: { imageId: number }) {
             viewerId={currentUser?.id}
             interactive={false}
             sticker={batch?.sticker}
-            // A card is ~450px wide and a sticker is a fraction of it, so 512
-            // is roughly eight times the linear resolution it draws at, on the
-            // hottest path in the product.
             artworkWidth={CARD_ARTWORK_WIDTH}
           />
         </div>

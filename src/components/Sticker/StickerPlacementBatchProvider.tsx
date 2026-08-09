@@ -94,17 +94,27 @@ export function StickerPlacementBatchProvider({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [placementQueries.map((query) => query.dataUpdatedAt).join(',')]);
 
-  // Resolved here rather than per card. `useStickerCosmetics` chunks at 100 ids
-  // and caches forever, so a whole feed's artwork is a handful of requests —
-  // where a card resolving its own is a request per distinct sticker set, which
-  // is a request per card as soon as stickers vary. Batching the placements and
-  // then paying per card for the artwork needed to draw them would have left the
-  // headline property of this provider true only for the cheap half.
+  // Resolved here rather than per card. `useStickerCosmetics` chunks at 100 ids,
+  // so a whole surface's artwork is a handful of requests — where a card
+  // resolving its own is a request per distinct sticker set, which is a request
+  // per card as soon as stickers vary. Batching the placements and then paying
+  // per card for the artwork needed to draw them would have left the headline
+  // property of this provider true only for the cheap half.
+  //
+  // Per **surface**, not per page: a home page mounts several `ImagesProvider`s
+  // (feed block, collection blocks, profile sections) and each gets its own
+  // provider and its own query, with no sharing even where their sticker sets
+  // overlap. That is the per-surface design rather than a defect, and it is
+  // still far cheaper than the per-card cost it replaced.
+  //
+  // Deduped here as well as inside the hook: the hook's memo key is the joined
+  // id string, and a surface with 500 placements of 20 stickers would otherwise
+  // build and join a 500-element array on every render of this provider.
   const cosmeticIds = useMemo(() => {
-    const ids: number[] = [];
+    const ids = new Set<number>();
     for (const placements of byImage.values())
-      for (const placement of placements) ids.push(placement.data.cosmeticId);
-    return ids;
+      for (const placement of placements) ids.add(placement.data.cosmeticId);
+    return [...ids];
   }, [byImage]);
 
   const { sticker } = useStickerCosmetics(cosmeticIds);
