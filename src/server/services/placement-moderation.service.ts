@@ -194,6 +194,61 @@ export async function removePlacementsByUser({
   };
 }
 
+/**
+ * One placement, removed by a moderator — the action behind a sticker report.
+ *
+ * **A live placement cannot go through `settlePlacement` alone.** That claims
+ * its transition with `WHERE status = 'pending'`, so an approved row matches
+ * nothing, no money moves, and it returns `settled: false` — a moderator would
+ * press remove on the reported sticker and watch it stay exactly where it is.
+ * Approved placements are taken down by the same write `removePlacementsByUser`
+ * uses, for the same reason: their money was already paid to an owner who did
+ * nothing wrong, so clawing it back punishes the wrong party.
+ *
+ * ⚠️ That the approved case moves no money is provisional pending Justin, and
+ * is the reversible direction — deciding later to claw back is additive.
+ */
+export async function removePlacementByModerator({
+  placementId,
+  actorId,
+}: {
+  placementId: number;
+  actorId: number;
+}) {
+  const placement = await dbWrite.placement.findUnique({
+    where: { id: placementId },
+    select: { id: true, status: true },
+  });
+
+  if (!placement) throw new Error('placement: that placement no longer exists');
+
+  if (placement.status === 'pending') {
+    const { settled } = await settlePlacement({
+      placementId,
+      action: 'removeByModerator',
+      actorId,
+    });
+    return { removed: settled, wasLive: false };
+  }
+
+  if (placement.status !== 'approved')
+    throw new Error(`placement: that placement is already ${placement.status}`);
+
+  const { count } = await dbWrite.placement.updateMany({
+    where: { id: placementId, status: 'approved' },
+    data: {
+      status: 'removed',
+      removedBy: 'moderator',
+      // Not `resolvedAt`/`resolvedById`: those record who approved it, and this
+      // is the one path whose purpose is a moderation record.
+      takenDownAt: new Date(),
+      takenDownById: actorId,
+    },
+  });
+
+  return { removed: count > 0, wasLive: true };
+}
+
 export async function suspendPlacementPrivileges({
   userId,
   actorId,

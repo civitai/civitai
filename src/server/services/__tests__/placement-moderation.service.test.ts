@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const queryRaw = vi.fn();
 const settlePlacement = vi.fn();
 const placementFindMany = vi.fn();
+const placementFindUnique = vi.fn();
 const placementUpdateMany = vi.fn();
 const placementCount = vi.fn();
 const suspensionFindUnique = vi.fn();
@@ -13,6 +14,7 @@ vi.mock('~/server/db/client', () => ({
     $queryRaw: queryRaw,
     placement: {
       findMany: placementFindMany,
+      findUnique: placementFindUnique,
       updateMany: placementUpdateMany,
       count: placementCount,
     },
@@ -31,6 +33,7 @@ const {
   countPendingPlacementsFrom,
   declinePlacementsOnBlock,
   isPlacementBlocked,
+  removePlacementByModerator,
   removePlacementsByUser,
   suspendPlacementPrivileges,
 } = await import('~/server/services/placement-moderation.service');
@@ -43,6 +46,7 @@ beforeEach(() => {
   queryRaw.mockResolvedValue([{ exists: false }]);
   suspensionFindUnique.mockResolvedValue(null);
   placementFindMany.mockResolvedValue([]);
+  placementFindUnique.mockResolvedValue(null);
   placementUpdateMany.mockResolvedValue({ count: 0 });
   settlePlacement.mockResolvedValue({ settled: true });
 });
@@ -293,5 +297,61 @@ describe('the takedown record', () => {
 
     expect(placementUpdateMany.mock.calls[0][0].where).toMatchObject({ id: { in: [1, 2] } });
     expect(result.hasMore).toBe(true);
+  });
+});
+
+describe('removing one reported placement', () => {
+  const APPROVED_PLACEMENT = 3101;
+  const PENDING_PLACEMENT = 3102;
+  const MODERATOR = 47;
+
+  // settlePlacement claims its transition with WHERE status = 'pending', so an
+  // approved row matches nothing and it returns settled: false having moved no
+  // money. Routing a live placement through it is a remove button that does
+  // nothing — and a green settlePlacement mock is exactly what would hide that,
+  // so this asserts the takedown write instead.
+  it('takes a live placement down directly rather than through settlement', async () => {
+    placementFindUnique.mockResolvedValue({ id: APPROVED_PLACEMENT, status: 'approved' });
+    placementUpdateMany.mockResolvedValue({ count: 1 });
+
+    const result = await removePlacementByModerator({
+      placementId: APPROVED_PLACEMENT,
+      actorId: MODERATOR,
+    });
+
+    expect(settlePlacement).not.toHaveBeenCalled();
+    expect(placementUpdateMany.mock.calls[0][0]).toMatchObject({
+      where: { id: APPROVED_PLACEMENT, status: 'approved' },
+      data: { status: 'removed', removedBy: 'moderator', takenDownById: MODERATOR },
+    });
+    expect(result).toMatchObject({ removed: true, wasLive: true });
+  });
+
+  it('settles a pending placement so its escrow is forfeited', async () => {
+    placementFindUnique.mockResolvedValue({ id: PENDING_PLACEMENT, status: 'pending' });
+
+    const result = await removePlacementByModerator({
+      placementId: PENDING_PLACEMENT,
+      actorId: MODERATOR,
+    });
+
+    expect(placementUpdateMany).not.toHaveBeenCalled();
+    expect(settlePlacement.mock.calls[0][0]).toMatchObject({
+      placementId: PENDING_PLACEMENT,
+      action: 'removeByModerator',
+      actorId: MODERATOR,
+    });
+    expect(result).toMatchObject({ removed: true, wasLive: false });
+  });
+
+  it('refuses one that is already settled instead of writing over the record', async () => {
+    placementFindUnique.mockResolvedValue({ id: APPROVED_PLACEMENT, status: 'declined' });
+
+    await expect(
+      removePlacementByModerator({ placementId: APPROVED_PLACEMENT, actorId: MODERATOR })
+    ).rejects.toThrow(/already declined/);
+
+    expect(placementUpdateMany).not.toHaveBeenCalled();
+    expect(settlePlacement).not.toHaveBeenCalled();
   });
 });
