@@ -130,6 +130,21 @@ export function resolveWatchdogPort(): number {
 }
 
 /**
+ * CPU-seconds per wall-second below which a wedge is classified STARVED rather than
+ * EXECUTING. Measured separation is total — a burning loop reads 0.89, a blocked one
+ * 0.00 — so this sits well clear of both rather than at a midpoint.
+ *
+ * It is deliberately generous on the starved side: the continuous profiler adds a
+ * constant CPU floor on the pools that run it, so a starved wedge need not read
+ * exactly zero. The emitted ratio histogram exists so that floor can be READ off real
+ * pods rather than guessed at here.
+ */
+export function resolveStarvedRatio(): number {
+  const raw = Number.parseFloat(process.env.EVENTLOOP_WATCHDOG_STARVED_RATIO ?? '');
+  return Number.isFinite(raw) && raw > 0 && raw < 1 ? raw : 0.2;
+}
+
+/**
  * Paired with the worker-served `civitai_app_watchdog_up`: this one says the main
  * thread spawned the worker, that one says the worker is alive. Neither alone can
  * tell "the watchdog is absent" from "no wedges occurred", which is the failure mode
@@ -483,7 +498,7 @@ function maybeCaptureWedge(wedgeStartMs) {
 function renderCaptureMetrics(out) {
   out.push('# HELP civitai_app_watchdog_capture_total Wedge CPU-profile captures attempted, by result. skipped-* results mean the trigger fired but was refused by backoff or the hourly capCfg.');
   out.push('# TYPE civitai_app_watchdog_capture_total counter');
-  const captureKeys = ['ok', 'error', 'skipped-in-flight', 'skipped-backoff', 'skipped-hourly-cap'];
+  const captureKeys = ['ok', 'error', 'skipped-in-flight', 'skipped-backoff', 'skipped-hourly-cap', 'skipped-starved'];
   for (const k of captureKeys) {
     out.push('civitai_app_watchdog_capture_total{result="' + k + '"} ' + (captureResults[k] || 0));
   }
@@ -515,7 +530,7 @@ const { workerData, parentPort } = require('node:worker_threads');
 const http = require('node:http');
 const crypto = require('node:crypto');
 
-const { sab, thresholdMs, port, token, heartbeatIntervalMs, pollMs, cap, s3 } = workerData;
+const { sab, thresholdMs, port, token, heartbeatIntervalMs, pollMs, cap, s3, starvedRatio } = workerData;
 const beat = new BigInt64Array(sab);
 
 const BUCKETS = [1, 2, 5, 10, 30, 60, 120, 300, 600];
@@ -540,8 +555,68 @@ function observeWedge(seconds) {
   }
 }
 
+// --- starvation classifier -------------------------------------------------
+//
+// Most wedges on this fleet contain no JS at all: sliced captures showed the thread
+// not executing during the wedge, against runqueue wait of 2.28s per second on nodes
+// at 90% requested CPU. Threads are queuing, not looping. A profiler cannot see that
+// — there is nothing to sample — but CPU time against wall time separates the two
+// classes completely. Measured: a burning loop reads 0.89, a blocked one reads 0.00.
+//
+// process.cpuUsage() is PROCESS-wide, not main-thread-scoped, so it also counts this
+// worker, V8's helpers, and Pyroscope's sampler where that runs. It is a
+// discriminator between ~0 and ~1, not an attribution. Per-thread precision would
+// mean /proc/self/task/<tid>/stat, which is Linux-only and unnecessary while the
+// classes sit two orders apart.
+const starvedCutoff = typeof starvedRatio === 'number' && starvedRatio > 0 ? starvedRatio : 0.2;
+const CPU_RING_MAX = 400;
+const cpuRing = [];
+
+function sampleCpu(now) {
+  const u = process.cpuUsage();
+  cpuRing.push({ at: now, cpuMs: (u.user + u.system) / 1000 });
+  if (cpuRing.length > CPU_RING_MAX) cpuRing.shift();
+}
+
+// CPU-seconds per wall-second since sinceMs, or null when the ring cannot reach back
+// that far. No backticks anywhere in this source -- it lives in a String.raw template
+// and one would terminate it.
+function cpuRatioSince(sinceMs, now) {
+  if (cpuRing.length < 2) return null;
+  let oldest = null;
+  for (let i = 0; i < cpuRing.length; i++) {
+    if (cpuRing[i].at <= sinceMs) oldest = cpuRing[i];
+    else break;
+  }
+  if (!oldest) oldest = cpuRing[0];
+  const latest = cpuRing[cpuRing.length - 1];
+  const wallMs = latest.at - oldest.at;
+  if (wallMs < 200) return null;
+  return (latest.cpuMs - oldest.cpuMs) / wallMs;
+}
+
+const wedgeKinds = { starved: 0, executing: 0, unknown: 0 };
+const RATIO_BUCKETS = [0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 1];
+const ratioBucketCounts = new Array(RATIO_BUCKETS.length).fill(0);
+let ratioCount = 0;
+let ratioSum = 0;
+
+function observeWedgeKind(ratio) {
+  if (ratio === null) {
+    wedgeKinds.unknown++;
+    return;
+  }
+  wedgeKinds[ratio < starvedCutoff ? 'starved' : 'executing']++;
+  ratioCount++;
+  ratioSum += ratio;
+  for (let i = 0; i < RATIO_BUCKETS.length; i++) {
+    if (ratio <= RATIO_BUCKETS[i]) ratioBucketCounts[i]++;
+  }
+}
+
 setInterval(function () {
   const now = Date.now();
+  sampleCpu(now);
   const lastBeat = lastBeatMs();
   const age = now - lastBeat;
   if (wedgeStartedAt === 0) {
@@ -549,12 +624,21 @@ setInterval(function () {
     // duration does not silently exclude the threshold.
     if (age >= thresholdMs) {
       wedgeStartedAt = lastBeat;
-      // Fire-and-forget: the capture must not delay the next poll, or the worker
-      // stops being able to report the wedge it is capturing.
-      maybeCaptureWedge(wedgeStartedAt);
+      // Gate on the ratio SO FAR, which is all that exists at detection. The
+      // classification below uses the whole wedge and is the more accurate of the
+      // two; this one only has to answer "is there anything to sample right now".
+      const earlyRatio = cpuRatioSince(wedgeStartedAt, now);
+      if (earlyRatio !== null && earlyRatio < starvedCutoff) {
+        tallyCapture('skipped-starved');
+      } else {
+        // Fire-and-forget: the capture must not delay the next poll, or the worker
+        // stops being able to report the wedge it is capturing.
+        maybeCaptureWedge(wedgeStartedAt);
+      }
     }
   } else if (age < thresholdMs) {
     observeWedge((now - wedgeStartedAt) / 1000);
+    observeWedgeKind(cpuRatioSince(wedgeStartedAt, now));
     wedgeStartedAt = 0;
   }
 }, pollMs).unref();
@@ -591,6 +675,23 @@ function render() {
   out.push('civitai_app_watchdog_wedge_duration_seconds_bucket{le="+Inf"} ' + wedgeCount);
   out.push('civitai_app_watchdog_wedge_duration_seconds_sum ' + wedgeSumSeconds);
   out.push('civitai_app_watchdog_wedge_duration_seconds_count ' + wedgeCount);
+
+  out.push('# HELP civitai_app_watchdog_wedge_kind_total Completed wedges by whether the main thread was EXECUTING (CPU burned during the wedge, so a profile has something to show) or STARVED (descheduled, waiting for CPU — nothing to sample, and the fix is capacity or scheduling rather than code). unknown means the CPU ring could not cover the wedge.');
+  out.push('# TYPE civitai_app_watchdog_wedge_kind_total counter');
+  out.push('civitai_app_watchdog_wedge_kind_total{kind="starved"} ' + wedgeKinds.starved);
+  out.push('civitai_app_watchdog_wedge_kind_total{kind="executing"} ' + wedgeKinds.executing);
+  out.push('civitai_app_watchdog_wedge_kind_total{kind="unknown"} ' + wedgeKinds.unknown);
+
+  out.push('# HELP civitai_app_watchdog_wedge_cpu_ratio Process CPU-seconds per wall-second over each completed wedge. Distribution, not last-value, so the starved population can be READ rather than assumed — the continuous profiler adds a CPU floor, so starved wedges may not sit at exactly 0.');
+  out.push('# TYPE civitai_app_watchdog_wedge_cpu_ratio histogram');
+  for (let i = 0; i < RATIO_BUCKETS.length; i++) {
+    out.push('civitai_app_watchdog_wedge_cpu_ratio_bucket{le="' + RATIO_BUCKETS[i] + '"} ' + ratioBucketCounts[i]);
+  }
+  out.push('civitai_app_watchdog_wedge_cpu_ratio_bucket{le="+Inf"} ' + ratioCount);
+  out.push('civitai_app_watchdog_wedge_cpu_ratio_sum ' + ratioSum);
+  out.push('civitai_app_watchdog_wedge_cpu_ratio_count ' + ratioCount);
+
+  gauge('civitai_app_watchdog_starved_ratio_threshold', 'Configured CPU-ratio below which a wedge is classified starved. Config echo.', starvedCutoff);
 
   renderCaptureMetrics(out);
 
@@ -807,6 +908,7 @@ export function registerEventLoopWatchdog(): void {
         // Resolved on the MAIN thread at spawn, so a missing credential is a boot-time
         // fact rather than something discovered during the first wedge.
         cap: captureConfig,
+        starvedRatio: resolveStarvedRatio(),
         s3: resolveS3Config(),
       },
       // The watchdog must never be the reason the process stays up.

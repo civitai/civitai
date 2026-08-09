@@ -131,6 +131,100 @@ describe('SigV4 signer', () => {
   });
 });
 
+describe('starvation classifier', () => {
+  // The dominant wedge class on this fleet is the main thread being descheduled, not
+  // looping — sliced production captures showed no JS executing during the wedge,
+  // against 2.28s/s of runqueue wait. A profiler cannot see that. CPU-time against
+  // wall-time can, and this proves the two classes actually separate rather than that
+  // the code runs.
+
+  async function runWedge(kind: 'starved' | 'executing') {
+    const sab = new SharedArrayBuffer(8);
+    const beat = new BigInt64Array(sab);
+    Atomics.store(beat, 0, BigInt(Date.now()));
+
+    const worker = new Worker(WATCHDOG_WORKER_SOURCE, {
+      eval: true,
+      workerData: {
+        sab,
+        thresholdMs: 300,
+        port: 0,
+        token: 'classifier-test',
+        heartbeatIntervalMs: 50,
+        pollMs: 25,
+        cap: { ...resolveCaptureConfig(), enabled: false },
+        s3: {},
+        starvedRatio: 0.2,
+      },
+    });
+
+    const port = await new Promise<number>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('never listened')), 10_000);
+      worker.on('message', (m: { type?: string; port?: number }) => {
+        if (m?.type === 'listening' && m.port) {
+          clearTimeout(timer);
+          resolve(m.port);
+        }
+      });
+      worker.on('error', reject);
+    });
+
+    // Withhold beats for 1.5s. In the executing case the MAIN thread burns CPU
+    // throughout, which is what the classifier has to notice; in the starved case it
+    // does nothing, standing in for a descheduled thread.
+    const until = Date.now() + 1500;
+    if (kind === 'executing') {
+      let sink = 0;
+      while (Date.now() < until) sink += Math.sqrt(Math.random());
+      void sink;
+    } else {
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+
+    Atomics.store(beat, 0, BigInt(Date.now()));
+    await new Promise((r) => setTimeout(r, 250));
+
+    const body = await (
+      await fetch(`http://127.0.0.1:${port}/metrics?token=classifier-test`)
+    ).text();
+    await worker.terminate();
+    return body;
+  }
+
+  const read = (body: string, name: string) =>
+    Number(
+      body
+        .split('\n')
+        .find((l) => l.startsWith(`${name} `))
+        ?.slice(name.length + 1)
+    );
+
+  it('🔴 classifies a CPU-burning wedge as executing', async () => {
+    const body = await runWedge('executing');
+    expect(read(body, 'civitai_app_watchdog_wedge_kind_total{kind="executing"}')).toBe(1);
+    expect(read(body, 'civitai_app_watchdog_wedge_kind_total{kind="starved"}')).toBe(0);
+  }, 30_000);
+
+  it('🔴 classifies an idle wedge as starved, and skips the capture', async () => {
+    const body = await runWedge('starved');
+    expect(read(body, 'civitai_app_watchdog_wedge_kind_total{kind="starved"}')).toBe(1);
+    expect(read(body, 'civitai_app_watchdog_wedge_kind_total{kind="executing"}')).toBe(0);
+    // The whole point of the gate: a starved wedge has nothing to sample, so no
+    // profile is taken and no idle artefact reaches the corpus.
+    expect(read(body, 'civitai_app_watchdog_capture_total{result="skipped-starved"}')).toBe(1);
+  }, 30_000);
+
+  it('exposes the ratio distribution and the threshold echo', async () => {
+    // A gauge of the last value could not answer "where do starved wedges actually
+    // sit" — the continuous profiler adds a CPU floor, so that has to be readable
+    // rather than assumed.
+    const body = await runWedge('starved');
+    expect(body).toContain('civitai_app_watchdog_wedge_cpu_ratio_bucket{le="0.05"}');
+    expect(body).toContain('civitai_app_watchdog_wedge_cpu_ratio_count 1');
+    expect(read(body, 'civitai_app_watchdog_starved_ratio_threshold')).toBe(0.2);
+  }, 30_000);
+});
+
 describe('capture metrics', () => {
   it('exposes every capture series even before anything is captured', async () => {
     // Absent and zero mean different things to an alert. A pool with capture armed
