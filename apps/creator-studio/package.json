@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "prepare": "svelte-kit sync",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "typecheck": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "lint": "eslint . --ext .js,.ts,.svelte --cache --cache-strategy metadata",
     "format": "prettier --write \"src/**/*.{js,ts,svelte}\"",

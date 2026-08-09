@@ -53,6 +53,62 @@ pnpm run prettier:check   # Check Prettier formatting
 pnpm run prettier:write   # Auto-fix Prettier formatting
 ```
 
+#### SvelteKit apps have their own standard
+
+`apps/moderator`, `apps/auth` and `apps/creator-studio` are SvelteKit 5 + Kysely + shadcn-svelte +
+Tailwind v4 — none of the Mantine/tRPC/Prisma guidance above applies to them. Their shared conventions
+live in **[`docs/svelte-app-standard.md`](docs/svelte-app-standard.md)**, and each app's `CLAUDE.md`
+records only its deltas. Review a segment there with `svelte-correctness-review`,
+`svelte-idiom-review` and `svelte-abstraction-review`.
+
+#### In SvelteKit apps (`apps/moderator`, `apps/auth`, `apps/creator-studio`): use `typecheck`, never `check`
+
+They are **not** synonyms. `typecheck` is `svelte-check` alone and writes nothing. `check` prefixes it
+with `svelte-kit sync`, which regenerates ~690 files under `.svelte-kit/` — a directory the Vite dev
+server watches — so running it in an edit→verify loop has Vite re-optimising the module graph while
+`svelte-check` loads ~9,000 files. That collision froze an entire day's work before it was diagnosed
+(2026-08-07), and it does not reproduce in the main app because `tsc --noEmit` emits nothing.
+
+Reach for `check` **only** after changing the route tree — adding, removing or renaming a
+`+page`/`+server`/`+layout` file — which is the only time the generated `$types` go stale. Symptom of
+needing it: `Cannot find module './$types'`, or component props resolving to `never`. `prepare` runs
+`sync` on install, so a fresh checkout is already covered.
+
+**`build` runs `svelte-kit sync` too** (`svelte-kit sync && vite build`), so it carries the same cost —
+and it is **not** a check: it catches nothing `svelte-check` doesn't.
+
+**Read `svelte-check`'s WARNING lines, not just ERROR.** It reports Svelte compiler warnings, and
+`state_referenced_locally` — `let x = $state(data.foo)` capturing only the first value, so the UI
+silently shows stale data after a navigation — is a real bug that appears there and nowhere else in
+the loop. Filtering output to `ERROR` hides it.
+
+#### Never run `npx prettier --plugin=prettier-plugin-svelte` on `.svelte` files
+
+It **empties every file it touches to zero bytes**, and reports success on each one. It took out 28
+components in one command (2026-08-07); they were only recoverable because they were committed. The
+first symptom is `svelte-check` reporting props as `never`, which reads like stale `$types` and sends
+you diagnosing the wrong thing.
+
+Note what `pnpm run prettier:write` does **not** cover: the root Prettier is 2.8.8 and globs
+`.ts`/`.tsx` only, so **no root command formats `.svelte` at all**. `apps/creator-studio` formats
+itself with its own Prettier 3 + plugin (`.prettierignore` explains why ownership must be exclusive);
+the other SvelteKit apps' `.svelte` files are hand-formatted.
+
+#### Prettier runs on UNCOMMITTED files only — never the whole repo
+
+`prettier:write`/`prettier:check` are `scripts/prettier-changed.mjs`, which formats what git reports as
+dirty (modified-vs-HEAD plus untracked) and nothing else. Do not "fix" them back into a `**/*` glob,
+and do not reach for a repo-wide `npx prettier --write` instead.
+
+**The repo is not Prettier-clean and will not be until the 2→3 upgrade reformats it deliberately.**
+`.github/workflows/lint.yml` puts the number at 789 of 4,116 `src` files; across the whole workspace it
+is ~1,000. So a repo-wide `--write` is not a formatting pass, it is a ~1,000-file commit that buries the
+actual change — and it rewrites **other people's uncommitted work in place**, which is how it was found
+(2026-08-08: one `pnpm run prettier:write` produced 1,085 modified files, and telling the reformatting
+apart from real edits afterwards needed a per-file diff against `prettier(HEAD)`).
+
+CI already scopes itself this way and gates only on **added** files for exactly this reason.
+
 ### Testing
 ```bash
 pnpm run test:unit:run    # Vitest unit suite (the one you almost always want)
