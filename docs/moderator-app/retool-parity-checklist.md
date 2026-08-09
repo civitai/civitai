@@ -118,10 +118,23 @@ Ported but incomplete. The header items are visible on every section in Retool, 
 
 - [ ] 🎥 **Strike the user as part of the TOS action.** *"TOS, affect the reason, also strike the user."*
       Retool did both in one gesture; ours requires leaving for User Lookup per owner.
-- [ ] 🎥 **Filter by rating.** *"You can filter to see specific ratings."*
-- [ ] 🎥 **Include already-removed images in any source.** *"filter to see including the ones that have
-      been removed from the account"* — built for the user source only (`userRemoved`), not as a filter
-      across sources.
+- [ ] 🔴 **`violationType` / `violationDetails` are never sent on removal.** `/api/mod/remove-images`
+      accepts a `violationType` **enum** plus a details string and forwards both to the ClickHouse
+      `DeleteTOS` event; the port sends only free-text `reason`. **Every removal from this page is
+      logged with an empty violation classification** — silent and permanent. The endpoint's own zod
+      schema is the authoritative list, so this needs **no re-extract**; the BIM audit's "re-extract
+      before trusting the action set" was the wrong conclusion for this item.
+- [ ] 🎥 **Filter by rating** — *"you can filter to see specific ratings"*. Worse than missing: the
+      rating is **never displayed**. `nsfwLevel` is selected and typed but the card renders
+      ingestion/needsReview/poi/minor/date/prompt and drops it.
+- [ ] **A toggle to hide or isolate removed images.** (Correction: an earlier draft claimed removed
+      images were only reachable via the user source. **Wrong — every source already returns them**,
+      badged `blocked: <reason>`, because `imageBase()` applies no ingestion filter. What Retool had and
+      we lack is the client-side *toggle* — "Show only ToS'd" / "Clear Filter" — plus a removed-only
+      view for the non-user sources.)
+- [ ] **Bulk selection helpers** — Select All / Select 100 / Unselect All. Multiselect works, but only
+      click-by-click, so a 200-image batch is 200 clicks.
+- [ ] `negativePrompt` is selected and rendered nowhere.
 - [ ] **Image-only account nuke** (`remove-images` with `userId`, no id list) — absent; the user source
       caps at 200.
 - [ ] Remove/restore counts are rows **found**, not rows **changed**, so re-removing an already-blocked
@@ -132,17 +145,38 @@ Ported but incomplete. The header items are visible on every section in Retool, 
 🎥 *"press the report and then their images load below… previous removals, previous reports… everything
 in the same screen instead of having to click around a bunch."*
 
-- [x] Queue and account side by side (fixed 2026-08-09 — was stacked).
-- [ ] **No image action path at all.** The grid is display-only: no selection, no remove/restore, and
-      the strike checkbox that Retool tied into the same flow is absent.
-- [ ] **Blocked images are hidden and `blockedFor` is never shown**, so prior enforcement is one number
-      and a CSAM removal is indistinguishable from a tag cleanup. No restore path.
+- [x] Queue and account side by side (2026-08-09 — was stacked). **The screenshot settles what Retool
+      did**: history tabs top-left, queue table top-right, image grid full-width below. So ours is a
+      deliberate improvement, not parity. Caveat: the split is `xl:` only, so it still stacks below
+      1280px — the exact failure it was meant to fix.
+- [ ] 🔴 **The image grid's entire filter bar.** Retool had, above the suspect's images: *Show only
+      ToS'd*, *Clear Filter*, *No Prompt Only*, rating checkboxes (PG / PG-13 / R / X / XXX / ToS),
+      *Start Date* / *End Date* / *Reset*, and *Search Prompt* / *Search Neg Prompt*. We have none of
+      it — so 60 unfiltered, unsearchable images is the whole review surface for an account with
+      thousands. Largest single omission in this section.
+- [ ] **No image action path at all.** The grid is display-only: no selection, no remove/restore, no
+      Select All / Select 100. (The *strike* action itself IS on this page; what is missing is tying it
+      to an image removal, as Retool's `strikeCheckbox` did.)
+- [ ] **`blockedFor` is never shown and blocked images are excluded**, so a CSAM removal is
+      indistinguishable from a tag cleanup, and there is no restore path. (The blocked *count* is
+      already reported separately as "N already blocked" — the gap is which and why.)
+- [ ] **A "Remaining" column per queue row** — the non-removed count, beside "Images". It is the number
+      that says whether an account has already been cleaned up; we show neither.
+- [ ] **`?user=` and `?page=` clobber each other.** Clicking a report on page 3 returns you to page 1;
+      paging closes the open drill-down. Small code, hit within a minute of working page 2.
+- [ ] Report history capped at 100 where Retool used 300; no *Profile* deep link beside User Lookup.
 - [ ] **Prompt/negativePrompt dropped** from the cards — for a generated image the prompt is the evidence.
-- [ ] 60-image cap with no paging (Retool reached 5000); per-suspect counts only, where Retool showed a
-      count against every queue row.
-- [ ] The suspect's history (mod activity, notes, received reports) is "shipped in User Lookup" — true
-      of the data, false of this page.
-- [ ] 🎥 **Post reports** — *"Same for post reports."* Confirm the post-report queue is equivalent.
+- [ ] 60-image cap **with no paging wired** — `ImageQueueGrid` already implements cursor paging and the
+      page simply doesn't pass a cursor. Retool's button reads *"Grab 5000 images"* and its query had no
+      `LIMIT` at all.
+- [ ] The suspect's history — Retool's top-left was a three-tab panel **ModActivity / Reports / UserReport
+      History** with actor and reason per row. **Strikes are the one piece already here**; mod activity,
+      notes and received reports are not.
+- [ ] 🎥 **Post reports** — *"Same for post reports."* **Unverifiable from what we hold**: the User
+      Reports export has no post-report queue, and there is no separate post-reports export. A generic
+      post-report *queue* is shipped at `/reports/post` with filters and actions; the drill-down half
+      (the post's images inline, actions on them) certainly is not. **Needs the post-reports export or a
+      screenshot of that tab.**
 
 ## 4. Image Lookup
 
@@ -186,7 +220,9 @@ in the same screen instead of having to click around a bunch."*
 
 ## 10. Cross-cutting
 
-- [ ] **Report `details` — the reporter's own words — is fetched and dropped on every page in the app.**
+- [ ] **Report `details` — the reporter's own words — is fetched and dropped on most pages.**
+      (Correction: **not** User Reports. `QueuePanel` renders `details->>'violation' ?? 'reason'` and
+      `details->>'comment'` as its own paragraph, matching Retool. Verify each page before "adding" it.)
 - [ ] `getReports` applies status/reason filters only when passed, silently returning all history
       otherwise. Chat Audit was the first caller to trip on it.
 
