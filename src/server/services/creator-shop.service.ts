@@ -8,6 +8,7 @@ import {
   revokeCosmeticsFromUsers,
   validateStickerCosmetic,
 } from '~/server/services/cosmetic.service';
+import { removePlacementsByCosmetic } from '~/server/services/placement-moderation.service';
 import {
   appendItemHistory,
   buildCosmeticData,
@@ -1897,6 +1898,41 @@ export const takedownCosmeticShopItem = async ({
         })
       : { revoked: 0 };
 
+  // Revoking the holding does not touch stickers already placed on other
+  // people's images — those live in `Placement` with the cosmetic id inside a
+  // JSON payload, and taking down the artwork everywhere is the whole point of
+  // a takedown. Drained rather than run once: the helper is bounded per batch,
+  // and one pass would report a clean takedown with the artwork still up.
+  // Capped so a runaway cannot hold the request; `hasMore` says to run again.
+  let placementsRemoved = { settled: 0, takenDown: 0, failed: 0, hasMore: false };
+  for (let batch = 0; batch < 10 && memberIds.length; batch++) {
+    let result: Awaited<ReturnType<typeof removePlacementsByCosmetic>>;
+    try {
+      result = await removePlacementsByCosmetic({ cosmeticIds: memberIds, actorId: moderatorId });
+    } catch (error) {
+      await logTakedown('error', 'Placement takedown failed', {
+        shopItemId: id,
+        cosmeticIds: memberIds,
+        error: errorMessage(error),
+      });
+      break;
+    }
+
+    placementsRemoved = {
+      settled: placementsRemoved.settled + result.settled,
+      takenDown: placementsRemoved.takenDown + result.takenDown,
+      failed: placementsRemoved.failed + result.failed.length,
+      hasMore: result.hasMore,
+    };
+    if (!result.hasMore) break;
+  }
+
+  if (placementsRemoved.hasMore || placementsRemoved.failed)
+    await logTakedown('error', 'Placement takedown left work behind', {
+      shopItemId: id,
+      ...placementsRemoved,
+    });
+
   if (creatorId) {
     await createNotification({
       type: 'creator-shop-item-taken-down',
@@ -1933,6 +1969,7 @@ export const takedownCosmeticShopItem = async ({
     unrecoveredResellerShare,
     unrecoveredPackPool,
     revokedFrom: revoked,
+    placementsRemoved,
     failures,
   });
 
@@ -1950,6 +1987,7 @@ export const takedownCosmeticShopItem = async ({
     unrecoveredResellerShare,
     unrecoveredPackPool,
     revokedFrom: revoked,
+    placementsRemoved,
     failures,
   };
 };

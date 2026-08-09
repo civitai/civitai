@@ -249,6 +249,78 @@ export async function removePlacementByModerator({
   return { removed: count > 0, wasLive: true };
 }
 
+/**
+ * Every placement made with a cosmetic that has been taken down.
+ *
+ * The third moderator power in the spec, and the one that is about the *maker*
+ * rather than the placer: a fine sticker used maliciously is a suspension, while
+ * artwork that is itself abusive has to come off everyone's work regardless of
+ * who placed it. `revokeCosmeticsFromUsers` strips the holding and un-equips
+ * profile decorations; it knows nothing about placements, which live in their
+ * own table with the cosmetic id inside a JSON payload. Without this the artwork
+ * stays on other people's images after being revoked — and once the cosmetic is
+ * gone the overlay renders nothing, so the placement is invisible, permanent,
+ * and still counted.
+ *
+ * Approved placements are taken down without settlement: the content owner was
+ * already paid and did not choose this sticker (Justin, 2026-08-08). Pending
+ * ones refund the placer in full, because the placer is a holder of the revoked
+ * cosmetic and is being made whole for it everywhere else.
+ *
+ * ⚠️ That full refund goes through `removeByOwner`, which is the only settle
+ * action whose payout returns the whole escrow — so the row records
+ * `removedBy: 'owner'` for something a moderator did. The money is right and the
+ * label is wrong; fixing the label means a third `PlacementRemovedBy` value and
+ * a payout branch for it, which is a migration.
+ */
+export async function removePlacementsByCosmetic({
+  cosmeticIds,
+  actorId,
+  limit = 200,
+}: {
+  cosmeticIds: number[];
+  actorId: number;
+  limit?: number;
+}) {
+  const ids = [...new Set(cosmeticIds)];
+  if (!ids.length) return { considered: 0, settled: 0, failed: [], takenDown: 0, hasMore: false };
+
+  // Raw, because the cosmetic id lives inside `data` and Prisma's JSON path
+  // filter takes one value at a time — a pack takedown revokes several members
+  // at once, and one query per member is a query per member.
+  const byStatus = (status: string) =>
+    dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "Placement"
+      WHERE surface = 'sticker'
+        AND status = ${status}
+        AND ("data"->>'cosmeticId')::int = ANY(${ids}::int[])
+      ORDER BY id
+      LIMIT ${limit}
+    `;
+
+  const pending = await byStatus('pending');
+  const settled = await settleEach(pending, (id) =>
+    settlePlacement({ placementId: id, action: 'removeByOwner', actorId })
+  );
+
+  const approved = await byStatus('approved');
+  const { count: takenDown } = await dbWrite.placement.updateMany({
+    where: { id: { in: approved.map((row) => row.id) }, status: 'approved' },
+    data: {
+      status: 'removed',
+      removedBy: 'moderator',
+      takenDownAt: new Date(),
+      takenDownById: actorId,
+    },
+  });
+
+  return {
+    ...settled,
+    takenDown,
+    hasMore: pending.length === limit || approved.length === limit,
+  };
+}
+
 export async function suspendPlacementPrivileges({
   userId,
   actorId,

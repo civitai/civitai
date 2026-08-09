@@ -34,6 +34,7 @@ const {
   declinePlacementsOnBlock,
   isPlacementBlocked,
   removePlacementByModerator,
+  removePlacementsByCosmetic,
   removePlacementsByUser,
   suspendPlacementPrivileges,
 } = await import('~/server/services/placement-moderation.service');
@@ -353,5 +354,76 @@ describe('removing one reported placement', () => {
 
     expect(placementUpdateMany).not.toHaveBeenCalled();
     expect(settlePlacement).not.toHaveBeenCalled();
+  });
+});
+
+describe('removing every placement made with a revoked cosmetic', () => {
+  const COSMETIC = 8801;
+  const PACK_MEMBER = 8802;
+  const MODERATOR = 53;
+
+  const rows = (pending: number[], approved: number[]) =>
+    queryRaw
+      .mockResolvedValueOnce(pending.map((id) => ({ id })))
+      .mockResolvedValueOnce(approved.map((id) => ({ id })));
+
+  // The content owner did not choose this sticker and was already paid for it,
+  // so a live placement is taken down without settlement. Settling it would
+  // compute a payout plan and claw that money back off the wrong person.
+  it('takes live placements down without moving money', async () => {
+    rows([], [4401, 4402]);
+    placementUpdateMany.mockResolvedValue({ count: 2 });
+
+    const result = await removePlacementsByCosmetic({
+      cosmeticIds: [COSMETIC],
+      actorId: MODERATOR,
+    });
+
+    expect(settlePlacement).not.toHaveBeenCalled();
+    expect(placementUpdateMany.mock.calls[0][0]).toMatchObject({
+      where: { id: { in: [4401, 4402] } },
+      data: { status: 'removed', removedBy: 'moderator', takenDownById: MODERATOR },
+    });
+    expect(result.takenDown).toBe(2);
+  });
+
+  // The placer is a holder of the revoked cosmetic and is refunded for it
+  // everywhere else, so forfeiting their escrow here would punish them for the
+  // maker's abuse. removeByOwner is the only action that returns the whole
+  // escrow — see the label caveat on the service.
+  it('refunds a pending placement in full rather than forfeiting it', async () => {
+    rows([4403], []);
+    placementUpdateMany.mockResolvedValue({ count: 0 });
+
+    await removePlacementsByCosmetic({ cosmeticIds: [COSMETIC], actorId: MODERATOR });
+
+    expect(settlePlacement.mock.calls[0][0]).toMatchObject({
+      placementId: 4403,
+      action: 'removeByOwner',
+      actorId: MODERATOR,
+    });
+  });
+
+  // A takedown that stopped after one bounded batch would report success with
+  // the artwork still on other people's work.
+  it('says when a batch filled so the caller runs again', async () => {
+    rows([4404, 4405], []);
+    placementUpdateMany.mockResolvedValue({ count: 0 });
+
+    const result = await removePlacementsByCosmetic({
+      cosmeticIds: [COSMETIC, PACK_MEMBER],
+      actorId: MODERATOR,
+      limit: 2,
+    });
+
+    expect(result.hasMore).toBe(true);
+  });
+
+  it('does nothing at all with no cosmetics to act on', async () => {
+    const result = await removePlacementsByCosmetic({ cosmeticIds: [], actorId: MODERATOR });
+
+    expect(queryRaw).not.toHaveBeenCalled();
+    expect(placementUpdateMany).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ considered: 0, takenDown: 0, hasMore: false });
   });
 });
