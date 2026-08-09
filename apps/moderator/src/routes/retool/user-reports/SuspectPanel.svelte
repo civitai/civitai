@@ -54,7 +54,9 @@
       <p class="text-xs text-dark-2">
         Showing the {suspect.items.length} most recent reviewable{suspect.truncated ? ' of more' : ''}.
         Blocked images are prior enforcement and are counted but not shown.
-        <a href={userLookupUrl(suspectId)} class={LINK_CLASS}>Full account in User Lookup</a>.
+        <a href={userLookupUrl(suspectId, 'reports')} class={LINK_CLASS}>
+          Their reports in User Lookup
+        </a>.
       </p>
     </div>
     {#if canAct}

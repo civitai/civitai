@@ -32,6 +32,11 @@ export function userUrl(civitaiUrl: string, username: string, section?: string |
 }
 
 /** `/retool/*` is documented as a transitional namespace, and this path was hardcoded at nine sites
- *  across three pages. When it moves, those become silent dead links. */
-export const userLookupUrl = (idOrUsername: number | string) =>
-  `/retool/user-lookup?q=${encodeURIComponent(String(idOrUsername))}`;
+ *  across three pages. When it moves, those become silent dead links.
+ *
+ *  `section` is a slug from `user-lookup/sections.ts` (`reports`, `notes`, …). Without one the bare
+ *  route redirects to the default section, so a link that means "their reports" must say so. */
+export const userLookupUrl = (idOrUsername: number | string, section?: string) => {
+  const q = `?q=${encodeURIComponent(String(idOrUsername))}`;
+  return section ? `/retool/user-lookup/${section}${q}` : `/retool/user-lookup${q}`;
+};
