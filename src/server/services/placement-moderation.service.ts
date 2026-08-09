@@ -265,7 +265,9 @@ export async function removePlacementByModerator({
  * used to claim and is worth correcting rather than deleting: a takedown never
  * writes the `Cosmetic` row, and `getStickerCosmetics` resolves artwork by id
  * with no join to `UserCosmetic` and no availability check — so revoking every
- * holding changes nothing about what renders. Reasoning from the old version
+ * holding changes nothing about what the placement overlay draws. (It does stop
+ * the picker offering the sticker and un-equips profile decorations; neither is
+ * what this is about.) Reasoning from the old version
  * leads to "we can skip the sweep, it draws nothing anyway", which is exactly
  * backwards.
  *

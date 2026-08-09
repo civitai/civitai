@@ -38,6 +38,12 @@ export function StickerPlacementOverlay({
    * decline buttons sit below the sticker, so on anything placed low they are
    * cut off by the card's `overflow-hidden` and offered half-visible. Both are
    * fine at detail size, which is the only place this rendered before.
+   *
+   * It also takes the hover card with it, and the moderator remove action inside
+   * it — so that action is detail-view only, which is where Justin asked for it.
+   * `key={placement.id}` on `body` below is load-bearing because of this: it was
+   * inert while every return was wrapped in a keyed element, and it is now what
+   * keys the array item on the non-interactive path.
    */
   interactive?: boolean;
   /**

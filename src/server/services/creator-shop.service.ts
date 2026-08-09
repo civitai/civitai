@@ -1902,7 +1902,9 @@ export const takedownCosmeticShopItem = async ({
   // people's images — those live in `Placement` with the cosmetic id inside a
   // JSON payload, and the overlay resolves artwork by cosmetic id with no join
   // to `UserCosmetic`, so a revoked sticker keeps rendering at full opacity on
-  // everything it was placed on. Taking it down there is the whole point. Drained rather than run once: the helper is bounded per batch,
+  // everything it was placed on. Taking it down there is the whole point.
+  //
+  // Drained rather than run once: the helper is bounded per batch,
   // and one pass would report a clean takedown with the artwork still up.
   // Capped so a runaway cannot hold the request; `hasMore` says to run again.
   //

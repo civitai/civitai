@@ -205,8 +205,17 @@ describe('takedownCosmeticShopItem — pack scoping', () => {
       purchase('pack-tx-2', OTHER_OWNER),
     ]);
     mocks.userCosmeticFindMany.mockResolvedValue([{ userId: PACK_BUYER }, { userId: OTHER_OWNER }]);
-    await takedownCosmeticShopItem({ id: PACK_ID, reason: 'test', moderatorId: MODERATOR });
+    const result = await takedownCosmeticShopItem({
+      id: PACK_ID,
+      reason: 'test',
+      moderatorId: MODERATOR,
+    });
+
     expect(mocks.removePlacementsByCosmetic).not.toHaveBeenCalled();
+    // Reported, not just logged. The whole justification for skipping is that a
+    // moderator must not be left believing the artwork came down, so the flag
+    // regressing to false silently would take the safety property with it.
+    expect(result.placementsRemoved.skippedForPack).toBe(true);
   });
 
   // A single item DOES sweep, and unscoped — the member cosmetic is delisted
@@ -221,9 +230,15 @@ describe('takedownCosmeticShopItem — pack scoping', () => {
     });
     mocks.purchaseFindMany.mockResolvedValue([purchase('single-tx')]);
     mocks.userCosmeticFindMany.mockResolvedValue([{ userId: PACK_BUYER }]);
-    await takedownCosmeticShopItem({ id: PACK_ID, reason: 'test', moderatorId: MODERATOR });
+    const result = await takedownCosmeticShopItem({
+      id: PACK_ID,
+      reason: 'test',
+      moderatorId: MODERATOR,
+    });
+
     expect(sweepArgs()?.cosmeticIds).toEqual([MEMBER_A]);
     expect(sweepArgs()).not.toHaveProperty('placerIds');
+    expect(result.placementsRemoved.skippedForPack).toBe(false);
   });
 
   it('a single-item takedown is still unscoped', async () => {

@@ -119,6 +119,10 @@ export function decrementPlacementCount(
  * HTTP requests for a change that affects one row. The removal is authoritative
  * server-side; the client only has to stop drawing it.
  *
+ * That is reachable from the image detail view too, not only from a feed: the
+ * detail opens as a routed dialog *over* the feed, so the provider and every
+ * chunk it holds stay mounted behind it.
+ *
  * The detail query IS invalidated, by id: it is one request, and the surfaces
  * that offer removal read it to decide whether the placement is still live.
  */
