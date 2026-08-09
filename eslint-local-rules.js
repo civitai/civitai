@@ -15,15 +15,29 @@
  *   - Prisma — `db.$transaction(async (tx) => { ... })`
  *   - Kysely — `db.transaction().execute(async (trx) => { ... })`
  *
- * 🔴 The Kysely form is matched deliberately, and matching only `$transaction`
- * was a real hole rather than a hypothetical one. `src/server/db/kyselyDb.ts`
- * already builds four Kysely clients over the existing pools, `apps/auth` and
- * `apps/creator-studio` run entirely on Kysely, and any Prisma→Kysely porting
- * moves transactional units across. A rule keyed to the literal string
- * `$transaction` goes silently inert as that happens — and this rule's own
- * fixtures are SOURCE STRINGS, so the suite would stay green while the detector
- * stopped finding anything. A detector that reports nothing looks identical to a
- * codebase with no violations. (Found while scoping the Kysely migration.)
+ * 🔴 THE KYSELY MATCHER IS FORWARD-LOOKING AND CURRENTLY MATCHES NOTHING. Say so
+ * rather than claiming coverage this does not have. Measured: the only Kysely
+ * `.transaction().execute(cb)` sites in the monorepo are in `apps/auth` (1) and
+ * `apps/creator-studio` (2), and neither is lintable — `pnpm lint` is
+ * `eslint src/`, CI filters changed files to `^(src|packages)/`, and
+ * creator-studio has its own `root: true` config without this plugin. `src/` and
+ * `packages/` have ZERO. So the reason to have it is that `src/server/db/kyselyDb.ts`
+ * builds four Kysely clients today and porting will move transactional units
+ * across — not that it is catching anything now. Extending lint scope to `apps/`
+ * is the separate change that would make it bite.
+ *
+ * Keyed to the literal string `$transaction`, this rule would have gone silently
+ * inert as that porting happened, and its fixtures are SOURCE STRINGS, so the
+ * suite would stay green while the detector stopped finding anything.
+ *
+ * KNOWN GAPS (measured, not hypothetical — all currently zero occurrences):
+ *   - `const t = db.transaction(); await t.execute(cb)` — the builder must be
+ *     called inline; a variable breaks the receiver walk.
+ *   - `await getTx().execute(cb)` — same reason.
+ *   - `db.startTransaction()` — Kysely's CONTROLLED transaction has no callback,
+ *     so there is no lexical boundary and this strategy structurally cannot see
+ *     it. I/O between it and `commit()` burns the same budget, invisibly.
+ *   - a named (non-inline) callback, same as the Prisma gap noted below.
  *
  * Interactive transactions hold a DB connection open under a wall-clock
  * timeout (Prisma default 5000ms, or an explicit `{ timeout }`). An awaited
@@ -483,7 +497,7 @@ function canonicalModulePath(specifier, fromFile) {
     // silently stopped matching RELATIVE specifiers — inert locally, working in
     // CI, with the test suite red only on the developer's machine.
     if (isPosixAbsolute(resolved)) {
-      return resolved.startsWith(`${REPO_SRC}/`)
+      return isUnderRepoSrc(resolved)
         ? stripModuleExtension(resolved.slice(REPO_SRC.length + 1))
         : null;
     }
@@ -503,10 +517,27 @@ const pathSep = require('path').sep;
 // The repo root is this file's own directory (ESLint loads `eslint-local-rules`
 // from it), so `<root>/src` is exactly what the `~` alias points at.
 const REPO_SRC = require('path').resolve(__dirname, 'src').split(pathSep).join('/');
-/** Absolute after the separator swap: posix `/x` or Windows `C:/x`. */
+/** Absolute after the separator swap: posix `/x`, Windows `C:/x`, or UNC `//host/share`. */
 function isPosixAbsolute(p) {
   return p.startsWith('/') || /^[A-Za-z]:\//.test(p);
 }
+
+/**
+ * Windows filenames are case-insensitive but `startsWith` is not, and ESLint is
+ * not guaranteed to hand us the same casing `path.resolve` produced: the CLI
+ * normalises the drive to uppercase via `process.cwd()`, while an editor or LSP
+ * passing an explicit path may not. A `c:\…` filename then fails the REPO_SRC
+ * comparison and the rule goes silently inert — the same failure mode as the
+ * leading-slash bug, one layer down. Linux stays byte-exact, where casing is
+ * genuinely significant.
+ */
+const CASE_INSENSITIVE_PATHS = pathSep === '\\';
+function isUnderRepoSrc(p) {
+  const prefix = `${REPO_SRC}/`;
+  const head = p.slice(0, prefix.length);
+  return CASE_INSENSITIVE_PATHS ? head.toLowerCase() === prefix.toLowerCase() : head === prefix;
+}
+
 function posixDirname(p) {
   const i = p.lastIndexOf('/');
   return i === -1 ? '.' : p.slice(0, i) || '/';
@@ -518,7 +549,10 @@ function posixNormalize(p) {
     if (seg === '..') out.pop();
     else out.push(seg);
   }
-  return `${p.startsWith('/') ? '/' : ''}${out.join('/')}`;
+  // A UNC path's leading `//` is part of the root, not a redundant separator —
+  // collapsing it to `/` yields a path that can never match REPO_SRC.
+  const root = p.startsWith('//') ? '//' : p.startsWith('/') ? '/' : '';
+  return `${root}${out.join('/')}`;
 }
 
 /**

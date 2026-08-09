@@ -56,8 +56,12 @@ ruleTester.run('no-io-in-transaction', rule, {
     // `execute`-named API taking a callback must NOT open a transaction context —
     // otherwise the matcher flags I/O in every such callback in the repo.
     `async function f(){ await queue.execute(async () => { await fetch('x'); }); }`,
-    // A plain query builder's `.execute()` takes no callback, so it is never matched.
-    `async function f(){ await db.selectFrom('User').execute(); await fetch('x'); }`,
+    // Both matchers require an INLINE callback. Drop that check and these reach
+    // `fn.params` with `fn === undefined` and crash the rule against whatever file
+    // is being linted — a failure with no violation attached to it. RuleTester
+    // reports a rule crash as a test failure, so these are what kill that mutation.
+    `async function f(){ await db.transaction().execute(); }`,
+    `async function f(){ await db.$transaction(); }`,
 
     // ---- REGRESSION GUARD (FALSE NEGATIVE, current behavior) ----
     // A non-inline (named) $transaction callback is NOT analyzed: the rule only
