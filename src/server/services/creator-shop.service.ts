@@ -1915,17 +1915,12 @@ export const takedownCosmeticShopItem = async ({
   // `removePlacementsByCosmetic`; the trade is deliberate and was tried the
   // other way first.
   //
-  // **Single items only.** A pack takedown archives the bundle and never
-  // delists its members — that is the comment above, and it is deliberate,
-  // since a member sold standalone is not what was taken down. But this call
-  // takes no per-member abuse designation, so sweeping here would remove every
-  // placement of every member site-wide while those members stay purchasable:
-  // the artwork judged too abusive to sit on anyone's image, still on sale, and
-  // re-placeable the moment someone rebuys it. That is incoherent under either
-  // answer to "should a pack takedown treat every member as abusive", so the
-  // sweep waits for the ruling. Skipping is the additive direction — the
-  // per-member takedown that already exists does sweep, and widening this later
-  // removes nothing.
+  // **Single items only, by decision.** Taking a pack down takes down the
+  // bundle, not the artwork in it (Justin, 2026-08-09) — its members stay on
+  // sale, which is why nothing delists them above. Sweeping here would remove
+  // every placement of every member site-wide while those members remain
+  // purchasable and immediately re-placeable, judging artwork nobody judged.
+  // Abusive artwork is taken down per member, and that path does sweep.
   // Rows a batch could not settle, excluded once they have failed twice.
   // `ORDER BY id` is stable, so a permanently failing row is re-selected first
   // every time and would otherwise burn all ten iterations. Excluding on the

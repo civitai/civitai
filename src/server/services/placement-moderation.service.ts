@@ -271,6 +271,9 @@ export async function removePlacementByModerator({
  * leads to "we can skip the sweep, it draws nothing anyway", which is exactly
  * backwards.
  *
+ * Called for a single cosmetic's takedown, never a pack's — a pack takedown
+ * removes the bundle, not the artwork in it (Justin, 2026-08-09).
+ *
  * Approved placements are taken down without settlement: the content owner was
  * already paid and did not choose this sticker (Justin, 2026-08-08). Pending
  * ones refund the placer in full, because the placer is a holder of the revoked

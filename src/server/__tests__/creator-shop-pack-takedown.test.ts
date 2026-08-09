@@ -191,12 +191,10 @@ describe('takedownCosmeticShopItem — pack scoping', () => {
     expect(ownerQuery?.where?.claimKey).toEqual({ in: ['pack-tx-1'] });
   });
 
-  // A pack takedown archives the bundle and never delists its members, and it
-  // carries no per-member abuse designation — so sweeping here would remove
-  // every placement of every member site-wide while those members stay
-  // purchasable and immediately re-placeable. Incoherent under either answer to
-  // "should a pack takedown treat every member as abusive", so it waits for the
-  // ruling. Skipping is the additive direction.
+  // Taking a pack down takes down the bundle, not the artwork in it (Justin,
+  // 2026-08-09) — its members stay on sale, so sweeping their placements would
+  // judge artwork nobody judged, and leave it purchasable and immediately
+  // re-placeable. Abusive artwork is taken down per member, and that sweeps.
   const sweepArgs = () => mocks.removePlacementsByCosmetic.mock.calls[0]?.[0];
 
   it('does not sweep placements for a pack takedown', async () => {
