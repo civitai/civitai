@@ -84,35 +84,61 @@ export function useStickerPlacementCounts(imageIds: number[], enabled = true) {
  * The detail query IS invalidated, by id: it is one request, and the surfaces
  * that offer removal read it to decide whether the placement is still live.
  */
+/**
+ * The removed row out of one cached list, and the image to decrement — which is
+ * `undefined` unless the row was **approved**.
+ *
+ * `getStickerPlacementCounts` is approved-only, so a pending row was never in
+ * it. Decrementing for one would leave the badge a sticker short of what is
+ * drawn, and the reaction bar adds the viewer's own pending rows to the count.
+ * Exported and pure so this rule is testable without a query client.
+ */
+export function dropPlacementFromList(
+  placements: PlacedSticker[] | undefined,
+  placementId: number
+) {
+  const hit = placements?.find((placement) => placement.id === placementId);
+  if (!hit || !placements) return { placements, countedOn: undefined };
+
+  return {
+    placements: placements.filter((placement) => placement.id !== placementId),
+    countedOn: hit.isPending ? undefined : hit.imageId,
+  };
+}
+
+/** One off the count for that image, and only if there is one to take. */
+export function decrementPlacementCount(
+  counts: Record<number, number> | undefined,
+  imageId: number
+) {
+  const current = counts?.[imageId];
+  if (!counts || !current) return counts;
+  return { ...counts, [imageId]: current - 1 };
+}
+
 export function useForgetStickerPlacement() {
   const queryClient = useQueryClient();
   const utils = trpc.useUtils();
 
   return useCallback(
     async (placementId: number) => {
-      let imageId: number | undefined;
+      let countedOn: number | undefined;
 
       queryClient.setQueriesData<PlacedSticker[]>(
         { queryKey: getQueryKey(trpc.placement.getStickerPlacements), exact: false },
         (placements) => {
-          const hit = placements?.find((placement) => placement.id === placementId);
-          if (!hit) return placements;
-          imageId = hit.imageId;
-          return placements?.filter((placement) => placement.id !== placementId);
+          const result = dropPlacementFromList(placements, placementId);
+          // Assigned only on the one cached chunk that held the row; the rest
+          // return their data untouched and leave this alone.
+          if (result.countedOn !== undefined) countedOn = result.countedOn;
+          return result.placements;
         }
       );
 
-      // Only when the placement was actually in a cached list, and only for its
-      // own image — the count is approved-only, so a pending row was never in it
-      // and decrementing would show one fewer sticker than are drawn.
-      if (imageId !== undefined)
+      if (countedOn !== undefined)
         queryClient.setQueriesData<Record<number, number>>(
           { queryKey: getQueryKey(trpc.placement.getStickerPlacementCounts), exact: false },
-          (counts) => {
-            const current = counts?.[imageId as number];
-            if (!counts || !current) return counts;
-            return { ...counts, [imageId as number]: current - 1 };
-          }
+          (counts) => decrementPlacementCount(counts, countedOn as number)
         );
 
       await utils.placement.getStickerPlacementDetail.invalidate({ placementId });
