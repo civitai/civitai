@@ -8,7 +8,6 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   LISTING_ASSET_ALLOWED_MIME,
   LISTING_ASSET_FORMAT_TO_MIME,
-  LISTING_ASSET_MAX_DIMENSION_PX,
   MAX_LISTING_ASSET_SIZE_BYTES,
 } from '~/server/schema/blocks/app-listing.schema';
 import {
@@ -2645,14 +2644,21 @@ export async function rejectExternalRequest(opts: {
 // ---------------------------------------------------------------------------
 
 /**
- * Measure the bytes the client uploaded to `key` and return the values to persist.
+ * Measure the bytes at `key` and return the values to persist.
  *
  * The per-kind geometry/size/MIME rules the attach procs enforce
  * (`validateListingImage`) read `Image.width` / `height` / `mimeType` /
- * `metadata.size`. Those come from here, so they must describe the stored bytes
- * rather than what the uploader said about them — otherwise every bound is
- * self-reported. The two rejections below are the ones no asset kind could pass
- * anyway, raised here because the kind is not known until attach.
+ * `metadata.size`. Those come from here, so they are measured rather than taken
+ * from the uploader — otherwise every one of those bounds is self-reported.
+ *
+ * What this buys is narrower than "the columns match the object": the presigned
+ * PUT stays usable for its full expiry, so the same key can be overwritten after
+ * this read. It guarantees the values were TRUE OF REAL BYTES AT PROBE TIME, not
+ * that they still describe whatever the key holds later.
+ *
+ * The two rejections below cannot be deferred to the attach proc's per-kind
+ * checks, because the kind is not known until attach: bytes over the loosest cap
+ * (no kind accepts them) and a format outside the allowlist.
  */
 async function measureListingAssetUpload(key: string) {
   const { probeStoredImage, StoredImageProbeError } =
@@ -2673,7 +2679,7 @@ async function measureListingAssetUpload(key: string) {
       err.reason === 'missing'
         ? "We couldn't find that upload — upload the image again."
         : err.reason === 'too-large'
-          ? `that image is over the ${MAX_LISTING_ASSET_SIZE_BYTES}-byte limit for listing media`
+          ? `that image is over the ${MAX_LISTING_ASSET_SIZE_BYTES / 1024 / 1024} MiB limit for listing media`
           : "That image couldn't be read. Try a different PNG, JPEG or WebP.";
     throw new TRPCError({ code: 'BAD_REQUEST', message });
   }
@@ -2687,16 +2693,6 @@ async function measureListingAssetUpload(key: string) {
       )})`,
     });
   }
-  if (
-    probe.width > LISTING_ASSET_MAX_DIMENSION_PX ||
-    probe.height > LISTING_ASSET_MAX_DIMENSION_PX
-  ) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: `that image is ${probe.width}×${probe.height}px (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side)`,
-    });
-  }
-
   return { width: probe.width, height: probe.height, mimeType, sizeBytes: probe.sizeBytes };
 }
 

@@ -318,11 +318,13 @@ export type ListOffsiteRequestsInput = z.infer<typeof listOffsiteRequestsSchema>
  * the attach proc's owner check gates which listing it can be attached to.
  *
  * 🔴 `width` / `height` / `mimeType` / `sizeBytes` are NOT persisted. The server
- * reads the uploaded object back and derives all four from the bytes, because the
- * attach proc's geometry/size/MIME bounds are expressed over exactly those columns
- * — trusting the uploader for them would make every one of those bounds
- * self-reported. They stay in the contract as optional so released clients that
- * still send them keep working.
+ * reads the uploaded object back and measures all four, because the attach proc's
+ * geometry/size/MIME bounds are expressed over exactly those columns — trusting
+ * the uploader for them would make every one of those bounds self-reported. The
+ * guarantee is "measured from real bytes at persist time", NOT "still true of the
+ * object": the presigned PUT stays usable for its full expiry, so the key can be
+ * overwritten afterwards. These fields stay in the contract as optional so
+ * released clients that still send them keep working.
  */
 export const persistListingAssetImageSchema = z.object({
   // The upload key returned by `/api/v1/image-upload` — imageSchema requires a uuid.

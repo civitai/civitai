@@ -3,7 +3,6 @@ import { TRPCError } from '@trpc/server';
 import sharp from 'sharp';
 
 import {
-  LISTING_ASSET_MAX_DIMENSION_PX,
   MAX_LISTING_ASSET_SIZE_BYTES,
   validateListingImage,
 } from '~/server/schema/blocks/app-listing.schema';
@@ -1452,18 +1451,6 @@ describe('persistListingAssetImage (measures the uploaded bytes)', () => {
     expect(mockCreateImage).not.toHaveBeenCalled();
   });
 
-  it('rejects an image past the absolute per-side ceiling', async () => {
-    storeObject(await flatPng(LISTING_ASSET_MAX_DIMENSION_PX + 1, 100));
-
-    await expect(
-      persistListingAssetImage({ input: HONEST_COVER, userId: CALLER })
-    ).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: expect.stringContaining(`${LISTING_ASSET_MAX_DIMENSION_PX}px per side`),
-    });
-    expect(mockCreateImage).not.toHaveBeenCalled();
-  });
-
   it('reports a quarter-turned JPEG the way a renderer shows it', async () => {
     // Stored 450×800 with EXIF orientation 6 — every viewer draws it 800×450, and
     // that is the shape the cover rules are about.
@@ -1480,6 +1467,21 @@ describe('persistListingAssetImage (measures the uploaded bytes)', () => {
 
     expect(persistedRow()).toMatchObject({ width: 800, height: 450, mimeType: 'image/jpeg' });
     expect(validateListingImage(persistedRow(), 'cover')).toEqual({ ok: true });
+  });
+
+  it('leaves an upright JPEG alone — the transpose is conditional, not per-format', async () => {
+    storeObject(
+      await sharp({
+        create: { width: 800, height: 450, channels: 3, background: { r: 8, g: 8, b: 8 } },
+      })
+        .withMetadata({ orientation: 1 })
+        .jpeg()
+        .toBuffer()
+    );
+
+    await persistListingAssetImage({ input: HONEST_COVER, userId: CALLER });
+
+    expect(persistedRow()).toMatchObject({ width: 800, height: 450 });
   });
 
   it('rejects an upload whose bytes are not there', async () => {

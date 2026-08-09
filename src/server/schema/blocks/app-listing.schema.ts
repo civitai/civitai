@@ -71,9 +71,8 @@ export const LISTING_ASSET_ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/web
  * of a client-declared content type. Doubles as the format allowlist for those
  * paths: a format absent here is rejected at ingest.
  */
-export const LISTING_ASSET_FORMAT_TO_MIME: Record<
-  string,
-  (typeof LISTING_ASSET_ALLOWED_MIME)[number]
+export const LISTING_ASSET_FORMAT_TO_MIME: Partial<
+  Record<string, (typeof LISTING_ASSET_ALLOWED_MIME)[number]>
 > = {
   jpeg: 'image/jpeg',
   png: 'image/png',

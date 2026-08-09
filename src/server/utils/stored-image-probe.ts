@@ -1,5 +1,6 @@
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 
+import { logToAxiom } from '~/server/logging/client';
 import { getImageUploadBackend } from '~/utils/s3-utils';
 
 /**
@@ -12,6 +13,11 @@ import { getImageUploadBackend } from '~/utils/s3-utils';
  * server never looked at, so any server-side rule expressed over those fields is
  * only as strong as client honesty. This reads the bytes the client actually
  * stored and reports what they are.
+ *
+ * 🔴 A POINT-IN-TIME reading, not a durable property of the key. The presigned PUT
+ * remains usable for its whole expiry window, so the object can be replaced after
+ * this returns. Callers may record "these values were measured from real bytes",
+ * never "these values describe the object".
  */
 
 export type StoredImageProbeReason =
@@ -27,8 +33,8 @@ export type StoredImageProbeReason =
 export class StoredImageProbeError extends Error {
   readonly reason: StoredImageProbeReason;
 
-  constructor(reason: StoredImageProbeReason, message: string) {
-    super(message);
+  constructor(reason: StoredImageProbeReason, message: string, options?: { cause?: unknown }) {
+    super(message, options);
     this.name = 'StoredImageProbeError';
     this.reason = reason;
   }
@@ -94,11 +100,26 @@ export async function probeStoredImage(
     sizeBytes = parseTotalSize(object.ContentRange, bytes.byteLength);
   } catch (err) {
     if (err instanceof StoredImageProbeError) throw err;
-    if (isNotFoundError(err)) throw new StoredImageProbeError('missing', 'stored image not found');
-    if (isRangeNotSatisfiableError(err)) {
-      throw new StoredImageProbeError('unreadable', 'stored image is empty');
+    if (isNotFoundError(err)) {
+      throw new StoredImageProbeError('missing', 'stored image not found', { cause: err });
     }
-    throw new StoredImageProbeError('store-unavailable', 'could not read the stored image');
+    if (isRangeNotSatisfiableError(err)) {
+      throw new StoredImageProbeError('unreadable', 'stored image is empty', { cause: err });
+    }
+    // `store-unavailable` is the only reason that is OUR fault, and the shapes it
+    // collapses (missing credentials, bad endpoint, 5xx, a rejected Range) are
+    // indistinguishable to the caller — so it is the one that has to be logged.
+    logToAxiom({
+      name: 'stored-image-probe',
+      type: 'error',
+      reason: 'store-unavailable',
+      message: err instanceof Error ? err.message : String(err),
+      errorName: err instanceof Error ? err.name : undefined,
+      statusCode: (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode,
+    }).catch(() => null);
+    throw new StoredImageProbeError('store-unavailable', 'could not read the stored image', {
+      cause: err,
+    });
   }
 
   if (sizeBytes > maxBytes) {
@@ -117,8 +138,10 @@ export async function probeStoredImage(
   let orientation: number | undefined;
   try {
     ({ width, height, format, orientation } = await sharp(bytes).metadata());
-  } catch {
-    throw new StoredImageProbeError('unreadable', 'stored image could not be decoded');
+  } catch (err) {
+    throw new StoredImageProbeError('unreadable', 'stored image could not be decoded', {
+      cause: err,
+    });
   }
   if (!format || !width || !height || width <= 0 || height <= 0) {
     throw new StoredImageProbeError('unreadable', 'stored image has no readable dimensions');
