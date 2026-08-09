@@ -6,15 +6,17 @@ import { TRPCError } from '@trpc/server';
 import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { createAxiomLogger, safeError } from '@civitai/axiom/client';
 import { structuredLogSink } from '~/server/logging/structured-log-sink';
-import { env } from '~/env/server';
+import { IS_BUILD } from '~/env/is-build';
 
 // The build guard is a Next.js concern, so it lives here in the app shim — not in
 // the app-agnostic @civitai/axiom package. Skip the client during `next build`.
 const noopLog = async (_data: MixedObject, _datastream?: string) => {};
 
 // 🔴 THIS MODULE IS IN THE **CLIENT** BUNDLE. It looks server-only and is not:
-// `src/pages/_app.tsx` → `~/server/services/system-cache` → `~/server/redis/fail-open-log`
+// `src/pages/_app.tsx` → `~/server/services/feature-flags.service` → `~/server/flipt/client`
 // reaches it, so anything imported here at module scope is bundled for the browser too.
+// (A dynamic `import()` does not exempt a module — the chunk is compiled, just not fetched.
+// `no-server-infra-in-app-graph.test.ts` tracks this edge in `KNOWN_REACHABLE`.)
 // A static `import { emitOtelLog } from '@civitai/telemetry/otel-logs'` here pulled
 // prom-client into the browser graph and broke `next build` with
 // `Can't resolve 'cluster' / 'fs' / 'v8'`. Nothing else catches that — typecheck, eslint
@@ -34,7 +36,7 @@ const noopLog = async (_data: MixedObject, _datastream?: string) => {};
 //
 // The sink is read per call from that stable object, so registering it after the logger
 // is built still takes effect. Pinned by a test in @civitai/axiom.
-export const logToAxiom = env.IS_BUILD
+export const logToAxiom = IS_BUILD
   ? noopLog
   : createAxiomLogger({}, structuredLogSink).logToAxiom;
 export { safeError };
