@@ -265,20 +265,51 @@ export async function removePlacementByModerator({
  * Approved placements are taken down without settlement: the content owner was
  * already paid and did not choose this sticker (Justin, 2026-08-08). Pending
  * ones refund the placer in full, because the placer is a holder of the revoked
- * cosmetic and is being made whole for it everywhere else.
- *
+ * cosmetic and is being made whole for it everywhere else. Both record
+ * `removedBy: 'cosmeticTakedown'` rather than `'moderator'`: a reconcile reading
+ * the row has to be able to tell "this placer's sticker was abusive, escrow
+ * forfeit" from "the artwork's maker was taken down, placer is a victim", and
+ * that distinction decides who gets compensated.
  */
 export async function removePlacementsByCosmetic({
   cosmeticIds,
+  placerIds,
+  skipIds,
   actorId,
   limit = 200,
 }: {
   cosmeticIds: number[];
+  /**
+   * Restricts the sweep to placers whose holding was actually revoked.
+   *
+   * A **pack** takedown needs this, and omitting it removes placements from
+   * people the takedown deliberately leaves alone: `revokeCosmeticsFromUsers` is
+   * scoped by the pack's claim keys, because a member sold standalone is not
+   * what was taken down. Unscoped, someone who bought that member on its own
+   * keeps the cosmetic, gets no refund, and still has their approved placement
+   * removed.
+   *
+   * An EMPTY array means "nobody qualifies" and sweeps nothing. Treating it as
+   * absent would widen a scoped sweep into an unscoped one, which is the bug
+   * this parameter exists to prevent.
+   */
+  placerIds?: number[];
+  /** Rows a previous batch in the same run could not settle — see below. */
+  skipIds?: number[];
   actorId: number;
   limit?: number;
 }) {
+  const empty = { considered: 0, settled: 0, failed: [] as number[], takenDown: 0, hasMore: false };
   const ids = [...new Set(cosmeticIds)];
-  if (!ids.length) return { considered: 0, settled: 0, failed: [], takenDown: 0, hasMore: false };
+  if (!ids.length) return empty;
+  if (placerIds && !placerIds.length) return empty;
+
+  const placers = placerIds ? [...new Set(placerIds)] : null;
+  // Rows that already failed this run are excluded rather than re-selected.
+  // `ORDER BY id` is stable, so a permanently failing pending row is picked
+  // first by every subsequent batch — 200 of them and the sweep makes zero
+  // progress across every iteration of the drain while reporting `hasMore`.
+  const skip = skipIds?.length ? [...new Set(skipIds)] : null;
 
   // Raw, because the cosmetic id lives inside `data` and Prisma's JSON path
   // filter takes one value at a time — a pack takedown revokes several members
@@ -289,6 +320,8 @@ export async function removePlacementsByCosmetic({
       WHERE surface = 'sticker'
         AND status = ${status}
         AND ("data"->>'cosmeticId')::int = ANY(${ids}::int[])
+        AND (${placers}::int[] IS NULL OR "placerId" = ANY(${placers}::int[]))
+        AND (${skip}::int[] IS NULL OR NOT (id = ANY(${skip}::int[])))
       ORDER BY id
       LIMIT ${limit}
     `;
@@ -303,7 +336,7 @@ export async function removePlacementsByCosmetic({
     where: { id: { in: approved.map((row) => row.id) }, status: 'approved' },
     data: {
       status: 'removed',
-      removedBy: 'moderator',
+      removedBy: 'cosmeticTakedown',
       takenDownAt: new Date(),
       takenDownById: actorId,
     },

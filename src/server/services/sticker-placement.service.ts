@@ -264,23 +264,35 @@ export type StickerPlacementView = {
 export async function getStickerPlacementDetail({
   placementId,
   viewerId,
+  isModerator = false,
 }: {
   placementId: number;
   viewerId?: number;
+  /**
+   * A moderator is party to neither side of a pending placement, so the scoping
+   * below hides it from the only role that can act on it — and the surfaces
+   * built on this read then say "no longer live" about something that is
+   * pending, with no action offered. Widened for moderators specifically rather
+   * than loosened for everyone: the rule that a pending placement is visible to
+   * exactly the placer and the owner is what stops it being enumerable.
+   */
+  isModerator?: boolean;
 }) {
   const placement = await dbRead.placement.findFirst({
     where: {
       id: placementId,
       surface: SURFACE,
-      OR: [
-        { status: 'approved' },
-        ...(viewerId
-          ? [
-              { status: 'pending' as const, placerId: viewerId },
-              { status: 'pending' as const, ownerId: viewerId },
-            ]
-          : []),
-      ],
+      OR: isModerator
+        ? undefined
+        : [
+            { status: 'approved' },
+            ...(viewerId
+              ? [
+                  { status: 'pending' as const, placerId: viewerId },
+                  { status: 'pending' as const, ownerId: viewerId },
+                ]
+              : []),
+          ],
     },
     select: {
       id: true,

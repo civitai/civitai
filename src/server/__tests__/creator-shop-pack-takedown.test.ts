@@ -22,6 +22,7 @@ const { mocks } = vi.hoisted(() => ({
     userCosmeticFindMany: vi.fn(),
     userFindUnique: vi.fn(),
     revokeCosmeticsFromUsers: vi.fn(),
+    removePlacementsByCosmetic: vi.fn(),
     refundMultiAccountTransaction: vi.fn(),
     createBuzzTransaction: vi.fn(),
     refundTransaction: vi.fn(),
@@ -59,6 +60,9 @@ vi.mock('~/server/services/cosmetic.service', () => ({
   revokeCosmeticsFromUsers: mocks.revokeCosmeticsFromUsers,
   validateStickerCosmetic: vi.fn(),
   isStickerSlugAvailable: vi.fn(),
+}));
+vi.mock('~/server/services/placement-moderation.service', () => ({
+  removePlacementsByCosmetic: mocks.removePlacementsByCosmetic,
 }));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mocks.createNotification,
@@ -110,6 +114,13 @@ beforeEach(() => {
   mocks.shopItemFindFirst.mockResolvedValue(null);
   mocks.shopItemUpdateMany.mockResolvedValue({ count: 0 });
   mocks.revokeCosmeticsFromUsers.mockResolvedValue({ revoked: 0 });
+  mocks.removePlacementsByCosmetic.mockResolvedValue({
+    considered: 0,
+    settled: 0,
+    failed: [],
+    takenDown: 0,
+    hasMore: false,
+  });
   mocks.refundMultiAccountTransaction.mockResolvedValue({
     refundedTransactions: [{ accountType: 'yellow', amount: 5000 }],
   });
@@ -178,6 +189,43 @@ describe('takedownCosmeticShopItem — pack scoping', () => {
     // A wider lookup than the revoke would report owners who keep their items.
     const ownerQuery = mocks.userCosmeticFindMany.mock.calls.at(-1)?.[0];
     expect(ownerQuery?.where?.claimKey).toEqual({ in: ['pack-tx-1'] });
+  });
+
+  // The placement sweep has to inherit the revoke's scope. Unscoped, it removes
+  // placements made with a member someone bought standalone — that person keeps
+  // the cosmetic, gets no refund, and still loses the placement they paid for.
+  const sweepArgs = () => mocks.removePlacementsByCosmetic.mock.calls[0]?.[0];
+
+  it('scopes the placement sweep to the placers whose holdings it revoked', async () => {
+    mocks.purchaseFindMany.mockResolvedValue([
+      purchase('pack-tx-1'),
+      purchase('pack-tx-2', OTHER_OWNER),
+    ]);
+    mocks.userCosmeticFindMany.mockResolvedValue([{ userId: PACK_BUYER }, { userId: OTHER_OWNER }]);
+    await takedownCosmeticShopItem({ id: PACK_ID, reason: 'test', moderatorId: MODERATOR });
+    expect(sweepArgs()?.placerIds).toEqual([PACK_BUYER, OTHER_OWNER]);
+  });
+
+  it('sweeps nobody when the pack never sold, even though the members have owners', async () => {
+    mocks.userCosmeticFindMany.mockResolvedValue([{ userId: PACK_BUYER }, { userId: OTHER_OWNER }]);
+    await takedownCosmeticShopItem({ id: PACK_ID, reason: 'test', moderatorId: MODERATOR });
+    expect(sweepArgs()?.placerIds).toEqual([]);
+  });
+
+  // A single item revokes from everyone who holds it, so the sweep is unscoped
+  // to match. Pinned so the scoping added for packs cannot leak into this path
+  // and quietly leave placements up.
+  it('leaves the sweep unscoped for a single-item takedown', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...packRow,
+      cosmeticId: MEMBER_A,
+      cosmetic: { createdById: 4001, creator: { username: 'someone' } },
+    });
+    mocks.purchaseFindMany.mockResolvedValue([purchase('single-tx')]);
+    mocks.userCosmeticFindMany.mockResolvedValue([{ userId: PACK_BUYER }]);
+    await takedownCosmeticShopItem({ id: PACK_ID, reason: 'test', moderatorId: MODERATOR });
+    expect(sweepArgs()?.placerIds).toBeUndefined();
+    expect(sweepArgs()?.cosmeticIds).toEqual([MEMBER_A]);
   });
 
   it('a single-item takedown is still unscoped', async () => {

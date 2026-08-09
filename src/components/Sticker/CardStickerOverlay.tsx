@@ -1,59 +1,39 @@
-import { useCallback, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { StickerPlacementOverlay } from '~/components/Sticker/StickerPlacementOverlay';
 import { useStickerPlacementBatch } from '~/components/Sticker/StickerPlacementBatchProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { useStickerRevealStore } from '~/store/sticker-reveal.store';
 
 type Box = { width: number; height: number; left: number; top: number };
 
+const same = (a: Box | null, b: Box) =>
+  !!a && a.width === b.width && a.height === b.height && a.left === b.left && a.top === b.top;
+
 /**
  * Placed stickers on a feed card.
  *
- * Card media is `object-fit: cover` with `object-position: top center`, so the
- * rendered artwork is *larger* than the card and cropped by it — not
- * letterboxed the way the detail view is. Positions are fractions of the
- * artwork's bounds, so the overlay has to be the same rectangle the artwork was
- * scaled to, and then clipped. Sizing it to the card instead would slide every
- * sticker relative to the thing it was placed on, worst on exactly the images
- * whose aspect ratio differs most from the card's.
+ * Positions are fractions of the artwork's bounds, so the overlay has to be the
+ * rectangle the artwork was actually scaled to — then clipped by the card.
  *
- * A consequence worth knowing rather than fixing: a sticker placed low on a tall
- * image is outside the crop and therefore not visible in the feed at all.
+ * **That rectangle is measured off the media element, not computed.** Card media
+ * is `object-fit: cover`, but the two card templates lay it out differently
+ * enough that the resulting box differs: one stretches the image to the card
+ * width inside a flex column, the other lets `height: 100%; width: auto`
+ * overflow a block box, which anchors the crop left instead of centring it.
+ * Reproducing that in arithmetic means encoding both templates' CSS here and
+ * being wrong the day either changes — silently, and only for the class of
+ * images whose aspect ratio makes the difference visible. Reading the element's
+ * own rect is correct for whatever the stylesheet does.
+ *
+ * A consequence worth knowing rather than fixing: `cover` crops, so a sticker
+ * placed low on a tall image is outside the visible box and not shown in a feed.
  */
-export function CardStickerOverlay({
-  imageId,
-  width,
-  height,
-}: {
-  imageId: number;
-  width?: number | null;
-  height?: number | null;
-}) {
+export function CardStickerOverlay({ imageId }: { imageId: number }) {
   const currentUser = useCurrentUser();
   const revealed = useStickerRevealStore((state) => state.revealed);
   const batch = useStickerPlacementBatch(imageId);
+  const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<Box | null>(null);
-
-  const aspectRatio = width && height ? width / height : null;
-
-  const measure = useCallback(
-    (entry: ResizeObserverEntry) => {
-      if (!aspectRatio) return;
-      const { width: cw, height: ch } = entry.contentRect;
-      if (cw <= 0 || ch <= 0) return;
-
-      const covered =
-        aspectRatio > cw / ch
-          ? { width: ch * aspectRatio, height: ch }
-          : { width: cw, height: cw / aspectRatio };
-
-      setBox({ ...covered, left: (cw - covered.width) / 2, top: 0 });
-    },
-    [aspectRatio]
-  );
-
-  const ref = useResizeObserver<HTMLDivElement>(measure);
 
   const placements = batch
     ? revealed
@@ -64,7 +44,42 @@ export function CardStickerOverlay({
         batch.pending
     : [];
 
-  if (!aspectRatio || !placements.length) return null;
+  const hasPlacements = placements.length > 0;
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || !hasPlacements) return;
+
+    // The media is a sibling subtree, not a child of the overlay: the overlay
+    // must sit above it, and nesting inside the link would make it part of the
+    // card's click target.
+    const media = node.parentElement?.querySelector('img, video');
+    if (!media) return;
+
+    const measure = () => {
+      const outer = node.getBoundingClientRect();
+      const inner = media.getBoundingClientRect();
+      if (inner.width <= 0 || inner.height <= 0) return;
+      const next = {
+        width: inner.width,
+        height: inner.height,
+        left: inner.left - outer.left,
+        top: inner.top - outer.top,
+      };
+      // Rects come back fractional and a ResizeObserver fires on every layout
+      // pass, so setting state unconditionally re-renders the whole overlay
+      // continuously on any page that animates the card (these scale on hover).
+      setBox((current) => (same(current, next) ? current : next));
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    observer.observe(media);
+    return () => observer.disconnect();
+  }, [hasPlacements]);
+
+  if (!hasPlacements) return null;
 
   return (
     <div ref={ref} className="pointer-events-none absolute inset-0 overflow-hidden">

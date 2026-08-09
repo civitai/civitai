@@ -24,9 +24,7 @@ export function ImageCard({ data }: Props) {
         name: 'imageDetail',
         state: { imageId: data.id, images: getImages(), ...context },
       }}
-      overlay={({ safe }) =>
-        safe && <CardStickerOverlay imageId={data.id} width={data.width} height={data.height} />
-      }
+      overlay={({ safe }) => safe && <CardStickerOverlay imageId={data.id} />}
       header={
         <div className="flex w-full items-start justify-between">
           {data.type === 'video' && data.metadata && 'duration' in data.metadata && (

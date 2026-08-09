@@ -382,7 +382,11 @@ describe('removing every placement made with a revoked cosmetic', () => {
     expect(settlePlacement).not.toHaveBeenCalled();
     expect(placementUpdateMany.mock.calls[0][0]).toMatchObject({
       where: { id: { in: [4401, 4402] } },
-      data: { status: 'removed', removedBy: 'moderator', takenDownById: MODERATOR },
+      // Not 'moderator'. A reconcile has to be able to tell this from a
+      // moderator removing an abusive placer's sticker, which forfeits instead
+      // of refunding — and the live rows are most of a takedown, so recording
+      // them as 'moderator' would leave the new reason written nowhere.
+      data: { status: 'removed', removedBy: 'cosmeticTakedown', takenDownById: MODERATOR },
     });
     expect(result.takenDown).toBe(2);
   });
@@ -417,6 +421,53 @@ describe('removing every placement made with a revoked cosmetic', () => {
     });
 
     expect(result.hasMore).toBe(true);
+  });
+
+  // A pack's members are sold standalone too, and `revokeCosmeticsFromUsers` is
+  // scoped by the pack's claim keys for exactly that reason. Unscoped here,
+  // someone who bought a member on its own keeps the cosmetic, gets no refund,
+  // and still loses the placement they paid for.
+  it('sweeps only the placers whose holding was revoked, when told to', async () => {
+    rows([], [4406]);
+    placementUpdateMany.mockResolvedValue({ count: 1 });
+
+    await removePlacementsByCosmetic({
+      cosmeticIds: [COSMETIC, PACK_MEMBER],
+      placerIds: [777, 778],
+      actorId: MODERATOR,
+    });
+
+    // (strings, status, cosmeticIds, placerIds, placerIds, skipIds, skipIds, limit)
+    expect(queryRaw.mock.calls[0][3]).toEqual([777, 778]);
+  });
+
+  // Empty must mean "nobody qualifies", not "no filter" — a pack whose only sale
+  // was already refunded revokes from nobody, and widening that to unscoped
+  // would strip every placement of every member from everyone.
+  it('sweeps nothing when the scoped set of placers is empty', async () => {
+    const result = await removePlacementsByCosmetic({
+      cosmeticIds: [COSMETIC],
+      placerIds: [],
+      actorId: MODERATOR,
+    });
+
+    expect(queryRaw).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ considered: 0, takenDown: 0, hasMore: false });
+  });
+
+  // ORDER BY id is stable, so a row that cannot settle is picked first by every
+  // later batch and the drain burns its whole budget re-trying it.
+  it('excludes rows an earlier batch could not settle', async () => {
+    rows([], []);
+    placementUpdateMany.mockResolvedValue({ count: 0 });
+
+    await removePlacementsByCosmetic({
+      cosmeticIds: [COSMETIC],
+      skipIds: [4407, 4408],
+      actorId: MODERATOR,
+    });
+
+    expect(queryRaw.mock.calls[0][5]).toEqual([4407, 4408]);
   });
 
   it('does nothing at all with no cosmetics to act on', async () => {

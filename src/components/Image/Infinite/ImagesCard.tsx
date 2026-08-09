@@ -149,13 +149,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                     <MediaHash {...image} />
                   )}
                 </RoutedDialogLink>
-                {safe && (
-                  <CardStickerOverlay
-                    imageId={image.id}
-                    width={image.width}
-                    height={image.height}
-                  />
-                )}
+                {safe && <CardStickerOverlay imageId={image.id} />}
                 <div className="absolute left-2 top-2">
                   <div className="flex flex-nowrap items-center gap-1">
                     <ImageGuard2.BlurToggle radius="xl" h={26} style={{ pointerEvents: 'auto' }} />

@@ -159,7 +159,7 @@ describe('takedownCosmeticShopItem', () => {
       moderatorId: 999,
     });
 
-    expect(mocks.removePlacementsByCosmetic).toHaveBeenCalledWith({
+    expect(mocks.removePlacementsByCosmetic.mock.calls[0][0]).toMatchObject({
       cosmeticIds: [7],
       actorId: 999,
     });

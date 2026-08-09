@@ -100,7 +100,11 @@ export const placementRouter = router({
   getStickerPlacementDetail: publicProcedure
     .input(getStickerPlacementDetailSchema)
     .query(({ input, ctx }) =>
-      getStickerPlacementDetail({ placementId: input.placementId, viewerId: ctx.user?.id })
+      getStickerPlacementDetail({
+        placementId: input.placementId,
+        viewerId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+      })
     ),
 
   getStickerPlacementCounts: publicProcedure
