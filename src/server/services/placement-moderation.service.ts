@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { settlePlacement } from '~/server/services/placement-escrow.service';
@@ -311,6 +312,15 @@ export async function removePlacementsByCosmetic({
   // progress across every iteration of the drain while reporting `hasMore`.
   const skip = skipIds?.length ? [...new Set(skipIds)] : null;
 
+  // Composed as fragments rather than `(${placers}::int[] IS NULL OR …)`.
+  // Whether a JS `null` bound to an array parameter arrives as a castable SQL
+  // NULL is a driver behaviour, and this layer's tests mock Prisma, so nothing
+  // would execute it before production — where the failure is a throw that
+  // fails the sweep closed and leaves the artwork up. An absent filter is not a
+  // filter that has to evaluate to true.
+  const placerFilter = placers ? Prisma.sql`AND "placerId" = ANY(${placers}::int[])` : Prisma.empty;
+  const skipFilter = skip ? Prisma.sql`AND NOT (id = ANY(${skip}::int[]))` : Prisma.empty;
+
   // Raw, because the cosmetic id lives inside `data` and Prisma's JSON path
   // filter takes one value at a time — a pack takedown revokes several members
   // at once, and one query per member is a query per member.
@@ -320,8 +330,8 @@ export async function removePlacementsByCosmetic({
       WHERE surface = 'sticker'
         AND status = ${status}
         AND ("data"->>'cosmeticId')::int = ANY(${ids}::int[])
-        AND (${placers}::int[] IS NULL OR "placerId" = ANY(${placers}::int[]))
-        AND (${skip}::int[] IS NULL OR NOT (id = ANY(${skip}::int[])))
+        ${placerFilter}
+        ${skipFilter}
       ORDER BY id
       LIMIT ${limit}
     `;

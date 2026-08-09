@@ -362,6 +362,16 @@ describe('removing every placement made with a revoked cosmetic', () => {
   const PACK_MEMBER = 8802;
   const MODERATOR = 53;
 
+  // Index-independent: the query composes optional fragments, so asserting a
+  // positional argument would quietly point at the wrong value the moment the
+  // SQL gains one. A `Prisma.Sql` fragment carries its own `values`.
+  const rawValues = (call: unknown[]) =>
+    call.flatMap((arg) =>
+      arg && typeof arg === 'object' && 'values' in (arg as { values?: unknown[] })
+        ? (arg as { values: unknown[] }).values
+        : [arg]
+    );
+
   const rows = (pending: number[], approved: number[]) =>
     queryRaw
       .mockResolvedValueOnce(pending.map((id) => ({ id })))
@@ -437,8 +447,7 @@ describe('removing every placement made with a revoked cosmetic', () => {
       actorId: MODERATOR,
     });
 
-    // (strings, status, cosmeticIds, placerIds, placerIds, skipIds, skipIds, limit)
-    expect(queryRaw.mock.calls[0][3]).toEqual([777, 778]);
+    expect(rawValues(queryRaw.mock.calls[0])).toContainEqual([777, 778]);
   });
 
   // Empty must mean "nobody qualifies", not "no filter" — a pack whose only sale
@@ -467,7 +476,7 @@ describe('removing every placement made with a revoked cosmetic', () => {
       actorId: MODERATOR,
     });
 
-    expect(queryRaw.mock.calls[0][5]).toEqual([4407, 4408]);
+    expect(rawValues(queryRaw.mock.calls[0])).toContainEqual([4407, 4408]);
   });
 
   it('does nothing at all with no cosmetics to act on', async () => {
