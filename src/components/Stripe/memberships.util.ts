@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import refreshSessions from '~/pages/api/admin/refresh-sessions';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';

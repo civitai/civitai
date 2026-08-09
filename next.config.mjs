@@ -10,7 +10,6 @@ const isProd = process.env.NODE_ENV === 'production';
 const isDev = process.env.NODE_ENV === 'development';
 const analyze = process.env.ANALYZE === 'true';
 const includeCircularDependencyPlugin = process.env.CIRCULAR_DEPENDENCY_PLUGIN === 'true';
-const shouldOptimizeImports = (isDev && analyze) || isProd;
 
 const withBundleAnalyzer = bundlAnalyzer({
   enabled: analyze,
@@ -228,12 +227,16 @@ export default defineNextConfig(
       // derives `dependencyTracking` from it, so the flag governs what turbo-tasks retains in
       // memory and not just what lands on disk.
       turbopackFileSystemCacheForBuild: false,
+      // NB: `lodash-es`, `@tabler/icons-react` and `@headlessui/react` are already in Next's
+      // built-in default list (config.js merges ours into it) — kept here only as intent.
+      // `@mantine/core` is NOT a Next default and is the widest barrel we import.
       optimizePackageImports: [
         '@civitai/client',
         './src/libs/form',
         'lodash-es',
         '@tabler/icons-react',
         '@headlessui/react',
+        '@mantine/core',
       ],
     },
     headers: async () => {
