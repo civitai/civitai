@@ -1,5 +1,13 @@
 # Retool migration — what a person has to do
 
+> **Two checklists now govern the work itself:**
+> [`retool-parity-checklist.md`](retool-parity-checklist.md) — everything Retool does today that the
+> port does not, which is the priority — and
+> [`post-migration-backlog.md`](post-migration-backlog.md) — improvements the team asked for on top,
+> which wait. This file stays what it was: the operational steps a person has to run.
+>
+> **A Retool app has no export and no ticket: the mass-ban tool.** Pull it before access is lost.
+
 Branch `moderator-app-pages`. This is the short list. Every item links to the reasoning and the exact
 commands in [`retool-migration-handover-detail.md`](retool-migration-handover-detail.md); read the
 detail before doing anything destructive.
