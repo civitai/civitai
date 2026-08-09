@@ -40,6 +40,11 @@ const DENIED_PREFIXES = [
   'packages/civitai-redis/',
   'packages/civitai-clickhouse/',
   'packages/civitai-axiom/',
+  'packages/civitai-telemetry/',
+  // Not the whole package: most of @civitai/buzz is pure pricing/limits constants that client
+  // code legitimately uses. Only the service transport and its env slice are infra.
+  'packages/civitai-buzz/src/client.ts',
+  'packages/civitai-buzz/src/env.ts',
 ];
 
 /**
@@ -74,6 +79,15 @@ const KNOWN_REACHABLE: { file: string; reason: string }[] = [
     file: 'packages/civitai-axiom/src/env.ts',
     reason: 'via civitai-axiom/src/client.ts; drops with it.',
   },
+  {
+    file: 'packages/civitai-buzz/src/client.ts',
+    reason:
+      'PRE-EXISTING, invisible until this guard learned to resolve unaliased workspace packages. Static chain: _app -> SignalsProviderStack -> SignalsNotifications -> shared/constants/buzz.constants.ts -> the @civitai/buzz BARREL, which `export * from ./client`. buzz.constants only needs ./account-types. Fix needs an `exports` map on @civitai/buzz (it ships none) so the import can go deep.',
+  },
+  {
+    file: 'packages/civitai-buzz/src/env.ts',
+    reason: 'same barrel chain as civitai-buzz/src/client.ts; drops with the same fix.',
+  },
 ];
 
 const EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
@@ -92,6 +106,47 @@ function readAliasMap(): [string, string][] {
 }
 
 const ALIASES = readAliasMap();
+
+/**
+ * Workspace packages resolved from each `package.json` `exports` map — the real contract, and
+ * the only thing that covers deep subpaths. tsconfig aliases only 8 of the 15 packages, so
+ * alias-only resolution silently treated `@civitai/auth`, `buzz`, `shared`, `ui`, `email`,
+ * `storage` and `db-queries` as external leaves and stopped walking there. That mattered:
+ * `@civitai/auth`'s barrel reaches `redis.ts`, which imports `@civitai/redis` — so the
+ * invariant held only because call sites happen to spell it `@civitai/auth/client`, something
+ * the guard could not see and a one-word edit would undo.
+ */
+function readWorkspacePackages(): { name: string; dir: string; exports: Record<string, string> }[] {
+  const packagesDir = path.join(REPO_ROOT, 'packages');
+  const out: { name: string; dir: string; exports: Record<string, string> }[] = [];
+  for (const entry of fs.readdirSync(packagesDir)) {
+    const manifest = path.join(packagesDir, entry, 'package.json');
+    if (!fs.existsSync(manifest)) continue;
+    const json = JSON.parse(fs.readFileSync(manifest, 'utf8')) as {
+      name?: string;
+      exports?: Record<string, string>;
+    };
+    if (!json.name) continue;
+    out.push({ name: json.name, dir: path.join(packagesDir, entry), exports: json.exports ?? {} });
+  }
+  if (!out.length) throw new Error('no workspace packages found under packages/');
+  return out;
+}
+
+const WORKSPACE_PACKAGES = readWorkspacePackages();
+
+function resolveWorkspace(spec: string): string | null {
+  for (const pkg of WORKSPACE_PACKAGES) {
+    if (spec !== pkg.name && !spec.startsWith(pkg.name + '/')) continue;
+    const rest = spec === pkg.name ? '' : spec.slice(pkg.name.length + 1);
+    const subpath = rest ? `./${rest}` : '.';
+    const target = pkg.exports[subpath];
+    if (target) return resolveFile(path.join(pkg.dir, target));
+    // `@civitai/buzz` ships no exports map at all; fall back to the source layout.
+    return resolveFile(path.join(pkg.dir, 'src', rest || 'index'));
+  }
+  return null;
+}
 
 function resolveFile(candidate: string): string | null {
   if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
@@ -119,7 +174,7 @@ function resolveSpecifier(spec: string, fromFile: string): string | null {
       return resolveFile(path.join(REPO_ROOT, target));
     }
   }
-  return null; // node_modules / unresolvable -> external leaf
+  return resolveWorkspace(spec); // null -> node_modules / unresolvable -> external leaf
 }
 
 function stripComments(source: string): string {
@@ -229,7 +284,7 @@ describe('no server infrastructure in the _app client graph', () => {
   it('walks a non-trivial graph', () => {
     // Guards the guard: an alias-resolution or entry-path breakage would empty the graph and
     // make every assertion below pass vacuously.
-    expect(reachable.size).toBeGreaterThan(500);
+    expect(reachable.size).toBeGreaterThan(1000);
   });
 
   it('does not reach server infrastructure', () => {
