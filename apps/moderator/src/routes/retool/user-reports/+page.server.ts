@@ -64,6 +64,8 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     suspect,
     strikes,
     canAct,
+    // The queue and the selected suspect sit side by side, which needs the full content width.
+    wide: true,
   };
 };
 

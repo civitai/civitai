@@ -128,6 +128,13 @@ any existing slice; recorded here so it is not re-derived. **User Lookup's real 
 Each is a candidate sub-page rather than a scrolling section. Only the top-level nav
 (`MainContentContainer`'s 21 view keys → `sections.ts`) was honoured; these nested groups were not.
 
+**User Reports was stacked, and is now queue-left / account-right** (2026-08-09, found by looking at
+the running page — the account panel sat below a 50-row queue, so clicking a report read as "nothing
+happened"). **Retool's actual arrangement is unconfirmed**: that export predates the layout emitter and
+its raw JSON is not on disk. The two `ContainerWidget2` in its component list are consistent with a
+sidebar-plus-detail split but do not prove one. **Confirm on re-extract** — if Retool stacked them, this
+is a deliberate improvement rather than a parity fix, and either way it should be recorded as one.
+
 ## Cross-cutting
 
 1. **Report `details` is dropped on every page that shows reports** — User Lookup, User Reports, Chat

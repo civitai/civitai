@@ -45,34 +45,51 @@
   </p>
 {/if}
 
-<QueuePanel
-  queue={data.queue}
-  total={data.queueTotal}
-  page={data.page}
-  perPage={data.perPage}
-  suspectId={data.suspectId}
-  canAct={data.canAct}
-  error={scoped('report')}
-  onSubmit={onReportSubmit}
-  {pendingId}
-/>
-
-{#if data.suspectId && data.suspect && data.strikes}
-  <!-- Keyed so an open strike or notify form cannot survive moving to a different suspect. -->
-  {#key data.suspectId}
-    <SuspectPanel
+<!-- Queue left, selected account right. Stacked, the account landed below a 50-row queue and read as
+     "nothing happened" when a report was clicked. -->
+<div class="flex flex-col gap-4 xl:flex-row xl:items-start">
+  <div
+    class="min-w-0 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:w-120 xl:shrink-0 xl:overflow-y-auto"
+  >
+    <QueuePanel
+      queue={data.queue}
+      total={data.queueTotal}
+      page={data.page}
+      perPage={data.perPage}
       suspectId={data.suspectId}
-      suspect={data.suspect}
-      strikes={data.strikes}
       canAct={data.canAct}
-      civitaiUrl={data.civitaiUrl}
-      strikeError={scoped('strike')}
-      notifyError={scoped('notify')}
-      warning={form && 'warning' in form ? (form.warning ?? null) : null}
-      {onSubmit}
-      {submitting}
+      error={scoped('report')}
+      onSubmit={onReportSubmit}
+      {pendingId}
     />
-  {/key}
-{/if}
+  </div>
+
+  <div class="min-w-0 flex-1">
+    {#if data.suspectId && data.suspect && data.strikes}
+      <!-- Keyed so an open strike or notify form cannot survive moving to a different suspect. -->
+      {#key data.suspectId}
+        <SuspectPanel
+          suspectId={data.suspectId}
+          suspect={data.suspect}
+          strikes={data.strikes}
+          canAct={data.canAct}
+          civitaiUrl={data.civitaiUrl}
+          strikeError={scoped('strike')}
+          notifyError={scoped('notify')}
+          warning={form && 'warning' in form ? (form.warning ?? null) : null}
+          {onSubmit}
+          {submitting}
+        />
+      {/key}
+    {:else}
+      <section class="rounded-xl border border-dashed border-dark-4 p-5">
+        <p class="text-sm text-dark-2">
+          Pick a reported account from the queue to see their images, strikes and enforcement options
+          here.
+        </p>
+      </section>
+    {/if}
+  </div>
+</div>
 
 <HistoryPanel history={data.history} truncated={data.historyTruncated} />
