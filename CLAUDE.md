@@ -53,7 +53,7 @@ pnpm run prettier:check   # Check Prettier formatting
 pnpm run prettier:write   # Auto-fix Prettier formatting
 ```
 
-#### In SvelteKit apps (`apps/moderator`, `apps/auth`): use `typecheck`, never `check`
+#### In SvelteKit apps (`apps/moderator`, `apps/auth`, `apps/creator-studio`): use `typecheck`, never `check`
 
 They are **not** synonyms. `typecheck` is `svelte-check` alone and writes nothing. `check` prefixes it
 with `svelte-kit sync`, which regenerates ~690 files under `.svelte-kit/` — a directory the Vite dev
