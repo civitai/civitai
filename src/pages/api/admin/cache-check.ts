@@ -12,7 +12,7 @@ const schema = z.object({
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const { userId, reset } = schema.parse(req.query);
-  if (reset) await refreshSession(userId);
+  if (reset) await refreshSession(userId, { caller: 'admin' });
 
   const hiddenPreferences = await getAllHiddenForUser({ userId, refreshCache: reset });
 

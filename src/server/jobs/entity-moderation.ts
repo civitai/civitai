@@ -101,7 +101,7 @@ async function autoMuteIfScamAccount({
       data: { muted: true },
       updateSource: 'entity-moderation:auto-mute-scam',
     });
-    await invalidateSession(userId);
+    await invalidateSession(userId, 'moderation');
 
     // Clean up the scammer's content based on entity type
     let cleanupSummary: string;

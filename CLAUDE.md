@@ -135,6 +135,30 @@ Use a top-level `import type * as PromClient` — an inline `typeof import('...'
 Several repo conventions are enforced by tests, not by eslint — `pnpm run test:lint-rules` runs all of them:
 `no-wholesale-module-mock` (the `importOriginal` rule above), `no-io-in-transaction`, `no-module-scope-cache`, `no-unloadable-image-fixture`. They live in `src/server/services/__tests__/`. If one fails, fix the code — don't add an exemption without saying why.
 
+#### A passing test says nothing about how it FAILS — check the revert
+**"The tests would catch a regression here" is a claim about the failure mode, not about coverage.** A green
+suite proves current behaviour. Whether a revert is *legible* is a separate property, and it is the one that
+decides if the test protects anything. Review your own tests by asking what a reverted fix would look like:
+an assertion message, a timeout, or nothing at all.
+
+🔴 **Proving a property by absence of termination is not proof — a test runner cannot observe it.** A fake
+that drives a loop and never terminates turns a regression into an infinite loop of `await`-on-already-resolved
+promises. That is a pure **microtask** loop: it starves the macrotask queue, and vitest's `testTimeout` is
+`setTimeout`-based, so **it never fires**. Measured: 4,194,305 iterations in 4 s with a 300 ms `setTimeout`
+that never ran. CI hangs until the job is killed — no assertion failure, no timeout, nothing to read.
+
+So **any fake driving a bounded loop must terminate on its own**, and the test must assert the loop stopped
+early. Capping a cursor fake at 50 pages turns an unreportable hang into `expected 51 to be less than 5` in
+under a second. Same rule as sizing a slow-path regression test so a revert *fails fast* rather than wedging
+the runner — see the `n = 10_000` cap in `session-invalidation.test.ts` and the terminating pages beside it.
+
+Two things this does NOT cover, stated so a green run isn't over-read: the paging guard in
+`test:lint-rules` catches cursor-shaped fakes only, so it reduces this class rather than closing it; and a
+loop driven by something other than a cursor is still on you to bound.
+
+(The formulation above is @ivy's, from reviewing PR #3756 — where the assertions were all correct and the
+failure mode was a hang. Both reviewers checked the assertions; neither asked what a revert would print.)
+
 #### Never `await` a browser-test state that DELETES ITSELF
 `expect.element` polls — first attempt immediate, then every **50 ms** — against the test's remaining budget (browser-mode `testTimeout` defaults to **15 s**, and the `component` project does not override it). Awaiting a state to **arrive** is safe: load only makes it arrive later and the matcher keeps polling. Awaiting a state that will **leave** — a spinner on a ceiling, a debounce window, anything a component tears down on a timer — is a race the matcher cannot win: once the state is gone it never comes back, so every remaining poll is also too late. Such a test is green on a quiet box, red on a busy one, and has no PR to blame.
 

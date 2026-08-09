@@ -1,5 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  recordWatchdogHeartbeat,
+  resolveWatchdogHeartbeatMs,
+  watchdogArmed,
+} from '~/server/eventloop-watchdog';
 
 /**
  * Liveness heartbeat for an EXEC liveness probe.
@@ -22,8 +27,15 @@ import path from 'node:path';
  * is reaped. That is the correct "tolerate busy, detect dead" semantics, with a
  * real loop-liveness signal instead of probe-latency tolerance tuning.
  *
- * Epoch-SECONDS (not ms) because the runner image is node:20-alpine → busybox
+ * Epoch-SECONDS (not ms) because the runner image is node:24-alpine3.24 → busybox
  * `date` has no `%N`; the probe reads seconds with `date +%s`.
+ *
+ * The same tick also stores a MILLISECOND timestamp into the event-loop watchdog's
+ * SharedArrayBuffer, which a worker thread reads to detect a wedge off-loop. One
+ * timer, two consumers at their own resolutions: the shell probe is stuck at
+ * seconds by busybox, the worker is not. When the watchdog is armed the tick rate
+ * drops to its heartbeat interval and the file write is throttled back to its own
+ * 2s cadence, so the probe's contract is unchanged.
  *
  * Implementation notes:
  * - SYNC write: the whole write completes inside the timer callback, so the file
@@ -36,7 +48,7 @@ import path from 'node:path';
  * - The timer is `unref()`d so it never keeps the process alive on its own.
  */
 const HEARTBEAT_FILE = process.env.LIVENESS_HEARTBEAT_FILE ?? '/tmp/heartbeat';
-const HEARTBEAT_INTERVAL_MS = 2000;
+const HEARTBEAT_FILE_INTERVAL_MS = 2000;
 
 let started = false;
 let loggedError = false;
@@ -74,7 +86,21 @@ export function registerLivenessHeartbeat() {
 
   // Write immediately so the file exists before the startup probe passes and
   // liveness (which gates behind startup) begins checking it.
+  recordWatchdogHeartbeat();
   write();
-  const timer = setInterval(write, HEARTBEAT_INTERVAL_MS);
+
+  const tickMs = watchdogArmed
+    ? Math.min(resolveWatchdogHeartbeatMs(), HEARTBEAT_FILE_INTERVAL_MS)
+    : HEARTBEAT_FILE_INTERVAL_MS;
+
+  let lastFileWrite = Date.now();
+  const timer = setInterval(() => {
+    const now = Date.now();
+    recordWatchdogHeartbeat(now);
+    if (now - lastFileWrite >= HEARTBEAT_FILE_INTERVAL_MS) {
+      lastFileWrite = now;
+      write();
+    }
+  }, tickMs);
   timer.unref();
 }

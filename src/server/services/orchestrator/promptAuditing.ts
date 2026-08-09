@@ -533,7 +533,7 @@ async function reportProhibitedRequest(options: {
         updateSource: 'promptAuditing:autoMute',
       });
 
-      await refreshSession(userId);
+      await refreshSession(userId, { caller: 'moderation' });
 
       // Clear the blocked prompts from Redis now that they're stored in the DB
       await clearBlockedPromptsAfterMute(userId);

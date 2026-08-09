@@ -1882,6 +1882,7 @@ export const REDIS_SYS_KEYS = {
   SESSION: {
     ALL: 'session:all',
     TOKEN_STATE: 'session:token-state',
+    LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock',
   },
   JOB: 'job',
   BUZZ_WITHDRAWAL_REQUEST: {
