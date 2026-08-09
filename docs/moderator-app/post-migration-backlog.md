@@ -12,6 +12,33 @@ Sources: the ClickUp subtask descriptions under `868kkxqpn` and two Loom walkthr
 
 ---
 
+## From "Misc Mod Asks" (`868kn8aa0`) — a subtask the tracker never listed
+
+- [ ] **Every link to Civitai should use the `.red` domain, not `.com`.** *"Every single link on
+      moderator.civitai.com to civitai should go to the .red domain instead of .com."* One env var
+      (`CIVITAI_APP_URL`) decides this for `$lib/entity-url` and `$lib/media/edge-url`, so it is close
+      to a config change — but `.env.example` currently documents `.com`, and a code comment in
+      `bulk-image.service.ts` used to call `.red` "the wrong site" (corrected 2026-08-09). **Do not
+      "fix" a `.red` link back to `.com`.**
+- [ ] **Model Notes on civitai.com**: they were exported from Retool; show them on `/models/`, and let
+      mods add notes and edit their own. The table is `ModelNotes` in the Retool database.
+- [ ] **Per-mod app permissions**: *"Allow admin to give access to apps to individual mods instead of
+      only relying on roles."* `AppPageAccess` grants per page **per role** today — individual grants
+      are the delta.
+- [ ] **Light mode toggle.** The app is dark-only by design, so this is a real piece of work.
+- [ ] **Three more apps Seb wants to add** (not migrations — new): reaction-cheater, collection-cheater,
+      Knights of New.
+
+### Low priority, "to discuss" (same ticket)
+
+- [ ] ToS'd images should not be deletable by the user — removal is sometimes discussed afterwards.
+- [ ] Show `userId` instead of `[deleted]` for deleted accounts, for mods.
+- [ ] Article comment reports are hard to action — threading takes you somewhere unhelpful.
+- [ ] Merge reports on one entity filed under different reasons (AdminAttention vs ToSViolation).
+- [ ] Real-person reports should require a comment.
+- [ ] Multiple reports on the same `entityId` should keep every reporter's comment, not just the first.
+      (Related: report `details` is dropped everywhere in the app today — see the parity list.)
+
 ## Permissions
 
 - [ ] **Sub-permissions per app.** *"We need sub-permissions per app too or something. Some mods need to

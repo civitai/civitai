@@ -9,9 +9,13 @@ import type { MediaType } from '$lib/media/edge-url';
 // output — `FindModelVersions` → `FindPosts` → `FindmagesFromPosts` is one join expressed as three
 // round trips. Here each source is a single query.
 //
-// The `Source`/`Link` columns Retool selected are deliberately absent: they hardcode
-// `image.civitai.com` and, in PostQuery, `civitai.red` — so a moderator clicking through from that
-// one landed on the wrong site. Media URLs come from $lib/media/edge-url, links from $lib/entity-url.
+// The `Source`/`Link` columns Retool selected are deliberately absent: they hardcode a domain per
+// query. Media URLs come from $lib/media/edge-url and links from $lib/entity-url, which take
+// `CIVITAI_APP_URL` — the one place the destination is decided.
+//
+// `civitai.red` is the INTENDED destination for moderator links (ClickUp 868kn8aa0: "every single link
+// on moderator.civitai.com to civitai should go to the .red domain instead of .com"). Retool was
+// inconsistent about it; do not "correct" a .red link to .com.
 
 export type BulkImage = {
   id: number;

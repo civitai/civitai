@@ -12,14 +12,37 @@ Detail and evidence for most items: [`retool-exports/parity-findings.md`](retool
 
 ---
 
-## 0. Blocking — a Retool app with no export at all
+## 0. Bulk Ban — a ninth app, export now in hand
 
-- [ ] 🎥 **Mass ban tool.** *"This one is limited to only some mods. Just a way to ban a lot of accounts
-      at the same time — put them in like this and hit ban."* There is **no export, no ClickUp subtask
-      and no page** for this. It is a live Retool app used by a restricted group.
-      **Pull its export before access is lost.** Until then it is unported and unscoped.
-      The walkthrough adds that other mods should get access, and that the alternative today is a
-      cloud tool "not every mod has access to".
+Subtask `868kn87qj`, *"Place to easily ban a list of users."* It was missed because the migration
+tracker only ever listed nine of the parent's **thirteen** subtasks. Export pulled and inventoried at
+[`retool-exports/bulk-ban.md`](retool-exports/bulk-ban.md) (15 queries / 12 components).
+
+- [ ] **Port it.** Paste a newline-separated list of user ids → `BANAPI` per user
+      (`/api/mod/ban-user`, one call each with a retry counter, capped at 5 consecutive failures) →
+      `ListUsers` to confirm `bannedAt` landed → `LogBans` to `retool_db`.
+- [ ] **It is also a ban-evasion console**, which is the part not to drop: `GetUsers` (buzz
+      transactions), `GetIP` and `UsersByIp` (ClickHouse `userActivities` grouped by registration IP),
+      `GetEmail`/`getEmails`, `UserNotes`. That is how a list of accounts is assembled in the first
+      place.
+- [ ] `deleteComments` runs against `Prod` as part of the flow — confirm whether banning here is
+      expected to remove comments too.
+- [ ] 🎥 **Restricted today, and that is a decision to revisit**: *"limited to only some mods… that's
+      good for other mods to have access to this too."* Gate it, then widen deliberately.
+
+## 0b. Four subtasks the tracker never listed
+
+`868kne95c` Model Reports · `868kn8aa0` Misc Mod Asks · `868kn67aq` ReTool Database Migration ·
+`868kn87qj` Bulk Ban. Only the last is a page to build; the others are covered below and in the backlog.
+
+- [ ] **Model Reports** (`868kne95c`): *"include the link and display the modelId to reduce the amount
+      of clicking."* 🎥 the walkthrough says *"we don't need this one, actually"* — **the ticket and the
+      video disagree; ask before building or dropping.**
+- [ ] **ReTool Database Migration** (`868kn67aq`) — the tables to move off Retool's Postgres:
+      `User`, `UserNotes`, `UserStrikes`, `ModelNotes`, `RatingChanges`, `ReToolActions`, and
+      `BuzzCodes` ("could potentially be dropped"). **`ModelNotes` is not in
+      `moderator-db-types.ts`** and nothing in the app reads it.
+      🔒 That ticket body contains a **live Postgres connection string with its password** — rotate it.
 
 ## 1. User Lookup — the primary console
 
