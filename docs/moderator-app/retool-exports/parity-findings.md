@@ -191,8 +191,10 @@ Confirmed by screenshot, already logged above, now with evidence:
 New, not previously logged:
 
 - [ ] **"Talked to a mod" is a red button in the persistent header that opens a `Chats with Mods`
-      modal** listing chat ids. The ticket asks for it "clearly at the top". We surface prior mod
-      contact nowhere.
+      modal** listing chat ids. The ticket asks for it "clearly at the top".
+      **Corrected 2026-08-09:** an earlier draft said we surface prior mod contact nowhere — wrong.
+      `ChatContactPanel` shows a chats-count and last-contact warning from `getModContact`. The gap is
+      the header placement and the chat-id list, not the signal.
 - [ ] **A persistent header across every section**: strike count, "Talked to a mod", subscription tier,
       Force Logout, and username / user id / email fields. Ours puts these inside sections.
 - [ ] **An "Enable Edits" toggle guarding editable username/email fields.** The ticket wants this

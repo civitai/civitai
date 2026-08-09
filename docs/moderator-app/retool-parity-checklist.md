@@ -52,27 +52,37 @@ Ported but incomplete. The header items are visible on every section in Retool, 
       username / user id / email.
 - [ ] **"Talked to a mod"** — a header button opening a *Chats with Mods* modal listing chat ids.
       🎥 *"You get to see if they've talked to a moderator previously."*
+      **Partially built:** `ChatContactPanel` already shows a chats-count and last-contact warning from
+      `getModContact`. Missing is the header placement and the chat-id list — not the signal.
 - [ ] **Report banner** — a pending/processing `UserReport` shown clearly at the top, actionable from
       this page. 🎥 *"You get to see if there's a user report on their account."*
+      **Partially built:** `getReportsOnUser` already filters to Pending/Processing and `ReportsPanel`
+      renders an amber block. Missing is the header placement and any way to action it from here.
 - [ ] **CSAM banner** — a `CsamReport` against the account shown clearly at the top. `CsamReport` is
       currently read nowhere in the app.
 - [ ] **Mute state must distinguish system from manual.** 🎥 *"if they're muted, if they're muted,
       overturned or pending."* `UserRestriction` is read nowhere, so a system auto-mute renders as an
       unexplained manual one, and unmuting here skips the Overturn path entirely.
-- [ ] **Reports: two tabs, Received and Submitted**, each a full table with a **Status filter**.
-      Screenshot shows **803 rows** for one account; ours is one merged list, no filter, capped at 50.
-      `getReportsSubmitted` also drops the commonest kind (reports against accounts) while the tile
-      above it counts them.
+- [ ] **Reports: a Status filter, and the 50-row cap.** Screenshot shows **803 rows** for one account.
+      (Correction: ours is *not* one merged list — `ReportsPanel` already renders received and filed as
+      two lists plus a banner. The real gaps are the filter and the cap.)
+- [ ] `getReportsSubmitted` drops the commonest kind (reports against accounts) while the tile above it
+      counts them, so "Total 12" can sit beside 4 rows.
 - [ ] **Report coverage is 6 of 11 entity types.** Bounty, BountyEntry, Collection, ResourceReview and
       chat reports are invisible, so an account reported over those reads as clean.
 - [ ] **Buzz: Payments and Receipts side by side**, each with its own type filter, plus a Description
-      filter, an *After date* picker, and a per-transaction **Color** column. Ours is one unfiltered
-      list. 🎥 buzz is actively used to grant and deduct.
+      filter and an *After date* picker. Ours is one merged list on a fixed 90-day window with no
+      filters. 🎥 buzz is actively used to grant and deduct.
+      (The per-transaction **Color** is already rendered — that sub-claim was stale.)
+- [ ] **A second row of aggregate tables** below those two (counterparty × total amount, for payments
+      and for receipts) — the other half of the 2×2 grid.
+- [ ] **The send form is missing `EntityType` / `EntityId`**, which Retool's `buzzSendEntityType` carries.
 - [ ] **Deduct Types reference table** beside the send form (which types lower lifetime balance, which
       can go negative).
-- [ ] **Moderation activity must show who did each action**, and includes the Retool era
-      (`ReToolActions`) — currently only `ModActivity` is read, so all pre-migration history is absent
-      while the panel reads as complete.
+- [ ] **Moderation activity omits the Retool era.** Only `ModActivity` is read; `ReToolActions` is typed
+      and queried nowhere, so all pre-migration history is absent while the panel reads as complete.
+      (Correction: "must show who did each action" is **already done** — `getModActivity` joins the
+      moderator name and the panel renders it.)
 - [ ] **Model/comment breakdowns** (`NumTos`, `NumPoi`, `NumNSFW`, `NumLocked`, `NumDeleted`,
       `NumTOSViolations`, `NumHidden`) collapsed to a single `COUNT(*)`.
 - [ ] **Review text (`details`) is never shown** — reviews can be deleted on rating and date alone.
@@ -83,6 +93,26 @@ Ported but incomplete. The header items are visible on every section in Retool, 
 - [ ] **Bulk Image Manager is a section of User Lookup's sidebar** in the live app; `sections.ts`
       omitted it because nothing was ported behind it. That page now exists.
 - [x] Balance **and lifetime** for Yellow/Blue/Green (fixed 2026-08-09).
+- [x] Moderator name on each activity row; per-transaction buzz colour; the shared-IP / alt-account
+      view (`AddressesPanel`) — all already built. Listed so nobody rebuilds them from a screenshot.
+
+### Found by the screenshot audit, absent from every earlier list
+
+- [ ] 🔒 **Buzz sending was Senior-Mod-gated in Retool** (`tabbedContainer12`'s second pane carries
+      `current_user.groups.some(i => i.name === "Senior Mod")`). Ours gates it on the general `/users`
+      permission — **a restricted capability silently widened**. Highest priority in this block.
+- [ ] **The whole account-edit capability.** An *Enable Edits* toggle over editable **Username, Email,
+      Full Name**, plus a Quick Info checkbox block — Muted, Banned, Moderator, Accepted TOS, Excluded
+      Leaderboards, Buzz-Blocked, FP Curator — with a Save button. Nothing in the build can edit any of
+      it. (The *sub-permission* that should guard it is a backlog item; the capability itself is parity.)
+- [ ] **Admin actions**: Make/Remove Moderator, Add/Remove **Buzz-Block**, Generator Buzz Earnings.
+- [ ] **Notifications**: a **Delete Notification** action and a **Link** field on the send form; ours is
+      message-only with no delete.
+- [ ] **Browsing level shown** ("Viewing: PG, PG13, R, X, XXX, Blocked") and a **Comment Spammer** alert
+      in Quick Info.
+- [ ] **Timed mutes**: a **Mute Start** datetime and a **Notify User** button beside the presets.
+- [ ] Header chips the checklist missed: **Banned for CSAM**, **UserReport by \<mod\>**, and a
+      **Copy Retool URL / Profile** pair.
 
 ## 2. Bulk Image Manager
 
