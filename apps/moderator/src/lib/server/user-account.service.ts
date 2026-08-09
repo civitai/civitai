@@ -333,6 +333,10 @@ export type UserBuzz = {
   /** Blue (generation) and green. Null when that account could not be read. */
   blue: number | null;
   green: number | null;
+  /** Lifetime per colour. Retool showed all three; `getUserAccounts` returns balances only, so these
+   *  come from the per-type account read. */
+  blueLifetime: number | null;
+  greenLifetime: number | null;
 } | null;
 
 export async function getBuzzBalance(userId: number): Promise<UserBuzz> {
@@ -342,10 +346,19 @@ export async function getBuzzBalance(userId: number): Promise<UserBuzz> {
     // so it must not be lost when the multi-account read fails.
     let blue: number | null = null;
     let green: number | null = null;
+    let blueLifetime: number | null = null;
+    let greenLifetime: number | null = null;
     try {
-      const accounts = await getBuzz().getUserAccounts(userId, ['blue', 'green']);
-      blue = accounts.Generation ?? accounts.blue ?? null;
-      green = accounts.Green ?? accounts.green ?? null;
+      // Per-type reads rather than `getUserAccounts`, which returns balances only — Retool showed a
+      // lifetime for every colour, and lifetime is what says whether a balance was earned or granted.
+      const [blueAcct, greenAcct] = await Promise.all([
+        getBuzz().getUserBuzzByAccountType(userId, 'blue'),
+        getBuzz().getUserBuzzByAccountType(userId, 'green'),
+      ]);
+      blue = blueAcct?.balance ?? null;
+      green = greenAcct?.balance ?? null;
+      blueLifetime = blueAcct?.lifetimeBalance ?? null;
+      greenLifetime = greenAcct?.lifetimeBalance ?? null;
     } catch (e) {
       console.error('[user-lookup] buzz colour balances unavailable', e);
     }
@@ -354,6 +367,8 @@ export async function getBuzzBalance(userId: number): Promise<UserBuzz> {
       lifetimeBalance: account.lifetimeBalance,
       blue,
       green,
+      blueLifetime,
+      greenLifetime,
     };
   } catch (e) {
     console.error('[user-lookup] buzz balance unavailable', e);

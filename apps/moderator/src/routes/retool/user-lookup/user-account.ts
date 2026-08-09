@@ -125,12 +125,15 @@ export type AvailableCosmetic = { id: number; name: string };
 export type Capped<T> = { items: T[]; truncated: boolean };
 
 export type Account = {
+  /** Mirrors `UserBuzz` in `user-account.service.ts` — the client type for the same payload. */
   buzz: {
     balance: number;
     lifetimeBalance: number;
     /** Null when the colour-balance read failed; yellow survives on its own. */
     blue: number | null;
     green: number | null;
+    blueLifetime: number | null;
+    greenLifetime: number | null;
   } | null;
   reviews: Capped<Review>;
   receivedReviews: Capped<ReceivedReview>;

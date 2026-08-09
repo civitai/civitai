@@ -109,6 +109,7 @@ for (const p of plugins) {
       rowGroup: pos.rowGroup || null,
       row: typeof pos.row === 'number' ? pos.row : 0,
       col: typeof pos.col === 'number' ? pos.col : 0,
+      width: typeof pos.width === 'number' ? pos.width : 0,
       hidden: tpl.hidden === true || undefined,
       // Panes are defined on the CONTAINER (`_ids` ↔ `position2.subcontainer`), not on the tab bar
       // that drives it — a TabsWidget2's own `_values` are usually still "Tab 1/2/3". `_hiddenByIndex`
@@ -167,8 +168,13 @@ if (!queriesOnly) {
     byParent.get(w.parent).push(w);
   }
   const inReadingOrder = (a, b) => a.row - b.row || a.col - b.col;
+  // Retool lays out on a 12-COLUMN GRID, and `col`/`width` are the whole answer to "was this page one
+  // column or two". A form at col 0 width 6 beside panels at col 7 width 5 is a two-column screen; port
+  // it as one and the moderator scrolls past what used to sit alongside.
   const describe = (w) =>
-    `${w.id} [${w.subtype}]${w.label ? ` "${String(w.label).replace(/\s+/g, ' ').slice(0, 60)}"` : ''}${w.hidden ? ' (hidden by default)' : ''}`;
+    `c${String(w.col).padStart(2)} w${String(w.width).padStart(2)}  ${w.id} [${w.subtype}]` +
+    `${w.label ? ` "${String(w.label).replace(/\s+/g, ' ').slice(0, 50)}"` : ''}` +
+    `${w.hidden ? ' (hidden by default)' : ''}`;
 
   const driverOf = new Map(
     widgets.filter((w) => w.targetContainerId).map((w) => [w.targetContainerId, w.id])

@@ -15,6 +15,14 @@
 
   type Subscription = NonNullable<LayoutData['result']>['subscription'];
 
+  // Balance AND lifetime per colour, as Retool showed. Built here rather than inline so the tuple
+  // doesn't infer as `string | number`.
+  const balanceRows = (buzz: NonNullable<Account['buzz']>) => [
+    { label: 'Yellow', balance: buzz.balance, lifetime: buzz.lifetimeBalance },
+    { label: 'Blue', balance: buzz.blue, lifetime: buzz.blueLifetime },
+    { label: 'Green', balance: buzz.green, lifetime: buzz.greenLifetime },
+  ];
+
   let {
     subscription,
     account,
@@ -149,30 +157,17 @@
           <p class="text-sm text-dark-2">Balance unavailable.</p>
         {:else}
           <div class="flex flex-wrap gap-6">
-            <div>
-              <div class="text-xl font-semibold tabular-nums text-white">
-                {num(result.buzz.balance)}
+            {#each balanceRows(result.buzz) as row (row.label)}
+              <div>
+                <div class="text-xl font-semibold tabular-nums text-white">
+                  {row.balance === null ? '—' : num(row.balance)}
+                </div>
+                <div class="text-xs text-dark-2">{row.label}</div>
+                <div class="text-xs tabular-nums text-dark-2">
+                  lifetime {row.lifetime === null ? '—' : num(row.lifetime)}
+                </div>
               </div>
-              <div class="text-xs text-dark-2">Yellow</div>
-            </div>
-            <div>
-              <div class="text-xl font-semibold tabular-nums text-white">
-                {result.buzz.blue === null ? '—' : num(result.buzz.blue)}
-              </div>
-              <div class="text-xs text-dark-2">Blue</div>
-            </div>
-            <div>
-              <div class="text-xl font-semibold tabular-nums text-white">
-                {result.buzz.green === null ? '—' : num(result.buzz.green)}
-              </div>
-              <div class="text-xs text-dark-2">Green</div>
-            </div>
-            <div>
-              <div class="text-xl font-semibold tabular-nums text-white">
-                {num(result.buzz.lifetimeBalance)}
-              </div>
-              <div class="text-xs text-dark-2">Lifetime</div>
-            </div>
+            {/each}
           </div>
         {/if}
       {:catch}

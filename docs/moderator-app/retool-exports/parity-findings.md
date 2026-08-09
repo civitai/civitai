@@ -135,6 +135,42 @@ its raw JSON is not on disk. The two `ContainerWidget2` in its component list ar
 sidebar-plus-detail split but do not prove one. **Confirm on re-extract** — if Retool stacked them, this
 is a deliberate improvement rather than a parity fix, and either way it should be recorded as one.
 
+## Layout geometry (2026-08-09, from a screenshot of Retool's Buzz page)
+
+**The export carries the full grid, and the first pass threw it away.** Retool lays out on a
+**12-column grid**: every widget's `position2` has `col`, `row`, `width`, `height`. The extractor now
+emits `col`/`width` per widget, which is the whole answer to "was this one column or two". Confirmed
+against a live screenshot of `Buzz`, which matches the export exactly.
+
+**`Buzz` → "Buzz Transaction" pane** — a genuine two-column screen:
+
+| | Retool | Ours |
+| --- | --- | --- |
+| Form (Action, Reason, Type, Amount, Description, EntityType/Id) | `col 0`, width 3–6 | ✅ present |
+| `container30` — **Presets** (5 canned workflows, e.g. Stripe Chargeback Retrieval) | `col 7`, width 5 | ✅ present |
+| `container29` — **Deduct Types** reference table (Type / Lowers Lifetime Balance / Can Go Negative) | `col 7`, width 5 | ❌ **absent** |
+| Three balances **and three lifetimes** (Yellow/Blue/Green) | header | ✅ fixed 2026-08-09 — was 3 balances, 1 lifetime |
+
+- [ ] **Deduct Types is missing.** It is a static reference table telling the moderator which transaction
+      types lower the lifetime balance and which can go negative — decision support for the very form
+      beside it. Three rows: Purchase, AuthorizedPurchase (can go negative), Chargeback (lowers lifetime,
+      can go negative).
+
+**`Buzz` → "View Buzz" pane** — much richer than what was built:
+
+- [ ] Retool had a `Check Buzz` button + **After date** picker, three filters (**Payment Type**,
+      **Receipt Type**, **Description**) and **four tables in a 2×2 grid** (`table23`/`table24` at
+      `col 0`/`col 6`, then `table53`/`table54` below). Ours is a single unfiltered "Buzz history" list.
+      The filters are the dropped-entry-point shape again.
+
+- [ ] **`Bulk Image Manager` is a section of User Lookup's own sidebar** in the live app (visible in the
+      screenshot, between "Socials & Bio" and "Buzz"). `sections.ts` deliberately omitted it because
+      nothing was ported behind it — that page now exists, so the entry can come back as a link.
+
+**Method note:** this was found by comparing a screenshot to the export, not by reading code. Every
+other page's layout is still unchecked, and only `user-lookup-v2` has a re-extracted inventory with
+geometry — the other seven exports predate it.
+
 ## Cross-cutting
 
 1. **Report `details` is dropped on every page that shows reports** — User Lookup, User Reports, Chat
