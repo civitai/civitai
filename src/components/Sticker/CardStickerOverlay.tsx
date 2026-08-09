@@ -51,8 +51,8 @@ const offsetWithin = (el: HTMLElement, stop: Element | null) => {
  * overflow a block box, which anchors the crop left instead of centring it.
  * Reproducing that in arithmetic means encoding both templates' CSS here and
  * being wrong the day either changes — silently, and only for the class of
- * images whose aspect ratio makes the difference visible. Reading the element's
- * own rect is correct for whatever the stylesheet does.
+ * images whose aspect ratio makes the difference visible. Measuring the element
+ * is correct for whatever the stylesheet does.
  *
  * A consequence worth knowing rather than fixing: `cover` crops, so a sticker
  * placed low on a tall image is outside the visible box and not shown in a feed.
@@ -100,9 +100,9 @@ export function CardStickerOverlay({ imageId }: { imageId: number }) {
         left: at.x - self.x,
         top: at.y - self.y,
       };
-      // Rects come back fractional and a ResizeObserver fires on every layout
-      // pass, so setting state unconditionally re-renders the whole overlay
-      // continuously on any page that animates the card (these scale on hover).
+      // A ResizeObserver fires on every layout pass, so setting state
+      // unconditionally would re-render the overlay continuously on a page that
+      // animates the card — and these do, on hover.
       setBox((current) => (same(current, next) ? current : next));
     };
 
@@ -119,7 +119,11 @@ export function CardStickerOverlay({ imageId }: { imageId: number }) {
     <div ref={ref} className="pointer-events-none absolute inset-0 overflow-hidden">
       {box && (
         <div className="pointer-events-none absolute" style={box}>
-          <StickerPlacementOverlay placements={placements} viewerId={currentUser?.id} />
+          <StickerPlacementOverlay
+            placements={placements}
+            viewerId={currentUser?.id}
+            interactive={false}
+          />
         </div>
       )}
     </div>

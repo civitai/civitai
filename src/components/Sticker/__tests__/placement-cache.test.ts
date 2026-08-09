@@ -47,14 +47,17 @@ describe('dropping a removed placement out of a cached list', () => {
     expect(result.countedOn).toBeUndefined();
   });
 
-  // The updater runs against every cached chunk, and all but one of them do not
-  // hold the row. Returning a rebuilt array there would replace the cached
-  // reference on every chunk in the feed and re-render all of them.
-  it('leaves a chunk that does not hold the row exactly as it was', () => {
+  // The updater runs against every cached chunk and all but one of them do not
+  // hold the row. Returning the array back — even the same reference — makes
+  // `setQueryData` write it and stamp a fresh `dataUpdatedAt`, which is what the
+  // batch provider memoises on, so every chunk in the feed recomputes.
+  // `undefined` is the only return it skips.
+  it('returns undefined for a chunk that does not hold the row, so the write is skipped', () => {
     const chunk = [OTHER];
     const result = dropPlacementFromList(chunk, APPROVED.id);
 
-    expect(result.placements).toBe(chunk);
+    expect(result.placements).toBeUndefined();
+    expect(chunk).toEqual([OTHER]);
     expect(result.countedOn).toBeUndefined();
   });
 

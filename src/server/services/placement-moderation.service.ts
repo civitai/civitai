@@ -258,10 +258,16 @@ export async function removePlacementByModerator({
  * artwork that is itself abusive has to come off everyone's work regardless of
  * who placed it. `revokeCosmeticsFromUsers` strips the holding and un-equips
  * profile decorations; it knows nothing about placements, which live in their
- * own table with the cosmetic id inside a JSON payload. Without this the artwork
- * stays on other people's images after being revoked — and once the cosmetic is
- * gone the overlay renders nothing, so the placement is invisible, permanent,
- * and still counted.
+ * own table with the cosmetic id inside a JSON payload.
+ *
+ * Without this the artwork **stays fully visible** on other people's images
+ * after being revoked. Not invisible-but-counted, which is what this comment
+ * used to claim and is worth correcting rather than deleting: a takedown never
+ * writes the `Cosmetic` row, and `getStickerCosmetics` resolves artwork by id
+ * with no join to `UserCosmetic` and no availability check — so revoking every
+ * holding changes nothing about what renders. Reasoning from the old version
+ * leads to "we can skip the sweep, it draws nothing anyway", which is exactly
+ * backwards.
  *
  * Approved placements are taken down without settlement: the content owner was
  * already paid and did not choose this sticker (Justin, 2026-08-08). Pending

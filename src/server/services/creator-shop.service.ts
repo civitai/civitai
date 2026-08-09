@@ -1900,8 +1900,9 @@ export const takedownCosmeticShopItem = async ({
 
   // Revoking the holding does not touch stickers already placed on other
   // people's images — those live in `Placement` with the cosmetic id inside a
-  // JSON payload, and taking down the artwork everywhere is the whole point of
-  // a takedown. Drained rather than run once: the helper is bounded per batch,
+  // JSON payload, and the overlay resolves artwork by cosmetic id with no join
+  // to `UserCosmetic`, so a revoked sticker keeps rendering at full opacity on
+  // everything it was placed on. Taking it down there is the whole point. Drained rather than run once: the helper is bounded per batch,
   // and one pass would report a clean takedown with the artwork still up.
   // Capped so a runaway cannot hold the request; `hasMore` says to run again.
   //
@@ -1931,7 +1932,16 @@ export const takedownCosmeticShopItem = async ({
   // more go before the sweep stops spending batches on it.
   const failureCount = new Map<number, number>();
   const unsettled: number[] = [];
-  let placementsRemoved = { settled: 0, takenDown: 0, failed: 0, hasMore: false };
+  let placementsRemoved = {
+    settled: 0,
+    takenDown: 0,
+    failed: 0,
+    hasMore: false,
+    // Reported, not just logged. A moderator taking a pack down over abusive
+    // artwork will otherwise reasonably believe the artwork is gone from the
+    // images it was placed on, and it is still there and still rendering.
+    skippedForPack: false,
+  };
   for (let batch = 0; batch < 10 && memberIds.length && !isPack; batch++) {
     let result: Awaited<ReturnType<typeof removePlacementsByCosmetic>>;
     try {
@@ -1955,6 +1965,7 @@ export const takedownCosmeticShopItem = async ({
       if (failures > 1) unsettled.push(placementId);
     }
     placementsRemoved = {
+      ...placementsRemoved,
       settled: placementsRemoved.settled + result.settled,
       takenDown: placementsRemoved.takenDown + result.takenDown,
       // Distinct rows, not attempts — a row is selected again on its retry, so
@@ -1965,11 +1976,13 @@ export const takedownCosmeticShopItem = async ({
     if (!result.hasMore) break;
   }
 
-  if (isPack && memberIds.length)
+  if (isPack && memberIds.length) {
+    placementsRemoved.skippedForPack = true;
     await logTakedown('info', 'Placement sweep skipped for a pack takedown', {
       shopItemId: id,
       cosmeticIds: memberIds,
     });
+  }
 
   if (placementsRemoved.hasMore || placementsRemoved.failed)
     await logTakedown('error', 'Placement takedown left work behind', {

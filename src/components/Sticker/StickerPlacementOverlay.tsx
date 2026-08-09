@@ -22,10 +22,21 @@ export function StickerPlacementOverlay({
   placements,
   viewerId,
   className,
+  interactive = true,
 }: {
   placements: PlacedSticker[];
   viewerId?: number;
   className?: string;
+  /**
+   * Off on a feed card, where the card is a link and the layer is clipped.
+   *
+   * An interactive sticker is a hole in the card that does not open the image —
+   * at `scale: 0.3` roughly a third of its width — and the owner's approve /
+   * decline buttons sit below the sticker, so on anything placed low they are
+   * cut off by the card's `overflow-hidden` and offered half-visible. Both are
+   * fine at detail size, which is the only place this rendered before.
+   */
+  interactive?: boolean;
 }) {
   const cosmeticIds = useMemo(
     () => placements.map((placement) => placement.data.cosmeticId),
@@ -50,7 +61,7 @@ export function StickerPlacementOverlay({
         const body = (
           <div
             key={placement.id}
-            className="pointer-events-auto absolute"
+            className={clsx('absolute', interactive && 'pointer-events-auto')}
             style={{
               left: `${placement.data.x * 100}%`,
               top: `${placement.data.y * 100}%`,
@@ -78,6 +89,11 @@ export function StickerPlacementOverlay({
             )}
           </div>
         );
+
+        // A hover card needs something to hover, so a non-interactive layer gets
+        // the sticker alone. The detail view is one click away and carries all
+        // of it.
+        if (!interactive) return body;
 
         if (!placement.isPending)
           return (
