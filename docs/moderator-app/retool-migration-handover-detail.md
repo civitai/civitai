@@ -54,6 +54,10 @@ the boxes. Three pages need granting before mods can review them:
 - [ ] `/retool/bulk-image-manager` — **grant this one narrowly.** Reaching it is gated on the page, but
       every action on it is additionally gated on `/users`, and it removes images in bulk across
       accounts that the moderator never looked up. Treat it as an enforcement page, not a lookup one.
+- [ ] `/retool/front-page-audit` — this grant also controls the rating buttons and the tag votes, not
+      just reaching the page. Without it the sweep renders read-only.
+- [ ] `/retool/image-help` — the second-opinion queue from Moderation Status. Same grant gates
+      "Mark handled".
 - [ ] Confirm the existing Retool pages still carry the grants you expect after the User Lookup
       restructure — its sections moved to `/retool/user-lookup/[section]`, and `canAccess`
       longest-prefix matches.
