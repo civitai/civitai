@@ -45,6 +45,7 @@
 //
 // Server-side (nodejs runtime) only. Never imported on the edge/client.
 
+import fs from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import client from 'prom-client';
 import { instrumentationRegistry, registerInstrumentationMetric } from '~/server/prom/client';
@@ -246,17 +247,12 @@ const EXIT_CODE_NO_TOKEN = 78;
  * the loop recovers. Bounded to the incident and loopback-only, but real.
  */
 const WATCHDOG_CAPTURE_SOURCE = String.raw`
-const zlib = require('node:zlib');
-const https = require('node:https');
-const nodeUrl = require('node:url');
-
 // Defaulted, not required: a malformed or absent capture config must never stop the
 // DETECTOR from running. Capture is the optional half, and the detector is not.
 const capCfg =
   cap && typeof cap === 'object'
     ? cap
-    : { enabled: false, backoffStartMs: 300000, backoffMaxMs: 3600000, maxPerHour: 0 };
-const s3Cfg = s3 && typeof s3 === 'object' ? s3 : {};
+    : { enabled: false, backoffStartMs: 300000, backoffMaxMs: 3600000, maxPerHour: 0, dir: '/tmp', maxFilesOnDisk: 3 };
 
 let captureInFlight = false;
 let captureBackoffUntil = 0;
@@ -264,117 +260,27 @@ let captureBackoffMs = capCfg.backoffStartMs;
 let capturesThisHour = 0;
 let capturesHourStart = Date.now();
 const captureResults = Object.create(null);
-const uploadResults = Object.create(null);
-let uploadBytes = 0;
+const writeResults = Object.create(null);
+let writeBytes = 0;
 let lastCaptureAt = 0;
 
 function tallyCapture(result) {
   captureResults[result] = (captureResults[result] || 0) + 1;
 }
-function tallyUpload(result) {
-  uploadResults[result] = (uploadResults[result] || 0) + 1;
+function tallyWrite(result) {
+  writeResults[result] = (writeResults[result] || 0) + 1;
 }
 
-function hmac(key, data) {
-  return crypto.createHmac('sha256', key).update(data, 'utf8').digest();
-}
-function sha256Hex(data) {
-  return crypto.createHash('sha256').update(data).digest('hex');
-}
-
-// Minimal SigV4 for a single S3 PUT. Hand-rolled because the worker may not import a
-// bare specifier: an eval'd worker in the standalone image has no reliable module
-// resolution, which is the same reason the source is inlined at all.
-function signPut(opts) {
-  const amzDate = opts.now.toISOString().replace(/[:-]|\.\d{3}/g, '');
-  const dateStamp = amzDate.slice(0, 8);
-  const payloadHash = sha256Hex(opts.body);
-  const canonicalHeaders =
-    'host:' + opts.host + '\n' +
-    'x-amz-content-sha256:' + payloadHash + '\n' +
-    'x-amz-date:' + amzDate + '\n';
-  const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
-  const canonicalRequest = [
-    'PUT',
-    opts.path,
-    '',
-    canonicalHeaders,
-    signedHeaders,
-    payloadHash,
-  ].join('\n');
-  const scope = dateStamp + '/' + opts.region + '/s3/aws4_request';
-  const stringToSign = [
-    'AWS4-HMAC-SHA256',
-    amzDate,
-    scope,
-    sha256Hex(canonicalRequest),
-  ].join('\n');
-  const signingKey = hmac(hmac(hmac(hmac('AWS4' + opts.secretKey, dateStamp), opts.region), 's3'), 'aws4_request');
-  const signature = crypto.createHmac('sha256', signingKey).update(stringToSign, 'utf8').digest('hex');
-  return {
-    amzDate: amzDate,
-    payloadHash: payloadHash,
-    authorization:
-      'AWS4-HMAC-SHA256 Credential=' + opts.accessKeyId + '/' + scope +
-      ', SignedHeaders=' + signedHeaders + ', Signature=' + signature,
-  };
-}
-
-function putObject(key, body) {
-  return new Promise(function (resolve) {
-    let parsed;
-    try {
-      parsed = new nodeUrl.URL(s3Cfg.endpoint);
-    } catch (err) {
-      return resolve({ ok: false, reason: 'bad-endpoint' });
-    }
-    const path = '/' + s3Cfg.bucket + '/' + key;
-    const signed = signPut({
-      now: new Date(),
-      host: parsed.host,
-      path: path,
-      region: s3Cfg.region,
-      accessKeyId: s3Cfg.accessKeyId,
-      secretKey: s3Cfg.secretKey,
-      body: body,
-    });
-    const mod = parsed.protocol === 'https:' ? https : http;
-    const req = mod.request(
-      {
-        method: 'PUT',
-        hostname: parsed.hostname,
-        port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-        path: path,
-        headers: {
-          host: parsed.host,
-          'x-amz-date': signed.amzDate,
-          'x-amz-content-sha256': signed.payloadHash,
-          authorization: signed.authorization,
-          'content-length': body.length,
-          'content-type': 'application/gzip',
-        },
-        timeout: capCfg.uploadTimeoutMs,
-      },
-      function (res) {
-        res.resume();
-        res.on('end', function () {
-          resolve(
-            res.statusCode >= 200 && res.statusCode < 300
-              ? { ok: true }
-              : { ok: false, reason: 'http-' + res.statusCode }
-          );
-        });
-      }
-    );
-    req.on('timeout', function () {
-      req.destroy();
-      resolve({ ok: false, reason: 'timeout' });
-    });
-    req.on('error', function () {
-      resolve({ ok: false, reason: 'network' });
-    });
-    req.end(body);
-  });
+// Files this pod has written and not yet seen collected. The harvester deletes only
+// AFTER a verified upload, so "still on disk" is the honest backlog signal.
+function captureFilesOnDisk() {
+  try {
+    return fs.readdirSync(capCfg.dir).filter(function (f) {
+      return f.indexOf('cpu-wedge-') === 0 && f.slice(-11) === '.cpuprofile';
+    }).length;
+  } catch (err) {
+    return 0;
+  }
 }
 
 function cdp(ws, method, params) {
@@ -457,22 +363,40 @@ async function captureWedge(wedgeStartMs) {
     await new Promise(function (r) { setTimeout(r, capCfg.captureMs); });
     const stopped = await cdp(ws, 'Profiler.stop');
     const wedgeMs = Math.round(Date.now() - wedgeStartMs);
-    const body = zlib.gzipSync(Buffer.from(JSON.stringify(stopped.profile)));
-    // The image tag here is the RUNTIME tag. The published source-map artifact shares
-    // its sha but carries a different timestamp, so a resolver keyed on the whole tag
-    // 404s — resolve maps by sha.
-    const key =
-      capCfg.keyPrefix + capCfg.pool + '/' + capCfg.pod + '/' +
-      new Date().toISOString().replace(/[:.]/g, '-') + '-' + wedgeMs + 'ms-' + capCfg.imageTag +
-      '.cpuprofile.gz';
     tallyCapture('ok');
     lastCaptureAt = Date.now();
-    const put = await putObject(key, body);
-    if (put.ok) {
-      tallyUpload('ok');
-      uploadBytes += body.length;
-    } else {
-      tallyUpload(put.reason);
+
+    // 🔴 Write to disk; do NOT ship it from here. The cpu-profile-harvester CronJob in
+    // civitai-dp-prod already sweeps <dir>/*.cpuprofile off every pod in the namespace
+    // every 15 minutes -- kubectl exec cat, gzip, S3 PUT, HEAD verify, and only then
+    // rm. Uploading from the app would mean giving ~163 internet-facing serving pods
+    // an object-store credential that the harvester's single short-lived Job already
+    // holds; on this cluster that credential is the cluster-wide MinIO identity, which
+    // can delete the CNPG Postgres backups. Those pods already carry the database
+    // write credential, so adding it would convert a recoverable compromise into an
+    // unrecoverable one. The harvester needs no new permission to do this.
+    //
+    // UNCOMPRESSED and named cpu-*: the harvester matches *.cpuprofile, gzips during
+    // transfer itself, and keys the object by image SHA so the profile can be paired
+    // with its source maps. A .gz here would simply never be collected.
+    const name =
+      'cpu-wedge-' + wedgeMs + 'ms-' + capCfg.pod + '-' +
+      new Date().toISOString().replace(/[:.]/g, '-') + '.cpuprofile';
+    const body = Buffer.from(JSON.stringify(stopped.profile));
+    try {
+      // Bound the pod's own disk independently of the harvester. maxPerHour limits the
+      // rate; this limits the BACKLOG, which is what actually fills /tmp when the
+      // harvester is broken or paused. Checked here rather than at trigger time so it
+      // reflects what the harvester has genuinely collected.
+      if (captureFilesOnDisk() >= capCfg.maxFilesOnDisk) {
+        tallyWrite('skipped-disk-cap');
+      } else {
+        fs.writeFileSync(capCfg.dir + '/' + name, body);
+        tallyWrite('ok');
+        writeBytes += body.length;
+      }
+    } catch (err) {
+      tallyWrite('error');
     }
   } catch (err) {
     tallyCapture('error');
@@ -480,7 +404,7 @@ async function captureWedge(wedgeStartMs) {
     if (ws) { try { ws.close(); } catch (err) { /* already gone */ } }
     captureInFlight = false;
     // Exponential, per pod. A sustained wave would otherwise capture the same stack
-    // repeatedly and upload near-identical multi-MB artifacts.
+    // repeatedly and write near-identical multi-MB artifacts.
     captureBackoffUntil = Date.now() + captureBackoffMs;
     captureBackoffMs = Math.min(captureBackoffMs * 2, capCfg.backoffMaxMs);
   }
@@ -502,16 +426,21 @@ function renderCaptureMetrics(out) {
   for (const k of captureKeys) {
     out.push('civitai_app_watchdog_capture_total{result="' + k + '"} ' + (captureResults[k] || 0));
   }
-  out.push('# HELP civitai_app_watchdog_upload_total Profile uploads attempted, by result.');
-  out.push('# TYPE civitai_app_watchdog_upload_total counter');
-  const uploadKeys = Object.keys(uploadResults);
-  if (uploadKeys.indexOf('ok') === -1) uploadKeys.push('ok');
-  for (const k of uploadKeys) {
-    out.push('civitai_app_watchdog_upload_total{result="' + k + '"} ' + (uploadResults[k] || 0));
+  out.push('# HELP civitai_app_watchdog_profile_write_total Profiles written to disk for the cpu-profile-harvester to collect, by result. skipped-disk-cap means the pod is holding its maximum uncollected backlog, which points at the harvester rather than at the app.');
+  out.push('# TYPE civitai_app_watchdog_profile_write_total counter');
+  const writeKeys = Object.keys(writeResults);
+  for (const k of ['ok', 'error', 'skipped-disk-cap']) {
+    if (writeKeys.indexOf(k) === -1) writeKeys.push(k);
   }
-  out.push('# HELP civitai_app_watchdog_upload_bytes_total Compressed profile bytes uploaded.');
-  out.push('# TYPE civitai_app_watchdog_upload_bytes_total counter');
-  out.push('civitai_app_watchdog_upload_bytes_total ' + uploadBytes);
+  for (const k of writeKeys) {
+    out.push('civitai_app_watchdog_profile_write_total{result="' + k + '"} ' + (writeResults[k] || 0));
+  }
+  out.push('# HELP civitai_app_watchdog_profile_write_bytes_total Uncompressed profile bytes written to disk. The harvester gzips in transit, so the stored size is far smaller.');
+  out.push('# TYPE civitai_app_watchdog_profile_write_bytes_total counter');
+  out.push('civitai_app_watchdog_profile_write_bytes_total ' + writeBytes);
+  out.push('# HELP civitai_app_watchdog_profiles_on_disk Captures written and not yet collected. Sustained growth means the harvester is not running; it deletes only after a verified upload.');
+  out.push('# TYPE civitai_app_watchdog_profiles_on_disk gauge');
+  out.push('civitai_app_watchdog_profiles_on_disk ' + captureFilesOnDisk());
   out.push('# HELP civitai_app_watchdog_last_capture_timestamp_seconds Unix time of the last successful capture, 0 if none.');
   out.push('# TYPE civitai_app_watchdog_last_capture_timestamp_seconds gauge');
   out.push('civitai_app_watchdog_last_capture_timestamp_seconds ' + Math.floor(lastCaptureAt / 1000));
@@ -529,8 +458,9 @@ export const WATCHDOG_WORKER_SOURCE =
 const { workerData, parentPort } = require('node:worker_threads');
 const http = require('node:http');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
 
-const { sab, thresholdMs, port, token, heartbeatIntervalMs, pollMs, cap, s3, starvedRatio } = workerData;
+const { sab, thresholdMs, port, token, heartbeatIntervalMs, pollMs, cap, starvedRatio } = workerData;
 const beat = new BigInt64Array(sab);
 
 const BUCKETS = [1, 2, 5, 10, 30, 60, 120, 300, 600];
@@ -561,20 +491,78 @@ function observeWedge(seconds) {
 // not executing during the wedge, against runqueue wait of 2.28s per second on nodes
 // at 90% requested CPU. Threads are queuing, not looping. A profiler cannot see that
 // — there is nothing to sample — but CPU time against wall time separates the two
-// classes completely. Measured: a burning loop reads 0.89, a blocked one reads 0.00.
+// classes completely. Measured on an idle preview pod: a burning loop reads 0.89, a
+// blocked one reads 0.00 — but see below, that separation does not survive contact
+// with a pod that has other threads doing work.
 //
-// process.cpuUsage() is PROCESS-wide, not main-thread-scoped, so it also counts this
-// worker, V8's helpers, and Pyroscope's sampler where that runs. It is a
-// discriminator between ~0 and ~1, not an attribution. Per-thread precision would
-// mean /proc/self/task/<tid>/stat, which is Linux-only and unnecessary while the
-// classes sit two orders apart.
+// 🔴 It must be the MAIN THREAD's CPU, not the process's. process.cpuUsage() sums
+// every thread, and a dp-prod pod runs ~58 of them: 32 Prisma tokio workers, 4
+// V8Workers doing GC and background JIT, 16 libuv workers, Pyroscope's sampler.
+// Measured in production 2026-08-09: the process idles around 0.11-0.14 CPU-s/s and
+// wedges came back at a mean ratio of 1.20, so 152 of 154 landed above 1.0 and the
+// starved bucket was UNREACHABLE -- every wedge classified executing, including ones
+// whose sliced captures showed the main thread not running at all. The two classes do
+// NOT sit two orders apart in production; they did in preview, where the pod is idle
+// and there is nothing else to count.
+//
+// The main JS thread's tid equals the process pid on Linux, so /proc/self/task/<pid>/
+// stat is that thread and only that thread. utime+stime are fields 14 and 15, in
+// USER_HZ ticks -- fixed at 100 by the kernel ABI regardless of CONFIG_HZ, hence 10ms
+// per tick.
+//
+// 🔴 Parse by cutting at the LAST ')': comm is parenthesised and may contain spaces,
+// so splitting the line on whitespace shifts every field after it. That exact bug
+// silently dropped the main thread from a per-thread CPU table during this
+// investigation.
 const starvedCutoff = typeof starvedRatio === 'number' && starvedRatio > 0 ? starvedRatio : 0.2;
 const CPU_RING_MAX = 400;
 const cpuRing = [];
+const MAIN_TID = process.pid;
+const TICK_MS = 10;
+
+function readMainThreadCpuMs() {
+  const raw = fs.readFileSync('/proc/self/task/' + MAIN_TID + '/stat', 'utf8');
+  const close = raw.lastIndexOf(')');
+  if (close < 0) throw new Error('unparseable stat');
+  // After ') ' the first field is state (field 3), so field N is at index N-3.
+  const rest = raw.slice(close + 2).split(' ');
+  const utime = Number(rest[11]);
+  const stime = Number(rest[12]);
+  if (!isFinite(utime) || !isFinite(stime)) throw new Error('unparseable stat');
+  return (utime + stime) * TICK_MS;
+}
+
+// Chosen ONCE, at startup, and never mixed: alternating sources mid-ring would
+// produce deltas between two different populations, which is a wrong ratio rather
+// than a missing one. Non-Linux (developer machines) falls back to the process-wide
+// reading, which is why cpu_source is exported -- a ratio means something different
+// under each source and the reader must be able to tell which one produced it.
+let cpuSource = 'process';
+try {
+  readMainThreadCpuMs();
+  cpuSource = 'main-thread';
+} catch (err) {
+  cpuSource = 'process';
+}
 
 function sampleCpu(now) {
-  const u = process.cpuUsage();
-  cpuRing.push({ at: now, cpuMs: (u.user + u.system) / 1000 });
+  let cpuMs;
+  if (cpuSource === 'main-thread') {
+    try {
+      cpuMs = readMainThreadCpuMs();
+    } catch (err) {
+      // /proc went away underneath us; degrade rather than stop classifying, and say
+      // so in the exported source label.
+      cpuSource = 'process';
+      const u = process.cpuUsage();
+      cpuMs = (u.user + u.system) / 1000;
+      cpuRing.length = 0;
+    }
+  } else {
+    const u = process.cpuUsage();
+    cpuMs = (u.user + u.system) / 1000;
+  }
+  cpuRing.push({ at: now, cpuMs: cpuMs });
   if (cpuRing.length > CPU_RING_MAX) cpuRing.shift();
 }
 
@@ -682,7 +670,7 @@ function render() {
   out.push('civitai_app_watchdog_wedge_kind_total{kind="executing"} ' + wedgeKinds.executing);
   out.push('civitai_app_watchdog_wedge_kind_total{kind="unknown"} ' + wedgeKinds.unknown);
 
-  out.push('# HELP civitai_app_watchdog_wedge_cpu_ratio Process CPU-seconds per wall-second over each completed wedge. Distribution, not last-value, so the starved population can be READ rather than assumed — the continuous profiler adds a CPU floor, so starved wedges may not sit at exactly 0.');
+  out.push('# HELP civitai_app_watchdog_wedge_cpu_ratio MAIN-THREAD CPU-seconds per wall-second over each completed wedge, per civitai_app_watchdog_cpu_source. Distribution, not last-value, so the starved population can be READ rather than assumed. Under source="process" this counts all ~58 threads and cannot reach the starved buckets on a serving pod — read the source label before reading the distribution.');
   out.push('# TYPE civitai_app_watchdog_wedge_cpu_ratio histogram');
   for (let i = 0; i < RATIO_BUCKETS.length; i++) {
     out.push('civitai_app_watchdog_wedge_cpu_ratio_bucket{le="' + RATIO_BUCKETS[i] + '"} ' + ratioBucketCounts[i]);
@@ -692,6 +680,13 @@ function render() {
   out.push('civitai_app_watchdog_wedge_cpu_ratio_count ' + ratioCount);
 
   gauge('civitai_app_watchdog_starved_ratio_threshold', 'Configured CPU-ratio below which a wedge is classified starved. Config echo.', starvedCutoff);
+  // Not cosmetic. The same ratio means different things under the two sources, and a
+  // fleet silently on the process-wide fallback would report every wedge as executing
+  // while looking perfectly healthy — the exact failure this patch exists to end.
+  out.push('# HELP civitai_app_watchdog_cpu_source Which CPU clock feeds the wedge classifier: main-thread (/proc/self/task/<pid>/stat, correct) or process (process.cpuUsage() fallback, counts every thread and cannot classify starved on a busy pod).');
+  out.push('# TYPE civitai_app_watchdog_cpu_source gauge');
+  out.push('civitai_app_watchdog_cpu_source{source="main-thread"} ' + (cpuSource === 'main-thread' ? 1 : 0));
+  out.push('civitai_app_watchdog_cpu_source{source="process"} ' + (cpuSource === 'process' ? 1 : 0));
 
   renderCaptureMetrics(out);
 
@@ -804,21 +799,21 @@ export function resolveCaptureConfig() {
     inspectorPort: parsePositiveInt(process.env.EVENTLOOP_WATCHDOG_INSPECTOR_PORT) ?? 9229,
     inspectorWaitMs: 5000,
     cdpTimeoutMs: 15_000,
-    uploadTimeoutMs: 30_000,
-    keyPrefix: process.env.CPU_PROFILE_S3_KEY_PREFIX ?? 'cpu-profiles/',
+    // Must match the harvester's PROFILE_DIR (default /tmp in the
+    // cpu-profile-harvester CronJob). A mismatch is silent on both sides: the app
+    // writes happily and the sweep finds nothing.
+    dir: process.env.CPU_PROFILE_DIR ?? '/tmp',
+    // Backlog ceiling, not a rate limit — maxPerHour is the rate limit. The harvester
+    // collects up to MAX_FILES_PER_POD=3 per 15-minute run, so 3 is one full run of
+    // slack before the pod starts refusing to write.
+    maxFilesOnDisk: clamp(
+      parsePositiveInt(process.env.EVENTLOOP_WATCHDOG_MAX_PROFILES_ON_DISK) ?? 3,
+      1,
+      20
+    ),
     pool: process.env.SERVICE_NAME ?? 'unknown',
     pod: resolvePodName(),
     imageTag: process.env.APP_VERSION ?? process.env.IMAGE_TAG ?? 'unknown',
-  };
-}
-
-function resolveS3Config() {
-  return {
-    endpoint: process.env.CPU_PROFILE_S3_ENDPOINT ?? '',
-    bucket: process.env.CPU_PROFILE_S3_BUCKET ?? '',
-    region: process.env.CPU_PROFILE_S3_REGION ?? 'us-east-1',
-    accessKeyId: process.env.CPU_PROFILE_S3_ACCESS_KEY_ID ?? '',
-    secretKey: process.env.CPU_PROFILE_S3_SECRET_ACCESS_KEY ?? '',
   };
 }
 
@@ -877,17 +872,14 @@ export function registerEventLoopWatchdog(): void {
     const captureConfig = resolveCaptureConfig();
 
     // Fail LOUDLY at boot rather than during the first wedge, when nobody is reading
-    // logs for a capture that silently never happened.
+    // logs for a capture that silently went nowhere. The directory is the whole
+    // contract with the harvester and a mismatch is invisible from both sides.
     if (captureConfig.enabled) {
-      const s3 = resolveS3Config();
-      const missing = (['endpoint', 'bucket', 'accessKeyId', 'secretKey'] as const).filter(
-        (k) => !s3[k]
-      );
-      if (missing.length) {
+      try {
+        fs.accessSync(captureConfig.dir, fs.constants.W_OK);
+      } catch {
         console.error(
-          `[eventloop-watchdog] capture is ENABLED but S3 config is incomplete (missing ${missing.join(
-            ', '
-          )}); wedges will be captured and the upload will fail`
+          `[eventloop-watchdog] capture is ENABLED but ${captureConfig.dir} is not writable; wedges will be captured and then dropped`
         );
       }
     }
@@ -905,11 +897,10 @@ export function registerEventLoopWatchdog(): void {
         token: process.env.WEBHOOK_TOKEN ?? '',
         heartbeatIntervalMs,
         pollMs: Math.min(DEFAULT_POLL_MS, heartbeatIntervalMs),
-        // Resolved on the MAIN thread at spawn, so a missing credential is a boot-time
-        // fact rather than something discovered during the first wedge.
+        // Resolved on the MAIN thread at spawn, so a bad config is a boot-time fact
+        // rather than something discovered during the first wedge.
         cap: captureConfig,
         starvedRatio: resolveStarvedRatio(),
-        s3: resolveS3Config(),
       },
       // The watchdog must never be the reason the process stays up.
       stdout: false,
