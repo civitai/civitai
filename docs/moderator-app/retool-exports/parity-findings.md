@@ -171,6 +171,48 @@ against a live screenshot of `Buzz`, which matches the export exactly.
 other page's layout is still unchecked, and only `user-lookup-v2` has a re-extracted inventory with
 geometry — the other seven exports predate it.
 
+## From the ClickUp ticket and its 13 screenshots (2026-08-09)
+
+**The User Lookup subtask (`868kn6x1b`) carries a requirements list nobody has been porting from.** The
+migration has been driven by the JSON exports, which describe what Retool *does*. The ticket describes
+what the moderation team *asked for* — including things Retool does badly. Several items match findings
+already logged here, which is corroboration from the people who use the tool; several have never been
+looked at. Its 13 screenshots are the first look at pages other than Buzz.
+
+Confirmed by screenshot, already logged above, now with evidence:
+
+- **Reports** is two tabs, `Reports Received` / `Reports Submitted`, with a **Status filter** and
+  **803 rows** for one account. Ours has no filter, a hard 50-row cap, and one merged list.
+- **View Buzz** is **Payments | Receipts side by side** — the ticket's "buzz needs to be split into
+  received/sent out" — each with its own type filter, plus a Description filter, an *After date*
+  picker, and a **Color** column per transaction. Ours is a single unfiltered list. The ticket also
+  says explicitly that 50 entries is too few for support to troubleshoot.
+
+New, not previously logged:
+
+- [ ] **"Talked to a mod" is a red button in the persistent header that opens a `Chats with Mods`
+      modal** listing chat ids. The ticket asks for it "clearly at the top". We surface prior mod
+      contact nowhere.
+- [ ] **A persistent header across every section**: strike count, "Talked to a mod", subscription tier,
+      Force Logout, and username / user id / email fields. Ours puts these inside sections.
+- [ ] **An "Enable Edits" toggle guarding editable username/email fields.** The ticket wants this
+      limited to some mods — it is the "sub-permissions per app" requirement, and it is an *edit*
+      capability we have not ported at all.
+- [ ] **Report banners**: a pending/processing `UserReport` and any `CsamReport` should show "very
+      clearly at the top", with a way to action/unaction from this page. Related to the
+      `CsamReport`-read-nowhere finding above.
+- [ ] LoRA training metadata + a clickthrough to the orchestrator dashboard.
+- [ ] Multi-select comments to ToS/delete them.
+- [ ] Prompts *and blocked prompts* list; editable socials & bio; mod notes that wrap.
+
+⚠️ **The ticket body contains a live Freshdesk API key in plaintext.** It is in ClickUp, not in this
+repo — do not copy it here. It should be rotated and replaced with an env var reference, and this
+finding kept out of any public doc beyond this sentence.
+
+**Method note:** every one of these came from a screenshot or the ticket text, not from code review or
+the export. The exports describe behaviour; they do not describe what was asked for, and they only
+describe layout once re-extracted.
+
 ## Cross-cutting
 
 1. **Report `details` is dropped on every page that shows reports** — User Lookup, User Reports, Chat
