@@ -3,7 +3,11 @@
 // reaches several of them, and zod-validating every server var is a large,
 // entirely unused cost there. `env.IS_BUILD` still re-exports this, so existing
 // callsites are unchanged.
-const isNextBuild =
-  process.argv.some((arg) => arg.includes('next')) && process.argv.some((arg) => arg === 'build');
+// `process.argv` is Node-only and this module sits in `_app`'s client chunk graph
+// (via server/logging/client). Nothing evaluates it in a browser today, but an
+// unguarded read would throw TypeError the moment something imports IS_BUILD from
+// a component — with the graph guard and typecheck both still green.
+const argv = typeof process !== 'undefined' && Array.isArray(process.argv) ? process.argv : [];
+const isNextBuild = argv.some((arg) => arg.includes('next')) && argv.some((arg) => arg === 'build');
 
 export const IS_BUILD = process.env.IS_BUILD === 'true' || isNextBuild;
