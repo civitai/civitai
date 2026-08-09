@@ -191,32 +191,39 @@ describe('takedownCosmeticShopItem — pack scoping', () => {
     expect(ownerQuery?.where?.claimKey).toEqual({ in: ['pack-tx-1'] });
   });
 
-  // The placement sweep deliberately does NOT inherit the revoke's scope, and it
-  // was written the other way first. A pack's claim keys miss every holding
-  // obtained another way — the maker's own creator grant above all — so a scoped
-  // sweep leaves the abusive artwork up on everything its author placed it on,
-  // which is the one outcome the feature exists to prevent. The cost, accepted:
-  // someone holding the same sticker inside the pack and standalone loses all of
-  // their placements of it.
+  // A pack takedown archives the bundle and never delists its members, and it
+  // carries no per-member abuse designation — so sweeping here would remove
+  // every placement of every member site-wide while those members stay
+  // purchasable and immediately re-placeable. Incoherent under either answer to
+  // "should a pack takedown treat every member as abusive", so it waits for the
+  // ruling. Skipping is the additive direction.
   const sweepArgs = () => mocks.removePlacementsByCosmetic.mock.calls[0]?.[0];
 
-  it('sweeps placements of every member, not only the pack buyers', async () => {
+  it('does not sweep placements for a pack takedown', async () => {
     mocks.purchaseFindMany.mockResolvedValue([
       purchase('pack-tx-1'),
       purchase('pack-tx-2', OTHER_OWNER),
     ]);
     mocks.userCosmeticFindMany.mockResolvedValue([{ userId: PACK_BUYER }, { userId: OTHER_OWNER }]);
     await takedownCosmeticShopItem({ id: PACK_ID, reason: 'test', moderatorId: MODERATOR });
-    expect(sweepArgs()).not.toHaveProperty('placerIds');
-    expect(sweepArgs()?.cosmeticIds).toEqual([MEMBER_A, MEMBER_B]);
+    expect(mocks.removePlacementsByCosmetic).not.toHaveBeenCalled();
   });
 
-  // A pack that never sold revokes from nobody — but its members' artwork is
-  // still taken down, so the placements still come off.
-  it('still sweeps when the pack never sold and nothing was revoked', async () => {
-    mocks.userCosmeticFindMany.mockResolvedValue([{ userId: PACK_BUYER }, { userId: OTHER_OWNER }]);
+  // A single item DOES sweep, and unscoped — the member cosmetic is delisted
+  // everywhere by `delistPacksContaining`, so removing its placements is
+  // consistent with it no longer being for sale. Pinned so the pack guard
+  // cannot widen into the path that has to keep working.
+  it('sweeps every placement of a single-item takedown, unscoped by placer', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...packRow,
+      cosmeticId: MEMBER_A,
+      cosmetic: { createdById: 4001, creator: { username: 'someone' } },
+    });
+    mocks.purchaseFindMany.mockResolvedValue([purchase('single-tx')]);
+    mocks.userCosmeticFindMany.mockResolvedValue([{ userId: PACK_BUYER }]);
     await takedownCosmeticShopItem({ id: PACK_ID, reason: 'test', moderatorId: MODERATOR });
-    expect(sweepArgs()?.cosmeticIds).toEqual([MEMBER_A, MEMBER_B]);
+    expect(sweepArgs()?.cosmeticIds).toEqual([MEMBER_A]);
+    expect(sweepArgs()).not.toHaveProperty('placerIds');
   });
 
   it('a single-item takedown is still unscoped', async () => {

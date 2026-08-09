@@ -1,0 +1,13 @@
+-- Validates the constraint added NOT VALID by 20260809040000.
+--
+-- **Its own migration so it cannot share a transaction with the ALTER that
+-- added it.** Postgres holds every lock until the transaction ends, so an
+-- `ADD CONSTRAINT ... NOT VALID` and a `VALIDATE CONSTRAINT` in one transaction
+-- keep the ACCESS EXCLUSIVE from the first across the scan of the second — the
+-- exact blocking the split exists to avoid, plus an extra catalogue update.
+-- Run separately (or under autocommit), never inside `psql --single-transaction`
+-- together with the previous file.
+--
+-- The widened constraint accepts everything the old one did, so this cannot
+-- fail on existing rows.
+ALTER TABLE "Placement" VALIDATE CONSTRAINT "Placement_removedBy_check";

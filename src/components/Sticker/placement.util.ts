@@ -1,4 +1,6 @@
-import { useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { getQueryKey } from '@trpc/react-query';
+import { useCallback, useMemo } from 'react';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -67,6 +69,56 @@ export function useStickerPlacementCounts(imageIds: number[], enabled = true) {
   );
 
   return (data ?? {}) as Record<number, number>;
+}
+
+/**
+ * Drops one placement out of whatever is already cached, without refetching.
+ *
+ * `utils.placement.invalidate()` is the obvious call and the wrong one on a
+ * feed: the batch provider holds two queries per 100 cards, so a moderator
+ * removing a sticker after scrolling a couple of thousand images would refetch
+ * forty of them — and tRPC request batching is off by default, so that is forty
+ * HTTP requests for a change that affects one row. The removal is authoritative
+ * server-side; the client only has to stop drawing it.
+ *
+ * The detail query IS invalidated, by id: it is one request, and the surfaces
+ * that offer removal read it to decide whether the placement is still live.
+ */
+export function useForgetStickerPlacement() {
+  const queryClient = useQueryClient();
+  const utils = trpc.useUtils();
+
+  return useCallback(
+    async (placementId: number) => {
+      let imageId: number | undefined;
+
+      queryClient.setQueriesData<PlacedSticker[]>(
+        { queryKey: getQueryKey(trpc.placement.getStickerPlacements), exact: false },
+        (placements) => {
+          const hit = placements?.find((placement) => placement.id === placementId);
+          if (!hit) return placements;
+          imageId = hit.imageId;
+          return placements?.filter((placement) => placement.id !== placementId);
+        }
+      );
+
+      // Only when the placement was actually in a cached list, and only for its
+      // own image — the count is approved-only, so a pending row was never in it
+      // and decrementing would show one fewer sticker than are drawn.
+      if (imageId !== undefined)
+        queryClient.setQueriesData<Record<number, number>>(
+          { queryKey: getQueryKey(trpc.placement.getStickerPlacementCounts), exact: false },
+          (counts) => {
+            const current = counts?.[imageId as number];
+            if (!counts || !current) return counts;
+            return { ...counts, [imageId as number]: current - 1 };
+          }
+        );
+
+      await utils.placement.getStickerPlacementDetail.invalidate({ placementId });
+    },
+    [queryClient, utils]
+  );
 }
 
 export function useImagePlacementSpace(imageId?: number) {

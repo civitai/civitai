@@ -4,6 +4,7 @@ import { IconSticker, IconTrash } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { useForgetStickerPlacement } from '~/components/Sticker/placement.util';
 import type { ReactElement } from 'react';
 import { useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -174,12 +175,12 @@ export function StickerPlacementHoverCard({
  */
 function ModeratorRemove({ placementId }: { placementId: number }) {
   const currentUser = useCurrentUser();
-  const utils = trpc.useUtils();
+  const forget = useForgetStickerPlacement();
 
   const remove = trpc.placement.removePlacement.useMutation({
     onSuccess: async () => {
       showSuccessNotification({ message: 'Placement removed.' });
-      await utils.placement.invalidate();
+      await forget(placementId);
     },
     onError: (error) =>
       showErrorNotification({ title: "Couldn't remove it", error: new Error(error.message) }),

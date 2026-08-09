@@ -1,6 +1,7 @@
 import { Alert, Button, Group, Stack, Text } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconTrash } from '@tabler/icons-react';
+import { useForgetStickerPlacement } from '~/components/Sticker/placement.util';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -14,7 +15,7 @@ import { trpc } from '~/utils/trpc';
  * are taking down.
  */
 export function RemoveReportedPlacement({ placementId }: { placementId: number }) {
-  const utils = trpc.useUtils();
+  const forget = useForgetStickerPlacement();
 
   const { data: placement, isLoading } = trpc.placement.getStickerPlacementDetail.useQuery(
     { placementId },
@@ -28,7 +29,7 @@ export function RemoveReportedPlacement({ placementId }: { placementId: number }
           ? 'Placement removed.'
           : 'Nothing to remove — it had already been settled.',
       });
-      await utils.placement.invalidate();
+      await forget(placementId);
     },
     onError: (error) =>
       showErrorNotification({ title: "Couldn't remove it", error: new Error(error.message) }),

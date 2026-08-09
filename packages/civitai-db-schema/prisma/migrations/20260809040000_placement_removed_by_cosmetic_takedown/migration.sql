@@ -6,11 +6,13 @@
 --
 -- The column is TEXT; this constraint is the only thing that has to change.
 --
--- Two statements on purpose. A plain ADD CONSTRAINT ... CHECK takes ACCESS
--- EXCLUSIVE and scans every row with writes blocked; NOT VALID takes the lock
--- only long enough to record the constraint, and VALIDATE then scans under
--- SHARE UPDATE EXCLUSIVE, which writers do not queue behind. Run them
--- separately if "Placement" is large enough for the scan to matter.
+-- Added NOT VALID so this takes ACCESS EXCLUSIVE only long enough to record the
+-- constraint instead of holding it across a full table scan. It is enforced on
+-- every INSERT and UPDATE immediately — NOT VALID skips the check of EXISTING
+-- rows, nothing else — so stopping here is safe, just incomplete.
+--
+-- The scan lives in 20260809041000, which MUST run in its own transaction. See
+-- the note there.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Placement_removedBy_check') THEN
@@ -25,8 +27,3 @@ BEGIN
     ) NOT VALID;
 END
 $$;
-
--- The widened constraint accepts everything the old one did, so this cannot
--- fail on existing rows; it is here so the constraint stops being NOT VALID and
--- the planner can rely on it.
-ALTER TABLE "Placement" VALIDATE CONSTRAINT "Placement_removedBy_check";

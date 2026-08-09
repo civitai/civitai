@@ -1911,6 +1911,18 @@ export const takedownCosmeticShopItem = async ({
   // abusive artwork up on everything its author placed it on. See the note on
   // `removePlacementsByCosmetic`; the trade is deliberate and was tried the
   // other way first.
+  //
+  // **Single items only.** A pack takedown archives the bundle and never
+  // delists its members — that is the comment above, and it is deliberate,
+  // since a member sold standalone is not what was taken down. But this call
+  // takes no per-member abuse designation, so sweeping here would remove every
+  // placement of every member site-wide while those members stay purchasable:
+  // the artwork judged too abusive to sit on anyone's image, still on sale, and
+  // re-placeable the moment someone rebuys it. That is incoherent under either
+  // answer to "should a pack takedown treat every member as abusive", so the
+  // sweep waits for the ruling. Skipping is the additive direction — the
+  // per-member takedown that already exists does sweep, and widening this later
+  // removes nothing.
   // Rows a batch could not settle, excluded once they have failed twice.
   // `ORDER BY id` is stable, so a permanently failing row is re-selected first
   // every time and would otherwise burn all ten iterations. Excluding on the
@@ -1920,7 +1932,7 @@ export const takedownCosmeticShopItem = async ({
   const failureCount = new Map<number, number>();
   const unsettled: number[] = [];
   let placementsRemoved = { settled: 0, takenDown: 0, failed: 0, hasMore: false };
-  for (let batch = 0; batch < 10 && memberIds.length; batch++) {
+  for (let batch = 0; batch < 10 && memberIds.length && !isPack; batch++) {
     let result: Awaited<ReturnType<typeof removePlacementsByCosmetic>>;
     try {
       result = await removePlacementsByCosmetic({
@@ -1945,11 +1957,19 @@ export const takedownCosmeticShopItem = async ({
     placementsRemoved = {
       settled: placementsRemoved.settled + result.settled,
       takenDown: placementsRemoved.takenDown + result.takenDown,
-      failed: placementsRemoved.failed + result.failed.length,
+      // Distinct rows, not attempts — a row is selected again on its retry, so
+      // summing per-batch failures reports double what is actually stuck.
+      failed: failureCount.size,
       hasMore: result.hasMore,
     };
     if (!result.hasMore) break;
   }
+
+  if (isPack && memberIds.length)
+    await logTakedown('info', 'Placement sweep skipped for a pack takedown', {
+      shopItemId: id,
+      cosmeticIds: memberIds,
+    });
 
   if (placementsRemoved.hasMore || placementsRemoved.failed)
     await logTakedown('error', 'Placement takedown left work behind', {
