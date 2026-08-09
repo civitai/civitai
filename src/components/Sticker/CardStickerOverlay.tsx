@@ -6,6 +6,8 @@ import { useStickerRevealStore } from '~/store/sticker-reveal.store';
 
 type Box = { width: number; height: number; left: number; top: number };
 
+const CARD_ARTWORK_WIDTH = 128;
+
 const same = (a: Box | null, b: Box) =>
   !!a && a.width === b.width && a.height === b.height && a.left === b.left && a.top === b.top;
 
@@ -123,6 +125,11 @@ export function CardStickerOverlay({ imageId }: { imageId: number }) {
             placements={placements}
             viewerId={currentUser?.id}
             interactive={false}
+            sticker={batch?.sticker}
+            // A card is ~450px wide and a sticker is a fraction of it, so 512
+            // is roughly eight times the linear resolution it draws at, on the
+            // hottest path in the product.
+            artworkWidth={CARD_ARTWORK_WIDTH}
           />
         </div>
       )}

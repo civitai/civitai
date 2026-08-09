@@ -1,5 +1,7 @@
 import { createContext, useContext, useMemo } from 'react';
 import type { PlacedSticker } from '~/components/Sticker/placement.util';
+import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
+import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useStickerRevealStore } from '~/store/sticker-reveal.store';
@@ -11,6 +13,7 @@ const PLACEMENT_FETCH_CHUNK = 100;
 type StickerPlacementBatch = {
   counts: Record<number, number>;
   byImage: Map<number, PlacedSticker[]>;
+  sticker: Map<number, ResolvedSticker>;
 };
 
 const StickerPlacementBatchContext = createContext<StickerPlacementBatch | null>(null);
@@ -91,7 +94,22 @@ export function StickerPlacementBatchProvider({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [placementQueries.map((query) => query.dataUpdatedAt).join(',')]);
 
-  const value = useMemo(() => ({ counts, byImage }), [counts, byImage]);
+  // Resolved here rather than per card. `useStickerCosmetics` chunks at 100 ids
+  // and caches forever, so a whole feed's artwork is a handful of requests —
+  // where a card resolving its own is a request per distinct sticker set, which
+  // is a request per card as soon as stickers vary. Batching the placements and
+  // then paying per card for the artwork needed to draw them would have left the
+  // headline property of this provider true only for the cheap half.
+  const cosmeticIds = useMemo(() => {
+    const ids: number[] = [];
+    for (const placements of byImage.values())
+      for (const placement of placements) ids.push(placement.data.cosmeticId);
+    return ids;
+  }, [byImage]);
+
+  const { sticker } = useStickerCosmetics(cosmeticIds);
+
+  const value = useMemo(() => ({ counts, byImage, sticker }), [counts, byImage, sticker]);
 
   if (!enabled) return <>{children}</>;
 
@@ -120,6 +138,7 @@ export function useStickerPlacementBatch(imageId: number) {
       count: batch.counts[imageId] ?? 0,
       placements,
       pending: placements.filter((placement) => placement.isPending),
+      sticker: batch.sticker,
     };
   }, [batch, imageId]);
 }
