@@ -1905,14 +1905,19 @@ export const takedownCosmeticShopItem = async ({
   // and one pass would report a clean takedown with the artwork still up.
   // Capped so a runaway cannot hold the request; `hasMore` says to run again.
   //
-  // Scoped to the placers whose holding was actually revoked whenever the
-  // revoke itself was scoped — a pack's members are sold standalone too, and
-  // taking down the bundle is not grounds for removing a placement made with a
-  // copy bought on its own. `ownerIds` is exactly who lost the cosmetic here.
-  const placerIds = packClaimKeys ? ownerIds : undefined;
-  // Rows a batch could not settle, excluded from the next one. `ORDER BY id` is
-  // stable, so without this a permanently failing row is re-selected first every
-  // time and the drain burns all ten iterations on it.
+  // Not scoped to `ownerIds`, though the revoke above is. A pack's claim keys
+  // exclude every holding obtained by another route, and the sharpest of those
+  // is the maker's own creator grant — scoping the sweep the same way leaves the
+  // abusive artwork up on everything its author placed it on. See the note on
+  // `removePlacementsByCosmetic`; the trade is deliberate and was tried the
+  // other way first.
+  // Rows a batch could not settle, excluded once they have failed twice.
+  // `ORDER BY id` is stable, so a permanently failing row is re-selected first
+  // every time and would otherwise burn all ten iterations. Excluding on the
+  // FIRST failure instead would give a transient Buzz or Redis blip zero
+  // retries, and nothing re-runs a takedown afterwards — so each row gets one
+  // more go before the sweep stops spending batches on it.
+  const failureCount = new Map<number, number>();
   const unsettled: number[] = [];
   let placementsRemoved = { settled: 0, takenDown: 0, failed: 0, hasMore: false };
   for (let batch = 0; batch < 10 && memberIds.length; batch++) {
@@ -1920,7 +1925,6 @@ export const takedownCosmeticShopItem = async ({
     try {
       result = await removePlacementsByCosmetic({
         cosmeticIds: memberIds,
-        placerIds,
         skipIds: unsettled,
         actorId: moderatorId,
       });
@@ -1933,7 +1937,11 @@ export const takedownCosmeticShopItem = async ({
       break;
     }
 
-    unsettled.push(...result.failed);
+    for (const placementId of result.failed) {
+      const failures = (failureCount.get(placementId) ?? 0) + 1;
+      failureCount.set(placementId, failures);
+      if (failures > 1) unsettled.push(placementId);
+    }
     placementsRemoved = {
       settled: placementsRemoved.settled + result.settled,
       takenDown: placementsRemoved.takenDown + result.takenDown,

@@ -275,6 +275,13 @@ export async function getStickerPlacementDetail({
    * pending, with no action offered. Widened for moderators specifically rather
    * than loosened for everyone: the rule that a pending placement is visible to
    * exactly the placer and the owner is what stops it being enumerable.
+   *
+   * **Widened to the other live status, not to every status.** Dropping the
+   * filter would also return declined, expired and removed rows, and every
+   * consumer reads a miss here as "this placement is already gone" — so a
+   * second moderator opening a report someone else has already actioned would
+   * be offered a remove button for a removed placement, told no Buzz moves,
+   * and handed an error when they pressed it.
    */
   isModerator?: boolean;
 }) {
@@ -283,7 +290,7 @@ export async function getStickerPlacementDetail({
       id: placementId,
       surface: SURFACE,
       OR: isModerator
-        ? undefined
+        ? [{ status: 'approved' }, { status: 'pending' }]
         : [
             { status: 'approved' },
             ...(viewerId

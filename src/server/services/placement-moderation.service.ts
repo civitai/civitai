@@ -271,30 +271,32 @@ export async function removePlacementByModerator({
  * the row has to be able to tell "this placer's sticker was abusive, escrow
  * forfeit" from "the artwork's maker was taken down, placer is a victim", and
  * that distinction decides who gets compensated.
+ *
+ * **Not scoped to the placers whose holding was revoked, deliberately, and it
+ * was tried the other way first.** `revokeCosmeticsFromUsers` scopes a pack to
+ * the claim keys it granted, and inheriting that scope here looks fairer: it
+ * spares someone who bought a member standalone. It also defeats the function.
+ * `UserCosmetic`'s key is `[userId, cosmeticId, claimKey]`, so a holding
+ * obtained by any route other than that purchase — above all **the maker's own
+ * creator grant** — is not in the scope. The person the takedown exists to stop
+ * would be the one person whose placements survived it.
+ *
+ * There is no third option: a `Placement` records a cosmetic id and nothing
+ * about which holding paid for it, and `spendStickerUses` drains across
+ * holdings without recording which one funded which placement. Placer identity
+ * is a proxy that is wrong in both directions by construction. So the sweep
+ * follows the artwork, and the cost is real and accepted: someone who owns the
+ * same sticker both inside a taken-down pack and standalone loses all of their
+ * placements of it. Pending ones refund in full; approved ones were already
+ * paid out to content owners and move no money either way.
  */
 export async function removePlacementsByCosmetic({
   cosmeticIds,
-  placerIds,
   skipIds,
   actorId,
   limit = 200,
 }: {
   cosmeticIds: number[];
-  /**
-   * Restricts the sweep to placers whose holding was actually revoked.
-   *
-   * A **pack** takedown needs this, and omitting it removes placements from
-   * people the takedown deliberately leaves alone: `revokeCosmeticsFromUsers` is
-   * scoped by the pack's claim keys, because a member sold standalone is not
-   * what was taken down. Unscoped, someone who bought that member on its own
-   * keeps the cosmetic, gets no refund, and still has their approved placement
-   * removed.
-   *
-   * An EMPTY array means "nobody qualifies" and sweeps nothing. Treating it as
-   * absent would widen a scoped sweep into an unscoped one, which is the bug
-   * this parameter exists to prevent.
-   */
-  placerIds?: number[];
   /** Rows a previous batch in the same run could not settle — see below. */
   skipIds?: number[];
   actorId: number;
@@ -303,22 +305,19 @@ export async function removePlacementsByCosmetic({
   const empty = { considered: 0, settled: 0, failed: [] as number[], takenDown: 0, hasMore: false };
   const ids = [...new Set(cosmeticIds)];
   if (!ids.length) return empty;
-  if (placerIds && !placerIds.length) return empty;
 
-  const placers = placerIds ? [...new Set(placerIds)] : null;
   // Rows that already failed this run are excluded rather than re-selected.
   // `ORDER BY id` is stable, so a permanently failing pending row is picked
   // first by every subsequent batch — 200 of them and the sweep makes zero
   // progress across every iteration of the drain while reporting `hasMore`.
   const skip = skipIds?.length ? [...new Set(skipIds)] : null;
 
-  // Composed as fragments rather than `(${placers}::int[] IS NULL OR …)`.
-  // Whether a JS `null` bound to an array parameter arrives as a castable SQL
-  // NULL is a driver behaviour, and this layer's tests mock Prisma, so nothing
-  // would execute it before production — where the failure is a throw that
-  // fails the sweep closed and leaves the artwork up. An absent filter is not a
-  // filter that has to evaluate to true.
-  const placerFilter = placers ? Prisma.sql`AND "placerId" = ANY(${placers}::int[])` : Prisma.empty;
+  // Composed as a fragment rather than `(${skip}::int[] IS NULL OR …)`. Whether
+  // a JS `null` bound to an array parameter arrives as a castable SQL NULL is a
+  // driver behaviour, and this layer's tests mock Prisma, so nothing would
+  // execute it before production — where the failure is a throw that fails the
+  // sweep closed and leaves the artwork up. An absent filter is not a filter
+  // that has to evaluate to true.
   const skipFilter = skip ? Prisma.sql`AND NOT (id = ANY(${skip}::int[]))` : Prisma.empty;
 
   // Raw, because the cosmetic id lives inside `data` and Prisma's JSON path
@@ -330,7 +329,6 @@ export async function removePlacementsByCosmetic({
       WHERE surface = 'sticker'
         AND status = ${status}
         AND ("data"->>'cosmeticId')::int = ANY(${ids}::int[])
-        ${placerFilter}
         ${skipFilter}
       ORDER BY id
       LIMIT ${limit}

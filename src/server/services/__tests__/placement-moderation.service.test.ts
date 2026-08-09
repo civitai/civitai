@@ -364,13 +364,21 @@ describe('removing every placement made with a revoked cosmetic', () => {
 
   // Index-independent: the query composes optional fragments, so asserting a
   // positional argument would quietly point at the wrong value the moment the
-  // SQL gains one. A `Prisma.Sql` fragment carries its own `values`.
+  // SQL gains one. A `Prisma.Sql` fragment carries its own `strings`/`values`.
+  const hasFragment = (arg: unknown): arg is { strings: string[]; values: unknown[] } =>
+    !!arg && typeof arg === 'object' && 'strings' in (arg as object);
+
   const rawValues = (call: unknown[]) =>
-    call.flatMap((arg) =>
-      arg && typeof arg === 'object' && 'values' in (arg as { values?: unknown[] })
-        ? (arg as { values: unknown[] }).values
-        : [arg]
-    );
+    call.flatMap((arg) => (hasFragment(arg) ? arg.values : [arg]));
+
+  // The bound values alone say nothing about the predicate they are bound to:
+  // swapping `"placerId"` for `"ownerId"` would keep every value assertion
+  // green while removing placements ON the wrong people's content.
+  const rawSql = (call: unknown[]) => {
+    const parts = [...(call[0] as string[])];
+    for (const arg of call.slice(1)) if (hasFragment(arg)) parts.push(...arg.strings);
+    return parts.join(' ');
+  };
 
   const rows = (pending: number[], approved: number[]) =>
     queryRaw
@@ -433,35 +441,21 @@ describe('removing every placement made with a revoked cosmetic', () => {
     expect(result.hasMore).toBe(true);
   });
 
-  // A pack's members are sold standalone too, and `revokeCosmeticsFromUsers` is
-  // scoped by the pack's claim keys for exactly that reason. Unscoped here,
-  // someone who bought a member on its own keeps the cosmetic, gets no refund,
-  // and still loses the placement they paid for.
-  it('sweeps only the placers whose holding was revoked, when told to', async () => {
+  // Scoping this to the placers whose holding was revoked was tried and undone.
+  // `UserCosmetic`'s key is [userId, cosmeticId, claimKey], so a pack's claim
+  // keys miss every holding obtained another way — above all the maker's own
+  // creator grant, which would leave the abusive artwork up on everything its
+  // author placed it on. The sweep follows the artwork, not the placer.
+  it('does not narrow the sweep by who placed it', async () => {
     rows([], [4406]);
     placementUpdateMany.mockResolvedValue({ count: 1 });
 
     await removePlacementsByCosmetic({
       cosmeticIds: [COSMETIC, PACK_MEMBER],
-      placerIds: [777, 778],
       actorId: MODERATOR,
     });
 
-    expect(rawValues(queryRaw.mock.calls[0])).toContainEqual([777, 778]);
-  });
-
-  // Empty must mean "nobody qualifies", not "no filter" — a pack whose only sale
-  // was already refunded revokes from nobody, and widening that to unscoped
-  // would strip every placement of every member from everyone.
-  it('sweeps nothing when the scoped set of placers is empty', async () => {
-    const result = await removePlacementsByCosmetic({
-      cosmeticIds: [COSMETIC],
-      placerIds: [],
-      actorId: MODERATOR,
-    });
-
-    expect(queryRaw).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ considered: 0, takenDown: 0, hasMore: false });
+    expect(rawSql(queryRaw.mock.calls[0])).not.toContain('placerId');
   });
 
   // ORDER BY id is stable, so a row that cannot settle is picked first by every
@@ -477,6 +471,7 @@ describe('removing every placement made with a revoked cosmetic', () => {
     });
 
     expect(rawValues(queryRaw.mock.calls[0])).toContainEqual([4407, 4408]);
+    expect(rawSql(queryRaw.mock.calls[0])).toContain('NOT (id = ANY');
   });
 
   it('does nothing at all with no cosmetics to act on', async () => {

@@ -191,41 +191,32 @@ describe('takedownCosmeticShopItem — pack scoping', () => {
     expect(ownerQuery?.where?.claimKey).toEqual({ in: ['pack-tx-1'] });
   });
 
-  // The placement sweep has to inherit the revoke's scope. Unscoped, it removes
-  // placements made with a member someone bought standalone — that person keeps
-  // the cosmetic, gets no refund, and still loses the placement they paid for.
+  // The placement sweep deliberately does NOT inherit the revoke's scope, and it
+  // was written the other way first. A pack's claim keys miss every holding
+  // obtained another way — the maker's own creator grant above all — so a scoped
+  // sweep leaves the abusive artwork up on everything its author placed it on,
+  // which is the one outcome the feature exists to prevent. The cost, accepted:
+  // someone holding the same sticker inside the pack and standalone loses all of
+  // their placements of it.
   const sweepArgs = () => mocks.removePlacementsByCosmetic.mock.calls[0]?.[0];
 
-  it('scopes the placement sweep to the placers whose holdings it revoked', async () => {
+  it('sweeps placements of every member, not only the pack buyers', async () => {
     mocks.purchaseFindMany.mockResolvedValue([
       purchase('pack-tx-1'),
       purchase('pack-tx-2', OTHER_OWNER),
     ]);
     mocks.userCosmeticFindMany.mockResolvedValue([{ userId: PACK_BUYER }, { userId: OTHER_OWNER }]);
     await takedownCosmeticShopItem({ id: PACK_ID, reason: 'test', moderatorId: MODERATOR });
-    expect(sweepArgs()?.placerIds).toEqual([PACK_BUYER, OTHER_OWNER]);
+    expect(sweepArgs()).not.toHaveProperty('placerIds');
+    expect(sweepArgs()?.cosmeticIds).toEqual([MEMBER_A, MEMBER_B]);
   });
 
-  it('sweeps nobody when the pack never sold, even though the members have owners', async () => {
+  // A pack that never sold revokes from nobody — but its members' artwork is
+  // still taken down, so the placements still come off.
+  it('still sweeps when the pack never sold and nothing was revoked', async () => {
     mocks.userCosmeticFindMany.mockResolvedValue([{ userId: PACK_BUYER }, { userId: OTHER_OWNER }]);
     await takedownCosmeticShopItem({ id: PACK_ID, reason: 'test', moderatorId: MODERATOR });
-    expect(sweepArgs()?.placerIds).toEqual([]);
-  });
-
-  // A single item revokes from everyone who holds it, so the sweep is unscoped
-  // to match. Pinned so the scoping added for packs cannot leak into this path
-  // and quietly leave placements up.
-  it('leaves the sweep unscoped for a single-item takedown', async () => {
-    mocks.shopItemFindUnique.mockResolvedValue({
-      ...packRow,
-      cosmeticId: MEMBER_A,
-      cosmetic: { createdById: 4001, creator: { username: 'someone' } },
-    });
-    mocks.purchaseFindMany.mockResolvedValue([purchase('single-tx')]);
-    mocks.userCosmeticFindMany.mockResolvedValue([{ userId: PACK_BUYER }]);
-    await takedownCosmeticShopItem({ id: PACK_ID, reason: 'test', moderatorId: MODERATOR });
-    expect(sweepArgs()?.placerIds).toBeUndefined();
-    expect(sweepArgs()?.cosmeticIds).toEqual([MEMBER_A]);
+    expect(sweepArgs()?.cosmeticIds).toEqual([MEMBER_A, MEMBER_B]);
   });
 
   it('a single-item takedown is still unscoped', async () => {

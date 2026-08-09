@@ -10,6 +10,35 @@ const same = (a: Box | null, b: Box) =>
   !!a && a.width === b.width && a.height === b.height && a.left === b.left && a.top === b.top;
 
 /**
+ * Layout position of `el` relative to `stop`, walking the offset chain.
+ *
+ * `offsetLeft`/`offsetTop` rather than `getBoundingClientRect`, because both
+ * card templates scale the media on hover and a rect includes transforms while
+ * a `ResizeObserver` does not fire on one. Measuring with a rect while the
+ * pointer happened to be resting on the card — which is normal, it is the card
+ * you are about to click — captures a box 5% too large and never corrects it.
+ *
+ * The two elements do not share an `offsetParent`: the media sits inside a
+ * positioned link, the overlay is a sibling of that link. Hence the walk rather
+ * than a subtraction of two `offsetLeft`s.
+ */
+const offsetWithin = (el: HTMLElement, stop: Element | null) => {
+  let x = 0;
+  let y = 0;
+  let current: HTMLElement | null = el;
+
+  while (current && current !== stop) {
+    x += current.offsetLeft;
+    y += current.offsetTop;
+    current = current.offsetParent as HTMLElement | null;
+  }
+
+  // Ran off the top without reaching `stop`, so the two are not in one offset
+  // chain and any number here would be a guess.
+  return current === stop ? { x, y } : null;
+};
+
+/**
  * Placed stickers on a feed card.
  *
  * Positions are fractions of the artwork's bounds, so the overlay has to be the
@@ -57,14 +86,19 @@ export function CardStickerOverlay({ imageId }: { imageId: number }) {
     if (!media) return;
 
     const measure = () => {
-      const outer = node.getBoundingClientRect();
-      const inner = media.getBoundingClientRect();
-      if (inner.width <= 0 || inner.height <= 0) return;
+      const element = media as HTMLElement;
+      if (element.offsetWidth <= 0 || element.offsetHeight <= 0) return;
+
+      const stop = node.offsetParent;
+      const at = offsetWithin(element, stop);
+      const self = offsetWithin(node, stop);
+      if (!at || !self) return;
+
       const next = {
-        width: inner.width,
-        height: inner.height,
-        left: inner.left - outer.left,
-        top: inner.top - outer.top,
+        width: element.offsetWidth,
+        height: element.offsetHeight,
+        left: at.x - self.x,
+        top: at.y - self.y,
       };
       // Rects come back fractional and a ResizeObserver fires on every layout
       // pass, so setting state unconditionally re-renders the whole overlay
