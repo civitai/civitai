@@ -69,8 +69,17 @@ const prismaMetricsFailures =
 
 // Seeded so a healthy pod reports an observable 0 rather than `no data` — an
 // absent series here is indistinguishable from a scrape that never checked.
-prismaMetricsFailures.inc({ type: 'read' }, 0);
-prismaMetricsFailures.inc({ type: 'write' }, 0);
+//
+// Guarded because this runs at MODULE SCOPE: the `as` cast above is unchecked,
+// so if this name is ever registered elsewhere with a different type or
+// labelset, `inc` throws while the route module is evaluating and 500s the
+// whole scrape — the exact failure the rest of this block exists to prevent.
+try {
+  prismaMetricsFailures.inc({ type: 'read' }, 0);
+  prismaMetricsFailures.inc({ type: 'write' }, 0);
+} catch {
+  // Seeding is a readability nicety; losing it must not cost the scrape.
+}
 
 async function collectPrismaMetrics(db: typeof dbRead | typeof dbWrite, type: 'read' | 'write') {
   try {
