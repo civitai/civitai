@@ -78,6 +78,7 @@ import {
   getImageResources,
   getReportViolationDetailsForImages,
   getResourceIdsForImages,
+  filterPinnedImagesToVersion,
   getTagNamesForImages,
   moderateImages,
 } from './../services/image.service';
@@ -435,10 +436,10 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const { items: pinnedPostsImages } = await getAllImages({
         ...input,
         domain: getRequestBoardDomainColor(ctx.req),
-        // Don't filter by model version/model for pinned posts â€” we already have
-        // exact postIds. The ImageResourceNew join that modelVersionId triggers
-        // excludes videos and other media that lack resource-detection entries,
-        // causing pinned posts with videos to silently disappear from the gallery.
+        // Fetch the posts whole and narrow them with filterPinnedImagesToVersion
+        // below. The ImageResourceNew join that modelVersionId triggers is an
+        // inner join, so filtering it here drops media with no resource-detection
+        // entries, which is what made pinned posts with videos disappear.
         modelVersionId: undefined,
         modelId: undefined,
         reviewId: undefined,
@@ -453,17 +454,14 @@ export const getImagesAsPostsInfiniteHandler = async ({
         dbTarget: 'datapacket',
       });
 
-      for (const image of pinnedPostsImages) {
+      const versionPinnedImages = input.modelVersionId
+        ? await filterPinnedImagesToVersion(pinnedPostsImages, input.modelVersionId)
+        : pinnedPostsImages;
+
+      for (const image of versionPinnedImages) {
         if (!image?.postId) continue;
         if (!pinned[image.postId]) pinned[image.postId] = [];
         pinned[image.postId].push(image);
-      }
-
-      // Build per-post image count map to see which posts got partial vs zero results
-      const imagesPerPost: Record<number, number> = {};
-      for (const id of versionPinnedPosts) imagesPerPost[id] = 0;
-      for (const img of pinnedPostsImages) {
-        if (img.postId) imagesPerPost[img.postId] = (imagesPerPost[img.postId] ?? 0) + 1;
       }
     }
 
