@@ -3723,6 +3723,13 @@ export type UserCosmetic = {
   forType: CosmeticEntity | null;
   remaining: number | null;
 };
+export type UserCosmeticShopItemResale = {
+  userId: number;
+  shopItemId: number;
+  sellerShare: number;
+  index: Generated<number>;
+  createdAt: Generated<Timestamp>;
+};
 export type UserCosmeticShopItemWishlist = {
   userId: number;
   shopItemId: number;
@@ -3800,6 +3807,10 @@ export type UserProfile = {
   bio: string | null;
   message: string | null;
   messageAddedAt: Timestamp | null;
+  sfwCoverImageId: number | null;
+  sfwBio: string | null;
+  sfwMessage: string | null;
+  sfwMessageAddedAt: Timestamp | null;
   location: string | null;
   nsfw: Generated<boolean>;
   privacySettings: Generated<unknown>;
@@ -4302,6 +4313,7 @@ export type DB = {
   TrustedSpokeDomain: TrustedSpokeDomain;
   User: User;
   UserCosmetic: UserCosmetic;
+  UserCosmeticShopItemResale: UserCosmeticShopItemResale;
   UserCosmeticShopItemWishlist: UserCosmeticShopItemWishlist;
   UserCosmeticShopPurchaseCosmetic: UserCosmeticShopPurchaseCosmetic;
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;

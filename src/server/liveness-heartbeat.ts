@@ -13,10 +13,10 @@ import {
  * event loop pins, and an httpGet liveness probe (served by that SAME loop)
  * times out — so the kubelet SIGKILLs a pod that is busy-but-ALIVE, which
  * cold-restarts it and AMPLIFIES the wave (cold-start module compilation re-pins
- * the loop → fails again → cascade). See the liveness history in
- * datapacket-talos `deployment-api.yaml`. The prior mitigation just widened the
- * probe tolerance to ~15min — a band-aid on a signal (probe-response latency)
- * that fundamentally can't tell "busy" from "dead".
+ * the loop → fails again → cascade). The prior mitigation just widened the probe
+ * tolerance to ~15min — a band-aid on a signal (probe-response latency) that
+ * fundamentally can't tell "busy" from "dead"; the deployment configuration's
+ * own history is the record of that, and is where the probe is defined.
  *
  * This writes the current epoch-SECONDS to a file every 2s, ON the event loop.
  * A k8s EXEC liveness probe then checks the file's staleness, e.g.:
@@ -27,8 +27,10 @@ import {
  * is reaped. That is the correct "tolerate busy, detect dead" semantics, with a
  * real loop-liveness signal instead of probe-latency tolerance tuning.
  *
- * Epoch-SECONDS (not ms) because the runner image is node:24-alpine3.24 → busybox
- * `date` has no `%N`; the probe reads seconds with `date +%s`.
+ * Epoch-SECONDS (not ms) because the runner image is Alpine-based → busybox `date`
+ * has no `%N`; the probe reads seconds with `date +%s`. (Deliberately not naming a
+ * Node tag here: the exact base image is pinned in one place, the Dockerfile, and a
+ * copy of it in a comment is a copy that goes stale without anything noticing.)
  *
  * The same tick also stores a MILLISECOND timestamp into the event-loop watchdog's
  * SharedArrayBuffer, which a worker thread reads to detect a wedge off-loop. One
@@ -57,7 +59,7 @@ export function registerLivenessHeartbeat() {
   if (started) return;
   started = true;
 
-  // Ensure the parent dir exists so the first write doesn't ENOENT. In the prod node:20-alpine pods `/tmp`
+  // Ensure the parent dir exists so the first write doesn't ENOENT. In the Alpine runtime image `/tmp`
   // already exists (mkdir recursive is a no-op), so the probe path is unchanged; on a Windows dev box
   // `/tmp/heartbeat` resolves to `C:\tmp\heartbeat`, whose parent doesn't exist — without this every 2s tick
   // logged an ENOENT. Best-effort: if mkdir fails, write() below still logs the persistent failure once.

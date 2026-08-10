@@ -161,6 +161,12 @@ export default defineNextConfig(
       'redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series',
       '@opentelemetry/sdk-node', '@opentelemetry/instrumentation', '@opentelemetry/instrumentation-http',
       '@opentelemetry/instrumentation-redis', '@prisma/instrumentation',
+      // Bundling this gives the app layer its own copy of the Prisma runtime while
+      // `dbRead`/`dbWrite` (reached through the transpiled `@civitai/db-schema`) hold a
+      // second one. `$queryRaw` identifies its template argument with `instanceof Sql`,
+      // so a `Prisma.join()` built by the other copy fails that check and is bound as a
+      // plain value -> `operator does not exist: integer = jsonb`.
+      '@prisma/client',
       // NOTE: the logs-pipeline packages (@opentelemetry/api, /api-logs, /sdk-logs,
       // /exporter-logs-otlp-proto) are deliberately NOT externalized here. Adding them
       // fails the image build, so it needs to be its own change with a full build as its

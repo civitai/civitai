@@ -20,6 +20,8 @@ const { mocks } = vi.hoisted(() => ({
     purchaseFindMany: vi.fn(),
     purchaseUpdate: vi.fn(),
     userCosmeticFindMany: vi.fn(),
+    resaleFindMany: vi.fn(),
+    resaleDeleteMany: vi.fn(),
     userFindUnique: vi.fn(),
     revokeCosmeticsFromUsers: vi.fn(),
     refundMultiAccountTransaction: vi.fn(),
@@ -36,6 +38,7 @@ vi.mock('~/server/db/client', () => ({
     cosmeticShopItemCosmetic: { findMany: mocks.packMemberFindMany },
     userCosmeticShopPurchases: { findMany: mocks.purchaseFindMany },
     userCosmetic: { findMany: mocks.userCosmeticFindMany },
+    userCosmeticShopItemResale: { findMany: mocks.resaleFindMany },
     user: { findUnique: mocks.userFindUnique },
   },
   dbWrite: {
@@ -45,6 +48,7 @@ vi.mock('~/server/db/client', () => ({
       updateMany: mocks.shopItemUpdateMany,
     },
     cosmeticShopSectionItem: { deleteMany: mocks.sectionItemDeleteMany },
+    userCosmeticShopItemResale: { deleteMany: mocks.resaleDeleteMany },
     userCosmeticShopPurchases: { findMany: mocks.purchaseFindMany, update: mocks.purchaseUpdate },
     userCosmetic: { findMany: mocks.userCosmeticFindMany },
   },
@@ -107,6 +111,7 @@ beforeEach(() => {
   mocks.purchaseFindMany.mockResolvedValue([]);
   mocks.userCosmeticFindMany.mockResolvedValue([]);
   mocks.userFindUnique.mockResolvedValue({ settings: {} });
+  mocks.resaleFindMany.mockResolvedValue([]);
   mocks.shopItemFindFirst.mockResolvedValue(null);
   mocks.shopItemUpdateMany.mockResolvedValue({ count: 0 });
   mocks.revokeCosmeticsFromUsers.mockResolvedValue({ revoked: 0 });

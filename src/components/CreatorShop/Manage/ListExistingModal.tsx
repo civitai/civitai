@@ -68,7 +68,7 @@ function PublicShopItemCard({
           </Text>
           {!item.listed && (
             <Badge size="xs" variant="light" color="gray" w="fit-content">
-              Delisted — sells again if the creator relists
+              Off sale — you can add it once the creator lists it again
             </Badge>
           )}
           <Text size="xs" c="dimmed" lineClamp={1}>
@@ -91,7 +91,7 @@ function PublicShopItemCard({
             mt={4}
             leftSection={added ? <IconCheck size={14} /> : <IconPlus size={14} />}
             loading={adding}
-            disabled={added}
+            disabled={added || !item.listed}
             onClick={onAdd}
           >
             {added ? 'Added' : 'Add to my shop'}
@@ -122,6 +122,13 @@ function ResoldListRow({
           </Text>
           <Text size="xs" c="dimmed" lineClamp={1}>
             {item.cosmetic ? getDisplayName(item.cosmetic.type) : 'Pack'}
+          </Text>
+          <Text size="xs" c="dimmed">
+            You keep{' '}
+            <Text span c="green" fw={600}>
+              {item.sellerShare}%
+            </Text>{' '}
+            — locked in when you listed it
           </Text>
           {item.addedBy?.username && (
             <Text size="xs" c="dimmed" className="break-words">
@@ -200,7 +207,7 @@ export function ListExistingModal() {
     const ids = order.map((i): UniqueIdentifier => i.id);
     const next = arrayMove(order, ids.indexOf(active.id), ids.indexOf(over.id));
     setOrder(next);
-    reorderResoldItems.mutate({ resoldItemIds: next.map((i) => i.id) });
+    reorderResoldItems.mutate({ shopItemIds: next.map((i) => i.id) });
   };
 
   return (

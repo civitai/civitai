@@ -534,6 +534,7 @@ model User {
   addedCosmeticShopItems     CosmeticShopItem[]
   purchasedCosmetics         UserCosmeticShopPurchases[]
   wishlistedCosmeticShopItems UserCosmeticShopItemWishlist[]
+  resoldCosmeticShopItems    UserCosmeticShopItemResale[]
   createdCosmetics           Cosmetic[]                  @relation("CosmeticCreator")
   donationGoals              DonationGoal[]
   donations                  Donation[]
@@ -1773,6 +1774,7 @@ model Image {
   collections         Collection[]
   connections         ImageConnection[]
   UserProfile         UserProfile[]
+  userProfileSfwCover UserProfile[]         @relation("UserProfileSfwCoverImage")
   clubCover           Club[]                @relation("coverImage")
   clubHeader          Club[]                @relation("headerImage")
   clubAvatar          Club[]                @relation("avatarImage")
@@ -4039,7 +4041,25 @@ model CosmeticShopItem {
   purchases UserCosmeticShopPurchases[]
   sections  CosmeticShopSectionItem[]
   wishlists UserCosmeticShopItemWishlist[]
+  resales   UserCosmeticShopItemResale[]
   members   CosmeticShopItemCosmetic[]
+}
+
+// Cross-creator resale: another creator listing this item in their own shop.
+// `sellerShare` is captured when the row is created and never rewritten, so the
+// original creator lowering (or withdrawing) the item's terms can't retroactively
+// cut someone who already listed it.
+model UserCosmeticShopItemResale {
+  userId      Int
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shopItemId  Int
+  shopItem    CosmeticShopItem @relation(fields: [shopItemId], references: [id], onDelete: Cascade)
+  sellerShare Int
+  index       Int              @default(0)
+  createdAt   DateTime         @default(now())
+
+  @@id([userId, shopItemId])
+  @@index([shopItemId])
 }
 
 model CosmeticShopItemCosmetic {
@@ -6456,6 +6476,13 @@ model UserProfile {
   bio                     String?
   message                 String?
   messageAddedAt          DateTime?
+  // SFW (green domain) overrides. Null means "inherit the field above"; a set
+  // value replaces it on civitai.com only.
+  sfwCoverImageId         Int?
+  sfwCoverImage           Image?    @relation("UserProfileSfwCoverImage", fields: [sfwCoverImageId], references: [id], onDelete: SetNull)
+  sfwBio                  String?
+  sfwMessage              String?
+  sfwMessageAddedAt       DateTime?
   location                String?
   nsfw                    Boolean   @default(false)
   privacySettings         Json      @default("{\"showFollowerCount\":true,\"showFollowingCount\":true,\"showReviewsRating\":true}")

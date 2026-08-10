@@ -3351,10 +3351,23 @@ export const blocksRouter = router({
         }
       );
       // customComfy post-paid SETTLE (plan §5.3): a mid-run cancel BILLS the
-      // accrued cost (orchestrator-side, non-refundable), so settle refunds the
-      // reserved CEILING down to that accrued `cost.total` on BOTH reservation
-      // keys. Self-scoping + idempotent + best-effort — a txt2img / non-customComfy
-      // cancel has no settle record and no-ops.
+      // accrued cost, and that accrued portion is non-refundable — post-billing
+      // handlers recompute the authoritative cost from measured RUNTIME, so the
+      // orchestrator exempts them from the blob-delivery proration below
+      // (WorkflowStepManager.GetUndeliveredFractionAsync) to avoid double-refunding.
+      // Settle therefore refunds the reserved CEILING down to that accrued
+      // `cost.total` on BOTH reservation keys. Self-scoping + idempotent +
+      // best-effort — a txt2img / non-customComfy cancel has no settle record and
+      // no-ops here.
+      //
+      // 🔴 DO NOT QUOTE THE "non-refundable" CLAUSE AS A GENERAL CANCEL RULE.
+      // It scopes to customComfy post-paid only. A NON-customComfy cancel IS
+      // prorated by the orchestrator: the workflow is re-priced by the share of
+      // each job's output blobs that never landed and the difference is refunded
+      // (a job that delivered nothing refunds in full). civitai/cli read this
+      // comment as universal and shipped "cancel does not undo the charge" to
+      // users for months — wrong, and wrong in the direction that costs them.
+      // Retracted in civitai/cli#336; see civitai/cli#307 for the trace.
       await settleCustomComfySpend({
         workflowId: input.workflowId,
         actualCost: snapshot.cost?.total ?? 0,

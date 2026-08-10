@@ -377,10 +377,11 @@ compares the current tier against the tier recorded in the baseline and reports
 `pending -> enforced` as a failure. Without that, the escalation is absorbed into the matched
 count and the run exits 0.
 
-That guard is **forward-looking only today**. Escalation needs an entry that is both `pending`
-and `missing-foreign-key`, and the current baseline has **zero** of those — all 12 pending
-entries are `missing-column`, which is hardcoded `pending` and can never rise. It fires on
-relations accepted from here on, not on anything already in the baseline.
+That guard is **nearly forward-looking**. Escalation needs an entry that is both `pending` and
+`missing-foreign-key`; the baseline has exactly **one** — `UserProfile.sfwCoverImageId`, added
+with the profile SFW override columns. Every other pending entry is a `missing-column`, which is
+hardcoded `pending` and can never rise. So the guard fires on that one relation, and on ones
+accepted from here on, and on nothing else already in the baseline.
 
 It also has a bypass worth knowing about: a catalog only gains a column via a **recapture**,
 and the documented procedure for a recapture is to refresh the baseline in the same commit —

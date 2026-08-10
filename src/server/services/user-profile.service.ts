@@ -23,6 +23,7 @@ import {
 import { userUpdateCounter } from '~/server/prom/client';
 import { usersSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 
 export type UserContentOverviewVariant = 'public' | 'sfw' | 'all';
 
@@ -62,16 +63,24 @@ export const getUserContentOverview = async ({
   return data[userId];
 };
 
+/**
+ * `domain` selects which stored variant of the split profile fields (cover image /
+ * announcement / bio) the caller sees. The check must stay green vs. not-green:
+ * `civitai.red` is configured as blue's primary too, so the request's resolved color
+ * is `blue` there and a `domain === 'red'` check would never fire in production.
+ */
 export const getUserWithProfile = async ({
   username,
   id,
   tx,
   isModerator,
   sessionUserId,
+  domain,
 }: GetUserProfileSchema & {
   tx?: Prisma.TransactionClient;
   isModerator?: boolean;
   sessionUserId?: number;
+  domain?: ColorDomain;
 }) => {
   const dbClient = tx ?? dbWrite;
   // Use write to get the latest most accurate user here since we'll need to create the profile
@@ -113,10 +122,30 @@ export const getUserWithProfile = async ({
 
     const { profile } = user;
     const userMeta = (user.meta ?? {}) as UserMeta;
-    const coverImage = profile?.coverImage;
-    const coverNeedsReview =
-      coverImage?.needsReview || coverImage?.ingestion === ImageIngestionStatus.Blocked;
     const sameUser = sessionUserId === user.id;
+    const canEdit = !!isModerator || sameUser;
+
+    const shapeCoverImage = (coverImage: NonNullable<typeof profile>['coverImage']) => {
+      if (!coverImage) return null;
+      const needsReview =
+        coverImage.needsReview || coverImage.ingestion === ImageIngestionStatus.Blocked;
+      if (needsReview && !canEdit) return null;
+
+      return {
+        ...coverImage,
+        meta: coverImage.meta as ImageMetaProps | null,
+        metadata: coverImage.metadata as MixedObject,
+        tags: coverImage.tags.map((t) => t.tag),
+      };
+    };
+
+    const defaultCoverImage = shapeCoverImage(profile?.coverImage ?? null);
+    const sfwCoverImage = shapeCoverImage(profile?.sfwCoverImage ?? null);
+
+    const green = domain === 'green';
+    const useSfwBio = green && profile?.sfwBio != null;
+    const useSfwMessage = green && profile?.sfwMessage != null;
+    const useSfwCoverImage = green && profile?.sfwCoverImageId != null;
 
     const creatorShopEnabled =
       (user.settings as { creatorShop?: { enabled?: boolean } } | null)?.creatorShop?.enabled ===
@@ -138,15 +167,23 @@ export const getUserWithProfile = async ({
         privacySettings: (profile?.privacySettings ?? {}) as PrivacySettingsSchema,
         profileSectionsSettings: (profile?.profileSectionsSettings ?? []) as ProfileSectionSchema[],
         showcaseItems: (profile?.showcaseItems ?? []) as ShowcaseItemSchema[],
-        coverImage:
-          coverImage && (isModerator || sameUser || !coverNeedsReview)
-            ? {
-                ...coverImage,
-                meta: coverImage.meta as ImageMetaProps | null,
-                metadata: coverImage.metadata as MixedObject,
-                tags: coverImage.tags.map((t) => t.tag),
-              }
-            : null,
+        bio: (useSfwBio ? profile?.sfwBio : profile?.bio) ?? null,
+        message: (useSfwMessage ? profile?.sfwMessage : profile?.message) ?? null,
+        messageAddedAt:
+          (useSfwMessage ? profile?.sfwMessageAddedAt : profile?.messageAddedAt) ?? null,
+        coverImageId: (useSfwCoverImage ? profile?.sfwCoverImageId : profile?.coverImageId) ?? null,
+        coverImage: useSfwCoverImage ? sfwCoverImage : defaultCoverImage,
+        // Both stored variants, for the profile editor only. A visitor on the green
+        // domain must never receive the mature copy it is being shown instead of.
+        defaultBio: canEdit ? profile?.bio ?? null : null,
+        defaultMessage: canEdit ? profile?.message ?? null : null,
+        defaultMessageAddedAt: canEdit ? profile?.messageAddedAt ?? null : null,
+        defaultCoverImage: canEdit ? defaultCoverImage : null,
+        sfwBio: canEdit ? profile?.sfwBio ?? null : null,
+        sfwMessage: canEdit ? profile?.sfwMessage ?? null : null,
+        sfwMessageAddedAt: canEdit ? profile?.sfwMessageAddedAt ?? null : null,
+        sfwCoverImageId: canEdit ? profile?.sfwCoverImageId ?? null : null,
+        sfwCoverImage: canEdit ? sfwCoverImage : null,
       },
     };
   };
@@ -181,14 +218,19 @@ export const updateUserProfile = async ({
   // nameplateId,
   userId,
   coverImage,
+  sfwCoverImage,
   // leaderboardShowcase,
   // profilePicture,
   creatorCardStatsPreferences,
+  domain,
   ...profile
-}: UserProfileUpdateSchema & { userId: number }) => {
-  const current = await getUserWithProfile({ id: userId }); // Ensures user exists && has a profile record.
+}: UserProfileUpdateSchema & { userId: number; domain?: ColorDomain }) => {
+  // `sessionUserId` is what populates the `default*`/`sfw*` fields compared below — they are
+  // withheld from anyone who can't edit the profile. Drop it and both read back null, so every
+  // save looks like a changed announcement and re-stamps `messageAddedAt`.
+  const current = await getUserWithProfile({ id: userId, sessionUserId: userId }); // Ensures user exists && has a profile record.
 
-  // We can safeuly update creatorCardStatsPreferences out of the transaction as it's not critical
+  // We can safely update creatorCardStatsPreferences out of the transaction as it's not critical
   if (creatorCardStatsPreferences) {
     // Parameterised: the payload is bound, not spliced into a string literal.
     // `JSON.stringify` escapes `"` and `\` but not `'`, so a preference value holding an
@@ -208,7 +250,25 @@ export const updateUserProfile = async ({
     userUpdateCounter?.inc({ location: 'user-profile.service:updateProfile' });
   }
 
-  const { coverImage: updatedCoverImage } = await dbWrite.$transaction(
+  const buildCoverImageUpdate = (image: UserProfileUpdateSchema['coverImage']) =>
+    image !== undefined && !image?.id
+      ? image === null
+        ? { disconnect: true }
+        : {
+            connectOrCreate: {
+              where: { id: image.id ?? -1 },
+              create: {
+                ...image,
+                meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                metadata: { coverImage: true, userId },
+                userId,
+                resources: undefined,
+              },
+            },
+          }
+      : undefined;
+
+  const updatedCoverImages = await dbWrite.$transaction(
     async (tx) => {
       // const shouldUpdateCosmetics = badgeId !== undefined || nameplateId !== undefined;
       // const payloadCosmeticIds: number[] = [];
@@ -300,33 +360,25 @@ export const updateUserProfile = async ({
         select: {
           userId: true,
           coverImage: { select: { id: true, url: true, ingestion: true, type: true } },
+          sfwCoverImage: { select: { id: true, url: true, ingestion: true, type: true } },
         },
         where: { userId },
         data: {
           ...profile,
           messageAddedAt:
-            profile.message === undefined || profile.message === current?.profile?.message
+            profile.message === undefined || profile.message === current?.profile?.defaultMessage
               ? undefined
               : profile.message
               ? new Date()
               : null,
-          coverImage:
-            coverImage !== undefined && !coverImage?.id
-              ? coverImage === null
-                ? { disconnect: true }
-                : {
-                    connectOrCreate: {
-                      where: { id: coverImage.id ?? -1 },
-                      create: {
-                        ...coverImage,
-                        meta: (coverImage?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-                        metadata: { coverImage: true, userId },
-                        userId,
-                        resources: undefined,
-                      },
-                    },
-                  }
-              : undefined,
+          sfwMessageAddedAt:
+            profile.sfwMessage === undefined || profile.sfwMessage === current?.profile?.sfwMessage
+              ? undefined
+              : profile.sfwMessage
+              ? new Date()
+              : null,
+          coverImage: buildCoverImageUpdate(coverImage),
+          sfwCoverImage: buildCoverImageUpdate(sfwCoverImage),
         },
       });
 
@@ -350,9 +402,12 @@ export const updateUserProfile = async ({
   // trigger enqueues an ImageScan JobQueue row on the Pending insert, which the
   // `ingest-images` sweeper drains, so the cover image still gets scanned even
   // if this inline enqueue fails.
-  if (updatedCoverImage && updatedCoverImage.ingestion === ImageIngestionStatus.Pending) {
+  const pendingCoverImages = [updatedCoverImages.coverImage, updatedCoverImages.sfwCoverImage]
+    .filter(isDefined)
+    .filter((image) => image.ingestion === ImageIngestionStatus.Pending);
+  if (pendingCoverImages.length) {
     enqueueImageIngestion({
-      images: [updatedCoverImage],
+      images: pendingCoverImages,
       name: 'user-profile-cover-ingest',
       userId,
     });
@@ -360,5 +415,5 @@ export const updateUserProfile = async ({
 
   await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
 
-  return getUserWithProfile({ id: userId });
+  return getUserWithProfile({ id: userId, sessionUserId: userId, domain });
 };

@@ -1,3 +1,5 @@
+// process-rewards and user.controller iterate this module's values and treat every
+// one as a BuzzEvent, so only rewards belong here — import helpers from their file.
 export { imagePostedToModelReward } from './passive/imagePostedToModel.reward';
 export { encouragementReward } from './active/encouragement.reward';
 export { firstDailyPostReward } from './active/firstDailyPost.reward';

@@ -1,6 +1,6 @@
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type { ToggleReactionInput, ReactionEntityType } from './../schema/reaction.schema';
-import { dbWrite, dbRead } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import {
   answerMetrics,
@@ -21,14 +21,8 @@ export const toggleReaction = async ({
 }: ToggleReactionInput & { userId: number; isModerator?: boolean }) => {
   const existing = await getReaction({ entityType, entityId, userId, reaction });
   if (existing) {
-    await deleteReaction({
-      entityType,
-      id: 'id' in existing ? existing.id : undefined,
-      entityId,
-      userId,
-      reaction,
-    });
-    return 'removed';
+    const deleted = await deleteReaction({ entityType, entityId, userId, reaction });
+    return deleted > 0 ? 'removed' : 'noop';
   } else {
     // Enforce on create only — a user blocked after reacting can still un-react.
     await throwIfBlockedByEntityOwner({ userId, entityType, entityId, isModerator });
@@ -46,8 +40,9 @@ const getReaction = async ({
   // RAW — user toggles their own reaction. Normal rep-lag (<1s) is shorter
   // than the user's click interval, so replica reads are fine. During a
   // high-rep-lag incident the HIGH_REPLICATION_LAG_MODE Flipt flag routes
-  // this to primary to avoid stale existence checks (bogus UNIQUE-violation
-  // creates or 'removed' returns against rows that don't exist).
+  // this to primary to avoid stale existence checks — a stale miss still
+  // means a UNIQUE-violation create, which this read is the only guard for.
+  // A stale hit is handled downstream: deleteReaction reports 0 rows.
   const db = await getDbWithoutLag();
   switch (entityType) {
     case 'question':
@@ -100,82 +95,82 @@ const getReaction = async ({
   }
 };
 
+// Deletes by the (entityId, userId, reaction) unique key rather than by the row id
+// read from the replica: within the replication window that id can name a row the
+// primary has already replaced, so a delete-by-id silently matches nothing.
+// Returns the number of rows actually removed — callers must not report a removal
+// (or emit a tracker/metric event) on a zero count.
 const deleteReaction = async ({
   entityType,
   entityId,
-  id,
   reaction,
   userId,
 }: {
   entityType: ReactionEntityType;
   entityId: number;
-  id?: number;
-  reaction?: ReviewReactions;
-  userId?: number;
+  reaction: ReviewReactions;
+  userId: number;
 }) => {
   switch (entityType) {
-    case 'question':
-      if (!id) {
-        return;
-      }
-      await dbWrite.questionReaction.deleteMany({ where: { id } });
-      await questionMetrics.queueUpdate(entityId);
-      return;
-    case 'answer':
-      if (!id) {
-        return;
-      }
-      await dbWrite.answerReaction.deleteMany({ where: { id } });
-      await answerMetrics.queueUpdate(entityId);
-      return;
-    case 'commentOld':
-      if (!id) {
-        return;
-      }
-      await dbWrite.commentReaction.deleteMany({ where: { id } });
-      return;
-    case 'comment':
-      if (!id) {
-        return;
-      }
-      await dbWrite.commentV2Reaction.deleteMany({ where: { id } });
-      return;
-    case 'image':
-      if (!id) {
-        return;
-      }
-      await dbWrite.imageReaction.deleteMany({ where: { id } });
-      return;
-    case 'post':
-      if (!id) {
-        return;
-      }
-      await dbWrite.postReaction.deleteMany({ where: { id } });
-      await postMetrics.queueUpdate(entityId);
-      return;
-    case 'resourceReview':
-      if (!id) {
-        return;
-      }
-      await dbWrite.resourceReviewReaction.deleteMany({ where: { id } });
-      return;
-    case 'article':
-      if (!id) {
-        return;
-      }
-      await dbWrite.articleReaction.deleteMany({ where: { id } });
-      await articleMetrics.queueUpdate(entityId);
-      return;
-    case 'bountyEntry':
-      if (!entityId || !userId || !reaction) {
-        return;
-      }
-
-      await dbWrite.bountyEntryReaction.deleteMany({
-        where: { userId, reaction, bountyEntryId: entityId },
+    case 'question': {
+      const { count } = await dbWrite.questionReaction.deleteMany({
+        where: { questionId: entityId, userId, reaction },
       });
-      await bountyEntryMetrics.queueUpdate(entityId);
-      return;
+      if (count > 0) await questionMetrics.queueUpdate(entityId);
+      return count;
+    }
+    case 'answer': {
+      const { count } = await dbWrite.answerReaction.deleteMany({
+        where: { answerId: entityId, userId, reaction },
+      });
+      if (count > 0) await answerMetrics.queueUpdate(entityId);
+      return count;
+    }
+    case 'commentOld': {
+      const { count } = await dbWrite.commentReaction.deleteMany({
+        where: { commentId: entityId, userId, reaction },
+      });
+      return count;
+    }
+    case 'comment': {
+      const { count } = await dbWrite.commentV2Reaction.deleteMany({
+        where: { commentId: entityId, userId, reaction },
+      });
+      return count;
+    }
+    case 'image': {
+      const { count } = await dbWrite.imageReaction.deleteMany({
+        where: { imageId: entityId, userId, reaction },
+      });
+      return count;
+    }
+    case 'post': {
+      const { count } = await dbWrite.postReaction.deleteMany({
+        where: { postId: entityId, userId, reaction },
+      });
+      if (count > 0) await postMetrics.queueUpdate(entityId);
+      return count;
+    }
+    case 'resourceReview': {
+      const { count } = await dbWrite.resourceReviewReaction.deleteMany({
+        where: { reviewId: entityId, userId, reaction },
+      });
+      return count;
+    }
+    case 'article': {
+      const { count } = await dbWrite.articleReaction.deleteMany({
+        where: { articleId: entityId, userId, reaction },
+      });
+      if (count > 0) await articleMetrics.queueUpdate(entityId);
+      return count;
+    }
+    case 'bountyEntry': {
+      const { count } = await dbWrite.bountyEntryReaction.deleteMany({
+        where: { bountyEntryId: entityId, userId, reaction },
+      });
+      if (count > 0) await bountyEntryMetrics.queueUpdate(entityId);
+      return count;
+    }
     default:
       throw throwBadRequestError();
   }

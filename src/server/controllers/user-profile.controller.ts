@@ -54,6 +54,7 @@ export const getUserProfileHandler = async ({
       username: input.username,
       isModerator: ctx.user?.isModerator,
       sessionUserId: ctx.user?.id,
+      domain: ctx.domain,
     });
 
     if (ctx.user && !ctx.user.isModerator) {
@@ -77,6 +78,15 @@ export const getUserProfileHandler = async ({
             messageAddedAt: null,
             coverImage: null,
             coverImageId: null,
+            defaultBio: null,
+            defaultMessage: null,
+            defaultMessageAddedAt: null,
+            defaultCoverImage: null,
+            sfwBio: null,
+            sfwMessage: null,
+            sfwMessageAddedAt: null,
+            sfwCoverImage: null,
+            sfwCoverImageId: null,
             location: null,
             nsfw: false,
             showcaseItems: [] as ShowcaseItemSchema[],
@@ -111,6 +121,7 @@ export const updateUserProfileHandler = async ({
     const user = await updateUserProfile({
       ...input,
       userId,
+      domain: ctx.domain,
     });
 
     purgeCache({ tags: [`user-creator-${userId}`] }).catch();

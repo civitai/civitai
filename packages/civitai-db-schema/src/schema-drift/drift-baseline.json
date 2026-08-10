@@ -24,6 +24,50 @@
       "field": "meta"
     },
     {
+      "fingerprint": "missing-column|UserProfile|sfwBio|UserProfile|sfwBio",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "UserProfile",
+      "columns": [
+        "sfwBio"
+      ],
+      "model": "UserProfile",
+      "field": "sfwBio"
+    },
+    {
+      "fingerprint": "missing-column|UserProfile|sfwCoverImageId|UserProfile|sfwCoverImageId",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "UserProfile",
+      "columns": [
+        "sfwCoverImageId"
+      ],
+      "model": "UserProfile",
+      "field": "sfwCoverImageId"
+    },
+    {
+      "fingerprint": "missing-column|UserProfile|sfwMessage|UserProfile|sfwMessage",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "UserProfile",
+      "columns": [
+        "sfwMessage"
+      ],
+      "model": "UserProfile",
+      "field": "sfwMessage"
+    },
+    {
+      "fingerprint": "missing-column|UserProfile|sfwMessageAddedAt|UserProfile|sfwMessageAddedAt",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "UserProfile",
+      "columns": [
+        "sfwMessageAddedAt"
+      ],
+      "model": "UserProfile",
+      "field": "sfwMessageAddedAt"
+    },
+    {
       "fingerprint": "missing-column|UserRank|thumbsDownCountAllTimeRank|UserRank|thumbsDownCountAllTimeRank",
       "kind": "missing-column",
       "tier": "pending",
@@ -528,6 +572,17 @@
       ],
       "model": "UserProfile",
       "field": "coverImage"
+    },
+    {
+      "fingerprint": "missing-foreign-key|UserProfile|sfwCoverImageId|UserProfile|sfwCoverImage|Image",
+      "kind": "missing-foreign-key",
+      "tier": "pending",
+      "table": "UserProfile",
+      "columns": [
+        "sfwCoverImageId"
+      ],
+      "model": "UserProfile",
+      "field": "sfwCoverImage"
     },
     {
       "fingerprint": "missing-foreign-key|UserRank|userId|UserRank|user|User",

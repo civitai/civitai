@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=24.0.0 <25"
   },
   "scripts": {
     "preinstall": "npx only-allow pnpm",
@@ -432,7 +432,8 @@
       "utf-8-validate"
     ],
     "patchedDependencies": {
-      "@mantine/hooks": "patches/@mantine__hooks.patch"
+      "@mantine/hooks": "patches/@mantine__hooks.patch",
+      "next@16.3.0": "patches/next@16.3.0.patch"
     }
   }
 }
