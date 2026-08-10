@@ -47,6 +47,36 @@ Sources: the ClickUp subtask descriptions under `868kkxqpn` and two Loom walkthr
 - [ ] 🎥 **Widen access to the mass ban tool** once it exists — *"That's good for other mods to have
       access to this too."* (Building it at all is parity; who can reach it is this.)
 
+## Blocked on a main-app change, or on a decision (from the User Lookup review, 2026-08-10)
+
+These are the only items the slice review could not close in the spoke. The rest of that review's
+findings are done — see the parity checklist.
+
+- [ ] 🔴 **Timed mutes never expire.** `addTimedMute` writes the moderator-DB row and sets
+      `muted`/`mutedAt`, but not `User.muteExpiresAt` — and that column is the only thing the main
+      app's `processTimedUnmutes` selects on. A 24-hour mute is therefore permanent while the panel
+      renders it as expiring. **Cannot be fixed here**: the main app uses `muteExpiresAt !== null` to
+      mean "this mute came from strikes", so a spoke-set value would let a strike expiry silently clear
+      a moderator's timed mute. Needs an `expiresAt`/`muteHours` parameter on `retool/user → mute`,
+      handled in `setUserMuted` with a distinguishable provenance marker.
+- [ ] **Strikes write a second, disconnected ledger.** `addUserStrike` inserts into the moderator DB's
+      legacy `UserStrikes`; the main app owns `UserStrike` via `retool/strike → create`. Missing
+      locally: escalation (≥2 points auto-mutes 3 days, ≥3 indefinite + session invalidation),
+      `points`/`expiresAt`, the `StrikeReason` enum, `reportId` attachment, the typed `strike-issued`
+      notification and its email, the auto-strike rate limit, and any way to void. The panel is also
+      blind to every strike the automated pipeline issued. **Retool never called that endpoint either,
+      so this is a deliberate widening, not parity** — it needs a decision before it is work.
+- [ ] **Nobody has looked at the page.** `apps/moderator/CLAUDE.md` is explicit that a segment which
+      only typechecks is not done. Every component here has been compiled through Vite, but no
+      moderator-app page in this slice has been rendered in a browser — and the two worst bugs found
+      this week (a blank optional field rejecting every Buzz transaction, and entity linkage silently
+      dropped from the ledger) were both things one real submission would have caught immediately.
+      Needs a signed-in session against the auth hub.
+- [ ] 🔒 **Rotate the Freshdesk API key.** It is in the ClickUp ticket body and was in the raw
+      `User Lookup v2` export as `const apiKey = '…'` inside a Function body. Redacted before that file
+      was committed, and never pushed — but it has been on disk and in a ticket, so treat it as
+      disclosed. Removal is not remediation.
+
 ## User Lookup
 
 - [ ] **Editable socials & bio** — 🎥 *"Force logout, you know, edit their socials."* Read-only today.
