@@ -3701,6 +3701,10 @@ export type UserProfile = {
   bio: string | null;
   message: string | null;
   messageAddedAt: Timestamp | null;
+  sfwCoverImageId: number | null;
+  sfwBio: string | null;
+  sfwMessage: string | null;
+  sfwMessageAddedAt: Timestamp | null;
   location: string | null;
   nsfw: Generated<boolean>;
   privacySettings: Generated<unknown>;

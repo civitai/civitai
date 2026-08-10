@@ -1419,6 +1419,7 @@ export interface Image {
   collections?: Collection[];
   connections?: ImageConnection[];
   UserProfile?: UserProfile[];
+  userProfileSfwCover?: UserProfile[];
   clubCover?: Club[];
   clubHeader?: Club[];
   clubAvatar?: Club[];
@@ -4443,6 +4444,11 @@ export interface UserProfile {
   bio: string | null;
   message: string | null;
   messageAddedAt: Date | null;
+  sfwCoverImageId: number | null;
+  sfwCoverImage?: Image | null;
+  sfwBio: string | null;
+  sfwMessage: string | null;
+  sfwMessageAddedAt: Date | null;
   location: string | null;
   nsfw: boolean;
   privacySettings: JsonValue;
