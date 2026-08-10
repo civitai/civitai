@@ -151,6 +151,7 @@ export default defineNextConfig(
       '@civitai/redis',
       '@civitai/clickhouse',
       '@civitai/axiom',
+      '@civitai/flipt',
       '@civitai/telemetry',
       '@civitai/auth',
       '@civitai/notifications',

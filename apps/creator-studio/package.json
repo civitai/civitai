@@ -23,6 +23,7 @@
     "@civitai/clickhouse": "workspace:*",
     "@civitai/db": "workspace:*",
     "@civitai/db-schema": "workspace:*",
+    "@civitai/flipt": "workspace:*",
     "@civitai/redis": "workspace:*",
     "@civitai/shared": "workspace:*",
     "@civitai/ui": "workspace:*",
