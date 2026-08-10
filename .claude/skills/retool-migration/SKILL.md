@@ -212,6 +212,9 @@ Two further things the schemas give you free:
 When a Retool query looks nonsensical — a dangling binding, a hardcoded id, a `SELECT *` feeding a
 button — **check whether the real work happens in an endpoint** before concluding the app did nothing.
 
+The [`retool-endpoint-audit`](../../agents/retool-endpoint-audit.md) agent does this sweep mechanically;
+run it at §6 as well, since the misses are easiest to see once the code exists.
+
 Two blind spots in the export itself, both of which need a screenshot to close:
 
 - **No event handlers.** Nothing records what a button, row or modal click actually triggered. A table
@@ -313,9 +316,17 @@ fans out three review agents — correctness, Svelte 5 + UI conventions, abstrac
 Every slice reviewed so far has come back with findings, several of them the kind that make a moderator
 believe something false about a user.
 
-**Then run a FOURTH review, export-vs-build.** The three above compare the code to itself and to this
-app's conventions; none of them opens the export, so all three pass cleanly over a faithful
-implementation of the wrong thing. Give an agent the inventory (`<app>.md`, which carries each query's
+**Then run [`retool-endpoint-audit`](../../agents/retool-endpoint-audit.md).** It checks the slice
+against the main app's API surface: a local write that duplicates an endpoint, a constant copied out of
+the main app, an endpoint parameter the call never sends, or a capability filed as "unported" that is
+already an endpoint action. It has caught all four shapes in one day — including a hardcoded vote
+weight that was a second copy of the number deciding whether a tag gets disabled, and a removal path
+that logged every deletion with an empty violation classification. Run it even when the slice looks
+finished; the misses are easiest to see once the code exists.
+
+**Then run a FIFTH review, export-vs-build.** The three code reviews compare the code to itself and to
+this app's conventions, and the endpoint audit compares it to the main app's API — **none of them opens
+the export**, so all four pass cleanly over a faithful implementation of the wrong thing. Give an agent the inventory (`<app>.md`, which carries each query's
 SQL), the audit, and the built files, and ask one question: *walk the export query by query — is each
 behaviour present, and does it match?* On Bulk Image Manager the three code reviews returned 14
 findings and missed all four gaps above; the fidelity pass found them in one run. Verify its claims
