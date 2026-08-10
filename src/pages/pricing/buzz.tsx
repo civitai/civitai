@@ -1,12 +1,15 @@
-import { Alert, Center, Container, Loader, Stack, Text, Title } from '@mantine/core';
+import { Alert, Anchor, Center, Container, Loader, Stack, Text, Title } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { Meta } from '~/components/Meta/Meta';
-import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { useAnyActiveMembership } from '~/components/Stripe/memberships.util';
 import { BuzzMembershipCallout } from '~/components/Subscriptions/BuzzMembershipCallout';
 import { PlanCard } from '~/components/Subscriptions/PlanCard';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { formatDate } from '~/utils/date-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
+import { capitalize } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
@@ -32,10 +35,18 @@ export default function BuzzMembershipPurchasePage() {
     paymentProvider: 'Civitai',
   });
 
-  const { subscription } = useActiveSubscription({
-    checkWhenInBadState: true,
-    includeBuzzPurchase: true,
-  });
+  // Every slot, not just this site's colour: a perks membership requires no membership at
+  // all, so a yellow one held while browsing green has to block the purchase here the same
+  // way the server guard blocks it.
+  const { subscription, subscriptionLoading } = useAnyActiveMembership();
+  const heldMembership = subscription
+    ? [
+        capitalize(subscription.productMeta.tier ?? ''),
+        subscription.productMeta.buzzPurchase ? 'perks membership' : 'membership',
+      ]
+        .filter(Boolean)
+        .join(' ')
+    : null;
 
   return (
     <>
@@ -53,7 +64,20 @@ export default function BuzzMembershipPurchasePage() {
 
           <BuzzMembershipCallout />
 
-          {isLoading ? (
+          {subscription && (
+            <Alert color="yellow" icon={<IconInfoCircle size={20} />}>
+              <Text size="sm">
+                Your {heldMembership} runs through {formatDate(subscription.currentPeriodEnd)}. A
+                perks membership can only be bought with no membership active — including one held
+                on the other site — so you can buy one once this lapses.{' '}
+                <Anchor component={Link} href="/user/membership">
+                  Manage your membership
+                </Anchor>
+              </Text>
+            </Alert>
+          )}
+
+          {isLoading || subscriptionLoading ? (
             <Center p="xl">
               <Loader />
             </Center>
