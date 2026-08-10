@@ -8,6 +8,8 @@
   import { SvelteSet } from 'svelte/reactivity';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import ImageActionBar from '$lib/components/ImageActionBar.svelte';
+  import CannedReasonPicker from '$lib/components/CannedReasonPicker.svelte';
+  import { STRIKE_REASONS } from '$lib/moderation-reasons';
   import SuspectFilterBar from './SuspectFilterBar.svelte';
   import type { PageData } from './$types';
   import { writeEnhancer } from '$lib/form-action';
@@ -41,6 +43,7 @@
   } = $props();
 
   let striking = $state(false);
+  let strikeReason = $state('');
   let notifying = $state(false);
   let submitting = $state(false);
 
@@ -118,7 +121,7 @@
           {strikeError}
         </div>
       {/if}
-      <Textarea name="reason" rows={2} placeholder="Reason — this text is sent to the user." required />
+      <CannedReasonPicker reasons={STRIKE_REASONS} idPrefix="strike" bind:value={strikeReason} />
       <div class="mt-2 flex gap-2">
         <Button type="submit" size="sm" variant="destructive" disabled={submitting}>
           {submitting ? 'Working…' : 'Issue strike'}

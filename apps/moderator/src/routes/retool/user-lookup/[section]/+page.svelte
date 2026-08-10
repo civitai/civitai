@@ -1,7 +1,8 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { page } from '$app/state';
-  import { cn } from '@civitai/ui/utils.js';
+  import { goto } from '$app/navigation';
+  import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
   import type { PageData } from './$types';
   import type { FormResult } from '../form-result';
   import { writeEnhancer } from '$lib/form-action';
@@ -62,11 +63,6 @@
     params.set('buzzTab', tab);
     return `?${params}`;
   };
-  const buzzTabClass = (active: boolean) =>
-    cn(
-      'rounded-md px-3 py-1.5 text-sm',
-      active ? 'bg-dark-4 text-white' : 'text-dark-2 hover:bg-dark-5 hover:text-dark-0'
-    );
 </script>
 
 {#if result}
@@ -104,12 +100,12 @@
            transaction pane, so the tab itself is gated, not just the submit. -->
       <BuzzBalances {account} />
       {#if data.canSendBuzz}
-        <div class="mb-4 flex gap-1">
-          <a href={buzzTabHref('view')} class={buzzTabClass(buzzTab === 'view')}>View Buzz</a>
-          <a href={buzzTabHref('send')} class={buzzTabClass(buzzTab === 'send')}>
-            Buzz Transaction
-          </a>
-        </div>
+        <Tabs value={buzzTab} onValueChange={(v) => v && goto(buzzTabHref(v))} class="mb-4">
+          <TabsList>
+            <TabsTrigger value="view">View Buzz</TabsTrigger>
+            <TabsTrigger value="send">Buzz Transaction</TabsTrigger>
+          </TabsList>
+        </Tabs>
       {/if}
 
       {#if buzzTab === 'send' && data.canSendBuzz}

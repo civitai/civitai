@@ -1,23 +1,5 @@
-// The closed lists the enforcement forms offer, in a module BOTH the panels and the action schemas can
-// import. The services in `$lib/server` own the same values but a component cannot import from there,
-// so each list was being re-typed in the panel — and the ban list is the one that must not drift: it
-// mirrors the main app's `BanReasonCode`, which `/api/mod/ban-user` parses strictly. A code added
-// server-side is then silently missing from the dropdown; one added only here 500s the ban.
-
-export const BAN_REASONS = [
-  'SexualMinor',
-  'SexualMinorGenerator',
-  'SexualMinorTraining',
-  'SexualPOI',
-  'Bestiality',
-  'Scat',
-  'Nudify',
-  'Harassment',
-  'LeaderboardCheating',
-  'BuzzCheating',
-  'RRDViolation',
-  'Other',
-] as const;
+// Page-local option sets. Anything a SERVICE also needs lives in `$lib/enforcement` instead — a list
+// declared in both places is one that drifts.
 
 export const LINK_TYPES = ['Social', 'Sponsorship', 'Other'] as const;
 
@@ -52,39 +34,6 @@ export const PROFILE_FIELDS = [
 // Widening either list is a decision for the mod team, not a default — see the backlog.
 export const BUZZ_SEND_REASONS = ['Reward', 'Refund'] as const;
 export const BUZZ_DEDUCT_REASONS = ['Purchase', 'ChargeBack', 'AuthorizedPurchase'] as const;
-
-// The full ledger enum stays for the SERVER's zod check: it mirrors `BUZZ_TRANSACTION_TYPES` in
-// user-actions.service.ts, which owns the numeric values the buzz API wants.
-export const BUZZ_TRANSACTION_TYPES = [
-  'Compensation',
-  'Reward',
-  'Refund',
-  'ChargeBack',
-  'Appeal',
-  'Tip',
-  'Dues',
-  'Generation',
-  'Boost',
-  'Incentive',
-  'Purchase',
-  'AuthorizedPurchase',
-  'Bounty',
-  'BountyEntry',
-  'Training',
-  'Donation',
-  'ClubMembership',
-  'ClubMembershipRefund',
-  'ClubWithdrawal',
-  'ClubDeposit',
-  'Withdrawal',
-  'Redeemable',
-  'Sell',
-  'Bank',
-  'Extract',
-  'Fee',
-  'Bid',
-  'LicenseFee',
-] as const;
 
 /** Retool's `buzzSendEntityType` — a closed list, not free text. */
 export const BUZZ_ENTITY_TYPES = ['Collection', 'Image', 'Model'] as const;

@@ -5,7 +5,12 @@
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { entityUrl } from '$lib/entity-url';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { reportStatusVariant, reportStatuses } from '$lib/reports';
+  import {
+    reportDetail,
+    reportReasonLabel,
+    reportStatusVariant,
+    reportStatuses,
+  } from '$lib/reports';
   import { fetchUserReports, type ReportRow } from './user-reports';
   import ListCard from './ListCard.svelte';
 
@@ -96,7 +101,7 @@
       <li>
         <div class="flex flex-wrap items-baseline gap-x-2">
           <Badge variant={reportStatusVariant(r.status)}>{r.status}</Badge>
-          <span class="text-dark-0">{r.reason}</span>
+          <span class="text-dark-0">{reportReasonLabel(r.details, r.reason)}</span>
           {#if url}
             <a href={url} target="_blank" rel="noreferrer" class={LINK_CLASS}>
               {r.entityType.toLowerCase()} {r.entityId}
@@ -106,6 +111,9 @@
           {/if}
           <span class="text-xs text-dark-2">{dateTime(r.createdAt)}</span>
         </div>
+        {#if reportDetail(r.details, 'comment')}
+          <p class="wrap-break-word text-dark-1">{reportDetail(r.details, 'comment')}</p>
+        {/if}
         <div class="flex flex-wrap items-baseline gap-x-2 text-xs text-dark-2">
           {#if showReporter && r.reporterId}
             <span>

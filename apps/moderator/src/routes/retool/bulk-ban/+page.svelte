@@ -11,7 +11,7 @@
   import { writeEnhancer } from '$lib/form-action';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
-  import { BAN_REASONS } from './reasons';
+  import { BAN_REASONS } from '$lib/enforcement';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 

@@ -1,4 +1,5 @@
 import { ReportReason, ReportStatus } from '@civitai/db-schema/enums';
+import { entityUrl } from './entity-url';
 
 export { ReportReason, ReportStatus };
 
@@ -129,24 +130,7 @@ export function reportStatusVariant(status: string): 'default' | 'secondary' | '
 }
 
 // Only id-URL-clean types are linkable; the rest return null until their richer URL shapes are ported.
-const entityPath: Partial<Record<ReportEntity, (id: number) => string>> = {
-  model: (id) => `/models/${id}`,
-  image: (id) => `/images/${id}`,
-  article: (id) => `/articles/${id}`,
-  post: (id) => `/posts/${id}`,
-  collection: (id) => `/collections/${id}`,
-  bounty: (id) => `/bounties/${id}`,
-  resourceReview: (id) => `/reviews/${id}`,
-  comicProject: (id) => `/comics/${id}`,
-  model3d: (id) => `/3d-models/${id}`,
-};
-
-export function getReportItemUrl(
-  base: string,
-  type: ReportEntity,
-  entityId: number | null
-): string | null {
-  if (entityId == null) return null;
-  const path = entityPath[type]?.(entityId);
-  return path ? `${base}${path}` : null;
-}
+/** One map for "where does this entity live" — see `$lib/entity-url`. The private copy here knew four
+ *  segments that one did not, so the same report linked on /reports and rendered dead in User Lookup. */
+export const getReportItemUrl = (base: string, type: ReportEntity, entityId: number | null) =>
+  entityUrl(base, type, entityId);

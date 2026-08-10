@@ -7,6 +7,7 @@ import { getModeratorDb } from './moderator-db';
 import { recordModActivity } from './mod-activity';
 import { recordUserActivity } from './user-activity';
 import { invalidateUserSessions } from './sessions';
+import { PROFILE_FIELD_KEYS, type ProfileField } from '$lib/enforcement';
 
 // Enforcement actions from User Lookup (Retool's BANAPI / UNBANAPI / ToggleMute / forceLogout, ticket
 // 868kkxqpn §1.2).
@@ -349,28 +350,8 @@ export async function forceLogout(input: {
   return { ok: true };
 }
 
-// `/api/mod/ban-user` parses `reasonCode` as `z.enum(BanReasonCode)` BEFORE it answers, and the endpoint
-// has no catch — so anything outside this list is a 500 and no ban. Authority is the main app's
-// `BanReasonCode` in `src/server/common/enums.ts`; kept here rather than in `@civitai/shared` because this
-// is the only spoke that bans. Promote it if a second one appears.
-//
-// `SexualMinor` additionally drives the main app's default media purge, which free text could never reach.
-export const BAN_REASON_CODES = [
-  'SexualMinor',
-  'SexualMinorGenerator',
-  'SexualMinorTraining',
-  'SexualPOI',
-  'Bestiality',
-  'Scat',
-  'Nudify',
-  'Harassment',
-  'LeaderboardCheating',
-  'BuzzCheating',
-  'RRDViolation',
-  'Other',
-] as const;
-
-export type BanReasonCode = (typeof BAN_REASON_CODES)[number];
+// The ban list lives in $lib/enforcement so the picker and this validator cannot drift apart.
+export { BAN_REASONS as BAN_REASON_CODES, type BanReasonCode } from '$lib/enforcement';
 
 // `/api/mod/ban-user` TOGGLES rather than setting a state, and answers 200 before it has done the work.
 // Re-reading `bannedAt` and refusing when it already matches the request turns the toggle back into an
@@ -801,15 +782,13 @@ export async function purgeAllContent(input: {
 //
 // Only the three free-text fields are writable. Retool's GUI write pointed at the whole `User` row,
 // which put username and email one mis-click from being overwritten.
-export type ProfileField = 'bio' | 'message' | 'location';
-const PROFILE_FIELDS: ProfileField[] = ['bio', 'message', 'location'];
 
 export async function clearProfileText(input: {
   userId: number;
   fields: ProfileField[];
   moderatorId: number;
 }): Promise<ActionResult> {
-  const fields = input.fields.filter((f) => PROFILE_FIELDS.includes(f));
+  const fields = input.fields.filter((f) => PROFILE_FIELD_KEYS.includes(f));
   if (!fields.length) return { ok: false, error: 'Nothing selected to clear.' };
 
   const result = await dbWrite

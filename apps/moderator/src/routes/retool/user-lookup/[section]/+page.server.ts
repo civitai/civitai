@@ -38,6 +38,7 @@ import {
 } from '$lib/server/user-actions.service';
 import { resolveUsername } from '$lib/server/user-lookup.service';
 import { BUZZ_ENTITY_TYPES } from '../enforcement-options';
+import { PROFILE_FIELD_KEYS, type ProfileField } from '$lib/enforcement';
 
 // The lookup itself lives in the layout so it survives moving between sections; this only validates
 // the slug, so an unknown one 404s rather than rendering the fallback panel.
@@ -184,9 +185,7 @@ export const actions: Actions = {
     const fields = form
       .getAll('fields')
       .map(String)
-      .filter((f): f is 'bio' | 'message' | 'location' =>
-        ['bio', 'message', 'location'].includes(f)
-      );
+      .filter((f): f is ProfileField => (PROFILE_FIELD_KEYS as string[]).includes(f));
 
     const result = await clearProfileText({
       userId: input.userId,

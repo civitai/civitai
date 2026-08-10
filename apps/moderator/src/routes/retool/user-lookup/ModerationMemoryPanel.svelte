@@ -8,6 +8,8 @@
   import { LINK_CLASS, dateTime } from '$lib/format';
   import type { FormResult } from './form-result';
   import { fetchMemory } from './user-memory';
+  import CannedReasonPicker from '$lib/components/CannedReasonPicker.svelte';
+  import { STRIKE_REASONS } from '$lib/moderation-reasons';
 
   let {
     userId,
@@ -31,6 +33,7 @@
   let editing = $state<number | null>(null);
   let adding = $state(false);
   let striking = $state(false);
+  let strikeReason = $state('');
   let submitting = $state(false);
 
   // applyAction populates `form` — without it "You can only edit your own notes." never reaches the UI
@@ -193,12 +196,7 @@
     {#if striking}
       <form method="POST" action="?/addStrike" use:enhance={onSubmit} class="mb-4">
         <input type="hidden" name="userId" value={userId} />
-        <Textarea
-          name="reason"
-          rows={2}
-          placeholder="Reason — this text is sent to the user."
-          required
-        />
+        <CannedReasonPicker reasons={STRIKE_REASONS} idPrefix="strike" bind:value={strikeReason} />
         <div class="mt-2 flex gap-2">
           <Button type="submit" size="sm" variant="destructive" disabled={submitting}>
             {submitting ? 'Working…' : 'Issue strike'}

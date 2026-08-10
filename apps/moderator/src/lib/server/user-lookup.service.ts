@@ -13,6 +13,8 @@ import { REPORT_SOURCES } from './report-sources';
 export type UserIdentity = {
   id: number;
   username: string | null;
+  /** Retool's UpdateUserDeets edits this alongside username and email. */
+  name: string | null;
   email: string | null;
   createdAt: Date | null;
   deletedAt: Date | null;
@@ -33,6 +35,9 @@ export type UserIdentity = {
    *  the account still reads as muted. `null` when the account has never been restricted. */
   restrictionStatus: string | null;
   restrictionType: string | null;
+  /** Quick Info in Retool. `onboarding` is a bitfield; nonzero means the TOS step is done. */
+  onboarding: number | null;
+  excludeFromLeaderboards: boolean | null;
 };
 
 export type UserCount = { label: string; count: number; profilePath: string | null };
@@ -214,6 +219,7 @@ async function getIdentity(userId: number): Promise<UserIdentity | null> {
     .select([
       'u.id',
       'u.username',
+      'u.name',
       'u.email',
       'u.createdAt',
       'u.deletedAt',
@@ -226,6 +232,8 @@ async function getIdentity(userId: number): Promise<UserIdentity | null> {
       'u.customerId',
       'u.paddleCustomerId',
       'u.rewardsEligibility',
+      'u.onboarding',
+      'u.excludeFromLeaderboards',
       // jsonb path extraction has no builder equivalent.
       sql<string | null>`u.meta #>> '{banDetails,reasonCode}'`.as('banReason'),
       sql<string | null>`u.meta #>> '{banDetails,detailsInternal}'`.as('banDetails'),

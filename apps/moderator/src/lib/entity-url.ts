@@ -7,6 +7,12 @@ const ENTITY_PATH: Record<string, string> = {
   post: 'posts',
   article: 'articles',
   bounty: 'bounties',
+  // The report pages knew these four and this map did not, so a Collection or ResourceReview report
+  // rendered as a working link on /reports and as dead grey text in User Lookup.
+  collection: 'collections',
+  resourcereview: 'reviews',
+  comicproject: 'comics',
+  model3d: '3d-models',
 };
 
 // Callers disagree on casing — ModActivity stores 'image', the report joins label rows 'Image', and

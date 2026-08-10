@@ -69,6 +69,12 @@
         {identity.restrictionType ?? 'restriction'}: {identity.restrictionStatus}
       </Badge>
     {/if}
+    <!-- Retool's Quick Info. Not accepting the TOS is normal for a new account and abnormal for an
+         old one, and leaderboard exclusion is the first thing a cheating investigation asks about. -->
+    {#if !identity.onboarding}<Badge variant="secondary">TOS not accepted</Badge>{/if}
+    {#if identity.excludeFromLeaderboards}
+      <Badge variant="secondary">excluded from leaderboards</Badge>
+    {/if}
     {#if identity.deletedAt}<Badge variant="secondary">deleted</Badge>{/if}
     {#if identity.isModerator}<Badge variant="secondary">moderator</Badge>{/if}
     {#if data.result?.curator.isCurator}<Badge variant="secondary">curator</Badge>{/if}

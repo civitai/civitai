@@ -83,11 +83,13 @@
   let editing = $state(false);
   let editUsername = $state('');
   let editEmail = $state('');
+  let editName = $state('');
   let saving = $state(false);
 
   const startEditing = () => {
     editUsername = identity.username ?? '';
     editEmail = identity.email ?? '';
+    editName = identity.name ?? '';
     editing = true;
   };
 
@@ -164,6 +166,10 @@
             <label class="flex flex-col gap-1 text-xs text-dark-2">
               Email
               <Input name="email" type="email" bind:value={editEmail} class="w-64" />
+            </label>
+            <label class="flex flex-col gap-1 text-xs text-dark-2">
+              Full name
+              <Input name="name" bind:value={editName} class="w-52" />
             </label>
             <Button type="submit" size="sm" disabled={saving}>
               {saving ? 'Saving…' : 'Save'}

@@ -12,7 +12,8 @@
   import { LINK_CLASS, dateTime } from '$lib/format';
   import type { FormResult } from './form-result';
   import { fetchSupport } from './user-support';
-  import { BAN_REASONS, MUTE_PRESETS, REWARDS_ELIGIBILITY } from './enforcement-options';
+  import { MUTE_PRESETS, REWARDS_ELIGIBILITY } from './enforcement-options';
+  import { BAN_REASONS } from '$lib/enforcement';
   import { writeEnhancer } from '$lib/form-action';
 
   type Identity = NonNullable<LayoutData['result']>['identity'];
