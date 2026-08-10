@@ -44,25 +44,11 @@
   let reason = $state('');
   let pendingFlag = $state<CannedReason['flag']>(undefined);
 
-  // Retool's radio mapped its `reason` token (poi/minor/tag) onto the removal and its `value` onto the
-  // message. The violation enum is ours — a canned reason that names one pre-selects it.
-  const TOS_VIOLATION: Record<string, string> = {
-    'Depicting Real People': 'realPerson',
-    'Minor displayed in mature context': 'animatedMinorNsfw',
-    'NSFW potential minor in a school environment': 'schoolNsfw',
-    'Realistic minor': 'realisticMinor',
-    Bestiality: 'bestiality',
-    'Rape/Forced Sex': 'sexualViolence',
-    'Scat/Fecal matter': 'fecalMatter',
-    'Graphic Violence/Gore': 'gore',
-    'Non AI content': 'non-ai',
-  };
-
   const applyTosReason = (r: CannedReason) => {
     tosReason = r.label;
     reason = r.message;
     pendingFlag = r.flag;
-    violationType = TOS_VIOLATION[r.label] ?? 'none';
+    violationType = r.violation ?? 'none';
   };
 
   let violationType = $state('none');

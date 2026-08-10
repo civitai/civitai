@@ -47,7 +47,16 @@
 
   // Both params have to survive each other: a bare `?user=` sent the moderator back to page 1, and a
   // bare `?page=` closed the account they had open.
-  const suspectHref = (entityId: number) => `?page=${page}&user=${entityId}`;
+  // Keeps the image filters, like `pageHref` below — a moderator triaging with "Only ToS'd" set is
+  // using it as a lens across accounts, and rebuilding it on every row click is the tax this avoids.
+  // The cursor still goes: it indexes the previous account's batch.
+  const suspectHref = (entityId: number) => {
+    const params = new URLSearchParams(pageState.url.search);
+    params.set('page', String(page));
+    params.set('user', String(entityId));
+    params.delete('cursor');
+    return `?${params}`;
+  };
 
   // Paging the queue keeps the image filters, which describe the open account, but never the cursor —
   // it indexes a batch belonging to whatever was on screen before.
