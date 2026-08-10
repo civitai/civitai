@@ -39,19 +39,30 @@ export type UserReview = {
    *  deciding without reading it. */
   details: string | null;
   modelCreator: string | null;
-  /** Null when the review has no helper row at all, which is not the same as zero images. */
-  imageCount: number | null;
+  imageCount: number;
 };
 
 export async function getReviews(userId: number, limit = 100): Promise<Capped<UserReview>> {
+  // Retool's SubmittedReviewImageCount. This is the body of the `ResourceReviewHelper` VIEW, inlined and
+  // correlated to the row — NEVER join the view itself. It groups over all 71M reviews, and the qual does
+  // not push through, so both a join and a keyed `IN (…)` lookup run past 60s for a user with 51 reviews.
+  // (The main app hit the same wall and commented its copy out: resourceReview.service.ts.) Correlated
+  // per returned row: 0.9s.
   return (
     dbRead
       .selectFrom('ResourceReview as rr')
       .innerJoin('Model as m', 'm.id', 'rr.modelId')
       .innerJoin('User as u', 'u.id', 'm.userId')
-      // Retool's SubmittedReviewImageCount, folded in rather than run as a second query keyed on the ids
-      // the first returned. A review carrying images is a different thing from a bare rating.
-      .leftJoin('ResourceReviewHelper as h', 'h.resourceReviewId', 'rr.id')
+      .select((eb) =>
+        eb
+          .selectFrom('ImageResourceNew as ir')
+          .innerJoin('Image as i', (join) =>
+            join.onRef('i.id', '=', 'ir.imageId').onRef('i.userId', '=', 'rr.userId')
+          )
+          .select((agg) => agg.fn.count('i.id').distinct().as('count'))
+          .whereRef('ir.modelVersionId', '=', 'rr.modelVersionId')
+          .as('imageCount')
+      )
       .select([
         'rr.id',
         'rr.createdAt',
@@ -62,13 +73,17 @@ export async function getReviews(userId: number, limit = 100): Promise<Capped<Us
         'rr.nsfw',
         'rr.details',
         'u.username as modelCreator',
-        'h.imageCount',
       ])
       .where('rr.userId', '=', userId)
       .orderBy('rr.createdAt', 'desc')
       .limit(limit + 1)
       .execute()
-      .then((rows) => capped(rows, limit))
+      .then((rows) =>
+        capped(
+          rows.map((row) => ({ ...row, imageCount: Number(row.imageCount ?? 0) })),
+          limit
+        )
+      )
   );
 }
 
