@@ -1,6 +1,14 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended", "docker:pinDigests"],
-  "enabledManagers": ["dockerfile"],
-  "schedule": ["before 6am on monday"]
+  "enabledManagers": ["dockerfile", "nvm"],
+  "schedule": ["before 6am on monday"],
+  "packageRules": [
+    {
+      "description": "Keep the root Dockerfile's node tag and .nvmrc in ONE pull request. src/__tests__/node-version-consistency.test.ts asserts the two agree, so a bump that moves only one of them reds that guard. Scoped to the two files that guard actually reads: the per-service images under apps/ and containers/ are on their own cadence and must not be dragged into this group.",
+      "matchDepNames": ["node"],
+      "matchFileNames": ["Dockerfile", ".nvmrc"],
+      "groupName": "node runtime pin"
+    }
+  ]
 }
