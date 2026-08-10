@@ -5092,6 +5092,25 @@ export async function getResourceIdsForImages(imageIds: number[]) {
   return imageResources;
 }
 
+/**
+ * Narrow a pinned post's media down to what the pinned model version made.
+ *
+ * Media with no resource rows at all is kept: it can't be attributed either way, and
+ * dropping it is what made pinned posts with videos vanish before 7518ca4f54.
+ */
+export async function filterPinnedImagesToVersion<T extends { id: number }>(
+  images: T[],
+  modelVersionId: number
+) {
+  if (!images.length) return images;
+
+  const resources = await getResourceIdsForImages(images.map((x) => x.id));
+  return images.filter((image) => {
+    const imageResources = resources[image.id];
+    return !imageResources?.length || imageResources.includes(modelVersionId);
+  });
+}
+
 type GetImageRaw = GetAllImagesRaw & {
   reactions?: ReviewReactions[];
   postId?: number | null;
