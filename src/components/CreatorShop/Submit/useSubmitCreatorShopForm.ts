@@ -22,6 +22,7 @@ import type {
 import {
   cosmeticPriceFloor,
   STICKER_MIN_BUZZ_PER_USE,
+  STICKER_MAX_USES,
   CREATOR_SHOP_CREATOR_SHARE,
   CREATOR_SHOP_SUBMISSION_FEE,
   isCreatorCosmeticType,
@@ -167,6 +168,11 @@ export function useSubmitCreatorShopForm({
     ? economicsRequired
       ? 'Set how many uses a purchase grants'
       : null
+    : // Grandfathered: a listing stored above the cap predates it, and the edit
+    // path only sends `uses` when it changes — so refusing it here would block
+    // an unrelated price edit over a value the creator isn't touching.
+    uses > STICKER_MAX_USES && uses !== existingEconomics.uses
+    ? `A purchase can grant at most ${STICKER_MAX_USES} uses`
     : price < usesFloor
     ? `${uses} uses needs at least ${usesFloor} Buzz (${STICKER_MIN_BUZZ_PER_USE} per use)`
     : null;

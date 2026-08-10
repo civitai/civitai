@@ -112,6 +112,9 @@ export const creatorCosmeticTypes = [
 // Consumables are priced per use, so a listing has to clear both floors.
 export const STICKER_MIN_BUZZ_PER_USE = 5;
 export const STICKER_DEFAULT_USES = 100;
+// Bounds the creator's own 10x approval grant, which the flat submission fee
+// does not scale with — the per-use price floor only governs what a BUYER pays.
+export const STICKER_MAX_USES = 100;
 
 /**
  * Minimum Buzz a creator may charge for a single top-up use.
@@ -395,7 +398,7 @@ export const submitCreatorShopItemSchema = z
     // Sticker only — the `:slug:` users type. Required for Sticker, ignored otherwise.
     slug: z.string().optional(),
     // Sticker only — uses granted per purchase.
-    uses: z.number().int().positive().optional(),
+    uses: z.number().int().positive().max(STICKER_MAX_USES).optional(),
     // Sticker only — what one additional use costs when a buyer runs out.
     // Intrinsic to the sticker, not to the offer: resale by reference means one
     // cosmetic can be listed at several prices, and a top-up must cost the same
@@ -525,7 +528,7 @@ export const updateCreatorShopItemSchema = z.object({
   // Sticker only. Omitted leaves the existing slug alone — replacing artwork must
   // not silently drop it, since owners' `:slug:` text depends on it.
   slug: z.string().optional(),
-  uses: z.number().int().positive().optional(),
+  uses: z.number().int().positive().max(STICKER_MAX_USES).optional(),
   pricePerUse: z.number().int().positive().optional(),
   // Required by the service when `imageUrl` replaces the artwork: the stored
   // affirmation covers the art that was submitted, so new art needs a new one.
