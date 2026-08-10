@@ -18,7 +18,7 @@ import {
   resolveImageUploadRequest,
   resolveResourcePickerRequest,
   resolveReviewConsentNotice,
-  resolveUngrantableConsentScopes,
+  resolveUngrantableConsentNotice,
   toHostGateStatus,
   PAGE_RESOURCE_PICKER_TYPES,
   type PageHostStatus,
@@ -63,60 +63,113 @@ describe('grantedPageScopes (#3/#6 — BLOCK_INIT carries the JWT scopes, not []
   });
 });
 
-describe('resolveUngrantableConsentScopes (Issue B — un-grantable dev-preview consent → toast)', () => {
-  it('returns the un-grantable subset when a requested scope is neither granted NOR missing (clamped at mint)', () => {
+describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview consent → toast)', () => {
+  it('notifies and NAMES the un-grantable subset when a requested scope is neither granted NOR missing (clamped at mint)', () => {
     // dev-tunnel preview: the token carries models:read:self; the block asks for
     // a scope the tunnel allowlist withheld → not granted, not addable via consent.
-    const out = resolveUngrantableConsentScopes(['apps:storage:read'], ['models:read:self'], []);
-    expect(out).toEqual(['apps:storage:read']);
+    expect(
+      resolveUngrantableConsentNotice(['apps:storage:read'], ['models:read:self'], [])
+    ).toEqual({ notify: true, scopes: ['apps:storage:read'] });
   });
 
-  it('returns EMPTY for the BENIGN already-granted case (block re-requests a held scope) — no toast', () => {
+  it('does NOT notify for the BENIGN already-granted case (block re-requests a held scope)', () => {
     expect(
-      resolveUngrantableConsentScopes(
+      resolveUngrantableConsentNotice(
         ['buzz:read:self'],
         ['buzz:read:self', 'models:read:self'],
         []
       )
-    ).toEqual([]);
+    ).toEqual({ notify: false, scopes: [] });
   });
 
-  it('returns EMPTY when the requested scope is grantable via consent (it is in missingScopes) — modal path owns it', () => {
+  it('does NOT notify when the requested scope is grantable via consent (it is in missingScopes) — modal path owns it', () => {
     expect(
-      resolveUngrantableConsentScopes(
+      resolveUngrantableConsentNotice(
         ['ai:write:budgeted'],
         ['models:read:self'],
         ['ai:write:budgeted']
       )
-    ).toEqual([]);
+    ).toEqual({ notify: false, scopes: [] });
   });
 
-  it('returns EMPTY when the block sends no hint / a garbage hint (never a fragile heuristic)', () => {
-    expect(resolveUngrantableConsentScopes(undefined, ['models:read:self'], [])).toEqual([]);
-    expect(resolveUngrantableConsentScopes([], ['models:read:self'], [])).toEqual([]);
-    expect(resolveUngrantableConsentScopes('nope', ['models:read:self'], [])).toEqual([]);
-    expect(resolveUngrantableConsentScopes([1, null, ''], ['models:read:self'], [])).toEqual([]);
+  it('does NOT notify when the block sends no hint / a garbage hint (never a fragile heuristic)', () => {
+    const silent = { notify: false, scopes: [] };
+    expect(resolveUngrantableConsentNotice(undefined, ['models:read:self'], [])).toEqual(silent);
+    expect(resolveUngrantableConsentNotice([], ['models:read:self'], [])).toEqual(silent);
+    expect(resolveUngrantableConsentNotice('nope', ['models:read:self'], [])).toEqual(silent);
+    expect(resolveUngrantableConsentNotice([1, null, ''], ['models:read:self'], [])).toEqual(
+      silent
+    );
   });
 
   it('reports ONLY the un-grantable scopes from a mixed hint (drops granted + missing), sorted+deduped', () => {
-    const out = resolveUngrantableConsentScopes(
-      [
-        'apps:storage:write',
-        'apps:storage:read',
-        'apps:storage:write',
-        'buzz:read:self',
-        'ai:write:budgeted',
-      ],
-      ['buzz:read:self'], // already granted
-      ['ai:write:budgeted'] // grantable via consent
-    );
-    expect(out).toEqual(['apps:storage:read', 'apps:storage:write']);
+    expect(
+      resolveUngrantableConsentNotice(
+        [
+          'apps:storage:write',
+          'apps:storage:read',
+          'apps:storage:write',
+          'buzz:read:self',
+          'ai:write:budgeted',
+        ],
+        ['buzz:read:self'], // already granted
+        ['ai:write:budgeted'] // grantable via consent
+      )
+    ).toEqual({ notify: true, scopes: ['apps:storage:read', 'apps:storage:write'] });
   });
 
   it('tolerates an undefined missingScopes', () => {
     expect(
-      resolveUngrantableConsentScopes(['apps:storage:read'], ['models:read:self'], undefined)
-    ).toEqual(['apps:storage:read']);
+      resolveUngrantableConsentNotice(['apps:storage:read'], ['models:read:self'], undefined)
+    ).toEqual({ notify: true, scopes: ['apps:storage:read'] });
+  });
+
+  /**
+   * 🔴 The untrusted-echo half. `rawScopesHint` comes from the block's own frame
+   * and the resulting `scopes` are posted back over the bridge for block UI to
+   * render, so only the fixed platform vocabulary may appear in them — while the
+   * DECISION stays on the unfiltered set, or an un-grantable scope the vocabulary
+   * doesn't know would silently produce no refusal at all.
+   */
+  describe('untrusted hint — the payload is filtered, the decision is not', () => {
+    it('drops markup / junk / oversized strings from `scopes` but STILL notifies', () => {
+      const out = resolveUngrantableConsentNotice(
+        ['<img src=x onerror=alert(1)>', 'not:a:real:scope', 'A'.repeat(5000)],
+        ['models:read:self'],
+        []
+      );
+      // The refusal survives — this is the toast + bridge-push trigger.
+      expect(out.notify).toBe(true);
+      // Nothing untrusted is echoed back.
+      expect(out.scopes).toEqual([]);
+    });
+
+    it('keeps the known scopes and drops the unknown ones from a MIXED hint, order preserved', () => {
+      const out = resolveUngrantableConsentNotice(
+        ['apps:storage:write', 'not:a:real:scope', 'apps:storage:read', '<script>x</script>'],
+        ['models:read:self'],
+        []
+      );
+      expect(out).toEqual({ notify: true, scopes: ['apps:storage:read', 'apps:storage:write'] });
+    });
+
+    it('does not treat inherited Object.prototype keys as known scopes (own-property test)', () => {
+      // `isKnownBlockScope` is `Object.prototype.hasOwnProperty.call(...)`, not
+      // `in` — `in` walked the prototype chain and let these through as "known".
+      const inherited = ['toString', 'constructor', '__proto__', 'valueOf', 'hasOwnProperty'];
+      const out = resolveUngrantableConsentNotice(inherited, ['models:read:self'], []);
+      expect(out.notify).toBe(true);
+      expect(out.scopes).toEqual([]);
+    });
+
+    it('still notifies when the ONLY un-grantable scope is unknown (the refusal is the signal)', () => {
+      // The regression guard for the obvious-but-wrong fix: filtering the
+      // DECISION by `isKnownBlockScope` would make this silent, removing an
+      // existing user-visible behaviour.
+      const out = resolveUngrantableConsentNotice(['totally:made:up'], ['models:read:self'], []);
+      expect(out.notify).toBe(true);
+      expect(out.scopes).toEqual([]);
+    });
   });
 });
 

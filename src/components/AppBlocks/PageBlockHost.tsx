@@ -27,7 +27,7 @@ import {
   resolvePublishGenerationOutputsRequest,
   resolveResourcePickerRequest,
   resolveReviewConsentNotice,
-  resolveUngrantableConsentScopes,
+  resolveUngrantableConsentNotice,
   shouldEmitMidSessionLossBeacon,
   toHostGateStatus,
 } from './pageBlockHostLogic';
@@ -1312,12 +1312,43 @@ export function PageBlockHost({
       // and can never be added via consent here — e.g. a dev-tunnel preview token
       // that doesn't carry it). Only the latter, proven from the block's advisory
       // `scopes` hint, surfaces a message so the app doesn't silently look dead.
-      const ungrantable = resolveUngrantableConsentScopes(
+      const ungrantable = resolveUngrantableConsentNotice(
         payload?.scopes,
         grantedScopes,
         missingScopes
       );
-      if (ungrantable.length === 0) return; // already-granted or no hint — drop
+      if (!ungrantable.notify) return; // already-granted or no hint — drop
+      // 🔴 Tell the BLOCK, not just the viewer. The toast below renders in the
+      // HOST frame; before this push nothing came back over the bridge, so the
+      // block could not tell "the user hasn't confirmed the dialog yet" from
+      // "this environment will never grant this scope" — and its own UI went on
+      // telling the developer to retry an action that can never succeed, right
+      // next to a host toast saying the opposite. This is a fire-and-forget PUSH
+      // (REQUEST_CONSENT carries no `requestId`, so there is nothing to correlate
+      // a `*_RESULT` reply to), matching the other uncorrelated host→block pushes
+      // (`TOKEN_REFRESH`, `ROUTE_CHANGED`, `SUSPEND`/`RESUME`).
+      //
+      // It ADDS a channel — the toast is unchanged. The BENIGN already-granted
+      // case returns above and stays silent in BOTH channels: a block that got a
+      // message there would render a permission-unavailable state over a
+      // permission that actually works.
+      //
+      // Sent BEFORE the toast so the block's signal cannot be lost to a throwing
+      // notification layer. That ordering is pinned by
+      // `PageBlockHost.browser.test.tsx` → "the CONSENT_UNAVAILABLE push happens
+      // BEFORE the toast", which asserts the order of the SYNCHRONOUS calls; a
+      // spy on the delivered message cannot see it (delivery is async).
+      //
+      // 🔴 WHAT `scopes` IS. It is NOT the block's raw hint. `notify` above is
+      // decided on the full un-grantable set (requested − granted − missing), but
+      // `ungrantable.scopes` is that set filtered to the known block-scope
+      // vocabulary — the hint is untrusted block input and this payload is
+      // rendered by block UI, so nothing outside the fixed vocabulary is echoed
+      // back out of the host. The two are deliberately different sets: when every
+      // requested scope is unrecognised this still sends, with `scopes: []`. The
+      // refusal is the signal; the names are advisory. Delivered solely to the
+      // frame that asked.
+      send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ungrantable.scopes });
       showNotification({
         color: 'yellow',
         title: 'Permission unavailable',
@@ -1331,6 +1362,7 @@ export function PageBlockHost({
     // what opened the commit→passive-effect window in the first place.
   }, [
     onMessage,
+    send,
     readGateStatus,
     missingScopes,
     grantedScopes,
