@@ -43,12 +43,14 @@ export type ModeratorReportRow = {
   entityId: number | null;
 };
 
+/** `'all'` must be said, not implied by omission. These were optional and silently skipped, which is
+ *  how Chat Audit came to count every chat report in history under copy promising open ones only. */
 export type GetReportsParams = {
   type: ReportEntity;
   page?: number;
   limit?: number;
-  statuses?: ReportStatus[];
-  reasons?: ReportReason[];
+  statuses: ReportStatus[] | 'all';
+  reasons: ReportReason[] | 'all';
   reportedBy?: string;
 };
 
@@ -84,8 +86,8 @@ export async function getReports({
     .leftJoin('User as resolver', 'resolver.id', 'Report.statusSetBy')
     .where(entityExists);
 
-  if (statuses?.length) base = base.where('Report.status', 'in', statuses);
-  if (reasons?.length) base = base.where('Report.reason', 'in', reasons);
+  if (statuses !== 'all') base = base.where('Report.status', 'in', statuses);
+  if (reasons !== 'all') base = base.where('Report.reason', 'in', reasons);
   if (reportedBy) base = base.where('User.username', 'ilike', `${reportedBy}%`);
 
   const totalItems = Number(

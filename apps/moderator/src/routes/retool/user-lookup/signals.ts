@@ -36,8 +36,13 @@ export type Signals = {
     blockedTotal: number;
     last24h: number;
   };
-  modContact: { chats: number; lastAt: string | null };
-  events: { key: string; type: string; time: string; actorId: number | null; actor: string | null }[];
+  events: {
+    key: string;
+    type: string;
+    time: string;
+    actorId: number | null;
+    actor: string | null;
+  }[];
 };
 
 export async function fetchSignals(userId: number, version: number): Promise<Signals> {

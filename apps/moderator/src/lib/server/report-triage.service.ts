@@ -26,6 +26,8 @@ export type SuspectImage = {
   blockedFor: string | null;
   prompt: string | null;
   negativePrompt: string | null;
+  isProfilePicture: boolean;
+  hasConnection: boolean;
 };
 
 /** Retool's "Images" and "Remaining" queue columns: `remaining` is what a colleague has not already
@@ -130,6 +132,15 @@ export async function getSuspectImages(
         'blockedFor',
         sql<string | null>`"meta" ->> 'prompt'`.as('prompt'),
         sql<string | null>`"meta" ->> 'negativePrompt'`.as('negativePrompt'),
+        // Blast radius, same probes as bulk-image.service.ts. Removing an image that is someone's
+        // profile picture or a bounty entry has consequences beyond the image, and a moderator
+        // clearing a grid cannot see either from the thumbnail.
+        sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u."profilePictureId" = "Image"."id")`.as(
+          'isProfilePicture'
+        ),
+        sql<boolean>`EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."entityId" = "Image"."id")`.as(
+          'hasConnection'
+        ),
       ])
       .orderBy('id', 'desc')
       .limit(limit + 1)

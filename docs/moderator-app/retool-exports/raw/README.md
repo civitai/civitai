@@ -1,9 +1,14 @@
 # Raw Retool exports
 
-The nine app exports this migration was built from, as attached to the ClickUp subtasks under
+The nine app exports this migration was built from, plus two **workflow** exports
+(`workflow-daily-challenge-*.json`, from `868kn80u9`), as attached to the ClickUp subtasks under
 `868kkxqpn`. Kept here because Retool access is being lost and the inventories beside them are lossy:
 they render what the extractor knows how to render, and the extractor has already been wrong twice
 about what mattered.
+
+`extract.mjs` reads app exports; the two workflow files have a different top-level shape
+(`crontab` / `triggerWebhooks` / `blockData` / `templateData`) and no components, so read them
+directly rather than through the extractor.
 
 Re-inventory any of them with:
 
@@ -21,6 +26,12 @@ the same pass.
 **Never overwrite one of these with a fresh download.** Sanitize first, verify the output contains no
 secret-shaped strings, and only then commit — a token in git history is disclosed permanently, and
 deleting the file afterwards does not undo that.
+
+The two workflow exports each carried three live credentials — a Discord webhook URL with its token, a
+PagerDuty `routing_key`, and the `run-jobs?token=` webhook token — all in an alert payload, not in a
+query or a header. **They sat in a ClickUp attachment before reaching here, so treat all three as
+disclosed and rotate them regardless of this redaction.** The Hangfire dashboard URL the alert links
+to is redacted as well, under the paths-to-production rule.
 
 Redaction is not limited to credentials. An internal CIDR and an abuse-domain literal are stripped
 too — network topology and moderation trigger terms are both private-repo material, and the second is

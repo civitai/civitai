@@ -5,7 +5,6 @@ import {
   getAccountEvents,
   getBlockedPrompts,
   getCommentBurst,
-  getModeratorContact,
   getRecentGenerations,
   getSharedIpAccounts,
   getSharedSocialAccounts,
@@ -20,30 +19,20 @@ import {
 export const GET: RequestHandler = async ({ params, locals }) => {
   const userId = requireUserIdParam(locals, params, '/retool/user-lookup');
 
-  const [
-    ips,
-    commentBurst,
-    shared,
-    socials,
-    sharedSocials,
-    prompts,
-    generations,
-    modContact,
-    events,
-  ] = await Promise.all([
-    // The ClickHouse-backed reads degrade individually. Without this a ClickHouse outage rejected the
-    // whole payload and blanked the Postgres-only halves of this section too — including the social
-    // links list and its remove action.
-    softly('ips', () => getUserIps(userId), []),
-    getCommentBurst(userId),
-    softly('sharedIps', () => getSharedIpAccounts(userId), { accounts: [], truncated: false }),
-    getSocials(userId),
-    getSharedSocialAccounts(userId),
-    softly('blockedPrompts', () => getBlockedPrompts(userId), { prompts: [], total: 0 }),
-    softly('recentGenerations', () => getRecentGenerations(userId), 0),
-    getModeratorContact(userId),
-    softly('accountEvents', () => getAccountEvents(userId), []),
-  ]);
+  const [ips, commentBurst, shared, socials, sharedSocials, prompts, generations, events] =
+    await Promise.all([
+      // The ClickHouse-backed reads degrade individually. Without this a ClickHouse outage rejected the
+      // whole payload and blanked the Postgres-only halves of this section too — including the social
+      // links list and its remove action.
+      softly('ips', () => getUserIps(userId), []),
+      getCommentBurst(userId),
+      softly('sharedIps', () => getSharedIpAccounts(userId), { accounts: [], truncated: false }),
+      getSocials(userId),
+      getSharedSocialAccounts(userId),
+      softly('blockedPrompts', () => getBlockedPrompts(userId), { prompts: [], total: 0 }),
+      softly('recentGenerations', () => getRecentGenerations(userId), 0),
+      softly('accountEvents', () => getAccountEvents(userId), []),
+    ]);
 
   // Nested per signal rather than flattened: a third shared-signal would otherwise add a third pair of
   // ad-hoc sibling names (sharedAccounts/truncated, sharedSocials/socialsTruncated, …).
@@ -56,7 +45,6 @@ export const GET: RequestHandler = async ({ params, locals }) => {
       truncated: sharedSocials.truncated,
     },
     generation: { blocked: prompts.prompts, blockedTotal: prompts.total, last24h: generations },
-    modContact,
     events,
   });
 };

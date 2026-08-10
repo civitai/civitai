@@ -12,6 +12,10 @@ selects — not its name.
 
 Status: **[x] fixed · [ ] open**. Nothing here is verified in a browser.
 
+**Reconciled against the code 2026-08-10.** The boxes had gone stale — fixes landed in `2586b46947`
+and `b3456102bb` without being ticked, so this file read as 19 open findings when 16 were done. If you
+are about to act on an unticked box, check the code first; that is how this file misleads.
+
 ## Bulk Image Manager — fixed in 948bd9d110
 
 - [x] `UserQuery5000` (`WHERE nsfwLevel = 32`, the already-removed view) absorbed into a row about
@@ -57,25 +61,25 @@ Status: **[x] fixed · [ ] open**. Nothing here is verified in a browser.
 - [ ] Report list has no status/reason filter and a hard 50-row cap where Retool had none
 - [ ] Timed-mute presets (6/12/24/48/72/168) still a free-text hours box
 
-## User Reports — 9 findings, 0 fixed
+## User Reports — 9 findings, 8 fixed
 
-- [ ] **No image action path at all.** Retool selected a reported user's images and removed/restored
+- [x] **No image action path at all.** Retool selected a reported user's images and removed/restored
       them here, with the strike checkbox and notification in the same flow. `ImageQueueGrid` is passed
       no `selected` set, so the grid is display-only and nothing links to Bulk Image Manager.
-- [ ] Blocked images excluded (`ingestion != 'Blocked'`) and `blockedFor` never surfaced — prior
+- [x] Blocked images excluded (`ingestion != 'Blocked'`) and `blockedFor` never surfaced — prior
       enforcement is one number, a CSAM removal is indistinguishable from a tag cleanup, no restore path
-- [ ] 60-image cap with no cursor, where Retool reached 5000
-- [ ] `prompt` / `negativePrompt` dropped from the cards — for a generated image the prompt *is* the
+- [x] 60-image cap with no cursor, where Retool reached 5000
+- [x] `prompt` / `negativePrompt` dropped from the cards — for a generated image the prompt *is* the
       ToS evidence
-- [ ] `profile` / `bounty` flags dropped (blast-radius warnings)
-- [ ] `GetImageCount` was per-queue-row in Retool; now only for the selected user, so the queue no
+- [x] `profile` / `bounty` flags dropped (blast-radius warnings)
+- [x] `GetImageCount` was per-queue-row in Retool; now only for the selected user, so the queue no
       longer shows which accounts have content worth reviewing
 - [ ] The suspect's history datasets (ClickHouse activities, Retool actions, notes, received reports)
       are "shipped in User Lookup" — true of the datasets, false of this page
-- [ ] `ReportHistory` 300 → 100
-- [ ] Pagination links drop the `user` param, closing the suspect drill-down
+- [x] `ReportHistory` 300 → 100
+- [x] Pagination links drop the `user` param, closing the suspect drill-down
 
-## Chat Audit — 5 findings, 2 fixed
+## Chat Audit — 5 findings, 4 fixed
 
 - [x] **Message-content search was unreachable for most spam terms.** `USERNAME_SHAPE`
       (`^[\w.-]{3,50}$`) classified `discord.gg`, `telegram`, `onlyfans`, `bitcoin` as usernames →
@@ -84,30 +88,30 @@ Status: **[x] fixed · [ ] open**. Nothing here is verified in a browser.
 - [x] **"Open reports" counted every chat report in history.** No `statuses`/`reasons` passed to
       `getReports`, under copy claiming the same definition of open as `/reports`; Retool's
       `reason != 'Automated'` was also dropped. Both restored.
-- [ ] Reporter's `details->>'comment'` fetched and never rendered — for a chat report that comment is
+- [x] Reporter's `details->>'comment'` fetched and never rendered — for a chat report that comment is
       the entire substance
-- [ ] `TopChatters` 50 → 25, unexplained
-- [ ] Ban / note actions deliberately delegated to User Lookup (accepted, but it is a capability
+- [x] `TopChatters` 50 → 25, unexplained
+- [x] **WON'T FIX** — ban / note actions deliberately delegated to User Lookup (a capability
       removed from this screen)
 
-## Image Lookup — 4 findings, 0 fixed
+## Image Lookup — 4 findings, 3 fixed
 
-- [ ] **`Image.meta` dropped** — Retool's `SELECT *` put the generation prompt in front of the
+- [x] **`Image.meta` dropped** — Retool's `SELECT *` put the generation prompt in front of the
       moderator. On an image flagged `minor` or `poi` the prompt is the strongest evidence, and this
       repo treats it as first-class elsewhere (`@civitai/mod-utils/prompt-audit`). `hideMeta` is also
       gone, so "uploader hid the prompt" and "no prompt" look identical.
-- [ ] Report `details` fetched, never rendered (same shape as everywhere else)
-- [ ] `hasImageEvents` is an unguarded ClickHouse call in `load`, so ClickHouse being down turns
+- [x] Report `details` fetched, never rendered (same shape as everywhere else)
+- [x] `hasImageEvents` is an unguarded ClickHouse call in `load`, so ClickHouse being down turns
       "no image matches" into an error page
-- [ ] `ImageReaction.updatedAt` dropped (no consequence found)
+- [x] **WON'T FIX** — `ImageReaction.updatedAt` dropped; no consequence found in two passes
 
-## Article Lookup — 3 findings, 0 fixed
+## Article Lookup — 3 findings, 2 fixed
 
-- [ ] `unlisted` selected, typed, rendered nowhere — an unlisted article is visually identical to a
+- [x] `unlisted` selected, typed, rendered nowhere — an unlisted article is visually identical to a
       public one
-- [ ] `coverId` declared on `ArticleRow` but never selected; `as unknown as ArticleRow` hides it, so a
+- [x] `coverId` declared on `ArticleRow` but never selected; `as unknown as ArticleRow` hides it, so a
       future cover thumbnail silently renders blank
-- [ ] `Article.metadata` dropped; unverified whether anything moderation-bearing lives there
+- [x] `Article.metadata` dropped — now selected and rendered raw when non-empty, since the column is `Json?` with no schema documentation and guessing its contents is what kept this open
 
 ## Layout parity (from the extractor's new `## layout` section, 2026-08-08)
 
@@ -214,6 +218,19 @@ finding kept out of any public doc beyond this sentence.
 **Method note:** every one of these came from a screenshot or the ticket text, not from code review or
 the export. The exports describe behaviour; they do not describe what was asked for, and they only
 describe layout once re-extracted.
+
+## tabbedContainer14, resolved 2026-08-10
+
+Recorded as UNVERIFIABLE for two days because the note never said what its panes were. Re-extracted from
+the committed raw export: it is a **Paddle account-linking workflow**, three panes —
+`1. Find Account` (`textInput15` "Enter Paddle Customer Id" → `table71`), `2. Remove an old
+paddleCustomerId account` (`textInput14` "Enter User Id" → `button95` "Remove Link"), and
+`3. Link Paddle Account` (`textInput12`).
+
+- [ ] **Not ported, and deliberately not built without a decision.** Two of the three panes WRITE to a
+      billing identifier on `User`, which is a different risk class from the rest of this page. The
+      lookup pane alone is harmless; the link/unlink pair needs someone to say whether the spoke should
+      own it at all. `paddleCustomerId` is already read and shown on the identity panel.
 
 ## Cross-cutting
 

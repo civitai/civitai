@@ -196,7 +196,7 @@ export async function getAccountEvents(userId: number, limit = 50): Promise<Acco
       type: r.type,
       time: clickhouseDate(r.time),
       actorId: isActor ? actorId : null,
-      actor: isActor ? (byId.get(actorId)?.username ?? null) : null,
+      actor: isActor ? byId.get(actorId)?.username ?? null : null,
     };
   });
 }
@@ -208,7 +208,9 @@ export type UserSocial = { id: number; url: string; type: string };
 // slash and 25 without, and those two sets do not overlap at all — an exact match reports 24 alts on a
 // 60-account ring.
 const normalizedUrl = (column: string) =>
-  sql<string>`regexp_replace(regexp_replace(lower(btrim(${sql.ref(column)})), '^https?://(www\\.)?', ''), '/+$', '')`;
+  sql<string>`regexp_replace(regexp_replace(lower(btrim(${sql.ref(
+    column
+  )})), '^https?://(www\\.)?', ''), '/+$', '')`;
 
 // `UserLink` has no uniqueness on (userId, url) — one account holds the same link up to 19 times — so
 // every read here dedupes. Left raw it renders a link 19 times, and in the shared-account list it
@@ -358,15 +360,14 @@ export async function getRecentGenerations(userId: number): Promise<number> {
 // Including it made this banner fire for 133,081 users, i.e. essentially anyone who has ever been in a
 // DM, asserting moderator contact that never happened. Retool's hardcoded list did not contain -1, so
 // deriving the list is only an improvement once system accounts are excluded.
-export async function getModeratorContact(
-  userId: number
-): Promise<{ chats: number; lastAt: Date | null }> {
-  const row = await dbRead
+export type ModeratorContact = { chats: number; lastAt: Date | null; chatIds: number[] };
+
+export async function getModeratorContact(userId: number): Promise<ModeratorContact> {
+  // Grouped rather than aggregated in one row: the ticket asked for the chat IDS as well as the
+  // count, so a moderator can open the prior conversation in Chat Audit instead of searching for it.
+  const rows = await dbRead
     .selectFrom('ChatMessage as cm')
-    .select((eb) => [
-      eb.fn.count<string>('cm.chatId').distinct().as('chats'),
-      eb.fn.max('cm.createdAt').as('lastAt'),
-    ])
+    .select((eb) => ['cm.chatId', eb.fn.max('cm.createdAt').as('lastAt')])
     .where('cm.chatId', 'in', (eb) =>
       eb.selectFrom('ChatMember').select('chatId').where('userId', '=', userId)
     )
@@ -374,7 +375,13 @@ export async function getModeratorContact(
     .where('cm.userId', 'in', (eb) =>
       eb.selectFrom('User').select('id').where('isModerator', '=', true).where('id', '>', 0)
     )
-    .executeTakeFirst();
+    .groupBy('cm.chatId')
+    .orderBy('lastAt', 'desc')
+    .execute();
 
-  return { chats: Number(row?.chats ?? 0), lastAt: row?.lastAt ?? null };
+  return {
+    chats: rows.length,
+    lastAt: rows[0]?.lastAt ?? null,
+    chatIds: rows.slice(0, 10).map((r) => r.chatId),
+  };
 }

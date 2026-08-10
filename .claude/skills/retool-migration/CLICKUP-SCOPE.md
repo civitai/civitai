@@ -126,7 +126,12 @@ The conventions that apply to every page:
 ### Workflows
 
 - [ ] Migrate the two confirmed-active Retool workflows: *Daily Challenge — Not Prepared Check*,
-      *Daily Challenge — Not Started Check*.
+      *Daily Challenge — Not Started Check*. Both are webhook-triggered alerting flows, **not cron**
+      — see the Workflows row in `MIGRATIONS.md`.
+- [ ] Find what calls the `startTrigger` webhook on those two. The export does not say, and the
+      alerts point at the Hangfire job scheduler, so that is the first place to look.
+- [ ] Rotate the three credentials the exports carried (Discord webhook token, PagerDuty routing key,
+      `run-jobs` webhook token) — they were attached to a ClickUp task, so treat them as disclosed.
 - [ ] Audit the remaining Retool workflows for usage before decommissioning anything.
 
 ---

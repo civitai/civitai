@@ -41,6 +41,9 @@
 
   // Typed non-null by Prisma's generated Kysely types, but the column is nullable in the database.
   const locked = $derived(article.lockedProperties ?? []);
+  const hasMetadata = $derived(
+    !!article.metadata && Object.keys(article.metadata as object).length > 0
+  );
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -111,6 +114,17 @@
       {/each}
     </div>
   </div>
+
+  {#if hasMetadata}
+    <div class="mt-4 border-t border-dark-4 pt-4">
+      <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Metadata</h3>
+      <pre class="overflow-x-auto rounded-md bg-dark-7 p-2 text-xs text-dark-0">{JSON.stringify(
+          article.metadata,
+          null,
+          2
+        )}</pre>
+    </div>
+  {/if}
 
   {#if locked.length}
     <div class="mt-4 border-t border-dark-4 pt-4">

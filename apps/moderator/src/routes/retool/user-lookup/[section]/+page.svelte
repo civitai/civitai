@@ -156,7 +156,7 @@
     {:else if section === 'mod-activity'}
       <ModActivityPanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
     {:else if section === 'chat'}
-      <ChatContactPanel {signals} />
+      <ChatContactPanel modContact={result.modContact} />
     {:else if section === 'notes'}
       <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} {form} />
     {:else if section === 'notifications'}

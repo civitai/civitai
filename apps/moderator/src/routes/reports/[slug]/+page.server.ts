@@ -39,8 +39,9 @@ export const load: PageServerLoad = async ({ params, url }) => {
   const data = await getReports({
     type,
     page,
-    statuses,
-    reasons,
+    // No selection is every reason, said explicitly — the badge counts them all, so the page must too.
+    statuses: statuses.length ? statuses : 'all',
+    reasons: reasons.length ? reasons : 'all',
     reportedBy: reportedBy || undefined,
   });
 

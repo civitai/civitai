@@ -78,7 +78,47 @@
     {#if identity.deletedAt}<Badge variant="secondary">deleted</Badge>{/if}
     {#if identity.isModerator}<Badge variant="secondary">moderator</Badge>{/if}
     {#if data.result?.curator.isCurator}<Badge variant="secondary">curator</Badge>{/if}
+    <!-- The rest of Retool's persistent header: prior enforcement, what they pay, and how to reach
+         them. Each was section-local, so judging an account meant visiting three tabs first. -->
+    {#if data.result?.strikeCount}
+      <Badge variant="destructive">
+        {data.result.strikeCount} strike{data.result.strikeCount > 1 ? 's' : ''}
+      </Badge>
+    {/if}
+    {#if data.result?.subscription?.productName}
+      <!-- Status is carried, not assumed: a cancelled subscription must not read as a paying one. -->
+      <Badge variant="secondary">
+        {data.result.subscription.productName}{data.result.subscription.status === 'active'
+          ? ''
+          : ` (${data.result.subscription.status})`}
+      </Badge>
+    {/if}
+    {#if data.result?.modContact.chats}
+      <Badge variant="secondary">
+        spoke with a mod ×{data.result.modContact.chats}
+      </Badge>
+    {/if}
+    {#if identity.email}
+      <span class="text-xs text-dark-2">{identity.email}</span>
+    {/if}
   </div>
+
+  <!-- The ticket asked for open reports "very clearly at the top", and actionable from here. A report
+       nobody has ruled on changes what every other panel on this page means. -->
+  {#if identity.openReportCount > 0}
+    <div
+      class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-200"
+      role="status"
+    >
+      <span>
+        {identity.openReportCount} open report{identity.openReportCount > 1 ? 's' : ''} against this
+        account.
+      </span>
+      <a href="/reports/user?status=Pending&status=Processing" class={LINK_CLASS}>
+        Triage in the report queue
+      </a>
+    </div>
+  {/if}
 
   <div class="flex gap-6">
     <nav class="w-56 shrink-0">

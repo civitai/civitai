@@ -1,6 +1,8 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { REPORT_SOURCES } from './report-sources';
+import { strikeCountsByUserIds } from './moderation-memory.service';
+import { getModeratorContact, type ModeratorContact } from './user-signals.service';
 
 // The PAGE LOAD half of User Lookup — identity, profile, score, counts, stats, reports, subscription.
 // One file per endpoint is the rule for this page's services; the sibling files are
@@ -31,6 +33,8 @@ export type UserIdentity = {
   rewardsEligibility: string | null;
   /** Retool showed both as header chips on every section. */
   csamReportCount: number;
+  /** Pending + Processing reports filed AGAINST this account. */
+  openReportCount: number;
   /** `Pending` means a SYSTEM restriction nobody has ruled on — the case where `mutedAt` is null and
    *  the account still reads as muted. `null` when the account has never been restricted. */
   restrictionStatus: string | null;
@@ -85,6 +89,11 @@ export type UserLookupResult = {
   subscription: UserSubscription | null;
   curator: CuratorStatus;
   ranks: LeaderboardRank[];
+  /** Header chip. Lives in the moderator database, so it cannot ride the identity query. */
+  strikeCount: number;
+  /** Prior moderator contact. In the load rather than the signals endpoint because it is a header
+   *  warning: acting on an account without knowing a mod already spoke to them is the failure. */
+  modContact: ModeratorContact;
 };
 
 // Retool used three separate queries behind three inputs; one resolver keeps the caller from having to
@@ -138,6 +147,8 @@ export async function getUserLookup(userId: number): Promise<UserLookupResult | 
     subscription,
     curator,
     ranks,
+    strikes,
+    modContact,
   ] = await Promise.all([
     getIdentity(userId),
     getProfile(userId),
@@ -149,6 +160,10 @@ export async function getUserLookup(userId: number): Promise<UserLookupResult | 
     getSubscription(userId),
     getCuratorStatus(userId),
     getLeaderboardRanks(userId),
+    // A different database, so it rides the same Promise.all rather than a second round trip. Failure
+    // degrades to "no strikes shown": the moderator database being down must not blank a lookup.
+    strikeCountsByUserIds([userId]).catch(() => new Map<number, number>()),
+    getModeratorContact(userId),
   ]);
   return identity
     ? {
@@ -162,6 +177,8 @@ export async function getUserLookup(userId: number): Promise<UserLookupResult | 
         subscription,
         curator,
         ranks,
+        strikeCount: strikes.get(userId) ?? 0,
+        modContact,
       }
     : null;
 }
@@ -255,6 +272,14 @@ async function getIdentity(userId: number): Promise<UserIdentity | null> {
         SELECT ur.type FROM "UserRestriction" ur
         WHERE ur."userId" = u.id ORDER BY ur.id DESC LIMIT 1
       )`.as('restrictionType'),
+      // The ticket asked for open reports against the account "very clearly at the top". A report
+      // nobody has ruled on changes what every other panel means, and it was reachable only by
+      // navigating to the Reports section and reading a list.
+      sql<number>`(
+        SELECT COUNT(*)::int FROM "UserReport" urp
+        JOIN "Report" r ON r.id = urp."reportId"
+        WHERE urp."userId" = u.id AND r.status IN ('Pending', 'Processing')
+      )`.as('openReportCount'),
     ])
     .where('u.id', '=', userId)
     .executeTakeFirst();

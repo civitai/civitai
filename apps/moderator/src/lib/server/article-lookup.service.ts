@@ -27,6 +27,7 @@ export type ArticleRow = {
   contentScannedAt: Date | null;
   scanRequestedAt: Date | null;
   lockedProperties: string[];
+  metadata: unknown;
   coverId: number | null;
   userId: number;
   username: string | null;
@@ -75,6 +76,9 @@ export async function getArticle(articleId: number): Promise<ArticleRow | null> 
       'a.contentScannedAt',
       'a.scanRequestedAt',
       'a.lockedProperties',
+      // `Json?` with no schema documentation, so what lives here is unknown rather than known-empty.
+      // Rendered raw when non-empty: cheaper than guessing, and it stops the question recurring.
+      'a.metadata',
       'a.userId',
       'u.username',
       'u.bannedAt as userBannedAt',
