@@ -27,8 +27,10 @@ import {
  * is reaped. That is the correct "tolerate busy, detect dead" semantics, with a
  * real loop-liveness signal instead of probe-latency tolerance tuning.
  *
- * Epoch-SECONDS (not ms) because the runner image is node:24-alpine3.24 → busybox
- * `date` has no `%N`; the probe reads seconds with `date +%s`.
+ * Epoch-SECONDS (not ms) because the runner image is Alpine-based → busybox `date`
+ * has no `%N`; the probe reads seconds with `date +%s`. (Deliberately not naming a
+ * Node tag here: the exact base image is pinned in one place, the Dockerfile, and a
+ * copy of it in a comment is a copy that goes stale without anything noticing.)
  *
  * The same tick also stores a MILLISECOND timestamp into the event-loop watchdog's
  * SharedArrayBuffer, which a worker thread reads to detect a wedge off-loop. One
@@ -57,7 +59,7 @@ export function registerLivenessHeartbeat() {
   if (started) return;
   started = true;
 
-  // Ensure the parent dir exists so the first write doesn't ENOENT. In the prod node:20-alpine pods `/tmp`
+  // Ensure the parent dir exists so the first write doesn't ENOENT. In the Alpine runtime image `/tmp`
   // already exists (mkdir recursive is a no-op), so the probe path is unchanged; on a Windows dev box
   // `/tmp/heartbeat` resolves to `C:\tmp\heartbeat`, whose parent doesn't exist — without this every 2s tick
   // logged an ENOENT. Best-effort: if mkdir fails, write() below still logs the persistent failure once.
