@@ -40,14 +40,14 @@ Subtask `868kn87qj`, *"Place to easily ban a list of users."* It was missed beca
 tracker only ever listed nine of the parent's **thirteen** subtasks. Export pulled and inventoried at
 [`retool-exports/bulk-ban.md`](retool-exports/bulk-ban.md) (15 queries / 12 components).
 
-- [ ] **Port it.** Paste a newline-separated list of user ids → `BANAPI` per user
+- [x] **Port it.** Paste a newline-separated list of user ids → `BANAPI` per user
       (`/api/mod/ban-user`, one call each with a retry counter, capped at 5 consecutive failures) →
       `ListUsers` to confirm `bannedAt` landed → `LogBans` to `retool_db`.
-- [ ] **It is also a ban-evasion console**, which is the part not to drop: `GetUsers` (buzz
+- [x] **It is also a ban-evasion console**, which is the part not to drop: `GetUsers` (buzz
       transactions), `GetIP` and `UsersByIp` (ClickHouse `userActivities` grouped by registration IP),
       `GetEmail`/`getEmails`, `UserNotes`. That is how a list of accounts is assembled in the first
       place.
-- [ ] `deleteComments` runs against `Prod` as part of the flow — confirm whether banning here is
+- [x] `deleteComments` runs against `Prod` as part of the flow — confirm whether banning here is
       expected to remove comments too.
 - [ ] 🎥 **Restricted today, and that is a decision to revisit**: *"limited to only some mods… that's
       good for other mods to have access to this too."* Gate it, then widen deliberately.
@@ -229,7 +229,7 @@ in the same screen instead of having to click around a bunch."*
 - [x] 🎥 **Expose all the columns.** *"you can expose all the columns. Maybe you want to look into the
       hashes or the meta… ingestion, all this stuff."* Retool used `SELECT *`; ours drops `meta` (the
       **prompt**), `hideMeta`, `analysis`, `scanJobs`, `hash`, `pHash`.
-- [ ] 🔴 **It could WRITE, and our code says otherwise.** A screenshot shows **Toggle Minor ON** and
+- [x] 🔴 **It could WRITE, and our code says otherwise.** A screenshot shows **Toggle Minor ON** and
       **Toggle Poi ON** beside the image data. The export has no mutation query, so it is stale against
       that screen — and `+page.server.ts` asserted "Read-only. Every action … lived in other apps",
       which would have stopped anyone noticing. Comment corrected 2026-08-09; the two actions are still
