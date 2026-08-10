@@ -47,7 +47,7 @@ type ImpersonateModActivity = {
 
 type UserModActivity = {
   entityType: 'user';
-  activity: 'setRewardsEligibility' | 'removeContent' | 'autoMuteScam';
+  activity: 'setRewardsEligibility' | 'removeContent' | 'autoMuteScam' | 'mutePendingReview';
 };
 
 type ComicProjectModActivity = {
