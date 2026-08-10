@@ -4,7 +4,7 @@ import { recordModActivity } from './mod-activity';
 import { rewardReportReporters } from './rewards';
 import {
   DEFAULT_REPORT_REASONS,
-  DEFAULT_REPORT_STATUSES,
+  NEW_REPORT_STATUSES,
   ReportStatus,
   reportCountKey,
   type ReportEntity,
@@ -158,10 +158,10 @@ export async function getReportHistory(
   return { items: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
-// Counted with the same filters the report pages land on, so a sub-nav badge matches the rows you get when
-// you click it.
+// NEW reports, not open ones — see NEW_REPORT_STATUSES. Reasons stay the page's defaults, so the badge
+// still only counts what this queue triages by hand.
 export async function getReportCounts(): Promise<Record<string, number>> {
-  const statuses = sql.join(DEFAULT_REPORT_STATUSES.map((s) => sql.lit(s)));
+  const statuses = sql.join(NEW_REPORT_STATUSES.map((s) => sql.lit(s)));
   const reasons = sql.join(DEFAULT_REPORT_REASONS.map((r) => sql.lit(r)));
   // One pass over Report (rides Report_open_reason_id_idx), then each report table joins the result —
   // per-branch joins back to Report seq-scanned it once per entity type.

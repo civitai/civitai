@@ -51,6 +51,11 @@ export const DEFAULT_REPORT_STATUSES: ReportStatus[] = [
   ReportStatus.Processing,
 ];
 
+/** What a queue badge counts: reports nobody has picked up. `Processing` is deliberately excluded —
+ *  a moderator sets it while investigating an ownership claim, which can run for weeks, so counting it
+ *  makes an idle queue read as a growing backlog. The queue page still LANDS on both. */
+export const NEW_REPORT_STATUSES: ReportStatus[] = [ReportStatus.Pending];
+
 export const reportEntityLabels: Record<ReportEntity, string> = {
   model: 'Model',
   comment: 'Model Comment',

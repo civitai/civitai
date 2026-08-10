@@ -1,6 +1,5 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
-import { env } from '$env/dynamic/private';
 import type { Actions, PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import { validNsfwLevels, NsfwLevel } from '@civitai/shared';
@@ -20,7 +19,6 @@ export const load: PageServerLoad = async ({ url }) => {
     limit,
     originalLevel: originalLevel ?? null,
     wide: true,
-    civitaiUrl: env.CIVITAI_APP_URL ?? 'https://civitai.com',
     ...data,
   };
 };

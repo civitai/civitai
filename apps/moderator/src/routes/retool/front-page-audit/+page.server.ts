@@ -1,6 +1,5 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
-import { env } from '$env/dynamic/private';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess } from '$lib/server/access';
 import { parseForm, parseQuery } from '$lib/server/query';
@@ -38,7 +37,6 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     // its children, so `/images/to-ingest` alone would have unlocked rating here, and a moderator
     // granted only this page would have seen the sweep with no buttons and no explanation.
     canAct: canAccess(locals.user, '/retool/front-page-audit'),
-    civitaiUrl: env.CIVITAI_APP_URL ?? 'https://civitai.com',
   };
 };
 

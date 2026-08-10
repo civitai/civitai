@@ -1,6 +1,5 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
-import { env } from '$env/dynamic/private';
 import type { Actions, PageServerLoad } from './$types';
 import { parseIdList, parseQuery } from '$lib/server/query';
 import { getImageTagReviewQueue, moderateImageTags } from '$lib/server/image-tags.service';
@@ -13,7 +12,7 @@ const querySchema = z.object({
 export const load: PageServerLoad = async ({ url }) => {
   const { cursor, limit } = parseQuery(url, querySchema);
   const data = await getImageTagReviewQueue({ cursor, limit });
-  return { limit, wide: true, civitaiUrl: env.CIVITAI_APP_URL ?? 'https://civitai.com', ...data };
+  return { limit, wide: true, ...data };
 };
 
 // Access is enforced globally (hooks.server.ts). `disable=true` approves the removal (tag disabled),

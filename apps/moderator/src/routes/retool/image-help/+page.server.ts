@@ -1,6 +1,5 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
-import { env } from '$env/dynamic/private';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess } from '$lib/server/access';
 import { parseForm, parseQuery } from '$lib/server/query';
@@ -27,7 +26,6 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     selected,
     images,
     canAct: canAccess(locals.user, '/retool/image-help'),
-    civitaiUrl: env.CIVITAI_APP_URL ?? 'https://civitai.com',
     // Queue left, the request's images right — two columns need the full content width.
     wide: true,
   };

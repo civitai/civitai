@@ -1,6 +1,5 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
-import { env } from '$env/dynamic/private';
 import type { Actions, PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import { validNsfwLevels, NsfwLevel } from '@civitai/shared';
@@ -15,7 +14,7 @@ const querySchema = z.object({
 export const load: PageServerLoad = async ({ url }) => {
   const { cursor, limit } = parseQuery(url, querySchema);
   const data = await getImageRatingRequests({ cursor, limit });
-  return { limit, wide: true, civitaiUrl: env.CIVITAI_APP_URL ?? 'https://civitai.com', ...data };
+  return { limit, wide: true, ...data };
 };
 
 const isRatingLevel = (n: number) => validNsfwLevels.has(n) || n === NsfwLevel.Blocked;

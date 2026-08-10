@@ -1,6 +1,5 @@
 import { error, fail } from '@sveltejs/kit';
 import { z } from 'zod';
-import { env } from '$env/dynamic/private';
 import type { Actions, PageServerLoad } from './$types';
 import { parseIdList, parseQuery } from '$lib/server/query';
 import {
@@ -50,7 +49,6 @@ export const load: PageServerLoad = async ({ params, url }) => {
   const base = {
     limit,
     level,
-    civitaiUrl: env.CIVITAI_APP_URL ?? 'https://civitai.red',
     wide: true,
     tagIds,
     excludedTagIds,

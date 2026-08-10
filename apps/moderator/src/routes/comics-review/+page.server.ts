@@ -1,6 +1,5 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
-import { env } from '$env/dynamic/private';
 import type { Actions, PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import { getComicReviewQueue } from '$lib/server/comic-review.service';
@@ -42,7 +41,6 @@ export const load: PageServerLoad = async ({ url }) => {
     limit,
     needsReview,
     reasons: REVIEW_REASONS,
-    civitaiUrl: env.CIVITAI_APP_URL ?? 'https://civitai.com',
     wide: true,
   };
 };
