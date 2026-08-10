@@ -51,6 +51,9 @@ const NOTE_MAX = 5000;
 // Every action's input is a zod parse, per the app standard. `fail` shapes carry the panel scope so each
 // panel renders only its own error — see format.ts.
 const accountFail = (message: string) => fail(400, { scope: 'account' as const, error: message });
+// Separate from `account`: the only renderer of that scope is the panel on Admin, so an identity
+// refusal scoped there is invisible on Basic, where the form actually is.
+const identityFail = (message: string) => fail(400, { scope: 'identity' as const, error: message });
 const noteFail = (status: number, message: string) =>
   fail(status, { scope: 'notes' as const, error: message });
 const socialsFail = (message: string) => fail(400, { scope: 'socials' as const, error: message });
@@ -116,7 +119,7 @@ export const actions: Actions = {
   // Retool's Enable Edits form. The endpoint gates this on the `retoolUpdateIdentity` permission, so a
   // moderator without it gets a clear refusal from the API rather than a silent no-op.
   updateIdentity: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');
+    if (!canAccess(locals.user, '/users')) return identityFail('Not permitted.');
     const input = parseForm(
       userIdSchema.extend({
         username: z.string().trim().min(1).max(50).optional(),
@@ -125,7 +128,7 @@ export const actions: Actions = {
       }),
       await request.formData()
     );
-    if (typeof input === 'string') return accountFail(input);
+    if (typeof input === 'string') return identityFail(input);
 
     const result = await updateUserIdentity({
       userId: input.userId,
@@ -134,7 +137,7 @@ export const actions: Actions = {
       name: input.name,
       moderatorId: locals.user.id,
     });
-    if (!result.ok) return accountFail(result.error);
+    if (!result.ok) return identityFail(result.error);
     return { success: true };
   },
 
@@ -389,11 +392,21 @@ export const actions: Actions = {
           .enum(BUZZ_ENTITY_TYPES)
           .optional()
           .or(z.literal('').transform(() => undefined)),
-        entityId: z.coerce.number().int().positive().max(2_147_483_647).optional(),
+        // An always-rendered empty input arrives as `''`, which `.optional()` does NOT skip — it
+        // coerces to 0 and fails `.positive()`, so leaving the optional field blank (the normal case)
+        // rejected every transaction with an error that read like the amount was wrong.
+        entityId: z
+          .literal('')
+          .transform(() => undefined)
+          .or(z.coerce.number().int().positive().max(2_147_483_647))
+          .optional(),
       }),
       await request.formData()
     );
     if (typeof input === 'string') return buzzFail(input);
+    // Half a link is worse than none: the ledger row would claim an entity type with no id behind it.
+    if ((input.entityType === undefined) !== (input.entityId === undefined))
+      return buzzFail('EntityType and EntityId must be given together.');
 
     const result = await sendBuzz({
       userId: input.userId,

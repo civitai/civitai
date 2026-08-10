@@ -1,9 +1,9 @@
 <script lang="ts">
   import { browser } from '$app/environment';
-  import { applyAction, enhance } from '$app/forms';
-  import { invalidateAll } from '$app/navigation';
-  import type { ActionResult } from '@sveltejs/kit';
+  import { enhance } from '$app/forms';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
+  import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
@@ -13,6 +13,7 @@
   import type { FormResult } from './form-result';
   import { fetchSupport } from './user-support';
   import { BAN_REASONS, MUTE_PRESETS, REWARDS_ELIGIBILITY } from './enforcement-options';
+  import { writeEnhancer } from '$lib/form-action';
 
   type Identity = NonNullable<LayoutData['result']>['identity'];
 
@@ -39,33 +40,24 @@
 
   const support = $derived(browser ? fetchSupport(identity.id, version) : null);
 
-  // `applyAction` is what populates `form` — a custom enhance callback replaces the default handling, so
-  // without it every fail() (already banned, not permitted, ban endpoint 500) is silently discarded and a
-  // refused action looks identical to a successful one.
+  // `reload: true` because these writes change `identity`, which DOES come from `load` — unlike the
+  // panels fed by `/api/*`, where reloading re-runs the reaction scan for nothing.
   //
   // `submitting` is not cosmetic. The ban endpoint answers 200 BEFORE it writes, so setBanned's
   // already-in-that-state guard is blind for the length of that write: two quick clicks both pass it,
   // both POST, and because the endpoint TOGGLES, the second one unbans. Nothing on screen changes in
   // between, because the success path re-reads the replica.
-  const afterAction =
-    () =>
-    async ({ result }: { result: ActionResult }) => {
-      await applyAction(result);
-      if (result.type === 'success') {
-        confirming = null;
-        showTimedMute = false;
-        reasonCode = '';
-        purgeConfirm = '';
-        version += 1;
-        await invalidateAll();
-      }
-      submitting = false;
-    };
-
-  const onSubmit = () => {
-    submitting = true;
-    return afterAction();
-  };
+  const onSubmit = writeEnhancer({
+    reload: true,
+    onSuccess: () => {
+      confirming = null;
+      showTimedMute = false;
+      reasonCode = '';
+      purgeConfirm = '';
+      version += 1;
+    },
+    busy: (v) => (submitting = v),
+  });
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -263,10 +255,12 @@
               placeholder="Rationale for the appeal record (optional)"
               class="mt-2"
             />
-            <label class="mt-2 flex items-center gap-2 text-sm text-dark-0">
-              <input type="checkbox" name="removeMedia" class="size-4 accent-primary" />
-              Also remove their images
-            </label>
+            <div class="mt-2 flex items-center gap-2">
+              <Checkbox id="ban-remove-media" name="removeMedia" />
+              <Label for="ban-remove-media" class="font-normal text-dark-0">
+                Also remove their images
+              </Label>
+            </div>
           {/if}
           <div class="mt-2 flex gap-2">
             <Button

@@ -151,8 +151,10 @@ export type Account = {
   availableBadges: AvailableCosmetic[];
 };
 
-export async function fetchAccount(userId: number): Promise<Account> {
-  const r = await fetch(`/api/user-account/${userId}`);
+/** `version` is part of the URL so bumping it rebuilds the derived promise — a Buzz send has to move
+ *  the balance above the form, and this data does not come from `load`. */
+export async function fetchAccount(userId: number, version = 0): Promise<Account> {
+  const r = await fetch(`/api/user-account/${userId}?v=${version}`);
   if (!r.ok) throw new Error(String(r.status));
   return r.json();
 }

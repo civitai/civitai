@@ -70,6 +70,40 @@ tracker only ever listed nine of the parent's **thirteen** subtasks. Export pull
 
 Ported but incomplete. The header items are visible on every section in Retool, not buried in one.
 
+### 1b. Widget-by-widget option-source audit, 2026-08-10
+
+All **34** option-bearing widgets in the export (22 Select, 7 Checkbox, 1 RadioGroup, 1 SegmentedControl,
+2 Switch, 1 SplitButton) were resolved to their actual `dataBindings` and diffed against the build.
+
+- [ ] 🔴 **`StrikeReasons` — the strike modal's reason picker.** `radioGroup1` binds to a `Function`
+      holding **eight canned reasons and the exact message each sends the user** (via
+      `InsertStrikeNotif` → `send-mod-notification`): Depicting Real People · Real person model not
+      marked correctly · Minor displayed in mature context · Realistic minor · Bestiality ·
+      Rape/Forced Sex · Non AI content *(links `/generate`)* · Other *(free text)*. We ship a bare
+      `Textarea` whose placeholder says "this text is sent to the user" — so **the free-text box we
+      built is one of the eight options, not the picker**. Third instance of the `Function`-picker
+      shape after `TosReasons` and `BanReasons`.
+- [x] **Buzz *Reason* was wrong in BOTH directions** (fixed 2026-08-10). It is not
+      `SELECT DISTINCT type` (that query binds to nothing); it is
+      `{{buzzSendAction.value === 'send' ? SendTypes.value : DeductTypes.value}}` — **scoped by
+      action**. The first fix shipped all 28 ledger types in both directions, making `deduct + Reward`
+      selectable. Now send → Reward/Refund, deduct → Purchase/ChargeBack/AuthorizedPurchase, matching
+      the Deduct Types table beside it. Widening either list is a mod-team decision, not a default.
+- [ ] **Filter rows missing entirely on two panes** — Submitted Reviews (Rating, TOS Violation?, NSFW?,
+      Excluded?, Search Review Content = 5 entry points) and Bounties (Type, Complete, Name Contains,
+      Description Contains = 4). Mod Activity's Action/Type filters and Reports Submitted's Reason and
+      ReportType filters are the same gap.
+- [ ] **Full name (`name`) has no input.** `updateIdentity` and `/api/mod/retool/user` both accept it;
+      `IdentityPanel` renders username and email only.
+- [ ] **`onboarding` (Accepted TOS) and `excludeFromLeaderboards` never reach the DOM.** Display-only
+      in Retool too — no write query touches them — but "Excluded Leaderboards" is exactly what a
+      leaderboard-cheating investigation needs to see.
+
+Verified correct, so they need no re-checking: `banReason` (ours is a superset and Retool's "Other"
+row was a copy-paste of BuzzCheating), `presetMutes`, `buzzSendEntityType`, `buzzSendAction`,
+`buzzType`, `socialTypeInsert`, `splitButton1`'s five presets, Payment/Receipt type filters, the
+Reports **status** filter, and the Model/Other comment split.
+
 ### 1a. Found by the export-vs-build and endpoint audits, 2026-08-09
 
 Both passes ran against the whole slice. Fixed in the same session:

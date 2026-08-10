@@ -31,7 +31,10 @@
     civitaiUrl: string;
   } = $props();
 
-  const error = $derived(form?.scope === 'profile' ? form.error : null);
+  // Both forms on this panel: clearing profile text, and the Enable Edits identity form.
+  const error = $derived(
+    form?.scope === 'profile' || form?.scope === 'identity' ? form.error : null
+  );
 
   let clearing = $state(false);
   let submitting = $state(false);

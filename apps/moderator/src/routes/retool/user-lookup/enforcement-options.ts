@@ -43,9 +43,18 @@ export const PROFILE_FIELDS = [
   ['location', 'Location'],
 ] as const;
 
-// Retool's "Reason" picker, which read `SELECT DISTINCT type FROM buzzTransactions` — every category
-// in live use. Mirrors `BUZZ_TRANSACTION_TYPES` in user-actions.service.ts, which owns the numeric
-// values the buzz API wants; a name added there and not here is simply unofferable.
+// Retool's "Reason" picker is SCOPED BY ACTION — `buzzSendType.data` is
+// `{{buzzSendAction.value === 'send' ? SendTypes.value : DeductTypes.value}}`, two Functions holding
+// these five entries. Offering the full ledger enum in both directions makes `deduct + Reward`
+// selectable, which is not a transaction anyone means to file. The `Deduct Types` reference table
+// beside the form documents exactly these three deduct types, which is the corroborating tell.
+//
+// Widening either list is a decision for the mod team, not a default — see the backlog.
+export const BUZZ_SEND_REASONS = ['Reward', 'Refund'] as const;
+export const BUZZ_DEDUCT_REASONS = ['Purchase', 'ChargeBack', 'AuthorizedPurchase'] as const;
+
+// The full ledger enum stays for the SERVER's zod check: it mirrors `BUZZ_TRANSACTION_TYPES` in
+// user-actions.service.ts, which owns the numeric values the buzz API wants.
 export const BUZZ_TRANSACTION_TYPES = [
   'Compensation',
   'Reward',

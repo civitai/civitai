@@ -86,7 +86,7 @@
               <span class="truncate text-xs text-dark-2" title={t.description}>{t.description}</span>
             {/if}
             {#if t.externalTransactionId}
-              <span class="text-xs text-dark-3" title="External transaction id">
+              <span class="text-xs text-dark-2" title="External transaction id">
                 {t.externalTransactionId}
               </span>
             {/if}

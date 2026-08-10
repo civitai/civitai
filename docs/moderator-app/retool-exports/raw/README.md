@@ -32,9 +32,13 @@ like nothing in particular. It was caught before the commit was ever pushed. Any
 
 Two misses came out of trusting the query list alone, both found in review rather than in the build:
 
-- **Option sets live in widget config, not in queries.** User Lookup's buzz *Reason* picker read
-  `SELECT DISTINCT type FROM buzzTransactions` — the live ledger categories. The port offered four
-  hardcoded values, so a moderator could not file a transaction as what it actually was.
+- **Option sets live in widget config, not in queries.** User Lookup's buzz *Reason* picker is
+  `{{buzzSendAction.value === 'send' ? SendTypes.value : DeductTypes.value}}` — two `Function`s, and
+  the list is **scoped by the action**: send offers Reward/Refund, deduct offers
+  Purchase/Chargeback/AuthorizedPurchase. The port offered four unrelated hardcoded values in both
+  directions. (A `transactionTypes` query doing `SELECT DISTINCT type FROM buzzTransactions` also
+  exists in this export, but nothing binds it to the picker — reading the query list and guessing the
+  binding is how that got asserted here in the first place. **Confirm the binding.**)
 - **A `Function` query is not automatically plumbing.** `TosReasons` (Bulk Image Manager and User
   Reports) is typed `Function`, which the migration skill's §2 says to bucket as Retool-side glue. It
   actually holds the eleven canned TOS removal reasons, the user-facing message for each, and the flag

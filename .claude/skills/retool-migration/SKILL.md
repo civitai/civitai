@@ -137,10 +137,17 @@ post-hoc review dug it out of the raw JSON. `BanReasons` in Bulk Ban is the same
 
 **A picker's options are a capability.** They come from three places and only one of them is in the
 query list: a static `_labels` set on the widget, a `Function` like the above, or a query bound to the
-widget (`SELECT DISTINCT type FROM buzzTransactions` behind User Lookup's buzz *Reason*). Port the
-source, not a hand-written subset of what you saw in a screenshot — a shortened list silently removes
-choices a moderator relies on, and no review that reads only the code can see it. Check the widget's
-`dataBindings` in `--json` output for what feeds it.
+widget. Port the source, not a hand-written subset of what you saw in a screenshot — a shortened list
+silently removes choices a moderator relies on, and no review that reads only the code can see it.
+
+🔴 **Read the widget's `data` expression; do NOT infer the binding from a plausibly-named query.**
+User Lookup's buzz *Reason* is `{{buzzSendAction.value === 'send' ? SendTypes.value :
+DeductTypes.value}}` — two `Function`s whose lists are **scoped by the sibling Action field** (send →
+Reward/Refund; deduct → Purchase/Chargeback/AuthorizedPurchase). The export also contains a
+`transactionTypes` query doing `SELECT DISTINCT type FROM buzzTransactions`, which binds to nothing.
+A fix that assumed the obvious query was the source shipped all 28 ledger types in both directions and
+made `deduct + Reward` selectable — a *different* wrong answer, and one that reads as thorough.
+`--json` gives you `dataBindings` per widget; resolve every one to a body before believing it.
 
 ## 2. Classify every query before building — no partial ports
 

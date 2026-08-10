@@ -44,7 +44,7 @@
 
   // One fetch per endpoint per section, shared by whichever panels the section renders. Fetching per
   // panel ran the account endpoint — including the 744M-row reaction scan — once per panel.
-  const account = $derived(browser && result ? fetchAccount(result.identity.id) : null);
+  const account = $derived(browser && result ? fetchAccount(result.identity.id, version) : null);
   const signals = $derived(browser && result ? fetchSignals(result.identity.id, version) : null);
 
   // Panels reset their own local state through `onWritten`; the page owns only the refresh, because it
@@ -113,7 +113,11 @@
       {/if}
 
       {#if buzzTab === 'send' && data.canSendBuzz}
-        <BuzzTransactionPanel userId={result.identity.id} {form} />
+        <BuzzTransactionPanel
+          userId={result.identity.id}
+          {form}
+          onWritten={() => (version += 1)}
+        />
       {:else}
         <SubscriptionPanel subscription={result.subscription} />
         <BuzzHistoryPanel userId={result.identity.id} />

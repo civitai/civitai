@@ -1,21 +1,22 @@
 <script lang="ts">
-  import { applyAction, enhance } from '$app/forms';
-  import { invalidateAll } from '$app/navigation';
-  import type { ActionResult } from '@sveltejs/kit';
+  import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import * as DropdownMenu from '@civitai/ui/components/ui/dropdown-menu/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
+  import { writeEnhancer } from '$lib/form-action';
   import type { FormResult } from './form-result';
   import {
     BUZZ_ACTIONS,
     BUZZ_COLORS,
+    BUZZ_DEDUCT_REASONS,
     BUZZ_ENTITY_TYPES,
-    BUZZ_TRANSACTION_TYPES,
+    BUZZ_SEND_REASONS,
   } from './enforcement-options';
 
-  let { userId, form }: { userId: number; form: FormResult } = $props();
+  let { userId, form, onWritten }: { userId: number; form: FormResult; onWritten: () => void } =
+    $props();
 
   const error = $derived(form?.scope === 'buzz' ? form.error : null);
 
@@ -53,13 +54,13 @@
     },
   ];
 
-  let submitting = $state(false);
   let action = $state('send');
   let reason = $state('');
   let color = $state('yellow');
   let amount = $state('');
   let description = $state('');
   let entityType = $state('');
+  let entityId = $state('');
 
   const actionLabel = $derived(BUZZ_ACTIONS.find(([v]) => v === action)?.[1] ?? action);
   const colorLabel = $derived(BUZZ_COLORS.find(([v]) => v === color)?.[1] ?? color);
@@ -72,22 +73,32 @@
     reason = p.reason;
   };
 
-  const afterAction =
-    () =>
-    async ({ result }: { result: ActionResult }) => {
-      await applyAction(result);
-      if (result.type === 'success') {
-        amount = '';
-        description = '';
-        await invalidateAll();
-      }
-      submitting = false;
-    };
-
-  const onSubmit = () => {
-    submitting = true;
-    return afterAction();
+  // Scoped by action, as Retool's SendTypes/DeductTypes were: `deduct + Reward` is not a transaction
+  // anyone means to file. Changing the action invalidates a reason from the other list.
+  const reasons = $derived(action === 'send' ? BUZZ_SEND_REASONS : BUZZ_DEDUCT_REASONS);
+  const setAction = (next: string) => {
+    action = next;
+    if (!(reasons as readonly string[]).includes(reason)) reason = '';
   };
+
+  let submitting = $state(false);
+
+  // EVERY field, not just amount and description — `entityId` would otherwise attach the next
+  // adjustment to the previous grant's entity. Goes through the page's enhancer shape so it does NOT
+  // invalidateAll: this panel's data comes from `/api/*`, and a reload re-runs the reaction scan.
+  const onSubmit = writeEnhancer({
+    onSuccess: () => {
+      action = 'send';
+      reason = '';
+      color = 'yellow';
+      amount = '';
+      description = '';
+      entityType = '';
+      entityId = '';
+      onWritten();
+    },
+    busy: (v) => (submitting = v),
+  });
 </script>
 
 <!-- Retool's Buzz Transaction pane: form left, Presets and Deduct Types stacked right. The reference
@@ -109,7 +120,7 @@
 
       <div>
         <Label for="buzz-action">Action</Label>
-        <Select.Root type="single" name="action" bind:value={action}>
+        <Select.Root type="single" name="action" value={action} onValueChange={setAction}>
           <Select.Trigger id="buzz-action" class="mt-1 w-full">{actionLabel}</Select.Trigger>
           <Select.Content>
             {#each BUZZ_ACTIONS as [value, label] (value)}
@@ -126,7 +137,7 @@
             {reason || 'Select an option'}
           </Select.Trigger>
           <Select.Content>
-            {#each BUZZ_TRANSACTION_TYPES as t (t)}
+            {#each reasons as t (t)}
               <Select.Item value={t}>{t}</Select.Item>
             {/each}
           </Select.Content>
@@ -186,7 +197,7 @@
         </div>
         <div class="w-32">
           <Label for="buzz-entity-id">EntityId</Label>
-          <Input id="buzz-entity-id" name="entityId" type="number" min="1" class="mt-1" />
+          <Input id="buzz-entity-id" name="entityId" type="number" min="1" bind:value={entityId} class="mt-1" />
         </div>
       </div>
 

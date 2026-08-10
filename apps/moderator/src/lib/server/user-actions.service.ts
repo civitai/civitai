@@ -489,10 +489,16 @@ export async function sendBuzz(input: {
       type: BUZZ_TRANSACTION_TYPES[input.transactionType],
       amount: input.amount,
       description: input.description,
-      ...(input.entityType ? { entityType: input.entityType } : {}),
-      ...(input.entityId ? { entityId: input.entityId } : {}),
-      // Makes the transaction traceable to a person rather than to "a moderator tool".
-      details: { moderatorId: input.moderatorId, source: 'moderator-app/user-lookup' },
+      // Entity linkage lives INSIDE `details` — that is where the buzz service reads it back from
+      // (`details?.entityId`) and where Retool's own body put it. Sent as top-level fields it is
+      // accepted, discarded, and the link a later investigation looks for is silently absent.
+      details: {
+        moderatorId: input.moderatorId,
+        source: 'moderator-app/user-lookup',
+        ...(input.entityType && input.entityId
+          ? { entityType: input.entityType, entityId: input.entityId }
+          : {}),
+      },
     });
   } catch (e) {
     console.error('[user-actions] buzz transaction failed', e);
