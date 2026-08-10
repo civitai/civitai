@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
 
 // #3774: winning a Community (source=User) challenge put the user on the System Daily winner
 // cooldown. `getJudgedEntries` already skipped the cooldown when the challenge being judged is
@@ -51,7 +52,7 @@ vi.mock('~/server/events', () => ({
 }));
 
 vi.mock('~/server/flipt/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/flipt/client')>();
+  const actual = await importOriginal<typeof FliptClient>();
   return { ...actual, isFlipt: mockIsFlipt };
 });
 
