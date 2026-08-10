@@ -5,7 +5,7 @@
 import { TRPCError } from '@trpc/server';
 import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { createAxiomLogger, safeError } from '@civitai/axiom/client';
-import type { AxiomDeps, EmitLog } from '@civitai/axiom/client';
+import { structuredLogSink } from '~/server/logging/structured-log-sink';
 import { env } from '~/env/server';
 
 // The build guard is a Next.js concern, so it lives here in the app shim — not in
@@ -21,23 +21,22 @@ const noopLog = async (_data: MixedObject, _datastream?: string) => {};
 // and both vitest projects all stayed green, because only the bundler walks this edge.
 //
 // So the OTel sink is REGISTERED, not imported: `src/instrumentation.node.ts` (server-only
-// by construction) calls `setStructuredLogSink(emitOtelLog)` at boot. The type import
-// above is erased at compile time and adds no runtime edge.
+// by construction) calls `setStructuredLogSink(emitOtelLog)` at boot. (That import is
+// `~/server/logging/structured-log-sink`, which has no runtime imports of its own, so it
+// adds no edge to the client graph either.)
 //
-// The sink is read per call from this stable object, so registering it after the logger
+// 🔴 The sink object is NOT declared here, and must not be. The bundler emits THIS module
+// 14 times into one server build (measured; see the header of ./structured-log-sink), so a
+// module-scope `const sink = {}` here is 14 separate objects and the single boot-time
+// `setStructuredLogSink()` call reaches exactly one of them — which is precisely the bug
+// that made the OTel bridge deliver 1.3% of records. It is imported from the
+// globalThis-pinned singleton instead, which every copy shares by construction.
+//
+// The sink is read per call from that stable object, so registering it after the logger
 // is built still takes effect. Pinned by a test in @civitai/axiom.
-const sink: AxiomDeps = {};
-
-/**
- * Attach an additional sink for every structured log record. Server-only callers.
- * Additive: it cannot change or break the stderr write or the Axiom dual-write, and a
- * sink that throws is contained by the logger.
- */
-export function setStructuredLogSink(emitLog: EmitLog): void {
-  sink.emitLog = emitLog;
-}
-
-export const logToAxiom = env.IS_BUILD ? noopLog : createAxiomLogger({}, sink).logToAxiom;
+export const logToAxiom = env.IS_BUILD
+  ? noopLog
+  : createAxiomLogger({}, structuredLogSink).logToAxiom;
 export { safeError };
 
 /**
