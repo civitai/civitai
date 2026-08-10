@@ -663,28 +663,33 @@ const endResaleListings = async ({ shopItemId, title }: { shopItemId: number; ti
   if (!listings.length) return;
 
   const at = Date.now();
-  try {
-    await Promise.all(
-      listings.map(({ userId, user }) =>
-        createNotification({
-          type: 'creator-shop-resale-ended',
-          userId,
-          category: NotificationCategory.System,
-          // Stamped: an item can be withdrawn, brought back, and withdrawn again.
-          key: `creator-shop-resale-ended:${shopItemId}:${userId}:${at}`,
-          details: { title, username: user.username ?? undefined },
-        })
-      )
-    );
-  } catch (error) {
-    // The listings are already gone; failing the withdrawal over an undelivered
-    // notification would leave the creator unable to retry it.
+  // The listings are already gone; failing the withdrawal over an undelivered
+  // notification would leave the creator unable to retry it, and one bad row
+  // shouldn't cost the other resellers their notice either.
+  const results = await Promise.allSettled(
+    listings.map(({ userId, user }) =>
+      createNotification({
+        type: 'creator-shop-resale-ended',
+        userId,
+        category: NotificationCategory.System,
+        // Stamped: an item can be withdrawn, brought back, and withdrawn again.
+        key: `creator-shop-resale-ended:${shopItemId}:${userId}:${at}`,
+        details: { title, username: user.username ?? undefined },
+      })
+    )
+  );
+  const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (failures.length)
     logToAxiom({
       level: 'error',
       message: 'Failed to notify resellers of a withdrawn shop item',
-      data: { shopItemId, error },
+      data: {
+        shopItemId,
+        failed: failures.length,
+        total: results.length,
+        errors: failures.map((f) => f.reason),
+      },
     });
-  }
 };
 
 export const archiveCreatorShopItem = async ({
@@ -853,9 +858,16 @@ export const getCreatorShopManageItems = async ({ userId }: { userId: number }) 
     where: { addedById: userId },
     // The reseller count tells the creator what's at stake before they touch the
     // item's resale terms — existing resellers keep the ones they listed under.
+    // Deleted accounts are filtered out to match `getShopItemResellers`, or the
+    // count disagrees with the list the creator opens from it.
     select: {
       ...creatorShopItemSelect,
-      _count: { select: { ...creatorShopItemSelect._count.select, resales: true } },
+      _count: {
+        select: {
+          ...creatorShopItemSelect._count.select,
+          resales: { where: { user: { deletedAt: null } } },
+        },
+      },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -1230,6 +1242,13 @@ export const addResoldItem = async ({
     select: { shopItemId: true },
   });
   if (existing) throw throwBadRequestError('You are already reselling this item');
+  // Append after the current last index rather than counting rows: removing a
+  // listing doesn't reindex the rest, so a count can collide with an index that
+  // is still in use ([0, 2] → 2).
+  const { _max } = await dbRead.userCosmeticShopItemResale.aggregate({
+    where: { userId },
+    _max: { index: true },
+  });
   // The row records the share on offer right now and is never rewritten: from
   // here on this reseller is paid what they signed up for, whatever the original
   // creator changes the item to later.
@@ -1238,7 +1257,7 @@ export const addResoldItem = async ({
       userId,
       shopItemId,
       sellerShare: (item.meta as CosmeticShopItemMeta | null)?.sellerShare ?? 0,
-      index: await dbRead.userCosmeticShopItemResale.count({ where: { userId } }),
+      index: (_max.index ?? -1) + 1,
     },
   });
 };

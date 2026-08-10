@@ -8,7 +8,7 @@ const { mocks } = vi.hoisted(() => ({
     queryRaw: vi.fn(),
     resaleFindUnique: vi.fn(),
     resaleFindMany: vi.fn(),
-    resaleCount: vi.fn(),
+    resaleAggregate: vi.fn(),
     resaleCreate: vi.fn(),
     resaleDeleteMany: vi.fn(),
     resaleUpdateMany: vi.fn(),
@@ -30,7 +30,7 @@ vi.mock('~/server/db/client', () => ({
     userCosmeticShopItemResale: {
       findUnique: mocks.resaleFindUnique,
       findMany: mocks.resaleFindMany,
-      count: mocks.resaleCount,
+      aggregate: mocks.resaleAggregate,
     },
     $queryRaw: mocks.queryRaw,
   },
@@ -100,7 +100,7 @@ describe('listing someone else’s item records the terms it was listed under', 
     mocks.getBlockedPairIds.mockResolvedValue([]);
     mocks.shopItemFindUnique.mockResolvedValue(sellableItem());
     mocks.resaleFindUnique.mockResolvedValue(null);
-    mocks.resaleCount.mockResolvedValue(2);
+    mocks.resaleAggregate.mockResolvedValue({ _max: { index: 1 } });
   });
 
   it('writes one row carrying the share on offer right now', async () => {
@@ -109,6 +109,28 @@ describe('listing someone else’s item records the terms it was listed under', 
     expect(mocks.resaleCreate).toHaveBeenCalledWith({
       data: { userId: RESELLER_ID, shopItemId: SHOP_ITEM_ID, sellerShare: 20, index: 2 },
     });
+  });
+
+  it('appends past the last index rather than counting rows', async () => {
+    // Removing a listing leaves a gap, so a row count would collide with an
+    // index that is still in use.
+    mocks.resaleAggregate.mockResolvedValue({ _max: { index: 2 } });
+
+    await addResoldItem({ userId: RESELLER_ID, shopItemId: SHOP_ITEM_ID });
+
+    expect(mocks.resaleCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ index: 3 }) })
+    );
+  });
+
+  it('starts at zero for a creator with no listings', async () => {
+    mocks.resaleAggregate.mockResolvedValue({ _max: { index: null } });
+
+    await addResoldItem({ userId: RESELLER_ID, shopItemId: SHOP_ITEM_ID });
+
+    expect(mocks.resaleCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ index: 0 }) })
+    );
   });
 
   it('refuses a second listing of the same item', async () => {
@@ -472,6 +494,22 @@ describe('withdrawing an item ends its resale listings', () => {
         details: { title: 'Golden Laurel', username: 'reseller' },
       })
     );
+  });
+
+  // One undeliverable notification shouldn't cost the other resellers theirs,
+  // nor fail a withdrawal whose listings are already gone.
+  it('still notifies the rest when one notification fails', async () => {
+    mocks.resaleFindMany.mockResolvedValue([
+      { userId: RESELLER_ID, user: { username: 'reseller' } },
+      { userId: RESELLER_ID + 1, user: { username: 'other' } },
+    ]);
+    mocks.createNotification.mockRejectedValueOnce(new Error('nope'));
+
+    await expect(
+      setCreatorShopItemListed({ id: SHOP_ITEM_ID, userId: CREATOR_ID, listed: false })
+    ).resolves.toBeDefined();
+
+    expect(mocks.createNotification).toHaveBeenCalledTimes(2);
   });
 
   it('skips the notification pass when nobody was reselling it', async () => {

@@ -690,20 +690,6 @@ export const purchaseCosmeticShopItem = async ({
     throw new Error('Cosmetic not found');
   }
 
-  // The resale listing this purchase is coming through, if any. Verified
-  // server-side (a row, not a claim) and loaded once here rather than again in
-  // the payout below.
-  const resaleListing =
-    shopItem.cosmetic.createdById &&
-    viaShopUserId &&
-    viaShopUserId > 0 &&
-    viaShopUserId !== shopItem.cosmetic.createdById
-      ? await dbRead.userCosmeticShopItemResale.findUnique({
-          where: { userId_shopItemId: { userId: viaShopUserId, shopItemId } },
-          select: { sellerShare: true },
-        })
-      : null;
-
   // Creator-submitted items share this table; only Published items are sellable.
   // Guards against buying Draft/PendingReview/Rejected/Archived items by id.
   if (shopItem.status !== CosmeticShopItemStatus.Published) {
@@ -800,6 +786,21 @@ export const purchaseCosmeticShopItem = async ({
   // 'blue-first' drains blue before completing with the domain color.
   const fromAccountTypes: BuzzSpendType[] =
     payWith === 'blue-first' ? ['blue', buzzType] : [buzzType];
+
+  // The resale listing this purchase is coming through, if any. Verified
+  // server-side (a row, not a claim) and loaded once here rather than again in
+  // the payout below. Runs after the guards above so a rejected purchase doesn't
+  // pay for a lookup it can't use.
+  const resaleListing =
+    shopItem.cosmetic.createdById &&
+    viaShopUserId &&
+    viaShopUserId > 0 &&
+    viaShopUserId !== shopItem.cosmetic.createdById
+      ? await dbRead.userCosmeticShopItemResale.findUnique({
+          where: { userId_shopItemId: { userId: viaShopUserId, shopItemId } },
+          select: { sellerShare: true },
+        })
+      : null;
 
   // Confirms user has enough buzz across the chosen accounts. The bank credit
   // lands under the API's default account type — that's bookkeeping only: the
