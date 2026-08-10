@@ -22,6 +22,16 @@ the same pass.
 secret-shaped strings, and only then commit — a token in git history is disclosed permanently, and
 deleting the file afterwards does not undo that.
 
+Redaction is not limited to credentials. An internal CIDR and an abuse-domain literal are stripped
+too — network topology and moderation trigger terms are both private-repo material, and the second is
+one sentence from being an evasion guide. **Both were already in the committed inventories before this
+directory existed, and those commits are pushed**, so they are disclosed; the redaction stops the leak
+widening rather than undoing it. Neither is a credential, so there is nothing to rotate.
+
+The inventories are generated FROM these files, so regenerate rather than hand-editing —
+`extract.mjs raw/<app>.json > <app>.md` — or a redacted export will quietly grow an unredacted
+inventory beside it.
+
 **Match on the assignment, not on the shape of the value.** The first sanitiser pass here missed a
 live key because it looked only for vendor prefixes and `Bearer` headers: User Lookup carries a
 `const apiKey = '…'` inside a Retool `Function` body, which is escaped JS inside the JSON and looks

@@ -98,7 +98,7 @@ resources: REST-WithoutResource, JavascriptQuery, Replicated_Read_Prod, retool_d
 ### query15   [SqlQueryUnified / Replicated_Read_Prod] 
     SELECT *
     FROM "User"
-    WHERE substring(email from '@(.+)$') = '%@moonfee.com%'
+    WHERE substring(email from '@(.+)$') = '%@<REDACTED_DOMAIN>%'
     AND "bannedAt" IS NULL
 
 ### query13   [SqlQueryUnified / Replicated_Read_Prod] 

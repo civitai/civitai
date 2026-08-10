@@ -1,4 +1,4 @@
-# moderation-status-.json
+# moderation-status.json
 
 queries: 77   components: 197
 resources: retool_db, Replicated_Read_Prod, REST-WithoutResource

@@ -1,4 +1,4 @@
-# bulk-image-manager-.json
+# bulk-image-manager.json
 
 queries: 40   components: 60
 resources: JavascriptQuery, REST-WithoutResource, retool_db, Replicated_Read_Prod

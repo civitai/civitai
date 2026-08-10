@@ -1,4 +1,4 @@
-# front-page-audit-.json
+# front-page-audit.json
 
 queries: 16   components: 19
 resources: Replicated_Read_Prod, Prod, retool_db, JavascriptQuery

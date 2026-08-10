@@ -687,7 +687,7 @@ resources: REST-WithoutResource, Clickhouse, Replicated_Read_Prod, Clickhouse - 
     SELECT * 
     FROM default.userActivities 
     WHERE targetUserId = {{userIdVar.value}}
-    AND NOT isIPAddressInRange(ip, '10.124.0.0/16')
+    AND NOT isIPAddressInRange(ip, '<REDACTED_CIDR>')
     AND "type" != 'Banned'
 
 ### GetModelVersions   [SqlQueryUnified / Replicated_Read_Prod] 
