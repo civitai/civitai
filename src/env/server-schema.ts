@@ -601,6 +601,15 @@ export const serverSchema = z
     FRESHDESK_TOKEN: z.string().optional(),
     FRESHDESK_AGENT_ID: z.coerce.number().optional(),
     UPLOAD_PROHIBITED_EXTENSIONS: commaDelimitedStringArray().optional(),
+    // Enforce the post-completion object-existence check in /api/upload/complete.
+    // 🔴 Defaults to FALSE = observe-only: the probe still runs and its verdict is
+    // logged, but a missing object does NOT fail the request. That ordering is
+    // deliberate — a 422 here increments no Prometheus counter (the http-error
+    // instrument returns early below 500), so the false-reject rate has to be
+    // measured from the completion log before rejection is switched on. Deliberately
+    // an env var rather than a Flipt flag: this endpoint family removed Flipt
+    // precisely because init failure caused a silent fallback.
+    UPLOAD_COMPLETE_VERIFY_ENFORCE: zc.booleanString.optional().default(false),
     POST_INTENT_DETAILS_HOSTS: z.preprocess(stringToArray, z.array(z.url()).optional()),
     CHOPPED_TOKEN: z.string().optional(),
     TIER_METADATA_KEY: z.string().default('tier'),
