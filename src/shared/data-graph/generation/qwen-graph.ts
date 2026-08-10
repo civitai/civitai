@@ -12,8 +12,13 @@
  * Qwen 2 (fal engine):
  * - Supports txt2img and img2img:edit workflows with locked model
  * - Nodes: aspectRatio (mapped to imageSize in handler), seed, enablePromptExpansion
+ *
+ * Qwen 3 (qwen engine — Alibaba Model Studio / DashScope):
+ * - Supports txt2img and img2img:edit workflows with locked model
+ * - Nodes: aspectRatio, negativePrompt, enablePromptExpansion, seed
  */
 
+import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
@@ -86,6 +91,21 @@ const qwen2AspectRatios = [
 ];
 
 // =============================================================================
+// Qwen 3 Constants
+// =============================================================================
+
+/** Qwen 3 aspect ratios — the Qwen-Image preset resolutions (~1.7MP) */
+const qwen3AspectRatios = [
+  { label: '16:9', value: '16:9', width: 1664, height: 928 },
+  { label: '3:2', value: '3:2', width: 1584, height: 1056 },
+  { label: '4:3', value: '4:3', width: 1472, height: 1140 },
+  { label: '1:1', value: '1:1', width: 1328, height: 1328 },
+  { label: '3:4', value: '3:4', width: 1140, height: 1472 },
+  { label: '2:3', value: '2:3', width: 1056, height: 1584 },
+  { label: '9:16', value: '9:16', width: 928, height: 1664 },
+];
+
+// =============================================================================
 // Types
 // =============================================================================
 
@@ -127,6 +147,31 @@ const qwen2SubGraph = new DataGraph<QwenCtx, GenerationCtx>()
   .merge(negativePromptGraph);
 
 // =============================================================================
+// Qwen 3 Subgraph (qwen engine — DashScope)
+// =============================================================================
+
+const qwen3SubGraph = new DataGraph<QwenCtx, GenerationCtx>()
+  .merge(() => createCheckpointGraph(), [])
+  .node(
+    'aspectRatio',
+    aspectRatioNode({
+      options: qwen3AspectRatios,
+      defaultValue: '1:1',
+      priorityOptions: ['16:9', '4:3', '1:1', '3:4', '9:16'],
+    })
+  )
+  .node(
+    'enablePromptExpansion',
+    () => ({
+      input: z.boolean().optional(),
+      output: z.boolean(),
+      defaultValue: true,
+    }),
+    []
+  )
+  .merge(negativePromptGraph);
+
+// =============================================================================
 // Qwen Family Graph
 // =============================================================================
 
@@ -154,6 +199,7 @@ export const qwenGraph = new DataGraph<QwenCtx, GenerationCtx>()
   .discriminator('ecosystem', {
     Qwen: qwenSubGraph,
     Qwen2: qwen2SubGraph,
+    Qwen3: qwen3SubGraph,
   })
   // Prompt + triggerWords are common to both Qwen and Qwen 2. negativePrompt
   // is merged only inside the Qwen2 branch; its registration effect adds
@@ -163,4 +209,4 @@ export const qwenGraph = new DataGraph<QwenCtx, GenerationCtx>()
   .merge(promptGraph);
 
 // Export constants for use in components and handlers
-export { qwenAspectRatios, qwen2AspectRatios };
+export { qwenAspectRatios, qwen2AspectRatios, qwen3AspectRatios };

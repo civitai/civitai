@@ -214,7 +214,12 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
 
                 {showVotes ? (
                   <div className={classes.footer}>
-                    <VotableTags entityType="image" entityId={image.id} tags={tags} />
+                    <VotableTags
+                      entityType="image"
+                      entityId={image.id}
+                      tags={tags}
+                      mediaType={image.type}
+                    />
                   </div>
                 ) : !isBlocked ? (
                   isPending ? (

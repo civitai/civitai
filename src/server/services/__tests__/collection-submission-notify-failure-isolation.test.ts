@@ -19,6 +19,7 @@ const {
     collection: { findMany: vi.fn() },
     $queryRaw: vi.fn(),
     collectionContributor: { findMany: vi.fn() },
+    collectionItem: { findMany: vi.fn() },
   },
   mockDbWrite: {
     $executeRaw: vi.fn(),
@@ -56,6 +57,8 @@ const IMAGE_ID = 42;
 // is true — that skips the `addContributorToCollection` follow-on-submit branch, which
 // isn't what this test is about.
 function arrangeReviewCollection() {
+  // No prior membership, so the submission is a real add rather than a no-op re-submission.
+  mockDbRead.collectionItem.findMany.mockResolvedValue([]);
   mockDbRead.collection.findMany.mockResolvedValue([
     {
       id: COLLECTION_ID,

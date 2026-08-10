@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_GENERATION_TRIAL_LIMIT,
+  acceptsBlueBuzz,
   buildModelVersionTerms,
+  migrateTermsForUsageControl,
   generationOpenToNonBuyers,
   generationPrice,
   generationTrialLimit,
@@ -171,6 +173,43 @@ describe('buildModelVersionTerms — the three generation grants', () => {
         freeGeneration: true,
       })
     ).toEqual({ generation: { price: 500, trialLimit: 10 } });
+  });
+});
+
+describe('acceptsBlueBuzz — an extra accepted currency, not a second price', () => {
+  it('is absent by default and set only when opted in', () => {
+    const base = { accessPrice: 500, freePreviewGenerations: 10 };
+    expect(buildModelVersionTerms(base)).not.toHaveProperty('acceptsBlueBuzz');
+    expect(acceptsBlueBuzz(buildModelVersionTerms(base))).toBe(false);
+    expect(buildModelVersionTerms({ ...base, acceptsBlueBuzz: true })).toEqual({
+      acceptsBlueBuzz: true,
+      download: { price: 500 },
+      generation: { trialLimit: 10 },
+    });
+  });
+
+  it('leaves the prices alone — blue and the domain currency cost the same', () => {
+    const withBlue = buildModelVersionTerms({
+      accessPrice: 500,
+      generationPrice: 200,
+      freePreviewGenerations: 10,
+      acceptsBlueBuzz: true,
+    });
+    expect(withBlue.download?.price).toBe(500);
+    expect(generationPrice(withBlue)).toBe(200);
+  });
+
+  it.each([
+    ['gen-only', { accessPrice: 500, genOnly: true }],
+    ['free generation', { accessPrice: 500, freeGeneration: true }],
+  ])('survives the %s shape', (_label, opts) => {
+    expect(acceptsBlueBuzz(buildModelVersionTerms({ ...opts, acceptsBlueBuzz: true }))).toBe(true);
+  });
+
+  it('survives price capping and a usage-control migration', () => {
+    const terms = buildModelVersionTerms({ accessPrice: 5000, acceptsBlueBuzz: true });
+    expect(acceptsBlueBuzz(cappedTerms(terms, 'free', { permanent: true }))).toBe(true);
+    expect(acceptsBlueBuzz(migrateTermsForUsageControl(terms, true))).toBe(true);
   });
 });
 

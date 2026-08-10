@@ -53,6 +53,62 @@ pnpm run prettier:check   # Check Prettier formatting
 pnpm run prettier:write   # Auto-fix Prettier formatting
 ```
 
+#### SvelteKit apps have their own standard
+
+`apps/moderator`, `apps/auth` and `apps/creator-studio` are SvelteKit 5 + Kysely + shadcn-svelte +
+Tailwind v4 — none of the Mantine/tRPC/Prisma guidance above applies to them. Their shared conventions
+live in **[`docs/svelte-app-standard.md`](docs/svelte-app-standard.md)**, and each app's `CLAUDE.md`
+records only its deltas. Review a segment there with `svelte-correctness-review`,
+`svelte-idiom-review` and `svelte-abstraction-review`.
+
+#### In SvelteKit apps (`apps/moderator`, `apps/auth`, `apps/creator-studio`): use `typecheck`, never `check`
+
+They are **not** synonyms. `typecheck` is `svelte-check` alone and writes nothing. `check` prefixes it
+with `svelte-kit sync`, which regenerates ~690 files under `.svelte-kit/` — a directory the Vite dev
+server watches — so running it in an edit→verify loop has Vite re-optimising the module graph while
+`svelte-check` loads ~9,000 files. That collision froze an entire day's work before it was diagnosed
+(2026-08-07), and it does not reproduce in the main app because `tsc --noEmit` emits nothing.
+
+Reach for `check` **only** after changing the route tree — adding, removing or renaming a
+`+page`/`+server`/`+layout` file — which is the only time the generated `$types` go stale. Symptom of
+needing it: `Cannot find module './$types'`, or component props resolving to `never`. `prepare` runs
+`sync` on install, so a fresh checkout is already covered.
+
+**`build` runs `svelte-kit sync` too** (`svelte-kit sync && vite build`), so it carries the same cost —
+and it is **not** a check: it catches nothing `svelte-check` doesn't.
+
+**Read `svelte-check`'s WARNING lines, not just ERROR.** It reports Svelte compiler warnings, and
+`state_referenced_locally` — `let x = $state(data.foo)` capturing only the first value, so the UI
+silently shows stale data after a navigation — is a real bug that appears there and nowhere else in
+the loop. Filtering output to `ERROR` hides it.
+
+#### Never run `npx prettier --plugin=prettier-plugin-svelte` on `.svelte` files
+
+It **empties every file it touches to zero bytes**, and reports success on each one. It took out 28
+components in one command (2026-08-07); they were only recoverable because they were committed. The
+first symptom is `svelte-check` reporting props as `never`, which reads like stale `$types` and sends
+you diagnosing the wrong thing.
+
+Note what `pnpm run prettier:write` does **not** cover: the root Prettier is 2.8.8 and globs
+`.ts`/`.tsx` only, so **no root command formats `.svelte` at all**. `apps/creator-studio` formats
+itself with its own Prettier 3 + plugin (`.prettierignore` explains why ownership must be exclusive);
+the other SvelteKit apps' `.svelte` files are hand-formatted.
+
+#### Prettier runs on UNCOMMITTED files only — never the whole repo
+
+`prettier:write`/`prettier:check` are `scripts/prettier-changed.mjs`, which formats what git reports as
+dirty (modified-vs-HEAD plus untracked) and nothing else. Do not "fix" them back into a `**/*` glob,
+and do not reach for a repo-wide `npx prettier --write` instead.
+
+**The repo is not Prettier-clean and will not be until the 2→3 upgrade reformats it deliberately.**
+`.github/workflows/lint.yml` puts the number at 789 of 4,116 `src` files; across the whole workspace it
+is ~1,000. So a repo-wide `--write` is not a formatting pass, it is a ~1,000-file commit that buries the
+actual change — and it rewrites **other people's uncommitted work in place**, which is how it was found
+(2026-08-08: one `pnpm run prettier:write` produced 1,085 modified files, and telling the reformatting
+apart from real edits afterwards needed a per-file diff against `prettier(HEAD)`).
+
+CI already scopes itself this way and gates only on **added** files for exactly this reason.
+
 ### Testing
 ```bash
 pnpm run test:unit:run    # Vitest unit suite (the one you almost always want)
@@ -82,6 +138,43 @@ Use a top-level `import type * as PromClient` — an inline `typeof import('...'
 #### Convention guards run as tests
 Several repo conventions are enforced by tests, not by eslint — `pnpm run test:lint-rules` runs all of them:
 `no-wholesale-module-mock` (the `importOriginal` rule above), `no-io-in-transaction`, `no-module-scope-cache`, `no-unloadable-image-fixture`. They live in `src/server/services/__tests__/`. If one fails, fix the code — don't add an exemption without saying why.
+
+#### A passing test says nothing about how it FAILS — check the revert
+**"The tests would catch a regression here" is a claim about the failure mode, not about coverage.** A green
+suite proves current behaviour. Whether a revert is *legible* is a separate property, and it is the one that
+decides if the test protects anything. Review your own tests by asking what a reverted fix would look like:
+an assertion message, a timeout, or nothing at all.
+
+🔴 **Proving a property by absence of termination is not proof — a test runner cannot observe it.** A fake
+that drives a loop and never terminates turns a regression into an infinite loop of `await`-on-already-resolved
+promises. That is a pure **microtask** loop: it starves the macrotask queue, and vitest's `testTimeout` is
+`setTimeout`-based, so **it never fires**. Measured: 4,194,305 iterations in 4 s with a 300 ms `setTimeout`
+that never ran. CI hangs until the job is killed — no assertion failure, no timeout, nothing to read.
+
+So **any fake driving a bounded loop must terminate on its own**, and the test must assert the loop stopped
+early. Capping a cursor fake at 50 pages turns an unreportable hang into `expected 51 to be less than 5` in
+under a second. Same rule as sizing a slow-path regression test so a revert *fails fast* rather than wedging
+the runner — see the `n = 10_000` cap in `session-invalidation.test.ts` and the terminating pages beside it.
+
+Two things this does NOT cover, stated so a green run isn't over-read: the paging guard in
+`test:lint-rules` catches cursor-shaped fakes only, so it reduces this class rather than closing it; and a
+loop driven by something other than a cursor is still on you to bound.
+
+(The formulation above is @ivy's, from reviewing PR #3756 — where the assertions were all correct and the
+failure mode was a hang. Both reviewers checked the assertions; neither asked what a revert would print.)
+
+#### Never `await` a browser-test state that DELETES ITSELF
+`expect.element` polls — first attempt immediate, then every **50 ms** — against the test's remaining budget (browser-mode `testTimeout` defaults to **15 s**, and the `component` project does not override it). Awaiting a state to **arrive** is safe: load only makes it arrive later and the matcher keeps polling. Awaiting a state that will **leave** — a spinner on a ceiling, a debounce window, anything a component tears down on a timer — is a race the matcher cannot win: once the state is gone it never comes back, so every remaining poll is also too late. Such a test is green on a quiet box, red on a busy one, and has no PR to blame.
+
+Fix it structurally, in this order:
+1. **Make the state absorbing** — drive the component so nothing can take the state away (e.g. `rerender` with a window so large the timer can never fire), *then* assert it. Add a negative control proving the prop change alone did not produce the state.
+2. **Don't assert the transient at all** — await the absorbing end-state, and pin that the intermediate step happened via a non-DOM observable (a mock call count).
+
+🔴 Do **not** widen the matcher budget, add a `retry`, or enlarge the component's own timeout instead. Those convert a fast failure into a slow one and leave the race unwinnable whenever the machine is slow enough — which is exactly when CI runs.
+
+⚠️ **A ~15 s failing test is a candidate filter, NOT a diagnosis.** It means only that some `expect.element` was never satisfied: four *non-race* mutations all failed at 14.97–15.09 s, and two **healthy, passing** tests legitimately run 15.06 s / 15.26 s waiting out a real 15 s product timeout. To tell a self-deleting state from one that never arrived, read the observable **synchronously right after the action** (present-then-gone vs never-present), or **enlarge the component's own window** and see whether the failure disappears — diagnostic only, since shipping that widening is what this rule forbids.
+
+Worked examples of both fixes: the two retry tests in `src/components/Apps/AppsSubmitEditView.browser.test.tsx`. Measurements behind every number above: `claudedocs/rca-appblocks-component-suite-flake-2026-08-05.md` (PR #3645).
 
 ### Database
 ```bash
@@ -254,12 +347,40 @@ get system Node instead of the flake's pinned version. Measured: system Node **2
 whose cwd was set to a different repo lost two suites to collection failures and **77 tests silently never ran**
 (10849 → 10772) while the output otherwise looked entirely normal.
 
-**Browser/component tests on NixOS need help — there is no `chromium` on `PATH`.** Two routes are known to work,
-and which one works has varied between attempts: `steam-run` plus an `LD_LIBRARY_PATH` carrying nss/nspr (in that
-attempt the documented `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` route hung), or `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`
-pointed at a nix chromium together with `--browser.api.host=127.0.0.1 --browser.api.port=63501` (reached after a
-bare `--project component` hung for ~18 minutes). Before blaming either route: **a stale `node_modules/.vite`
-cache — typical after a `kill -9` — hangs for minutes at near-zero CPU. Clear it first**, then pick a route.
+**Browser/component tests on NixOS: the host's browser bundle must match this repo's playwright pin — fix the
+host, not `package.json`.**
+The failure is *not* "no `chromium` on `PATH`" — a NixOS host that sets `PLAYWRIGHT_BROWSERS_PATH` (nixpkgs
+`playwright-driver.browsers`) already has Chromium. Playwright pins **one exact Chromium build per release** and
+looks it up by revision under that path, so a driver/bundle mismatch fails with
+`browserType.launch: Executable doesn't exist at .../chromium_headless_shell-<rev>/...` — and the whole
+`component` project then reports **`Test Files (130)` / `Tests no tests`**, i.e. 0 of 130 executed. That reads
+like a broken suite, not a missing browser.
+
+**The repo pin is `^1.57.0` and stays there — adapt the host to it.** `playwright` / `@playwright/test` resolve
+to **1.57.0**, which wants Chromium revision **1200**. Before running, check the two numbers that have to be
+equal: `node_modules/playwright/../playwright-core/browsers.json` (the revision playwright will look for) against
+`ls $PLAYWRIGHT_BROWSERS_PATH` (the revisions the bundle actually has). If they differ, point
+`PLAYWRIGHT_BROWSERS_PATH` at a `playwright-driver` bundle of the *matching* version instead of bumping the repo.
+Nixpkgs carries exactly one playwright version per revision, so a host that drives several repos on different
+playwright lines needs one pinned nixpkgs input per line and a per-project selector — the version skew is a
+property of the host, not of this repo.
+
+**Do not "fix" this by bumping the pin — the bump is not self-contained.** It was tried and reverted. CI runs
+some Playwright jobs in **version-matched container images that ship their own browsers** (`PLAYWRIGHT_BROWSERS_PATH`
+pointing inside the image) while executing the *workspace-local* `./node_modules/.bin/playwright`. Bumping this
+repo alone desynchronises that pair and reproduces the same bug in CI: the preview smoke suite went **2 passed /
+59 failed**, and every one of the 59 was `browserType.launch: Executable doesn't exist at
+/ms-playwright/chromium_headless_shell-1228/...` — 177 occurrences (59 × 3 retries) and **zero** assertion or
+timeout failures. Not one spec executed. So a bump needs a lockstep image-tag change owned by someone else, in
+the same window, in both directions. Adapting the host costs one person nothing and no one else anything.
+
+A caret range is also not a pin for a package with a 1:1 browser mapping: `^1.57.0` floating within the 1.57
+line is fine (the Chromium build is stable across a minor line), but bumping the *minor* changes the revision.
+
+Escape hatch if your host's bundle can't match the pin: `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=<abs path to a
+chrome/chrome-headless-shell binary>` — honoured by `vitest.config.mts`'s provider, and it bypasses the revision
+lookup entirely. Before blaming any of this: **a stale `node_modules/.vite` cache — typical after a `kill -9` —
+hangs for minutes at near-zero CPU. Clear it first.**
 
 ## Important Notes
 
@@ -389,3 +510,13 @@ pnpm run dev-debug  # Includes --max_old_space_size=8192
 1. Check connection string
 2. Apply pending migrations manually (we do NOT use `prisma migrate deploy` — see Database section above)
 3. Regenerate client: `pnpm run db:generate`
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

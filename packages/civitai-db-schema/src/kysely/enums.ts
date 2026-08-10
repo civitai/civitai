@@ -289,6 +289,7 @@ export const ReportReason = {
   CSAM: 'CSAM',
   Automated: 'Automated',
   Spam: 'Spam',
+  StickerPlacement: 'StickerPlacement',
 } as const;
 export type ReportReason = (typeof ReportReason)[keyof typeof ReportReason];
 export const ReportStatus = {

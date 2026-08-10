@@ -1,9 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isBlockedTagName, stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
+import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 import {
   DEFAULT_BROWSING_SETTINGS_ADDONS,
   resolveBrowsingSettingsAddons,
 } from '~/shared/constants/browsing-settings-addons';
+import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   allBrowsingLevelsFlag,
@@ -25,6 +27,103 @@ vi.mock('~/server/services/system-cache', async () => {
     ]),
     getBrowsingSettingAddons: vi.fn(async () => DEFAULT_BROWSING_SETTINGS_ADDONS),
   };
+});
+
+describe('scoped addon entries', () => {
+  const SCOPED_TAG = 987654;
+  const GLOBAL_TAG = 123456;
+  const addons: BrowsingSettingsAddon[] = [
+    {
+      type: 'some',
+      nsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+      excludedTagIds: [GLOBAL_TAG],
+    },
+    {
+      type: 'some',
+      nsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+      excludedTagIds: [SCOPED_TAG],
+      scope: 'newCreators',
+    },
+  ];
+
+  it('skips a scoped entry when no scope is active', () => {
+    const resolved = resolveBrowsingSettingsAddons(addons, publicBrowsingLevelsFlag);
+    expect(resolved.excludedTagIds).toContain(GLOBAL_TAG);
+    expect(resolved.excludedTagIds).not.toContain(SCOPED_TAG);
+  });
+
+  it('applies a scoped entry when its scope is active', () => {
+    const resolved = resolveBrowsingSettingsAddons(addons, publicBrowsingLevelsFlag, {
+      scope: 'newCreators',
+    });
+    expect(resolved.excludedTagIds).toContain(SCOPED_TAG);
+    expect(resolved.excludedTagIds).toContain(GLOBAL_TAG);
+  });
+
+  describe('enforceBlockedBrowsingTags derives the scope from the input', () => {
+    beforeEach(() => {
+      vi.mocked(getBrowsingSettingAddons).mockResolvedValue(addons);
+    });
+    afterEach(() => {
+      vi.mocked(getBrowsingSettingAddons).mockResolvedValue(DEFAULT_BROWSING_SETTINGS_ADDONS);
+    });
+
+    it('excludes the scoped tag on a new-creators feed', async () => {
+      const input: { browsingLevel: number; newCreators?: boolean; excludedTagIds?: number[] } = {
+        browsingLevel: publicBrowsingLevelsFlag,
+        newCreators: true,
+      };
+      await enforceBlockedBrowsingTags(input, { id: 1 });
+      expect(input.excludedTagIds).toContain(SCOPED_TAG);
+    });
+
+    // The bug this scoping exists to prevent: a global entry filtered the tag out of
+    // the board's own collection block, which fetches a fixed page and drops filtered
+    // items without backfilling.
+    it('leaves the scoped tag alone on an ordinary feed', async () => {
+      const input: { browsingLevel: number; newCreators?: boolean; excludedTagIds?: number[] } = {
+        browsingLevel: publicBrowsingLevelsFlag,
+      };
+      await enforceBlockedBrowsingTags(input, { id: 1 });
+      expect(input.excludedTagIds ?? []).not.toContain(SCOPED_TAG);
+      expect(input.excludedTagIds).toContain(GLOBAL_TAG);
+    });
+
+    it('excludes the scoped tag on a new-creators MODEL feed', async () => {
+      const input: { browsingLevel: number; newCreators?: boolean; excludedTagIds?: number[] } = {
+        browsingLevel: publicBrowsingLevelsFlag,
+        newCreators: true,
+      };
+      await enforceBlockedBrowsingTagsForModels(input, { id: 1 });
+      expect(input.excludedTagIds).toContain(SCOPED_TAG);
+    });
+
+    it('leaves the scoped tag alone on an ordinary model feed', async () => {
+      const input: { browsingLevel: number; newCreators?: boolean; excludedTagIds?: number[] } = {
+        browsingLevel: publicBrowsingLevelsFlag,
+      };
+      await enforceBlockedBrowsingTagsForModels(input, { id: 1 });
+      expect(input.excludedTagIds ?? []).not.toContain(SCOPED_TAG);
+    });
+  });
+
+  it('drops an entry whose scope is not a known surface, and says so', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const typo = [
+      { ...addons[1], scope: 'newCreator' as BrowsingSettingsAddon['scope'] },
+    ] as BrowsingSettingsAddon[];
+
+    const resolved = resolveBrowsingSettingsAddons(typo, publicBrowsingLevelsFlag, {
+      scope: 'newCreators',
+    });
+
+    expect(resolved.excludedTagIds).not.toContain(SCOPED_TAG);
+    expect(consoleError).toHaveBeenCalledWith(
+      'Unrecognized browsing settings addon scope:',
+      'newCreator'
+    );
+    consoleError.mockRestore();
+  });
 });
 
 describe('stripBlockedTagIds', () => {

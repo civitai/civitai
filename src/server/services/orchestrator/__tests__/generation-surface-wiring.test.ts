@@ -5,6 +5,7 @@ import { execFileSync } from 'child_process';
 import ts from 'typescript';
 
 import { GENERATION_SURFACES } from '~/shared/data-graph/generation/model-substitution';
+import { REQUEST_RESOLVED_GENERATION_SURFACES } from '~/server/services/orchestrator/generation-surface';
 
 /**
  * 🔴 POPULATION GUARD for the `surface` label of
@@ -91,9 +92,75 @@ interface CallSite {
   line: number;
   /** Number of top-level arguments actually passed. */
   arity: number;
-  /** Every `GENERATION_SURFACES` member passed as a bare string literal. */
-  surfaceLiterals: string[];
+  /** What sits in the surface slot (argument index 3). */
+  surfaceArg: SurfaceArg;
+  /** Whether this FILE imports the approved resolver from the module defining it. */
+  importsResolver: boolean;
 }
+
+type SurfaceArg =
+  | { kind: 'literal'; value: string }
+  | { kind: 'call'; callee: string }
+  | { kind: 'other'; text: string };
+
+const describeArg = (a: SurfaceArg): string =>
+  a.kind === 'literal' ? `literal '${a.value}'` : a.kind === 'call' ? `${a.callee}(...)` : a.text;
+
+/**
+ * What a pinned call site must pass as its surface.
+ *
+ * A bare string is the original, strictest form: that call site is that surface,
+ * always, checked against the AST.
+ *
+ * 🔴 THE RESOLVED FORM, AND WHY IT IS NOT A HOLE (#3665). One call site cannot
+ * be pinned to a literal: `orchestrator.router`'s two procedures each serve BOTH
+ * the on-site generator and every bearer-token caller, because `AIServicesRead`/
+ * `AIServicesWrite` are user-grantable scopes. Its surface is a property of the
+ * REQUEST, so the honest pin is "resolved by exactly this function, whose range
+ * is exactly these surfaces".
+ *
+ * What it keeps:
+ *   - a NEW call site anywhere still fails (`EXPECTED_SURFACE_BY_CALL_SITE`
+ *     membership is checked first, and is unchanged);
+ *   - a DIFFERENT expression in the surface slot — a variable, a ternary, an
+ *     inlined `ctx.subject ? 'api' : 'onsite'`, a cast, a second resolver — fails;
+ *   - a LITERAL where a resolver is pinned (i.e. re-hardcoding the bug #3665
+ *     fixes) fails, and vice versa;
+ *   - a MODULE-SCOPE local function or alias named `generationSurfaceForRequest`
+ *     fails, via the import-provenance check — see
+ *     {@link importsResolverFromDefiningModule}. 🔴 Read "module-scope"
+ *     literally: the check is per FILE, so a BLOCK-scoped shadow declared inside
+ *     ONE procedure, while the real import stays at the top and is still used by
+ *     the sibling procedure, satisfies it and reinstates #3665 for that
+ *     procedure alone (measured: guard 6/6 green, `tsc` 0 errors, eslint clean).
+ *     Closing that would need real scope resolution; it is left open deliberately
+ *     because it is an adversarial shape, not a refactor anyone reaches for — but
+ *     it is written down rather than implied away, because an earlier revision of
+ *     this list said "a LOCAL function or alias fails" full stop, which was false.
+ *
+ * 🔴 WHAT IT GENUINELY GIVES UP, STATED HONESTLY BECAUSE AN EARLIER REVISION OF
+ * THIS COMMENT DID NOT. It claimed to keep "every mutation this guard exists to
+ * catch". An audit disproved that with three measured mutants that passed 84/84
+ * plus a clean `tsc`: the resolver called with `{}` instead of `ctx`, a local
+ * shadowing function, and an alias binding. The first is now a compile error
+ * (`GenerationSurfaceRequest` was made non-weak) and the other two are caught
+ * here; the general point survives — a name-matching AST guard cannot verify
+ * that the ARGUMENT is the real request, only that the callee is the approved
+ * name from the approved module. `tsc` is what checks the argument, and it only
+ * has teeth because the parameter type is non-weak. If you relax that type back
+ * to all-optional fields, THIS guard silently stops covering the argument.
+ *
+ * It also cannot know WHICH of the resolver's two surfaces a given request
+ * produces — not knowable statically, covered by execution in
+ * `generation-surface.test.ts`. `REQUEST_RESOLVED_GENERATION_SURFACES` is
+ * imported here rather than restated, so the range cannot drift.
+ */
+type SurfacePin = string | { readonly resolvedBy: string; readonly range: readonly string[] };
+
+/** The ONE approved resolver. Anything else in the surface slot fails. */
+const SURFACE_RESOLVER = 'generationSurfaceForRequest';
+/** …and the ONE module it may be imported from. See {@link importsResolverFromDefiningModule}. */
+const SURFACE_RESOLVER_MODULE = '~/server/services/orchestrator/generation-surface';
 
 /**
  * Every PRODUCTION call site allowed to build a generation context, keyed by
@@ -105,12 +172,24 @@ interface CallSite {
  * `src/server/schema/blocks/workflow.schema.ts`'s `modelSubstitutions` contract).
  * A row added without that is the failure described above, just made official.
  */
-const EXPECTED_SURFACE_BY_CALL_SITE: Record<CallSiteKey, string> = {
-  // The on-site generator. #3520 calls this substitution CORRECT: the only way
-  // the form holds an out-of-list id is a stale localStorage value after an
-  // ecosystem switch, and the user visibly sees the picker snap back.
-  'src/server/routers/orchestrator.router.ts::generateFromGraph': 'onsite',
-  'src/server/routers/orchestrator.router.ts::whatIfFromGraph': 'onsite',
+const EXPECTED_SURFACE_BY_CALL_SITE: Record<CallSiteKey, SurfacePin> = {
+  // 🔴 RESOLVED, NOT LITERAL (#3665). These two procedures serve the on-site
+  // generator AND every bearer-token caller — same code path, opposite meanings.
+  // On-site, #3520 calls the substitution CORRECT (a stale localStorage id after
+  // an ecosystem switch, picker visibly snapping back). Via a CLI or any API
+  // integration, neither property holds: the id is deliberate and nothing snaps.
+  //
+  // They were pinned to a hardcoded `'onsite'`, which meant every API
+  // substitution was filed under the one case everyone agrees is working as
+  // intended — and thereby excluded from the incidence number gating phase 3.
+  'src/server/routers/orchestrator.router.ts::generateFromGraph': {
+    resolvedBy: SURFACE_RESOLVER,
+    range: REQUEST_RESOLVED_GENERATION_SURFACES,
+  },
+  'src/server/routers/orchestrator.router.ts::whatIfFromGraph': {
+    resolvedBy: SURFACE_RESOLVER,
+    range: REQUEST_RESOLVED_GENERATION_SURFACES,
+  },
   // The App Blocks bridge — the surface the issue is about. The id was written
   // by an app author and the correction was unobservable. This ONE function is
   // also the only place the block wire contract's `modelSubstitutions` field
@@ -192,6 +271,78 @@ function enclosingFunctionName(node: ts.Node): string {
   return '<module scope>';
 }
 
+/**
+ * What sits in the surface slot: a `GENERATION_SURFACES` string literal, a call
+ * and its callee name, or neither. Anything not in these two shapes — a bare
+ * variable, a ternary, an `as` cast, an `await` — is `{ kind: 'other' }` and
+ * fails every pin, which is the intended conservatism.
+ */
+function describeSurfaceArg(arg: ts.Expression | undefined): SurfaceArg {
+  if (!arg) return { kind: 'other', text: '<missing>' };
+  if (ts.isStringLiteral(arg)) {
+    return (GENERATION_SURFACES as readonly string[]).includes(arg.text)
+      ? { kind: 'literal', value: arg.text }
+      : { kind: 'other', text: `literal '${arg.text}' (not a surface)` };
+  }
+  if (ts.isCallExpression(arg)) {
+    const callee = arg.expression;
+    const name = ts.isIdentifier(callee)
+      ? callee.text
+      : ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.name)
+      ? callee.name.text
+      : null;
+    return name ? { kind: 'call', callee: name } : { kind: 'other', text: 'call of an expression' };
+  }
+  return { kind: 'other', text: ts.SyntaxKind[arg.kind] };
+}
+
+/**
+ * Does `file` import {@link SURFACE_RESOLVER} from the module that DEFINES it?
+ *
+ * 🔴 WHY NAME EQUALITY IS NOT ENOUGH. The resolved pin matches on the callee's
+ * identifier, and an identifier is just a name in scope. THREE measured mutants
+ * reinstated the #3665 defect with the guard green AND a clean `tsc`: a LOCAL
+ * `function generationSurfaceForRequest(_ctx: unknown) { return 'onsite'; }`
+ * shadowing the import, `const generationSurfaceForRequest = alwaysOnsite`, and
+ * — found only after the first two were closed — `import { alwaysOnsite as
+ * generationSurfaceForRequest }` from THIS module, which defeated a check that
+ * read the local binding instead of the exported name.
+ *
+ * A full symbol resolution would need a Program (slow, and this guard runs off
+ * plain source files); requiring the EXPORTED name {@link SURFACE_RESOLVER} to
+ * be imported from {@link SURFACE_RESOLVER_MODULE} closes all three without one.
+ *
+ * 🔴 IT FAILS CLOSED, AND TWO LEGITIMATE SHAPES ARE COLLATERAL. A namespace
+ * import (`import * as gs` → `gs.generationSurfaceForRequest(ctx)`) and a
+ * RELATIVE specifier for the same module (`'../services/orchestrator/…'`, a
+ * shape used ~358× elsewhere in `src/server`) both fail this check even though
+ * both are correct code. That is deliberate — a false RED costs one confused
+ * minute and a green mutant costs the metric — but if you are adding a 5th call
+ * site and hit it, the fix is to use the `~/`-aliased named import, not to
+ * loosen this. The failure message says so.
+ */
+function importsResolverFromDefiningModule(source: ts.SourceFile): boolean {
+  return source.statements.some((st) => {
+    if (!ts.isImportDeclaration(st)) return false;
+    if (!ts.isStringLiteral(st.moduleSpecifier)) return false;
+    if (st.moduleSpecifier.text !== SURFACE_RESOLVER_MODULE) return false;
+    const named = st.importClause?.namedBindings;
+    if (!named || !ts.isNamedImports(named)) return false;
+    // 🔴 THE EXPORTED NAME, NOT THE LOCAL BINDING. On an `import { a as b }`,
+    // `el.propertyName` is `a` (what the module exports) and `el.name` is `b`
+    // (the local alias); on a plain `import { a }`, `propertyName` is undefined
+    // and `name` is `a`. An earlier revision read `el.name` and a comment here
+    // asserted that an alias "would still be this module's export, which is
+    // fine" — that was WRONG, and a delta audit produced the mutant that proves
+    // it: `import { alwaysOnsite as generationSurfaceForRequest }` from this
+    // very module resolved every request to 'onsite' — the exact #3665 defect —
+    // with the guard suite 6/6 GREEN and `tsc` at 0 errors. *This module's
+    // export* is not the same claim as *the approved resolver*. Reading
+    // `propertyName ?? name` asks the question that was always meant.
+    return named.elements.some((el) => (el.propertyName ?? el.name).text === SURFACE_RESOLVER);
+  });
+}
+
 /** Every real `buildGenerationContext(...)` call in `file`, with its context. */
 function callSitesIn(file: string): CallSite[] {
   const text = readFileSync(path.join(REPO_ROOT, file), 'utf8');
@@ -219,10 +370,16 @@ function callSitesIn(file: string): CallSite[] {
           fn: enclosingFunctionName(node),
           line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1,
           arity: node.arguments.length,
-          surfaceLiterals: node.arguments
-            .filter((a): a is ts.StringLiteral => ts.isStringLiteral(a))
-            .map((a) => a.text)
-            .filter((v) => (GENERATION_SURFACES as readonly string[]).includes(v)),
+          // 🔴 THE SURFACE ARGUMENT BY POSITION, not "any argument that looks
+          // like one". An earlier revision scanned ALL arguments for a string
+          // literal / a call, which was wrong in both directions: it accepted a
+          // resolver call passed in the WRONG SLOT, and it false-failed the
+          // moment any OTHER argument became a call (measured: changing arg 0 to
+          // `resolveTier(user)` at a `'preset'` site failed with a message about
+          // surfaces). `buildGenerationContext(userTier, flags, user, surface)`
+          // — the surface is index 3, and tsc already pins the signature.
+          surfaceArg: describeSurfaceArg(node.arguments[3]),
+          importsResolver: importsResolverFromDefiningModule(source),
         });
       }
     }
@@ -273,15 +430,37 @@ describe('generation-context surface wiring', () => {
   it('🔴 every call site passes the surface its pinned function must declare', () => {
     const wrong = sites
       .filter((c) => keyOf(c) in EXPECTED_SURFACE_BY_CALL_SITE)
-      .filter((c) => {
-        const expected = EXPECTED_SURFACE_BY_CALL_SITE[keyOf(c)];
-        return c.surfaceLiterals.length !== 1 || c.surfaceLiterals[0] !== expected;
+      .map((c) => {
+        const pin = EXPECTED_SURFACE_BY_CALL_SITE[keyOf(c)];
+        const at = `${c.file}:${c.line} inside ${c.fn}()`;
+        const got = describeArg(c.surfaceArg);
+        if (typeof pin === 'string') {
+          // Literal pin: the surface slot holds exactly that literal. Swapping a
+          // hardcoded surface for a resolved one without amending the table
+          // fails here rather than passing quietly.
+          if (c.surfaceArg.kind === 'literal' && c.surfaceArg.value === pin) return null;
+          return `${at} passes ${got} in the surface slot, expected the literal '${pin}'`;
+        }
+        // Resolved pin: the slot holds a call to the ONE approved resolver, AND
+        // this file imports that name from the module that defines it. Both
+        // halves are load-bearing — re-hardcoding `'onsite'` fails the first
+        // (even though 'onsite' is a legitimate value of the range), and a local
+        // function or alias of the same name fails the second.
+        if (c.surfaceArg.kind === 'call' && c.surfaceArg.callee === pin.resolvedBy) {
+          if (c.importsResolver) return null;
+          return (
+            `${at} calls ${pin.resolvedBy}(...), but ${c.file} has no ` +
+            `\`import { ${pin.resolvedBy} } from '${SURFACE_RESOLVER_MODULE}'\`. ` +
+            `Either the name is bound to something else locally (a shadowing function, ` +
+            `an alias of a DIFFERENT export) — which is the bug this checks for — or the ` +
+            `import is written in a shape this guard deliberately does not accept ` +
+            `(a namespace import, or a relative specifier for the same module). ` +
+            `If it is the latter, switch to the '~/'-aliased named import above; do not loosen this check.`
+          );
+        }
+        return `${at} passes ${got} in the surface slot, expected a call to ${pin.resolvedBy}(...)`;
       })
-      .map(
-        (c) =>
-          `${c.file}:${c.line} inside ${c.fn}() passes [${c.surfaceLiterals.join(', ')}], ` +
-          `expected exactly ['${EXPECTED_SURFACE_BY_CALL_SITE[keyOf(c)]}']`
-      );
+      .filter((m): m is string => m !== null);
     expect(wrong).toEqual([]);
   });
 
@@ -318,8 +497,18 @@ describe('generation-context surface wiring', () => {
     // A surface value with no call site would be a series that can never be
     // emitted — an alert keyed on it would then be structurally silent, which is
     // the exact failure class this counter exists to avoid.
-    expect([...new Set(Object.values(EXPECTED_SURFACE_BY_CALL_SITE))].sort()).toEqual(
-      [...GENERATION_SURFACES].sort()
-    );
+    //
+    // A resolved pin contributes its whole RANGE, because any of those values can
+    // reach the counter from that one call site. The range is imported from
+    // beside the resolver, and `generation-surface.test.ts` proves by execution
+    // that the resolver actually produces every value in it — without that, a
+    // range could list a surface nothing emits and this assertion would certify
+    // the orphan instead of catching it.
+    const covered = new Set<string>();
+    for (const pin of Object.values(EXPECTED_SURFACE_BY_CALL_SITE)) {
+      if (typeof pin === 'string') covered.add(pin);
+      else for (const s of pin.range) covered.add(s);
+    }
+    expect([...covered].sort()).toEqual([...GENERATION_SURFACES].sort());
   });
 });

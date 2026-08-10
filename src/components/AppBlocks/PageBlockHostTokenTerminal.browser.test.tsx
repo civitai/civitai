@@ -149,7 +149,73 @@ function postFromBlock(type: string, payload?: unknown) {
   );
 }
 
+/**
+ * Drive the host to `ready` AND wait for that transition's PASSIVE EFFECTS to have
+ * run — not merely for its commit.
+ *
+ * 🔴 THE SECOND WAIT IS THE WHOLE POINT; deleting it restores a CI-observed flake.
+ * `data-block-ready` is written during the COMMIT (`isReady = status === 'ready'`
+ * in PageBlockHost's JSX). The impression beacon is a `useEffect` keyed on the
+ * committed `status`, and React 18 flushes passive effects in a LATER scheduler
+ * task than the commit. So the attribute reading `"true"` is NOT evidence that the
+ * ready-transition finished; it is evidence that it is about to.
+ *
+ * Measured THREE ways, because the INSTRUMENT changes the answer — which is itself
+ * the point, so quote the instrument along with the number:
+ *   - Task-by-task (poll the attribute AND the beacon count on every macrotask): at
+ *     the instant the attribute first reads `"true"` the count is 0, and the beacon
+ *     lands exactly ONE task later — 3/3 runs, `gapTasks=1`. The gap is real and
+ *     deterministic.
+ *   - MutationObserver on the attribute, which resolves at the microtask checkpoint
+ *     of the COMMIT task and so is forced INTO that window: the attribute-only gate
+ *     reproduces the CI string in 4/5 runs.
+ *   - The gate's OWN sampler (`vi.waitFor`, 50ms interval) on an IDLE box: the count
+ *     is ALREADY 1 at the first poll that sees the attribute — 8/8 drives in each of
+ *     3 runs. Locally the window is essentially never sampled.
+ * That last line is why the flake is load-dependent, and why re-running the suite on
+ * a quiet machine can never reproduce it.
+ *
+ * Four call sites assert on the beacon IMMEDIATELY after this helper returns. With
+ * the old gate each was a coin-flip against `vi.waitFor`'s 50ms poll interval: on a
+ * quiet box the poll that first sees the attribute lands after the flush, on a
+ * saturated CI runner it lands inside the one-task window and `beaconCalls()` is
+ * still `[]` — the exact CI error, `expected [] to have a length of 1 but got +0`
+ * (civitai#3675 and #3670, same test, same string).
+ *
+ * Same mechanism as the image-upload flake fixed in #3675; that one had to retry a
+ * one-shot POST, this one only has to wait for the right observable. Re-posting
+ * BLOCK_READY on each poll is idempotent (the host latches `ready`), so widening
+ * the wait costs nothing. The wait is bounded: `component-setup.tsx` raises
+ * `vi.waitFor`'s default timeout to 10s globally, so a gate that never opens fails
+ * loudly rather than hanging the suite.
+ *
+ * This does NOT weaken the callers: every one of them still asserts the EXACT
+ * beacon count/statuses afterwards, so a second or wrongly-tagged beacon still
+ * fails them.
+ *
+ * 🔴 SCOPE OF THE GUARANTEE — it is "a beacon EXISTS", NOT "a beacon ARRIVED".
+ * That only proves the ready-transition's effects flushed when the count starts at
+ * ZERO, i.e. on a FIRST ready transition. All eight current call sites are exactly
+ * that. A future call site reached when a beacon already exists (a remount, a soft
+ * navigation) would find the gate pre-satisfied and get NO protection at all —
+ * silently. Rather than promise a coverage this cannot deliver, the precondition is
+ * ASSERTED below, so that case fails loudly and actionably instead.
+ *
+ * A growth-delta gate ("wait for count > entry count") was considered and rejected:
+ * the host emits at most ONE impression per MOUNT (`blockRenderEmittedRef`), so a
+ * legitimate second call within one mount would wait for a beacon that is never
+ * coming and burn the full 10s timeout.
+ */
 async function driveToReady() {
+  if (beaconCalls().length !== 0) {
+    throw new Error(
+      `driveToReady() requires a FIRST ready transition (found ${beaconCalls().length} ` +
+        'prior impression beacon(s)). Its readiness gate is "a beacon exists", which ' +
+        'cannot tell "the effect flushed" from "a beacon was already there", so it ' +
+        'would return before this transition completes. Wait for the specific ' +
+        'observable this call site needs instead of extending this helper.'
+    );
+  }
   await vi.waitFor(() => {
     const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
     if (!el.contentWindow) throw new Error('not mounted yet');
@@ -158,6 +224,9 @@ async function driveToReady() {
     postFromBlock('BLOCK_READY', {});
     const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
     if (el.getAttribute('data-block-ready') !== 'true') throw new Error('not ready yet');
+    if (beaconCalls().length === 0) {
+      throw new Error('ready is COMMITTED but its passive effects have not flushed yet');
+    }
   });
 }
 

@@ -64,13 +64,31 @@ export const STARTER_ESTIMATE_BUZZ = 15;
 
 // ── POST-PAID BUDGET (single engine) ──────────────────────────────────────────
 // `maxBuzz` MUST equal `ceil(stepTimeoutSeconds × 1)` (asserted at registry load):
-// the step `timeout` is the PHYSICAL cap (~1 Buzz/GPU-second). A cheap single-step
-// Z-Image turbo gen finishes in seconds, so 30 is generous headroom while keeping a
-// tight blast-radius ceiling. The router reserves this ceiling on every cap and
-// settles-to-actual.
+// the step `timeout` is the PHYSICAL cap (~1 Buzz/GPU-second). The router reserves
+// this ceiling on every cap and settles-to-actual.
+//
+// 🔴 THE CEILING MUST COVER COLD START, NOT JUST EXECUTION. This value was 30 on the
+// reasoning that "a cheap single-step Z-Image turbo gen finishes in seconds" — true
+// of the generation, and irrelevant to the timeout. `stepTimeoutSeconds` is
+// wall-clock for the WHOLE step, so it also spans worker spin-up and checkpoint
+// download. On a cold worker 30s expires before the first sample: measured
+// 2026-08-06, this recipe's own sample body expired cold at 30 and then succeeded
+// for 4 Buzz once weights were warm. That made the starter recipe — the first thing
+// a new App developer runs, and the one most likely to hit a cold worker — fail on
+// first use, reporting a bare `expired` with no message.
+//
+// 90 matches the lowest per-engine ceiling already shipped by seamless-pano
+// (90/150/180) and is ~3× the slowest warm inline run observed (55s). Raising it is
+// free: billing settles to actual GPU-seconds, so the ceiling costs nothing unless
+// it is actually consumed — an over-tight value buys no savings and only converts a
+// slow start into a silent failure.
+//
+// ⚠️ Scope of the evidence: ONE cold-start observation, not a distribution. If cold
+// starts are found to exceed 90s (a larger checkpoint, a colder pool), raise this
+// again rather than concluding the timeout is the wrong mechanism.
 export const STARTER_BUDGET: { stepTimeoutSeconds: number; maxBuzz: number } = {
-  stepTimeoutSeconds: 30,
-  maxBuzz: 30,
+  stepTimeoutSeconds: 90,
+  maxBuzz: 90,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

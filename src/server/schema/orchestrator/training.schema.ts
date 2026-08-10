@@ -94,6 +94,10 @@ const aiToolkitTrainingParams = z
       modelVariant: z.undefined().optional(),
     }),
     aiToolkitBaseParams.extend({
+      ecosystem: z.literal('minimaxh3'),
+      modelVariant: z.undefined().optional(),
+    }),
+    aiToolkitBaseParams.extend({
       ecosystem: z.literal('ernie'),
       modelVariant: z.undefined().optional(),
     }),

@@ -29,6 +29,7 @@ const { mockDbRead, mockDbWrite, mockCreateNotification, mockHomeBlockCacheBust,
       collection: { findMany: vi.fn() },
       $queryRaw: vi.fn(),
       collectionContributor: { findMany: vi.fn() },
+      collectionItem: { findMany: vi.fn() },
     },
     mockDbWrite: {
       $executeRaw: vi.fn(),
@@ -82,6 +83,8 @@ async function unhandledRejectionsDuring(act: () => void | Promise<unknown>) {
 
 describe('saveItemInCollections — submission-notify failure logging cannot itself crash the process', () => {
   it('swallows a logToAxiom failure when resolving recipients also fails', async () => {
+    // No prior membership, so the submission is a real add rather than a no-op re-submission.
+    mockDbRead.collectionItem.findMany.mockResolvedValue([]);
     mockDbRead.collection.findMany.mockResolvedValue([
       {
         id: COLLECTION_ID,

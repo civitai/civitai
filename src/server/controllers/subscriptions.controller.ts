@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/server';
 import type { Context } from '~/server/createContext';
@@ -17,6 +18,9 @@ export const getPlansHandler = async ({ input, ctx }: { input: GetPlansSchema; c
     !!env.NEXT_PUBLIC_PADDLE_TOKEN &&
     !!env.PADDLE_SECRET_KEY;
 
+  if (input.buzzPurchase && !ctx.features.buzzMemberships)
+    throw new TRPCError({ code: 'FORBIDDEN' });
+
   const fallbackToStripe = !paddleSupported;
 
   const defaultPaymentProvider = fallbackToStripe
@@ -27,6 +31,7 @@ export const getPlansHandler = async ({ input, ctx }: { input: GetPlansSchema; c
     paymentProvider: input.paymentProvider ?? defaultPaymentProvider,
     interval: input.interval,
     buzzType: input.buzzType,
+    buzzPurchase: input.buzzPurchase,
   });
 };
 
@@ -38,11 +43,12 @@ export const getUserSubscriptionHandler = async ({
   input?: Partial<GetUserSubscriptionInput>;
 }) => {
   if (!ctx.user?.id) return null;
+  // Spread rather than enumerate: this handler silently dropped `includeBuzzPurchase` when
+  // it was added to the schema and the service, so Buzz memberships stayed invisible with
+  // no error anywhere. `userId` last so a client-supplied one can't override the session.
   return await getUserSubscription({
+    ...input,
     userId: ctx.user.id,
-    buzzType: input?.buzzType,
-    includeBadState: input?.includeBadState,
-    includeCanceled: input?.includeCanceled,
   });
 };
 

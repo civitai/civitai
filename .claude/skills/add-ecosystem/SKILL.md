@@ -9,7 +9,30 @@ Adds a new ecosystem and base model entry to [basemodel.constants.ts](src/shared
 
 ## When to use
 
-Use when a new model provider or variant is being added to Civitai — e.g., new provider (Baidu's Ernie), new architecture (Flux's Kontext), or a distinct variant of an existing family that should appear as its own selection in the UI.
+Use when a new model provider or variant is being added to Civitai — e.g., new provider (Baidu's Ernie), new architecture (Flux's Kontext), or a variant of an existing family whose resources aren't interchangeable with its siblings.
+
+## The test: does this need its own ecosystem?
+
+Answer this **before** picking IDs. The ecosystem is the **compatibility** key, not a UI grouping and not a media label:
+
+> **A variant needs its own ecosystem when a LoRA (or other addon) trained for it would NOT work on every model carrying the sibling's baseModel.**
+
+That is the whole test. [getGenerationSupport](src/shared/constants/basemodel.constants.ts) returns `'full'` unconditionally for same-ecosystem pairs — there is no media dimension and no per-model nuance in it. Putting two things in one ecosystem asserts "resources cross freely between these," so only do it when that's true.
+
+**Architecture is not weights.** The most common way to get this wrong is reading a vendor's "one unified model" marketing as "one checkpoint." Providers routinely ship a shared architecture as separate weight releases, and a LoRA is trained against *weights*. Check what actually ships — distinct releases, distinct sizes, distinct endpoints — not what the announcement calls the family.
+
+**Do not split on output media.** "Image vs video" is not the question; "do resources cross" is. If one checkpoint does both, that's one ecosystem with a `type: ['image', 'video']` base model (Grok). If they're separate checkpoints that happen to differ in output media, that's two ecosystems (Wan Image 2.7 / Wan Video 2.7 — note there are deliberately no `crossEcosystemRules` between them).
+
+**When genuinely unsure, split.** The two mistakes are not symmetric:
+
+| Choice | If wrong | Cost to fix |
+| --- | --- | --- |
+| Split, but they're compatible | Resources don't cross | Add `crossEcosystemRules` entries — additive, that's what the mechanism is for |
+| Merged, but they're incompatible | Incompatible resources offered as compatible | Change the ecosystem key → **changes the AIR URN namespace on already-published resources** |
+
+Splitting is reversible; merging is not. This is doubly true for API-only / `modelLocked` ecosystems, where no community resources exist yet — the split costs nothing today and preserves the option.
+
+Media-specific *labelling* for creators is a `BaseModelRecord` concern, not an ecosystem one — several base models can share one ecosystem, each with its own `name` and `type`.
 
 ## Workflow (interactive after research)
 
@@ -23,6 +46,7 @@ Ask the user for the model name and a reference link (HuggingFace page, official
   - Provider/company (drives family selection)
   - License (match against existing `licenses` array or flag as new)
   - Model type (`image` vs `video` — sometimes both)
+  - **How it actually ships** — one checkpoint or several separate weight releases? This decides the ecosystem split (see "The test" above), so read for distinct releases/sizes/endpoints rather than trusting the family name.
   - Short description for the base model record
 - Search the codebase for prior patterns: `Grep` for the provider name to see if a family already exists
 
@@ -150,3 +174,4 @@ Note: making a new ecosystem **generatable** (`GenerationBaseModel`) and **featu
 
 - **Ernie** (Baidu, image): new family, new license; ECO.Ernie = 67, BM.Ernie = 83, familyId 17, licenseId 13 (Apache 2.0 — matched existing).
 - **Seedance** (ByteDance, video): family 12 (ByteDance — existed), licenseId 23 (Seedream — shared with Seedream since ByteDance uses the same agreement).
+- **Flux 3 Video** (BFL, video): ECO.Flux3Video = 79, BM.Flux3Video = 98, family 1, new licenseId 39. A worked example of the split test — BFL announced FLUX-3 as one multimodal model, which reads like a single ecosystem, but it ships as separate weight releases (Video, Image, the open-weight Dev backbone). Shared architecture, different checkpoints ⇒ separate ecosystems, named for the modality so the siblings land without a rename. Same reasoning as the Flux.2 Klein variants, which share `parentEcosystemId: ECO.Flux2` purely for AIR identity while their LoRAs do not cross.

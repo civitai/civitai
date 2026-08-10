@@ -1,7 +1,11 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from '$lib/server/db';
 import type { ModelType } from '@civitai/db-schema';
-import { hasCurrentRightsAffirmation, type ModelVersionTerms } from '@civitai/buzz';
+import {
+  acceptsBlueBuzz,
+  hasCurrentRightsAffirmation,
+  type ModelVersionTerms,
+} from '@civitai/buzz';
 import {
   DEFAULT_GENERATION_TRIAL_LIMIT,
   type PaidAccessConfig,
@@ -39,6 +43,7 @@ function paidAccessToConfig(timeframeDays: number | null, terms: unknown): PaidA
     accessPrice: t.download?.price ?? paidGen?.price,
     generationPrice: t.download ? paidGen?.price : undefined,
     freeGeneration: !!gen && 'free' in gen,
+    acceptsBlueBuzz: acceptsBlueBuzz(t),
     freePreviewGenerations: paidGen?.trialLimit ?? DEFAULT_GENERATION_TRIAL_LIMIT,
     donationGoalEnabled: false,
     donationGoal: undefined,

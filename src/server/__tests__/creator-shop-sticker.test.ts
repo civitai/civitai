@@ -4,7 +4,10 @@ import {
   creatorGrantRemaining,
   patchCosmeticData,
 } from '~/server/services/creator-shop.data';
-import { submitCreatorShopItemSchema } from '~/server/schema/creator-shop.schema';
+import {
+  submitCreatorShopItemSchema,
+  updateCreatorShopItemSchema,
+} from '~/server/schema/creator-shop.schema';
 import {
   COSMETIC_PRICE_FLOOR_MIN,
   cosmeticDimensionsLabel,
@@ -15,6 +18,7 @@ import {
   isCreatorCosmeticType,
   packItemFloor,
   STICKER_MIN_BUZZ_PER_USE,
+  STICKER_MAX_USES,
   STICKER_MAX_LONG_EDGE,
   STICKER_MIN_LONG_EDGE,
   stickerPerUseFloor,
@@ -274,6 +278,70 @@ describe('uses is required for stickers', () => {
       slug: undefined,
     });
     expect(result.success).toBe(true);
+  });
+});
+
+// The submission fee is flat, but the creator's own grant is `uses x 10` — so an
+// unbounded `uses` mints unlimited free placements for a fixed cost. The per-use
+// price floor doesn't stop it: it constrains what a BUYER pays, and a creator who
+// never intends to sell is unaffected by it.
+describe('uses is bounded for stickers', () => {
+  const submitBase = {
+    cosmeticType: CosmeticType.Sticker,
+    name: 'Test',
+    imageUrl: 'img',
+    slug: 'party_cat',
+    // High enough that the per-use price floor can never be what rejects these.
+    price: 5_000_000,
+    pricePerUse: 5,
+    rightsAffirmed: true,
+  };
+  const overCap = STICKER_MAX_USES + 1;
+
+  it('caps uses at 100', () => {
+    expect(STICKER_MAX_USES).toBe(100);
+  });
+
+  it('rejects uses above the cap on submit', () => {
+    const result = submitCreatorShopItemSchema.safeParse({ ...submitBase, uses: overCap });
+    expect(result.success).toBe(false);
+    if (!result.success)
+      expect(result.error.issues.some((i) => i.path.includes('uses'))).toBe(true);
+    expect(submitCreatorShopItemSchema.safeParse({ ...submitBase, uses: 100_000 }).success).toBe(
+      false
+    );
+  });
+
+  it('accepts uses at the cap on submit', () => {
+    expect(
+      submitCreatorShopItemSchema.safeParse({ ...submitBase, uses: STICKER_MAX_USES }).success
+    ).toBe(true);
+  });
+
+  // The submit-time check is not the whole story: an approved item can be edited,
+  // and the approval grant reads whatever `uses` ended up stored.
+  it('rejects uses above the cap on update', () => {
+    const result = updateCreatorShopItemSchema.safeParse({ id: 1, uses: overCap });
+    expect(result.success).toBe(false);
+    if (!result.success)
+      expect(result.error.issues.some((i) => i.path.includes('uses'))).toBe(true);
+  });
+
+  it('accepts uses at the cap on update', () => {
+    expect(updateCreatorShopItemSchema.safeParse({ id: 1, uses: STICKER_MAX_USES }).success).toBe(
+      true
+    );
+  });
+
+  // What the cap is actually for. Reads the grant through the schema rather than
+  // asserting on the multiplier alone, so widening either one fails here.
+  it('bounds the creator approval grant at 1000 uses', () => {
+    const accepted = [1, 50, STICKER_MAX_USES, overCap, 100_000].filter(
+      (uses) => submitCreatorShopItemSchema.safeParse({ ...submitBase, uses }).success
+    );
+    expect(accepted).toEqual([1, 50, STICKER_MAX_USES]);
+    for (const uses of accepted)
+      expect(creatorGrantRemaining(CosmeticType.Sticker, { uses })).toBeLessThanOrEqual(1000);
   });
 });
 

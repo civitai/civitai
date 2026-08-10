@@ -6,6 +6,7 @@ import { logToAxiom } from '~/server/logging/client';
 import {
   queueImageSearchIndexUpdate,
   resetBlockedNsfwLevel,
+  dropBlockedImageDeleteQueue,
 } from '~/server/services/image.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
@@ -97,6 +98,9 @@ export async function unblockAccountDeletionImages(userId: number) {
           // Blocking force-set `nsfwLevel` to Blocked and left the rating lock on, which the
           // recompute skips; resetBlockedNsfwLevel is the shared undo for that.
           () => resetBlockedNsfwLevel(ids),
+          // The grace block queued these for purge; leaving the row behind means a later
+          // re-delete inherits the first block's clock and skips retention entirely.
+          () => dropBlockedImageDeleteQueue(ids),
           () => queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
         ],
         RESTORE_FOLLOWUP_CONCURRENCY

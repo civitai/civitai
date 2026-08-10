@@ -163,7 +163,6 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
                     <Tooltip
                       label={label}
                       position="bottom"
-                      color="dark"
                       openDelay={200}
                       offset={10}
                     >

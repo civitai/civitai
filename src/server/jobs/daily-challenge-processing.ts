@@ -339,6 +339,7 @@ async function createChallengeFromSelection(
         challengeDate,
         maxItemsPerUser: config.entryPrizeRequirement * 2,
         endsAt,
+        autoTagId: config.challengeTagId,
         disableTagRequired: true,
         disableFollowOnSubmission: true,
       },
@@ -588,7 +589,8 @@ export async function reviewEntries() {
       logToAxiom({
         type: 'warning',
         name: 'daily-challenge-process-entries',
-        message: 'Active challenge count hit the batch ceiling; excess challenges roll to the next tick',
+        message:
+          'Active challenge count hit the batch ceiling; excess challenges roll to the next tick',
         count: activeChallenges.length,
       });
     }
@@ -1581,7 +1583,8 @@ export async function pickWinnersForChallenge(
         await logToAxiom({
           type: 'info',
           name: 'challenge-partial-winner-residual',
-          message: 'User challenge completed with fewer winners than prize places; buzz not paid out',
+          message:
+            'User challenge completed with fewer winners than prize places; buzz not paid out',
           challengeId: currentChallenge.challengeId,
           residualBuzz,
           winnersCount: winningEntries.length,
@@ -1858,7 +1861,9 @@ export async function getJudgedEntries(
     return [];
   }
 
-  // Exclude users who won a challenge within the cooldown period, scoped by event
+  // Exclude users who won a challenge within the cooldown period, scoped by event. Wins in a user
+  // challenge are excluded from the lookback for the same reason user challenges skip the cooldown
+  // below: the two prize pools are independent in both directions.
   let recentWinnerIds = new Set<number>();
   if (source === ChallengeSource.User) {
     // Paid user challenges never apply the winner cooldown — a recent daily-challenge win
@@ -1885,6 +1890,7 @@ export async function getJudgedEntries(
       JOIN "Challenge" c ON c.id = cw."challengeId"
       WHERE cw."createdAt" > now() - ${cooldownInterval}::interval
         AND c.status = 'Completed'
+        AND c."source" <> 'User'
         ${eventCondition}
     `;
     recentWinnerIds = new Set(recentWinners.map((w) => w.userId));
@@ -1896,6 +1902,7 @@ export async function getJudgedEntries(
       JOIN "Challenge" c ON c.id = cw."challengeId"
       WHERE cw."createdAt" > now() - ${config.winnerCooldown}::interval
         AND c.status = 'Completed'
+        AND c."source" <> 'User'
     `;
     recentWinnerIds = new Set(recentWinners.map((w) => w.userId));
   }

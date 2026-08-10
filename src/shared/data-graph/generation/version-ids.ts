@@ -8,6 +8,7 @@
  * the `graph -> common -> config -> graph` import cycle that otherwise leaves
  * these constants `undefined` at module-eval time depending on load order.
  */
+
 export const klingVersionIds = {
   v1_6: 2623815,
   v2: 2623817,
@@ -30,6 +31,10 @@ export const viduVersionIds = {
 export const happyHorseVersionIds = {
   'v1.0': 2902378,
   'v1.1': 3063263,
+} as const;
+
+export const flux3VideoVersionIds = {
+  'v3.0': 3204701,
 } as const;
 
 export const grokVersionIds = {

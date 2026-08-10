@@ -39,6 +39,7 @@ export const appRouter = router({
   modelVersion: lazy(() => import('./model-version.router').then((m) => m.modelVersionRouter)),
   notification: lazy(() => import('./notification.router').then((m) => m.notificationRouter)),
   partner: lazy(() => import('./partner.router').then((m) => m.partnerRouter)),
+  placement: lazy(() => import('./placement.router').then((m) => m.placementRouter)),
   post: lazy(() => import('./post.router').then((m) => m.postRouter)),
   question: lazy(() => import('./question.router').then((m) => m.questionRouter)),
   reaction: lazy(() => import('./reaction.router').then((m) => m.reactionRouter)),
@@ -99,9 +100,15 @@ export const appRouter = router({
     import('~/server/routers/membership-gift.router').then((m) => m.membershipGiftRouter)
   ),
   tool: lazy(() => import('~/server/routers/tool.router').then((m) => m.toolRouter)),
-  cosmeticShop: lazy(() => import('~/server/routers/cosmetic-shop.router').then((m) => m.cosmeticShopRouter)),
-  creatorShop: lazy(() => import('~/server/routers/creator-shop.router').then((m) => m.creatorShopRouter)),
-  productBadge: lazy(() => import('~/server/routers/product-badge.router').then((m) => m.productBadgeRouter)),
+  cosmeticShop: lazy(() =>
+    import('~/server/routers/cosmetic-shop.router').then((m) => m.cosmeticShopRouter)
+  ),
+  creatorShop: lazy(() =>
+    import('~/server/routers/creator-shop.router').then((m) => m.creatorShopRouter)
+  ),
+  productBadge: lazy(() =>
+    import('~/server/routers/product-badge.router').then((m) => m.productBadgeRouter)
+  ),
   technique: lazy(() => import('~/server/routers/technique.router').then((m) => m.techniqueRouter)),
   donationGoal: lazy(() =>
     import('~/server/routers/donation-goal.router').then((m) => m.donationGoalRouter)

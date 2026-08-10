@@ -116,6 +116,9 @@ import {
   getUserBuzzAccountByAccountTypes,
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
+import { paidAccessPayoutAccount } from '~/server/utils/buzz-helpers';
+import { BuzzTypes } from '~/shared/constants/buzz.constants';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -1079,9 +1082,7 @@ export const getModelsRaw = async ({
           }
 
           if (hidePrivateModels) {
-            modelVersions = modelVersions.filter(
-              (mv) => mv.availability === 'Public' || mv.availability === 'EarlyAccess'
-            );
+            modelVersions = modelVersions.filter((mv) => mv.availability === 'Public');
           }
 
           // Distinct base models across the visible versions — surfaced to the card
@@ -2780,6 +2781,8 @@ export type ModelEarlyAccessRefundRequirement = {
   }[];
   buyerCount: number;
   totalBuzz: number;
+  /** What reversing these purchases debits from each of the owner's accounts, keyed by account. */
+  totalsByAccount: Partial<Record<BuzzSpendType, number>>;
 };
 
 // Early access is sold per model VERSION, so the refund set is computed version-by-version and each
@@ -2793,7 +2796,12 @@ export type ModelEarlyAccessRefundRequirement = {
 export const getModelEarlyAccessRefundRequirement = async ({
   id,
 }: GetByIdInput): Promise<ModelEarlyAccessRefundRequirement> => {
-  const empty: ModelEarlyAccessRefundRequirement = { purchases: [], buyerCount: 0, totalBuzz: 0 };
+  const empty: ModelEarlyAccessRefundRequirement = {
+    purchases: [],
+    buyerCount: 0,
+    totalBuzz: 0,
+    totalsByAccount: {},
+  };
   const versions = await dbWrite.modelVersion.findMany({
     where: { modelId: id },
     select: { id: true, meta: true },
@@ -2836,21 +2844,25 @@ export const getModelEarlyAccessRefundRequirement = async ({
 
   // Refund amounts come from the ledger, not current terms — prices can change after purchase.
   const limit = pLimit(5);
-  const amounts = await Promise.all(
+  const ledgers = await Promise.all(
     purchases
       .flatMap((purchase) => purchase.buzzTransactionIds)
-      .map((prefix) =>
-        limit(async () => {
-          const transactions = await getMultiAccountTransactionsByPrefix(prefix);
-          return transactions.reduce((sum, transaction) => sum + transaction.amount, 0);
-        })
-      )
+      .map((prefix) => limit(() => getMultiAccountTransactionsByPrefix(prefix)))
   );
+
+  // Each leg is reported by the account the BUYER spent from, so the owner's side has to be
+  // re-derived through the same mapping the charge used.
+  const totalsByAccount: Partial<Record<BuzzSpendType, number>> = {};
+  for (const leg of ledgers.flat()) {
+    const account = paidAccessPayoutAccount(BuzzTypes.toSpendType(leg.accountType));
+    totalsByAccount[account] = (totalsByAccount[account] ?? 0) + leg.amount;
+  }
 
   return {
     purchases,
     buyerCount: new Set(purchases.map((purchase) => purchase.buyerId)).size,
-    totalBuzz: amounts.reduce((sum, amount) => sum + amount, 0),
+    totalBuzz: Object.values(totalsByAccount).reduce((sum, amount) => sum + amount, 0),
+    totalsByAccount,
   };
 };
 
@@ -2866,12 +2878,24 @@ const refundModelEarlyAccessPurchases = async ({
     select: { name: true, userId: true },
   });
 
-  // Refunds debit the owner's yellow account — the account the purchases paid into.
-  const balances = await getUserBuzzAccountByAccountTypes(model.userId, ['yellow']);
-  const balance = balances.yellow ?? 0;
-  if (balance < requirement.totalBuzz) {
+  // Checked per account, not against one total: a creator paid in blue holds nothing in yellow, and
+  // the two are not interchangeable. The ledger exempts refunds from its own sufficiency check and
+  // will take an account negative, so nothing downstream re-checks this.
+  const accounts = Object.keys(requirement.totalsByAccount) as BuzzSpendType[];
+  const balances = await getUserBuzzAccountByAccountTypes(model.userId, accounts);
+  const shortfalls = accounts
+    .map((account) => ({
+      account,
+      required: requirement.totalsByAccount[account] ?? 0,
+      available: balances[account] ?? 0,
+    }))
+    .filter(({ required, available }) => available < required);
+
+  if (shortfalls.length > 0) {
     throw throwInsufficientFundsError(
-      `Refunding early access buyers requires ${requirement.totalBuzz} Buzz but the account only has ${balance}.`
+      `Refunding early access buyers requires ${shortfalls
+        .map((s) => `${s.required} ${s.account} Buzz but the account only has ${s.available}`)
+        .join('; ')}.`
     );
   }
 

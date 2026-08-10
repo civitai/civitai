@@ -995,7 +995,9 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   const [insufficientBuzzError, setInsufficientBuzzError] = useState(false);
   const [isMinLoading, setIsMinLoading] = useState(false);
   const minLoadingTimer = useRef<ReturnType<typeof setTimeout>>();
-  const [promptWarning, setPromptWarning] = useState<string | null>(null);
+  const [promptWarning, setPromptWarning] = useState<{ message: string; soft: boolean } | null>(
+    null
+  );
 
   // Get whatIf data for buzz transaction checking
   const { data: whatIfData } = useWhatIfContext();
@@ -1018,10 +1020,12 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
 
   const generateMutation = useGenerateFromGraph({
     onError: (error) => {
-      const isPOI =
-        error.message?.startsWith('Your prompt was flagged') || error.message?.includes('POI');
-      if (isPOI) {
-        setPromptWarning(error.message);
+      const soft = (error.data as { softBlock?: boolean } | undefined)?.softBlock === true;
+      const message = error.message;
+      const isPromptBlock =
+        message?.startsWith('Your prompt was flagged') || message?.includes('POI');
+      if (isPromptBlock) {
+        setPromptWarning({ message, soft });
         currentUser?.refresh();
       } else if (error.message === 'insufficientBuzz') {
         // Route through the insufficient-buzz alert (with switch-buzz-type prompt)
@@ -1035,7 +1039,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
 
   const clearWarning = () => setPromptWarning(null);
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (acknowledgedSoftBlock = false) => {
     // Generation funnel telemetry — ordering matches legacy GenForm semantics.
     //
     // Legacy: RHF's `onError` fires BEFORE GenForm's `canGenerate` short-
@@ -1221,6 +1225,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         ...(sourceMetadata ? { sourceMetadata } : {}),
         ...(sourceMetadataMap ? { sourceMetadataMap } : {}),
         externalId,
+        acknowledgedSoftBlock,
       });
 
       if (hasPaidAccess) {
@@ -1286,17 +1291,29 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   if (promptWarning) {
     return (
       <>
-        <Alert color="red" title="Prohibited Prompt">
-          <Text className="whitespace-pre-wrap">{promptWarning}</Text>
+        <Alert
+          color={promptWarning.soft ? 'yellow' : 'red'}
+          title={promptWarning.soft ? 'Prompt Flagged' : 'Prohibited Prompt'}
+        >
+          <Text className="whitespace-pre-wrap">{promptWarning.message}</Text>
+          {promptWarning.soft && (
+            <Text size="sm" mt={4}>
+              Our filter can misread ordinary wording. If you know your prompt follows our content
+              policy, you can generate it anyway.
+            </Text>
+          )}
           <Button
-            color="red"
+            color={promptWarning.soft ? 'yellow' : 'red'}
             variant="light"
-            onClick={clearWarning}
+            onClick={() => {
+              clearWarning();
+              if (promptWarning.soft) handleSubmit(true);
+            }}
             style={{ marginTop: 10 }}
             leftSection={<IconCheck />}
             fullWidth
           >
-            I Understand, Continue Generating
+            {promptWarning.soft ? 'Generate Anyway' : 'I Understand, Continue Generating'}
           </Button>
         </Alert>
         {currentUser?.username && (

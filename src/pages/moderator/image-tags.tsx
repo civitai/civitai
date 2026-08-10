@@ -352,6 +352,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
           tags={tags.moderation}
           entityType="image"
           entityId={image.id}
+          mediaType={image.type}
           highlightContested
         />
       )}

@@ -3,6 +3,7 @@ import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
 import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-check';
+import { auditBitdexConsistency } from '~/server/jobs/audit-bitdex-consistency';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
@@ -63,6 +64,7 @@ import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
 import type { Job } from '~/server/jobs/job';
 import { jobQueueJobs } from '~/server/jobs/job-queue';
 import { newOrderJobs } from '~/server/jobs/new-order-jobs';
+import { placementJobs } from '~/server/jobs/placement-jobs';
 import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { syncEmailBlocklist } from '~/server/jobs/sync-email-blocklist';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
@@ -76,6 +78,7 @@ import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publ
 import { processSubscriptionsRequiringRenewal } from '~/server/jobs/process-subscriptions-requiring-renewal';
 import { processVaultItems } from '~/server/jobs/process-vault-items';
 import { auditWildcardSetCategoriesJob } from '~/server/jobs/audit-wildcard-set-categories';
+import { metricReconciliationJobs } from '~/server/jobs/metric-reconciliation-audit';
 import { reconcileWildcardSetsJob } from '~/server/jobs/reconcile-wildcard-sets';
 import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
 import { refreshAuctionCache } from '~/server/jobs/refresh-auction-cache';
@@ -125,6 +128,7 @@ export const jobs: Job[] = [
   deliverLeaderboardCosmetics,
   reindexRecentScheduledImages,
   reemitBitdexOps,
+  auditBitdexConsistency,
   pushDiscordMetadata,
   applyVotedTags,
   removeOldDrafts,
@@ -168,6 +172,7 @@ export const jobs: Job[] = [
   clearVaultItems,
   reconcileWildcardSetsJob,
   auditWildcardSetCategoriesJob,
+  ...metricReconciliationJobs,
   ...jobQueueJobs,
   countReviewImages,
   processingEngingEarlyAccess,
@@ -209,6 +214,7 @@ export const jobs: Job[] = [
   advanceReferralSubs,
   ...prepaidMembershipJobs,
   ...entityModerationJobs,
+  ...placementJobs,
   retryFailedTextModeration,
   articleIngestionReconcile,
   expireStrikesJob,

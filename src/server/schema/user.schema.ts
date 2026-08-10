@@ -321,7 +321,6 @@ export const userSettingsSchema = z.object({
       enabled: z.boolean().optional(),
       showModels: z.boolean().optional(),
       featuredItemIds: z.array(z.number()).optional(),
-      resoldItemIds: z.array(z.number()).optional(),
       description: z.string().nullish(),
       coverImageId: z.number().nullish(),
       // Ordered storefront sections with per-section visibility.

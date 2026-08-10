@@ -23,6 +23,7 @@ import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
+import { SuspendPlacerMenuItem } from '~/components/Sticker/SuspendPlacerMenuItem';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 // import { ProfileHeader } from '~/components/Profile/ProfileHeader';
@@ -275,6 +276,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
         <>
           {isMod && (
             <>
+              <SuspendPlacerMenuItem userId={user.id} />
               {env.NEXT_PUBLIC_USER_LOOKUP_URL && (
                 <Menu.Item
                   component="a"

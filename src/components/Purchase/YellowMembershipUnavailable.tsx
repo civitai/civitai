@@ -3,10 +3,12 @@ import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 import { useServerDomains } from '~/providers/AppProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { QS } from '~/utils/qs';
 import { syncAccount } from '~/utils/sync-account';
 
 export function YellowMembershipUnavailable() {
+  const features = useFeatureFlags();
   const serverDomains = useServerDomains();
   const greenPricingUrl = syncAccount(
     `//${serverDomains.green}/pricing?${QS.stringify({ buzzType: 'green' })}`
@@ -52,6 +54,41 @@ export function YellowMembershipUnavailable() {
           </Button>
         </Stack>
       </Paper>
+
+      {features.buzzMemberships && (
+        <Paper p="lg" radius="md" withBorder style={outerCardStyle}>
+          <Stack gap="md">
+            <div className="flex items-center gap-2.5">
+              <ThemeIcon size={36} radius="lg" color="blue.6" variant="light">
+                <IconBolt size={20} stroke={2} fill="currentColor" />
+              </ThemeIcon>
+              <div>
+                <Text fw={600} size="md">
+                  Perks Membership
+                </Text>
+                <Text size="xs" c="dimmed">
+                  Pay with the Buzz you&rsquo;ve earned
+                </Text>
+              </div>
+            </div>
+            <Text size="sm" c="dimmed">
+              Spend Buzz on one month of membership perks — generation limits, priority, Vault and
+              private models. No monthly Buzz, no bonus Buzz and no Creator Program, and it
+              doesn&rsquo;t renew automatically.
+            </Text>
+            <Button
+              component={Link}
+              href="/pricing/buzz"
+              leftSection={<IconBolt size={16} fill="currentColor" />}
+              color="blue.7"
+              radius="md"
+              size="md"
+            >
+              View Perks Memberships
+            </Button>
+          </Stack>
+        </Paper>
+      )}
 
       <Paper p="lg" radius="md" withBorder style={outerCardStyle}>
         <Stack gap="md">

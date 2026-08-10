@@ -15,6 +15,14 @@ import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useScrollMargin } from '~/hooks/useScrollMargin';
 import type { AdFeedItem } from '~/components/Ads/ads.utils';
 
+// `contentVisibility: 'auto'` below implies `contain: paint`, which clips every
+// descendant to the item's border box no matter what `overflow` says — so a card's
+// corner badge gets sliced in half. Padding the item outward by this much (and
+// pulling its origin back by the same) gives that overflow somewhere to land while
+// leaving the card's own box untouched. Must stay <= half the 16px row/column gap,
+// or a later sibling's bleed paints over the badge and undoes the whole thing.
+const ITEM_BLEED = 8;
+
 type Props<TData> = {
   data: TData[];
   render: React.ComponentType<MasonryRenderItemProps<TData>>;
@@ -135,15 +143,18 @@ function VirtualColumn<TData>({
           style={{
             position: 'absolute',
             top: 0,
-            left: 0,
-            width: '100%',
-            height: items[item.index].height,
-            transform: `translateY(${item.start - rowVirtualizer.options.scrollMargin}px)`,
+            left: -ITEM_BLEED,
+            width: `calc(100% + ${ITEM_BLEED * 2}px)`,
+            height: items[item.index].height + ITEM_BLEED * 2,
+            padding: ITEM_BLEED,
+            transform: `translateY(${
+              item.start - rowVirtualizer.options.scrollMargin - ITEM_BLEED
+            }px)`,
             // Skip layout/paint for offscreen overscan rows; the explicit
             // `height` above keeps layout space reserved so the virtualizer's
             // scroll math stays correct.
             contentVisibility: 'auto',
-            containIntrinsicSize: `0 ${items[item.index].height}px`,
+            containIntrinsicSize: `0 ${items[item.index].height + ITEM_BLEED * 2}px`,
           }}
         >
           <VirtualItem index={item.index} item={items[item.index]} {...rest} />

@@ -13,6 +13,7 @@ import { challengeNotifications } from '~/server/notifications/challenge.notific
 import { collectionNotifications } from '~/server/notifications/collection.notifications';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
 import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop.notifications';
+import { placementNotifications } from '~/server/notifications/placement.notifications';
 import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
 import { featuredNotifications } from '~/server/notifications/featured.notifications';
 import { followNotifications } from '~/server/notifications/follow.notifications';
@@ -49,6 +50,7 @@ export const notificationProcessors = {
   ...reportNotifications,
   ...featuredNotifications,
   ...bountyNotifications,
+  ...placementNotifications,
   ...buzzNotifications,
   ...collectionNotifications,
   ...imageNotifications,
@@ -94,27 +96,33 @@ export function getNotificationMessage(notification: Omit<BareNotification, 'id'
 
 function getNotificationTypes() {
   const notificationTypes: string[] = [];
+  const optInNotificationTypes: string[] = [];
   const notificationCategoryTypes: Record<
     string,
-    { displayName: string; type: string; defaultDisabled: boolean }[]
+    { displayName: string; type: string; optIn: boolean }[]
   > = {};
-  for (const [
-    type,
-    { displayName, toggleable, category, defaultDisabled, showCategory },
-  ] of Object.entries(notificationProcessors)) {
+  for (const [type, { displayName, toggleable, category, optIn, showCategory }] of Object.entries(
+    notificationProcessors
+  )) {
     if (toggleable === false && !showCategory) continue;
     notificationCategoryTypes[category] ??= [];
-    notificationCategoryTypes[category]!.push({
-      type,
-      displayName,
-      defaultDisabled: defaultDisabled ?? false,
-    });
-    notificationTypes.push(type);
+    notificationCategoryTypes[category]!.push({ type, displayName, optIn: optIn ?? false });
+    if (optIn) optInNotificationTypes.push(type);
+    else notificationTypes.push(type);
   }
 
   return {
     notificationCategoryTypes,
     notificationTypes,
+    optInNotificationTypes,
   };
 }
-export const { notificationCategoryTypes, notificationTypes } = getNotificationTypes();
+/**
+ * `notificationTypes` deliberately EXCLUDES opt-in types — it is the list the bulk on/off toggles
+ * send, and for an opt-in type "off" writes the row that subscribes you. Those types are still
+ * present in `notificationCategoryTypes` so they render their own checkbox.
+ */
+export const { notificationCategoryTypes, notificationTypes, optInNotificationTypes } =
+  getNotificationTypes();
+
+export const isOptInNotification = (type: string) => optInNotificationTypes.includes(type);

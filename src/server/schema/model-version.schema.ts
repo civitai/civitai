@@ -79,6 +79,7 @@ export const trainingDetailsBaseModelsZImage = ['zimageturbo', 'zimagebase'] as 
 export const trainingDetailsBaseModelsFlux2Klein = ['flux2klein_4b', 'flux2klein_9b'] as const;
 export const trainingDetailsBaseModelsLtx2 = ['ltx2'] as const;
 export const trainingDetailsBaseModelsLtx23 = ['ltx23'] as const;
+export const trainingDetailsBaseModelsMiniMaxH3 = ['minimaxh3'] as const;
 export const trainingDetailsBaseModelsErnie = ['ernie'] as const;
 export const trainingDetailsBaseModelsHiDreamO1 = ['hidream_o1'] as const;
 export const trainingDetailsBaseModelsAnima = ['anima'] as const;
@@ -113,6 +114,7 @@ const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsWan,
   ...trainingDetailsBaseModelsLtx2,
   ...trainingDetailsBaseModelsLtx23,
+  ...trainingDetailsBaseModelsMiniMaxH3,
 ] as const;
 const trainingDetailsBaseModelsAudio = [
   ...trainingDetailsBaseModelsAcestep15,
@@ -382,6 +384,7 @@ const generationGrantSchema = z.union([
 export const modelVersionTermsSchema = z.object({
   download: downloadGrantSchema.optional(),
   generation: generationGrantSchema.optional(),
+  acceptsBlueBuzz: z.boolean().optional(),
 });
 
 export type ModelVersionPaidAccessInputSchema = z.infer<typeof modelVersionPaidAccessInputSchema>;
@@ -584,6 +587,9 @@ export type ModelVersionEarlyAccessPurchase = z.infer<typeof modelVersionEarlyAc
 export const modelVersionEarlyAccessPurchase = z.object({
   modelVersionId: z.number(),
   type: z.enum(['download', 'generation']),
+  // A boolean, not a currency: the buyer may only choose BETWEEN blue and their domain currency, and
+  // naming the currency outright would let a client ask a green-domain purchase to spend yellow.
+  payWithBlue: z.boolean().optional(),
 });
 
 export type GetModelVersionPopularityInput = z.infer<typeof getModelVersionPopularityInput>;

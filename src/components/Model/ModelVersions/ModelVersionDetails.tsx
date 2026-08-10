@@ -1,4 +1,5 @@
 import { type ModelVersionTerms, generationPrice } from '@civitai/buzz';
+import { formatLicensingFee } from '~/utils/licensing-fee-display';
 import {
   Accordion,
   ActionIcon,
@@ -148,7 +149,6 @@ import {
 import type { ModelById } from '~/types/router';
 import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
-import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
@@ -288,8 +288,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const isDraft = version?.status === ModelStatus.Draft;
 
   // const shouldOmit = [1562709, 1672021, 1669468].includes(model.id) && !user?.isModerator;
+  // Drafts hide the action, except for owners/mods on ExternalGeneration versions: those carry no
+  // weights, so generating is the only way to check the wiring before publishing.
   const couldGenerate =
-    !isDraft && // We don't wanna show the action for drafts.
+    (!isDraft || (isExternalGeneration && isOwnerOrMod)) &&
     isSelectableInGenerator &&
     features.imageGeneration &&
     // !shouldOmit &&
@@ -1437,8 +1439,23 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       <Group gap={4} wrap="nowrap">
                         <CurrencyIcon currency="BUZZ" size={16} />
                         <Text size="sm">
-                          {numberWithCommas(Number(version.licensingFee))} / image
+                          {formatLicensingFee(
+                            Number(version.effectiveLicensingFee ?? version.licensingFee),
+                            version.baseModel
+                          )}
                         </Text>
+                        {/* The owner is shown their stored fee everywhere else, so when the tier cap
+                            lowers it they need both numbers — otherwise they read the setting as what
+                            they earn (CU 868kn7zu4). */}
+                        {version.effectiveLicensingFee != null &&
+                          Number(version.effectiveLicensingFee) <
+                            Number(version.licensingFee ?? 0) && (
+                            <Text size="xs" c="dimmed">
+                              capped from{' '}
+                              {formatLicensingFee(Number(version.licensingFee), version.baseModel)}{' '}
+                              by your membership tier
+                            </Text>
+                          )}
                         <Popover
                           width={260}
                           shadow="md"

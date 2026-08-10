@@ -78,6 +78,9 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     animated,
     sellableByOthers,
     sellerShare,
+    canEditOwnerFields,
+    resaleChanged,
+    itemSellerShare,
     acceptsBlueBuzz,
     offsets,
     offsetsChanged,
@@ -118,6 +121,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
       offsetsChanged ||
       form.economicsChanged ||
       form.acceptsBlueBuzzChanged ||
+      resaleChanged ||
       !!localUrl
     : !!imageId ||
       !!name.trim() ||
@@ -162,7 +166,10 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
               </Stack>
             )}
             <Alert color="blue" icon={<IconInfoCircle size={18} />}>
-              <Text size="xs">This item is live — you can only change its price and quantity.</Text>
+              <Text size="xs">
+                This item is live — its artwork and details are fixed, but you can still change how
+                it sells: price, quantity, and payment and resale terms.
+              </Text>
             </Alert>
           </>
         ) : (
@@ -414,7 +421,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
           label="Accept Blue Buzz"
           description="Buyers can pay with Blue Buzz — fully, or combined with their regular Buzz. You're paid blue for the blue-paid portion."
         />
-        {!isEdit && (
+        {canEditOwnerFields && (
           <Stack gap={6}>
             <Switch
               checked={sellableByOthers}
@@ -422,6 +429,17 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
               label="Let other creators sell this"
               description="Other creators can list this cosmetic in their own shops."
             />
+            {isEdit && (item?.resellerCount ?? 0) > 0 && (
+              <Alert color="blue" icon={<IconInfoCircle size={18} />}>
+                <Text size="xs">
+                  {item?.resellerCount === 1
+                    ? '1 creator already resells this'
+                    : `${item?.resellerCount} creators already resell this`}
+                  . They keep the {itemSellerShare}% they listed under — changes here only apply to
+                  creators who list it from now on.
+                </Text>
+              </Alert>
+            )}
             {sellableByOthers && (
               <>
                 <NumberInput

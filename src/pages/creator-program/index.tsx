@@ -63,6 +63,7 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { Countdown } from '~/components/Countdown/Countdown';
 import classes from './index.module.scss';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import { TierCapsTable } from '~/components/Subscriptions/TierCapsTable';
 
 const sizing = {
   header: {
@@ -833,31 +834,19 @@ const MonetizationCapsSection = () => {
             </Text>
           </Group>
           <Divider />
-          <Group wrap="nowrap" w="100%">
+          <Group wrap="nowrap" w="100%" align="flex-start">
             <IconTrendingUp size={24} className="flex-none" />
-            <Text>
-              Your caps scale with your tier —{' '}
-              <Text component="span" fw={700}>
-                Free
-              </Text>{' '}
-              to{' '}
-              <Text component="span" fw={700}>
-                Bronze
-              </Text>{' '}
-              to{' '}
-              <Text component="span" fw={700}>
-                Silver
-              </Text>{' '}
-              to{' '}
-              <Text component="span" fw={700}>
-                Gold
-              </Text>{' '}
-              — so upgrading your membership raises how much you can earn per resource.{' '}
-              <Anchor component={NextLink} href="/pricing">
-                Compare membership tiers
-              </Anchor>
-              .
-            </Text>
+            <Stack gap="sm" w="100%">
+              <Text>
+                Here is every tier&apos;s ceiling. Upgrading raises how much you can earn per
+                resource.{' '}
+                <Anchor component={NextLink} href="/pricing">
+                  Compare membership tiers
+                </Anchor>
+                .
+              </Text>
+              <TierCapsTable />
+            </Stack>
           </Group>
         </Stack>
       </Paper>

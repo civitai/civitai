@@ -66,7 +66,7 @@ export default defineRetoolEndpoint('user', {
     input: z.object({ userId }),
     rateLimit: { max: 30, windowSeconds: 60 },
     async handler(input) {
-      await invalidateSession(input.userId);
+      await invalidateSession(input.userId, 'moderation');
       return { loggedOut: true, affected: { userIds: [input.userId] } };
     },
   }),

@@ -27,7 +27,7 @@ import {
   resolvePublishGenerationOutputsRequest,
   resolveResourcePickerRequest,
   resolveReviewConsentNotice,
-  resolveUngrantableConsentScopes,
+  resolveUngrantableConsentNotice,
   shouldEmitMidSessionLossBeacon,
   toHostGateStatus,
 } from './pageBlockHostLogic';
@@ -37,7 +37,7 @@ import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
 import { BlockImageScanPoller } from './BlockImageScanPoller';
 import type { BlockImageScanResult } from './blockImageScanLogic';
-import { projectBlockInitMaturity } from './projectBlockInit';
+import { projectBlockInitMaturity, withSignedInFlag } from './projectBlockInit';
 import { sendBlockRender } from './sendBlockRender';
 import {
   computeLaunchTimings,
@@ -755,6 +755,22 @@ export function PageBlockHost({
     return '';
   }, [router.query.path]);
 
+  // 🔴 THIS CONTEXT IS NOT PROJECTED, AND THAT IS THE SECOND IDENTITY CHANNEL.
+  // `IframeHost` runs its slot context through `projectBlockInitContext`, whose
+  // allowlist DROPS `viewerUserId` / `viewerUsername`; this host emits them
+  // verbatim. So the `@deprecated` markers on `BlockInitPayload.viewer.id` /
+  // `.username` reduce unconditional identity disclosure on the model slot and by
+  // ZERO here — a full-page block learns who is looking at it from `context`
+  // whether or not it ever touches `viewer`.
+  //
+  // Deliberately left in place rather than quietly dropped: these are published
+  // SDK contract fields on `PageContext`, and the deployed-population enumeration
+  // that justifies every other keep/drop call in this payload was run for the
+  // `viewer` object, NOT for `context.viewerUserId`. Removing them needs a
+  // PAGE-SHAPED allowlist (the model allowlist would strip `slug` / `subPath` /
+  // `entityType` and break deep-linking) plus that enumeration. Tracked on the
+  // `PageContext.viewerUserId` @deprecated note; pinned as present-today by
+  // PageBlockHostInitContractV2.browser.test.tsx so the removal cannot be silent.
   const buildContext = useCallback(
     (): PageContext => ({
       slotId: 'app.page',
@@ -785,7 +801,18 @@ export function PageBlockHost({
       },
       context: buildContext(),
       settings: { publisherSettings: {}, userSettings: {} },
-      viewer,
+      // 🔴 THE SECOND PRODUCER OF THE BLOCK_INIT `viewer` OBJECT. Unlike
+      // IframeHost — which derives it from the slot context via
+      // `projectBlockInitViewer` — this host receives an ALREADY-RESOLVED
+      // `viewer` prop from the /apps/run/[slug] route and used to pass it
+      // straight through. So the v2 `signedIn` flag added inside
+      // `projectBlockInitViewer` would have reached the model-slot surface only,
+      // and every full-page app would have shipped a viewer object without it —
+      // the classic half-fleet miss this file's THEME_CHANGE comment describes.
+      // Routing through the SHARED `withSignedInFlag` helper is what makes the
+      // two surfaces incapable of drifting: neither host stamps the object by
+      // hand. `null` (anonymous) passes through as `null`.
+      viewer: withSignedInFlag(viewer),
       theme,
       renderMode: 'iframe',
       // Advisory maturity signal — server-authoritative values from the mint.
@@ -816,6 +843,48 @@ export function PageBlockHost({
     if (marks && marks.initSentAt === null) marks.initSentAt = nowMs();
     send('BLOCK_INIT', (buildInitPayloadRef.current ?? (() => undefined as never))());
   }, [send]);
+
+  // 🔴 DECLARED BEFORE THE INIT-HANDSHAKE EFFECT ON PURPOSE, and IframeHost
+  // places it the same way. React runs effects in declaration order, so on the
+  // FIRST commit this must run while `initSentRef` is still false — otherwise
+  // the gate in it is INERT on mount and the host emits a redundant
+  // THEME_CHANGE immediately after its own BLOCK_INIT. Measured: with this
+  // effect declared after the init effect the mount sequence was
+  // BLOCK_INIT → TOKEN_REFRESH → THEME_CHANGE. (The TOKEN_REFRESH in that
+  // sequence is pre-existing and out of scope here.) Moving this effect below
+  // the init effect silently re-creates that, which is why
+  // `PageBlockHostThemeChange.browser.test.tsx` asserts the mount sequence.
+  // Push a THEME_CHANGE when the viewer toggles light/dark WHILE the block is
+  // mounted. `theme` is a PROP — the route computes it from
+  // `useComputedColorScheme`, so it changes on a toggle and re-renders us.
+  //
+  // Without this the block keeps its mount-time theme until reloaded: BLOCK_INIT
+  // is deduped SDK-side (only the first is honored) and `useBlockIframeSrc`
+  // deliberately FREEZES the URL fragment at mount, so neither existing channel
+  // can carry a later value.
+  //
+  // 🔴 THE SAME WIRING MUST EXIST IN IframeHost.tsx (the model-slot surface).
+  // The two hosts do NOT share a bridge — each registers its own postMessage
+  // handlers by hand (the gotcha-#73 class `hostHandlerParity.ts` documents) —
+  // so wiring one and not the other leaves half the blocks stuck.
+  // `hostHandlerParity` cannot catch this one: its INVENTORY covers block→host
+  // messages, and this is a host→block push. The per-surface browser tests are
+  // the coverage.
+  //
+  // Gated on `initSentRef` for the same reason TOKEN_REFRESH is: before the FIRST
+  // BLOCK_INIT post there is nothing to talk to. (Note the guard flips on that
+  // POST, not on BLOCK_READY — so a toggle between the post and the ack does
+  // push, into a frame that may not be listening yet. That is harmless and NOT
+  // the safety net: `buildInitPayload` reads `theme` fresh on every retry tick,
+  // so the BLOCK_INIT the block finally accepts carries the current theme
+  // regardless of whether any push was heard.)
+  // Deliberately NOT gated on `reviewMode`: the theme is neither
+  // side-effecting nor private, and the review sandbox should render in the
+  // moderator's own color scheme like every other surface.
+  useEffect(() => {
+    if (!initSentRef.current) return;
+    send('THEME_CHANGE', { theme });
+  }, [theme, send]);
 
   // Init handshake — start once token is present (no checkpoint dependency for
   // a page). Retry-until-BLOCK_READY via the shared controller.
@@ -940,6 +1009,32 @@ export function PageBlockHost({
   }, [token, expiresAt, grantedScopes, send]);
 
   // Answer a block-initiated REQUEST_TOKEN.
+  //
+  // 🔴 A `TOKEN_REFRESH_RESPONSE` WITHOUT A `requestId` IS NOT A REPLY. The
+  // block side's `refresh()` awaits a response correlated STRICTLY by
+  // `requestId` — it resolves the pending promise for that id and nothing else —
+  // so an uncorrelated reply has never resolved anyone's `refresh()`. Where it
+  // appeared to work at all it was via the SDK's incidental side effect of
+  // snapshotting whatever token rides on any `TOKEN_REFRESH_RESPONSE`, while the
+  // caller's promise sat there until its own timeout.
+  //
+  // The old code spread `...(requestId ? { requestId } : {})` — a TRUTHINESS
+  // test, so it ALSO dropped an empty-string requestId, which a block can
+  // legitimately have minted and be waiting on. Now: whatever STRING the block
+  // sent is echoed back verbatim (`''` included), so a reply always correlates.
+  //
+  // And when the inbound message carried no usable requestId at all, we send a
+  // `TOKEN_REFRESH` PUSH instead of a fabricated-id reply — because that is
+  // exactly what the message semantically is: a host-initiated token rotation
+  // with nothing to correlate to. It reaches the block through the same handler
+  // as the rotation push above (which is the only path that ever actually
+  // delivered a token in this case), and it does not put an unanswerable
+  // `TOKEN_REFRESH_RESPONSE` on the wire for the SDK to discard.
+  //
+  // 🔴 IframeHost.tsx CARRIES THE SAME LOGIC AND MUST STAY IN STEP. The two
+  // hosts register their postMessage handlers by hand and share no bridge, so
+  // fixing one leaves half the fleet on the broken shape — each surface has its
+  // own browser test for this.
   useEffect(() => {
     const off = onMessage<{ requestId?: string } | undefined>('REQUEST_TOKEN', (raw) => {
       if (!token || !initSentRef.current) return;
@@ -947,10 +1042,12 @@ export function PageBlockHost({
         raw && typeof raw === 'object' && typeof raw.requestId === 'string'
           ? raw.requestId
           : undefined;
-      send('TOKEN_REFRESH_RESPONSE', {
-        ...(requestId ? { requestId } : {}),
-        token: { raw: token, scopes: grantedScopes, expiresAt: expiresAt ?? '' },
-      });
+      const wrapped = { raw: token, scopes: grantedScopes, expiresAt: expiresAt ?? '' };
+      if (requestId === undefined) {
+        send('TOKEN_REFRESH', { token: wrapped });
+        return;
+      }
+      send('TOKEN_REFRESH_RESPONSE', { requestId, token: wrapped });
     });
     return off;
   }, [token, expiresAt, grantedScopes, send, onMessage]);
@@ -1215,12 +1312,43 @@ export function PageBlockHost({
       // and can never be added via consent here — e.g. a dev-tunnel preview token
       // that doesn't carry it). Only the latter, proven from the block's advisory
       // `scopes` hint, surfaces a message so the app doesn't silently look dead.
-      const ungrantable = resolveUngrantableConsentScopes(
+      const ungrantable = resolveUngrantableConsentNotice(
         payload?.scopes,
         grantedScopes,
         missingScopes
       );
-      if (ungrantable.length === 0) return; // already-granted or no hint — drop
+      if (!ungrantable.notify) return; // already-granted or no hint — drop
+      // 🔴 Tell the BLOCK, not just the viewer. The toast below renders in the
+      // HOST frame; before this push nothing came back over the bridge, so the
+      // block could not tell "the user hasn't confirmed the dialog yet" from
+      // "this environment will never grant this scope" — and its own UI went on
+      // telling the developer to retry an action that can never succeed, right
+      // next to a host toast saying the opposite. This is a fire-and-forget PUSH
+      // (REQUEST_CONSENT carries no `requestId`, so there is nothing to correlate
+      // a `*_RESULT` reply to), matching the other uncorrelated host→block pushes
+      // (`TOKEN_REFRESH`, `ROUTE_CHANGED`, `SUSPEND`/`RESUME`).
+      //
+      // It ADDS a channel — the toast is unchanged. The BENIGN already-granted
+      // case returns above and stays silent in BOTH channels: a block that got a
+      // message there would render a permission-unavailable state over a
+      // permission that actually works.
+      //
+      // Sent BEFORE the toast so the block's signal cannot be lost to a throwing
+      // notification layer. That ordering is pinned by
+      // `PageBlockHost.browser.test.tsx` → "the CONSENT_UNAVAILABLE push happens
+      // BEFORE the toast", which asserts the order of the SYNCHRONOUS calls; a
+      // spy on the delivered message cannot see it (delivery is async).
+      //
+      // 🔴 WHAT `scopes` IS. It is NOT the block's raw hint. `notify` above is
+      // decided on the full un-grantable set (requested − granted − missing), but
+      // `ungrantable.scopes` is that set filtered to the known block-scope
+      // vocabulary — the hint is untrusted block input and this payload is
+      // rendered by block UI, so nothing outside the fixed vocabulary is echoed
+      // back out of the host. The two are deliberately different sets: when every
+      // requested scope is unrecognised this still sends, with `scopes: []`. The
+      // refusal is the signal; the names are advisory. Delivered solely to the
+      // frame that asked.
+      send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ungrantable.scopes });
       showNotification({
         color: 'yellow',
         title: 'Permission unavailable',
@@ -1234,6 +1362,7 @@ export function PageBlockHost({
     // what opened the commit→passive-effect window in the first place.
   }, [
     onMessage,
+    send,
     readGateStatus,
     missingScopes,
     grantedScopes,

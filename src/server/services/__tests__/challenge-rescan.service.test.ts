@@ -204,4 +204,17 @@ describe('getWinnerCooldownStatus', () => {
     expect(result.onCooldown).toBe(true);
     expect(result.lastWinChallengeId).toBe(9);
   });
+
+  // #3774: a Community (source=User) win was reported as a Daily cooldown. The exclusion lives in
+  // SQL, so the query text is the only observable here — the mocked client never evaluates it.
+  it('excludes wins earned in user challenges from the lookback', async () => {
+    mockDbRead.$queryRaw
+      .mockResolvedValueOnce([{ eventId: null, source: 'System' }])
+      .mockResolvedValueOnce([]);
+
+    await getWinnerCooldownStatus(42, 111);
+
+    const winLookupSql = (mockDbRead.$queryRaw.mock.calls[1][0] as unknown as string[]).join('');
+    expect(winLookupSql).toMatch(/ch\."source"\s*<>\s*'User'/);
+  });
 });

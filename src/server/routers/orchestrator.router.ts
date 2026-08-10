@@ -10,6 +10,7 @@ import {
   updateWorkflow,
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
+import { generationSurfaceForRequest } from '~/server/services/orchestrator/generation-surface';
 import { getWorkflow as clientGetWorkflow } from '@civitai/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import {
@@ -342,6 +343,7 @@ export const orchestratorRouter = router({
         remixOfId,
         buzzType,
         externalId,
+        acknowledgedSoftBlock,
       } = input;
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
@@ -349,13 +351,17 @@ export const orchestratorRouter = router({
         userTier,
         ctx.features,
         { id: ctx.user.id, isModerator: ctx.user.isModerator },
-        // #3520: the ON-SITE generator. A substitution here is the DELIBERATE,
-        // correct graceful degradation the issue defends — a stale localStorage
-        // version id after an ecosystem switch, with the picker visibly snapping
-        // back. Labelling it keeps it out of the App Blocks incidence number that
-        // gates the phase-3 policy decision, instead of inflating it with the one
-        // case everyone agrees is working as intended.
-        'onsite'
+        // #3665: `onsite` for a cookie session, `api` for a bearer token. This
+        // procedure serves BOTH — `AIServicesWrite` is a user-grantable scope, so
+        // a CLI or any external integration reaches this exact code path.
+        //
+        // It was a hardcoded `'onsite'`, which meant every API substitution was
+        // recorded as the DELIBERATE, correct graceful degradation #3520 defends
+        // (a stale localStorage id after an ecosystem switch, picker visibly
+        // snapping back) — and therefore excluded from the incidence number that
+        // gates the phase-3 policy decision. An API caller has neither property:
+        // the id is deliberate and there is no picker to snap.
+        generationSurfaceForRequest(ctx)
       );
 
       // Workflow-level feature-flag gate. `filterWorkflowsByFeatureFlags` only
@@ -408,6 +414,9 @@ export const orchestratorRouter = router({
         sourceMetadataMap,
         remixOfId,
         externalId,
+        // `.input(z.any())` — an explicit identity check, so a truthy non-boolean
+        // from a hand-rolled client can't stand in for the acknowledgement.
+        acknowledgedSoftBlock: acknowledgedSoftBlock === true,
       });
 
       // Bust the short-TTL queryGeneratedImages cache so a concurrent tab or an
@@ -431,13 +440,12 @@ export const orchestratorRouter = router({
         userTier,
         ctx.features,
         { id: ctx.user.id, isModerator: ctx.user.isModerator },
-        // #3520: the ON-SITE generator. A substitution here is the DELIBERATE,
-        // correct graceful degradation the issue defends — a stale localStorage
-        // version id after an ecosystem switch, with the picker visibly snapping
-        // back. Labelling it keeps it out of the App Blocks incidence number that
-        // gates the phase-3 policy decision, instead of inflating it with the one
-        // case everyone agrees is working as intended.
-        'onsite'
+        // #3665: `onsite` for a cookie session, `api` for a bearer token — see
+        // the sibling call in `generateFromGraph`. This one matters MORE, not
+        // less: `whatIfFromGraph` is the read-only, zero-spend estimate an
+        // external caller makes BEFORE committing buzz, so it is where a
+        // substitution is both most detectable and most worth counting.
+        generationSurfaceForRequest(ctx)
       );
 
       // Mirror of the gate in `generateFromGraph`. Reject what-if costing for

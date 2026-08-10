@@ -136,6 +136,7 @@ import {
   snapshotFromWorkflow,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
 } from '~/server/services/blocks/workflow.service';
+import { projectModelSubstitutions } from '~/shared/data-graph/generation/model-substitution';
 import {
   assertInlineGraphAirsDeclared,
   assertViewerEntitledToInlineResources,
@@ -1090,9 +1091,7 @@ async function createBlockTextToImageStep(opts: {
   // object — so it describes THIS submit and no one else's. Behaviour is
   // unchanged; the caller folds this into the snapshot so the block can detect
   // that it was billed for a model it did not ask for.
-  const modelSubstitutions = externalCtx.modelSubstitutions
-    ?.list()
-    .map(({ requested, applied, reason }) => ({ requested, applied, reason }));
+  const modelSubstitutions = projectModelSubstitutions(externalCtx.modelSubstitutions);
 
   // 🔴 PERSIST it on the workflow's own metadata, not only on the submit reply.
   // A block renders from the TERMINAL POLL (the only snapshot carrying
@@ -3352,10 +3351,23 @@ export const blocksRouter = router({
         }
       );
       // customComfy post-paid SETTLE (plan §5.3): a mid-run cancel BILLS the
-      // accrued cost (orchestrator-side, non-refundable), so settle refunds the
-      // reserved CEILING down to that accrued `cost.total` on BOTH reservation
-      // keys. Self-scoping + idempotent + best-effort — a txt2img / non-customComfy
-      // cancel has no settle record and no-ops.
+      // accrued cost, and that accrued portion is non-refundable — post-billing
+      // handlers recompute the authoritative cost from measured RUNTIME, so the
+      // orchestrator exempts them from the blob-delivery proration below
+      // (WorkflowStepManager.GetUndeliveredFractionAsync) to avoid double-refunding.
+      // Settle therefore refunds the reserved CEILING down to that accrued
+      // `cost.total` on BOTH reservation keys. Self-scoping + idempotent +
+      // best-effort — a txt2img / non-customComfy cancel has no settle record and
+      // no-ops here.
+      //
+      // 🔴 DO NOT QUOTE THE "non-refundable" CLAUSE AS A GENERAL CANCEL RULE.
+      // It scopes to customComfy post-paid only. A NON-customComfy cancel IS
+      // prorated by the orchestrator: the workflow is re-priced by the share of
+      // each job's output blobs that never landed and the difference is refunded
+      // (a job that delivered nothing refunds in full). civitai/cli read this
+      // comment as universal and shipped "cancel does not undo the charge" to
+      // users for months — wrong, and wrong in the direction that costs them.
+      // Retracted in civitai/cli#336; see civitai/cli#307 for the trace.
       await settleCustomComfySpend({
         workflowId: input.workflowId,
         actualCost: snapshot.cost?.total ?? 0,
@@ -5388,16 +5400,32 @@ export const blocksRouter = router({
     //     requested scope against `ALL_SCOPES` on purpose (clamping to Full would drop
     //     a legitimately-requested opt-in bit), so a token's ceiling is its client's
     //     `allowedScopes | UserRead`, not Full.
-    //   - The one client exceeding Full (civitai-cli, 100663297) was written by a RAW SQL
-    //     migration, which no zod schema governs.
+    //   - The one client exceeding Full (civitai-cli, now 100777985) was written by RAW SQL
+    //     MIGRATIONS, which no zod schema governs.
     //   - `appblk-*` clients get `allowedScopes` written directly by
     //     publish-request.service (also bypassing zod). Safe by construction, not by cap:
     //     `deriveOauthBitmaskFromBlockScopes` maps only bits below 25, and those clients
     //     carry `grants: []` so they cannot mint an account bearer token at all.
-    // 100663297 is not a superset of Full (it carries bit 0 and none of 1..24), so the
-    // flip is unreachable — but that last part rests on INSPECTION of that migration,
-    // not on a cap. If a future migration grants a client `Full | <some opt-in bit>`,
-    // this gate flips for it and no test will catch it.
+    // 100777985 is not a superset of Full: it carries bits 0, 14, 15, 16, 25 and 26 —
+    // UserRead, AIServicesRead, AIServicesWrite, BuzzRead, AppBlocksSubmit,
+    // AppBlocksDevTunnel — and NONE of 1..13 or 17..24, so it does not contain Full
+    // (33554431) and the flip stays unreachable for it. (Bits 14/15/16 were added by
+    // `20260806140000_widen_civitai_cli_oauth_client_ai_services_scopes` so the
+    // `civitai login` token can run `civitai generate` — issue #3681.)
+    // 🔴 That last part NO LONGER rests on inspection alone. The migration surface is
+    // now pinned by `src/server/services/oauth/__tests__/oauth-client-scope-grants.test.ts`,
+    // which enumerates every migration whose LIVE SQL writes `"OauthClient"."allowedScopes"`
+    // off the tree, reconciles the set against a declared table, pins each grant's whole
+    // statement verbatim, folds the grants per client — SEEDED FROM THE COLUMN DEFAULT
+    // (Full), not from 0 — and fails if any client would hold a STRICT superset of Full.
+    // The seed is what makes the claim real: the likely way this gate flips is a migration
+    // that ORs one opt-in bit onto a row created with the column default, landing on
+    // `Full | <bit>`; folding from 0 read that same migration as granting just `<bit>` and
+    // passed clean. Verified by planting exactly that migration and watching the guard go
+    // red on `allowedScopes=100663295`.
+    // What that guard still cannot see is a grant written OUTSIDE a migration (a hand-run
+    // UPDATE against a database), and it cannot prove what any environment's row actually
+    // holds — these migrations are manual-apply.
     //
     // Scope provisioning: the civitai-cli client's allowedScopes migration sets bit 25
     // and the login token requests it, so no NEW migration is needed here. Note the
@@ -5576,8 +5604,15 @@ export const blocksRouter = router({
       const { addCollaborator } = await import('~/server/services/blocks/forgejo.service');
 
       const { forgejoUsername, token } = await ensureForgejoIdentity(ctx.user!.id);
-      // Idempotent: grants write on this slug's repo (no-op if already a
-      // collaborator). The repo lives under civitai-apps/<slug>.
+      // Grants AT LEAST write on this slug's repo — `addCollaborator` reads the
+      // current level first and does not lower it, so an existing admin/owner is
+      // left untouched. This is NOT "idempotent" in the Forgejo sense the old
+      // comment claimed: the underlying PUT is a SET that applies DOWNGRADES
+      // too (measured on 15.0.6), which is precisely why the read-before-write
+      // lives in the service. That read-then-write is NOT atomic — see the
+      // TOCTOU note on `addCollaborator` — so "does not lower it" describes the
+      // sequential case, not this proc racing the CLI one.
+      // The repo lives under civitai-apps/<slug>.
       await addCollaborator({ slug, username: forgejoUsername, permission: 'write' });
 
       // Browser-facing host (clone via Cloudflare → oauth2-proxy is bypassed by
@@ -6043,8 +6078,19 @@ export const blocksRouter = router({
       );
       const { addCollaborator } = await import('~/server/services/blocks/forgejo.service');
       const { forgejoUsername, token } = await ensureForgejoIdentity(ctx.user!.id);
-      // Read is enough to pull/sync; grant `read` (idempotent). getMyAppRepo
-      // grants `write` for the push flow — the CLI `pull` only needs read.
+      // Read is enough to pull/sync, so `read` is what this asks for. It is a
+      // grant-AT-LEAST, not a set: `addCollaborator` reads the current level and
+      // skips the PUT when it is already higher, so an author who got `write`
+      // from getMyAppRepo's push flow keeps it. That is load-bearing rather than
+      // defensive — the raw PUT this replaced answered 204 for a DOWNGRADE just
+      // as it does for a grant (measured on Forgejo 15.0.6), so `civitai app
+      // pull` silently stripped push access from the author's own repo and no
+      // status code distinguished it from success. Measured with the
+      // `write:repository` PAT this flow mints: at `read` a clone succeeds but a
+      // push is rejected, so the downgrade genuinely broke authors' pushes.
+      // The old comment called that "idempotent"; the API has no such property.
+      // The read-then-write is not atomic, so a call racing getMyAppRepo can
+      // still land on `read` — see the TOCTOU note on `addCollaborator`.
       await addCollaborator({ slug, username: forgejoUsername, permission: 'read' });
 
       const publicHost = env.FORGEJO_PUBLIC_URL.replace(/^https?:\/\//, '').replace(/\/$/, '');

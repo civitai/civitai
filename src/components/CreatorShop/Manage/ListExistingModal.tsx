@@ -61,18 +61,18 @@ function PublicShopItemCard({
   return (
     <Paper withBorder radius="md" p="xs">
       <Group gap="xs" wrap="nowrap" align="flex-start">
-        <CosmeticThumb data={item.cosmetic.data} name={item.cosmetic.name} />
+        <CosmeticThumb data={item.cosmetic?.data} name={item.cosmetic?.name ?? 'Pack'} />
         <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
           <Text size="sm" fw={600} lineClamp={1}>
-            {item.cosmetic.name}
+            {item.cosmetic?.name ?? 'Pack'}
           </Text>
           {!item.listed && (
             <Badge size="xs" variant="light" color="gray" w="fit-content">
-              Delisted — sells again if the creator relists
+              Off sale — you can add it once the creator lists it again
             </Badge>
           )}
           <Text size="xs" c="dimmed" lineClamp={1}>
-            {getDisplayName(item.cosmetic.type)}
+            {item.cosmetic ? getDisplayName(item.cosmetic.type) : 'Pack'}
           </Text>
           {item.addedBy?.username && (
             <Text size="xs" c="dimmed" className="break-words">
@@ -91,7 +91,7 @@ function PublicShopItemCard({
             mt={4}
             leftSection={added ? <IconCheck size={14} /> : <IconPlus size={14} />}
             loading={adding}
-            disabled={added}
+            disabled={added || !item.listed}
             onClick={onAdd}
           >
             {added ? 'Added' : 'Add to my shop'}
@@ -115,13 +115,20 @@ function ResoldListRow({
     <Paper withBorder radius="md" p="xs">
       <Group gap="xs" wrap="nowrap">
         <IconArrowsMove size={18} className="shrink-0 cursor-grab text-gray-6 dark:text-dark-2" />
-        <CosmeticThumb data={item.cosmetic.data} name={item.cosmetic.name} />
+        <CosmeticThumb data={item.cosmetic?.data} name={item.cosmetic?.name ?? 'Pack'} />
         <Stack gap={0} style={{ minWidth: 0, flex: 1 }}>
           <Text size="sm" fw={600} lineClamp={1}>
-            {item.cosmetic.name}
+            {item.cosmetic?.name ?? 'Pack'}
           </Text>
           <Text size="xs" c="dimmed" lineClamp={1}>
-            {getDisplayName(item.cosmetic.type)}
+            {item.cosmetic ? getDisplayName(item.cosmetic.type) : 'Pack'}
+          </Text>
+          <Text size="xs" c="dimmed">
+            You keep{' '}
+            <Text span c="green" fw={600}>
+              {item.sellerShare}%
+            </Text>{' '}
+            — locked in when you listed it
           </Text>
           {item.addedBy?.username && (
             <Text size="xs" c="dimmed" className="break-words">
@@ -134,7 +141,7 @@ function ResoldListRow({
           variant="subtle"
           loading={removing}
           onClick={onRemove}
-          aria-label={`Remove ${item.cosmetic.name}`}
+          aria-label={`Remove ${item.cosmetic?.name ?? 'Pack'}`}
         >
           <IconX size={16} />
         </ActionIcon>
@@ -200,7 +207,7 @@ export function ListExistingModal() {
     const ids = order.map((i): UniqueIdentifier => i.id);
     const next = arrayMove(order, ids.indexOf(active.id), ids.indexOf(over.id));
     setOrder(next);
-    reorderResoldItems.mutate({ resoldItemIds: next.map((i) => i.id) });
+    reorderResoldItems.mutate({ shopItemIds: next.map((i) => i.id) });
   };
 
   return (

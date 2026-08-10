@@ -139,6 +139,74 @@ function postFromBlock(type: string, payload?: unknown) {
   );
 }
 
+/**
+ * Capture host→block posts. `send` targets the iframe's contentWindow, so the
+ * assertable record of what the HOST told the BLOCK is a listener on that
+ * window (same helper shape as PageBlockHostThemeChange / -Storage).
+ *
+ * Attach it AFTER the iframe is in the DOM (i.e. after `driveToReady`); it is
+ * structurally blind to anything posted before it subscribes, which is fine for
+ * the consent path — every message under test is a response to a REQUEST_CONSENT
+ * the test itself posts later.
+ */
+function listenForHostPosts() {
+  const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+  const cw = el.contentWindow;
+  if (!cw) throw new Error('iframe contentWindow missing');
+  const received: Array<{ type: string; payload: unknown }> = [];
+  const handler = (e: MessageEvent) => {
+    const d = e.data as { type?: string; payload?: unknown } | null;
+    if (d && typeof d.type === 'string') received.push({ type: d.type, payload: d.payload });
+  };
+  cw.addEventListener('message', handler);
+  return {
+    received,
+    of: (type: string) => received.filter((m) => m.type === type),
+    clear: () => received.splice(0, received.length),
+    stop: () => cw.removeEventListener('message', handler),
+  };
+}
+
+/**
+ * Record the ORDER of the two host-side effects on the un-grantable branch: the
+ * CONSENT_UNAVAILABLE bridge push and the host toast.
+ *
+ * `listenForHostPosts` above structurally CANNOT do this. `send` →
+ * `contentWindow.postMessage` is delivered asynchronously, so its listener always
+ * runs after the whole handler has returned — a `vi.fn()` toast spy that cannot
+ * throw plus an async delivery means moving `send` below `showNotification` in the
+ * product changes nothing any of those assertions can see.
+ *
+ * The CALL to `postMessage` is synchronous, so patching it on the target window
+ * records the two markers in the order the handler actually performs them. Only
+ * CONSENT_UNAVAILABLE is recorded — the host also posts BLOCK_INIT/TOKEN_REFRESH
+ * through the same window.
+ */
+function recordConsentEffectOrder() {
+  const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+  const cw = el.contentWindow;
+  if (!cw) throw new Error('iframe contentWindow missing');
+  const order: string[] = [];
+  const original = cw.postMessage.bind(cw) as (message: unknown, targetOrigin: string) => void;
+  cw.postMessage = ((message: unknown, targetOrigin: string) => {
+    const type = (message as { type?: string } | null)?.type;
+    if (type === 'CONSENT_UNAVAILABLE') order.push('send');
+    original(message, targetOrigin);
+  }) as unknown as Window['postMessage'];
+  showNotificationSpy.mockImplementation(() => {
+    order.push('toast');
+  });
+  return {
+    order,
+    stop: () => {
+      cw.postMessage = original as unknown as Window['postMessage'];
+      // mockClear() (the beforeEach) keeps implementations — reset so the marker
+      // impl cannot leak into another test.
+      showNotificationSpy.mockReset();
+    },
+  };
+}
+
 // Same-origin so trustTier='internal' yields a pinned (non-opaque) transport
 // whose expectedOrigin equals this frame's origin.
 const SAME_ORIGIN_SRC = `${window.location.origin}/`;
@@ -336,6 +404,193 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     });
     // No consent dialog is opened for an un-grantable scope.
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+
+  /**
+   * The refusal must be observable to the BLOCK, not only to the viewer.
+   *
+   * The host-side toast renders in the HOST frame. Nothing was posted back over
+   * the bridge, so the block could not tell "the user hasn't confirmed the dialog
+   * yet" from "this environment will never grant this scope" — and its own UI kept
+   * telling the developer to retry an action that can never succeed, directly
+   * contradicting the corner toast on the same screen.
+   */
+  test('Issue B: an UN-GRANTABLE REQUEST_CONSENT posts CONSENT_UNAVAILABLE to the block with the refused scopes', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        declaredScopes={['models:read:self']}
+        missingScopes={[]}
+        needsConsent={false}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    const posts = listenForHostPosts();
+    try {
+      // Post exactly ONCE, outside the waitFor. `send` → `contentWindow.postMessage`
+      // is delivered asynchronously, so a post INSIDE a retrying waitFor fires
+      // several REQUEST_CONSENTs before the first CONSENT_UNAVAILABLE lands and the
+      // extra replies arrive later — which makes the count untrustworthy here and
+      // actively broke the benign test's zero below. `driveToReady` already proved
+      // the handler is live (it reads a render-body ref, not a stale closure), so
+      // one post is enough; the waitFor only awaits DELIVERY.
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:write', 'apps:storage:read'] });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+
+      const msg = posts.of('CONSENT_UNAVAILABLE')[0];
+      expect(msg.payload).toEqual({
+        reason: 'ungrantable',
+        // The host's own computed un-grantable set (sorted+deduped), filtered to
+        // the known block-scope vocabulary — not the block's raw hint echoed back.
+        scopes: ['apps:storage:read', 'apps:storage:write'],
+      });
+
+      // ADDITIVE, not a replacement: the viewer-facing toast still fires, and the
+      // un-grantable path still opens no consent dialog.
+      expect(showNotificationSpy).toHaveBeenCalled();
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
+
+  /**
+   * 🔴 The payload is UNTRUSTED BLOCK INPUT until the host filters it.
+   *
+   * `payload.scopes` on a REQUEST_CONSENT is whatever the block's own frame put
+   * there, and the CONSENT_UNAVAILABLE push hands it to block UI to render. The
+   * host therefore names only scopes from the fixed platform vocabulary.
+   *
+   * The decision to refuse is NOT filtered, and that half is the more important
+   * one: the un-grantable set is the trigger as well as the payload, so filtering
+   * the trigger would make a request for an un-grantable scope the vocabulary
+   * doesn't know produce no message and no toast — silently deleting the existing
+   * user-visible behaviour in the name of sanitising it.
+   */
+  test('Issue B: unknown/garbage/oversized scopes are DROPPED from the CONSENT_UNAVAILABLE payload, and the message + toast still fire', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        declaredScopes={['models:read:self']}
+        missingScopes={[]}
+        needsConsent={false}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    const posts = listenForHostPosts();
+    try {
+      // Every requested scope is un-grantable AND outside the vocabulary.
+      postFromBlock('REQUEST_CONSENT', {
+        scopes: ['<img src=x onerror=alert(1)>', 'not:a:real:scope', 'A'.repeat(5000)],
+      });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+
+      // The refusal is still delivered — with NO names, because none survived.
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: [],
+      });
+      // …and the existing host-side behaviour is byte-for-byte unchanged.
+      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('Issue B: a MIXED hint names only the KNOWN scopes in the payload (sorted order preserved)', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        declaredScopes={['models:read:self']}
+        missingScopes={[]}
+        needsConsent={false}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    const posts = listenForHostPosts();
+    try {
+      postFromBlock('REQUEST_CONSENT', {
+        scopes: ['apps:storage:write', 'not:a:real:scope', 'apps:storage:read'],
+      });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: ['apps:storage:read', 'apps:storage:write'],
+      });
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('Issue B: the CONSENT_UNAVAILABLE push happens BEFORE the toast', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        declaredScopes={['models:read:self']}
+        missingScopes={[]}
+        needsConsent={false}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    const rec = recordConsentEffectOrder();
+    try {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:write'] });
+      await vi.waitFor(() => expect(rec.order).toHaveLength(2));
+      // The block's signal must not be reachable only past a notification layer
+      // that can throw. Asserted on the synchronous CALLS — see the helper.
+      expect(rec.order).toEqual(['send', 'toast']);
+    } finally {
+      rec.stop();
+    }
+  });
+
+  test('the BENIGN already-granted REQUEST_CONSENT posts NO CONSENT_UNAVAILABLE (the silent no-op stays silent)', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        missingScopes={[]}
+        needsConsent={false}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    const posts = listenForHostPosts();
+    try {
+      // 🔴 POSITIVE CONTROL. The subject of this test is a ZERO, and a host that
+      // dropped the message — or a listener wired to nothing — produces the same
+      // zero. `models:read:self` is neither granted (absent from declaredScopes)
+      // nor grantable (missingScopes is empty), so it is UN-GRANTABLE and MUST
+      // produce a CONSENT_UNAVAILABLE on this very mount. Watch the count move
+      // before reading the zero. ONE post (see the note in the test above), so the
+      // exactly-one assertion also proves nothing is still in flight when we clear.
+      postFromBlock('REQUEST_CONSENT', { scopes: ['models:read:self'] });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+      posts.clear();
+      showNotificationSpy.mockClear();
+
+      // THE SUBJECT: `ai:write:budgeted` is in declaredScopes and nothing is
+      // withheld, so the block is re-requesting a scope it ALREADY holds. Nothing
+      // is blocked ⇒ no toast AND no bridge message. Emitting here would train
+      // blocks to render a "permission unavailable" state on a working permission.
+      postFromBlock('REQUEST_CONSENT', { scopes: ['ai:write:budgeted'] });
+      await new Promise((r) => setTimeout(r, 150));
+      expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(0);
+      expect(showNotificationSpy).not.toHaveBeenCalled();
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
   });
 
   test('reviewMode surfaces a passive reduced-permissions notice and NEVER a consent modal', async () => {

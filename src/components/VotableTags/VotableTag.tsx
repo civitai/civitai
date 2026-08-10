@@ -15,7 +15,7 @@ import {
   alpha,
 } from '@mantine/core';
 import { useCallback, useRef } from 'react';
-import type { TagType } from '~/shared/utils/prisma/enums';
+import type { MediaType, TagType } from '~/shared/utils/prisma/enums';
 import {
   IconArrowBigDown,
   IconArrowBigUp,
@@ -39,6 +39,7 @@ import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/Hidd
 import { useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { getTagFeedHref } from '~/components/VotableTags/tagFeedHref';
 import classes from './VotableTag.module.scss';
 
 type VotableTagProps = VotableTagConnectorInput & {
@@ -53,6 +54,7 @@ type VotableTagProps = VotableTagConnectorInput & {
   lastUpvote?: Date | null;
   onChange: (changed: { name: string; vote: number }) => void;
   highlightContested?: boolean;
+  mediaType?: MediaType;
 };
 
 type VotableTagStore = {
@@ -97,6 +99,7 @@ export function VotableTag({
   lastUpvote,
   onChange,
   highlightContested,
+  mediaType,
 }: VotableTagProps) {
   const currentUser = useCurrentUser();
   const clickedRef = useRef(false);
@@ -238,7 +241,7 @@ export function VotableTag({
         )}
         <Text
           component={Link}
-          href={`/images?tags=${tagId}&view=feed`}
+          href={getTagFeedHref(tagId, mediaType)}
           data-activity="tag-click:image"
           title={!isVoting ? `Score: ${score}` : undefined}
           style={{ zIndex: 10 }}

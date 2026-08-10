@@ -17,10 +17,16 @@ import { buildBlockIframeSrc, type BlockInitFragmentFields } from './blockIframe
  * If the fragment tracked it, the iframe's `src` ATTRIBUTE would change on a
  * theme toggle — a navigation of a third-party frame where today there is
  * none. At best that is a `hashchange` inside the block; at worst a reload that
- * discards its in-progress state. In exchange for nothing: the host does not
- * propagate live theme changes to blocks today either, because the SDK dedupes
- * `BLOCK_INIT` and no theme-change message exists. Freezing keeps the rendered
- * `src` exactly as stable as it is today.
+ * discards its in-progress state. Freezing keeps the rendered `src` exactly as
+ * stable as it is today.
+ *
+ * A live theme toggle now reaches the block over the `THEME_CHANGE` postMessage
+ * push instead (see the effects in `IframeHost.tsx` / `PageBlockHost.tsx`) — a
+ * message, not a navigation. That is what makes the freeze free: the fragment
+ * is a first-paint fast path only, and it never has to carry an update. An
+ * earlier version of this comment said the host "does not propagate live theme
+ * changes to blocks today either" — true when written, no longer true, and
+ * exactly the sentence that would have justified un-freezing the fragment.
  *
  * This invariant is the safety argument for the whole fast path, so it is
  * pinned directly by `BlockInitFragmentFreeze.browser.test.tsx` — mount, change

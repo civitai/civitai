@@ -263,7 +263,7 @@ function CollectionListForm({
     }
 
     addCollectionItemMutation.mutate(
-      { ...props, collections: selectedCollections, removeFromCollectionIds },
+      { ...props, collections, removeFromCollectionIds },
       {
         async onSuccess(result, { type, modelId, collections }) {
           const added = result.status === 'added';

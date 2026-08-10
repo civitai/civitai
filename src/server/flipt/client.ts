@@ -45,6 +45,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // Gates the reemit-bitdex-ops job (BitDex publish re-emitter). Default-off: the
   // job is registered but no-ops until this flag is flipped on.
   BITDEX_PUBLISH_REEMITTER = 'bitdex-publish-reemitter',
+  // Gates the audit-bitdex-consistency job (standing PG<->BitDex comparison).
+  // Separate from the re-emitter flag on purpose: the audit is read-only and the
+  // healer is write-side, so switching one off must not blind or unblind the other.
+  // Default-off, like every flag here — isFlipt returns false for an unknown flag.
+  BITDEX_CONSISTENCY_AUDIT = 'bitdex-consistency-audit',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.
@@ -67,6 +72,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // failure. Deliberately does NOT gate /api/admin/temp/minor-hash-sweep, so
   // rollback stays usable after the switch is thrown.
   MINOR_HASH_AUTO_FLAG = 'minor-hash-auto-flag',
+  // Arms the reaction reconciliation audit's repair path to WRITE compensating
+  // events to ClickHouse. Default-off — isFlipt returns false for an unknown flag
+  // or an unreachable Flipt, and for a path that mutates production metrics that
+  // is the safe failure. Off, the hourly path does nothing at all and the nightly
+  // one runs its diff as a dry run for visibility.
+  METRIC_REACTION_REPAIR = 'metric-reaction-repair',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;

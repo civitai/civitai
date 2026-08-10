@@ -385,7 +385,7 @@ export async function evaluateStrikeEscalation(
       });
     }
 
-    await invalidateSession(userId);
+    await invalidateSession(userId, 'strike');
 
     return { totalPoints, action: 'muted-and-flagged' };
   } else if (totalPoints >= 2) {
@@ -420,7 +420,7 @@ export async function evaluateStrikeEscalation(
       });
     }
 
-    await invalidateSession(userId);
+    await invalidateSession(userId, 'strike');
 
     return { totalPoints, action: 'muted' };
   }
@@ -453,7 +453,7 @@ export async function evaluateStrikeEscalation(
       details: {},
     });
 
-    await refreshSession(userId);
+    await refreshSession(userId, { caller: 'strike' });
     return { totalPoints, action: 'unmuted' };
   }
 
@@ -611,12 +611,10 @@ export async function voidStrike(input: VoidStrikeInput & { voidedBy: number }) 
   const strikeFindArgs = {
     where: { id: strikeId },
   } as const;
-  const strike = await dbRead.userStrike
-    .findUniqueOrThrow(strikeFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'userStrike', caller: 'voidStrike' });
-      return dbWrite.userStrike.findUniqueOrThrow(strikeFindArgs);
-    });
+  const strike = await dbRead.userStrike.findUniqueOrThrow(strikeFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'userStrike', caller: 'voidStrike' });
+    return dbWrite.userStrike.findUniqueOrThrow(strikeFindArgs);
+  });
 
   // Send notification — createNotification handles its own error logging
   await createNotification({
@@ -753,7 +751,7 @@ export async function processTimedUnmutes(): Promise<{ unmutedCount: number }> {
           },
           updateSource: 'timed-unmute',
         });
-        await refreshSession(id);
+        await refreshSession(id, { caller: 'strike' });
         unmutedCount++;
       } else if (action === 'unmuted') {
         // evaluateStrikeEscalation already unmuted them

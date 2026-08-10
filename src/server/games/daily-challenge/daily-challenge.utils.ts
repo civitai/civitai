@@ -44,6 +44,7 @@ const challengeConfigSchema = z.object({
   challengeType: z.string(),
   challengeCollectionId: z.number(),
   judgedTagId: z.number(),
+  challengeTagId: z.number(),
   reviewMeTagId: z.number(),
   userCooldown: z.string(),
   resourceCooldown: z.string(),
@@ -76,6 +77,9 @@ export const dailyChallengeConfig: ChallengeConfig = {
   challengeType: 'world-morph',
   challengeCollectionId: 6236625,
   judgedTagId: 299729,
+  // collection:daily-challenge — set as the daily collection's autoTagId so entries are tagged on
+  // submission. Daily only: mod- and user-created challenges deliberately go untagged.
+  challengeTagId: 676575,
   reviewMeTagId: 301770,
   userCooldown: '14 day',
   resourceCooldown: '90 day',

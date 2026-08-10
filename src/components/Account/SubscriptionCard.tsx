@@ -21,6 +21,10 @@ import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import {
+  getBuzzMembershipPrice,
+  getSubscriptionDisplayBuzzType,
+} from '~/shared/utils/buzz-membership';
 import { formatDate } from '~/utils/date-helpers';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { syncAccount } from '~/utils/sync-account';
@@ -29,6 +33,7 @@ import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useNextBuzzDelivery } from '~/hooks/useNextBuzzDelivery';
 import { numberWithCommas } from '~/utils/number-helpers';
+import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 export function SubscriptionCard() {
@@ -38,6 +43,7 @@ export function SubscriptionCard() {
   const { subscription, subscriptionLoading } = useActiveSubscription({
     buzzType: mainBuzzType,
     checkWhenInBadState: true,
+    includeBuzzPurchase: true,
   });
   const { subscription: otherSubscription, subscriptionLoading: otherSubscriptionLoading } =
     useActiveSubscription({
@@ -113,6 +119,7 @@ function SubscriptionRow({
   nextBuzzDelivery: { date: Date; amount: number } | null;
   showDivider: boolean;
 }) {
+  const [siteBuzzType] = useAvailableBuzz();
   const price = subscription.price;
   const product = subscription.product;
   const { image } = getPlanDetails(subscription.product, features);
@@ -120,9 +127,13 @@ function SubscriptionRow({
   const manageHref = isCrossDomain
     ? syncAccount(`//${otherDomain}/user/membership`)
     : '/user/membership';
-  const buzzType: BuzzSpendType = (subscription.buzzType as BuzzSpendType) ?? 'yellow';
+  const buzzType = getSubscriptionDisplayBuzzType(subscription.buzzType, siteBuzzType);
   const buzzConfig = useBuzzCurrencyConfig(buzzType);
   const buzzLabel = buzzType === 'green' ? 'Green' : 'Yellow';
+  // Buzz memberships grant no coloured Buzz, so the colour pill is meaningless on them —
+  // and their Price row's USD amount is only an input for deriving the Buzz cost.
+  const isBuzzMembership = !!(subscription.product.metadata as SubscriptionProductMetadata)
+    ?.buzzPurchase;
 
   const manageButton = isCrossDomain ? (
     <Button
@@ -150,12 +161,19 @@ function SubscriptionRow({
     </Button>
   );
 
-  const priceText = price
-    ? `${getStripeCurrencyDisplay(
+  const priceText = !price
+    ? null
+    : isBuzzMembership
+    ? `${numberWithCommas(
+        getBuzzMembershipPrice({
+          unitAmount: price.unitAmount,
+          buzzPrice: (subscription.product.metadata as SubscriptionProductMetadata)?.buzzPrice,
+        })
+      )} Buzz/${shortenPlanInterval(price.interval)}`
+    : `${getStripeCurrencyDisplay(
         price.unitAmount,
         price.currency
-      )} ${price.currency.toUpperCase()}/${shortenPlanInterval(price.interval)}`
-    : null;
+      )} ${price.currency.toUpperCase()}/${shortenPlanInterval(price.interval)}`;
   const dateLabel = subscription.isBadState
     ? 'Payment failed'
     : `${subscription.cancelAt || isCivitaiProvider ? 'Ends' : 'Renews'} ${formatDate(
@@ -205,13 +223,14 @@ function SubscriptionRow({
                   </Text>
                 )}
                 <Box
-                  className={buzzConfig.classNames?.gradient}
+                  className={isBuzzMembership ? undefined : buzzConfig.classNames?.gradient}
                   px={8}
                   py={1}
                   style={{ borderRadius: 999, flexShrink: 0 }}
+                  bg={isBuzzMembership ? 'blue.6' : undefined}
                 >
                   <Text size="xs" fw={700} c="white" lh={1.2}>
-                    {buzzLabel}
+                    {isBuzzMembership ? 'Buzz purchase' : buzzLabel}
                   </Text>
                 </Box>
               </Group>
