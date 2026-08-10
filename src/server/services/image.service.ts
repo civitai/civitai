@@ -332,9 +332,21 @@ export async function purgeResizeCache({ url }: { url: string }) {
 export async function deleteImageFromS3({ id, url }: { id: number; url: string }) {
   if (!env.DATABASE_IS_PROD) return;
   // Legacy avatar rows hold a full external URL where every other row holds a bucket key.
-  // Handing one to deleteObject as a Key can only fail, and it drags a third party into a
-  // delete that was never ours to perform.
-  if (!url || url.startsWith('http')) return;
+  // Handing one to deleteObject as a Key can only fail, and it is not ours to delete anyway.
+  if (!url || url.startsWith('http')) {
+    // Skipping is safe because no row stores a url for a bucket we own — a property of the data,
+    // not of this code. A first-party url arriving here means that changed, and the skip would
+    // then be dropping a real delete instead of declining someone else's.
+    if (/^https?:\/\/[^/]*\bcivitai\.com/i.test(url))
+      await logToAxiom({
+        type: 'warning',
+        name: 'delete-image-from-s3-skipped-first-party-url',
+        message: 'Image.url holds a first-party url, not a bucket key; nothing was deleted',
+        imageId: id,
+        url,
+      }).catch(() => undefined);
+    return;
+  }
 
   try {
     const otherImagesWithSameUrl = await dbWrite.image.findFirst({

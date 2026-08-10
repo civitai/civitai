@@ -167,4 +167,18 @@ describe('deleteImageFromS3', () => {
     expect(mockLogToAxiom).not.toHaveBeenCalled();
     expect(invalidateCalls()).toHaveLength(0);
   });
+
+  // The guard above is safe only while no row holds a url for a bucket we own. Nothing enforces
+  // that, so a first-party url reaching it has to be audible rather than a silent skip.
+  it('flags a first-party url instead of skipping it silently', async () => {
+    await deleteImageFromS3({ id: 4242, url: 'https://image.civitai.com/abc/original.jpeg' });
+
+    expect(mockFindFirst).not.toHaveBeenCalled();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'delete-image-from-s3-skipped-first-party-url',
+        imageId: 4242,
+      })
+    );
+  });
 });
