@@ -90,7 +90,19 @@ describe('starvation classifier', () => {
     while (Date.now() < until) sink += Math.sqrt(Math.random());
   `;
 
-  async function runWedge(kind: 'starved' | 'executing', backgroundThreads = 0) {
+  // The worker's own sampling cadence. Named so the ring warmup below reads as a
+  // multiple of it rather than as one more bare millisecond guess.
+  const WORKER_POLL_MS = 25;
+
+  /**
+   * @param settleOn series the wedge must make true before the body is read. See
+   *   scrapeUntil — this is WHEN to look, never WHAT to assert.
+   */
+  async function runWedge(
+    kind: 'starved' | 'executing',
+    settleOn: Record<string, number>,
+    backgroundThreads = 0
+  ) {
     const sab = new SharedArrayBuffer(8);
     const beat = new BigInt64Array(sab);
     Atomics.store(beat, 0, BigInt(Date.now()));
@@ -103,7 +115,7 @@ describe('starvation classifier', () => {
         port: 0,
         token: 'classifier-test',
         heartbeatIntervalMs: 50,
-        pollMs: 25,
+        pollMs: WORKER_POLL_MS,
         cap: { ...resolveCaptureConfig(), enabled: false },
         starvedRatio: 0.2,
       },
@@ -114,16 +126,36 @@ describe('starvation classifier', () => {
       () => new Worker(SPINNER, { eval: true, workerData: { ms: 1800 } })
     );
 
-    const port = await new Promise<number>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('never listened')), 10_000);
-      worker.on('message', (m: { type?: string; port?: number }) => {
-        if (m?.type === 'listening' && m.port) {
-          clearTimeout(timer);
-          resolve(m.port);
-        }
+    // Beat from before the worker exists until the wedge starts, so the only stale-beat
+    // window in the run is the one the test opens deliberately, and a slow worker boot
+    // cannot be read as a first, spurious wedge.
+    const beating = setInterval(() => Atomics.store(beat, 0, BigInt(Date.now())), WORKER_POLL_MS);
+    let port: number;
+    try {
+      port = await new Promise<number>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('never listened')), 10_000);
+        worker.on('message', (m: { type?: string; port?: number }) => {
+          if (m?.type === 'listening' && m.port) {
+            clearTimeout(timer);
+            resolve(m.port);
+          }
+        });
+        worker.on('error', reject);
       });
-      worker.on('error', reject);
-    });
+
+      // 🔴 Let the worker's CPU ring accumulate samples that PRE-DATE the wedge. The
+      // classifier reads main-thread CPU over [wedge start, detection] and returns null
+      // — no classification, and at detection no skipped-starved tally — when the ring
+      // cannot reach back that far. The ring starts when the worker boots, so without
+      // this warmup the entire margin is worker startup against the 300ms threshold:
+      // ~20ms boot idle, and the capture gate stops being recorded once boot slips past
+      // ~90ms. That is #3773 — the wedge still classified starved, only the
+      // detection-time counter went missing. Production never sees it: the worker starts
+      // with the process and wedges arrive minutes later, ring long since full.
+      await new Promise((r) => setTimeout(r, WORKER_POLL_MS * 16));
+    } finally {
+      clearInterval(beating);
+    }
 
     // Withhold beats for 1.5s. In the executing case the MAIN thread burns CPU
     // throughout, which is what the classifier has to notice; in the starved case it
@@ -138,11 +170,7 @@ describe('starvation classifier', () => {
     }
 
     Atomics.store(beat, 0, BigInt(Date.now()));
-    await new Promise((r) => setTimeout(r, 250));
-
-    const body = await (
-      await fetch(`http://127.0.0.1:${port}/metrics?token=classifier-test`)
-    ).text();
+    const body = await scrapeUntil(port, settleOn);
     await worker.terminate();
     await Promise.all(spinners.map((s) => s.terminate()));
     return body;
@@ -156,14 +184,57 @@ describe('starvation classifier', () => {
         ?.slice(name.length + 1)
     );
 
+  // Poll for the counters the wedge has to move instead of sleeping a fixed interval
+  // and hoping. Every series here is written by the worker's own poll loop, so "has it
+  // landed yet" is a question about a loaded runner's scheduling, not a constant — a
+  // fixed 250ms guess left ~65ms of slack against worker startup and went red on CI
+  // (#3773). This changes WHEN the body is read, never what is asserted about it: an
+  // expectation that never becomes true is not waited away, it fails here with what it
+  // wanted and what it last saw.
+  async function scrapeUntil(port: number, settleOn: Record<string, number>) {
+    const deadlineMs = 10_000;
+    const deadline = Date.now() + deadlineMs;
+    let body = '';
+    for (;;) {
+      body = await (await fetch(`http://127.0.0.1:${port}/metrics?token=classifier-test`)).text();
+      if (Object.entries(settleOn).every(([name, value]) => read(body, name) === value)) {
+        return body;
+      }
+      if (Date.now() >= deadline) {
+        const wanted = Object.entries(settleOn)
+          .map(([name, value]) => `${name} = ${value}`)
+          .join(', ');
+        const seen = body
+          .split('\n')
+          .filter(
+            (l) =>
+              l.startsWith('civitai_app_watchdog_wedge_kind_total') ||
+              l.startsWith('civitai_app_watchdog_wedge_cpu_ratio_count') ||
+              l.startsWith('civitai_app_watchdog_capture_total')
+          )
+          .join('\n  ');
+        throw new Error(
+          `watchdog metrics never settled: waited ${deadlineMs}ms for ${wanted}.\n` +
+            `  last scrape:\n  ${seen}`
+        );
+      }
+      await new Promise((r) => setTimeout(r, WORKER_POLL_MS));
+    }
+  }
+
   it('🔴 classifies a CPU-burning wedge as executing', async () => {
-    const body = await runWedge('executing');
+    const body = await runWedge('executing', {
+      'civitai_app_watchdog_wedge_kind_total{kind="executing"}': 1,
+    });
     expect(read(body, 'civitai_app_watchdog_wedge_kind_total{kind="executing"}')).toBe(1);
     expect(read(body, 'civitai_app_watchdog_wedge_kind_total{kind="starved"}')).toBe(0);
   }, 30_000);
 
   it('🔴 classifies an idle wedge as starved, and skips the capture', async () => {
-    const body = await runWedge('starved');
+    const body = await runWedge('starved', {
+      'civitai_app_watchdog_wedge_kind_total{kind="starved"}': 1,
+      'civitai_app_watchdog_capture_total{result="skipped-starved"}': 1,
+    });
     expect(read(body, 'civitai_app_watchdog_wedge_kind_total{kind="starved"}')).toBe(1);
     expect(read(body, 'civitai_app_watchdog_wedge_kind_total{kind="executing"}')).toBe(0);
     // The whole point of the gate: a starved wedge has nothing to sample, so no
@@ -185,7 +256,11 @@ describe('starvation classifier', () => {
   it.runIf(process.platform === 'linux')(
     '🔴 classifies a wedge as starved even while OTHER threads burn CPU',
     async () => {
-      const body = await runWedge('starved', 4);
+      const body = await runWedge(
+        'starved',
+        { 'civitai_app_watchdog_wedge_kind_total{kind="starved"}': 1 },
+        4
+      );
       expect(read(body, 'civitai_app_watchdog_cpu_source{source="main-thread"}')).toBe(1);
       expect(read(body, 'civitai_app_watchdog_wedge_kind_total{kind="starved"}')).toBe(1);
       expect(read(body, 'civitai_app_watchdog_wedge_kind_total{kind="executing"}')).toBe(0);
@@ -197,7 +272,9 @@ describe('starvation classifier', () => {
     // A gauge of the last value could not answer "where do starved wedges actually
     // sit" — the continuous profiler adds a CPU floor, so that has to be readable
     // rather than assumed.
-    const body = await runWedge('starved');
+    const body = await runWedge('starved', {
+      civitai_app_watchdog_wedge_cpu_ratio_count: 1,
+    });
     expect(body).toContain('civitai_app_watchdog_wedge_cpu_ratio_bucket{le="0.05"}');
     expect(body).toContain('civitai_app_watchdog_wedge_cpu_ratio_count 1');
     expect(read(body, 'civitai_app_watchdog_starved_ratio_threshold')).toBe(0.2);

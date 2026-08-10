@@ -53,6 +53,14 @@ pnpm run prettier:check   # Check Prettier formatting
 pnpm run prettier:write   # Auto-fix Prettier formatting
 ```
 
+#### SvelteKit apps have their own standard
+
+`apps/moderator`, `apps/auth` and `apps/creator-studio` are SvelteKit 5 + Kysely + shadcn-svelte +
+Tailwind v4 — none of the Mantine/tRPC/Prisma guidance above applies to them. Their shared conventions
+live in **[`docs/svelte-app-standard.md`](docs/svelte-app-standard.md)**, and each app's `CLAUDE.md`
+records only its deltas. Review a segment there with `svelte-correctness-review`,
+`svelte-idiom-review` and `svelte-abstraction-review`.
+
 #### In SvelteKit apps (`apps/moderator`, `apps/auth`, `apps/creator-studio`): use `typecheck`, never `check`
 
 They are **not** synonyms. `typecheck` is `svelte-check` alone and writes nothing. `check` prefixes it
@@ -67,14 +75,12 @@ needing it: `Cannot find module './$types'`, or component props resolving to `ne
 `sync` on install, so a fresh checkout is already covered.
 
 **`build` runs `svelte-kit sync` too** (`svelte-kit sync && vite build`), so it carries the same cost —
-and it is **not** part of the verify loop here. `typecheck` during the work and one `check` when the
-slice is done is the whole gate.
+and it is **not** a check: it catches nothing `svelte-check` doesn't.
 
 **Read `svelte-check`'s WARNING lines, not just ERROR.** It reports Svelte compiler warnings, and
 `state_referenced_locally` — `let x = $state(data.foo)` capturing only the first value, so the UI
 silently shows stale data after a navigation — is a real bug that appears there and nowhere else in
-the loop. Filtering output to `ERROR` hides it and makes a build look like the only thing that catches
-it. It isn't.
+the loop. Filtering output to `ERROR` hides it.
 
 #### Never run `npx prettier --plugin=prettier-plugin-svelte` on `.svelte` files
 
@@ -83,11 +89,10 @@ components in one command (2026-08-07); they were only recoverable because they 
 first symptom is `svelte-check` reporting props as `never`, which reads like stale `$types` and sends
 you diagnosing the wrong thing.
 
-Use `pnpm run prettier:write`. Note what that does **not** cover: the root Prettier is 2.8.8 and the
-script globs `.ts`/`.tsx` only, so **no root command formats `.svelte` at all**. `apps/creator-studio`
-formats itself with its own Prettier 3 + plugin (`.prettierignore` explains why ownership has to be
-exclusive); the other SvelteKit apps' `.svelte` files are simply hand-formatted. Ad-hoc `npx prettier`
-is fine for `.ts`/`.json`, never for `.svelte`.
+Note what `pnpm run prettier:write` does **not** cover: the root Prettier is 2.8.8 and globs
+`.ts`/`.tsx` only, so **no root command formats `.svelte` at all**. `apps/creator-studio` formats
+itself with its own Prettier 3 + plugin (`.prettierignore` explains why ownership must be exclusive);
+the other SvelteKit apps' `.svelte` files are hand-formatted.
 
 #### Prettier runs on UNCOMMITTED files only — never the whole repo
 
@@ -96,14 +101,13 @@ dirty (modified-vs-HEAD plus untracked) and nothing else. Do not "fix" them back
 and do not reach for a repo-wide `npx prettier --write` instead.
 
 **The repo is not Prettier-clean and will not be until the 2→3 upgrade reformats it deliberately.**
-`.github/workflows/lint.yml` puts the number at 789 of 4,116 `src` files, and measured across the whole
-workspace it is ~1,000. So a repo-wide `--write` is not a formatting pass, it is a ~1,000-file commit
-that buries the actual change — and it rewrites **other people's uncommitted work in place**, which is
-how it was found (2026-08-08: one `pnpm run prettier:write` produced 1,085 modified files, and telling
-the reformatting apart from real edits afterwards needed a per-file diff against `prettier(HEAD)`).
+`.github/workflows/lint.yml` puts the number at 789 of 4,116 `src` files; across the whole workspace it
+is ~1,000. So a repo-wide `--write` is not a formatting pass, it is a ~1,000-file commit that buries the
+actual change — and it rewrites **other people's uncommitted work in place**, which is how it was found
+(2026-08-08: one `pnpm run prettier:write` produced 1,085 modified files, and telling the reformatting
+apart from real edits afterwards needed a per-file diff against `prettier(HEAD)`).
 
-CI already scopes itself this way and gates only on **added** files for exactly this reason; the local
-scripts now match it.
+CI already scopes itself this way and gates only on **added** files for exactly this reason.
 
 ### Testing
 ```bash
@@ -423,7 +427,7 @@ A useful tell: if you are documenting **why** a guard exists and **what it stops
 ### Before Committing
 1. Run type checking: `pnpm run typecheck`
 2. Run linting: `pnpm run lint`
-3. Format code: `pnpm run prettier:write` (uncommitted files only — see below)
+3. Format code: `pnpm run prettier:write`
 4. Run the unit suite: `pnpm run test:unit:run`
 5. If you touched `schema.full.prisma`: `pnpm run db:check-generated`
 6. Test changes locally

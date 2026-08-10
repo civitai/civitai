@@ -9,7 +9,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *   (a) raw SVG is NEVER stored/served — the bytes that reach the store are always PNG;
  *   (b) an external SVG resource ref (`file://` / `http://`) is NOT fetched/embedded;
  *   (c) an over-`limitInputPixels` SVG (huge viewBox) is REJECTED cleanly (BAD_REQUEST,
- *       nothing stored) via the EXPLICIT input-pixel cap — not a 500, not an OOM.
+ *       nothing stored) via the EXPLICIT input-pixel cap — not a 500, not an OOM;
+ *   (d) a REAL over-cap raster (5000×5000, ~80KB — under every byte gate) is rejected
+ *       with a message naming the PIXEL bound, not the generic decode failure
+ *       (civitai/cli#270);
+ *   (e) genuinely unreadable bytes still get the decode-failure message;
+ *   (f) a large-but-under-cap icon still ingests, downscaled.
  *
  * Only the downstream store + DB are mocked; sharp/librsvg run for real. Fast + hermetic
  * (no network, tiny inline SVGs).
@@ -20,7 +25,10 @@ vi.mock('~/server/services/image.service', () => ({ createImage: vi.fn() }));
 
 import { uploadImageBufferToStore } from '~/utils/s3-utils';
 import { createImage } from '~/server/services/image.service';
-import { ingestListingAssetFromDataUri } from '~/server/services/blocks/listing-meta.service';
+import {
+  INLINE_ICON_MAX_DECODED_BYTES,
+  ingestListingAssetFromDataUri,
+} from '~/server/services/blocks/listing-meta.service';
 
 const upload = vi.mocked(uploadImageBufferToStore);
 const create = vi.mocked(createImage);
@@ -28,6 +36,17 @@ const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 function svgDataUri(inner: string): string {
   return 'data:image/svg+xml,' + encodeURIComponent(inner);
+}
+
+function pngDataUri(png: Buffer): string {
+  return 'data:image/png;base64,' + png.toString('base64');
+}
+
+async function bigFlatPng(width: number, height: number): Promise<Buffer> {
+  const { default: sharp } = await import('sharp');
+  return sharp({ create: { width, height, channels: 3, background: '#3355aa' } })
+    .png({ compressionLevel: 9 })
+    .toBuffer();
 }
 
 beforeEach(() => {
@@ -89,8 +108,63 @@ describe('ingestListingAssetFromDataUri — REAL sharp rasterization (integratio
     );
     await expect(
       ingestListingAssetFromDataUri({ input: { dataUri: svg, kind: 'icon' }, userId: 1 })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('over the 16,777,216 pixel limit'),
+    });
     expect(upload).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it('(d) REJECTS a REAL over-cap raster PNG naming the PIXEL bound, not "couldn\'t be read"', async () => {
+    // 5000×5000 flat colour compresses to ~80KB, so it clears BOTH byte gates
+    // (INLINE_ICON_MAX_DECODED_BYTES = 2MiB and the schema's data-URI length cap).
+    // The pixel cap is the ONLY bound it trips — the case that used to surface as a
+    // decode failure (civitai/cli#270).
+    const png = await bigFlatPng(5000, 5000);
+    expect(png.byteLength).toBeLessThan(INLINE_ICON_MAX_DECODED_BYTES);
+
+    await expect(
+      ingestListingAssetFromDataUri({
+        input: { dataUri: pngDataUri(png), kind: 'icon' },
+        userId: 1,
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message:
+        'That icon is 5000×5000 (25,000,000 pixels), over the 16,777,216 pixel limit. Resize it to 1024×1024 or smaller and upload it manually.',
+    });
+    expect(upload).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('(e) NEGATIVE CONTROL — genuinely unreadable bytes still get the decode-failure message', async () => {
+    await expect(
+      ingestListingAssetFromDataUri({
+        input: {
+          dataUri: 'data:image/png;base64,' + Buffer.from('@not-a-png').toString('base64'),
+          kind: 'icon',
+        },
+        userId: 1,
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: "That icon couldn't be read. Try uploading it manually.",
+    });
+    expect(upload).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('(f) POSITIVE CONTROL — a large-but-under-cap icon still ingests, downscaled to 1024', async () => {
+    // 4000×4000 = 16,000,000px, just UNDER the 16,777,216 cap. Pairs with (d) at
+    // 25,000,000px so the bound is measured on both sides, not just the failing one.
+    const png = await bigFlatPng(4000, 4000);
+    const res = await ingestListingAssetFromDataUri({
+      input: { dataUri: pngDataUri(png), kind: 'icon' },
+      userId: 1,
+    });
+    expect(res).toEqual({ imageId: 42 });
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ width: 1024, height: 1024 }));
   });
 });

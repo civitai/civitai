@@ -224,8 +224,8 @@ importers:
         specifier: ^7.4.2
         version: 7.4.2(@opentelemetry/api@1.9.0)
       '@pyroscope/nodejs':
-        specifier: 0.6.1
-        version: 0.6.1(fastify@5.9.0)
+        specifier: 0.6.2
+        version: 0.6.2(fastify@5.9.0)
       '@react-hook/window-size':
         specifier: ^3.1.1
         version: 3.1.1(react@18.3.1)
@@ -1552,9 +1552,28 @@ importers:
       '@opentelemetry/api':
         specifier: ^1.9.0
         version: 1.9.0
+      '@opentelemetry/api-logs':
+        specifier: ^0.211.0
+        version: 0.211.0
+      '@opentelemetry/resources':
+        specifier: 2.9.0
+        version: 2.9.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/sdk-logs':
+        specifier: ^0.211.0
+        version: 0.211.0(@opentelemetry/api@1.9.0)
       prom-client:
         specifier: ^14.2.0
         version: 14.2.0
+    devDependencies:
+      '@opentelemetry/context-async-hooks':
+        specifier: ^2.5.0
+        version: 2.5.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/core':
+        specifier: 2.9.0
+        version: 2.9.0(@opentelemetry/api@1.9.0)
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.0.18)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(lightningcss@1.32.0)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)
 
   packages/civitai-ui:
     dependencies:
@@ -4120,8 +4139,8 @@ packages:
   '@protobufjs/utf8@1.1.2':
     resolution: {integrity: sha512-b1UQwcEZ4yCnMCD8DAL1VlbvBJE9/IX4FTIp7BG1xYpf29SLazLSrqUkj4w7Y5y7cCVP6E5tcqqcI0xemPkHug==}
 
-  '@pyroscope/nodejs@0.6.1':
-    resolution: {integrity: sha512-6CiE3Vs+q99flTeJlus03d4cGphYnqPgJLEYbhpRWVtwdvPWYqft0XdTyMi97kFcTTOWjcEHXXhzGUmFQfDTHQ==}
+  '@pyroscope/nodejs@0.6.2':
+    resolution: {integrity: sha512-o1tmdpDiWnY8G1RYid1isLvFPTU5MW0f1B99WjrL9TubsfjSvK+q/I90s5YmooyRRG+3MgcL0RbPQIvEt0oGOA==}
     engines: {node: '>=20.20.2'}
     peerDependencies:
       express: ^4.0.0 || ^5.0.0
@@ -15983,7 +16002,7 @@ snapshots:
 
   '@protobufjs/utf8@1.1.2': {}
 
-  '@pyroscope/nodejs@0.6.1(fastify@5.9.0)':
+  '@pyroscope/nodejs@0.6.2(fastify@5.9.0)':
     dependencies:
       '@datadog/pprof': 5.14.4
       debug: 4.4.3
