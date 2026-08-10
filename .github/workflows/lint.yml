@@ -323,6 +323,21 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # Not a package suite, and deliberately parked in this job anyway: it needs a completed
+      # `pnpm install` and a job that FAILS the build, and this is the cheapest one that is
+      # both. Adding a fourth job would buy a tidier name for the price of a fourth full
+      # install; the step name is what GitHub shows on a failure, so blame stays readable.
+      #
+      # What it guards: `/api/og` returned 500 on every request for two days because Next
+      # 16.3.0 leaves the libvips SVG loader blocked and `next/og` rasterizes through it. We
+      # carry the upstream one-line fix as a pnpm patch. The behavioural regression test for
+      # that outage lives in the `unit` job above — which is `continue-on-error`, so it cannot
+      # stop the same breakage reaching production a second time. This runs the structural
+      # half of it, against the INSTALLED node_modules rather than the patch file, so a patch
+      # that exists but did not apply is caught. ~50ms, no test runner.
+      - name: Next SVG loader patch applied
+        run: node scripts/ci/assert-next-svg-patch-applied.mjs
+
       - name: Package unit tests
         run: pnpm run test:packages:run --reporter=default --reporter=json --outputFile=packages-report.json
 

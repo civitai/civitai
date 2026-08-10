@@ -1,3 +1,6 @@
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
@@ -34,11 +37,33 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * optimizer is touched. If it ever fails, the harness itself is broken and the
  * second case's verdict means nothing. The second case is the regression guard.
  *
+ * WHERE THE GATING HAPPENS. This whole file runs in the `Unit tests` job, which
+ * is `continue-on-error: true` — it reports, it does not block. The third case
+ * below is the one cheap enough to also run in a job that fails the build (no
+ * database, no sharp, no browser, no Next module graph — just a file read), so
+ * the assertion itself lives in `scripts/ci/assert-next-svg-patch-applied.mjs`
+ * and the `Package unit tests` job runs it directly. Do not re-inline the check
+ * here: the copy that gates is the one that would go stale unnoticed.
+ *
  * Watched red/green (2026-08-09, Next 16.3.0):
  *   - patch REMOVED and reinstalled: case 1 PASSES (harness fine), case 2 FAILS
  *     with "Input buffer contains unsupported image format" — the verbatim
  *     production error — and case 3 FAILS naming the missing loader.
  *   - patch APPLIED: all three pass.
+ *
+ * Re-watched 2026-08-10 after case 3 moved into the script, against the script
+ * as shipped — a mutation that kills a different case than the intended one is
+ * a green for the wrong reason, so each of these was checked for WHICH case
+ * went red and WHY:
+ *   - patch key deleted from `pnpm.patchedDependencies` + reinstalled: the
+ *     script exits 1 reporting both copies, and case 3 fails with that text
+ *     verbatim in the AssertionError (1 failed, 2 skipped under `-t`).
+ *   - ESM copy broken while the CJS copy stays correct: exits 1, reporting the
+ *     ESM copy only. This is what proves the second patch hunk is actually
+ *     covered rather than shadowed by the CJS check.
+ *   - ESM copy absent (the shape of the production standalone image): exits 0,
+ *     reports 1 copy read and the ESM copy as skipped.
+ *   - both copies absent: exits 1 rather than passing vacuously on zero reads.
  *
  * SCOPE / WHAT THIS DOES NOT COVER. This runs in-process, so it does not cover
  * packaging failures under `output: 'standalone'` (the OTHER way `/api/og` has
@@ -163,16 +188,36 @@ describe('/api/og — renders a PNG after the Next image optimizer initializes s
     expectPngResponse(await renderOg({ type: 'model', id: '999999999' }));
   });
 
-  it('the image optimizer un-blocks the SVG loader that next/og depends on', async () => {
+  it('the image optimizer un-blocks the SVG loader that next/og depends on', () => {
     // Structural companion to the behavioural guard above: assert the actual
     // remedy is present in the artifact we install, so a failure says WHY rather
-    // than only that a render broke. Reads Next's shipped source rather than our
-    // patch file, so re-installing without the patch fails here too.
-    const optimizerSource = await import('node:fs').then(({ readFileSync }) =>
-      readFileSync(require.resolve('next/dist/server/image-optimizer.js'), 'utf8')
-    );
-    const unblockCall = /unblock\(\{\s*operation:\s*\[([^\]]*)\]/.exec(optimizerSource);
-    expect(unblockCall, 'next image-optimizer no longer has a sharp.unblock call').not.toBeNull();
-    expect(unblockCall![1]).toContain('VipsForeignLoadSvg');
+    // than only that a render broke. It reads Next's shipped source rather than
+    // our patch file, so re-installing without the patch fails here too.
+    //
+    // The assertion itself lives in the script rather than here, and this case
+    // shells out to it, for two reasons. One rule, one place: this file is in the
+    // report-only `Unit tests` job, and the same check also has to run in a
+    // BLOCKING job — two copies of the regex would drift, and the copy that
+    // gates is the one that would go stale unnoticed. And running it as a
+    // subprocess means this case exercises the exact command CI runs, exit code
+    // included, rather than something merely equivalent to it.
+    const script = join(process.cwd(), 'scripts/ci/assert-next-svg-patch-applied.mjs');
+    // Positive control on the plumbing: from a wrong cwd the spawn below fails
+    // for a reason that has nothing to do with the loader, and the point of this
+    // case is that a failure names the loader.
+    expect(existsSync(script), `guard script not found at ${script}`).toBe(true);
+
+    // `spawnSync`, not `execFileSync`: on a non-zero exit the latter throws an
+    // Error whose message is only "Command failed: node <path>" and keeps stderr
+    // on a property vitest never prints. The whole point of this case is that a
+    // RED run names the missing loader, so the script's own output has to reach
+    // the assertion message.
+    const run = spawnSync(process.execPath, [script], { encoding: 'utf8' });
+    const output = `${run.stdout ?? ''}${run.stderr ?? ''}`;
+    expect(run.status, output).toBe(0);
+    // Never let a silent no-op pass for a green: the script prints how many
+    // copies of image-optimizer.js it actually read, and zero is a vacuous OK.
+    expect(output).toMatch(/copies of image-optimizer\.js read: [1-9]/);
+    expect(output).toContain('VipsForeignLoadSvg');
   });
 });
