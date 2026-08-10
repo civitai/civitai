@@ -40,6 +40,7 @@
   type Board = {
     activity: Record<string, { type: string; at: string; moderator: string | null }>;
     lag: { task: string; lastUpdate: string; lastUpdateBy: string | null }[];
+    sweeps: { task: string; since: string | null; count: number }[];
     autoBlocked: {
       id: number;
       userId: number;
@@ -259,6 +260,25 @@
             </li>
           {/each}
         </ul>
+
+        <!-- The two queues whose count is "what has arrived since the mark". Marking swept is what
+             advances it; without the button the counts only ever grow. -->
+        {#each board.sweeps as s (s.task)}
+          <div class="mt-3 border-t border-dark-4 pt-3">
+            <div class="flex flex-wrap items-baseline justify-between gap-2">
+              <span class="text-sm text-dark-0">
+                {s.task === 'blockedImages' ? 'Unusually blocked images' : 'Official-account models'}
+              </span>
+              <span class="text-sm tabular-nums {s.count ? 'text-white' : 'text-dark-2'}">
+                {s.since ? format(s.count) : 'never swept'}
+              </span>
+            </div>
+            <form method="POST" action="?/sweep" use:enhance class="mt-1">
+              <input type="hidden" name="task" value={s.task} />
+              <Button type="submit" variant="outline" size="sm">Mark swept</Button>
+            </form>
+          </div>
+        {/each}
       </section>
     {/if}
 

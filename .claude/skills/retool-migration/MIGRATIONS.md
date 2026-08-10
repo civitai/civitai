@@ -89,8 +89,8 @@ A queue/stat board rather than a lookup tool.
       buttons whose success handlers write `ModerationImageHelp` (`{createdBy, imageIds, createdAt,
       type}`). Nothing in `apps/moderator` writes that table — it only reads and marks handled. Once
       Retool is switched off the queue drains to empty permanently. **This blocks calling group A done.**
-- [ ] **Queue-lag indicators + the `Mods_TaskTimers` protocol** (35 queries) — the "N behind" board.
-- [ ] **Who is working a queue** — `RecentReports`/`RecentRating`/`RecentTagger` gave each dashboard row
+- [x] **Queue-lag indicators + the `Mods_TaskTimers` protocol** — built on the dashboard, with the acknowledge ("Mark swept") write so the mark actually advances.
+- [x] **Who is working a queue** — `RecentReports`/`RecentRating`/`RecentTagger` gave each dashboard row
       "last touched by `<mod>`, N minutes ago", coloured against a per-type threshold table that exists in
       no query. The board here is count-only.
 - [ ] **The `Graphs` tab** — `HourlyImages`, `HourlyModels`, `RRatingStats`, `ResearchRating`.
@@ -98,16 +98,16 @@ A queue/stat board rather than a lookup tool.
       screenshot before it can be scoped.
 - [ ] **Model-side surfaces with no page at all** — `ModelReview`, `TrainingCount`,
       `UnpublishingReasons`. There is no models route in the app.
-- [ ] **`ActionAllPostReports`** — sweeps pending post-reports where every image is already blocked.
+- [x] **`ActionAllPostReports`** — sweeps pending post-reports where every image is already blocked.
       `/reports/[slug]` actions one at a time; the batch *selector* is what is missing, not the verb.
 - [ ] **`GetSplitQueue`/`SplitCurrent`/`SplitCatchup`** — forks the front-page sweep into current and
       catch-up streams when it falls behind. Tooltip: "Only do this if it's 4 or more hours behind".
-- [ ] **`BlockedImagesTask`** (images blocked for an *unusual* `blockedFor`) and **`CivitModelsData`**
+- [x] **`BlockedImagesTask`** (images blocked for an *unusual* `blockedFor`) and **`CivitModelsData`**
       (`userId = -1` official publishes) — review counts misfiled as jobs.
-- [ ] **`AutoBlockedUsers`** — `ModActivity WHERE activity = 'autoMuteScam'`; the automatic-scam-mute
+- [x] **`AutoBlockedUsers`** — `ModActivity WHERE activity = 'autoMuteScam'`; the automatic-scam-mute
       audit trail. Nothing in the app mentions `autoMuteScam`.
 - [ ] **`FindSHA`/`LogSHA256`** — takedown-hash ledger into `ModerationSHA`. No counterpart.
-- [ ] **Decision needed: report reason set.** Badges count only `DEFAULT_REPORT_REASONS`, so pending
+- [x] **Report reason set** — decided 2026-08-10: badges count every reason and the queue page lands unfiltered to match. Original note: badges counted only `DEFAULT_REPORT_REASONS`, so pending
       **NSFW, CSAM and StickerPlacement** reports show nowhere. Retool excluded only `Automated`.
 
 ## User Lookup v2

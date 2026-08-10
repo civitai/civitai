@@ -4,6 +4,7 @@ import { appRoles } from '@civitai/auth';
 import { APP, canAccess } from '$lib/server/access';
 import { ReportStatus } from '$lib/reports';
 import { setReportStatus } from '$lib/server/reports.service';
+import { SWEEP_TASKS, acknowledgeSweep } from '$lib/server/moderation-board.service';
 
 export const load: PageServerLoad = ({ locals }) => ({
   roles: appRoles(locals.user, APP),
@@ -25,5 +26,23 @@ export const actions: Actions = {
 
     await setReportStatus({ id, status, userId: locals.user.id, ip: getClientAddress() });
     return { success: true, id };
+  },
+
+  /**
+   * The write half of Retool's task-timer protocol: "I have worked this queue up to now." Without it
+   * the mark never advances and every since-last-sweep count grows forever.
+   */
+  sweep: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/reports')) return fail(403, { error: 'Not permitted.' });
+    const author = locals.user.username;
+    if (!author) return fail(400, { error: 'Your account has no username to attribute this to.' });
+
+    const form = await request.formData();
+    const task = String(form.get('task'));
+    if (!(SWEEP_TASKS as readonly string[]).includes(task))
+      return fail(400, { error: 'Unknown queue.' });
+
+    await acknowledgeSweep(task, author);
+    return { success: true, swept: task };
   },
 };

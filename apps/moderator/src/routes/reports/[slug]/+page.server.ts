@@ -1,13 +1,14 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { getReports, setReportStatus, updateReportNotes } from '$lib/server/reports.service';
+import { getResolvedPostReportIds } from '$lib/server/moderation-board.service';
 import {
   DEFAULT_REPORT_STATUSES,
   reportEntityForSlug,
   reportReasons,
   reportStatuses,
+  ReportStatus,
   type ReportReason,
-  type ReportStatus,
 } from '$lib/reports';
 
 const isStatus = (v: string): v is ReportStatus => (reportStatuses as string[]).includes(v);
@@ -59,6 +60,38 @@ export const actions: Actions = {
     await setReportStatus({ id, status, userId: locals.user.id, ip: getClientAddress() });
     return { success: true };
   },
+  /**
+   * Retool's `ActionAllPostReports`. Post reports whose post is already entirely blocked are resolved
+   * by the content — the row is open only because nobody clicked it. Retool swept them in one go; the
+   * port had the verb (`setStatus`) and not the SELECT, so the sweep had to be done by hand.
+   *
+   * Actioned, not Unactioned: the content WAS removed, so the report was correct.
+   */
+  actionResolvedPosts: async ({ locals, getClientAddress }) => {
+    const ids = await getResolvedPostReportIds();
+    if (!ids.length)
+      return fail(400, { message: 'No post reports are already resolved by content.' });
+
+    // Sequential, and each one re-checked by `setReportStatus` — it treats zero affected rows as a
+    // failure, so a report someone else actioned in the meantime is skipped rather than double-logged.
+    let actioned = 0;
+    for (const id of ids) {
+      try {
+        await setReportStatus({
+          id,
+          status: ReportStatus.Actioned,
+          userId: locals.user.id,
+          ip: getClientAddress(),
+        });
+        actioned += 1;
+      } catch {
+        // Already actioned by someone else. Counted as skipped, not as a failure of the sweep.
+      }
+    }
+
+    return { success: true, actioned, found: ids.length };
+  },
+
   saveNotes: async ({ request }) => {
     const data = await request.formData();
     const id = Number(data.get('id'));

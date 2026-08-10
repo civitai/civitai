@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import {
   getAutoBlockedUsers,
   getRecentQueueActivity,
+  getSweepCounts,
   getTaskLag,
 } from '$lib/server/moderation-board.service';
 
@@ -13,17 +14,19 @@ import {
 // Route access is gated in hooks.server.ts. Everything here is a moderator-facing aggregate over data
 // the dashboard already shows, so it carries no narrower check of its own.
 export const GET: RequestHandler = async () => {
-  const [activity, lag, autoBlocked] = await Promise.all([
+  const [activity, lag, autoBlocked, sweeps] = await Promise.all([
     getRecentQueueActivity(),
-    // The moderator database is separate infrastructure; it being down must degrade the lag strip
-    // rather than blank the board.
+    // The moderator database is separate infrastructure; it being down must degrade the strips that
+    // depend on it rather than blank the board.
     getTaskLag().catch(() => []),
     getAutoBlockedUsers(),
+    getSweepCounts().catch(() => []),
   ]);
 
   return json({
     activity: Object.fromEntries(activity),
     lag,
     autoBlocked,
+    sweeps,
   });
 };

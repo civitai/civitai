@@ -91,6 +91,17 @@
   <p>{data.totalItems} reports</p>
 </header>
 
+<!-- Retool's `ActionAllPostReports`. Only meaningful here: the query keys on every image in the post
+     already being blocked, which is a post-shaped question. -->
+{#if data.type === 'post'}
+  <form method="POST" action="?/actionResolvedPosts" use:enhance class="mb-4">
+    <Button type="submit" variant="outline" size="sm">Action reports already resolved by content</Button>
+    <span class="ml-2 text-xs text-muted-foreground">
+      Pending reports whose post is entirely blocked already.
+    </span>
+  </form>
+{/if}
+
 <div class="mb-4 flex flex-wrap items-end gap-x-6 gap-y-3">
   <div class="flex flex-col gap-1">
     <span class="text-xs font-medium text-muted-foreground">Status</span>

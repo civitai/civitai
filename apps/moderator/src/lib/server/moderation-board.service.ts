@@ -76,6 +76,86 @@ export async function getTaskLag(): Promise<TaskLag[]> {
     .sort((a, b) => a.lastUpdate.getTime() - b.lastUpdate.getTime());
 }
 
+// SWEPT REVIEW COUNTS.
+//
+// Two queries the old audit filed as "backfill jobs" that are neither jobs nor backfills: each counts
+// what has arrived in a queue SINCE the last acknowledgement, which is what makes them a workload
+// rather than a total. Both read their bound from `Mods_TaskTimers`.
+export const SWEEP_TASKS = ['blockedImages', 'civitaiModels'] as const;
+export type SweepTask = (typeof SWEEP_TASKS)[number];
+
+async function getSweepAt(task: SweepTask): Promise<Date | null> {
+  const row = await getModeratorDb()
+    .selectFrom('Mods_TaskTimers')
+    .select('lastUpdate')
+    .where('task', '=', task)
+    .orderBy('lastUpdate', 'desc')
+    .limit(1)
+    .executeTakeFirst();
+  return row?.lastUpdate ? new Date(row.lastUpdate as unknown as string) : null;
+}
+
+/**
+ * Retool's `BlockedImagesTask`: images blocked for an **unusual** reason since the last sweep. The four
+ * excluded values are the ordinary ones — anything else means the blocker fired for a reason a
+ * moderator has not seen, which is the case worth looking at.
+ */
+async function countBlockedImagesSince(since: Date): Promise<number> {
+  const row = await dbRead
+    .selectFrom('Image')
+    .select((eb) => eb.fn.countAll<string>().as('count'))
+    .where('ingestion', '=', 'Blocked')
+    .where('blockedFor', 'not in', ['moderated', 'Moderated', 'CSAM', 'AiNotVerified'])
+    .where('createdAt', '>', since)
+    .executeTakeFirst();
+  return Number(row?.count ?? 0);
+}
+
+/** Retool's `CivitModelsData`: what the official account (`userId = -1`) has published since the sweep. */
+async function countCivitaiModelsSince(since: Date): Promise<number> {
+  const row = await dbRead
+    .selectFrom('Model')
+    .select((eb) => eb.fn.countAll<string>().as('count'))
+    .where('userId', '=', -1)
+    .where('status', '=', 'Published')
+    .where('updatedAt', '>', since)
+    .executeTakeFirst();
+  return Number(row?.count ?? 0);
+}
+
+export type SweepCount = { task: SweepTask; since: Date | null; count: number };
+
+export async function getSweepCounts(): Promise<SweepCount[]> {
+  const [blockedAt, civitaiAt] = await Promise.all([
+    getSweepAt('blockedImages'),
+    getSweepAt('civitaiModels'),
+  ]);
+
+  // No acknowledgement yet means no bound, and an unbounded count over all history is a different
+  // question — reported as "never swept" rather than as a number nobody can act on.
+  const [blocked, civitai] = await Promise.all([
+    blockedAt ? countBlockedImagesSince(blockedAt) : Promise.resolve(0),
+    civitaiAt ? countCivitaiModelsSince(civitaiAt) : Promise.resolve(0),
+  ]);
+
+  return [
+    { task: 'blockedImages', since: blockedAt, count: blocked },
+    { task: 'civitaiModels', since: civitaiAt, count: civitai },
+  ];
+}
+
+/**
+ * The other half of the protocol. Retool wrote this from every `*Insert`/`*Check` button; without a
+ * writer the mark never advances and every "since last sweep" count grows forever — the same
+ * consumer-with-no-producer trap the help-request queue had.
+ */
+export async function acknowledgeSweep(task: string, by: string): Promise<void> {
+  await getModeratorDb()
+    .insertInto('Mods_TaskTimers')
+    .values({ task, lastUpdate: sql`now()`, lastUpdateBy: by })
+    .execute();
+}
+
 /**
  * Retool's `AutoBlockedUsers` (`table10` on the board): accounts the scam detector muted on its own.
  * Nobody decided these individually, so the list is the only place they are reviewable — and a false
@@ -89,6 +169,33 @@ export type AutoBlockedUser = {
   bannedAt: Date | null;
   muted: boolean | null;
 };
+
+/**
+ * Retool's `ActionAllPostReports`: pending post reports whose post is *entirely* blocked already
+ * (`nsfwLevel = 32` on every image). The content has resolved the report; the row is only still open
+ * because nobody clicked it.
+ *
+ * `HAVING COUNT(*) = COUNT(CASE WHEN nsfwLevel = 32 …)` is doing real work — a post with one blocked
+ * image and nine live ones must NOT match, so this cannot be rewritten as a simple `WHERE`. Posts with
+ * no images cannot match either, since the join drops them.
+ */
+export async function getResolvedPostReportIds(limit = 500): Promise<number[]> {
+  const { rows } = await sql<{ report_id: number }>`
+    WITH targets AS (
+      SELECT r.id AS report_id, i."nsfwLevel"
+      FROM "Report" r
+      JOIN "PostReport" pr ON pr."reportId" = r.id
+      JOIN "Image" i ON i."postId" = pr."postId"
+      WHERE r.status = 'Pending'
+    )
+    SELECT report_id
+    FROM targets
+    GROUP BY report_id
+    HAVING COUNT(*) = COUNT(CASE WHEN "nsfwLevel" = 32 THEN 1 END)
+    LIMIT ${limit}
+  `.execute(dbRead);
+  return rows.map((r) => r.report_id);
+}
 
 export async function getAutoBlockedUsers(limit = 50): Promise<AutoBlockedUser[]> {
   return (
