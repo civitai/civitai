@@ -3,6 +3,10 @@
   "extends": ["config:recommended", "docker:pinDigests"],
   "enabledManagers": ["dockerfile", "nvm"],
   "schedule": ["before 6am on monday"],
+  "major": {
+    "description": "A major bump is never opened unasked. Majors stay VISIBLE on the Dependency Dashboard (issue #3789) with an unticked checkbox, and a branch/PR is only created once a human ticks it. Digest pins and patch/minor updates are unaffected and keep flowing automatically — they are separate updateTypes. Motivation: the first scheduled run queued three majors at once, one of which (node v24) rewrites the base image of every service under apps/ plus containers/image-stub in a single PR.",
+    "dependencyDashboardApproval": true
+  },
   "packageRules": [
     {
       "description": "Keep the root Dockerfile's node tag and .nvmrc in ONE pull request. src/__tests__/node-version-consistency.test.ts asserts the two agree, so a bump that moves only one of them reds that guard. Scoped to the two files that guard actually reads: the per-service images under apps/ and containers/ are on their own cadence and must not be dragged into this group.",
