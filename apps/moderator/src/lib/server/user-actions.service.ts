@@ -103,6 +103,52 @@ const callRetoolEndpoint = (
 ): Promise<JsonResult> =>
   postJson({ path: `/api/mod/retool/${resource}`, body, label, auth: 'modKey', timeoutMs: 30_000 });
 
+/**
+ * Retool's `UpdateUserDeets`, behind the Enable Edits toggle. The endpoint already carries this and
+ * gates it on the `retoolUpdateIdentity` permission — the per-capability grant the ticket asks for —
+ * so this is a call, not a new write path. Only the fields the moderator changed are sent.
+ */
+export async function updateUserIdentity(input: {
+  userId: number;
+  username?: string;
+  email?: string;
+  name?: string;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  const changed: Record<string, unknown> = {};
+  if (input.username !== undefined) changed.username = input.username;
+  if (input.email !== undefined) changed.email = input.email;
+  if (input.name !== undefined) changed.name = input.name;
+  if (!Object.keys(changed).length) return { ok: false, error: 'Nothing to change.' };
+
+  const result = await callRetoolEndpoint(
+    'user',
+    { action: 'updateIdentity', userId: input.userId, ...changed },
+    'Identity update'
+  );
+  if (!result.ok) return result;
+
+  await logAction(`updateIdentity:${Object.keys(changed).join(',')}`, input.userId, input.moderatorId);
+  return { ok: true };
+}
+
+/** Retool's Make/Remove Moderator, gated on `retoolToggleModerator` at the endpoint. */
+export async function toggleModerator(input: {
+  userId: number;
+  isModerator: boolean;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  const result = await callRetoolEndpoint(
+    'user',
+    { action: 'toggleModerator', userId: input.userId, isModerator: input.isModerator },
+    'Moderator toggle'
+  );
+  if (!result.ok) return result;
+
+  await logAction(`toggleModerator:${input.isModerator}`, input.userId, input.moderatorId);
+  return { ok: true };
+}
+
 const countOf = (body: Record<string, unknown>, keys: string[]) =>
   keys.reduce((sum, k) => sum + (typeof body[k] === 'number' ? (body[k] as number) : 0), 0);
 

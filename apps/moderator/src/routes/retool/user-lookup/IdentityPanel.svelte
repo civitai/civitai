@@ -4,6 +4,7 @@
   import type { ActionResult } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
   import type { LayoutData } from './$types';
   import { userUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime } from '$lib/format';
@@ -73,6 +74,30 @@
     ['Banned at', dateTime(identity.bannedAt)],
     ['Rewards eligibility', identity.rewardsEligibility ?? '—'],
   ]);
+
+  // Retool's `Enable Edits` toggle over username / email / full name. Off by default and off again
+  // after every save: these are the fields a mistyped edit is hardest to notice and worst to leave.
+  let editing = $state(false);
+  let editUsername = $state('');
+  let editEmail = $state('');
+  let saving = $state(false);
+
+  const startEditing = () => {
+    editUsername = identity.username ?? '';
+    editEmail = identity.email ?? '';
+    editing = true;
+  };
+
+  const afterSave =
+    () =>
+    async ({ result }: { result: ActionResult }) => {
+      await applyAction(result);
+      if (result.type === 'success') {
+        editing = false;
+        await invalidateAll();
+      }
+      saving = false;
+    };
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -113,6 +138,45 @@
         <dd class="text-dark-0 break-all">{value}</dd>
       </div>
     {/each}
+
+    {#if canAct}
+      <div class="sm:col-span-2 lg:col-span-3">
+        {#if !editing}
+          <Button size="sm" variant="outline" onclick={startEditing}>Enable edits</Button>
+        {:else}
+          <form
+            method="POST"
+            action="?/updateIdentity"
+            use:enhance={() => {
+              saving = true;
+              return afterSave();
+            }}
+            class="flex flex-wrap items-end gap-2"
+          >
+            <input type="hidden" name="userId" value={identity.id} />
+            <label class="flex flex-col gap-1 text-xs text-dark-2">
+              Username
+              <Input name="username" bind:value={editUsername} class="w-52" />
+            </label>
+            <label class="flex flex-col gap-1 text-xs text-dark-2">
+              Email
+              <Input name="email" type="email" bind:value={editEmail} class="w-64" />
+            </label>
+            <Button type="submit" size="sm" disabled={saving}>
+              {saving ? 'Saving…' : 'Save'}
+            </Button>
+            <Button type="button" size="sm" variant="outline" onclick={() => (editing = false)}>
+              Cancel
+            </Button>
+            <!-- The endpoint gates this on `retoolUpdateIdentity`, so a moderator without that grant
+                 gets a refusal from the API rather than a silent no-op. -->
+            <p class="w-full text-xs text-dark-2">
+              Requires the identity-edit permission; the API refuses it otherwise.
+            </p>
+          </form>
+        {/if}
+      </div>
+    {/if}
 
     <div>
       <dt class="text-xs tracking-wide text-dark-2 uppercase">Stripe customer</dt>

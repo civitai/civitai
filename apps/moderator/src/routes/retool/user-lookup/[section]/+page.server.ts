@@ -31,6 +31,8 @@ import {
   resetSubscriptionCaches,
   revokeTimedMute,
   setBanned,
+  toggleModerator,
+  updateUserIdentity,
   setMuted,
   unmuteAndClearTimed,
 } from '$lib/server/user-actions.service';
@@ -106,6 +108,49 @@ export const actions: Actions = {
       input.muted === 'true'
         ? await setMuted({ userId: input.userId, muted: true, moderatorId: locals.user.id })
         : await unmuteAndClearTimed({ userId: input.userId, moderatorId: locals.user.id });
+    if (!result.ok) return accountFail(result.error);
+    return { success: true };
+  },
+
+  // Retool's Enable Edits form. The endpoint gates this on the `retoolUpdateIdentity` permission, so a
+  // moderator without it gets a clear refusal from the API rather than a silent no-op.
+  updateIdentity: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');
+    const input = parseForm(
+      userIdSchema.extend({
+        username: z.string().trim().min(1).max(50).optional(),
+        email: z.string().trim().email().max(255).optional(),
+        name: z.string().trim().max(255).optional(),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return accountFail(input);
+
+    const result = await updateUserIdentity({
+      userId: input.userId,
+      username: input.username,
+      email: input.email,
+      name: input.name,
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return accountFail(result.error);
+    return { success: true };
+  },
+
+  toggleModerator: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users') || !isSenior(locals.user))
+      return accountFail('Changing moderator status requires a senior moderator.');
+    const input = parseForm(
+      userIdSchema.extend({ isModerator: z.enum(['true', 'false']) }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return accountFail(input);
+
+    const result = await toggleModerator({
+      userId: input.userId,
+      isModerator: input.isModerator === 'true',
+      moderatorId: locals.user.id,
+    });
     if (!result.ok) return accountFail(result.error);
     return { success: true };
   },
