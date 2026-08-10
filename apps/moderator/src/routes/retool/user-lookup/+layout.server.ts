@@ -12,7 +12,9 @@ export const load: LayoutServerLoad = async ({ url, locals }) => {
   // Senior gates the capabilities Retool restricted with a pane-level `only visible when`: sending
   // buzz, and promoting or demoting a moderator. Every action re-checks it regardless.
   const senior = canAct && isSenior(locals.user);
-  const base = { q, canAct, canSendBuzz: senior, isSenior: senior };
+  // Full content width: the panels are multi-column and data-dense (Buzz shows the transaction form
+  // and the history together), and the 6xl cap forced them into a single narrow stack.
+  const base = { q, canAct, canSendBuzz: senior, isSenior: senior, wide: true };
   if (!q) return { ...base, result: null, notFound: false };
 
   const userId = await resolveUserId(q);

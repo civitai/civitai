@@ -101,10 +101,11 @@
   });
 </script>
 
-<!-- Retool's Buzz Transaction pane: form left, Presets and Deduct Types stacked right. The reference
-     table sits beside the Reason picker on purpose — which types lower the lifetime balance and which
-     may go negative is the fact needed WHILE choosing one. -->
-<div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+<!-- One column, so the caller can stand this beside the balances and history rather than above them:
+     a grant or deduction is judged against those numbers. Presets and the Deduct Types reference stay
+     within a screen of the Reason picker — which types lower the lifetime balance and which may go
+     negative is the fact needed WHILE choosing one. -->
+<div class="space-y-4">
   <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
     {#if error}
       <div
@@ -115,7 +116,7 @@
       </div>
     {/if}
 
-    <form method="POST" action="?/sendBuzz" use:enhance={onSubmit} class="max-w-md space-y-3">
+    <form method="POST" action="?/sendBuzz" use:enhance={onSubmit} class="space-y-3">
       <input type="hidden" name="userId" value={userId} />
 
       <div>
@@ -207,43 +208,41 @@
     </form>
   </section>
 
-  <div class="space-y-4">
-    <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
-      <h4 class="mb-3 text-sm font-semibold text-white">Presets</h4>
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger>
-          {#snippet child({ props })}
-            <Button {...props} type="button" class="w-full">Apply a preset</Button>
-          {/snippet}
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Content align="start">
-          {#each PRESETS as p (p.label)}
-            <DropdownMenu.Item onSelect={() => applyPreset(p)}>{p.label}</DropdownMenu.Item>
-          {/each}
-        </DropdownMenu.Content>
-      </DropdownMenu.Root>
-    </section>
+  <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
+    <h4 class="mb-3 text-sm font-semibold text-white">Presets</h4>
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger>
+        {#snippet child({ props })}
+          <Button {...props} type="button" class="w-full">Apply a preset</Button>
+        {/snippet}
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Content align="start">
+        {#each PRESETS as p (p.label)}
+          <DropdownMenu.Item onSelect={() => applyPreset(p)}>{p.label}</DropdownMenu.Item>
+        {/each}
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
+  </section>
 
-    <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
-      <h4 class="mb-3 text-sm font-semibold text-white">Deduct Types</h4>
-      <table class="w-full text-xs text-dark-2">
-        <thead>
-          <tr class="text-left text-dark-0">
-            <th class="py-1 pr-3 font-medium">Type</th>
-            <th class="py-1 pr-3 font-medium">Lowers lifetime</th>
-            <th class="py-1 font-medium">Can go negative</th>
+  <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
+    <h4 class="mb-3 text-sm font-semibold text-white">Deduct Types</h4>
+    <table class="w-full text-xs text-dark-2">
+      <thead>
+        <tr class="text-left text-dark-0">
+          <th class="py-1 pr-3 font-medium">Type</th>
+          <th class="py-1 pr-3 font-medium">Lowers lifetime</th>
+          <th class="py-1 font-medium">Can go negative</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each [['Purchase', false, false], ['AuthorizedPurchase', false, true], ['Chargeback', true, true]] as [name, lifetime, negative] (name)}
+          <tr class="border-t border-dark-4">
+            <td class="py-1 pr-3">{name}</td>
+            <td class="py-1 pr-3">{lifetime ? '✓' : '—'}</td>
+            <td class="py-1">{negative ? '✓' : '—'}</td>
           </tr>
-        </thead>
-        <tbody>
-          {#each [['Purchase', false, false], ['AuthorizedPurchase', false, true], ['Chargeback', true, true]] as [name, lifetime, negative] (name)}
-            <tr class="border-t border-dark-4">
-              <td class="py-1 pr-3">{name}</td>
-              <td class="py-1 pr-3">{lifetime ? '✓' : '—'}</td>
-              <td class="py-1">{negative ? '✓' : '—'}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </section>
-  </div>
+        {/each}
+      </tbody>
+    </table>
+  </section>
 </div>

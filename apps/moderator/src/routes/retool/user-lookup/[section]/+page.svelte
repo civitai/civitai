@@ -1,8 +1,5 @@
 <script lang="ts">
   import { browser } from '$app/environment';
-  import { page } from '$app/state';
-  import { goto } from '$app/navigation';
-  import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
   import type { PageData } from './$types';
   import type { FormResult } from '../form-result';
   import { writeEnhancer } from '$lib/form-action';
@@ -55,14 +52,6 @@
     busy: (value) => (submitting = value),
   });
 
-  // In the URL so a moderator can hand a colleague the tab they are looking at, and so the browser
-  // back button leaves the transaction form rather than the whole section.
-  const buzzTab = $derived(page.url.searchParams.get('buzzTab') === 'send' ? 'send' : 'view');
-  const buzzTabHref = (tab: string) => {
-    const params = new URLSearchParams(page.url.search);
-    params.set('buzzTab', tab);
-    return `?${params}`;
-  };
 </script>
 
 {#if result}
@@ -96,28 +85,26 @@
       />
       <CosmeticsPanel {account} />
     {:else if section === 'buzz'}
-      <!-- Retool's two Buzz tabs, with the balances above both. Only a senior moderator saw the
-           transaction pane, so the tab itself is gated, not just the submit. -->
+      <!-- Retool split these across two tabs. Granting or deducting Buzz is a judgement made AGAINST
+           the balances and the history, so hiding one behind the other made the moderator carry the
+           numbers in their head. Side by side instead, with the form sticky so it survives scrolling
+           a long history. Only a senior moderator sees it. -->
       <BuzzBalances {account} />
-      {#if data.canSendBuzz}
-        <Tabs value={buzzTab} onValueChange={(v) => v && goto(buzzTabHref(v))} class="mb-4">
-          <TabsList>
-            <TabsTrigger value="view">View Buzz</TabsTrigger>
-            <TabsTrigger value="send">Buzz Transaction</TabsTrigger>
-          </TabsList>
-        </Tabs>
-      {/if}
-
-      {#if buzzTab === 'send' && data.canSendBuzz}
-        <BuzzTransactionPanel
-          userId={result.identity.id}
-          {form}
-          onWritten={() => (version += 1)}
-        />
-      {:else}
-        <SubscriptionPanel subscription={result.subscription} />
-        <BuzzHistoryPanel userId={result.identity.id} />
-      {/if}
+      <div class="flex flex-col gap-4 xl:flex-row xl:items-start">
+        {#if data.canSendBuzz}
+          <div class="xl:sticky xl:top-4 xl:w-96 xl:shrink-0">
+            <BuzzTransactionPanel
+              userId={result.identity.id}
+              {form}
+              onWritten={() => (version += 1)}
+            />
+          </div>
+        {/if}
+        <div class="min-w-0 flex-1">
+          <SubscriptionPanel subscription={result.subscription} />
+          <BuzzHistoryPanel userId={result.identity.id} />
+        </div>
+      </div>
     {:else if section === 'prompts'}
       <PromptAuditPanel {signals} />
     {:else if section === 'shop'}
