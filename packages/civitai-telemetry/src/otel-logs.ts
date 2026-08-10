@@ -21,7 +21,8 @@ import {
   type LogRecordProcessor,
 } from '@opentelemetry/sdk-logs';
 import type { Resource } from '@opentelemetry/resources';
-import { registerCounter, registerCounterWithLabels } from './client';
+import promClient from 'prom-client';
+import { instrumentationRegistry, registerInstrumentationMetric, PROM_PREFIX } from './client';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type MixedObject = Record<string, any>;
@@ -31,22 +32,55 @@ type MixedObject = Record<string, any>;
 // ---------------------------------------------------------------------------
 // A count of zero records arriving at the far end is indistinguishable from a bridge
 // that never runs. These make the difference observable in-process, before the record
-// ever leaves it. `skipped{reason="no_provider"}` in particular is the ONLY runtime
-// signal for the module-identity/bundling failure described on `resolveLogger` below —
-// a unit test structurally cannot see that one.
-export const otelLogRecordsEmittedCounter = registerCounter({
-  name: 'otel_log_records_emitted_total',
-  help: 'Structured log records handed to the OTel Logs API by the Axiom bridge',
-});
+// ever leaves it.
+//
+// 🔴 REGISTERED ON `instrumentationRegistry`, NOT on prom-client's default registry.
+// This module is only ever loaded from `src/instrumentation.node.ts`, i.e. from the
+// INSTRUMENTATION graph, and `/api/metrics` scrapes prom-client's default registry as it
+// exists in the REQUEST graph. A metric created here with `registerCounter` therefore
+// lands in a registry nothing scrapes: it is registered, it increments, and it is absent
+// from every `/metrics` response. That is not a theory — it is what shipped: the first
+// production window of this bridge had a live `/metrics` returning 1,758 lines (90 of them
+// `nodejs_*`, so the endpoint itself was healthy) and ZERO `otel_log*` series, which left
+// the one instrument designed to make the bridge's failure legible completely mute.
+//
+// `instrumentationRegistry` is pinned on `globalThis` precisely so it crosses that
+// boundary, and `src/pages/api/metrics.ts` already merges it into the scrape. This is the
+// same trap, and the same cure, as the event-loop long-task metrics (PR #2451); see the
+// WHY note on `instrumentationRegistry` above.
+//
+// `registerInstrumentationMetric` is get-or-create, so a second evaluation of this module
+// (another graph, or HMR) adopts the existing counter instead of throwing "already
+// registered" inside the constructor.
+const EMITTED_METRIC = PROM_PREFIX + 'otel_log_records_emitted_total';
+const SKIPPED_METRIC = PROM_PREFIX + 'otel_log_records_skipped_total';
+
+export const otelLogRecordsEmittedCounter = registerInstrumentationMetric(
+  EMITTED_METRIC,
+  () =>
+    new promClient.Counter({
+      name: EMITTED_METRIC,
+      help: 'Structured log records handed to the OTel Logs API by the Axiom bridge',
+      registers: [instrumentationRegistry],
+    })
+);
 
 export const OTEL_LOG_SKIP_REASONS = ['disabled', 'no_provider', 'emit_threw'] as const;
 export type OtelLogSkipReason = (typeof OTEL_LOG_SKIP_REASONS)[number];
 
-export const otelLogRecordsSkippedCounter = registerCounterWithLabels({
-  name: 'otel_log_records_skipped_total',
-  help: 'Structured log records NOT emitted over OTLP, by reason',
-  labelNames: ['reason'] as const,
-});
+export const otelLogRecordsSkippedCounter = registerInstrumentationMetric(
+  SKIPPED_METRIC,
+  () =>
+    // `Counter<T>`'s type parameter is the LABEL NAME union, not the label VALUE union —
+    // so it is `'reason'`, matching `labelNames` below. (`OtelLogSkipReason` is the set of
+    // values that label may take; putting it here type-checks the call sites backwards.)
+    new promClient.Counter<'reason'>({
+      name: SKIPPED_METRIC,
+      help: 'Structured log records NOT emitted over OTLP, by reason',
+      labelNames: ['reason'] as const,
+      registers: [instrumentationRegistry],
+    })
+);
 
 // ---------------------------------------------------------------------------
 // Severity
@@ -151,11 +185,28 @@ let cachedLogger: Logger | undefined;
  * exception. A module-scope `getLogger()` is therefore not a style question; it is the
  * bug.
  *
- * This is a TIMING problem, not a bundling-identity one: every installed copy of the
- * logs API shares the same `Symbol.for` key and the same backwards-compatibility
- * version, so a second bundled copy still reads the same global. Checking the global
+ * This is a TIMING problem, and the guard below is the fix for it. Checking the global
  * first makes the permanently-silent state unreachable, and makes the not-yet-registered
  * state OBSERVABLE (counted as `no_provider`) rather than invisible.
+ *
+ * 🔴 It is NOT the whole story, and the note that used to stand here was read as if it
+ * were. It argued that a second BUNDLED copy of the logs API would still read the same
+ * global, so identity could not matter. Both halves of that have now been measured on a
+ * real production build, and the conclusion drawn from them was wrong:
+ *
+ *   - The premise is true but idle. `@opentelemetry/api-logs` is not bundled AT ALL —
+ *     Next externalizes node_modules for the server build, and a scan of the emitted
+ *     server source maps finds ZERO copies of it. There is one instance, from the require
+ *     cache. Externalizing it via `serverExternalPackages` would change nothing.
+ *   - The conclusion is false. Identity DID sink the bridge — just not this module's.
+ *     The duplicated module was the app's own logger shim, `src/server/logging/client.ts`
+ *     (14 emitted copies), whose module-scope sink object the boot-time registration
+ *     could only ever arm in one of them. Fixed by pinning that object on `globalThis`;
+ *     see `src/server/logging/structured-log-sink.ts`.
+ *
+ * The lesson worth keeping: "which module instance holds this state" is a question about
+ * the BUNDLER's output, and reasoning about `Symbol.for` keys cannot answer it. Read the
+ * build.
  */
 function resolveLogger(): Logger | undefined {
   if (cachedLogger) return cachedLogger;
