@@ -2,12 +2,14 @@ import client from 'prom-client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as RedisClient from '~/server/redis/client';
 
-const { mockAuditHour, mockAuditExactness, mockRedisGet, mockRedisSet } = vi.hoisted(() => ({
-  mockAuditHour: vi.fn(),
-  mockAuditExactness: vi.fn(),
-  mockRedisGet: vi.fn(),
-  mockRedisSet: vi.fn(),
-}));
+const { mockAuditHour, mockAuditExactness, mockRedisGet, mockRedisSet, mockLogToAxiom } =
+  vi.hoisted(() => ({
+    mockAuditHour: vi.fn(),
+    mockAuditExactness: vi.fn(),
+    mockRedisGet: vi.fn(),
+    mockRedisSet: vi.fn(),
+    mockLogToAxiom: vi.fn(),
+  }));
 
 vi.mock('~/server/services/metric-reconciliation.service', () => ({
   auditReactionHour: mockAuditHour,
@@ -22,7 +24,7 @@ vi.mock('~/server/flipt/client', () => ({
   isFlipt: vi.fn().mockResolvedValue(false),
   FLIPT_FEATURE_FLAGS: { METRIC_REACTION_REPAIR: 'metric-reaction-repair' },
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 
 // Spread the real module so REDIS_SYS_KEYS stays authoritative — a hand-written
 // key here would let the job and the test agree on a key production never uses.
@@ -73,6 +75,7 @@ const STORED_SNAPSHOT = {
   recentCoverage: 0.9997,
   backlogCoverage: 0.9612,
   phantomRate: 0.0037,
+  recentPairs: 464,
 };
 
 beforeEach(() => {
@@ -80,11 +83,15 @@ beforeEach(() => {
   mockAuditHour.mockResolvedValue(HEALTHY_HOUR);
   mockRedisGet.mockResolvedValue(null);
   mockRedisSet.mockResolvedValue('OK');
+  mockLogToAxiom.mockResolvedValue(undefined);
   for (const name of [
     'exactness_recent_coverage_ratio',
     'exactness_backlog_coverage_ratio',
     'exactness_phantom_ratio',
     'exactness_last_run_timestamp_seconds',
+    'exactness_recent_pairs',
+    'hourly_coverage_ratio',
+    'audit_last_run_timestamp_seconds',
   ]) {
     client.register.getSingleMetric(`civitai_app_reaction_${name}`)?.reset();
   }
@@ -131,19 +138,106 @@ describe('nightly exactness gauges survive a pod roll', () => {
   });
 
   /**
-   * A null arm means the sample had nothing to compare. Publishing it as 0 would read
-   * as total loss on a dashboard and would defeat the `!= 0` guard every query uses.
+   * An unset gauge and a measured 0.0 are byte-identical on the scrape, so asserting
+   * `toBe(0)` here proves nothing — it passes whether the null is skipped or published
+   * as a zero. `recentPairs` is the only thing that separates the two states, so that
+   * is what this asserts. The pair of tests below is the real coverage: same gauge
+   * value, opposite meaning, told apart by the companion gauge.
    */
-  it('leaves a null arm unpublished rather than writing a zero', async () => {
+  it('marks a null recent arm as UNMEASURED via recent_pairs', async () => {
     mockRedisGet.mockResolvedValue(
-      JSON.stringify({ ...STORED_SNAPSHOT, recentCoverage: null, phantomRate: null })
+      JSON.stringify({ ...STORED_SNAPSHOT, recentCoverage: null, recentPairs: 0 })
     );
 
     await runHourly();
 
     expect(await gaugeValue('exactness_recent_coverage_ratio')).toBe(0);
+    expect(await gaugeValue('exactness_recent_pairs')).toBe(0);
     expect(await gaugeValue('exactness_backlog_coverage_ratio')).toBe(0.9612);
-    expect(await gaugeValue('exactness_last_run_timestamp_seconds')).toBe(NIGHTLY_RAN_AT);
+  });
+
+  it('marks a measured total loss as MEASURED, at the same gauge value', async () => {
+    mockRedisGet.mockResolvedValue(
+      JSON.stringify({ ...STORED_SNAPSHOT, recentCoverage: 0, recentPairs: 412 })
+    );
+
+    await runHourly();
+
+    // Identical to the test above — which is the point.
+    expect(await gaugeValue('exactness_recent_coverage_ratio')).toBe(0);
+    // ...and this is what makes it a total loss rather than an empty sample.
+    expect(await gaugeValue('exactness_recent_pairs')).toBe(412);
+  });
+
+  /**
+   * The re-publish is an `await`, so the process can serve /api/metrics from the same
+   * prom registry while it is pending. If it sits between the anchor set and the value
+   * set, a scrape in that window on a pod's first run after a roll sees a fresh anchor
+   * beside a coverage gauge still at prom-client's default 0, and the freshest-pod query
+   * reads that 0 as a total CDC loss. Asserting the ordering directly is the only way to
+   * pin it — the gauge values at the END of the run are identical either way.
+   */
+  it('sets the hourly coverage gauge BEFORE the anchor, and re-publishes after both', async () => {
+    const order: string[] = [];
+    mockRedisGet.mockImplementation(async () => {
+      order.push('republish');
+      return JSON.stringify(STORED_SNAPSHOT);
+    });
+    const gauge = (name: string) =>
+      client.register.getSingleMetric(`civitai_app_reaction_${name}`) as unknown as {
+        set: (v: number) => void;
+      };
+    const coverage = gauge('hourly_coverage_ratio');
+    const anchor = gauge('audit_last_run_timestamp_seconds');
+    const realCoverage = coverage.set.bind(coverage);
+    const realAnchor = anchor.set.bind(anchor);
+    const spyCoverage = vi.spyOn(coverage, 'set').mockImplementation((v) => {
+      order.push('coverage');
+      realCoverage(v);
+    });
+    const spyAnchor = vi.spyOn(anchor, 'set').mockImplementation((v) => {
+      order.push('anchor');
+      realAnchor(v);
+    });
+
+    try {
+      await runHourly();
+    } finally {
+      spyCoverage.mockRestore();
+      spyAnchor.mockRestore();
+    }
+
+    expect(order).toEqual(['coverage', 'anchor', 'republish']);
+  });
+
+  /**
+   * `JSON.parse(raw) as T` cannot catch a shape change. `undefined !== null` is true, so
+   * a field missing after a deploy reaches `gauge.set(undefined)`, which THROWS — and the
+   * caller's catch then swallows it, publishing no gauges at all while the hourly audit
+   * reports success. Validation turns that into a logged refusal.
+   */
+  it('refuses a malformed snapshot instead of publishing a partial one', async () => {
+    const { recentPairs: _dropped, ...missingField } = STORED_SNAPSHOT;
+    mockRedisGet.mockResolvedValue(JSON.stringify(missingField));
+
+    const result = (await runHourly()) as { coverage: number | null };
+
+    expect(result.coverage).toBe(1);
+    expect(await gaugeValue('exactness_recent_coverage_ratio')).toBe(0);
+    expect(await gaugeValue('exactness_last_run_timestamp_seconds')).toBe(0);
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'reaction-exactness-republish', level: 'error' })
+    );
+  });
+
+  it('logs rather than swallows a Redis read failure', async () => {
+    mockRedisGet.mockRejectedValue(new Error('ECONNREFUSED'));
+
+    await runHourly();
+
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'reaction-exactness-republish', level: 'warn' })
+    );
   });
 
   it('still completes the hourly audit when Redis is unreachable', async () => {
@@ -185,8 +279,9 @@ describe('nightly exactness audit', () => {
       recentCoverage: 1,
       backlogCoverage: 0.9612,
       phantomRate: 0.00125,
+      recentPairs: 500,
     });
-    expect(options.EX).toBeGreaterThan(0);
+    expect(options).toBeUndefined();
   });
 
   it('stamps the snapshot with its own completion time', async () => {

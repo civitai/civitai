@@ -101,6 +101,8 @@ const GAUGE_HELP = {
     'Same, for reactions older than the lookback. Un-repaired outage burn-down — do not alert on this',
   exactness_phantom_ratio:
     'Per-(image,user,reaction) pairs in ClickHouse with no Postgres row (known residual ~0.0037)',
+  exactness_recent_pairs:
+    'Reaction pairs inside the nightly lookback. Zero means the recent-coverage ratio is undefined rather than 0.0 — gate alerts on it',
 } as const;
 
 /**
@@ -164,6 +166,20 @@ type NightlyExactnessSnapshot = {
   recentCoverage: number | null;
   backlogCoverage: number | null;
   phantomRate: number | null;
+  /**
+   * Published unconditionally, including as 0, because it is the only thing that makes
+   * a null arm observable. An unset gauge and a genuine 0.0 are byte-identical on the
+   * scrape, so `recentCoverage === null` (no recent pairs in the sample) is otherwise
+   * indistinguishable from a measured total loss — and alerting on the second while
+   * silently paging on the first is exactly the confusion this pair of gauges exists to
+   * resolve. Alert queries gate the coverage ratio on this being non-zero.
+   *
+   * A zero here is NOT a quiet site. It requires 200 sampled images that all have recent
+   * ClickHouse reaction events and no recent Postgres rows, which is mass PG-side loss or
+   * mass phantom events. Measured over five consecutive daily seeds, 195-198 of 200
+   * images had recent Postgres reactions, so the healthy value is in the hundreds.
+   */
+  recentPairs: number;
 };
 
 /**
@@ -181,28 +197,83 @@ type NightlyExactnessSnapshot = {
  * at re-publish would make a dead nightly look alive forever, which is the exact
  * failure this exists to expose.
  *
- * The TTL only cleans up after a genuinely retired job: staleness on
- * `exactness_last_run_timestamp_seconds` is alertable within hours, so nothing
- * depends on the key surviving a week.
+ * Deliberately NO TTL. An earlier version expired the key after 7 days on tidiness
+ * grounds, which quietly converted a firing alert into a false recovery: on expiry the
+ * re-publish stops, the next roll empties the gauges, the staleness rule's selector goes
+ * empty, NoData resolves to OK, and an alert about a dead nightly RESOLVES while the
+ * nightly is still dead. A stale snapshot is not a leak — it is the evidence, and
+ * `ranAt` is what makes its staleness legible. One key.
  */
-const NIGHTLY_SNAPSHOT_TTL_SECONDS = 7 * 24 * 60 * 60;
 
+/**
+ * A null arm leaves its gauge unset, which reads as 0 on the scrape — identical to a
+ * measured 0.0. `recentPairs` is what tells the two apart, so it is always published
+ * and alert queries gate on it. Do NOT resolve this by publishing a null as 0: that
+ * makes the healthy-but-empty case page, and makes a real total loss unremarkable.
+ */
 function publishNightlyExactnessGauges(snapshot: NightlyExactnessSnapshot) {
-  // A null arm means the sample had nothing to compare, not a zero. Leaving the
-  // gauge unset keeps it excluded by the `!= 0` guard rather than publishing a 0
-  // that reads as total loss.
   if (snapshot.recentCoverage !== null)
     gauges.exactness_recent_coverage_ratio.set(snapshot.recentCoverage);
   if (snapshot.backlogCoverage !== null)
     gauges.exactness_backlog_coverage_ratio.set(snapshot.backlogCoverage);
   if (snapshot.phantomRate !== null) gauges.exactness_phantom_ratio.set(snapshot.phantomRate);
+  gauges.exactness_recent_pairs.set(snapshot.recentPairs);
   gauges.exactness_last_run_timestamp_seconds.set(snapshot.ranAt);
 }
 
+/**
+ * Validated rather than cast. `JSON.parse(raw) as T` is a lie the compiler cannot check,
+ * and the specific way it bites here is silent: `undefined !== null` is true, so a field
+ * missing after a deploy that changes the snapshot shape reaches `gauge.set(undefined)`,
+ * which throws — and the caller's catch then swallows it, publishing NO gauges at all
+ * while the hourly audit reports success.
+ */
+function parseSnapshot(raw: string): NightlyExactnessSnapshot | undefined {
+  const parsed: unknown = JSON.parse(raw);
+  if (!parsed || typeof parsed !== 'object') return undefined;
+  const s = parsed as Record<string, unknown>;
+  const nullableNumber = (v: unknown) => v === null || typeof v === 'number';
+  if (typeof s.ranAt !== 'number' || typeof s.recentPairs !== 'number') return undefined;
+  if (!nullableNumber(s.recentCoverage)) return undefined;
+  if (!nullableNumber(s.backlogCoverage)) return undefined;
+  if (!nullableNumber(s.phantomRate)) return undefined;
+  return s as NightlyExactnessSnapshot;
+}
+
+/**
+ * Failures are logged, not swallowed. Every other failure path in this file reports to
+ * Axiom, and a silent one here is worse than most: a stale or unreadable snapshot
+ * re-publishes yesterday's coverage over today's and rewinds the nightly's freshness
+ * stamp, so the gauges look present and current while being neither.
+ */
 async function republishNightlyExactnessGauges() {
-  const raw = await sysRedis.get(REDIS_SYS_KEYS.METRIC_RECONCILIATION.NIGHTLY_EXACTNESS);
+  let raw: string | null;
+  try {
+    raw = await sysRedis.get(REDIS_SYS_KEYS.METRIC_RECONCILIATION.NIGHTLY_EXACTNESS);
+  } catch (e) {
+    await logToAxiom({
+      type: 'metric-reconciliation',
+      name: 'reaction-exactness-republish',
+      level: 'warn',
+      message: 'could not read the nightly exactness snapshot',
+      error: JSON.stringify({ error: (e as Error)?.message }),
+    }).catch(() => undefined);
+    return;
+  }
   if (!raw) return;
-  publishNightlyExactnessGauges(JSON.parse(raw) as NightlyExactnessSnapshot);
+
+  const snapshot = parseSnapshot(raw);
+  if (!snapshot) {
+    await logToAxiom({
+      type: 'metric-reconciliation',
+      name: 'reaction-exactness-republish',
+      level: 'error',
+      message: 'nightly exactness snapshot failed validation — gauges not re-published',
+      error: JSON.stringify({ raw: raw.slice(0, 500) }),
+    }).catch(() => undefined);
+    return;
+  }
+  publishNightlyExactnessGauges(snapshot);
 }
 
 function floorToHour(date: Date) {
@@ -224,16 +295,24 @@ export const reactionVolumeAuditJob = createJob(
     gauges.hourly_unmapped_rows.set(
       Object.values(result.unknownReactions).reduce((a, b) => a + b, 0)
     );
-    gauges.audit_last_run_timestamp_seconds.set(Date.now() / 1000);
-
-    // Carries the nightly's values onto whichever pod ran most recently. A failure
-    // here must not fail the hourly audit — the reconciliation is the job, the
-    // re-publish is a convenience for the nightly's panels.
-    await republishNightlyExactnessGauges().catch(() => undefined);
-
     // An hour with no reactions has undefined coverage. Leaving the gauge at its
     // previous value beats publishing a 0 that would page for a quiet hour.
     if (result.coverage !== null) gauges.hourly_coverage_ratio.set(result.coverage);
+    // Last, and after every value above. Alert queries pick the pod with the freshest
+    // anchor and then read its values, so the anchor must never be newer than they are.
+    gauges.audit_last_run_timestamp_seconds.set(Date.now() / 1000);
+
+    /**
+     * Strictly after the anchor, never between it and the values. This is an `await`, so
+     * the process can serve /api/metrics from the same prom registry while it is pending;
+     * placed earlier, a scrape landing in that window on a pod's first run after a roll
+     * would see a fresh anchor beside a coverage gauge still at prom-client's default 0,
+     * and the freshest-pod query would read that 0 as a total CDC loss.
+     *
+     * A failure here must not fail the hourly audit — the reconciliation is the job, the
+     * re-publish is a convenience for the nightly's panels.
+     */
+    await republishNightlyExactnessGauges().catch(() => undefined);
 
     const breached = result.coverage !== null && result.coverage < COVERAGE_WARN;
     if (breached || Object.keys(result.unknownReactions).length > 0) {
@@ -288,13 +367,23 @@ export const reactionExactnessAuditJob = createJob(
       recentCoverage: result.recentCoverage,
       backlogCoverage: result.backlogCoverage,
       phantomRate: result.phantomRate,
+      recentPairs: result.recentPairs,
     };
     publishNightlyExactnessGauges(snapshot);
+    // Logged, not swallowed: a silently-failed write leaves the hourly re-publishing an
+    // older snapshot, which rewinds the freshness stamp and serves stale coverage as
+    // current — the one outcome worse than the gauges being absent.
     await sysRedis
-      .set(REDIS_SYS_KEYS.METRIC_RECONCILIATION.NIGHTLY_EXACTNESS, JSON.stringify(snapshot), {
-        EX: NIGHTLY_SNAPSHOT_TTL_SECONDS,
-      })
-      .catch(() => undefined);
+      .set(REDIS_SYS_KEYS.METRIC_RECONCILIATION.NIGHTLY_EXACTNESS, JSON.stringify(snapshot))
+      .catch((e) =>
+        logToAxiom({
+          type: 'metric-reconciliation',
+          name: 'reaction-exactness-audit',
+          level: 'warn',
+          message: 'could not persist the nightly exactness snapshot',
+          error: JSON.stringify({ error: (e as Error)?.message }),
+        }).catch(() => undefined)
+      );
 
     if (result.missingInCh > 0) {
       await requestReactionRepair({

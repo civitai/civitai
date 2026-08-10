@@ -125,11 +125,32 @@ export async function repairReactionMetrics(
    *
    * Cost of a now-ish stamp, which matters before anyone runs another BULK repair:
    * consumers doing a rolling window over `createdAt` see the `-1` but not the old
-   * `+1` it cancels, so historical corrections read as fresh un-reactions. Measured
-   * after the 2026-08-07 backfill: 3,197,222 removals on one day against a ~18k/day
-   * baseline, leaving 17,247 orphaned removals inside the image leaderboards' 30-day
-   * window. `original createdAt + 1s` would avoid both that and the ReplacingMergeTree
-   * key collision that stamping at the original `createdAt` exactly would cause.
+   * `+1` it cancels, so historical corrections read as fresh un-reactions. After the
+   * 2026-08-07 backfill, 3,197,222 removals landed on that single day against a
+   * ~18k/day baseline (15.8k-22.3k over the 16 surrounding days).
+   *
+   * The orphan count below is stated with its query because it is easy to measure
+   * something adjacent and conclude it does not reproduce. Group
+   * `entityMetricEvents_month` by (entityId, userId, metricType) over the last 30 days,
+   * restricted to images `images_created` says were created in that window with
+   * nsfwLevel in (PG, PG13) — i.e. the ones the age-multiplier leaderboards actually
+   * score — and count groups where negatives outnumber positives: 17,247 such pairs
+   * attributable to 2026-08-07, 87% of the 40,808 net points subtracted. Re-measured an
+   * hour later it read 17,236, so treat ~0.1% drift as the window moving, not a
+   * discrepancy.
+   *
+   * `original createdAt + 1s` would avoid both that and the ReplacingMergeTree key
+   * collision that stamping at the original `createdAt` exactly would cause — verified
+   * that the table is `SharedReplacingMergeTree` ORDER BY (entityType, entityId,
+   * metricType, userId, createdAt) with no version column, so a `-1` at the original
+   * timestamp is key-identical to its `+1` and one is dropped arbitrarily on merge.
+   *
+   * Second-order effect on the nightly audit, worth knowing before the next bulk run:
+   * the repair inflated the exactness sampling pool 6.9x on its own day (2,065,335
+   * candidate images against a ~300k daily norm), most of them repair-touched images
+   * whose only recent event is a synthetic `-1`. The night after a bulk repair the
+   * recent arm is drawn from a badly skewed pool and is at its noisiest exactly when
+   * someone is watching it.
    */
   const { rows: clockRows } = await pgDbRead.query<{ removalAt: string }>(
     `SELECT to_char(
