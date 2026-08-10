@@ -1,4 +1,4 @@
-import { REDIS_SYS_KEYS, type RedisKeyTemplateSys } from '@civitai/redis';
+import { REDIS_SYS_KEYS, createLruCache, type RedisKeyTemplateSys } from '@civitai/redis';
 import {
   getPageAccessGrants,
   setPageAccessRoles,
@@ -12,30 +12,50 @@ const KEY = `${REDIS_SYS_KEYS.APP.PAGE_ACCESS}:${APP}` as RedisKeyTemplateSys;
 const REDIS_TTL_SECONDS = 300;
 const MEMO_TTL_MS = 30_000;
 
-let memo: PageAccessGrants = {};
-let memoUntil = 0;
+// One entry, since there is one app's grants to hold. A failed load is never cached and `allowStale`
+// serves the last good map through the outage: an empty map is indistinguishable from "nobody is granted
+// anything", so returning one would revoke every non-admin moderator until the load recovered.
+const memo = createLruCache<typeof APP, PageAccessGrants>({
+  name: 'page-access',
+  max: 1,
+  ttl: MEMO_TTL_MS,
+  allowStale: true,
+  keyFn: (app) => app,
+  fetchFn: readThrough,
+});
 
 // Read on every gated request, so it must never throw and never hit Postgres per request: in-process memo
 // → sysRedis → Postgres. A write on one server is visible to the others within MEMO_TTL_MS.
 //
-// The memo is only extended on SUCCESS. An empty map is indistinguishable from "nobody is granted
-// anything", so caching a failed load would revoke every non-admin moderator's access for the length of
-// the TTL; retrying on the next request keeps an outage to the requests it actually touches.
+// `{}` only where there is genuinely nothing to serve — a process whose FIRST load failed. That still
+// denies every non-admin, so the log line is the one to look for when a tier reports an empty sidebar.
 export async function loadPageAccessGrants(): Promise<PageAccessGrants> {
-  if (Date.now() < memoUntil) return memo;
   try {
-    memo = await readThrough();
-    memoUntil = Date.now() + MEMO_TTL_MS;
+    return await memo.fetch(APP);
   } catch (e) {
-    console.error('[page-access] load failed, keeping last known grants', e);
+    console.error('[page-access] load failed and no grants have ever loaded', e);
+    return {};
   }
-  return memo;
 }
 
+// Postgres is the source of truth, so a sysRedis failure must not discard a read that succeeded: the
+// publish is best-effort AFTER the grants are in hand. Throwing here instead would leave `memo` empty and
+// revoke every non-admin's page access for as long as sysRedis was down, while admins — who bypass grants
+// entirely — saw nothing wrong. A cache read that throws falls through to Postgres for the same reason.
 async function readThrough(): Promise<PageAccessGrants> {
-  const cached = await getSysRedis().get(KEY);
-  if (cached) return JSON.parse(cached) as PageAccessGrants;
-  return publish(await getPageAccessGrants(dbRead, APP));
+  try {
+    const cached = await getSysRedis().get(KEY);
+    if (cached) return JSON.parse(cached) as PageAccessGrants;
+  } catch (e) {
+    console.error('[page-access] cache read failed, falling back to Postgres', e);
+  }
+  const grants = await getPageAccessGrants(dbRead, APP);
+  try {
+    await publish(grants);
+  } catch (e) {
+    console.error('[page-access] loaded from Postgres, but caching them failed', e);
+  }
+  return grants;
 }
 
 // The admin page edits grants, so it reads Postgres directly rather than the request cache — a stale or
@@ -52,16 +72,15 @@ export async function setPageRoles(input: {
   await setPageAccessRoles(dbWrite, { app: APP, ...input });
 
   // Postgres is the source of truth and the rows are already committed, so everything below is
-  // best-effort: a cache failure must not report the save as failed. `memo` is set before the Redis
-  // write so this server is correct even if Redis is down, and the memo is expired on failure so the
-  // next request re-reads rather than serving a map we are no longer sure about.
+  // best-effort: a cache failure must not report the save as failed. The memo is filled before the Redis
+  // write so this server is correct even if Redis is down, and dropped on failure so the next request
+  // re-reads rather than serving a map we are no longer sure about.
   try {
     const grants = await getPageAccessGrants(dbWrite, APP);
-    memo = grants;
-    memoUntil = Date.now() + MEMO_TTL_MS;
+    memo.set(APP, grants);
     await publish(grants);
   } catch (e) {
-    memoUntil = 0;
+    memo.delete(APP);
     console.error('[page-access] saved, but refreshing the cache failed', e);
   }
 }

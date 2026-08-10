@@ -163,6 +163,11 @@ function collectGrants(
 }
 let grants = collectGrants(NAVIGATION);
 
+/** The effective path→roles map `allows` consults, for diagnostics — group entries included. */
+export function grantsSnapshot(): Record<string, Role[]> {
+  return Object.fromEntries(grants.map((g) => [g.path, [...g.roles]]));
+}
+
 type RoleUser = Pick<SessionUser, 'roles'> | null | undefined;
 
 const isSuper = (user: RoleUser) => (user?.roles ?? []).includes(SUPER_ROLE);
