@@ -24,21 +24,26 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * Fails before the fix (everything is a raw 500); passes after.
  */
 
-const { mockCompleteMultipartUpload, mockObjectExists } = vi.hoisted(() => ({
+const { mockCompleteMultipartUpload, mockObjectExists, mockS3Send } = vi.hoisted(() => ({
   mockCompleteMultipartUpload: vi.fn(),
   mockObjectExists: vi.fn(),
+  mockS3Send: vi.fn(),
 }));
 
-// Keep the REAL module (so the real classifyS3MultipartError runs) and override
-// only the network send + client factories.
+// Keep the REAL module (so the real classifyS3MultipartError AND the real
+// `headObject` / `isNotFoundError` run) and override only the network send + client
+// factories. 🔴 The client factories return a stub whose `.send` is `mockS3Send`, so
+// the post-completion HeadObject probe is driven by real AWS-SDK-shaped errors
+// through the real not-found classifier — a fake `headObject` could encode the same
+// wrong shape as the code and pass with the bug present.
 vi.mock('~/utils/s3-utils', async (importOriginal) => {
   const actual = await importOriginal<typeof import('~/utils/s3-utils')>();
   return {
     ...actual,
     completeMultipartUpload: mockCompleteMultipartUpload,
     objectExists: mockObjectExists,
-    getUploadS3Client: vi.fn(() => ({})),
-    getB2ImageS3Client: vi.fn(() => ({})),
+    getUploadS3Client: vi.fn(() => ({ send: mockS3Send })),
+    getB2ImageS3Client: vi.fn(() => ({ send: mockS3Send })),
   };
 });
 
@@ -56,6 +61,9 @@ vi.mock('~/server/db/client', () => ({ dbWrite: {}, dbRead: {} }));
 import handler from '~/pages/api/upload/complete';
 // Mocked in ~/__tests__/setup as vi.fn(); imported here so the LOG PAYLOAD is assertable.
 import { logToAxiom } from '~/server/logging/client';
+// The REAL helper (the vi.mock above spreads the actual module), driven directly to
+// pin the never-throws contract the handler's fail-open depends on.
+import { headObject } from '~/utils/s3-utils';
 
 function makeRes() {
   const headers: Record<string, string> = {};
@@ -106,7 +114,9 @@ function makeReq() {
   return {
     method: 'POST',
     body: {
-      bucket: 'civitai-modelfiles',
+      // The bucket value is irrelevant to every assertion in this file, so it is kept
+      // generic rather than naming a real one (matching `reqWithParts` below).
+      bucket: 'test-bucket',
       key: 'some/key.safetensors',
       type: 'model',
       uploadId: 'test-upload-id',
@@ -125,6 +135,11 @@ beforeEach(() => {
   mockCompleteMultipartUpload.mockReset();
   mockObjectExists.mockReset();
   mockObjectExists.mockResolvedValue(false);
+  // Default for the post-completion HeadObject probe: the object is there with real
+  // bytes. That is the healthy case, so every test that isn't ABOUT the probe keeps
+  // asserting the same status it always did.
+  mockS3Send.mockReset();
+  mockS3Send.mockResolvedValue({ ContentLength: 1024 });
 });
 
 describe('/api/upload/complete — error classification', () => {
@@ -324,5 +339,183 @@ describe('/api/upload/complete — the completion LOG must record the completion
     await handler(reqWithParts(undefined), res);
     expect(logged()?.partCount).toBeNull();
     expect(res.statusCode).toBe(200);
+  });
+});
+
+describe('/api/upload/complete — a successful completion must be VERIFIED against the bucket', () => {
+  /**
+   * WHY THIS EXISTS — silent data loss, proven in production.
+   *
+   * CompleteMultipartUpload can resolve WITHOUT THROWING and still leave the session
+   * unfinished with no object: S3 documents that the call "can contain either a
+   * success or an error" and that an error "might be embedded in the 200 OK
+   * response". A completion resolved as successful, the file row was written 472 ms
+   * later, and the storage backend still lists that session unfinished with NO
+   * object. Nothing re-verified, so the row is permanent, indistinguishable from a
+   * healthy one, and unrecoverable — the browser had already dropped the bytes.
+   *
+   * The fix is one HeadObject before the 200, so the failure lands while the client
+   * still holds the file and can re-upload.
+   *
+   * 🔴 These assert the STATUS AND BODY THE CLIENT SEES, never that HeadObject was
+   * called. A spy-count assertion passes with a handler that issues the probe and
+   * then ignores the answer — which is the entire bug.
+   *
+   * 🔴 The probe runs through the REAL `headObject` and the REAL not-found
+   * classifier; only `s3.send` is stubbed, with AWS-SDK-shaped errors.
+   */
+  const notFound = () =>
+    Object.assign(new Error('NotFound'), { name: 'NotFound', $metadata: { httpStatusCode: 404 } });
+
+  const unverifiedEvent = () =>
+    vi
+      .mocked(logToAxiom)
+      .mock.calls.map((c) => c[0] as Record<string, unknown>)
+      .find((c) => c?.name === 's3-upload-complete-unverified');
+
+  const completeEvent = () =>
+    vi
+      .mocked(logToAxiom)
+      .mock.calls.map((c) => c[0] as Record<string, unknown>)
+      .find((c) => c?.name === 's3-upload-complete');
+
+  beforeEach(() => vi.mocked(logToAxiom).mockClear());
+
+  it('🔴 THE DEFECT: completion resolves but the object is ABSENT → 422, never a success', async () => {
+    mockCompleteMultipartUpload.mockResolvedValue({ Location: 'https://cdn/x', ETag: '"abc"' });
+    mockS3Send.mockRejectedValue(notFound());
+    const res = makeRes();
+    await handler(makeReq(), res);
+    // Before this change the handler returned 200 with result.Location here, and the
+    // client went on to register a row for a file that does not exist.
+    expect(res.statusCode).toBe(422);
+    expect(res.body).toEqual({
+      error: 'Upload completed but the file was not stored — please re-upload',
+    });
+    expect(res.headers['Cache-Control']).toBe('no-store');
+    expect(res.body).not.toBe('https://cdn/x');
+  });
+
+  it('the absent case is separately alertable and records the probe verdict', async () => {
+    mockCompleteMultipartUpload.mockResolvedValue({ Location: 'https://cdn/x', ETag: '"abc"' });
+    mockS3Send.mockRejectedValue(notFound());
+    await handler(makeReq(), makeRes());
+    expect(unverifiedEvent()).toBeDefined();
+    expect(completeEvent()?.objectStatus).toBe('absent');
+    expect(completeEvent()?.objectVerified).toBe(false);
+  });
+
+  it('object present with real bytes → 200 + Location, unchanged', async () => {
+    mockCompleteMultipartUpload.mockResolvedValue({ Location: 'https://cdn/x', ETag: '"abc"' });
+    mockS3Send.mockResolvedValue({ ContentLength: 4096 });
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe('https://cdn/x');
+    expect(unverifiedEvent()).toBeUndefined();
+    expect(completeEvent()?.objectVerified).toBe(true);
+    expect(completeEvent()?.objectSize).toBe(4096);
+  });
+
+  it('object present but ZERO bytes → 422 (presence alone is not enough)', async () => {
+    mockCompleteMultipartUpload.mockResolvedValue({ Location: 'https://cdn/x', ETag: '"abc"' });
+    mockS3Send.mockResolvedValue({ ContentLength: 0 });
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.statusCode).toBe(422);
+    expect(completeEvent()?.objectSize).toBe(0);
+  });
+
+  /**
+   * 🔴 FAIL-OPEN CASES. A verification step that turns a working upload into an error
+   * is worse than the bug it guards. Only a bucket that ANSWERS "not there" — or
+   * answers with a definitively zero length — may reject. Everything else is "we
+   * could not consult the bucket", which is not evidence of loss.
+   */
+  it('HeadObject 403 (rotated/absent credentials) → 200, not a rejection', async () => {
+    mockCompleteMultipartUpload.mockResolvedValue({ Location: 'https://cdn/x' });
+    mockS3Send.mockRejectedValue(
+      Object.assign(new Error('Access Denied'), {
+        name: 'AccessDenied',
+        $metadata: { httpStatusCode: 403 },
+      })
+    );
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe('https://cdn/x');
+    expect(completeEvent()?.objectStatus).toBe('unknown');
+    expect(completeEvent()?.objectVerified).toBe(true);
+  });
+
+  it('HeadObject network failure (ECONNRESET) → 200, not a rejection', async () => {
+    mockCompleteMultipartUpload.mockResolvedValue({ Location: 'https://cdn/x' });
+    mockS3Send.mockRejectedValue(
+      Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' })
+    );
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe('https://cdn/x');
+  });
+
+  // The probe's own timeout budget firing must not fail the upload it is checking —
+  // this is the "the verification step causes the failure it looks for" case.
+  it('HeadObject aborted by its own timeout → 200, not a rejection', async () => {
+    mockCompleteMultipartUpload.mockResolvedValue({ Location: 'https://cdn/x' });
+    mockS3Send.mockRejectedValue(
+      Object.assign(new Error('Request aborted'), { name: 'AbortError' })
+    );
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.statusCode).toBe(200);
+    expect(completeEvent()?.objectStatus).toBe('unknown');
+  });
+
+  // `size: null` means the backend reported NO length. That is not zero, and a size
+  // check that treats it as zero rejects healthy uploads on every backend that omits
+  // ContentLength.
+  it('object present but the backend reports no ContentLength → 200', async () => {
+    mockCompleteMultipartUpload.mockResolvedValue({ Location: 'https://cdn/x' });
+    mockS3Send.mockResolvedValue({});
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.statusCode).toBe(200);
+    expect(completeEvent()?.objectStatus).toBe('present');
+    expect(completeEvent()?.objectSize).toBeNull();
+  });
+
+  // A backend that finalizes the object but echoes no Location is HEALTHY. The probe
+  // is stronger evidence than the response shape, so it — not the shape — decides.
+  it('a completion with NO Location but a real object still returns 200', async () => {
+    mockCompleteMultipartUpload.mockResolvedValue({});
+    mockS3Send.mockResolvedValue({ ContentLength: 512 });
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.statusCode).toBe(200);
+    expect(unverifiedEvent()).toBeUndefined();
+  });
+});
+
+describe('headObject — the probe itself can never throw into its caller', () => {
+  // The whole guard rests on this: `headObject` resolving to `unknown` instead of
+  // throwing is what makes the handler's fail-open reachable at all. A client object
+  // with no usable `send` is the cheapest deterministic stand-in for "the client
+  // could not be used".
+  it('a client whose send throws synchronously resolves to unknown', async () => {
+    const broken = {
+      send: () => {
+        throw new TypeError('boom');
+      },
+    } as never;
+    await expect(headObject('test-bucket', 'k', broken)).resolves.toEqual({ status: 'unknown' });
+  });
+
+  it('reports the ContentLength the backend returned', async () => {
+    const ok = { send: async () => ({ ContentLength: 77 }) } as never;
+    await expect(headObject('test-bucket', 'k', ok)).resolves.toEqual({
+      status: 'present',
+      size: 77,
+    });
   });
 });
