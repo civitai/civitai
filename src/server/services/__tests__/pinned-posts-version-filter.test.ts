@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
+import type * as FliptClient from '~/server/flipt/client';
 
 // Pinning is per model version, so a pinned post must contribute only the media that version made.
 // The carve-out for media carrying no resource rows is the whole point of the function and is what a
@@ -65,7 +66,7 @@ vi.mock('~/server/redis/client', () => {
 });
 
 vi.mock('../../flipt/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../flipt/client')>()),
+  ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn().mockResolvedValue(false),
   getFliptBoolean: vi.fn().mockResolvedValue(false),
   getFliptVariant: vi.fn().mockResolvedValue(null),
