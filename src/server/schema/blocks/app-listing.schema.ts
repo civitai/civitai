@@ -54,11 +54,17 @@ export const LISTING_SCREENSHOT_ASPECT_MAX = 2.6;
 export const LISTING_SCREENSHOT_MIN_PX = 320;
 
 /**
- * Absolute upper bound on either side of ANY listing asset. A ceiling (the
- * per-kind checks above only enforce MINIMUMS / aspect) that stops a
- * decompression-bomb / absurd-dimension image (e.g. 100000×100000) from being
- * stored and rendered as store media. 8192px is comfortably above any real store
- * icon/cover/screenshot.
+ * Absolute upper bound on EITHER SIDE of any listing asset. A ceiling (the
+ * per-kind checks above only enforce MINIMUMS / aspect) that keeps an
+ * absurdly-dimensioned image (e.g. 100000×100000) from being stored and rendered
+ * as store media. 8192px is comfortably above any real store icon/cover/screenshot.
+ *
+ * 🔴 It bounds SHAPE, not AREA — do not cite it as the decompression-bomb defence.
+ * 8192×8192 is 67 Mpx and passes this check; so does 8192×4000 (33 Mpx). The
+ * inline-icon ingest path bounds decoded PIXEL COUNT separately
+ * (`INLINE_ICON_MAX_INPUT_PIXELS`, 16.7 Mpx in `listing-meta.service.ts`), which is
+ * the metric that threat actually calls for. Bounding area on the upload path is a
+ * known gap, not something this constant covers.
  */
 export const LISTING_ASSET_MAX_DIMENSION_PX = 8192;
 
@@ -71,10 +77,18 @@ export const LISTING_ASSET_MAX_DIMENSION_PX = 8192;
  * Single-sourced because the bound is applied at more than one layer, and an
  * open-coded copy at each would let them drift: the ingest paths reject early
  * (before the bytes reach `createImage` + the scan pipeline), while
- * {@link validateListingImage} is the gate EVERY asset passes at attach whatever
- * created its `Image` row — the attach gate is ownership-based, so it cannot tell
- * how a row was made, and an ingest-side check alone is bypassable by attaching
- * an image uploaded through some other path.
+ * {@link validateListingImage} re-applies it at attach, which catches rows the
+ * measured ingest paths did not create.
+ *
+ * 🔴 SCOPE — the attach check is a BACKSTOP, not a chokepoint. Two things it does
+ * not cover, so nobody builds on a guarantee that isn't here:
+ *   1. `backfillListingAssets` / `migrateBlockScreenshots`
+ *      (`app-listing-assets.service.ts`) write listing assets via direct `dbWrite`
+ *      calls and never call {@link validateListingImage} at all.
+ *   2. At attach the dimensions are read off the `Image` row, and some creation
+ *      paths accept width/height from the client (see the note in
+ *      `measure-uploaded-image.ts`) — so for a row this feature did not measure,
+ *      the bound is only as honest as the path that made it.
  */
 export function listingAssetTooLargeReason(
   subject: string,
@@ -157,9 +171,11 @@ export function validateListingImage(
   if (!width || !height || width <= 0 || height <= 0) {
     return { ok: false, reason: `${kind} has unknown or non-positive dimensions` };
   }
-  // The ceiling applies to EVERY kind (the per-kind rules below are minimums +
-  // aspect; only `icon` carries its own, tighter, maximum). Checked here rather
-  // than only at ingest because this is the one gate every asset passes.
+  // The ceiling applies to every kind validated here (the per-kind rules below are
+  // minimums + aspect; only `icon` carries its own, tighter, maximum). Checked at
+  // attach as well as at ingest so a row the measured ingest paths did not create
+  // is still bounded — see the SCOPE note on `listingAssetTooLargeReason` for what
+  // this does NOT cover.
   const tooLarge = listingAssetTooLargeReason(kind, width, height);
   if (tooLarge) return { ok: false, reason: tooLarge };
   const aspect = width / height;
