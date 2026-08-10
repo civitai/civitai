@@ -76,9 +76,14 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
      * indistinguishable from a healthy one, and the bytes are unrecoverable — the
      * browser had already dropped them.
      *
-     * One HeadObject closes that gap while the client still holds the file and can
-     * re-upload. We deliberately trust the probe over the response SHAPE: a present,
-     * non-empty object is proof regardless of whether the backend echoed a Location.
+     * One HeadObject closes that gap: the failure surfaces at completion time, as a
+     * failed upload the user can see and retry, instead of a row that looks healthy
+     * forever. 🔴 Note it does NOT guarantee the bytes are still in hand — the store
+     * keeps the File, but `useS3Upload.tsx` sets `file: undefined` on its bailout, so
+     * "retry" there means the user re-selecting the file, not an automatic resend.
+     *
+     * We deliberately trust the probe over the response SHAPE: a present, non-empty
+     * object is proof regardless of whether the backend echoed a Location.
      */
     const head = await headObject(bucket, key, s3, {
       abortSignal: AbortSignal.timeout(COMPLETE_VERIFY_TIMEOUT_MS),
@@ -222,9 +227,13 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
          * We need the client to retry the UPLOAD, not the completion. 422 is the code
          * that already carries that meaning here — "the request was well formed but the
          * upload STATE isn't; terminal → re-upload" — and, unlike a retryable status,
-         * both clients treat it as final rather than re-POSTing a manifest whose
+         * both clients now treat it as final rather than re-POSTing a manifest whose
          * session may already be consumed (each such retry throws NoSuchUpload and gets
          * relabelled "already finalized or aborted", destroying the diagnosis).
+         *
+         * "Both" is load-bearing and was NOT true before this change: the exemption
+         * existed only in s3-upload.store.ts, so useS3Upload.tsx retried a terminal
+         * status 4 times. It is now one shared predicate — see isTerminalCompleteStatus.
          *
          * Not 409: terminal, but carries no re-upload meaning. Not 500: this is a
          * storage-state fault, and paging on it as a server bug buries it.
