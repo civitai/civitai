@@ -40,11 +40,16 @@
 
   // The selection empties on a successful write and on a new batch. An open panel outliving either
   // leaves an armed destructive submit that would post an empty `imageIds`.
+  //
+  // `violationType` is reset with them: it is the value the endpoint classifies the removal by and
+  // ships to ClickHouse, so carrying it across batches files the next account's removal under the
+  // previous one's reason.
   $effect(() => {
     if (count === 0) {
       confirming = null;
       notifying = false;
       flagging = false;
+      violationType = 'none';
     }
   });
 

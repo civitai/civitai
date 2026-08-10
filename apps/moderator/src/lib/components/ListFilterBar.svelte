@@ -3,6 +3,7 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
+  import { num } from '$lib/format';
 
   export type FilterField =
     | { kind: 'select'; key: string; label: string; options: [string, string][] }
@@ -21,6 +22,11 @@
     total: number;
   } = $props();
 
+  // Two bars on one page share field keys (`rating`, `q`), so a global id would point the second
+  // bar's label at the first bar's control.
+  const uid = $props.id();
+  const fid = (key: string) => `flt-${uid}-${key}`;
+
   const active = $derived(Object.values(values).some((v) => v));
   const labelFor = (f: FilterField & { kind: 'select' }) =>
     f.options.find(([v]) => v === values[f.key])?.[1] ?? f.label;
@@ -30,9 +36,9 @@
   {#each fields as f (f.key)}
     {#if f.kind === 'select'}
       <div>
-        <Label for="flt-{f.key}" class="text-xs text-dark-2">{f.label}</Label>
+        <Label for={fid(f.key)} class="text-xs text-dark-2">{f.label}</Label>
         <Select.Root type="single" bind:value={values[f.key]}>
-          <Select.Trigger id="flt-{f.key}" class="mt-1 w-36">{labelFor(f)}</Select.Trigger>
+          <Select.Trigger id={fid(f.key)} class="mt-1 w-36">{labelFor(f)}</Select.Trigger>
           <Select.Content>
             <Select.Item value="">{f.label} — any</Select.Item>
             {#each f.options as [value, label] (value)}
@@ -43,8 +49,8 @@
       </div>
     {:else}
       <div>
-        <Label for="flt-{f.key}" class="text-xs text-dark-2">{f.label}</Label>
-        <Input id="flt-{f.key}" bind:value={values[f.key]} class="mt-1 w-52" />
+        <Label for={fid(f.key)} class="text-xs text-dark-2">{f.label}</Label>
+        <Input id={fid(f.key)} bind:value={values[f.key]} class="mt-1 w-52" />
       </div>
     {/if}
   {/each}
@@ -54,6 +60,6 @@
   {/if}
 
   <span class="pb-1.5 text-xs text-dark-2">
-    {matched} of {total}
+    {num(matched)} of {num(total)}
   </span>
 </div>

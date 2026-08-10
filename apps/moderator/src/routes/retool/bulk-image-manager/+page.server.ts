@@ -44,6 +44,11 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   }
 
   const byUser = source === 'user' || source === 'userRemoved';
+  // Bound BEFORE resolving: `resolveUserId` compares an all-digit term against an int4 column, so one
+  // fat-fingered extra digit errored out of `load` and rendered a 500 instead of "no images found".
+  if (/^\d+$/.test(q) && Number(q) > MAX_INT4)
+    return { source, q, canAct, batch: null, notFound: true, owners: [] };
+
   const id = byUser ? await resolveUserId(q) : /^\d+$/.test(q) ? Number(q) : null;
   if (!id || id > MAX_INT4) return { source, q, canAct, batch: null, notFound: true, owners: [] };
 

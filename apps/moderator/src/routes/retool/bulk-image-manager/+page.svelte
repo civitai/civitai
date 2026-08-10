@@ -2,9 +2,11 @@
   import { untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import type { ActionData, PageData } from './$types';
@@ -16,22 +18,27 @@
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
-  // Local mirrors so typing doesn't navigate. The effect re-syncs them on back/forward, where the
-  // component is not remounted.
+  // Local mirrors so typing doesn't navigate. Keyed on the URL, NOT on `data`: this page's enhancer
+  // reloads, so `data` is a new object after every remove/restore/flag — an effect watching it wipes a
+  // half-typed id the moment the previous action's invalidation lands.
   let source = $state(untrack(() => data.source));
   let term = $state(untrack(() => data.q));
+  const subject = $derived(page.url.search);
   $effect(() => {
-    source = data.source;
-    term = data.q;
+    subject;
+    untrack(() => {
+      source = data.source;
+      term = data.q;
+    });
   });
 
   const selected = new SvelteSet<string | number>();
 
-  // A new batch must not carry the previous one's selection — the ids would still submit, and they
-  // belong to images no longer on screen.
+  // Same reason: a FAILED action also invalidates, and clearing on `data.batch` identity would empty
+  // the selection under an error that says "narrow the selection".
   $effect(() => {
-    data.batch;
-    selected.clear();
+    subject;
+    untrack(() => selected.clear());
   });
 
   const ownerOfImage = $derived(new Map((data.batch?.items ?? []).map((i) => [i.id, i.userId])));
@@ -72,7 +79,13 @@
       {/each}
     </Select.Content>
   </Select.Root>
-  <Input bind:value={term} placeholder={BULK_SOURCE_LABELS[source]} class="min-w-48 flex-1" />
+  {#if source === 'imageIds'}
+    <!-- A single-line input strips newlines, and Firefox CONCATENATES the pasted lines — a column of
+         ids becomes one number, which either overflows int4 or lands on an unrelated image. -->
+    <Textarea bind:value={term} rows={3} placeholder="One id per line, or comma-separated" class="min-w-64 flex-1" />
+  {:else}
+    <Input bind:value={term} placeholder={BULK_SOURCE_LABELS[source]} class="min-w-48 flex-1" />
+  {/if}
   <Button type="submit">Find images</Button>
 </form>
 
@@ -156,10 +169,12 @@
     />
   {/if}
 
+  <!-- No selection without the actions: ticking a box with no action bar leaves the moderator in a
+       mode where clicking an image toggles instead of opening it, for no reason. -->
   <ImageQueueGrid
     items={batch.items}
     civitaiUrl={data.civitaiUrl}
-    {selected}
+    selected={data.canAct ? selected : undefined}
     card={imageCard}
     empty="No images in this batch."
     endLabel={batch.truncated ? null : 'End of batch.'}

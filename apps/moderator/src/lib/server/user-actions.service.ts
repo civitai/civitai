@@ -85,8 +85,10 @@ async function postJson(opts: {
       signal: AbortSignal.timeout(opts.timeoutMs),
     });
     if (!res.ok) return { ok: false, error: `${opts.label} returned ${res.status}.` };
-    // The endpoints return the affected counts and they are the only way to tell a real mutation from
-    // a no-op — a stale panel or a second moderator re-submitting gets a 200 having changed nothing.
+    // ⚠️ The count in the body is rows FOUND, not rows CHANGED — `remove-images` and `restore-images`
+    // both return the length of a pre-update `findMany` over the submitted ids. So the zero-affected
+    // guards below fire only when an id does not exist at all: re-removing an already-blocked batch
+    // reports full success. Do not read these counts as proof a mutation happened.
     return {
       ok: true,
       body: ((await res.json().catch(() => ({}))) ?? {}) as Record<string, unknown>,
