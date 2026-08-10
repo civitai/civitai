@@ -11,14 +11,14 @@ left worth porting) · `dropped` (agreed not to port)
 | App | Subtask | Queries | Components | Route | Status |
 | --- | --- | --- | --- | --- | --- |
 | User Lookup v2 | `868kn6x1b` | 170 | 433 | `/retool/user-lookup` | **partial** — everything unblocked is built (unverified in a browser); what is left is blocked, not pending: see below |
-| Moderation Status | `868kn5zg1` | 77 | 197 | `/retool/image-help` (group A) | **77/77 classified** ([audit](../../../docs/moderator-app/retool-exports/moderation-status-audit.md)); **group A ported**. It is a board, not a tool: five unrelated things share one Retool page. A = help requests (3 queries, the only group with no counterpart anywhere — built as `/retool/image-help`), B = queue stats (21, dashboard owns it; `RRatingStats`/`TaggerRatio` measure moderators and are worth a card), C = report triage (6, `/reports` owns it), D = rating/tag review (12, `/images/*` owns it — but confirm `ReviewGrouped` and `GetSplitQueue`), E = **35 backfill jobs and timers that are not UI at all** and belong to the Workflows/cron decision. No `/retool/moderation-status` route exists or should. |
+| Moderation Status | `868kn5zg1` | 77 | 197 | `/retool/image-help` (group A only) | ⚠️ **The audit is WRONG and must not be acted on until rewritten** — see the section below. A fidelity review (2026-08-10) walked all 77: **8 present, 4 partial/divergent, 4 correctly omitted, 61 absent**. Only 3 of 77 are built. The audit's two load-bearing claims are both false: group E is **not** cron (there is not one `Timer` in the export — all 35 are button-triggered), and the export **does** carry layout and option sets, so "three of four tabs unported" was invisible. Two rank-1 count bugs found and fixed. Reclassify before any further work. |
 | Bulk Image Manager | `868kn76au` | 40 | 60 | `/retool/bulk-image-manager` | **ported, not verified** — 40/40 classified ([audit](../../../docs/moderator-app/retool-exports/bulk-image-manager-audit.md)). Reviewed by all three agents; findings fixed. **Not run against a live page, and needs granting on `/admin`.** Deliberate divergences: batches cap at 200 with a truncation warning (Retool's `UserQuery` was uncapped, `UserQuery5000` capped at 5000), and POI/minor flags can be CLEARED as well as set — Retool hardcoded `value=true`, so **the clear path has no Retool behaviour to compare against and is the first thing to exercise**. A fourth, **export-vs-build fidelity** review then found four real gaps the three code reviews structurally could not: `UserQuery5000` (the already-removed view) absorbed into a row about `resolveUserId`; the pasted-id-list entry point classified by endpoint rather than entry; prompt/POI/minor fetched but never rendered; `nukeUser` mis-mapped to the broader `remove-all-content`. All fixed or recorded as open gaps in the audit. Re-extracted 2026-08-10; raw export committed under retool-exports/raw/. |
 | User Reports | `868kn78hc` | 34 | 57 | `/retool/user-reports` | **ported, not verified** — 34/34 classified ([audit](../../../docs/moderator-app/retool-exports/user-reports-audit.md)): 4 ported, 14 already shipped elsewhere, 16 Retool glue. Reviewed by all three agents; findings fixed. **Not run against a live page, and needs granting on `/admin`.** Re-extracted 2026-08-10 with the current extractor (layout + widget options); the raw export is committed at docs/moderator-app/retool-exports/raw/. |
 | Chat Audit | `868kn7m9r` | 20 | 50 | `/retool/chat-audit` | **built** — all 20 queries ported and reviewed, unverified in a browser, Retool still live |
 | Front Page Audit | `868kn82bf` | 16 | 19 | `/retool/front-page-audit` | **ported, not verified** — 16/16 classified ([audit](../../../docs/moderator-app/retool-exports/front-page-audit-audit.md)): 7 port, 4 already shipped, 2 superseded, 3 plumbing. A proactive sweep (pick a rating + ordering + media, re-rate what is wrong), distinct from `/images/ratings` which is reactive. Re-rating reuses `updateImageNsfwLevel`. **Three things are NOT ported and are recorded in the handover: the shared resume point (`FrontPageTimers`) and both rating logs (`RatingChanges`, `research_ratings`) — all three are GUI-mode writes whose column lists the export does not carry.** Two schema findings: Retool selects `i."aiNsfwLevel"`, which exists in production but not in `schema.full.prisma`, and `ImageRank` is an unmodelled view — both read through raw `sql`. Retool's `ByReactions` filtered on the deprecated `i.nsfw` enum while its newest views used the `nsfwLevel` bitmask; the port uses the bitmask for both so the orderings agree. |
 | Image Lookup | `868kn7q2v` | 10 | 21 | `/retool/image-lookup` | **built** — all 10 queries ported, unverified in a browser, Retool still live |
 | Article Lookup | `868kn7t8d` | 3 | 9 | `/retool/article-lookup` | **ported, not verified** — 3/3 queries classified ([audit](../../../docs/moderator-app/retool-exports/article-lookup-audit.md)): 2 ported, 1 plumbing (`query1` is an `information_schema` scratch query with a literal `'your_table'` placeholder). Reviewed; findings fixed. **Not run against a live page, and needs granting on `/admin`.** Re-extracted 2026-08-10; the raw export is committed under retool-exports/raw/. |
-| Bulk Ban | `868kn87qj` | 15 | 12 | `/retool/bulk-ban` | **ported, not verified** — 15/15 classified ([audit](../../../docs/moderator-app/retool-exports/bulk-ban-audit.md)): 9 port, 2 already shipped, 3 ad-hoc scratch, 1 not ported (`deleteComments`, whose input query is absent from the export and which writes Prod directly). The ninth app, missed because the tracker listed 9 of the parent ticket's 13 subtasks. Ban loop keeps Retool's 5-consecutive-failure abort; the ban-evasion half (registration IPs, email-domain histogram, accounts-per-IP) is ported as shapes with inputs rather than Retool's hardcoded case data. Gated on `isSenior`. |
+| Bulk Ban | `868kn87qj` | 15 | 12 | `/retool/bulk-ban` | **ported, not verified** — 15/15 classified ([audit](../../../docs/moderator-app/retool-exports/bulk-ban-audit.md)): 9 port, 2 already shipped, 3 ad-hoc scratch, 1 not ported (`deleteComments`, whose input query is absent from the export and which writes Prod directly). The ninth app, missed because the tracker listed 9 of the parent ticket's 13 subtasks. Ban loop keeps Retool's 5-consecutive-failure abort; the ban-evasion half (registration IPs, email-domain histogram, accounts-per-IP) is ported as shapes with inputs rather than Retool's hardcoded case data. Gated on `isSenior`. **Fidelity review 2026-08-10** found three defects and two absent capabilities, all now fixed: the ban confirmation promised a content purge that only happened for `SexualMinor` (`removeMedia` was never passed — checkbox added); `parseIdList` truncated silently at 1001 so a 2,000-id list reported 1,001 banned (`parseIdListStrict` refuses instead); the reason picker preselected `Other`; **`query15` domain expansion** and **`GetUsers` tip-farm finder** were both absent and are now built. Its audit was wrong in three rows — `query15` is not covered by the domain histogram (that one is scoped to ids already pasted, so it counts a ring but cannot grow one), `GetUsers` is a workflow not plumbing, and `query13` was filed unported when it is covered. The `textArea2` copy-out is now a details block. **15/15 accounted for; nothing left unported.** One deliberate divergence: the 5-failure abort counts **ids** where Retool counted **attempts**, so a single permanently-failing id no longer halts the run. |
 | Workflows (2) | `868kn80u9` | — | — | cron, not a page | not started |
 
 **The exports are attached to the ClickUp subtasks of 868kkxqpn** — one subtask per app, listed above.
@@ -47,22 +47,68 @@ duplicates and Retool plumbing (`Function`, `State`, `Timer`).
 
 Resources: `Replicated_Read_Prod`, `retool_db`, REST.
 
-A queue/stat board rather than a lookup tool. Roughly four things live in it, and they are separable —
-port them independently rather than as one page.
+A queue/stat board rather than a lookup tool.
 
-- [ ] **Help requests** — `GetHelpers`, `GetImageData`, `UpdateHelpRequest`. **Unblocked** —
-      `ModerationImageHelp` is reachable through `getModeratorDb()` (37 open rows). `imageIds` is a
-      jsonb array; `GetImageData` then reads those images from the main database.
-- [ ] **Queue stats / throughput** — `HourlyImages`, `HourlyModels`, `MinorTimers`, `PoITimers`,
-      `TagTimer`, `ModelTimer`, `ArticleTimer`, `FPATaskTimers`, `RRatingStats`, `TaggerRatio`,
-      `MuteStats`. Charts and counters; overlaps the dashboard already built.
-- [ ] **Report triage** — `Reports`, `RecentReports`, `UrgentReports`, `ActionReport`,
-      `ActionAllPostReports`. **`UrgentReports` is already shipped** as the dashboard's "Most reported".
-- [ ] **Rating / tag review** — `RatingQueue`, `ErrorRatingQueue`, `TagQueue`, `ResearchRating`,
-      `LookUpTags`, `ReviewGrouped`, `blockedTagInsert`.
-- [ ] **Insert/backfill jobs** — `MinorInsert`, `PoIInsert`, `ModelInsert`, `newUserInsert`,
-      `*_catchup`, `*Timer`. These are Retool **workflows**, not UI. Most likely belong as cron jobs (or
-      are already covered) — confirm before porting any of them.
+> ⚠️ **Fidelity review, 2026-08-10: 61 of 77 queries are ABSENT and the audit's grouping is unsound.**
+> Do not treat the buckets below as settled. The audit must be rewritten before more is built.
+
+**The two claims that hid everything else:**
+
+1. **"Group E is 35 backfill jobs and timers, not UI."** There is **not one `Timer` plugin in the
+   export**. All 35 are fired by button clicks (`button32 → ArticleCheck`, `button55 → ModelInsert`,
+   `button13 → pg`, …) writing `{task, lastUpdate, lastUpdateBy}` into `Mods_TaskTimers`. They are a
+   **manual acknowledgement protocol** — "I have swept this queue up to here" — read back by the paired
+   `*Timer` query and rendered as a per-queue "N behind" indicator. Filing them as cron would build a
+   scheduler for something no scheduler ever ran, and still leave the indicators unbuilt. Same
+   mechanism the Front Page Audit slice already recorded as unported.
+2. **"This export predates the extractor upgrades, so it has no layout or option sets."** It has both.
+   Acting on that sentence is why three of the four top-level tabs were never noticed as unported:
+   `tabbedContainer1` is `Moderation Status` / `Image Help` / `Graphs` / `Who is who?`, and only
+   **Image Help** exists here. Three of the six tables in the app are still unaccounted for.
+
+**Fixed on the spot** (both were screens stating something false):
+
+- `TagQueue` — the sidebar badge counted without Retool's `JOIN "Image" … AND i."nsfwLevel" < 32`
+  while the queue page filtered on it, so blocked images inflated a badge that could never reach zero.
+- `RatingQueue` — the queue and its count kept only `irr.total >= 3`, dropping Retool's second
+  admission branch `OR (irr.total <= -5 AND irr."createdAt" < NOW() - INTERVAL '10 hours')`. That is
+  the *disagreement* case: strongly-negative rating requests aged 10h. Nothing else picked them up.
+
+**Confirmed genuinely covered** (predicate-by-predicate): `UrgentReports`, `ActionReport`,
+`ErrorRatingQueue`, `ArticleReview`, `ReviewGrouped` (its seven buckets are split across
+`getImageReviewCounts` + `appeals` + `reported`, and all three arms match).
+
+**Confirmed dead in Retool too**, so not gaps: `HolidayPostsBulbs`, `LookUpTags`, `RatingTaggers`,
+`TaggerRatio`, `MuteStats` — no widget binds them. Note this corrects the row above: `RRatingStats`
+**did** render (as `table1` on the Graphs tab); `TaggerRatio` never did. Its on-screen partner was
+`ResearchRating`.
+
+**The real open work, in rough value order:**
+
+- [ ] **`/retool/image-help` is a consumer with no producer.** `GetMinors`/`GetPoI`/`GetReported` are
+      buttons whose success handlers write `ModerationImageHelp` (`{createdBy, imageIds, createdAt,
+      type}`). Nothing in `apps/moderator` writes that table — it only reads and marks handled. Once
+      Retool is switched off the queue drains to empty permanently. **This blocks calling group A done.**
+- [ ] **Queue-lag indicators + the `Mods_TaskTimers` protocol** (35 queries) — the "N behind" board.
+- [ ] **Who is working a queue** — `RecentReports`/`RecentRating`/`RecentTagger` gave each dashboard row
+      "last touched by `<mod>`, N minutes ago", coloured against a per-type threshold table that exists in
+      no query. The board here is count-only.
+- [ ] **The `Graphs` tab** — `HourlyImages`, `HourlyModels`, `RRatingStats`, `ResearchRating`.
+- [ ] **The `Who is who?` tab** — contents not enumerated by the layout; needs the raw export or a
+      screenshot before it can be scoped.
+- [ ] **Model-side surfaces with no page at all** — `ModelReview`, `TrainingCount`,
+      `UnpublishingReasons`. There is no models route in the app.
+- [ ] **`ActionAllPostReports`** — sweeps pending post-reports where every image is already blocked.
+      `/reports/[slug]` actions one at a time; the batch *selector* is what is missing, not the verb.
+- [ ] **`GetSplitQueue`/`SplitCurrent`/`SplitCatchup`** — forks the front-page sweep into current and
+      catch-up streams when it falls behind. Tooltip: "Only do this if it's 4 or more hours behind".
+- [ ] **`BlockedImagesTask`** (images blocked for an *unusual* `blockedFor`) and **`CivitModelsData`**
+      (`userId = -1` official publishes) — review counts misfiled as jobs.
+- [ ] **`AutoBlockedUsers`** — `ModActivity WHERE activity = 'autoMuteScam'`; the automatic-scam-mute
+      audit trail. Nothing in the app mentions `autoMuteScam`.
+- [ ] **`FindSHA`/`LogSHA256`** — takedown-hash ledger into `ModerationSHA`. No counterpart.
+- [ ] **Decision needed: report reason set.** Badges count only `DEFAULT_REPORT_REASONS`, so pending
+      **NSFW, CSAM and StickerPlacement** reports show nowhere. Retool excluded only `Automated`.
 
 ## User Lookup v2
 
@@ -113,6 +159,7 @@ landed, and every pass paid the cost of re-reading the same service. Ship a page
       the time (30M of 31.5M logins), so filtering on it silently returns nothing. The main app's
       `csam.service.ts` has this wrong and is worth a look.
       `PotentialSpammer` (v1) not ported — V2 supersedes it.
+
 > **Reviewed 2026-08-06** by the three `moderator-review` agents, after the slice had already shipped and
 > passed an ad-hoc review. It found that **muting did not work**: session revocation landed but nothing
 > busted `session:data2`, which caches `muted` for 4h and which the hub's login path reads cache-first —
@@ -333,6 +380,7 @@ get it wrong.
 Deferred: message-text search is ~3s over 4.2M unindexed rows. A pg_trgm GIN index on
 `ChatMessage.content` would fix it, but that is a large index and an extension — an infra decision, not
 a migration one.
+
 ## User Reports
 
 Resources: `Replicated_Read_Prod`, `retool_db`, ClickHouse, REST. The smallest of the three, and the
