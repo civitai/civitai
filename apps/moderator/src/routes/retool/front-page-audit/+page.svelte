@@ -7,6 +7,8 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
+  import { cn } from '@civitai/ui/utils.js';
+  import { TAG_CATEGORIES } from './moderation-tags';
   import type { ActionData, PageData } from './$types';
   import { writeEnhancer } from '$lib/form-action';
   import { dateTime, num } from '$lib/format';
@@ -205,6 +207,44 @@
           </span>
         {/each}
       </div>
+    {/if}
+
+    {#if data.canAct}
+      <!-- Retool's TagData palette. Voting only on tags already present means a tag the auto-tagger
+           MISSED can never be added, which is the case this sweep exists to catch. A tag already on
+           the image is marked, so the palette doubles as "what is on this". -->
+      <details class="text-xs">
+        <summary class="text-dark-2 hover:text-dark-0">Add a moderation tag</summary>
+        <div class="mt-1.5 space-y-1.5">
+          {#each TAG_CATEGORIES as category (category.key)}
+            <div class="flex flex-wrap items-center gap-1">
+              <span class="w-16 shrink-0 text-dark-3">{category.label}</span>
+              {#each category.tags as tag (tag.id)}
+                {@const present = img.moderatedTags.some((t) => t.id === tag.id)}
+                <form method="POST" action="?/voteTag" use:enhance={onSubmit} class="inline">
+                  <input type="hidden" name="imageId" value={img.id} />
+                  <input type="hidden" name="tagId" value={tag.id} />
+                  <input type="hidden" name="direction" value={present ? 'down' : 'up'} />
+                  <button
+                    type="submit"
+                    title="{present ? 'Remove' : 'Add'} — implies {getBrowsingLevelLabel(
+                      tag.nsfwLevel
+                    )}"
+                    class={cn(
+                      'rounded border px-1.5 py-0.5',
+                      present
+                        ? 'border-primary bg-primary/15 text-white'
+                        : 'border-dark-4 text-dark-2 hover:bg-dark-5 hover:text-dark-0'
+                    )}
+                  >
+                    {tag.name}
+                  </button>
+                </form>
+              {/each}
+            </div>
+          {/each}
+        </div>
+      </details>
     {/if}
 
     {#if img.isProfilePicture || img.hasConnection}

@@ -56,6 +56,7 @@
   <ReportsPanel
     reports={data.reports ?? []}
     total={data.reportsTotal ?? 0}
+    statusFilter={data.reportStatusFilter ?? []}
     page={data.reportsPage ?? 1}
     perPage={data.reportsPerPage ?? 20}
     chatId={data.chatId}

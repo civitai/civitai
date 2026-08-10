@@ -3,6 +3,7 @@
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import MessageMeta from './MessageMeta.svelte';
+  import ListFilterBar from '$lib/components/ListFilterBar.svelte';
   import type { PageData } from './$types';
 
   type Result = NonNullable<PageData['transcript']>;
@@ -13,6 +14,21 @@
     transcript,
     members,
   }: { chatId: number; transcript: Result; members: Members } = $props();
+
+  // Retool's select2 (participant) and textInput1 (content), both client-side over the loaded
+  // transcript. In a 300-message chat, "what did THIS person say" and "find the message containing X"
+  // are the two questions a moderator opens a transcript to answer.
+  const senders = $derived(
+    [...new Set(transcript.rows.map((m) => m.username).filter((u): u is string => !!u))].sort()
+  );
+  let filters = $state<Record<string, string>>({});
+  const shown = $derived(
+    transcript.rows.filter(
+      (m) =>
+        (!filters.sender || m.username === filters.sender) &&
+        (!filters.term || (m.content ?? '').toLowerCase().includes(filters.term.toLowerCase()))
+    )
+  );
 </script>
 
 <section class="mb-4 grid gap-4 lg:grid-cols-[2fr_1fr]">
@@ -33,8 +49,22 @@
     {#if transcript.rows.length === 0}
       <p class="text-sm text-dark-2">No messages in this chat.</p>
     {:else}
+      <ListFilterBar
+        fields={[
+          { kind: 'select', key: 'sender', label: 'From', options: senders.map((s) => [s, s]) },
+          { kind: 'search', key: 'term', label: 'Search messages' },
+        ]}
+        bind:values={filters}
+        matched={shown.length}
+        total={transcript.rows.length}
+      />
+
+      {#if shown.length === 0}
+        <p class="text-sm text-dark-2">No messages match these filters.</p>
+      {/if}
+
       <ul class="space-y-2 text-sm">
-        {#each transcript.rows as m (m.id)}
+        {#each shown as m (m.id)}
           <li>
             <MessageMeta {...m} />
             <p class="min-w-0 wrap-break-word whitespace-pre-wrap text-dark-0">{m.content}</p>

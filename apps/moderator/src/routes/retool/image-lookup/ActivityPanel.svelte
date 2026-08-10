@@ -41,10 +41,31 @@
               </a>
             {/if}
             <span class="text-xs text-dark-2">{dateTime(r.createdAt)}</span>
+            <!-- One report and thirty reports are the same row without this. -->
+            {#if r.alsoReportedBy?.length}
+              <span class="text-xs text-amber-300">
+                +{r.alsoReportedBy.length} also reported
+              </span>
+            {/if}
+            {#if r.previouslyReviewedCount}
+              <span class="text-xs text-dark-2">reviewed {r.previouslyReviewedCount}× before</span>
+            {/if}
+            {#if r.statusSetBy}
+              <span class="text-xs text-dark-2">
+                {r.status.toLowerCase()} by {r.statusSetBy}{r.statusSetAt
+                  ? ` · ${dateTime(r.statusSetAt)}`
+                  : ''}
+              </span>
+            {/if}
             {#if reportDetail(r.details, 'comment')}
               <!-- The reporter's own words: the only part of a report that says what happened. -->
               <p class="w-full wrap-break-word text-xs text-dark-1">
                 {reportDetail(r.details, 'comment')}
+              </p>
+            {/if}
+            {#if r.internalNotes}
+              <p class="w-full wrap-break-word text-xs text-dark-2">
+                Internal: {r.internalNotes}
               </p>
             {/if}
           </li>

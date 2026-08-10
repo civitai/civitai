@@ -134,17 +134,17 @@ export async function voteOnTag(input: {
   tagId: number;
   direction: 'up' | 'down';
 }): Promise<{ ok: boolean; error?: string }> {
-  // The tag must actually be a Moderation tag on THIS image. Retool trusted the client with both ids,
-  // so a forged tagId wrote a vote for an unrelated tag.
-  const attached = await dbRead
-    .selectFrom('TagsOnImageDetails as toi')
-    .innerJoin('Tag as t', 't.id', 'toi.tagId')
+  // The tag must be a Moderation tag — Retool trusted the client with both ids, so a forged tagId
+  // wrote a vote for an unrelated tag. It must NOT also be attached to this image: requiring that
+  // made the tag palette unusable, since ADDING a tag the tagger missed is the whole point of it.
+  // `type = 'Moderation'` is the security property; attachment was never part of it.
+  const moderationTag = await dbRead
+    .selectFrom('Tag as t')
     .select('t.id')
-    .where('toi.imageId', '=', input.imageId)
-    .where('toi.tagId', '=', input.tagId)
+    .where('t.id', '=', input.tagId)
     .where('t.type', '=', 'Moderation')
     .executeTakeFirst();
-  if (!attached) return { ok: false, error: 'That tag is not a moderation tag on this image.' };
+  if (!moderationTag) return { ok: false, error: 'That tag is not a moderation tag.' };
 
   const result = await voteOnImageTags([
     { imageId: input.imageId, tagId: input.tagId, vote: input.direction === 'up' ? 1 : -1 },

@@ -39,6 +39,8 @@ export type ModeratorReportRow = {
   reportedByUsername: string | null;
   reportedByEmail: string | null;
   alsoReportedByCount: number;
+  statusSetAt: Date | null;
+  statusSetByUsername: string | null;
   entityId: number | null;
 };
 
@@ -78,6 +80,9 @@ export async function getReports({
   let base = dbRead
     .selectFrom('Report')
     .leftJoin('User', 'User.id', 'Report.userId')
+    // Who RESOLVED it, aliased so it does not collide with the reporter join above. Retool's report
+    // table showed this column; without it a moderator cannot tell whether to re-open a closed report.
+    .leftJoin('User as resolver', 'resolver.id', 'Report.statusSetBy')
     .where(entityExists);
 
   if (statuses?.length) base = base.where('Report.status', 'in', statuses);
@@ -98,6 +103,8 @@ export async function getReports({
       'Report.details',
       'User.username as reportedByUsername',
       'User.email as reportedByEmail',
+      'Report.statusSetAt',
+      'resolver.username as statusSetByUsername',
     ])
     .select(
       sql<number>`coalesce(array_length("Report"."alsoReportedBy", 1), 0)`.as('alsoReportedByCount')

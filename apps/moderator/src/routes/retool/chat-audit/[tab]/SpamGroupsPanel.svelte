@@ -3,6 +3,7 @@
   import ShowMoreButton from '$lib/components/ShowMoreButton.svelte';
   import { LINK_CLASS, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
+  import ListFilterBar from '$lib/components/ListFilterBar.svelte';
   import type { ChatInsights } from './chat-insights';
 
   let { spam }: { spam: ChatInsights['spam'] } = $props();
@@ -12,7 +13,19 @@
   // Private messages: the count and the sender make a row actionable, the body is evidence a
   // moderator should have to ask for.
   let showBodies = $state(false);
-  const visible = $derived(!spam ? [] : expanded ? spam.groups : spam.groups.slice(0, SHOWN));
+  // Retool's switch1 ("Hide Banned Users") and textInput3 (content). Without the first, an
+  // already-banned spammer cannot be filtered out — the difference between an actionable list and a
+  // list of history.
+  let filters = $state<Record<string, string>>({ banned: 'hide' });
+  const matched = $derived(
+    (spam?.groups ?? []).filter(
+      (g) =>
+        (filters.banned !== 'hide' || !g.bannedAt) &&
+        (filters.banned !== 'only' || !!g.bannedAt) &&
+        (!filters.term || (g.content ?? '').toLowerCase().includes(filters.term.toLowerCase()))
+    )
+  );
+  const visible = $derived(expanded ? matched : matched.slice(0, SHOWN));
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -36,6 +49,28 @@
   {:else if spam.groups.length === 0}
     <p class="text-sm text-dark-2">Nobody sent the same text into multiple chats.</p>
   {:else}
+    <ListFilterBar
+      fields={[
+        {
+          kind: 'select',
+          key: 'banned',
+          label: 'Banned',
+          options: [
+            ['hide', 'Hide banned'],
+            ['only', 'Only banned'],
+          ],
+        },
+        { kind: 'search', key: 'term', label: 'Search text' },
+      ]}
+      bind:values={filters}
+      matched={matched.length}
+      total={spam.groups.length}
+    />
+
+    {#if matched.length === 0}
+      <p class="text-sm text-dark-2">No senders match these filters.</p>
+    {/if}
+
     <ul class="space-y-2 text-sm">
       {#each visible as g (g.key)}
         <li class="min-w-0">
@@ -52,8 +87,9 @@
         </li>
       {/each}
     </ul>
+    <!-- The FILTERED count: "show all 40" under a filter showing 3 is a lie about what is behind it. -->
     <ShowMoreButton
-      total={spam.groups.length}
+      total={matched.length}
       shown={SHOWN}
       {expanded}
       capped={spam.truncated}

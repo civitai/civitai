@@ -3,7 +3,13 @@ import { z } from 'zod';
 import type { PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import { MAX_INT4 } from '$lib/server/users.service';
-import { DEFAULT_REPORT_STATUSES, ReportEntity, reportReasons } from '$lib/reports';
+import {
+  DEFAULT_REPORT_STATUSES,
+  ReportEntity,
+  ReportStatus,
+  reportReasons,
+  reportStatuses,
+} from '$lib/reports';
 import { getReports } from '$lib/server/reports.service';
 import {
   chatExists,
@@ -32,6 +38,16 @@ const querySchema = z.object({
   q: z.string().trim().catch(''),
   chat: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
   rpage: z.coerce.number().int().positive().max(10_000).catch(1),
+  // Retool's select1 filtered the report table by status. Hardcoding the open ones made every
+  // Actioned/Unactioned chat report unreachable from this page.
+  rstatus: z
+    .string()
+    .optional()
+    .transform((v) =>
+      v
+        ? (v.split(',').filter((x) => (reportStatuses as string[]).includes(x)) as ReportStatus[])
+        : []
+    ),
 });
 
 // READ-ONLY. Retool's version could ban from the transcript (BANAPI) and write a note (SetNote); both
@@ -42,7 +58,7 @@ export const load: PageServerLoad = async ({ url, params }) => {
   const tab = params.tab;
   if (!(TABS as readonly string[]).includes(tab)) error(404, 'Unknown tab');
 
-  const { q, chat, rpage } = parseQuery(url, querySchema);
+  const { q, chat, rpage, rstatus } = parseQuery(url, querySchema);
 
   if (tab === 'reports') {
     // The report queue comes from the shared report service rather than a hand-written
@@ -50,7 +66,7 @@ export const load: PageServerLoad = async ({ url, params }) => {
     // previously disagreed, so a report actioned on /reports stayed in this queue forever.
     const reports = await getReports({
       type: ReportEntity.Chat,
-      statuses: DEFAULT_REPORT_STATUSES,
+      statuses: rstatus.length ? rstatus : DEFAULT_REPORT_STATUSES,
       reasons: QUEUE_REASONS,
       page: rpage,
       limit: REPORTS_PER_PAGE,
@@ -62,6 +78,7 @@ export const load: PageServerLoad = async ({ url, params }) => {
       reportsTotal: reports.totalItems,
       reportsPage: reports.page,
       reportsPerPage: reports.limit,
+      reportStatusFilter: rstatus,
     };
   }
 

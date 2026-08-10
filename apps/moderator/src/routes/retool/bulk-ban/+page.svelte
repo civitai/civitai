@@ -94,7 +94,11 @@
   </div>
 {:else if form?.success}
   <div class="mb-4 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200" role="status">
-    Banned {num(form.banned ?? 0)} accounts.
+    {#if 'noted' in form && typeof form.noted === 'number'}
+      Noted {num(form.noted)} accounts.
+    {:else if 'banned' in form && typeof form.banned === 'number'}
+      Banned {num(form.banned)} accounts.
+    {/if}
   </div>
 {/if}
 
@@ -124,6 +128,22 @@
           </li>
         {/each}
       </ul>
+
+      <!-- Retool's standalone "Add Notes". Annotating a cohort you have identified but not yet
+           decided on is a separate gesture from banning it — and it covers the already-banned rows
+           the ban loop skips. Every matched candidate, not just the bannable ones. -->
+      {#if data.candidates.length}
+        <form method="POST" action="?/addNotes" use:enhance={onSubmit} class="mt-4 flex gap-2">
+          <input type="hidden" name="userIds" value={data.candidates.map((c) => c.id).join(',')} />
+          <Input
+            name="note"
+            placeholder="Note on all {num(data.candidates.length)} matched accounts"
+            class="min-w-48 flex-1"
+            required
+          />
+          <Button type="submit" variant="outline" disabled={submitting}>Add notes</Button>
+        </form>
+      {/if}
 
       {#if data.canAct && bannable.length}
         {#if !confirming}

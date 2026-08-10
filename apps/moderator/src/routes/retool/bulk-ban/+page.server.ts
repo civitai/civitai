@@ -129,4 +129,47 @@ export const actions: Actions = {
         : undefined,
     };
   },
+
+  /**
+   * Retool's `button2` ("Add Notes"), which triggered `UserNotes` ALONE — it did not ban. Two things
+   * were lost by only writing notes inside the ban loop: annotating a cohort you have identified but
+   * not yet decided on, and noting the accounts a ban failed on or that were already banned.
+   *
+   * Not senior-gated: a note is not an enforcement action, and the page's own `/users` gate already
+   * applies. Notes go on EVERY matched candidate, banned or not — that is the point.
+   */
+  addNotes: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return actionFail('Not permitted.');
+    const author = locals.user.username;
+    if (!author) return actionFail('Your account has no username to attribute the note to.');
+
+    const input = parseForm(
+      z.object({
+        userIds: z.string().transform((s) => parseIdList(s, 5001)),
+        note: z.string().trim().min(1).max(1000),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return actionFail(input);
+    if (!input.userIds.length) return actionFail('No accounts to annotate.');
+
+    const results = await Promise.all(
+      input.userIds.map((userId) =>
+        addUserNote({ userId, notes: input.note, author })
+          .then(() => true)
+          .catch(() => false)
+      )
+    );
+    const noted = results.filter(Boolean).length;
+    if (noted === 0) return actionFail('Could not write any notes.');
+
+    return {
+      success: true,
+      noted,
+      warning:
+        noted < input.userIds.length
+          ? `${input.userIds.length - noted} note(s) could not be written.`
+          : undefined,
+    };
+  },
 };

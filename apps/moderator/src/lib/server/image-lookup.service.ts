@@ -70,6 +70,12 @@ export type ImageReportRow = {
   details: unknown;
   reportedById: number;
   reportedBy: string | null;
+  internalNotes: string | null;
+  alsoReportedBy: number[] | null;
+  previouslyReviewedCount: number | null;
+  statusSetAt: Date | null;
+  statusSetById: number | null;
+  statusSetBy: string | null;
 };
 
 export type ImageModActivity = {
@@ -269,17 +275,28 @@ async function getReports(imageId: number): Promise<ImageReportRow[]> {
       'r.createdAt',
       'r.details',
       'r.userId as reportedById',
+      // Retool's report table showed all of these. 'One report' and 'thirty reports' are the whole
+      // triage signal, and who cleared it is how a moderator knows whether to re-open it.
+      'r.internalNotes',
+      'r.alsoReportedBy',
+      'r.previouslyReviewedCount',
+      'r.statusSetAt',
+      'r.statusSetBy as statusSetById',
     ])
     .where('ir.imageId', '=', imageId)
     .orderBy('r.createdAt', 'desc')
     .execute();
 
-  const byId = await usersByIds(rows.map((r) => r.reportedById));
+  const byId = await usersByIds([
+    ...rows.map((r) => r.reportedById),
+    ...rows.map((r) => r.statusSetById ?? 0),
+  ]);
   return rows.map((r) => ({
     ...r,
     reason: String(r.reason),
     status: String(r.status),
     reportedBy: byId.get(r.reportedById)?.username ?? null,
+    statusSetBy: r.statusSetById ? byId.get(r.statusSetById)?.username ?? null : null,
   }));
 }
 
