@@ -16,6 +16,8 @@ import { getDisplayName } from '~/utils/string-helpers';
 import React, { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
+import { PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
+import type { ShopFilterType } from '~/server/schema/creator-shop.schema';
 import type { GetShopInput } from '~/server/schema/cosmetic-shop.schema';
 import classes from './ShopFiltersDropdown.module.scss';
 
@@ -38,7 +40,7 @@ export function ShopFiltersDropdown({
   const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
 
-  const types = availableTypes ?? (Object.values(CosmeticType) as CosmeticType[]);
+  const types: ShopFilterType[] = availableTypes ?? (Object.values(CosmeticType) as CosmeticType[]);
 
   const [opened, setOpened] = useState(false);
   const filterLength =
@@ -83,14 +85,14 @@ export function ShopFiltersDropdown({
         <Chip.Group
           value={filters.cosmeticTypes ?? []}
           onChange={(cosmeticTypes) => {
-            setFilters((prev) => ({ ...prev, cosmeticTypes: cosmeticTypes as CosmeticType[] }));
+            setFilters((prev) => ({ ...prev, cosmeticTypes: cosmeticTypes as ShopFilterType[] }));
           }}
           multiple
         >
           <Group gap={8}>
             {types.map((type, index) => (
               <Chip key={index} value={type} {...chipProps}>
-                <span>{getDisplayName(type)}</span>
+                <span>{type === PACK_FILTER_VALUE ? 'Pack' : getDisplayName(type)}</span>
               </Chip>
             ))}
           </Group>
@@ -189,7 +191,7 @@ type Props = {
   setFilters: React.Dispatch<React.SetStateAction<Filters>>;
   filters: Filters;
   // Restrict the cosmetic-type chips (e.g. Creator Shop shows only sellable types).
-  availableTypes?: CosmeticType[];
+  availableTypes?: ShopFilterType[];
   // Hide the Owned / Not Owned modifiers (Creator Shop storefront).
   hideModifiers?: boolean;
   // Show the Wishlisted toggle (only /shop renders wishlist controls today).

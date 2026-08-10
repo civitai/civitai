@@ -103,6 +103,7 @@ function UserArticlesPage() {
             </Group>
             {viewingPublished ? (
               <ArticlesInfinite
+                disableStoreFilters
                 filters={{
                   ...query,
                   sort,

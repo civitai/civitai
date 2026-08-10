@@ -165,6 +165,15 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // Still `request: false` — the SDK's `useRequestConsent()` posts it with
+  // `sendMessage` and AWAITS nothing, so an unhandled one can never hang a block.
+  // But PageBlockHost does emit ONE uncorrelated host→block PUSH off this
+  // message: when the requested scopes are proven un-grantable (clamped/withheld
+  // at mint, so no consent round-trip can ever resolve them) it sends
+  // `CONSENT_UNAVAILABLE { reason, scopes }` so the block can stop telling the
+  // user to retry. It is a push, not a reply — there is no `requestId` to
+  // correlate — hence `reply` stays `''`. The behavioural pin is
+  // PageBlockHost.browser.test.tsx.
   REQUEST_CONSENT: {
     request: false,
     reply: '',

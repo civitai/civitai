@@ -53,11 +53,11 @@ export function useSubmitCreatorShopForm({
   const { uploadToCF, files, resetFiles } = useCFImageUpload();
 
   const [type, setTypeState] = useState<CreatorCosmeticType>(
-    item?.cosmetic.type && isCreatorCosmeticType(item.cosmetic.type)
-      ? item.cosmetic.type
+    item?.cosmetic?.type && isCreatorCosmeticType(item.cosmetic?.type)
+      ? item.cosmetic?.type
       : CosmeticType.Badge
   );
-  const existingEconomics = stickerEconomicsFromCosmeticData(item?.cosmetic.data);
+  const existingEconomics = stickerEconomicsFromCosmeticData(item?.cosmetic?.data);
   // Empty, never prefilled with a default. A prefilled field cannot express
   // "unset": seeded to the floor it was indistinguishable from a creator who
   // chose the floor, so an unrelated edit either wrote a price they never
@@ -66,7 +66,7 @@ export function useSubmitCreatorShopForm({
   const [uses, setUses] = useState<number | undefined>(existingEconomics.uses);
   const [pricePerUse, setPricePerUse] = useState<number | undefined>(existingEconomics.pricePerUse);
   const [slug, setSlug] = useState<string>(
-    ((item?.cosmetic.data as { slug?: string } | null)?.slug ?? '') as string
+    ((item?.cosmetic?.data as { slug?: string } | null)?.slug ?? '') as string
   );
   const [name, setName] = useState(item?.title ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
@@ -80,18 +80,29 @@ export function useSubmitCreatorShopForm({
   const [checks, setChecks] = useState<AutoCheck[]>([]);
   const [artReplaced, setArtReplaced] = useState(false);
   const [animated, setAnimated] = useState<boolean>(
-    !!(item?.cosmetic.data as { animated?: boolean } | null)?.animated
+    !!(item?.cosmetic?.data as { animated?: boolean } | null)?.animated
   );
   const [rightsAffirmed, setRightsAffirmed] = useState(false);
-  const [sellableByOthers, setSellableByOthers] = useState(false);
-  const [sellerShare, setSellerShare] = useState(0);
+  const itemResale = (item?.meta ?? null) as {
+    sellableByOthers?: boolean;
+    sellerShare?: number;
+  } | null;
+  const itemSellableByOthers = !!itemResale?.sellableByOthers;
+  const itemSellerShare = itemResale?.sellerShare ?? 0;
+  const [sellableByOthers, setSellableByOthers] = useState(itemSellableByOthers);
+  const [sellerShare, setSellerShare] = useState(itemSellerShare);
+  const resaleChanged =
+    sellableByOthers !== itemSellableByOthers ||
+    // A share edit under a switched-off toggle is not a change: the server
+    // stores 0 either way, so treating it as one would offer a pointless save.
+    (sellableByOthers && sellerShare !== itemSellerShare);
   const itemAcceptsBlueBuzz = !!(item?.meta as { acceptsBlueBuzz?: boolean } | null)
     ?.acceptsBlueBuzz;
   const [acceptsBlueBuzz, setAcceptsBlueBuzz] = useState(itemAcceptsBlueBuzz);
   const acceptsBlueBuzzChanged = acceptsBlueBuzz !== itemAcceptsBlueBuzz;
   // Avatar-decoration fit adjustment (per side, -5..5); all-zero = none stored.
   const [offsets, setOffsetsState] = useState<CosmeticOffsets>(
-    (item?.cosmetic.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? {
+    (item?.cosmetic?.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? {
       top: 0,
       right: 0,
       bottom: 0,
@@ -131,16 +142,19 @@ export function useSubmitCreatorShopForm({
   // `null === userId` is false there, so a cosmetic without a creator — an
   // official one — is refused. Treating a missing creator as permission would
   // demand a price the save then rejects.
-  const canEditEconomics =
-    !isEdit || !!currentUser?.isModerator || item?.cosmetic.createdById === currentUser?.id;
-  const economicsEditable = isSticker && canEditEconomics;
+  //
+  // It gates the resale terms as well, which the server refuses from a
+  // cross-lister on the same rule.
+  const canEditOwnerFields =
+    !isEdit || !!currentUser?.isModerator || item?.cosmetic?.createdById === currentUser?.id;
+  const economicsEditable = isSticker && canEditOwnerFields;
   // Permission and obligation are different questions, and the server only ever
   // answered the first: a moderator MAY change another creator's economics, but
   // nothing says an unrelated edit should force them to invent values for a
   // sticker that isn't theirs — which on a cross-listing would rewrite the
   // original creator's top-up price for every buyer.
   const economicsRequired =
-    economicsEditable && (!isEdit || item?.cosmetic.createdById === currentUser?.id);
+    economicsEditable && (!isEdit || item?.cosmetic?.createdById === currentUser?.id);
   // Consumables must clear a per-use floor as well as the listing floor.
   const usesFloor = isSticker && uses ? uses * STICKER_MIN_BUZZ_PER_USE : 0;
   // An unset economic field is an error the creator can see, not a field that
@@ -183,7 +197,7 @@ export function useSubmitCreatorShopForm({
   const [debouncedSlug] = useDebouncedValue(normalizedSlug, 400);
   const slugCheckEnabled = isSticker && !slugLocked && isValidStickerSlug(debouncedSlug);
   const { data: slugCheck, isFetching: slugChecking } = trpc.creatorShop.checkStickerSlug.useQuery(
-    { slug: debouncedSlug, excludeCosmeticId: item?.cosmetic.id },
+    { slug: debouncedSlug, excludeCosmeticId: item?.cosmetic?.id },
     { enabled: slugCheckEnabled }
   );
   const slugTaken = slugCheckEnabled && slugCheck?.available === false;
@@ -278,7 +292,7 @@ export function useSubmitCreatorShopForm({
   // null clears a previously stored adjustment; undefined = nothing to store.
   const normalizedOffsets = isDecoration && hasOffsets ? offsets : null;
   const existingOffsets =
-    (item?.cosmetic.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? null;
+    (item?.cosmetic?.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? null;
   const offsetsChanged =
     isDecoration && JSON.stringify(normalizedOffsets) !== JSON.stringify(existingOffsets);
 
@@ -317,7 +331,7 @@ export function useSubmitCreatorShopForm({
         if (
           isSticker &&
           (artReplaced ||
-            normalizedSlug !== ((item.cosmetic.data as { slug?: string } | null)?.slug ?? ''))
+            normalizedSlug !== ((item.cosmetic?.data as { slug?: string } | null)?.slug ?? ''))
         )
           payload.slug = normalizedSlug;
         // The economics were editable in this form but never sent, so changing
@@ -330,6 +344,10 @@ export function useSubmitCreatorShopForm({
         if (isSticker && pricePerUse !== undefined && pricePerUse !== existingEconomics.pricePerUse)
           payload.pricePerUse = pricePerUse;
         if (acceptsBlueBuzzChanged) payload.acceptsBlueBuzz = acceptsBlueBuzz;
+        if (resaleChanged) {
+          payload.sellableByOthers = sellableByOthers;
+          payload.sellerShare = sellableByOthers ? sellerShare : 0;
+        }
         await updateItem.mutateAsync(payload);
       } else {
         await submitItem.mutateAsync({
@@ -359,7 +377,7 @@ export function useSubmitCreatorShopForm({
   };
 
   const previewCosmetic = {
-    id: item?.cosmetic.id ?? 0,
+    id: item?.cosmetic?.id ?? 0,
     name: name || 'Preview',
     type,
     source: CosmeticSource.Purchase,
@@ -411,6 +429,11 @@ export function useSubmitCreatorShopForm({
     setSellableByOthers,
     sellerShare,
     setSellerShare,
+    canEditOwnerFields,
+    resaleChanged,
+    // What existing resellers keep if the creator lowers the share — the whole
+    // point of showing them the field on a live item.
+    itemSellerShare,
     acceptsBlueBuzz,
     setAcceptsBlueBuzz,
     acceptsBlueBuzzChanged,

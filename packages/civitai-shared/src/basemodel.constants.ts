@@ -133,6 +133,7 @@ export const ECO = {
   Flux2Klein_4B_base: 57,
   Qwen: 10,
   Qwen2: 62,
+  Qwen3: 80,
   Chroma: 11,
   HyDit1: 12,
   AuraFlow: 13,
@@ -579,6 +580,13 @@ export const ecosystems: EcosystemRecord[] = [
     familyId: 10,
     sortOrder: 91,
   },
+  {
+    id: ECO.Qwen3,
+    key: 'Qwen3',
+    displayName: 'Qwen 3',
+    familyId: 10,
+    sortOrder: 92,
+  },
 
   // ZImage Family (familyId: 11)
   {
@@ -859,7 +867,8 @@ export const MODEL3D_ECOSYSTEM_KEYS = new Set<string>(
  *  - AceStepAudioInput   → Ace
  *
  * NOTE: lookalikes that are EXTERNAL and must NOT be listed — `Flux2` (≠ Klein),
- * `Qwen2` (≠ Qwen), and all `Wan*` (currently FAL). Keep this in sync when an
+ * `Qwen2` (≠ Qwen, FAL), `Qwen3` (≠ Qwen, Alibaba DashScope), and all `Wan*`
+ * (currently FAL). Keep this in sync when an
  * ecosystem's routing changes.
  */
 export const SELF_HOSTED_ECOSYSTEM_KEYS = [
@@ -980,6 +989,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Qwen 2 - checkpoint only
   { ecosystemId: ECO.Qwen2, supportType: 'generation', modelTypes: [ModelType.Checkpoint] },
 
+  // Qwen 3 - checkpoint only
+  { ecosystemId: ECO.Qwen3, supportType: 'generation', modelTypes: [ModelType.Checkpoint] },
+
   // HyV1 (Hunyuan Video) - LORA only
   { ecosystemId: ECO.HyV1, supportType: 'generation', modelTypes: loraOnly },
 
@@ -1071,8 +1083,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Vidu - checkpoint only
   { ecosystemId: ECO.Vidu, supportType: 'generation', modelTypes: checkpointOnly },
 
-  // MiniMax H3 (Hailuo) - checkpoint only
+  // MiniMax H3 (Hailuo) - checkpoint only for generation, LORA training (AI Toolkit only)
   { ecosystemId: ECO.MiniMaxH3, supportType: 'generation', modelTypes: checkpointOnly },
+  { ecosystemId: ECO.MiniMaxH3, supportType: 'training', modelTypes: loraOnly },
 
   // Kling - checkpoint only
   { ecosystemId: ECO.Kling, supportType: 'generation', modelTypes: checkpointOnly },
@@ -1284,6 +1297,14 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2744101 },
       modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Qwen3,
+    defaults: {
+      model: { id: 3207633 },
+      modelLocked: true,
+      engine: 'qwen',
     },
   },
   {
@@ -2031,6 +2052,7 @@ export const BM = {
   Anima: 77,
   Grok: 78,
   Qwen2: 79,
+  Qwen3: 99,
   WanImage27: 86,
   WanVideo27: 81,
   Upscaler: 82,
@@ -2908,6 +2930,14 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Next-generation Qwen image generation model',
     type: 'image',
     ecosystemId: ECO.Qwen2,
+    licenseId: 13,
+  },
+  {
+    id: BM.Qwen3,
+    name: 'Qwen 3',
+    description: "Alibaba's Qwen 3 image generation model",
+    type: 'image',
+    ecosystemId: ECO.Qwen3,
     licenseId: 13,
   },
 

@@ -24,7 +24,7 @@ export function ResoldSection({
   const filtered = useMemo(() => {
     const types = filters.cosmeticTypes;
     if (!types?.length) return items;
-    return items.filter((c) => types.includes(c.cosmetic.type));
+    return items.filter((c) => !!c.cosmetic && types.includes(c.cosmetic.type));
   }, [items, filters]);
 
   if (!items.length) return null;

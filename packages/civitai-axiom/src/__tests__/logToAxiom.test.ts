@@ -144,3 +144,146 @@ describe('logToAxiom structured-stderr sink (always-on for Loki)', () => {
     );
   });
 });
+
+// The injected-sink seam. `emitLog` is a plain function parameter, so these use a real
+// one — there is no module to mock, which is the point of injecting it.
+describe('logToAxiom injected sink (deps.emitLog)', () => {
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    h.ingestEvents.mockReset().mockResolvedValue(undefined);
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    errorSpy.mockRestore();
+  });
+
+  it('receives the SAME string that was written to stderr — identity, not an equal copy', async () => {
+    const bodies: string[] = [];
+    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED, {
+      emitLog: (body) => {
+        bodies.push(body);
+      },
+    });
+
+    await logToAxiom(ERR);
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(bodies).toHaveLength(1);
+    // `toBe` on strings is value identity — a sink that re-serialized the payload would
+    // produce an equal-looking but different string (e.g. dropping `_axiom`) and fail here.
+    expect(bodies[0]).toBe(errorSpy.mock.calls[0][0]);
+    expect(JSON.parse(bodies[0])._axiom).toBe('civitai-errors');
+  });
+
+  it('receives the payload and datastream alongside the line', async () => {
+    const calls: Array<[string, Record<string, unknown>, string | undefined]> = [];
+    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED, {
+      emitLog: (body, data, datastream) => {
+        calls.push([body, data, datastream]);
+      },
+    });
+
+    await logToAxiom(ERR);
+
+    expect(calls).toHaveLength(1);
+    const [, data, datastream] = calls[0];
+    expect(datastream).toBe('civitai-errors');
+    // `pod` is added by the logger, so the sink sees the same object Axiom ingests.
+    expect(data).toMatchObject({ message: ERR.message, code: ERR.code, pod: 'pod-test' });
+  });
+
+  it('CATCH LADDER: an unserializable payload still yields ONE line, shared by both sinks', async () => {
+    // The three-branch stringify ladder was refactored from three `console.error` calls
+    // to "assign once, write once". This pins that the fallback branch still produces
+    // exactly one stderr write AND that the sink gets that same fallback string.
+    const bodies: string[] = [];
+    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED, {
+      emitLog: (body) => {
+        bodies.push(body);
+      },
+    });
+
+    const circular: Record<string, unknown> = { name: 'payment.webhook' };
+    circular.self = circular;
+
+    await expect(logToAxiom(circular)).resolves.toBeUndefined();
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toBe(errorSpy.mock.calls[0][0]);
+    const parsed = JSON.parse(bodies[0]);
+    expect(parsed.name).toBe('payment.webhook');
+    expect(typeof parsed._stringifyError).toBe('string');
+  });
+
+  it('CONTAINMENT: a throwing sink does not break the caller, the stderr line, or the Axiom write', async () => {
+    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED, {
+      emitLog: () => {
+        throw new Error('sink exploded');
+      },
+    });
+
+    // The caller must be untouched — logToAxiom is awaited on hot paths.
+    await expect(logToAxiom(ERR)).resolves.toBeUndefined();
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(errorSpy.mock.calls[0][0] as string)).toMatchObject({
+      message: ERR.message,
+    });
+    expect(h.ingestEvents).toHaveBeenCalledTimes(1);
+  });
+
+  it('LATE REGISTRATION: a sink attached to the deps object AFTER the logger is built still fires', async () => {
+    // The app registers its sink from a server-only entry point at boot, which happens
+    // after this factory has already run. That works only because `deps.emitLog` is read
+    // per call rather than captured at construction — this pins exactly that.
+    const deps: { emitLog?: (body: string) => void } = {};
+    const bodies: string[] = [];
+    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED, deps);
+
+    // Before registration: nothing to call, and the logger still works.
+    await logToAxiom(ERR);
+    expect(bodies).toHaveLength(0);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+
+    // Register late, exactly as the app does.
+    deps.emitLog = (body: string) => {
+      bodies.push(body);
+    };
+
+    await logToAxiom(ERR);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toBe(errorSpy.mock.calls[1][0]);
+  });
+
+  it('is OPTIONAL: with no deps the logger behaves exactly as before', async () => {
+    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+
+    await expect(logToAxiom(ERR)).resolves.toBeUndefined();
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(h.ingestEvents).toHaveBeenCalledTimes(1);
+  });
+
+  it('is NOT called outside prod, where no structured line is written either', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    let called = 0;
+    const { logToAxiom } = createAxiomLogger(
+      { ...PROD_CONFIGURED, isProd: false },
+      {
+        emitLog: () => {
+          called += 1;
+        },
+      }
+    );
+
+    await logToAxiom(ERR);
+
+    expect(called).toBe(0);
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    logSpy.mockRestore();
+  });
+});

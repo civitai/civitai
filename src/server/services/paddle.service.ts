@@ -77,7 +77,7 @@ export const createCustomer = async ({ id, email }: { id: number; email: string 
 
     userUpdateCounter?.inc({ location: 'paddle.service:createCustomer' });
 
-    await refreshSession(id);
+    await refreshSession(id, { caller: 'subscription' });
 
     return customer.id;
   } else {
@@ -255,7 +255,9 @@ export const processCompleteBuzzTransaction = async (
   // never throw — the buzz credit has already happened and the next
   // webhook retry will re-attempt the write (idempotent on
   // payment_transaction_id + app_block_id).
-  const attribution = extractAttribution(meta as Record<string, unknown> as Record<string, string | number | null | undefined>);
+  const attribution = extractAttribution(
+    meta as Record<string, unknown> as Record<string, string | number | null | undefined>
+  );
   if (attribution) {
     try {
       // Paddle doesn't surface processor fees on the line item shape

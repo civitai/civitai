@@ -162,13 +162,10 @@ export function Home() {
 
                       <ImagesInfinite
                         showAds
+                        disableStoreFilters
                         filters={{
-                          // Required to override localStorage filters
                           period: MetricTimeframe.Week,
                           sort: ImageSort.MostReactions,
-                          types: undefined,
-                          hidden: undefined,
-                          followed: false,
                           withMeta: true,
                         }}
                       />

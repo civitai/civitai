@@ -28,7 +28,7 @@ export const buildData = (
 };
 
 export const existingArtUrl = (item?: CreatorShopManageItem) =>
-  (item?.cosmetic.data as { url?: string } | null)?.url ?? null;
+  (item?.cosmetic?.data as { url?: string } | null)?.url ?? null;
 
 export const editNotice = (status?: CosmeticShopItemStatus) => {
   if (status === CosmeticShopItemStatus.Published)

@@ -45,6 +45,7 @@ import { addTagVotes } from '~/server/services/tag.service';
 import {
   isPrismaUniqueViolation,
   throwAuthorizationError,
+  throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
@@ -69,21 +70,66 @@ export const getReportById = <TSelect extends Prisma.ReportSelect>({
   return dbRead.report.findUnique({ where: { id }, select });
 };
 
+/**
+ * The `details.placementId` predicate, for reasons that carry one.
+ *
+ * Returned as a spreadable fragment rather than branching inside the query, so a
+ * reason without a placement produces no predicate at all and the generic dedupe
+ * behaves exactly as it did.
+ */
+const reportedPlacementFilter = ({
+  reason,
+  details,
+}: {
+  reason: ReportReason;
+  details?: MixedObject;
+}) => {
+  // No predicate applies to any other reason. This early-out is the honest kind.
+  if (reason !== ReportReason.StickerPlacement) return {};
+
+  const placementId = (details as { placementId?: number } | undefined)?.placementId;
+
+  // Refuses rather than degrading. Returning `{}` here would silently fold every
+  // sticker report on an image back into the first one — the exact defect this
+  // predicate exists to fix, wearing the fix's clothes. The number is guaranteed
+  // by `z.coerce.number()` in the report schema, which lives in another file and
+  // is connected to this one by nothing: loosen it, add a second reason carrying
+  // a placementId, or reach this from outside the router, and a silent fold is
+  // what a moderator acts on. A 500 is the better failure.
+  if (typeof placementId !== 'number' || !Number.isFinite(placementId))
+    throw throwBadRequestError('report: a sticker placement report must name a placement');
+
+  return { details: { path: ['placementId'], equals: placementId } };
+};
+
 const validateReportCreation = async ({
   userId,
   reportType,
   entityReportId,
   reason,
+  details,
 }: {
   userId: number;
   reportType: ReportEntity;
   entityReportId: number;
   reason: ReportReason;
+  details?: MixedObject;
 }): Promise<Report | null> => {
   // Look if there's already a report for this type with the same reason
   const entityIdField = reportType === ReportEntity.User ? 'userId' : `${reportType}Id`;
   const existingReport = await dbWrite.report.findFirst({
-    where: { reason, [reportType]: { [entityIdField]: entityReportId } },
+    where: {
+      reason,
+      [reportType]: { [entityIdField]: entityReportId },
+      // A sticker report names one placement, and an image can carry several.
+      // Deduping on (reason, image) alone folds a report about placement 2 into
+      // an existing one about placement 1 and drops the new details, so a
+      // moderator acting on it removes the wrong person's sticker and keeps
+      // their Buzz. Narrowed to the placement so the same one still dedupes and
+      // a different one does not. Every other reason is unaffected — the
+      // predicate is only added when there is a placement to add it for.
+      ...reportedPlacementFilter({ reason, details }),
+    },
     orderBy: { id: 'desc' },
   });
 
@@ -161,6 +207,43 @@ const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
 };
 
 type CreateReportProps = CreateReportInput & { userId: number; isModerator?: boolean };
+/**
+ * A sticker report names the placement it is about, and the placement has to be
+ * on the thing being reported.
+ *
+ * Without this the id is whatever the client sent: a moderator opening the
+ * report would act on a placement from some other image, which removes an
+ * innocent person's sticker and takes their Buzz with it. The picker only ever
+ * offers placements on this image, so anything else is either a stale form or a
+ * hand-made request — and a listing that offers the right options is not a
+ * mutation that refuses the wrong ones.
+ */
+async function assertReportedPlacementIsOnEntity({
+  type,
+  entityId,
+  details,
+}: {
+  type: ReportEntity;
+  entityId: number;
+  details?: MixedObject;
+}) {
+  const placementId = (details as MixedObject | undefined)?.placementId;
+  if (placementId == null) return;
+
+  if (type !== ReportEntity.Image)
+    throw throwBadRequestError(
+      'report: a sticker placement can only be reported through its image'
+    );
+
+  const placement = await dbRead.placement.findFirst({
+    where: { id: Number(placementId), surface: 'sticker', targetType: 'image', targetId: entityId },
+    select: { id: true },
+  });
+
+  if (!placement)
+    throw throwBadRequestError('report: that sticker is not on the image being reported');
+}
+
 export const createReport = async ({
   userId,
   id,
@@ -175,6 +258,8 @@ export const createReport = async ({
   // only mods can create csam reports
   if (data.reason === ReportReason.CSAM && !isModerator) throw throwAuthorizationError();
 
+  await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
+
   const validReport =
     data.reason !== ReportReason.NSFW && data.reason !== ReportReason.Automated
       ? await validateReportCreation({
@@ -182,6 +267,7 @@ export const createReport = async ({
           reportType: type,
           entityReportId: id,
           reason: data.reason,
+          details: data.details as MixedObject,
         })
       : null;
   if (validReport) return validReport;

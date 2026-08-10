@@ -419,7 +419,7 @@ export const completeOnboardingHandler = async ({
     // main app READS the cached SessionUser, it no longer recomputes it per request. Bust that cache so the
     // client's next session read reflects the advanced step — without this the stale cached `onboarding` makes a
     // NEW user repeat the same step forever ("can't get through account creation"). Mirrors updateUserHandler.
-    if (changed) await refreshSession(id);
+    if (changed) await refreshSession(id, { caller: 'profile' });
 
     const isComplete = onboarding === OnboardingComplete;
     if (isComplete && changed && onboardingCompletedCounter) onboardingCompletedCounter.inc();
@@ -572,7 +572,7 @@ export const updateUserHandler = async ({
 
     purgeCache({ tags: [`user-creator-${id}`] }).catch();
 
-    postUpdatePromises.push(refreshSession(id));
+    postUpdatePromises.push(refreshSession(id, { caller: 'profile' }));
 
     await Promise.all(postUpdatePromises);
 
@@ -1089,7 +1089,7 @@ export const toggleMuteHandler = async ({
     },
     updateSource: 'toggleMute',
   });
-  await invalidateSession(id);
+  await invalidateSession(id, 'moderation');
 
   await ctx.track.userActivity({
     type: user.muted ? 'Unmuted' : 'Muted',

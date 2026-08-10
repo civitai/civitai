@@ -14,6 +14,7 @@ type AddonTarget = {
   userId?: number;
   username?: string;
   browsingLevel?: number;
+  newCreators?: boolean;
 };
 
 type Viewer = { id?: number; username?: string | null; isModerator?: boolean };
@@ -57,7 +58,7 @@ function applyAddonExclusions(
   }
 }
 
-async function loadBlockedBrowsingContext(browsingLevel: number | undefined, viewer: Viewer) {
+async function loadBlockedBrowsingContext(input: AddonTarget, viewer: Viewer) {
   const [blocked, addons] = await Promise.all([
     getBlockedBrowsingTags(),
     getBrowsingSettingAddons(),
@@ -66,9 +67,11 @@ async function loadBlockedBrowsingContext(browsingLevel: number | undefined, vie
   // entry and silently disable every exclusion. Same guard for a Blocked-only
   // level collapsing to 0 after onlySelectableLevels.
   const level =
-    onlySelectableLevels(browsingLevel || publicBrowsingLevelsFlag) || publicBrowsingLevelsFlag;
+    onlySelectableLevels(input.browsingLevel || publicBrowsingLevelsFlag) ||
+    publicBrowsingLevelsFlag;
   const resolved = resolveBrowsingSettingsAddons(addons, level, {
     isModerator: viewer.isModerator,
+    scope: input.newCreators ? 'newCreators' : undefined,
   });
   return { blocked, resolved };
 }
@@ -87,7 +90,7 @@ export async function enforceBlockedBrowsingTags(
   input: AddonTarget & { tags?: number[] },
   viewer: Viewer
 ): Promise<{ emptyResult: boolean }> {
-  const { blocked, resolved } = await loadBlockedBrowsingContext(input.browsingLevel, viewer);
+  const { blocked, resolved } = await loadBlockedBrowsingContext(input, viewer);
 
   const strip = stripBlockedTagIds(
     input.tags,
@@ -110,7 +113,7 @@ export async function enforceBlockedBrowsingTagsForModels(
   viewer: Viewer,
   opts?: EnforcementOptions
 ): Promise<{ emptyResult: boolean }> {
-  const { blocked, resolved } = await loadBlockedBrowsingContext(input.browsingLevel, viewer);
+  const { blocked, resolved } = await loadBlockedBrowsingContext(input, viewer);
 
   const requestedTagName = input.tagname ?? input.tag;
   if (

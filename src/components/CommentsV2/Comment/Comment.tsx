@@ -19,10 +19,13 @@ import {
   IconEye,
   IconEyeOff,
   IconFlag,
+  IconId,
+  IconLink,
   IconPinned,
   IconPinnedOff,
   IconTrash,
 } from '@tabler/icons-react';
+import { useClipboard } from '@mantine/hooks';
 import clsx from 'clsx';
 import React, { useEffect, useState } from 'react';
 import { create } from 'zustand';
@@ -41,8 +44,10 @@ import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { type Comment } from '~/server/services/commentsv2.service';
+import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { constants } from '../../../server/common/constants';
 import { useMutateComment } from '../commentv2.utils';
@@ -99,7 +104,22 @@ export function CommentContent({
   const id = useStore((state) => state.id);
   const setId = useStore((state) => state.setId);
 
+  const currentUser = useCurrentUser();
+  const clipboard = useClipboard();
+
   const { toggleHide, togglePinned } = useMutateComment();
+
+  const handleCopyLink = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('highlight', String(comment.id));
+    clipboard.copy(url.toString());
+    showSuccessNotification({ message: 'Comment link copied to clipboard' });
+  };
+
+  const handleCopyId = () => {
+    clipboard.copy(String(comment.id));
+    showSuccessNotification({ message: 'Comment ID copied to clipboard' });
+  };
 
   const editing = id === comment.id;
   const [replying, setReplying] = useState(false);
@@ -259,6 +279,14 @@ export function CommentContent({
                     Report
                   </Menu.Item>
                 </LoginRedirect>
+              )}
+              <Menu.Item leftSection={<IconLink size={14} stroke={1.5} />} onClick={handleCopyLink}>
+                Copy link
+              </Menu.Item>
+              {currentUser?.isModerator && (
+                <Menu.Item leftSection={<IconId size={14} stroke={1.5} />} onClick={handleCopyId}>
+                  Copy comment ID
+                </Menu.Item>
               )}
             </Menu.Dropdown>
           </Menu>

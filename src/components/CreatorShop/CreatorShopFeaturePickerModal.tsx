@@ -23,6 +23,8 @@ import {
 } from '~/components/CreatorShop/creator-shop.util';
 import { useSeededState } from '~/components/CreatorShop/useSeededState';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
+import { PackCoverTiles } from '~/components/CreatorShop/Pack/PackCoverTiles';
+import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import { CREATOR_SHOP_MAX_FEATURED } from '~/server/schema/creator-shop.schema';
 import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -30,6 +32,9 @@ import { getDisplayName } from '~/utils/string-helpers';
 type SampleCosmetic = ComponentProps<typeof CosmeticSample>['cosmetic'];
 
 const ART_THUMB_HEIGHT = 90;
+
+const packTiles = (item: { meta: unknown }) =>
+  ((item.meta ?? {}) as CosmeticShopItemMeta).coverTiles ?? [];
 
 function FeaturePickerCard({
   item,
@@ -68,7 +73,11 @@ function FeaturePickerCard({
           overflow: 'hidden',
         }}
       >
-        <CosmeticSample cosmetic={item.cosmetic as unknown as SampleCosmetic} size="md" />
+        {item.cosmetic ? (
+          <CosmeticSample cosmetic={item.cosmetic as unknown as SampleCosmetic} size="md" />
+        ) : (
+          <PackCoverTiles tiles={packTiles(item)} size={96} fallbackIcon />
+        )}
         {isSelected && (
           <ThemeIcon pos="absolute" top={6} right={6} radius="xl" size="sm" color="yellow">
             <IconCheck size={12} stroke={3} />
@@ -80,7 +89,7 @@ function FeaturePickerCard({
           {item.title}
         </Text>
         <Text size="xs" c="dimmed" lineClamp={1}>
-          {getDisplayName(item.cosmetic.type)}
+          {item.cosmetic ? getDisplayName(item.cosmetic.type) : 'Pack'}
         </Text>
       </Stack>
     </Paper>

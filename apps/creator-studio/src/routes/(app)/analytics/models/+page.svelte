@@ -64,6 +64,13 @@
 
   const grouping = modelGroupingState(() => data.grouping);
 
+  // The name cell truncates, so its tooltip has to carry the whole label the row shows — including the
+  // version, which is the only thing distinguishing two rows of the same model in version grouping.
+  const rowLabel = (m: Row) =>
+    [m.modelName ?? (m.modelId != null ? `Model ${m.modelId}` : `Version ${m.modelVersionId}`)]
+      .concat(m.versionName ? [m.versionName] : [])
+      .join(' · ');
+
   // Rolled up in the browser rather than by a second query: the payload already carries every version, and
   // the currency filter has to apply to the same numbers either way. Versions whose model was deleted have
   // no modelId to group by, so they stay individual rows.
@@ -330,7 +337,7 @@
                 <a
                   href="/analytics/models/{m.modelId}"
                   class="group flex items-center gap-1 font-medium text-blue-4 hover:text-blue-3"
-                  title={m.modelName ?? ''}
+                  title={rowLabel(m)}
                 >
                   <span
                     class="min-w-0 truncate underline decoration-blue-4/40 underline-offset-2 group-hover:decoration-blue-3"
@@ -344,7 +351,7 @@
                   <IconChevronRight size={14} class="shrink-0" />
                 </a>
               {:else}
-                <div class="truncate text-dark-2" title={m.versionName ?? ''}>
+                <div class="truncate text-dark-2" title={rowLabel(m)}>
                   Version {m.modelVersionId}{#if m.versionName}<span class="text-dark-3">
                       · {m.versionName}</span
                     >{/if}

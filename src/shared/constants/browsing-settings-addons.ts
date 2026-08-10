@@ -1,9 +1,28 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 
+/**
+ * Surfaces an addon entry can be limited to. An entry with no `scope` applies
+ * everywhere, which is what every entry did before scopes existed.
+ *
+ * Kept as a runtime list, not just a type: the live entries are hand-edited JSON
+ * in redis and parsed without a schema, so the type checks nothing at that
+ * boundary.
+ */
+export const BROWSING_ADDON_SCOPES = ['newCreators'] as const;
+export type BrowsingAddonScope = (typeof BROWSING_ADDON_SCOPES)[number];
+
 export type BrowsingSettingsAddon = {
   type: 'all' | 'some' | 'none';
   nsfwLevels: NsfwLevel[];
+  /**
+   * Limit this entry to one surface. Omit for a global rule. Use this for
+   * anything that should be hidden from discovery but stay visible where a user
+   * asked for it by name — a global `excludedTagIds` also empties the tag's own
+   * collection pages and home blocks, which fetch a fixed page and drop filtered
+   * items without backfilling.
+   */
+  scope?: BrowsingAddonScope;
   disablePoi?: boolean;
   disableMinor?: boolean;
   excludedTagIds?: number[];
@@ -41,12 +60,23 @@ function emptyResolvedAddons(): ResolvedBrowsingSettingsAddons {
 export function resolveBrowsingSettingsAddons(
   data: BrowsingSettingsAddon[],
   browsingLevel: number,
-  opts?: { isModerator?: boolean }
+  opts?: { isModerator?: boolean; scope?: BrowsingAddonScope }
 ): ResolvedBrowsingSettingsAddons {
   if (opts?.isModerator) return emptyResolvedAddons();
 
   return data.reduce((acc, elem) => {
     try {
+      if (elem.scope) {
+        // A misspelled scope matches no surface, so the entry silently stops
+        // applying anywhere. Say so — nothing validates the redis payload, and
+        // moderators resolve to no addons at all, so nobody can spot it by eye.
+        if (!BROWSING_ADDON_SCOPES.includes(elem.scope)) {
+          console.error('Unrecognized browsing settings addon scope:', elem.scope);
+          return acc;
+        }
+        if (elem.scope !== opts?.scope) return acc;
+      }
+
       const intersection = Flags.intersection(
         browsingLevel,
         Flags.arrayToInstance(elem.nsfwLevels)

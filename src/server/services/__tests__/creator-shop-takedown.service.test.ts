@@ -7,6 +7,8 @@ const { mocks } = vi.hoisted(() => ({
     shopItemFindUnique: vi.fn(),
     shopItemUpdate: vi.fn(),
     sectionItemDeleteMany: vi.fn(),
+    resaleFindMany: vi.fn(),
+    resaleDeleteMany: vi.fn(),
     purchaseFindMany: vi.fn(),
     purchaseUpdate: vi.fn(),
     userCosmeticFindMany: vi.fn(),
@@ -15,20 +17,32 @@ const { mocks } = vi.hoisted(() => ({
     refundMultiAccountTransaction: vi.fn(),
     refundTransaction: vi.fn(),
     revokeCosmeticsFromUsers: vi.fn(),
+    shopItemFindFirst: vi.fn(),
+    shopItemUpdateMany: vi.fn(),
+    packMemberFindMany: vi.fn(),
     createNotification: vi.fn(),
   },
 }));
 
 vi.mock('~/server/db/client', () => ({
   dbRead: {
-    cosmeticShopItem: { findUnique: mocks.shopItemFindUnique },
+    // findFirst + cosmeticShopItemCosmetic are the pack delist cascade's reads.
+    // Takedown reaches them through delistPacksContaining.
+    cosmeticShopItem: { findUnique: mocks.shopItemFindUnique, findFirst: mocks.shopItemFindFirst },
+    cosmeticShopItemCosmetic: { findMany: mocks.packMemberFindMany },
     userCosmeticShopPurchases: { findMany: mocks.purchaseFindMany },
     userCosmetic: { findMany: mocks.userCosmeticFindMany },
+    userCosmeticShopItemResale: { findMany: mocks.resaleFindMany },
     user: { findUnique: mocks.userFindUnique },
   },
   dbWrite: {
-    cosmeticShopItem: { findUnique: mocks.shopItemFindUnique, update: mocks.shopItemUpdate },
+    cosmeticShopItem: {
+      findUnique: mocks.shopItemFindUnique,
+      update: mocks.shopItemUpdate,
+      updateMany: mocks.shopItemUpdateMany,
+    },
     cosmeticShopSectionItem: { deleteMany: mocks.sectionItemDeleteMany },
+    userCosmeticShopItemResale: { deleteMany: mocks.resaleDeleteMany },
     // Sales and ownership are read off the primary during a takedown — replica
     // lag would mean refunding fewer buyers than we strip the cosmetic from.
     userCosmeticShopPurchases: { findMany: mocks.purchaseFindMany, update: mocks.purchaseUpdate },
@@ -109,6 +123,11 @@ describe('takedownCosmeticShopItem', () => {
       { userId: 11 }, // the creator's own grant
     ]);
     mocks.userFindUnique.mockResolvedValue({ settings: {} });
+    mocks.resaleFindMany.mockResolvedValue([]);
+    // The delist cascade: no surviving listing, no packs bundling this cosmetic.
+    mocks.shopItemFindFirst.mockResolvedValue(null);
+    mocks.packMemberFindMany.mockResolvedValue([]);
+    mocks.shopItemUpdateMany.mockResolvedValue({ count: 0 });
     mocks.logToAxiom.mockResolvedValue(undefined);
     mocks.refundMultiAccountTransaction.mockResolvedValue(yellowRefund(1000));
     mocks.createBuzzTransaction.mockResolvedValue({ transactionId: 'tx' });
@@ -132,6 +151,9 @@ describe('takedownCosmeticShopItem', () => {
       moderatorId: 999,
     });
     expect(mocks.sectionItemDeleteMany).toHaveBeenCalledWith({ where: { shopItemId: 42 } });
+    // Resale listings survive their creator archiving an item; a takedown is the
+    // case where they must not, so the rows go with it.
+    expect(mocks.resaleDeleteMany).toHaveBeenCalledWith({ where: { shopItemId: 42 } });
 
     expect(mocks.refundMultiAccountTransaction).toHaveBeenCalledTimes(2);
     expect(mocks.refundMultiAccountTransaction).toHaveBeenCalledWith(

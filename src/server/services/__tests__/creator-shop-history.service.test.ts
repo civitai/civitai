@@ -17,9 +17,12 @@ const { mocks } = vi.hoisted(() => ({
 vi.mock('~/server/db/client', () => ({
   dbRead: {
     cosmeticShopItem: { findUnique: mocks.shopItemFindUnique, findFirst: vi.fn() },
+    // Reviewing anything other than an approval runs the D14 pack delist
+    // cascade, which reads the join table.
+    cosmeticShopItemCosmetic: { findMany: vi.fn().mockResolvedValue([]) },
   },
   dbWrite: {
-    cosmeticShopItem: { update: mocks.shopItemUpdate },
+    cosmeticShopItem: { update: mocks.shopItemUpdate, updateMany: vi.fn() },
     cosmetic: { update: vi.fn() },
     userCosmetic: { createMany: mocks.userCosmeticCreateMany },
   },

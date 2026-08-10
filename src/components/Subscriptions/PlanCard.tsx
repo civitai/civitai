@@ -19,7 +19,7 @@ import type { SubscriptionPlan, UserSubscription } from '~/server/services/subsc
 import { capitalize, getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
-import { getBuzzMembershipPrice } from '~/shared/utils/buzz-membership';
+import { getBuzzMembershipPrice, isMembershipActive } from '~/shared/utils/buzz-membership';
 import { numberWithCommas } from '~/utils/number-helpers';
 import Router from 'next/router';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -56,6 +56,14 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
   const meta = (product.metadata ?? {}) as SubscriptionProductMetadata;
   const subscriptionMeta = (subscription?.product.metadata ?? {}) as SubscriptionProductMetadata;
   const isBuzzPurchase = !!meta.buzzPurchase;
+  // Green and yellow memberships can be held at the same time; a Buzz-purchased one cannot
+  // live alongside either. So holding any membership blocks the BUZZ card's button and
+  // nothing else — cash cards keep their own upgrade/downgrade rules.
+  //
+  // Not `hasActiveSubscription`, which reads a status: a lapsed row keeps `status = 'active'`
+  // until something reconciles it, and trialing/other non-'active' states are still rejected
+  // by the purchase guard.
+  const buzzPurchaseBlocked = isBuzzPurchase && !!subscription && isMembershipActive(subscription);
   const subscriptionIsBuzzPurchase = !!subscriptionMeta.buzzPurchase;
   // Tier-matching would let a Buzz membership claim the CASH card of the same tier, showing
   // "Manage your Membership" on a plan the user hasn't bought and hiding the upgrade they're
@@ -272,7 +280,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                         </Button>
                       ) : // A disabled Mantine Button still navigates when rendered as an
                       // anchor, so drop the link entirely while a membership is active.
-                      hasActiveSubscription ? (
+                      buzzPurchaseBlocked ? (
                         <Button radius="xl" {...subscribeBtnProps.subscribe} disabled>
                           Membership already active
                         </Button>

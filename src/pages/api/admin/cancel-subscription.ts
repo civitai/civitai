@@ -79,7 +79,7 @@ export default WebhookEndpoint(async function (req: AxiomAPIRequest, res: NextAp
       });
 
       // Invalidate user session to reflect subscription change
-      await refreshSession(userId);
+      await refreshSession(userId, { caller: 'admin' });
 
       return res.status(200).json({
         message: 'Subscription canceled immediately',
@@ -107,7 +107,7 @@ export default WebhookEndpoint(async function (req: AxiomAPIRequest, res: NextAp
       });
 
       // Invalidate user session to reflect subscription change
-      await refreshSession(userId);
+      await refreshSession(userId, { caller: 'admin' });
 
       return res.status(200).json({
         message: 'Subscription will cancel at period end',

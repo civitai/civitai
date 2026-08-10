@@ -72,6 +72,9 @@ export default function Reports() {
       value: [
         ReportReason.AdminAttention,
         ReportReason.Claim,
+        // Sticker reports rode TOSViolation until they got their own reason, so
+        // omitting it here hid them from the default queue entirely.
+        ReportReason.StickerPlacement,
         ReportReason.Ownership,
         ReportReason.TOSViolation,
         ReportReason.Spam,
