@@ -162,7 +162,9 @@ for (const entry of WATCHLIST) {
   } else if (entry.rule === 'SINGLETON') {
     if (copies.length > 1) {
       result.violations.push(
-        `emitted ${copies.length} times, expected exactly 1. ${entry.why}\n    copies: ${copies.slice(0, 10).join(', ')}${copies.length > 10 ? `, +${copies.length - 10} more` : ''}`
+        `emitted ${copies.length} times, expected exactly 1. ${entry.why}\n    copies: ${copies
+          .slice(0, 10)
+          .join(', ')}${copies.length > 10 ? `, +${copies.length - 10} more` : ''}`
       );
     }
   } else if (entry.rule === 'SHARED_STATE') {
@@ -170,7 +172,13 @@ for (const entry of WATCHLIST) {
     result.pinned = copies.length - unpinned.length;
     if (unpinned.length > 0) {
       result.violations.push(
-        `${unpinned.length} of ${copies.length} emitted copies do NOT reference \`globalThis.${entry.globalKey}\`, so each of those holds PRIVATE module-scope state. ${entry.why}\n    unpinned copies: ${unpinned.slice(0, 10).join(', ')}${unpinned.length > 10 ? `, +${unpinned.length - 10} more` : ''}`
+        `${unpinned.length} of ${copies.length} emitted copies do NOT reference \`globalThis.${
+          entry.globalKey
+        }\`, so each of those holds PRIVATE module-scope state. ${
+          entry.why
+        }\n    unpinned copies: ${unpinned.slice(0, 10).join(', ')}${
+          unpinned.length > 10 ? `, +${unpinned.length - 10} more` : ''
+        }`
       );
     }
   } else {
@@ -186,12 +194,16 @@ if (AS_JSON) {
   console.log(JSON.stringify({ serverDir: SERVER_DIR, maps: mapFiles.length, results }, null, 2));
 } else {
   console.log('===== server-graph module identity =====');
-  console.log(`scanned ${chunkSources.size} emitted chunks (${mapFiles.length} source maps) under ${SERVER_DIR}`);
+  console.log(
+    `scanned ${chunkSources.size} emitted chunks (${mapFiles.length} source maps) under ${SERVER_DIR}`
+  );
   console.log('');
   for (const r of results) {
     const detail =
       r.rule === 'SHARED_STATE'
-        ? `${r.copies} emitted cop${r.copies === 1 ? 'y' : 'ies'}, ${r.pinned ?? 0} referencing globalThis.${r.globalKey}`
+        ? `${r.copies} emitted cop${r.copies === 1 ? 'y' : 'ies'}, ${
+            r.pinned ?? 0
+          } referencing globalThis.${r.globalKey}`
         : `${r.copies} emitted cop${r.copies === 1 ? 'y' : 'ies'}`;
     console.log(`  ${r.violations.length ? 'FAIL' : ' OK '}  ${r.rule.padEnd(12)} ${r.module}`);
     console.log(`        ${detail}`);

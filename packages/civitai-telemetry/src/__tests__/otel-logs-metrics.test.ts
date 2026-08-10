@@ -2,7 +2,11 @@ import client from 'prom-client';
 import { describe, expect, it } from 'vitest';
 
 import { instrumentationRegistry, PROM_PREFIX } from '../client';
-import { emitOtelLog, otelLogRecordsEmittedCounter, otelLogRecordsSkippedCounter } from '../otel-logs';
+import {
+  emitOtelLog,
+  otelLogRecordsEmittedCounter,
+  otelLogRecordsSkippedCounter,
+} from '../otel-logs';
 
 /**
  * WHERE the bridge's counters are registered, which is the whole reason they were absent

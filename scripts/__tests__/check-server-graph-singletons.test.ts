@@ -45,10 +45,7 @@ function chunk(name: string, sources: string[], code: string) {
   mkdirSync(serverDir, { recursive: true });
   const base = path.join(dir, 'server', name);
   writeFileSync(base, code);
-  writeFileSync(
-    `${base}.map`,
-    JSON.stringify({ version: 3, sources, names: [], mappings: '' })
-  );
+  writeFileSync(`${base}.map`, JSON.stringify({ version: 3, sources, names: [], mappings: '' }));
 }
 
 /** The healthy baseline every case starts from: a singleton otel-logs, emitted once. */
@@ -56,8 +53,7 @@ function healthyOtelLogs() {
   chunk('chunks/instrumentation.js', [`../../${OTEL_MODULE}`], 'module.exports=[1,()=>{}]');
 }
 
-const run = () =>
-  spawnSync(process.execPath, [GATE, '--next-dir', dir], { encoding: 'utf8' });
+const run = () => spawnSync(process.execPath, [GATE, '--next-dir', dir], { encoding: 'utf8' });
 
 const output = (r: ReturnType<typeof run>) => `${r.stdout}${r.stderr}`;
 
@@ -87,7 +83,9 @@ describe('check-server-graph-singletons', () => {
 
     const r = run();
     expect(r.status).toBe(1);
-    expect(output(r)).toContain(`1 of 2 emitted copies do NOT reference \`globalThis.${SINK_KEY}\``);
+    expect(output(r)).toContain(
+      `1 of 2 emitted copies do NOT reference \`globalThis.${SINK_KEY}\``
+    );
     // Names the offending chunk, so the failure is actionable rather than just red.
     expect(output(r)).toContain('chunks/ssr/b.js');
   });
