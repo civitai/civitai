@@ -625,16 +625,22 @@ export const getPermissionDetailsHandler = async ({
     userId: ctx.user.id,
     isModerator: ctx.user.isModerator,
   });
+  const permissionsByCollectionId = new Map(permissions.map((p) => [p.collectionId, p]));
 
-  return collections.map((c) => ({
-    ...c,
-    tags: c.tags.map((t) => ({
-      ...t.tag,
-      filterableOnly: t.filterableOnly,
-    })),
-    metadata: (c.metadata ?? {}) as CollectionMetadataSchema,
-    permissions: permissions.find((p) => p.collectionId === c.id),
-  }));
+  return collections.flatMap((c) => {
+    const permission = permissionsByCollectionId.get(c.id);
+    if (!permission?.read) return [];
+
+    return {
+      ...c,
+      tags: c.tags.map((t) => ({
+        ...t.tag,
+        filterableOnly: t.filterableOnly,
+      })),
+      metadata: (c.metadata ?? {}) as CollectionMetadataSchema,
+      permissions: permission,
+    };
+  });
 };
 
 export const removeCollectionItemHandler = async ({

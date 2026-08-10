@@ -13,6 +13,10 @@ const civitaiWorkspacePkgs = [
   'redis',
   'clickhouse',
   'axiom',
+  // `@civitai/flipt` (packages/civitai-flipt) backs src/server/flipt/client.ts, which the
+  // feature-flag and image suites pull in. Same story as the others: not symlinked into root
+  // node_modules, so without this alias those suites fail to collect.
+  'flipt',
   'telemetry',
   'brand',
   // `@civitai/notifications` (packages/civitai-notifications) is re-exported by

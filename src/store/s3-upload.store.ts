@@ -9,6 +9,7 @@ import type { UploadPartError } from '~/utils/upload-retry';
 import {
   getPartRetryDelay,
   isExpiredPartError,
+  isTerminalCompleteStatus,
   MAX_PART_ATTEMPTS,
   shouldRetryPartError,
 } from '~/utils/upload-retry';
@@ -358,8 +359,8 @@ export const useS3UploadStore = create<StoreProps>()(
                   }),
                 });
 
-                // 409/422 are terminal by the endpoint's contract; retrying only burns time.
-                if (!res.ok && res.status !== 409 && res.status !== 422 && remainingAttempts > 0)
+                // Terminal statuses must not be re-POSTed — see isTerminalCompleteStatus.
+                if (!res.ok && !isTerminalCompleteStatus(res.status) && remainingAttempts > 0)
                   throw new Error(`Failed to complete upload (${res.status})`);
 
                 return res;

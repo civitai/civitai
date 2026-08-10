@@ -16,7 +16,7 @@ import {
   emitOtelLog,
   registerOtelShutdown,
 } from '@civitai/telemetry/otel-logs';
-import { setStructuredLogSink } from '~/server/logging/client';
+import { setStructuredLogSink } from '~/server/logging/structured-log-sink';
 import { trace } from '@opentelemetry/api';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { registerCpuProfiler, registerEventLoopStallProfiler } from '~/server/cpu-profiler';
@@ -131,6 +131,15 @@ void import('~/server/warmup')
 // module is reachable from the client entry point — importing the bridge there bundles
 // prom-client for the browser and fails the build. This file only ever runs on the
 // server, so it is the correct place for the edge. See the note in that module.
+//
+// 🔴 This call reaches every log call site ONLY because the sink object it mutates lives
+// on `globalThis`. This file is compiled into ONE merged runtime module; the logger shim
+// is compiled into 14 of them. When the sink was a module-scope object in the shim, this
+// single call armed the one copy that happened to be merged alongside this file (which is
+// why `eventloop-longtask`, merged into this same runtime module, was the ONLY call site
+// that ever emitted) and left the other 13 permanently dark. See the header of
+// `~/server/logging/structured-log-sink`, and `scripts/check-server-graph-singletons.mjs`,
+// which fails the build if a copy of that module ever loses the globalThis pin.
 //
 // Unconditional on purpose: `emitOtelLog` is itself gated on OTEL_LOGS_ENABLED (default
 // off), so wiring it here keeps ONE gate rather than two, and its skip counter is then a

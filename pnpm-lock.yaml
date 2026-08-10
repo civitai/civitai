@@ -50,8 +50,8 @@ importers:
         specifier: workspace:*
         version: link:packages/civitai-buzz
       '@civitai/client':
-        specifier: 0.2.0-beta.86
-        version: 0.2.0-beta.86
+        specifier: 0.2.0-beta.87
+        version: 0.2.0-beta.87
       '@civitai/cybertipline-tools':
         specifier: ^0.1.0
         version: 0.1.0
@@ -61,6 +61,9 @@ importers:
       '@civitai/db-schema':
         specifier: workspace:*
         version: link:packages/civitai-db-schema
+      '@civitai/flipt':
+        specifier: workspace:*
+        version: link:packages/civitai-flipt
       '@civitai/next-axiom':
         specifier: ^0.17.0
         version: 0.17.0(next@16.3.0(patch_hash=d4cabfb715b050babab8b116679e9bd883334feb7bdf383883679c3cf22f94c6)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))
@@ -963,6 +966,9 @@ importers:
       '@civitai/db-schema':
         specifier: workspace:*
         version: link:../../packages/civitai-db-schema
+      '@civitai/flipt':
+        specifier: workspace:*
+        version: link:../../packages/civitai-flipt
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
@@ -1444,6 +1450,19 @@ importers:
       '@types/nodemailer':
         specifier: ^6.4.7
         version: 6.4.17
+
+  packages/civitai-flipt:
+    dependencies:
+      '@flipt-io/flipt-client-js':
+        specifier: ^0.2.0
+        version: 0.2.0
+      zod:
+        specifier: ^4.0.17
+        version: 4.4.3
+    devDependencies:
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.0.18)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(lightningcss@1.32.0)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)
 
   packages/civitai-notifications:
     dependencies:
@@ -2066,8 +2085,8 @@ packages:
     resolution: {integrity: sha512-dSXkI8hVoozzlPS9DymzoyncWz8eapH3wkSDzDVGWjjqamXn8Dbcq1hWu5xUZkZmqCaR76F7BS9BQNqvOJ++Sw==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
-  '@civitai/client@0.2.0-beta.86':
-    resolution: {integrity: sha512-1Fko63BlENrfRwy/LA4xDmzlWLKXV7Hv6lvW3swpnBCFEIpeqsAVz0Ve5jwjA/U1qsXugkTmBTpNiFPRg+mhnw==}
+  '@civitai/client@0.2.0-beta.87':
+    resolution: {integrity: sha512-mJJ+dFWe9LuiraxZl5AekgUnpI9QwAFxzkNH3Ri/S/tzjSgDLJN/arbcDkuZcsFvDtj5YrJ2taKRF4GXLaU9XA==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
   '@civitai/cybertipline-tools@0.1.0':
@@ -13816,7 +13835,7 @@ snapshots:
       rfc6902: 5.2.0
       tslib: 2.8.1
 
-  '@civitai/client@0.2.0-beta.86':
+  '@civitai/client@0.2.0-beta.87':
     dependencies:
       '@hey-api/client-fetch': 0.1.14
       rfc6902: 5.2.0

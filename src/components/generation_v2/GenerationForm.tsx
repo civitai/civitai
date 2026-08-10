@@ -2261,6 +2261,20 @@ export function GenerationForm() {
                 )}
               />
 
+              {/* Turbo LoRA toggle (MiniMax H3 comfy) */}
+              <Controller
+                graph={graph}
+                name="turbo"
+                render={({ value, onChange }) => (
+                  <Checkbox
+                    label="Turbo"
+                    description="Use the turbo LoRA — converges in fewer steps"
+                    checked={value}
+                    onChange={(e) => onChange(e.currentTarget.checked)}
+                  />
+                )}
+              />
+
               {/* Vidu Q3: Enable audio toggle */}
               <Controller
                 graph={graph}

@@ -8,10 +8,10 @@
  * - v2: Standard quality video generation
  * - v2-fast: Faster generation with lower cost
  * - v2-mini: Smaller/cheaper variant (480p/720p only)
- * - v2.5: Latest generation, up to 30s clips
+ * - v2.5: Latest generation, up to 30s clips (480p/720p only)
  *
  * Supports txt2vid and img2vid workflows.
- * Features: aspect ratio, duration, resolution (480p/720p/1080p),
+ * Features: aspect ratio, duration, resolution (480p/720p),
  * generateAudio toggle, seed, and images (for I2V).
  */
 
@@ -77,7 +77,8 @@ const seedanceResolutions = [
   { label: '720p', value: '720p' },
 ] as const;
 
-const seedanceResolutionsHd = [
+// v2 is the only model that supports 1080p
+const seedanceResolutionsV2 = [
   { label: '480p', value: '480p' },
   { label: '720p', value: '720p' },
   { label: '1080p', value: '1080p' },
@@ -115,9 +116,8 @@ export const seedanceGraph = new DataGraph<{ ecosystem: string; workflow: string
   .node(
     'resolution',
     (ctx) => {
-      const supports1080p =
-        ctx.model?.id === seedanceVersionIds.v2 || ctx.model?.id === seedanceVersionIds['v2.5'];
-      const options = supports1080p ? seedanceResolutionsHd : seedanceResolutions;
+      const supports1080p = ctx.model?.id === seedanceVersionIds.v2;
+      const options = supports1080p ? seedanceResolutionsV2 : seedanceResolutions;
       return enumNode({ options, defaultValue: '720p' });
     },
     ['model']
