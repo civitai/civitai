@@ -90,7 +90,7 @@ const KNOWN_REACHABLE: { file: string; reason: string }[] = [
   },
 ];
 
-const EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
+const EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.svelte'];
 
 function readAliasMap(): [string, string][] {
   // tsconfig is JSONC (comments + trailing commas). Use TypeScript's own parser rather than
@@ -126,7 +126,10 @@ type ExportTarget = string | Record<string, unknown> | undefined;
 function exportTargetToPath(target: ExportTarget): string | null {
   if (typeof target === 'string') return target;
   if (!target || typeof target !== 'object') return null;
-  for (const condition of ['default', 'import', 'require', 'node']) {
+  // `import` before `default`: this walks SOURCE. The conventional manifest is
+  // `{ import: './src/x.ts', default: './dist/x.cjs' }`, and preferring `default` would walk a
+  // bundled artifact whose imports are invisible — blindness, dressed as a resolution.
+  for (const condition of ['import', 'node', 'default', 'require']) {
     const value = target[condition];
     if (typeof value === 'string') return value;
   }
@@ -183,7 +186,13 @@ function resolveWorkspace(spec: string): string | null {
       best = target.replace('*', subpath.slice(prefix.length, subpath.length - suffix.length));
       bestPrefix = prefix.length;
     }
-    if (best) return resolveFile(path.join(pkg.dir, best));
+    // Fall THROUGH when a wildcard matched but its target doesn't exist. Returning here
+    // would make a wildcard key strictly worse than no map at all, since the layout
+    // fallback below would never get its turn.
+    if (best) {
+      const resolved = resolveFile(path.join(pkg.dir, best));
+      if (resolved) return resolved;
+    }
 
     // Six packages ship no `exports` map at all (buzz, redis, axiom, ...); use their layout.
     return resolveFile(path.join(pkg.dir, 'src', rest || 'index'));
@@ -193,6 +202,16 @@ function resolveWorkspace(spec: string): string | null {
 
 function resolveFile(candidate: string): string | null {
   if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+  // ESM specifiers name the EMITTED file, so TS/Svelte sources are imported as `./x.js`
+  // (and Svelte 5 rune modules as `./x.svelte.js`). Every real `@civitai/ui` subpath in
+  // apps/ is spelled that way; without this swap they all resolve to nothing and the
+  // package becomes a silent external leaf.
+  if (candidate.endsWith('.js')) {
+    const stem = candidate.slice(0, -'.js'.length);
+    for (const ext of EXTENSIONS) {
+      if (fs.existsSync(stem + ext)) return stem + ext;
+    }
+  }
   for (const ext of EXTENSIONS) {
     if (fs.existsSync(candidate + ext)) return candidate + ext;
   }
@@ -333,18 +352,34 @@ describe('workspace export resolution', () => {
     expect(exportTargetToPath({ import: './src/a.ts', require: './dist/a.cjs' })).toBe(
       './src/a.ts'
     );
-    expect(exportTargetToPath({ default: './src/b.ts', import: './src/c.ts' })).toBe('./src/b.ts');
+    // `import` wins over `default`: `default` conventionally points at a built artifact, and
+    // walking that instead of source is how a resolver goes blind while looking successful.
+    expect(exportTargetToPath({ default: './dist/b.cjs', import: './src/b.ts' })).toBe(
+      './src/b.ts'
+    );
     expect(exportTargetToPath('./src/d.ts')).toBe('./src/d.ts');
     expect(exportTargetToPath(undefined)).toBeNull();
     expect(exportTargetToPath({ types: './a.d.ts' })).toBeNull();
   });
 
-  it('resolves a wildcard subpath to the package layout it actually declares', () => {
-    // `@civitai/ui` maps `./components/*` at `./src/lib/components/*`. Exact-key lookup misses,
-    // and the source-layout fallback would guess `src/components/*` and resolve nothing.
-    const resolved = resolveWorkspace('@civitai/ui/utils');
-    expect(resolved, '@civitai/ui/utils should resolve via its exports map').not.toBeNull();
-    expect(resolved!.replace(/\\/g, '/')).toContain('packages/civitai-ui/src/lib/utils.ts');
+  it('resolves a wildcard-only subpath, spelled the way the repo actually spells it', () => {
+    // Must be a subpath with NO exact key, or this passes on the exact branch and never
+    // reaches the wildcard code — `./utils` has one, so it proved nothing.
+    // `@civitai/ui` maps `./hooks/*` at `./src/lib/hooks/*`, and every real call site writes
+    // the EMITTED name (`.svelte.js`) against a `.svelte.ts` source.
+    expect(
+      Object.keys(WORKSPACE_PACKAGES.find((p) => p.name === '@civitai/ui')!.exports),
+      'pick a subpath with no exact key or this test is vacuous'
+    ).not.toContain('./hooks/is-mobile.svelte.js');
+
+    const resolved = resolveWorkspace('@civitai/ui/hooks/is-mobile.svelte.js');
+    expect(
+      resolved,
+      'a wildcard subpath must resolve, not become a silent external leaf'
+    ).not.toBeNull();
+    expect(resolved!.replace(/\\/g, '/')).toContain(
+      'packages/civitai-ui/src/lib/hooks/is-mobile.svelte.ts'
+    );
   });
 });
 
