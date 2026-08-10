@@ -1,14 +1,18 @@
-import type { PageServerLoad } from './$types';
-import { lookupQuerySchema, parseQuery } from '$lib/server/query';
+import { fail } from '@sveltejs/kit';
+import { z } from 'zod';
+import type { Actions, PageServerLoad } from './$types';
+import { canAccess } from '$lib/server/access';
+import { setImageFlag } from '$lib/server/user-actions.service';
+import { lookupQuerySchema, parseForm, parseQuery } from '$lib/server/query';
 import { getImageLookup, resolveImageId } from '$lib/server/image-lookup.service';
 import { hasImageEvents } from '$lib/server/image-signals.service';
 
-// Read-only — but NOT because Retool's was. A screenshot of the live app shows `Toggle Minor ON` and
-// `Toggle Poi ON` beside the image data, so it could write; the export carries no mutation query and is
-// stale against that screen. Porting those two actions is an open parity item, not a settled decision.
-export const load: PageServerLoad = async ({ url }) => {
+// Retool's Image Lookup could write: a screenshot of the live app shows `Toggle Minor ON` and
+// `Toggle Poi ON` beside the image data. Its export carries no mutation query and is stale against that
+// screen, so the actions come from the endpoint Bulk Image Manager already uses.
+export const load: PageServerLoad = async ({ url, locals }) => {
   const { q } = parseQuery(url, lookupQuerySchema);
-  if (!q) return { q, result: null, deletedImageId: null, notFound: false };
+  if (!q) return { q, result: null, deletedImageId: null, notFound: false, canAct: false };
 
   const imageId = await resolveImageId(q);
   const result = imageId ? await getImageLookup(imageId) : null;
@@ -31,5 +35,38 @@ export const load: PageServerLoad = async ({ url }) => {
     }
   }
 
-  return { q, result, deletedImageId, notFound: !result && !deletedImageId };
+  return {
+    q,
+    result,
+    deletedImageId,
+    notFound: !result && !deletedImageId,
+    canAct: canAccess(locals.user, '/retool/image-lookup'),
+  };
+};
+
+export const actions: Actions = {
+  // Retool's Toggle Minor / Toggle Poi. Same endpoint Bulk Image Manager uses, so the flag write has
+  // one implementation and one audit trail; Retool could only ever turn them ON.
+  setFlag: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/retool/image-lookup'))
+      return fail(400, { error: 'Not permitted.' });
+    const input = parseForm(
+      z.object({
+        imageId: z.coerce.number().int().positive(),
+        flagValue: z.enum(['poi:true', 'poi:false', 'minor:true', 'minor:false']),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return fail(400, { error: input });
+
+    const [flag, value] = input.flagValue.split(':');
+    const result = await setImageFlag({
+      imageIds: [input.imageId],
+      flag: flag as 'poi' | 'minor',
+      value: value === 'true',
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return fail(400, { error: result.error });
+    return { success: true };
+  },
 };

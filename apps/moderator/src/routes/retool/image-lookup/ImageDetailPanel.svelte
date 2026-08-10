@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { enhance } from '$app/forms';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import { entityUrl, userUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
@@ -7,7 +9,13 @@
 
   type Image = NonNullable<PageData['result']>['image'];
 
-  let { image, civitaiUrl }: { image: Image; civitaiUrl: string } = $props();
+  let {
+    image,
+    civitaiUrl,
+    canAct = false,
+  }: { image: Image; civitaiUrl: string; canAct?: boolean } = $props();
+
+  let flagging = $state(false);
 
   const imageUrl = $derived(entityUrl(civitaiUrl, 'image', image.id));
   const postUrl = $derived(entityUrl(civitaiUrl, 'post', image.postId));
@@ -53,6 +61,45 @@
     {#if image.acceptableMinor}<Badge variant="secondary">acceptable minor</Badge>{/if}
     {#if image.poi}<Badge variant="secondary">POI</Badge>{/if}
   </div>
+
+  {#if canAct}
+    <!-- Retool had Toggle Minor / Toggle Poi here, ON only. Both directions, because a flag set in
+         error is otherwise uncorrectable from the screen that shows it. -->
+    <form
+      method="POST"
+      action="?/setFlag"
+      use:enhance={() => {
+        flagging = true;
+        return async ({ update }) => {
+          await update({ reset: true });
+          flagging = false;
+        };
+      }}
+      class="mt-3 flex flex-wrap gap-2"
+    >
+      <input type="hidden" name="imageId" value={image.id} />
+      <Button
+        type="submit"
+        name="flagValue"
+        value={image.minor ? 'minor:false' : 'minor:true'}
+        size="sm"
+        variant="outline"
+        disabled={flagging}
+      >
+        {image.minor ? 'Clear minor' : 'Set minor'}
+      </Button>
+      <Button
+        type="submit"
+        name="flagValue"
+        value={image.poi ? 'poi:false' : 'poi:true'}
+        size="sm"
+        variant="outline"
+        disabled={flagging}
+      >
+        {image.poi ? 'Clear POI' : 'Set POI'}
+      </Button>
+    </form>
+  {/if}
 
   <div class="mt-2 flex flex-wrap items-baseline gap-x-3 text-sm">
     <span class="text-dark-2">by</span>
