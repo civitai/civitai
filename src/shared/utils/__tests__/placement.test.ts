@@ -95,6 +95,23 @@ describe('splitPlacementPayment — the Buzz-conservation invariant', () => {
     expect(split.toPlacer).toBe(0);
   });
 
+  // The place button tells the placer their whole payment reaches the creator.
+  // Reintroducing a platform or seller cut on this surface makes that a false
+  // statement about money, and nothing else asserts the compiled defaults --
+  // the escrow suite mocks the config accessor.
+  it('pays the space owner the entire amount at the compiled sticker defaults', () => {
+    const amount = 1000;
+    const split = splitPlacementPayment({
+      amount,
+      outcome: 'approved',
+      declineFeeRate: PLACEMENT_SURFACES.sticker.defaultDeclineFeeRate,
+      sellerShare: PLACEMENT_SURFACES.sticker.defaultSellerShare,
+      platformShare: PLACEMENT_SURFACES.sticker.defaultPlatformShare,
+    });
+
+    expect(split).toEqual({ toOwner: amount, toSeller: 0, toPlatform: 0, toPlacer: 0 });
+  });
+
   it('returns everything on expiry and on owner removal of an auto-approved placement', () => {
     for (const outcome of ['expired', 'removedByOwner', 'removedByCosmeticTakedown'] as const) {
       const split = splitPlacementPayment({

@@ -1,3 +1,4 @@
+import { Text } from '@mantine/core';
 import { useEffect, useRef } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
@@ -275,6 +276,9 @@ export function DraftStickerLayer() {
             })
           }
         />
+        <Text size="xs" c="dimmed" ta="center" mt={4}>
+          All of it goes to the creator
+        </Text>
       </div>
     </div>
   );

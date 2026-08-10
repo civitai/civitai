@@ -97,7 +97,9 @@ export const PLACEMENT_SURFACES = {
     defaultMode: 'off',
     defaultDeclineFeeRate: 0.3,
     defaultSellerShare: 0,
-    defaultPlatformShare: 0.3,
+    // The whole payment reaches the space owner, and the place button says so.
+    // Changing this makes that copy false — change both or neither.
+    defaultPlatformShare: 0,
     expiryHours: 48,
   },
   remixGallery: {
