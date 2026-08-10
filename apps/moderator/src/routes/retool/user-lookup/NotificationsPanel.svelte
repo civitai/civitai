@@ -9,6 +9,18 @@
   import type { FormResult } from './form-result';
   import ListCard from './ListCard.svelte';
 
+  // `details` keys vary by notification type — the notifications service stores a raw payload and the
+  // monolith renders it. These are the ones that carry prose; anything else is ids and is not worth
+  // showing. Falls back to nothing rather than dumping JSON at a moderator.
+  const BODY_KEYS = ['message', 'details', 'content', 'reason', 'body'];
+  const notificationBody = (details: Record<string, unknown>) => {
+    for (const key of BODY_KEYS) {
+      const value = details?.[key];
+      if (typeof value === 'string' && value.trim()) return value;
+    }
+    return null;
+  };
+
   let {
     account,
     userId,
@@ -89,11 +101,19 @@
       {#snippet children(limit)}
         <ul class="space-y-1 text-sm">
           {#each notifications.items.slice(0, limit) as n (n.id)}
-            <li class="flex flex-wrap items-baseline gap-x-2">
-              <span class="text-dark-0">{n.type}</span>
-              <Badge variant="secondary">{n.category}</Badge>
-              {#if !n.read}<span class="text-xs text-dark-2">unread</span>{/if}
-              <span class="text-xs text-dark-2">{dateTime(n.createdAt)}</span>
+            <li class="min-w-0">
+              <div class="flex flex-wrap items-baseline gap-x-2">
+                <span class="text-dark-0">{n.type}</span>
+                <Badge variant="secondary">{n.category}</Badge>
+                {#if !n.read}<span class="text-xs text-dark-2">unread</span>{/if}
+                <span class="text-xs text-dark-2">{dateTime(n.createdAt)}</span>
+              </div>
+              <!-- The body is the whole point of the panel; type and date cannot settle whether the
+                   user was told. `details` is the raw payload — the monolith enriches it downstream,
+                   so keys vary by type and the useful ones are shown as-is. -->
+              {#if notificationBody(n.details)}
+                <p class="wrap-break-word text-xs text-dark-2">{notificationBody(n.details)}</p>
+              {/if}
             </li>
           {/each}
         </ul>

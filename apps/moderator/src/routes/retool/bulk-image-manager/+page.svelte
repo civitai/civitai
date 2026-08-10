@@ -116,10 +116,12 @@
     class="mb-4 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200"
     role="status"
   >
+    <!-- The endpoint returns the images it FOUND, not the ones it changed, so an id that was already
+         blocked counts here. "Submitted" is the claim the number actually supports. -->
     {#if 'removed' in form && form.removed != null}
-      Removed {num(form.removed)} images.
+      Removed {num(form.removed)} images — count is images submitted, not necessarily changed.
     {:else if 'restored' in form && form.restored != null}
-      Restored {num(form.restored)} images.
+      Restored {num(form.restored)} images — count is images submitted, not necessarily changed.
     {:else if 'flagged' in form && form.flagged != null}
       Updated flags on {num(form.flagged)} images.
     {:else if 'notified' in form && form.notified != null}

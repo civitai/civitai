@@ -138,6 +138,11 @@
         {#if reportDetail(r.details, 'comment')}
           <p class="wrap-break-word text-dark-1">{reportDetail(r.details, 'comment')}</p>
         {/if}
+        <!-- The moderator-side note. Fetched here all along and rendered on /reports, Chat Audit and
+             Image Lookup but not here, so the same report read differently depending on the page. -->
+        {#if r.internalNotes}
+          <p class="wrap-break-word text-xs text-dark-2">note: {r.internalNotes}</p>
+        {/if}
         <div class="flex flex-wrap items-baseline gap-x-2 text-xs text-dark-2">
           {#if showReporter && r.reporterId}
             <span>

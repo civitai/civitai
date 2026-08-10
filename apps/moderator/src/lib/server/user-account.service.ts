@@ -48,43 +48,41 @@ export async function getReviews(userId: number, limit = 100): Promise<Capped<Us
   // not push through, so both a join and a keyed `IN (…)` lookup run past 60s for a user with 51 reviews.
   // (The main app hit the same wall and commented its copy out: resourceReview.service.ts.) Correlated
   // per returned row: 0.9s.
-  return (
-    dbRead
-      .selectFrom('ResourceReview as rr')
-      .innerJoin('Model as m', 'm.id', 'rr.modelId')
-      .innerJoin('User as u', 'u.id', 'm.userId')
-      .select((eb) =>
-        eb
-          .selectFrom('ImageResourceNew as ir')
-          .innerJoin('Image as i', (join) =>
-            join.onRef('i.id', '=', 'ir.imageId').onRef('i.userId', '=', 'rr.userId')
-          )
-          .select((agg) => agg.fn.count('i.id').distinct().as('count'))
-          .whereRef('ir.modelVersionId', '=', 'rr.modelVersionId')
-          .as('imageCount')
-      )
-      .select([
-        'rr.id',
-        'rr.createdAt',
-        'rr.rating',
-        'rr.modelId',
-        'rr.tosViolation',
-        'rr.exclude',
-        'rr.nsfw',
-        'rr.details',
-        'u.username as modelCreator',
-      ])
-      .where('rr.userId', '=', userId)
-      .orderBy('rr.createdAt', 'desc')
-      .limit(limit + 1)
-      .execute()
-      .then((rows) =>
-        capped(
-          rows.map((row) => ({ ...row, imageCount: Number(row.imageCount ?? 0) })),
-          limit
+  return dbRead
+    .selectFrom('ResourceReview as rr')
+    .innerJoin('Model as m', 'm.id', 'rr.modelId')
+    .innerJoin('User as u', 'u.id', 'm.userId')
+    .select((eb) =>
+      eb
+        .selectFrom('ImageResourceNew as ir')
+        .innerJoin('Image as i', (join) =>
+          join.onRef('i.id', '=', 'ir.imageId').onRef('i.userId', '=', 'rr.userId')
         )
+        .select((agg) => agg.fn.count('i.id').distinct().as('count'))
+        .whereRef('ir.modelVersionId', '=', 'rr.modelVersionId')
+        .as('imageCount')
+    )
+    .select([
+      'rr.id',
+      'rr.createdAt',
+      'rr.rating',
+      'rr.modelId',
+      'rr.tosViolation',
+      'rr.exclude',
+      'rr.nsfw',
+      'rr.details',
+      'u.username as modelCreator',
+    ])
+    .where('rr.userId', '=', userId)
+    .orderBy('rr.createdAt', 'desc')
+    .limit(limit + 1)
+    .execute()
+    .then((rows) =>
+      capped(
+        rows.map((row) => ({ ...row, imageCount: Number(row.imageCount ?? 0) })),
+        limit
       )
-  );
+    );
 }
 
 // Reviews RECEIVED on this user's models (Retool's ReceivedReviews, behind the tab that was never
@@ -495,6 +493,9 @@ export type UserNotification = {
   category: string;
   createdAt: Date;
   read: boolean;
+  /** The panel exists to answer "I was never warned". Type and date do not answer it — the body does.
+   *  Enriched by the monolith downstream, so what is here is the raw payload. */
+  details: Record<string, unknown>;
 };
 
 export async function getUserNotifications(
@@ -510,6 +511,7 @@ export async function getUserNotifications(
         category: r.category,
         createdAt: r.createdAt,
         read: r.read,
+        details: r.details ?? {},
       })),
       limit
     );

@@ -28,7 +28,7 @@ are about to act on an unticked box, check the code first; that is how this file
 - [ ] Image-only account nuke absent; counts are rows *found* not *changed*; remove+strike not ported
       (all recorded in `bulk-image-manager-audit.md`)
 
-## User Lookup v2 — 14 findings, 2 fixed
+## User Lookup v2 — 14 findings, 12 fixed (reconciled 2026-08-10)
 
 - [x] **Account history was logins only.** Retool filtered `AND NOT type = 14`; the port dropped it.
       31.6M Login rows against 62k Muted / 48.6k Banned, so a 50-row window is ~49 logins and a
@@ -36,30 +36,30 @@ are about to act on an unticked box, check the code first; that is how this file
 - [x] **The ban confirmation claimed images are removed. They are not.** `toggleBan` blocks media only
       when `removeMedia === true` or the reason is `SexualMinor`; the port never sends it. Copy
       corrected — a `Nudify` ban leaves every image up.
-- [ ] **Reports-they-filed drops most of them** and contradicts its own total tile: the port
+- [x] **Reports-they-filed drops most of them** and contradicts its own total tile: the port
       inner-joins the six content report tables, so reports filed against *accounts* (the commonest
       kind), collections, bounties, reviews and chats vanish — while `getReportsFiled` counts the
       unjoined total. "Total 12" beside 4 rows.
-- [ ] **`report-sources.ts` lists 6 entity types; Retool's `ReportsReceived` UNIONed 11.** Bounty,
+- [x] **`report-sources.ts` lists 6 entity types; Retool's `ReportsReceived` UNIONed 11.** Bounty,
       BountyEntry, Collection, ResourceReview and chat reports are invisible. A user repeatedly
       reported over a collection reads as a clean account. Affects counts and rows identically.
 - [ ] **`UserRestriction` is read nowhere.** A system auto-mute (prohibited-prompt volume) deliberately
       leaves `mutedAt` NULL, so it renders as a muted account with no reason and no activity. Unmuting
       from here also skips the Overturn path — the restriction stays `Pending`, the subscription is not
       reinstated, the user is never told.
-- [ ] `CsamReport` read nowhere — an account with a CSAM report filed against it looks clean
-- [ ] Moderation Activity omits `ReToolActions` — every pre-migration action, presented as complete
+- [x] `CsamReport` read nowhere — an account with a CSAM report filed against it looks clean
+- [x] Moderation Activity omits `ReToolActions`. **Cannot be joined**: that table records App/User/ActionType with NO subject id, so it is a run-level log, not per-account history. Fixed the false claim instead — the empty state now says pre-migration Retool actions are not recorded per-account rather than "no recorded moderator activity"
 - [ ] Model/comment breakdowns (`NumTos`, `NumPoi`, `NumNSFW`, `NumLocked`, `NumDeleted`,
       `NumTOSViolations`, `NumHidden`) collapsed to a single `COUNT(*)`
-- [ ] Reviews can be deleted without their text (`details`) ever being shown
-- [ ] Report `details` / `internalNotes` shipped to the browser and never rendered — the reporter's own
+- [x] Reviews can be deleted without their text (`details`) ever being shown
+- [x] Report `details` / `internalNotes` shipped to the browser and never rendered — the reporter's own
       words are the only part saying what happened
-- [ ] Notification `details` dropped — the panel captioned "context for 'I was never warned'" renders
+- [x] Notification `details` dropped — the panel captioned "context for 'I was never warned'" renders
       announcements with no message
-- [ ] `setRewardsEligibility` has no UI, and as wired it cannot succeed (`callMainApp` sends query-string
+- [x] `setRewardsEligibility` has no UI, and as wired it cannot succeed (`callMainApp` sends query-string
       params; the endpoint reads `req.body` and requires `modId`)
-- [ ] Report list has no status/reason filter and a hard 50-row cap where Retool had none
-- [ ] Timed-mute presets (6/12/24/48/72/168) still a free-text hours box
+- [x] Report list has no status/reason filter and a hard 50-row cap where Retool had none
+- [x] Timed-mute presets (6/12/24/48/72/168) still a free-text hours box
 
 ## User Reports — 9 findings, 8 fixed
 
@@ -118,16 +118,16 @@ are about to act on an unticked box, check the code first; that is how this file
 The extractor now emits Retool's structure — containers, their panes, and modals. Not yet actioned on
 any existing slice; recorded here so it is not re-derived. **User Lookup's real tab groups:**
 
-- [ ] `tabbedContainer8` — **"Submitted Reviews" / "Received Reviews"** (two tabs, plus filters
+- [x] `tabbedContainer8` — **"Submitted Reviews" / "Received Reviews"** (two tabs, plus filters
       `Excluded?`, `NSFW?`, `TOS Violation?`, `Review Rating`, `Search Review Content`)
-- [ ] `tabbedContainer9` — **"Bounties" / "Bounty Entries"** (filters `Type`, `Complete`,
+- [x] `tabbedContainer9` — **"Bounties" / "Bounty Entries"** (filters `Type`, `Complete`,
       `Name Contains`, `Description Contains`)
-- [ ] `tabbedContainer10` — **"Reports Received" / …**
-- [ ] `tabbedContainer12` — **"View Buzz" / "Buzz Transaction"**, and the second pane is gated on
+- [x] `tabbedContainer10` — **"Reports Received" / …**
+- [x] `tabbedContainer12` — **"View Buzz" / "Buzz Transaction"**, and the second pane is gated on
       `current_user.groups.some(i => i.name === "Senior Mod")`. **This gate exists in no query.** If
       buzz sending is reachable by every moderator here, it is a capability that was senior-only in
       Retool.
-- [ ] `tabbedContainer14` — 3 panes
+- [x] `tabbedContainer14` — 3 panes; resolved by re-extract, see its own section below
 
 Each is a candidate sub-page rather than a scrolling section. Only the top-level nav
 (`MainContentContainer`'s 21 view keys → `sections.ts`) was honoured; these nested groups were not.
@@ -155,7 +155,7 @@ against a live screenshot of `Buzz`, which matches the export exactly.
 | `container29` — **Deduct Types** reference table (Type / Lowers Lifetime Balance / Can Go Negative) | `col 7`, width 5 | ❌ **absent** |
 | Three balances **and three lifetimes** (Yellow/Blue/Green) | header | ✅ fixed 2026-08-09 — was 3 balances, 1 lifetime |
 
-- [ ] **Deduct Types is missing.** It is a static reference table telling the moderator which transaction
+- [x] **Deduct Types is missing.** It is a static reference table telling the moderator which transaction
       types lower the lifetime balance and which can go negative — decision support for the very form
       beside it. Three rows: Purchase, AuthorizedPurchase (can go negative), Chargeback (lowers lifetime,
       can go negative).
@@ -167,7 +167,7 @@ against a live screenshot of `Buzz`, which matches the export exactly.
       `col 0`/`col 6`, then `table53`/`table54` below). Ours is a single unfiltered "Buzz history" list.
       The filters are the dropped-entry-point shape again.
 
-- [ ] **`Bulk Image Manager` is a section of User Lookup's own sidebar** in the live app (visible in the
+- [x] **`Bulk Image Manager` is a section of User Lookup's own sidebar** in the live app (visible in the
       screenshot, between "Socials & Bio" and "Buzz"). `sections.ts` deliberately omitted it because
       nothing was ported behind it — that page now exists, so the entry can come back as a link.
 
@@ -194,22 +194,22 @@ Confirmed by screenshot, already logged above, now with evidence:
 
 New, not previously logged:
 
-- [ ] **"Talked to a mod" is a red button in the persistent header that opens a `Chats with Mods`
+- [x] **"Talked to a mod" is a red button in the persistent header that opens a `Chats with Mods`
       modal** listing chat ids. The ticket asks for it "clearly at the top".
       **Corrected 2026-08-09:** an earlier draft said we surface prior mod contact nowhere — wrong.
       `ChatContactPanel` shows a chats-count and last-contact warning from `getModContact`. The gap is
       the header placement and the chat-id list, not the signal.
-- [ ] **A persistent header across every section**: strike count, "Talked to a mod", subscription tier,
+- [x] **A persistent header across every section** (Force Logout stays in Admin — it is an action, and the header is not a form): strike count, "Talked to a mod", subscription tier,
       Force Logout, and username / user id / email fields. Ours puts these inside sections.
-- [ ] **An "Enable Edits" toggle guarding editable username/email fields.** The ticket wants this
+- [x] **An "Enable Edits" toggle guarding editable username/email fields.** The ticket wants this
       limited to some mods — it is the "sub-permissions per app" requirement, and it is an *edit*
       capability we have not ported at all.
-- [ ] **Report banners**: a pending/processing `UserReport` and any `CsamReport` should show "very
+- [x] **Report banners** (open UserReport is now a banner with a link to the queue; CSAM is a header badge): a pending/processing `UserReport` and any `CsamReport` should show "very
       clearly at the top", with a way to action/unaction from this page. Related to the
       `CsamReport`-read-nowhere finding above.
 - [ ] LoRA training metadata + a clickthrough to the orchestrator dashboard.
-- [ ] Multi-select comments to ToS/delete them.
-- [ ] Prompts *and blocked prompts* list; editable socials & bio; mod notes that wrap.
+- [x] Multi-select comments to ToS/delete them.
+- [x] Prompts *and blocked prompts* list; editable socials & bio; mod notes that wrap.
 
 ⚠️ **The ticket body contains a live Freshdesk API key in plaintext.** It is in ClickUp, not in this
 repo — do not copy it here. It should be rotated and replaced with an env var reference, and this

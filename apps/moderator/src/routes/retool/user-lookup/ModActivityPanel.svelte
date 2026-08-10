@@ -69,7 +69,13 @@
     {#if !rows}
       <p class="text-sm text-dark-2">Loading moderator activity…</p>
     {:else if rows.length === 0}
-      <p class="text-sm text-dark-2">No recorded moderator activity.</p>
+      <!-- NOT "no moderator activity": actions taken in Retool were logged to `ReToolActions`, which
+           records the moderator and the app but no subject id, so it cannot be queried per-account.
+           An account actioned only before the migration is silent here, not clean. -->
+      <p class="text-sm text-dark-2">
+        Nothing in ModActivity for this account. Actions taken in Retool before the migration are not
+        recorded per-account and would not appear here.
+      </p>
     {:else}
       {@const shown = filterRows(rows)}
       <ListFilterBar

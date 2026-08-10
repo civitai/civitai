@@ -78,6 +78,7 @@ export type Notification = {
   category: string;
   createdAt: string;
   read: boolean;
+  details: Record<string, unknown>;
 };
 
 export type ResourceGeneration = {

@@ -15,6 +15,11 @@ export const REPORT_SOURCES = [
   ['BountyEntry', 'BountyEntry', 'BountyEntryReport', 'bountyEntryId'],
   ['Collection', 'Collection', 'CollectionReport', 'collectionId'],
   ['ResourceReview', 'ResourceReview', 'ResourceReviewReport', 'resourceReviewId'],
+  // Newer than Retool's eleven, and reachable the same way — all three own by `userId`. Leaving them
+  // out reproduces exactly the count-vs-rows disagreement this list exists to prevent.
+  ['Comic', 'ComicProject', 'ComicProjectReport', 'comicProjectId'],
+  ['3D Model', 'Model3D', 'Model3DReport', 'model3dId'],
+  ['3D Review', 'Model3DReview', 'Model3DReviewReport', 'model3dReviewId'],
 ] as const;
 
 /** `Chat` owns by `ownerId`, not `userId`, so it cannot join through the loop above. Reported chats
