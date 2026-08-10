@@ -8,6 +8,7 @@ import {
   revokeCosmeticsFromUsers,
   validateStickerCosmetic,
 } from '~/server/services/cosmetic.service';
+import { removePlacementsByCosmetic } from '~/server/services/placement-moderation.service';
 import {
   appendItemHistory,
   buildCosmeticData,
@@ -2099,6 +2100,95 @@ export const takedownCosmeticShopItem = async ({
         })
       : { revoked: 0 };
 
+  // Revoking the holding does not touch stickers already placed on other
+  // people's images — those live in `Placement` with the cosmetic id inside a
+  // JSON payload, and the overlay resolves artwork by cosmetic id with no join
+  // to `UserCosmetic`, so a revoked sticker keeps rendering at full opacity on
+  // everything it was placed on. Taking it down there is the whole point.
+  //
+  // Drained rather than run once: the helper is bounded per batch,
+  // and one pass would report a clean takedown with the artwork still up.
+  // Capped so a runaway cannot hold the request; `hasMore` says to run again.
+  //
+  // Not scoped to `ownerIds`, though the revoke above is. A pack's claim keys
+  // exclude every holding obtained by another route, and the sharpest of those
+  // is the maker's own creator grant — scoping the sweep the same way leaves the
+  // abusive artwork up on everything its author placed it on. See the note on
+  // `removePlacementsByCosmetic`; the trade is deliberate and was tried the
+  // other way first.
+  //
+  // **Single items only, by decision.** Taking a pack down takes down the
+  // bundle, not the artwork in it (Justin, 2026-08-09) — its members stay on
+  // sale, which is why nothing delists them above. Sweeping here would remove
+  // every placement of every member site-wide while those members remain
+  // purchasable and immediately re-placeable, judging artwork nobody judged.
+  // Abusive artwork is taken down per member, and that path does sweep.
+  // Rows a batch could not settle, excluded once they have failed twice.
+  // `ORDER BY id` is stable, so a permanently failing row is re-selected first
+  // every time and would otherwise burn all ten iterations. Excluding on the
+  // FIRST failure instead would give a transient Buzz or Redis blip zero
+  // retries, and nothing re-runs a takedown afterwards — so each row gets one
+  // more go before the sweep stops spending batches on it.
+  const failureCount = new Map<number, number>();
+  const unsettled: number[] = [];
+  let placementsRemoved = {
+    settled: 0,
+    takenDown: 0,
+    failed: 0,
+    hasMore: false,
+    // Reported, not just logged. A moderator taking a pack down over abusive
+    // artwork will otherwise reasonably believe the artwork is gone from the
+    // images it was placed on, and it is still there and still rendering.
+    skippedForPack: false,
+  };
+  for (let batch = 0; batch < 10 && memberIds.length && !isPack; batch++) {
+    let result: Awaited<ReturnType<typeof removePlacementsByCosmetic>>;
+    try {
+      result = await removePlacementsByCosmetic({
+        cosmeticIds: memberIds,
+        skipIds: unsettled,
+        actorId: moderatorId,
+      });
+    } catch (error) {
+      await logTakedown('error', 'Placement takedown failed', {
+        shopItemId: id,
+        cosmeticIds: memberIds,
+        error: errorMessage(error),
+      });
+      break;
+    }
+
+    for (const placementId of result.failed) {
+      const failures = (failureCount.get(placementId) ?? 0) + 1;
+      failureCount.set(placementId, failures);
+      if (failures > 1) unsettled.push(placementId);
+    }
+    placementsRemoved = {
+      ...placementsRemoved,
+      settled: placementsRemoved.settled + result.settled,
+      takenDown: placementsRemoved.takenDown + result.takenDown,
+      // Distinct rows, not attempts — a row is selected again on its retry, so
+      // summing per-batch failures reports double what is actually stuck.
+      failed: failureCount.size,
+      hasMore: result.hasMore,
+    };
+    if (!result.hasMore) break;
+  }
+
+  if (isPack && memberIds.length) {
+    placementsRemoved.skippedForPack = true;
+    await logTakedown('info', 'Placement sweep skipped for a pack takedown', {
+      shopItemId: id,
+      cosmeticIds: memberIds,
+    });
+  }
+
+  if (placementsRemoved.hasMore || placementsRemoved.failed)
+    await logTakedown('error', 'Placement takedown left work behind', {
+      shopItemId: id,
+      ...placementsRemoved,
+    });
+
   if (creatorId) {
     await createNotification({
       type: 'creator-shop-item-taken-down',
@@ -2135,6 +2225,7 @@ export const takedownCosmeticShopItem = async ({
     unrecoveredResellerShare,
     unrecoveredPackPool,
     revokedFrom: revoked,
+    placementsRemoved,
     failures,
   });
 
@@ -2152,6 +2243,7 @@ export const takedownCosmeticShopItem = async ({
     unrecoveredResellerShare,
     unrecoveredPackPool,
     revokedFrom: revoked,
+    placementsRemoved,
     failures,
   };
 };

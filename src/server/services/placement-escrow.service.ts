@@ -187,7 +187,13 @@ type SettleAction =
   | 'declineByBlock'
   | 'expire'
   | 'removeByOwner'
-  | 'removeByModerator';
+  | 'removeByModerator'
+  /**
+   * The cosmetic itself was taken down as abusive. Refunds the placer in full:
+   * they are a holder of the revoked artwork, not its author, and the takedown
+   * makes them whole for it everywhere else.
+   */
+  | 'removeByCosmeticTakedown';
 
 const STATUS_FOR_ACTION: Record<SettleAction, 'approved' | 'declined' | 'expired' | 'removed'> = {
   approve: 'approved',
@@ -196,11 +202,13 @@ const STATUS_FOR_ACTION: Record<SettleAction, 'approved' | 'declined' | 'expired
   expire: 'expired',
   removeByOwner: 'removed',
   removeByModerator: 'removed',
+  removeByCosmeticTakedown: 'removed',
 };
 
 const REMOVED_BY_FOR_ACTION: Partial<Record<SettleAction, PlacementRemovedBy>> = {
   removeByOwner: 'owner',
   removeByModerator: 'moderator',
+  removeByCosmeticTakedown: 'cosmeticTakedown',
 };
 
 const isUniqueViolation = (error: unknown) =>
@@ -613,8 +621,12 @@ async function payoutLegsFor(
             { kind: 'feeToOwner', amount: fee },
             { kind: 'principalToPlacer', amount: principal },
           ];
+    // A cosmetic takedown refunds the same as an owner's removal — the placer
+    // holds revoked artwork rather than having authored it — and differs only in
+    // what the row records about who did it and why.
     case 'expired':
     case 'removedByOwner':
+    case 'removedByCosmeticTakedown':
       return [
         { kind: 'principalToPlacer', amount: principal },
         { kind: 'feeToPlacer', amount: fee },

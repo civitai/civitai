@@ -1,4 +1,6 @@
-import { useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { getQueryKey } from '@trpc/react-query';
+import { useCallback, useMemo } from 'react';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -67,6 +69,92 @@ export function useStickerPlacementCounts(imageIds: number[], enabled = true) {
   );
 
   return (data ?? {}) as Record<number, number>;
+}
+
+/**
+ * The removed row out of one cached list, and the image to decrement — which is
+ * `undefined` unless the row was **approved**.
+ *
+ * `getStickerPlacementCounts` is approved-only, so a pending row was never in
+ * it. Decrementing for one would leave the badge a sticker short of what is
+ * drawn, and the reaction bar adds the viewer's own pending rows to the count.
+ * Exported and pure so this rule is testable without a query client.
+ *
+ * A chunk with no hit yields `undefined` rather than its own array back.
+ * `setQueryData` writes any defined value it is handed and stamps a fresh
+ * `dataUpdatedAt` even for an identical reference — and the batch provider
+ * memoises on exactly that — so `undefined` is the only return that leaves an
+ * untouched chunk genuinely untouched.
+ */
+export function dropPlacementFromList(
+  placements: PlacedSticker[] | undefined,
+  placementId: number
+) {
+  const hit = placements?.find((placement) => placement.id === placementId);
+  if (!hit || !placements) return { placements: undefined, countedOn: undefined };
+
+  return {
+    placements: placements.filter((placement) => placement.id !== placementId),
+    countedOn: hit.isPending ? undefined : hit.imageId,
+  };
+}
+
+/** One off the count for that image, and only if there is one to take. */
+export function decrementPlacementCount(
+  counts: Record<number, number> | undefined,
+  imageId: number
+) {
+  const current = counts?.[imageId];
+  if (!counts || !current) return counts;
+  return { ...counts, [imageId]: current - 1 };
+}
+
+/**
+ * Drops one placement out of whatever is already cached, without refetching.
+ *
+ * `utils.placement.invalidate()` is the obvious call and the wrong one on a
+ * feed: the batch provider holds two queries per 100 cards, so a moderator
+ * removing a sticker after scrolling a couple of thousand images would refetch
+ * forty of them — and tRPC request batching is off by default, so that is forty
+ * HTTP requests for a change that affects one row. The removal is authoritative
+ * server-side; the client only has to stop drawing it.
+ *
+ * That is reachable from the image detail view too, not only from a feed: the
+ * detail opens as a routed dialog *over* the feed, so the provider and every
+ * chunk it holds stay mounted behind it.
+ *
+ * The detail query IS invalidated, by id: it is one request, and the surfaces
+ * that offer removal read it to decide whether the placement is still live.
+ */
+export function useForgetStickerPlacement() {
+  const queryClient = useQueryClient();
+  const utils = trpc.useUtils();
+
+  return useCallback(
+    async (placementId: number) => {
+      let countedOn: number | undefined;
+
+      queryClient.setQueriesData<PlacedSticker[]>(
+        { queryKey: getQueryKey(trpc.placement.getStickerPlacements), exact: false },
+        (placements) => {
+          const result = dropPlacementFromList(placements, placementId);
+          // Assigned only on the chunk that held the row; every other chunk
+          // returns `undefined`, which skips the write and leaves this alone.
+          if (result.countedOn !== undefined) countedOn = result.countedOn;
+          return result.placements;
+        }
+      );
+
+      if (countedOn !== undefined)
+        queryClient.setQueriesData<Record<number, number>>(
+          { queryKey: getQueryKey(trpc.placement.getStickerPlacementCounts), exact: false },
+          (counts) => decrementPlacementCount(counts, countedOn as number)
+        );
+
+      await utils.placement.getStickerPlacementDetail.invalidate({ placementId });
+    },
+    [queryClient, utils]
+  );
 }
 
 export function useImagePlacementSpace(imageId?: number) {

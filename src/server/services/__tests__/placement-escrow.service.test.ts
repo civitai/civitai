@@ -516,28 +516,32 @@ describe('running a release path twice', () => {
   const hold = () =>
     holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 });
 
-  it.each(['approve', 'decline', 'expire', 'removeByOwner', 'removeByModerator'] as const)(
-    'moves no money the second time: %s',
-    async (action) => {
-      givenPlacement();
-      await hold();
-      await settlePlacement({ placementId: 1, action, actorId: OWNER });
+  it.each([
+    'approve',
+    'decline',
+    'expire',
+    'removeByOwner',
+    'removeByModerator',
+    'removeByCosmeticTakedown',
+  ] as const)('moves no money the second time: %s', async (action) => {
+    givenPlacement();
+    await hold();
+    await settlePlacement({ placementId: 1, action, actorId: OWNER });
 
-      const legsAfterFirst = legsFor(1);
-      clearMoneyMocks();
+    const legsAfterFirst = legsFor(1);
+    clearMoneyMocks();
 
-      const second = await settlePlacement({
-        placementId: 1,
-        action,
-        actorId: OWNER,
-        sellerId: SELLER,
-      });
+    const second = await settlePlacement({
+      placementId: 1,
+      action,
+      actorId: OWNER,
+      sellerId: SELLER,
+    });
 
-      expect(second.settled).toBe(false);
-      expect(moneyMoved()).toBe(0);
-      expect(legsFor(1)).toEqual(legsAfterFirst);
-    }
-  );
+    expect(second.settled).toBe(false);
+    expect(moneyMoved()).toBe(0);
+    expect(legsFor(1)).toEqual(legsAfterFirst);
+  });
 
   // A block landing while an approval is in flight, or the expiry sweep firing
   // during a decline: the status transition is the lock, so the loser matches no
@@ -710,6 +714,7 @@ describe('the amounts a resume replays', () => {
       'expire',
       'removeByOwner',
       'removeByModerator',
+      'removeByCosmeticTakedown',
     ] as const) {
       db.placements.clear();
       db.legs.clear();

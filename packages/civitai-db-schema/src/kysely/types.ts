@@ -2891,8 +2891,10 @@ export type Placement = {
   data: Generated<unknown>;
   status: string;
   /**
-   * 'owner' | 'moderator', set with status 'removed'. The two removals refund
-   * opposite amounts, so the status alone cannot settle the money.
+   * 'owner' | 'moderator' | 'cosmeticTakedown', set with status 'removed'. The
+   * removals refund different amounts, so the status alone cannot settle the
+   * money. Constrained by "Placement_removedBy_check" — a new value needs a
+   * migration even though the column is TEXT.
    */
   removedBy: string | null;
   /**

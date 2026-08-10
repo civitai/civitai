@@ -17,6 +17,7 @@ const { mocks } = vi.hoisted(() => ({
     refundMultiAccountTransaction: vi.fn(),
     refundTransaction: vi.fn(),
     revokeCosmeticsFromUsers: vi.fn(),
+    removePlacementsByCosmetic: vi.fn(),
     shopItemFindFirst: vi.fn(),
     shopItemUpdateMany: vi.fn(),
     packMemberFindMany: vi.fn(),
@@ -58,6 +59,9 @@ vi.mock('~/server/services/buzz.service', () => ({
 vi.mock('~/server/services/cosmetic.service', () => ({
   revokeCosmeticsFromUsers: mocks.revokeCosmeticsFromUsers,
   validateStickerCosmetic: vi.fn(),
+}));
+vi.mock('~/server/services/placement-moderation.service', () => ({
+  removePlacementsByCosmetic: mocks.removePlacementsByCosmetic,
 }));
 vi.mock('~/server/services/creator-program.service', () => ({
   hasValidCreatorMembership: vi.fn(),
@@ -133,6 +137,76 @@ describe('takedownCosmeticShopItem', () => {
     mocks.createBuzzTransaction.mockResolvedValue({ transactionId: 'tx' });
     mocks.refundTransaction.mockResolvedValue({ transactionId: 'refund-tx' });
     mocks.revokeCosmeticsFromUsers.mockResolvedValue({ revoked: 3 });
+    mocks.removePlacementsByCosmetic.mockResolvedValue({
+      considered: 0,
+      settled: 0,
+      failed: [],
+      takenDown: 0,
+      hasMore: false,
+    });
+  });
+
+  // Revoking the holding leaves stickers already placed on other people's
+  // images untouched — they live in their own table, keyed by a cosmetic id
+  // inside a JSON payload, and nothing else in this takedown looks there.
+  it('takes down every placement made with the cosmetic', async () => {
+    mocks.removePlacementsByCosmetic.mockResolvedValue({
+      considered: 4,
+      settled: 1,
+      failed: [],
+      takenDown: 3,
+      hasMore: false,
+    });
+
+    const result = await takedownCosmeticShopItem({
+      id: 42,
+      reason: 'Abusive artwork',
+      moderatorId: 999,
+    });
+
+    expect(mocks.removePlacementsByCosmetic.mock.calls[0][0]).toMatchObject({
+      cosmeticIds: [7],
+      actorId: 999,
+    });
+    expect(result.placementsRemoved).toMatchObject({ settled: 1, takenDown: 3 });
+  });
+
+  // Bounded per batch, so one pass would report a clean takedown with the
+  // artwork still on other people's work.
+  it('drains the placement takedown rather than running one batch', async () => {
+    mocks.removePlacementsByCosmetic
+      .mockResolvedValueOnce({ considered: 2, settled: 0, failed: [], takenDown: 2, hasMore: true })
+      .mockResolvedValueOnce({
+        considered: 1,
+        settled: 0,
+        failed: [],
+        takenDown: 1,
+        hasMore: false,
+      });
+
+    const result = await takedownCosmeticShopItem({
+      id: 42,
+      reason: 'Abusive artwork',
+      moderatorId: 999,
+    });
+
+    expect(mocks.removePlacementsByCosmetic).toHaveBeenCalledTimes(2);
+    expect(result.placementsRemoved.takenDown).toBe(3);
+  });
+
+  // A takedown that aborts because placements could not be removed would leave
+  // the buyers unrefunded and the cosmetic on sale.
+  it('finishes the takedown even if the placement sweep throws', async () => {
+    mocks.removePlacementsByCosmetic.mockRejectedValue(new Error('db is having a moment'));
+
+    const result = await takedownCosmeticShopItem({
+      id: 42,
+      reason: 'Abusive artwork',
+      moderatorId: 999,
+    });
+
+    expect(result.revokedFrom).toBe(3);
+    expect(result.placementsRemoved).toMatchObject({ takenDown: 0 });
   });
 
   it('stops sales, refunds every buyer, claws back the creator earnings and strips the cosmetic', async () => {

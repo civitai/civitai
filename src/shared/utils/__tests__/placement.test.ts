@@ -22,6 +22,7 @@ const OUTCOMES: PlacementOutcome[] = [
   'expired',
   'removedByOwner',
   'removedByModerator',
+  'removedByCosmeticTakedown',
 ];
 
 // Boundaries plus the awkward middles. 0 and 1 are included deliberately: the
@@ -95,7 +96,7 @@ describe('splitPlacementPayment — the Buzz-conservation invariant', () => {
   });
 
   it('returns everything on expiry and on owner removal of an auto-approved placement', () => {
-    for (const outcome of ['expired', 'removedByOwner'] as const) {
+    for (const outcome of ['expired', 'removedByOwner', 'removedByCosmeticTakedown'] as const) {
       const split = splitPlacementPayment({
         amount: 250,
         outcome,
@@ -139,6 +140,9 @@ describe('settling a stored placement', () => {
   it('resolves a removal only when it knows who removed it', () => {
     expect(placementOutcomeFromStatus('removed', 'owner')).toBe('removedByOwner');
     expect(placementOutcomeFromStatus('removed', 'moderator')).toBe('removedByModerator');
+    expect(placementOutcomeFromStatus('removed', 'cosmeticTakedown')).toBe(
+      'removedByCosmeticTakedown'
+    );
     expect(() => placementOutcomeFromStatus('removed', null)).toThrow(/who removed it/);
     expect(() => placementOutcomeFromStatus('removed')).toThrow(/who removed it/);
   });

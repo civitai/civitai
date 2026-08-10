@@ -10,6 +10,7 @@ import {
   placementPriceRangeSchema,
   placementSpaceSchema,
   placerSchema,
+  removePlacementSchema,
   suspendPlacerSchema,
 } from '~/server/schema/placement.schema';
 import { placementPriceRange } from '~/server/services/placement.service';
@@ -23,6 +24,7 @@ import {
 import {
   countPendingPlacementsFrom,
   isPlacementSuspended,
+  removePlacementByModerator,
   removePlacementsByUser,
   restorePlacementPrivileges,
   suspendPlacementPrivileges,
@@ -98,7 +100,11 @@ export const placementRouter = router({
   getStickerPlacementDetail: publicProcedure
     .input(getStickerPlacementDetailSchema)
     .query(({ input, ctx }) =>
-      getStickerPlacementDetail({ placementId: input.placementId, viewerId: ctx.user?.id })
+      getStickerPlacementDetail({
+        placementId: input.placementId,
+        viewerId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+      })
     ),
 
   getStickerPlacementCounts: publicProcedure
@@ -185,6 +191,17 @@ export const placementRouter = router({
 
     return { removed };
   }),
+
+  /**
+   * Not flag-gated, for the same reason `actOnStickers` isn't: turning the flag
+   * off must not leave a reported placement live with nothing able to take it
+   * down.
+   */
+  removePlacement: moderatorProcedure
+    .input(removePlacementSchema)
+    .mutation(({ input, ctx }) =>
+      removePlacementByModerator({ placementId: input.placementId, actorId: ctx.user.id })
+    ),
 
   restorePlacer: moderatorProcedure
     .input(placerSchema)
