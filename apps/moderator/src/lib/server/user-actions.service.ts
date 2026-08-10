@@ -743,12 +743,21 @@ export async function setImageFlag(input: {
 }): Promise<ActionResult> {
   if (!input.imageIds.length) return { ok: false, error: 'Select at least one image.' };
 
-  const result = await callMainApp(
-    '/api/mod/update-image-flag',
-    { flag: input.flag, value: String(input.value), ids: input.imageIds.join(',') },
-    'Image flag update'
-  );
-  if (!result.ok) return result;
+  // Chunked like remove/restore, and for a harder reason: this endpoint reads `req.query`, so the ids
+  // ride in the URL. 5,000 of them is a ~40 KB request line, which the server rejects outright — the
+  // Select-all path was the one most likely to fail and the least likely to say so.
+  for (let i = 0; i < input.imageIds.length; i += CHUNK) {
+    const result = await callMainApp(
+      '/api/mod/update-image-flag',
+      {
+        flag: input.flag,
+        value: String(input.value),
+        ids: input.imageIds.slice(i, i + CHUNK).join(','),
+      },
+      'Image flag update'
+    );
+    if (!result.ok) return result;
+  }
 
   await Promise.all(
     input.imageIds.map((id) =>

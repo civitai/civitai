@@ -125,7 +125,12 @@ export async function addUserStrike(input: {
       userId: input.userId,
       type: 'system-announcement',
       category: 'System',
-      details: { message: `A moderator issued a strike on your account: ${input.reason}` },
+      details: {
+        message: `A moderator issued a strike on your account: ${input.reason}`,
+        // Retool's strike notification linked here; `system-announcement` renders `url` as the
+        // click-through, so omitting it leaves the user told but with nowhere to go.
+        url: '/safety',
+      },
     });
     notified = true;
   } catch (e) {
@@ -142,17 +147,22 @@ export async function addUserStrike(input: {
 export async function sendModNotification(input: {
   userId: number;
   message: string;
+  /** `system-announcement` renders this as the click-through. Without it the notification is dead
+   *  text — Retool sent `/safety`, or `/generate` for its non-AI-content reason. */
+  url?: string;
   moderatorId: number;
 }): Promise<ActionResult> {
   try {
     await getNotifications().createNotification({
-      // Keyed on the moderator and the instant so two different messages cannot collapse into one,
-      // while a double-submit of the same one does.
-      key: `moderator-message:${input.moderatorId}:${input.userId}:${input.message.slice(0, 64)}`,
+      // The minute bucket is what makes this a double-submit guard rather than a permanent one: keyed
+      // on the message alone, a moderator could never send the same warning to the same user twice.
+      key: `moderator-message:${input.moderatorId}:${input.userId}:${Math.floor(
+        Date.now() / 60_000
+      )}:${input.message.slice(0, 64)}`,
       userId: input.userId,
       type: 'system-announcement',
       category: 'System',
-      details: { message: input.message },
+      details: { message: input.message, ...(input.url ? { url: input.url } : {}) },
     });
   } catch (e) {
     console.error('[moderation-memory] notification failed', e);

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { untrack } from "svelte";
+  import { page } from "$app/state";
   import { enhance } from '$app/forms';
   import { goto } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
@@ -13,11 +15,16 @@
   let mode = $state<'add' | 'remove'>('add');
   let text = $state('');
 
-  // Reset the input + mode whenever a different type tab loads.
+  // Keyed on the URL — the tab is `?type=`. Depending on `data` instead meant every successful add or
+  // remove (which invalidates) also forced `mode` back to 'add', so a moderator working in Remove mode
+  // was silently returned to Add and their next clicks staged nothing.
+  const subject = $derived(page.url.search);
   $effect(() => {
-    data.type;
-    text = '';
-    mode = 'add';
+    subject;
+    untrack(() => {
+      text = '';
+      mode = 'add';
+    });
   });
 
   const sortedItems = $derived([...data.blocklist.data].sort());

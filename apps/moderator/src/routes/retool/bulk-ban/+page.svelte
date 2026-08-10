@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { page } from "$app/state";
   import { untrack } from 'svelte';
   import { enhance } from '$app/forms';
   import { goto } from '$app/navigation';
@@ -18,10 +19,16 @@
   let ids = $state(untrack(() => data.ids));
   let names = $state(untrack(() => data.names));
   let ips = $state(untrack(() => data.ips));
+  // Keyed on the URL, not on `data`: this page's enhancer reloads, so banning a list re-ran `load` and
+  // overwrote whatever the moderator had pasted into these boxes since the last check.
+  const subject = $derived(page.url.search);
   $effect(() => {
-    ids = data.ids;
-    names = data.names;
-    ips = data.ips;
+    subject;
+    untrack(() => {
+      ids = data.ids;
+      names = data.names;
+      ips = data.ips;
+    });
   });
 
   let reasonCode = $state('Other');

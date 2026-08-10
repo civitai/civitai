@@ -103,17 +103,30 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
 
-    // The flag the canned reason implies, applied in the same gesture. Best-effort: the removal has
-    // already landed, so a flag failure must not report the removal as failed.
-    if (input.alsoFlag === 'poi' || input.alsoFlag === 'minor')
-      await setImageFlag({
-        imageIds: input.imageIds,
-        flag: input.alsoFlag,
-        value: true,
-        moderatorId: locals.user.id,
-      });
     if (!result.ok) return actionFail(result.error);
-    return { success: true, removed: result.count };
+
+    // ONLY once the removal has landed. Run before that check, a failed removal still flagged every
+    // submitted id — thousands of images marked POI under a red "removal failed" banner.
+    const flagged =
+      input.alsoFlag === 'poi' || input.alsoFlag === 'minor'
+        ? await setImageFlag({
+            imageIds: input.imageIds,
+            flag: input.alsoFlag,
+            value: true,
+            moderatorId: locals.user.id,
+          })
+        : null;
+
+    // A silent flag failure is worse than none: the moderator believes the images are marked. `tag`
+    // is offered by the reason list but is not an image flag, so say that rather than drop it.
+    const flagWarning =
+      flagged && !flagged.ok
+        ? `The ${input.alsoFlag} flag was NOT applied: ${flagged.error}`
+        : input.alsoFlag === 'tag'
+        ? '"tag" is not an image flag and was not applied.'
+        : undefined;
+
+    return { success: true, removed: result.count, warning: flagWarning };
   },
 
   restore: async ({ request, locals }) => {

@@ -92,7 +92,14 @@ export async function getSuspectImages(
 
   const filtered = (() => {
     let q = base;
-    if (filters.tosOnly) q = q.where('tosViolation', '=', true);
+    // `tosViolation` alone misses everything removed from this very page: `handleBlockImages` sets
+    // `ingestion='Blocked', blockedFor='moderated'` and never touches that column. Retool's predicate
+    // was the ingestion one; both are kept so a manual ToS flag still matches. `AiNotVerified` is a
+    // scanner outcome, not a moderator decision, which is why Retool excluded it.
+    if (filters.tosOnly)
+      q = q.where(
+        sql<boolean>`("tosViolation" = true OR ("ingestion" = 'Blocked' AND "blockedFor" IS DISTINCT FROM 'AiNotVerified'))`
+      );
     // `meta` is null on an upload and `{}` on a wipe; both are "no prompt" to a moderator.
     if (filters.noPrompt) q = q.where(sql<boolean>`coalesce("meta" ->> 'prompt', '') = ''`);
     if (filters.levels.length) q = q.where('nsfwLevel', 'in', filters.levels);

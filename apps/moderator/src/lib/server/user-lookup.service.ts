@@ -94,7 +94,11 @@ export async function resolveUserId(term: string): Promise<number | null> {
   const value = term.trim();
   if (!value) return null;
 
-  if (/^\d+$/.test(value)) {
+  // Bounded HERE, not at the call sites: `User.id` is int4, so an over-long digit string errors the
+  // comparison rather than missing — and this runs inside User Lookup's LAYOUT load, so one extra
+  // digit rendered a 500 on every section instead of "no user matches". Falling through rather than
+  // returning null is deliberate: all-digit usernames exist.
+  if (/^\d+$/.test(value) && Number(value) <= 2_147_483_647) {
     const byId = await dbRead
       .selectFrom('User')
       .select('id')

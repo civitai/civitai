@@ -39,14 +39,19 @@ const querySchema = z.object({
   // Absent means every rating, so an unticked box set and a fully ticked one read the same. 0 is
   // allowed on purpose: an unrated image has no browsing level, and without it ticking every box
   // silently drops exactly the images no scanner has judged yet.
+  // `(v ?? '').split(',')` yields `['']` -> `[0]`, and 0 is a MEANINGFUL level here (unrated), so the
+  // filter kept it: with no `levels` in the URL every grid showed `nsfwLevel in (0)` and reported the
+  // account as having no images at all. Guard the absent case before splitting.
   levels: z
     .string()
     .optional()
     .transform((v) =>
-      (v ?? '')
-        .split(',')
-        .map(Number)
-        .filter((n) => n === 0 || ingestionErrorLevelSet.has(n))
+      v
+        ? v
+            .split(',')
+            .map(Number)
+            .filter((n) => n === 0 || ingestionErrorLevelSet.has(n))
+        : []
     ),
   from: dateParam,
   // Inclusive: a date-only `to` parses as that midnight, which would exclude the whole day picked.
@@ -206,18 +211,34 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
 
-    // The flag the canned reason implies, applied in the same gesture. Best-effort: the removal has
-    // already landed, so a flag failure must not report the removal as failed.
-    if (input.alsoFlag === 'poi' || input.alsoFlag === 'minor')
-      await setImageFlag({
-        imageIds: input.imageIds,
-        flag: input.alsoFlag,
-        value: true,
-        moderatorId: locals.user.id,
-      });
     // The SERVER's count, not the submitted one: a partial removal must not read as a full one.
     if (!result.ok) return scopedFail('images', result.error);
-    return { success: true, imageResult: `Removed ${result.count} of ${input.imageIds.length}.` };
+
+    // ONLY once the removal has landed. Run before that check, a failed removal still flagged every
+    // submitted id — thousands of images marked POI under a red "removal failed" banner.
+    const flagged =
+      input.alsoFlag === 'poi' || input.alsoFlag === 'minor'
+        ? await setImageFlag({
+            imageIds: input.imageIds,
+            flag: input.alsoFlag,
+            value: true,
+            moderatorId: locals.user.id,
+          })
+        : null;
+
+    // A silent flag failure is worse than none: the moderator believes the images are marked. `tag`
+    // is offered by the reason list but is not an image flag, so say that rather than drop it.
+    const flagNote =
+      flagged && !flagged.ok
+        ? ` The ${input.alsoFlag} flag was NOT applied: ${flagged.error}`
+        : input.alsoFlag === 'tag'
+        ? ' Note: "tag" is not an image flag and was not applied.'
+        : '';
+
+    return {
+      success: true,
+      imageResult: `Removed ${result.count} of ${input.imageIds.length}.${flagNote}`,
+    };
   },
 
   restore: async ({ request, locals }) => {
