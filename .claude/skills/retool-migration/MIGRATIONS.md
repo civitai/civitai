@@ -93,14 +93,14 @@ A queue/stat board rather than a lookup tool.
 - [x] **Who is working a queue** — `RecentReports`/`RecentRating`/`RecentTagger` gave each dashboard row
       "last touched by `<mod>`, N minutes ago", coloured against a per-type threshold table that exists in
       no query. The board here is count-only.
-- [ ] **The `Graphs` tab** — `HourlyImages`, `HourlyModels`, `RRatingStats`, `ResearchRating`.
+- [x] **The `Graphs` tab** — built as `/retool/queue-stats`, its own route because Retool put it behind a "Load Graphs" button. Inline SVG rather than a charting dependency. `RRatingStats` is bounded to 30 days (Retool was unbounded over ModActivity) and the window is stated on the page.
 - [ ] **The `Who is who?` tab** — contents not enumerated by the layout; needs the raw export or a
       screenshot before it can be scoped.
 - [ ] **Model-side surfaces with no page at all** — `ModelReview`, `TrainingCount`,
       `UnpublishingReasons`. There is no models route in the app.
 - [x] **`ActionAllPostReports`** — sweeps pending post-reports where every image is already blocked.
       `/reports/[slug]` actions one at a time; the batch *selector* is what is missing, not the verb.
-- [ ] **`GetSplitQueue`/`SplitCurrent`/`SplitCatchup`** — forks the front-page sweep into current and
+- [x] **`GetSplitQueue`/`SplitCurrent`/`SplitCatchup`** — built on `/retool/queue-stats`; both tables written in one transaction, and button69`s tooltip rule is on the page. This also recovers the FrontPageTimers column list the Front Page Audit slice recorded as unknown. Original note: forks the front-page sweep into current and
       catch-up streams when it falls behind. Tooltip: "Only do this if it's 4 or more hours behind".
 - [x] **`BlockedImagesTask`** (images blocked for an *unusual* `blockedFor`) and **`CivitModelsData`**
       (`userId = -1` official publishes) — review counts misfiled as jobs.

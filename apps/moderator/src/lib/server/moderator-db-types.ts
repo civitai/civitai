@@ -82,6 +82,19 @@ export type Mods_TaskTimers = {
 };
 
 /**
+ * The front-page rating sweep's shared resume point. `username` is not always a person: the row
+ * `splitQueue` marks where the queue was forked into a current and a catch-up stream, which is what
+ * the board's Split control writes. `nsfw` holds a browsing-level digit as TEXT.
+ */
+export type FrontPageTimers = {
+  id: Generated<number>;
+  username: string | null;
+  nsfw: string | null;
+  lastCheckedAt: Timestamp | null;
+  buttonPressedTime: Timestamp | null;
+};
+
+/**
  * Retool's own action log. Free text with no foreign keys — the user id is embedded in `ActionType`
  * and queried with LIKE. Read-only archive; new activity belongs in ModActivity.
  */
@@ -99,5 +112,8 @@ export type ModeratorDB = {
   TimedMutes: TimedMutes;
   ModerationImageHelp: ModerationImageHelp;
   Mods_TaskTimers: Mods_TaskTimers;
+  FrontPageTimers: FrontPageTimers;
+  /** Same shape; the catch-up stream's resume point is a separate table, as Retool had it. */
+  FrontPageTimers_catchup: FrontPageTimers;
   ReToolActions: ReToolActions;
 };
