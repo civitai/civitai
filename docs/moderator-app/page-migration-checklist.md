@@ -18,7 +18,7 @@ Each page is a checkbox. Sub-bullets list the procedures, services, schemas, and
 
 **How the page is built is standardised** — Svelte 5 idiom, shadcn primitives, styling tokens, component
 placement: [`apps/moderator/CLAUDE.md`](../../apps/moderator/CLAUDE.md). Before ticking a page, run the
-[`moderator-review`](../../.claude/skills/moderator-review/SKILL.md) skill over it. Both apply equally to
+[`svelte-review`](../../.claude/skills/svelte-review/SKILL.md) skill over it. Both apply equally to
 Retool migrations, so the two migration paths converge on the same result.
 
 ---

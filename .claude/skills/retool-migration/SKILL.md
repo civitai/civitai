@@ -332,7 +332,7 @@ So for each query, read its **SQL body**, not its name: what does the WHERE filt
 it select, and where does its input come from? A query whose input is a widget you did not build is
 not ported, whatever endpoint you mapped it to.
 
-**Then run the [`moderator-review`](../moderator-review/SKILL.md) skill.** It
+**Then run the [`svelte-review`](../svelte-review/SKILL.md) skill.** It
 fans out three review agents — correctness, Svelte 5 + UI conventions, abstraction — over the segment.
 Every slice reviewed so far has come back with findings, several of them the kind that make a moderator
 believe something false about a user.
