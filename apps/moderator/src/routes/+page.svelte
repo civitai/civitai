@@ -13,6 +13,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { entityUrl } from '$lib/entity-url';
   import { sidebarCounts } from '$lib/sidebar-counts.svelte';
+  import { queueSeverityClass } from '$lib/queue-thresholds';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -34,12 +35,34 @@
   // runs ~200ms, which does not belong in the dashboard's first paint.
   let reported = $state<Reported[] | null>(null);
 
+  // Retool's board: who last worked each queue, how far behind each swept task is, and the scam
+  // detector's own mutes. A count alone cannot tell an untouched queue from one being drained.
+  type Board = {
+    activity: Record<string, { type: string; at: string; moderator: string | null }>;
+    lag: { task: string; lastUpdate: string; lastUpdateBy: string | null }[];
+    autoBlocked: {
+      id: number;
+      userId: number;
+      username: string | null;
+      createdAt: string;
+      bannedAt: string | null;
+      muted: boolean | null;
+    }[];
+  };
+  let board = $state<Board | null>(null);
+
   onMount(async () => {
     try {
       const r = await fetch('/api/most-reported');
       reported = r.ok ? await r.json() : [];
     } catch {
       reported = [];
+    }
+    try {
+      const r = await fetch('/api/moderation-board');
+      if (r.ok) board = await r.json();
+    } catch {
+      // The board is context on top of counts that are already rendered; failing quietly is right.
     }
   });
 
@@ -58,10 +81,33 @@
 
   // `count: null` = nothing to count (no countKey), which is not the same as an empty queue — the
   // empty-row collapsing below keys off that difference.
-  type Item = { path: string; label: string; informational?: boolean; count: number | null };
+  type Item = {
+    path: string;
+    label: string;
+    informational?: boolean;
+    count: number | null;
+    countKey?: string;
+  };
   type Section = { label: string; items: Item[]; total: number };
 
   const loading = $derived(counts.value === null);
+
+  const severity = (item: Item) =>
+    item.countKey ? queueSeverityClass(item.countKey, item.count) : null;
+
+  // Oldest first: the queue nobody has touched is the one worth seeing, not the busiest.
+  const recentlyWorked = $derived(
+    Object.values(board?.activity ?? {}).sort(
+      (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime()
+    )
+  );
+
+  const ago = (iso: string) => {
+    const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    if (mins < 60) return `${Math.max(0, mins)}m ago`;
+    if (mins < 1440) return `${Math.round(mins / 60)}h ago`;
+    return `${Math.round(mins / 1440)}d ago`;
+  };
 
   const sections = $derived.by(() => {
     const toItem = (link: (typeof data.nav)[number]): Item => ({
@@ -69,6 +115,7 @@
       label: link.label,
       informational: link.informational,
       count: link.countKey ? (counts.value?.[link.countKey] ?? 0) : null,
+      countKey: link.countKey,
     });
     const byCount = (a: Item, b: Item) => (b.count ?? -1) - (a.count ?? -1);
 
@@ -141,7 +188,13 @@
                 >
                   <span class={item.count ? 'text-dark-0' : 'text-dark-2'}>{item.label}</span>
                   {#if item.count !== null}
-                    <span class="tabular-nums {item.count ? 'text-white' : 'text-dark-2'}">
+                    <!-- Retool's threshold colouring. The scales are per-queue and not comparable —
+                         2 comment reports is amber where 200 tags is still green — so a queue with no
+                         standard renders plainly rather than borrowing another's. -->
+                    <span
+                      class="tabular-nums {severity(item) ??
+                        (item.count ? 'text-white' : 'text-dark-2')}"
+                    >
                       {format(item.count)}
                     </span>
                   {/if}
@@ -162,6 +215,79 @@
         {/if}
       </section>
     {/each}
+  </div>
+{/if}
+
+{#if board}
+  <div class="mt-8 grid gap-3 lg:grid-cols-3">
+    <!-- Retool's `RecentReports`, which fed the "last touched by <mod> N minutes ago" on every queue
+         row. Its point is telling a queue nobody is working from one being actively drained — a count
+         alone cannot. Listed rather than attached per row: the report-source labels and the sidebar's
+         count keys are named independently, and three of them do not correspond. -->
+    {#if recentlyWorked.length}
+      <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
+        <h2 class="mb-1 text-sm font-semibold text-white">Recently worked</h2>
+        <p class="mb-3 text-xs text-dark-2">Last report resolved in each queue.</p>
+        <ul class="space-y-1 text-sm">
+          {#each recentlyWorked as a (a.type)}
+            <li class="flex flex-wrap items-baseline justify-between gap-x-3">
+              <span class="text-dark-0">{a.type}</span>
+              <span class="text-xs text-dark-2">
+                {ago(a.at)}{a.moderator ? ` · ${a.moderator}` : ''}
+              </span>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
+
+    <!-- Retool's per-queue lag strip. The rows are acknowledgements a moderator wrote ("I have swept
+         this up to now"), not job runs — so "3d ago" means nobody has claimed the queue in 3 days. -->
+    {#if board.lag.length}
+      <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
+        <h2 class="mb-1 text-sm font-semibold text-white">Queue sweeps</h2>
+        <p class="mb-3 text-xs text-dark-2">
+          When each queue was last claimed, oldest first. Nothing sweeps automatically.
+        </p>
+        <ul class="space-y-1 text-sm">
+          {#each board.lag as t (t.task)}
+            <li class="flex items-baseline justify-between gap-3">
+              <span class="text-dark-0">{t.task}</span>
+              <span class="text-xs text-dark-2">
+                {ago(t.lastUpdate)}{t.lastUpdateBy ? ` · ${t.lastUpdateBy}` : ''}
+              </span>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
+
+    <!-- Retool's `AutoBlockedUsers`. Nobody decided these individually, so this list is the only place
+         a false positive is visible — a muted account with no moderator behind it. -->
+    {#if board.autoBlocked.length}
+      <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
+        <h2 class="mb-1 text-sm font-semibold text-white">
+          Auto-muted for scam ({board.autoBlocked.length})
+        </h2>
+        <p class="mb-3 text-xs text-dark-2">
+          Muted by the detector, not by a moderator. Review the ones that look wrong.
+        </p>
+        <ul class="space-y-1 text-sm">
+          {#each board.autoBlocked.slice(0, 12) as u (u.id)}
+            <li class="flex flex-wrap items-baseline justify-between gap-x-3">
+              <a href="/retool/user-lookup?q={u.userId}" class="text-blue-4 hover:underline">
+                {u.username ?? `#${u.userId}`}
+              </a>
+              <span class="flex items-baseline gap-2 text-xs text-dark-2">
+                {#if u.bannedAt}<Badge variant="destructive">banned since</Badge>{/if}
+                {#if !u.muted}<Badge variant="secondary">already unmuted</Badge>{/if}
+                {ago(u.createdAt)}
+              </span>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
   </div>
 {/if}
 

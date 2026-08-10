@@ -69,6 +69,19 @@ export type ModerationImageHelp = {
 };
 
 /**
+ * How far each queue has been swept. Retool wrote a row per acknowledgement — a moderator pressing a
+ * button to say "I have worked this queue up to now" — and read the newest back as the board's
+ * "N behind" indicator. It is a coordination signal between moderators, NOT a job schedule: nothing
+ * runs on a timer, and the export contains no Timer plugin at all.
+ */
+export type Mods_TaskTimers = {
+  id: Generated<number>;
+  task: string | null;
+  lastUpdate: Generated<Timestamp>;
+  lastUpdateBy: string | null;
+};
+
+/**
  * Retool's own action log. Free text with no foreign keys — the user id is embedded in `ActionType`
  * and queried with LIKE. Read-only archive; new activity belongs in ModActivity.
  */
@@ -85,5 +98,6 @@ export type ModeratorDB = {
   UserStrikes: UserStrikes;
   TimedMutes: TimedMutes;
   ModerationImageHelp: ModerationImageHelp;
+  Mods_TaskTimers: Mods_TaskTimers;
   ReToolActions: ReToolActions;
 };
