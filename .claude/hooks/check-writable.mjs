@@ -42,9 +42,13 @@ const DANGEROUS_PATTERNS = [
 // Expensive or historically destructive, but sometimes legitimate — confirm rather than block.
 const GUARDED_PATTERNS = [
   {
-    pattern: /svelte-kit\s+sync|pnpm\s+(run\s+)?check\b/i,
+    // `svelte-kit sync` alone is cheap (121 generated files) and is deliberately NOT guarded.
+    // A full build writes ~1,800 files / 25MB and is not a check — it catches nothing `svelte-check`
+    // does not, apart from Svelte's TS stripping leaving `?` on optional parameters, which
+    // check-svelte-ts.mjs now catches on write instead.
+    pattern: /(apps[\/\\](moderator|auth|creator-studio)[^;&|]*\bbuild\b|\bvite\s+build\b)/i,
     reason:
-      '`svelte-kit sync` regenerates ~690 files under .svelte-kit/, which the Vite dev server watches — the collision that froze this window repeatedly. Use `pnpm run typecheck` unless the route tree changed.',
+      'A SvelteKit build writes ~1,800 files into the workspace and is NOT a verification step — use `pnpm --filter ./apps/<app> run typecheck`. Confirm only if you are diagnosing a build-only failure or producing a real artifact.',
   },
   {
     pattern: /prettier[^;&|]*--write/i,

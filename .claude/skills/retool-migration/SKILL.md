@@ -345,14 +345,18 @@ weight that was a second copy of the number deciding whether a tag gets disabled
 that logged every deletion with an empty violation classification. Run it even when the slice looks
 finished; the misses are easiest to see once the code exists.
 
-**Then run a FIFTH review, export-vs-build.** The three code reviews compare the code to itself and to
-this app's conventions, and the endpoint audit compares it to the main app's API — **none of them opens
-the export**, so all four pass cleanly over a faithful implementation of the wrong thing. Give an agent the inventory (`<app>.md`, which carries each query's
-SQL), the audit, and the built files, and ask one question: *walk the export query by query — is each
-behaviour present, and does it match?* On Bulk Image Manager the three code reviews returned 14
-findings and missed all four gaps above; the fidelity pass found them in one run. Verify its claims
-against the inventory yourself before acting — it will also produce plausible-but-false ones (it called
-`TOSImages` a dismissed mutation; the export says `//doesnt run anywhere, just a test`).
+**Then run the FIFTH review: the [`retool-fidelity-review`](../../agents/retool-fidelity-review.md)
+agent, on the app by name.** The three code reviews compare the code to itself and to this app's
+conventions, and the endpoint audit compares it to the main app's API — **none of them opens the
+export**, so all four pass cleanly over a faithful implementation of the wrong thing. This one walks
+the export query by query and asks whether each behaviour is present and matches. On Bulk Image Manager
+the three code reviews returned 14 findings and missed all four gaps above; the fidelity pass found them
+in one run. Verify its claims against the inventory yourself before acting — it will also produce
+plausible-but-false ones (it called `TOSImages` a dismissed mutation; the export says `//doesnt run
+anywhere, just a test`).
+
+Run it on **every** slice, including ones already marked shipped. It is an agent rather than a
+paragraph because doing it ad-hoc meant it was done differently each time.
 
 Then:
 
