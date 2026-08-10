@@ -13,10 +13,10 @@ import {
  * event loop pins, and an httpGet liveness probe (served by that SAME loop)
  * times out — so the kubelet SIGKILLs a pod that is busy-but-ALIVE, which
  * cold-restarts it and AMPLIFIES the wave (cold-start module compilation re-pins
- * the loop → fails again → cascade). See the liveness history in
- * datapacket-talos `deployment-api.yaml`. The prior mitigation just widened the
- * probe tolerance to ~15min — a band-aid on a signal (probe-response latency)
- * that fundamentally can't tell "busy" from "dead".
+ * the loop → fails again → cascade). The prior mitigation just widened the probe
+ * tolerance to ~15min — a band-aid on a signal (probe-response latency) that
+ * fundamentally can't tell "busy" from "dead"; the deployment configuration's
+ * own history is the record of that, and is where the probe is defined.
  *
  * This writes the current epoch-SECONDS to a file every 2s, ON the event loop.
  * A k8s EXEC liveness probe then checks the file's staleness, e.g.:
