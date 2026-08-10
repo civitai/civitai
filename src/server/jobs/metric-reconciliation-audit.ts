@@ -2,6 +2,7 @@ import client from 'prom-client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { PROM_PREFIX } from '~/server/prom/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { repairReactionMetrics } from '~/server/services/metric-reaction-repair.service';
 import {
   auditReactionExactness,
@@ -90,7 +91,10 @@ const GAUGE_HELP = {
     'Postgres ImageReaction rows for the audited hour with no matching ClickHouse event',
   hourly_unmapped_rows:
     'Postgres reaction values with no ClickHouse metricType mapping (non-zero = mapping gap)',
-  audit_last_run_timestamp_seconds: 'Unix time of the last completed reaction reconciliation run',
+  audit_last_run_timestamp_seconds:
+    'Unix time of the last completed hourly reaction reconciliation run',
+  exactness_last_run_timestamp_seconds:
+    'Unix time the nightly exactness audit last completed. Re-published hourly, but always carries the nightly run time, never the re-publish time',
   exactness_recent_coverage_ratio:
     'Per-(image,user,reaction) pairs from the last 24h present in both Postgres and entityMetricUserState_v3',
   exactness_backlog_coverage_ratio:
@@ -100,10 +104,22 @@ const GAUGE_HELP = {
 } as const;
 
 /**
- * A job runs on one pod, so only that pod's series carries a fresh value —
- * aggregate coverage with `min()` and counts with `max()`. The last-run gauge is
- * what catches the job silently stopping, which is otherwise indistinguishable
- * from a healthy pipeline.
+ * A job runs on one pod, but every pod registers these gauges and prom-client never
+ * resets them — so aggregate with
+ * `max(<gauge> and on(pod) topk(1, ..._last_run_timestamp_seconds != 0))`, never
+ * `min()`, `avg()`, or a bare `max()`. Measured 2026-08-10: 189 series for
+ * `hourly_coverage_ratio`, exactly 2 non-zero. `min`/`avg` read the ~187 pods that
+ * never ran; a bare `max` reads whichever pod remembers the best value, and one of
+ * those two live series was 2h stale, so a bad hour would have read green.
+ *
+ * The `!= 0` must sit INSIDE `topk` — `topk(1, gauge)` still returns a pod when
+ * every value is zero, because the zeros tie and one wins arbitrarily.
+ *
+ * The last-run gauges are what catch a job silently stopping, which is otherwise
+ * indistinguishable from a healthy pipeline. They need an `absent()` alert as well
+ * as a staleness one: once every pod holding a value has been replaced the `!= 0`
+ * selector is empty, so a staleness rule evaluates to NoData and stays quiet in
+ * exactly the state it exists to catch.
  */
 const gauges = (global.metricReconciliationGauges ??= Object.fromEntries(
   Object.entries(GAUGE_HELP).map(([name, help]) => [
@@ -142,6 +158,53 @@ setReactionRepairHook(async ({ imageIds, reason }) => {
   }).catch(() => undefined);
 });
 
+type NightlyExactnessSnapshot = {
+  /** The nightly's own completion time. Never the re-publish time — see below. */
+  ranAt: number;
+  recentCoverage: number | null;
+  backlogCoverage: number | null;
+  phantomRate: number | null;
+};
+
+/**
+ * The nightly writes its gauges once a day; the jobs deployment rolls several times
+ * a day. Measured 2026-08-10, ~10h after a successful 04:43 run: all 189
+ * `exactness_recent_coverage_ratio` series read 0 — the value was simply gone, and a
+ * panel or alert built on it could not tell a healthy nightly from a dead one.
+ *
+ * So the nightly persists its result and the hourly job re-publishes it, which also
+ * puts the nightly's values on the same pod that carries
+ * `audit_last_run_timestamp_seconds` — the freshness anchor the hourly queries
+ * already join against.
+ *
+ * `ranAt` is the nightly's completion time and is re-published verbatim. Stamping it
+ * at re-publish would make a dead nightly look alive forever, which is the exact
+ * failure this exists to expose.
+ *
+ * The TTL only cleans up after a genuinely retired job: staleness on
+ * `exactness_last_run_timestamp_seconds` is alertable within hours, so nothing
+ * depends on the key surviving a week.
+ */
+const NIGHTLY_SNAPSHOT_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+function publishNightlyExactnessGauges(snapshot: NightlyExactnessSnapshot) {
+  // A null arm means the sample had nothing to compare, not a zero. Leaving the
+  // gauge unset keeps it excluded by the `!= 0` guard rather than publishing a 0
+  // that reads as total loss.
+  if (snapshot.recentCoverage !== null)
+    gauges.exactness_recent_coverage_ratio.set(snapshot.recentCoverage);
+  if (snapshot.backlogCoverage !== null)
+    gauges.exactness_backlog_coverage_ratio.set(snapshot.backlogCoverage);
+  if (snapshot.phantomRate !== null) gauges.exactness_phantom_ratio.set(snapshot.phantomRate);
+  gauges.exactness_last_run_timestamp_seconds.set(snapshot.ranAt);
+}
+
+async function republishNightlyExactnessGauges() {
+  const raw = await sysRedis.get(REDIS_SYS_KEYS.METRIC_RECONCILIATION.NIGHTLY_EXACTNESS);
+  if (!raw) return;
+  publishNightlyExactnessGauges(JSON.parse(raw) as NightlyExactnessSnapshot);
+}
+
 function floorToHour(date: Date) {
   const d = new Date(date);
   d.setUTCMinutes(0, 0, 0);
@@ -162,6 +225,12 @@ export const reactionVolumeAuditJob = createJob(
       Object.values(result.unknownReactions).reduce((a, b) => a + b, 0)
     );
     gauges.audit_last_run_timestamp_seconds.set(Date.now() / 1000);
+
+    // Carries the nightly's values onto whichever pod ran most recently. A failure
+    // here must not fail the hourly audit — the reconciliation is the job, the
+    // re-publish is a convenience for the nightly's panels.
+    await republishNightlyExactnessGauges().catch(() => undefined);
+
     // An hour with no reactions has undefined coverage. Leaving the gauge at its
     // previous value beats publishing a 0 that would page for a quiet hour.
     if (result.coverage !== null) gauges.hourly_coverage_ratio.set(result.coverage);
@@ -214,11 +283,18 @@ export const reactionExactnessAuditJob = createJob(
     const seed = Math.floor(Date.now() / 86_400_000);
     const result = await auditReactionExactness({ sampleSize: 200, lookbackHours: 24, seed });
 
-    if (result.recentCoverage !== null)
-      gauges.exactness_recent_coverage_ratio.set(result.recentCoverage);
-    if (result.backlogCoverage !== null)
-      gauges.exactness_backlog_coverage_ratio.set(result.backlogCoverage);
-    if (result.phantomRate !== null) gauges.exactness_phantom_ratio.set(result.phantomRate);
+    const snapshot: NightlyExactnessSnapshot = {
+      ranAt: Date.now() / 1000,
+      recentCoverage: result.recentCoverage,
+      backlogCoverage: result.backlogCoverage,
+      phantomRate: result.phantomRate,
+    };
+    publishNightlyExactnessGauges(snapshot);
+    await sysRedis
+      .set(REDIS_SYS_KEYS.METRIC_RECONCILIATION.NIGHTLY_EXACTNESS, JSON.stringify(snapshot), {
+        EX: NIGHTLY_SNAPSHOT_TTL_SECONDS,
+      })
+      .catch(() => undefined);
 
     if (result.missingInCh > 0) {
       await requestReactionRepair({

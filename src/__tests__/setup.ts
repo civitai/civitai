@@ -173,6 +173,10 @@ const promMetricStub = () => {
 };
 
 vi.mock('~/server/prom/client', () => ({
+  // The real value. Modules that build their own prom-client metrics name them
+  // `PROM_PREFIX + '...'`, and a stubbed prefix would make every such test assert
+  // against a metric name production never emits.
+  PROM_PREFIX: 'civitai_app_',
   // Factory functions — modules call these at import time to build their metrics
   // (e.g. meilisearch/client.ts, eventloop-longtask.ts). Each returns a stub.
   registerCounter: vi.fn(promMetricStub),
