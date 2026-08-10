@@ -38,14 +38,6 @@ export const reportReasonLabels: Record<ReportReason, string> = {
   StickerPlacement: 'Sticker Placement',
 };
 
-export const DEFAULT_REPORT_REASONS: ReportReason[] = [
-  ReportReason.AdminAttention,
-  ReportReason.Claim,
-  ReportReason.Ownership,
-  ReportReason.TOSViolation,
-  ReportReason.Spam,
-];
-
 export const DEFAULT_REPORT_STATUSES: ReportStatus[] = [
   ReportStatus.Pending,
   ReportStatus.Processing,

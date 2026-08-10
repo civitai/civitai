@@ -1,4 +1,5 @@
 import { sql } from '@civitai/db/kysely';
+import { NsfwLevel } from '@civitai/shared';
 import { dbRead } from './db';
 import { getImageReviewCounts } from './image-review.service';
 import { getImageRatingReviewCount } from './image-rating-review.service';
@@ -27,11 +28,15 @@ async function fetchCounts(): Promise<SidebarCounts> {
     await Promise.all([
       getImageReviewCounts(),
       // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
+      // The nsfwLevel bound must match the QUEUE's (image-tags.service.ts) — without it, blocked images
+      // inflate a badge whose page can never show them, so the count never reaches zero.
       dbRead
-        .selectFrom('TagsOnImageNew')
-        .select((eb) => eb.fn.count('imageId').distinct().as('count'))
-        .where(sql<boolean>`((attributes >> 9)::integer & 1) = 1`)
-        .where(sql<boolean>`((attributes >> 10)::integer & 1) <> 1`)
+        .selectFrom('TagsOnImageNew as toi')
+        .innerJoin('Image as i', 'i.id', 'toi.imageId')
+        .select((eb) => eb.fn.count('toi.imageId').distinct().as('count'))
+        .where(sql<boolean>`((toi.attributes >> 9)::integer & 1) = 1`)
+        .where(sql<boolean>`((toi.attributes >> 10)::integer & 1) <> 1`)
+        .where('i.nsfwLevel', '<', NsfwLevel.Blocked)
         .executeTakeFirst(),
       getImageRatingReviewCount(),
       dbRead

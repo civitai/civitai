@@ -56,7 +56,10 @@ export async function getImageRatingRequests({
       i."createdAt"
     FROM image_rating_requests irr
     JOIN "Image" i ON i.id = irr."imageId"
-    WHERE irr.total >= 3
+    WHERE (
+        irr.total >= 3
+        OR (irr.total <= -5 AND irr."createdAt" < NOW() - INTERVAL '10 hours')
+      )
       AND i."blockedFor" IS NULL
       AND i."nsfwLevelLocked" = FALSE
       AND i.ingestion != 'PendingManualAssignment'::"ImageIngestionStatus"
@@ -75,7 +78,7 @@ export async function getImageRatingRequests({
 export async function getImageRatingReviewCount(): Promise<number> {
   const { rows } = await sql<{ count: number }>`
     WITH image_rating_requests AS (
-      SELECT "imageId", COALESCE(SUM(weight), 0) total
+      SELECT "imageId", COALESCE(SUM(weight), 0) total, MIN("createdAt") AS "createdAt"
       FROM "ImageRatingRequest"
       WHERE status = 'Pending'
       GROUP BY "imageId"
@@ -83,7 +86,10 @@ export async function getImageRatingReviewCount(): Promise<number> {
     SELECT count(*)::int count
     FROM image_rating_requests irr
     JOIN "Image" i ON i.id = irr."imageId"
-    WHERE irr.total >= 3
+    WHERE (
+        irr.total >= 3
+        OR (irr.total <= -5 AND irr."createdAt" < NOW() - INTERVAL '10 hours')
+      )
       AND i."blockedFor" IS NULL
       AND i."nsfwLevelLocked" = FALSE
       AND i.ingestion != 'PendingManualAssignment'::"ImageIngestionStatus"

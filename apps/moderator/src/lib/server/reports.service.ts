@@ -3,7 +3,6 @@ import { dbRead, dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
 import { rewardReportReporters } from './rewards';
 import {
-  DEFAULT_REPORT_REASONS,
   NEW_REPORT_STATUSES,
   ReportStatus,
   reportCountKey,
@@ -158,15 +157,14 @@ export async function getReportHistory(
   return { items: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
-// NEW reports, not open ones — see NEW_REPORT_STATUSES. Reasons stay the page's defaults, so the badge
-// still only counts what this queue triages by hand.
+// NEW reports, not open ones — see NEW_REPORT_STATUSES. EVERY reason counts: filtering to the
+// hand-triaged set left pending NSFW, CSAM and StickerPlacement reports showing a zero badge, and the
+// queue page lands on the same unfiltered set so the badge and the list cannot disagree.
 export async function getReportCounts(): Promise<Record<string, number>> {
   const statuses = sql.join(NEW_REPORT_STATUSES.map((s) => sql.lit(s)));
-  const reasons = sql.join(DEFAULT_REPORT_REASONS.map((r) => sql.lit(r)));
   // One pass over Report (rides Report_open_reason_id_idx), then each report table joins the result —
   // per-branch joins back to Report seq-scanned it once per entity type.
-  const open = sql`select "id" from "Report"
-    where "status" in (${statuses}) and "reason" in (${reasons})`;
+  const open = sql`select "id" from "Report" where "status" in (${statuses})`;
   const branches = Object.entries(reportEntityJoin).map(
     ([type, join]) => sql`select ${sql.lit(type)} as type, count(*)::int as count
       from ${sql.table(join.table)} er

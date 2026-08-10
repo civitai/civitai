@@ -2,7 +2,6 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { getReports, setReportStatus, updateReportNotes } from '$lib/server/reports.service';
 import {
-  DEFAULT_REPORT_REASONS,
   DEFAULT_REPORT_STATUSES,
   reportEntityForSlug,
   reportReasons,
@@ -20,12 +19,9 @@ export const load: PageServerLoad = async ({ params, url }) => {
 
   // Canonicalize a bare landing so the active default filters are explicit (and shareable) in the URL.
   // Only absent params get defaults — a present-but-empty `?status=` is a deliberate clear, left alone.
-  if (!url.searchParams.has('status') || !url.searchParams.has('reason')) {
+  if (!url.searchParams.has('status')) {
     const canonical = new URL(url);
-    if (!canonical.searchParams.has('status'))
-      DEFAULT_REPORT_STATUSES.forEach((s) => canonical.searchParams.append('status', s));
-    if (!canonical.searchParams.has('reason'))
-      DEFAULT_REPORT_REASONS.forEach((r) => canonical.searchParams.append('reason', r));
+    DEFAULT_REPORT_STATUSES.forEach((s) => canonical.searchParams.append('status', s));
     redirect(307, canonical.pathname + canonical.search);
   }
 
@@ -35,9 +31,10 @@ export const load: PageServerLoad = async ({ params, url }) => {
   const reportedBy = url.searchParams.get('reportedBy')?.trim() || '';
 
   // A present-but-empty param (`?status=`) is an explicit clear → all; an absent param → the default
-  // review view (open statuses, hand-triaged reasons).
+  // review view. Reason has NO default: the badge counts every reason, so landing on a subset would
+  // send a moderator to a list shorter than the number they clicked.
   const statuses = url.searchParams.has('status') ? urlStatuses : DEFAULT_REPORT_STATUSES;
-  const reasons = url.searchParams.has('reason') ? urlReasons : DEFAULT_REPORT_REASONS;
+  const reasons = urlReasons;
 
   const data = await getReports({
     type,
