@@ -147,11 +147,11 @@ Ported but incomplete. The header items are visible on every section in Retool, 
 - [x] 🔒 **Buzz sending was Senior-Mod-gated in Retool** (`tabbedContainer12`'s second pane carries
       `current_user.groups.some(i => i.name === "Senior Mod")`). Ours gates it on the general `/users`
       permission — **a restricted capability silently widened**. Highest priority in this block.
-- [ ] **The whole account-edit capability.** An *Enable Edits* toggle over editable **Username, Email,
+- [x] **The whole account-edit capability.** An *Enable Edits* toggle over editable **Username, Email,
       Full Name**, plus a Quick Info checkbox block — Muted, Banned, Moderator, Accepted TOS, Excluded
       Leaderboards, Buzz-Blocked, FP Curator — with a Save button. Nothing in the build can edit any of
       it. (The *sub-permission* that should guard it is a backlog item; the capability itself is parity.)
-- [ ] **Admin actions**: Make/Remove Moderator, Add/Remove **Buzz-Block**, Generator Buzz Earnings.
+- [~] **Admin actions**: Make/Remove Moderator, Add/Remove **Buzz-Block**, Generator Buzz Earnings.
 - [ ] **Notifications**: a **Delete Notification** action and a **Link** field on the send form; ours is
       message-only with no delete.
 - [ ] **Browsing level shown** ("Viewing: PG, PG13, R, X, XXX, Blocked") and a **Comment Spammer** alert
