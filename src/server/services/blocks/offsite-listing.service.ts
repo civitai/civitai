@@ -5,11 +5,7 @@ import { TRPCError } from '@trpc/server';
 import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
-import {
-  LISTING_ASSET_ALLOWED_MIME,
-  LISTING_ASSET_FORMAT_TO_MIME,
-  MAX_LISTING_ASSET_SIZE_BYTES,
-} from '~/server/schema/blocks/app-listing.schema';
+import { MAX_LISTING_ASSET_SIZE_BYTES } from '~/server/schema/blocks/app-listing.schema';
 import {
   assertNoOnPlatformSurface,
   validateExternalUrl,
@@ -35,6 +31,7 @@ import {
 } from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionable } from '~/server/services/blocks/app-listing-actionable.service';
 import { computeListingProblems } from '~/server/services/blocks/listing-problems';
+import { measureUploadedImage } from '~/server/services/blocks/measure-uploaded-image';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import {
   deriveContentRatingFromAssets,
@@ -2644,57 +2641,15 @@ export async function rejectExternalRequest(opts: {
 // ---------------------------------------------------------------------------
 
 /**
- * Measure the bytes at `key` and return the values to persist.
- *
- * The per-kind geometry/size/MIME rules the attach procs enforce
- * (`validateListingImage`) read `Image.width` / `height` / `mimeType` /
- * `metadata.size`. Those come from here, so they are measured rather than taken
- * from the uploader — otherwise every one of those bounds is self-reported.
- *
- * What this buys is narrower than "the columns match the object": the presigned
- * PUT stays usable for its full expiry, so the same key can be overwritten after
- * this read. It guarantees the values were TRUE OF REAL BYTES AT PROBE TIME, not
- * that they still describe whatever the key holds later.
- *
- * The two rejections below cannot be deferred to the attach proc's per-kind
- * checks, because the kind is not known until attach: bytes over the loosest cap
- * (no kind accepts them) and a format outside the allowlist.
+ * The byte cap is the LOOSEST per-kind cap: bytes above it satisfy no kind, and the
+ * kind is not known until attach, so it is the only size rejection that can happen
+ * this early.
  */
-async function measureListingAssetUpload(key: string) {
-  const { probeStoredImage, StoredImageProbeError } =
-    await import('~/server/utils/stored-image-probe');
-
-  let probe;
-  try {
-    probe = await probeStoredImage(key, { maxBytes: MAX_LISTING_ASSET_SIZE_BYTES });
-  } catch (err) {
-    if (!(err instanceof StoredImageProbeError)) throw err;
-    if (err.reason === 'store-unavailable') {
-      throw new TRPCError({
-        code: 'INTERNAL_SERVER_ERROR',
-        message: "We couldn't read that upload back to check it. Try again.",
-      });
-    }
-    const message =
-      err.reason === 'missing'
-        ? "We couldn't find that upload — upload the image again."
-        : err.reason === 'too-large'
-          ? `that image is over the ${MAX_LISTING_ASSET_SIZE_BYTES / 1024 / 1024} MiB limit for listing media`
-          : "That image couldn't be read. Try a different PNG, JPEG or WebP.";
-    throw new TRPCError({ code: 'BAD_REQUEST', message });
-  }
-
-  const mimeType = LISTING_ASSET_FORMAT_TO_MIME[probe.format];
-  if (!mimeType) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: `unsupported image type "${probe.format}" (allowed: ${LISTING_ASSET_ALLOWED_MIME.join(
-        ', '
-      )})`,
-    });
-  }
-  return { width: probe.width, height: probe.height, mimeType, sizeBytes: probe.sizeBytes };
-}
+const measureListingAssetUpload = (key: string) =>
+  measureUploadedImage(key, {
+    maxBytes: MAX_LISTING_ASSET_SIZE_BYTES,
+    subject: 'listing media',
+  });
 
 /**
  * Materialise an uploaded image into an `Image` row (owned by the caller) and
