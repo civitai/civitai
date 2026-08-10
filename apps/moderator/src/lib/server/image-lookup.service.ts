@@ -122,13 +122,16 @@ export async function resolveImageId(term: string): Promise<number | null> {
   if (!uuid) {
     // A site URL (`/images/138809682`) has the id as its last segment.
     const last = value.split(/[?#]/)[0].replace(/\/+$/, '').split('/').pop() ?? '';
-    return /^\d+$/.test(last) ? asId(last) : null;
+    if (/^\d+$/.test(last)) return asId(last);
   }
 
+  // Retool matched `url` against the raw term, so any stored value resolved. Older rows hold full
+  // CDN URLs rather than a bare UUID; without the fallback those report "no image matches", which
+  // reads as deleted rather than as an unrecognised format.
   const row = await dbRead
     .selectFrom('Image')
     .select('id')
-    .where('url', '=', uuid)
+    .where('url', '=', uuid ?? value)
     .executeTakeFirst();
   return row?.id ?? null;
 }
@@ -234,14 +237,7 @@ async function getReactions(
   const rows = await dbRead
     .selectFrom('ImageReaction as ir')
     .leftJoin('User as u', 'u.id', 'ir.userId')
-    .select([
-      'ir.id',
-      'ir.userId',
-      'ir.reaction',
-      'ir.createdAt',
-      'u.username',
-      'u.bannedAt',
-    ])
+    .select(['ir.id', 'ir.userId', 'ir.reaction', 'ir.createdAt', 'u.username', 'u.bannedAt'])
     .where('ir.imageId', '=', imageId)
     .orderBy('ir.createdAt', 'desc')
     .limit(limit + 1)
@@ -266,7 +262,14 @@ async function getReports(imageId: number): Promise<ImageReportRow[]> {
   const rows = await dbRead
     .selectFrom('ImageReport as ir')
     .innerJoin('Report as r', 'r.id', 'ir.reportId')
-    .select(['r.id', 'r.reason', 'r.status', 'r.createdAt', 'r.details', 'r.userId as reportedById'])
+    .select([
+      'r.id',
+      'r.reason',
+      'r.status',
+      'r.createdAt',
+      'r.details',
+      'r.userId as reportedById',
+    ])
     .where('ir.imageId', '=', imageId)
     .orderBy('r.createdAt', 'desc')
     .execute();
@@ -304,7 +307,7 @@ async function getModActivity(
     activity: r.activity,
     createdAt: r.createdAt,
     moderatorId: r.userId,
-    moderatorUsername: r.userId ? (byId.get(r.userId)?.username ?? null) : null,
+    moderatorUsername: r.userId ? byId.get(r.userId)?.username ?? null : null,
   }));
 
   return { rows: page, truncated };

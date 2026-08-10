@@ -35,6 +35,8 @@
       'Moderator override',
       article.moderatorNsfwLevel === null ? '—' : getBrowsingLevelLabel(article.moderatorNsfwLevel),
     ],
+    // The cover is usually WHY the effective level is what it is, so it belongs beside the three.
+    ['Cover image', article.coverId === null ? '—' : `#${article.coverId}`],
   ]);
 
   // Typed non-null by Prisma's generated Kysely types, but the column is nullable in the database.

@@ -46,7 +46,10 @@
       value={String(level.value)}
       size="sm"
       variant={level.value === current ? 'secondary' : 'outline'}
-      disabled={busy || level.value === current}
+      title={level.value === current
+        ? 'Confirm this rating — locks it so the image leaves the sweep'
+        : level.description}
+      disabled={busy}
     >
       {level.label}
     </Button>

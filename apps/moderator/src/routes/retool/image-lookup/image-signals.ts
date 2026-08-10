@@ -1,16 +1,12 @@
-// The `/api/image-signals` payload, declared once for the endpoint and the panel. Page-local because it
-// crosses a JSON boundary — `Date` arrives as `string` — and a component must not import from
-// `$lib/server/*`.
+// The `/api/image-signals` payload, declared once for the endpoint and the panel.
+//
+// DERIVED from the service's row type through `Jsonified`, not hand-copied: the copy drifted the first
+// time a column was added, and a missing field on a type like this surfaces as a silently unrendered
+// value rather than an error. `import type` is erased at build, so no server code reaches the bundle.
+import type { ImageEvent as ImageEventRow } from '$lib/server/image-signals.service';
+import type { Jsonified } from '$lib/format';
 
-export type ImageEvent = {
-  key: string;
-  type: string;
-  time: string;
-  userId: number;
-  tosReason: string | null;
-  violationType: string | null;
-  violationDetails: string;
-};
+export type ImageEvent = Jsonified<ImageEventRow>;
 
 export type ReactionCluster = {
   ip: string;

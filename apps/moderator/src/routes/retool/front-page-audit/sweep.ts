@@ -22,10 +22,20 @@ export const MEDIA_LABELS: Record<(typeof SWEEP_MEDIA)[number], string> = {
  * Confirmed against a screenshot of the live app (2026-08-09): its rating bar and filter offer exactly
  * PG / PG-13 / R / X / XXX. No re-extract needed.
  */
+// Descriptions are Retool's `browsingLabels`, shown as tooltips on the rating buttons — the wording a
+// moderator calibrates against, which a bare letter does not carry.
 export const SWEEP_LEVELS = [
-  { value: NsfwLevel.PG, label: 'PG' },
-  { value: NsfwLevel.PG13, label: 'PG-13' },
-  { value: NsfwLevel.R, label: 'R' },
-  { value: NsfwLevel.X, label: 'X' },
-  { value: NsfwLevel.XXX, label: 'XXX' },
+  { value: NsfwLevel.PG, label: 'PG', description: 'Safe for work. No naughty stuff' },
+  {
+    value: NsfwLevel.PG13,
+    label: 'PG-13',
+    description: 'Revealing clothing, violence, and light gore.',
+  },
+  {
+    value: NsfwLevel.R,
+    label: 'R',
+    description: 'Adult themes and situations, partial nudity, graphic violence and death.',
+  },
+  { value: NsfwLevel.X, label: 'X', description: 'Graphic nudity, Adult objects and settings' },
+  { value: NsfwLevel.XXX, label: 'XXX', description: 'Sexual content and activity' },
 ];

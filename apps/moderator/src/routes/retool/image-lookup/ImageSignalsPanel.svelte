@@ -107,6 +107,19 @@
                   {#if e.tosReason}
                     <span class="text-xs text-dark-2">{e.tosReason}</span>
                   {/if}
+                  <!-- Both were already fetched and shipped to the client, and neither reached the
+                       DOM: on a deleted image this row IS the record of who removed it and why. -->
+                  {#if e.userId}
+                    <a href={userLookupUrl(e.userId)} class="text-xs {LINK_CLASS}">by #{e.userId}</a>
+                  {/if}
+                  {#if e.violationDetails}
+                    <span class="w-full wrap-break-word text-xs text-dark-2">
+                      {e.violationDetails}
+                    </span>
+                  {/if}
+                  {#if e.tags}
+                    <span class="w-full wrap-break-word text-xs text-dark-2">tags: {e.tags}</span>
+                  {/if}
                 </li>
               {/each}
             </ul>

@@ -65,6 +65,9 @@ export async function getArticle(articleId: number): Promise<ArticleRow | null> 
       'a.unlisted',
       'a.nsfw',
       'a.tosViolation',
+      // The cover image drives the article's effective nsfwLevel, which is this page's headline badge —
+      // so "which image is the cover" is a question the page invites and could not answer.
+      'a.coverId',
       'a.nsfwLevel',
       'a.userNsfwLevel',
       'a.moderatorNsfwLevel',

@@ -39,6 +39,8 @@ export type ImageEvent = {
   tosReason: string | null;
   violationType: string | null;
   violationDetails: string;
+  /** The tag set as of that moment — on a Tags event this is what the scanner changed. */
+  tags: string | null;
 };
 
 // `default.images` is the image's lifecycle log — Create / Delete / DeleteTOS / Tags / Resources /
@@ -60,8 +62,9 @@ export async function getImageEvents(
     tosReason: string | null;
     violationType: string | null;
     violationDetails: string;
+    tags: string | null;
   }>(`
-    SELECT type, time, userId, tosReason, violationType, violationDetails
+    SELECT type, time, userId, tosReason, violationType, violationDetails, toString(tags) AS tags
     FROM default.images
     WHERE imageId = ${imageId}
       ${bound}
@@ -82,6 +85,7 @@ export async function getImageEvents(
     tosReason: r.tosReason,
     violationType: r.violationType,
     violationDetails: r.violationDetails,
+    tags: r.tags || null,
   }));
 
   return { rows: page, truncated };
