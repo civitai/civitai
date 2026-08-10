@@ -171,6 +171,21 @@ as permission to drop one. Bucket it as `port` and build it.
 `{{ }}` bindings become real inputs: URL query params for filters, form fields for actions.
 Never interpolate them into SQL — use Kysely's builder, or parameterised `sql` tags.
 
+⚠️ **Read the resource AND the URL before deciding what a query is.** A Retool query is very often a
+**REST call into the main app**, not a database write — the exports carry 13 distinct `/api/mod/*`
+endpoints between them, including every destructive one (`ban-user`, `remove-images`,
+`restore-images`, `remove-all-content`, `update-image-flag`, `action-report`,
+`send-mod-notification`). Classifying by table name alone will file a main-app side effect as a local
+write and lose everything the endpoint does around it — search-index sync, ClickHouse tracking,
+notifications, cache busting.
+
+Two blind spots in the export itself, both of which need a screenshot to close:
+
+- **No event handlers.** Nothing records what a button, row or modal click actually triggered. A table
+  labelled "click rows!" gives no hint in the export where the click went.
+- **Frame-level widgets are not dumped.** A persistent header outside the main container appears in no
+  pane, so an app can have a whole toolbar the `## layout` section never mentions.
+
 ## 4. Build the page
 
 **Read [`apps/moderator/CLAUDE.md`](../../../apps/moderator/CLAUDE.md) first** — Svelte 5 idiom, shadcn

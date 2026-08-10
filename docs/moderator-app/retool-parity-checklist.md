@@ -10,6 +10,28 @@ walkthrough it is marked 🎥.
 
 Detail and evidence for most items: [`retool-exports/parity-findings.md`](retool-exports/parity-findings.md).
 
+## Two things the exports cannot tell you
+
+**1. A Retool query is often a REST call into the main app, not a database write.** Do not read
+`retool_db` and assume the rest is local SQL. Across all nine exports there are **13 distinct main-app
+endpoints** — `ban-user`, `remove-images`, `restore-images`, `remove-all-content`,
+`send-mod-notification`, `update-image-flag`, `action-report`, `set-rewards-eligibility`,
+`reset-user-subscription-caches`, `admin/cache-check`, and the `retool/{user,comment,review}` family.
+All are either called by the port or deliberately reimplemented (`action-report` → local
+`setReportStatus`, which additionally rewards reporters). **When classifying a query, check the
+resource and the URL before deciding where it belongs.**
+
+**2. The export has no event handlers and does not dump frame-level widgets.** So:
+- The persistent header (strike chip, *Talked to a mod*, sub tier, Force Logout, the three lookup
+  inputs) appears in **no** container in the layout dump — it lives in the app frame. Porting from the
+  export alone, you would not know it exists.
+- **Every click target is invisible.** The single most load-bearing word on the Basic screen is
+  *"Content (click rows!)"*, and nothing in the export records what a row click did.
+- `navigation1` is the *designed* section list, not the shipped one — the live nav omits an entry the
+  export contains.
+
+A screenshot beats the export for anything in those three categories.
+
 ---
 
 ## 0. Bulk Ban — a ninth app, export now in hand
@@ -48,8 +70,25 @@ tracker only ever listed nine of the parent's **thirteen** subtasks. Export pull
 
 Ported but incomplete. The header items are visible on every section in Retool, not buried in one.
 
-- [ ] **Persistent header across all sections**: strike count, subscription tier, Force Logout,
-      username / user id / email.
+- [ ] **Header: the strike chip, subscription tier and Force Logout are missing from it.** (The header
+      itself, and lookup by id / username / email, are **already done** — `+layout.svelte` keeps
+      username, id and the banned/muted/deleted/moderator badges on every section, and `resolveUserId`
+      already tries all three.) Force Logout, mute, ban and purge exist but live under Admin.
+- [ ] **Paddle account linking is absent.** Retool had a three-step wizard behind the Membership
+      panel's Paddle button — find account by customer id, unlink an old one, link this one — writing
+      `User.paddleCustomerId` with a `retool_db` audit row. The port reads that column and deep-links
+      to Paddle, but nothing can re-link a mis-linked billing account.
+- [ ] **"Content (click rows!)" is a drill-down, and ours goes somewhere else.** Retool's rows clicked
+      through inside the console; ours link out to the **public** civitai profile — where deleted,
+      unpublished and TOS'd content is not shown, so the count and the page it opens legitimately
+      disagree. Three of eight rows (model comments, image comments, reviews) do not link at all.
+      Point each row at the in-app section instead.
+- [ ] **A ninth Content row, Chat Messages**, that `AllCountsUnion` does not produce and we do not show.
+- [ ] **Placement**: Retool put mute / ban / purge / freshdesk / refresh-session / clear-cache in a bar
+      on the landing section. Ours are all one section away under Admin. Reachable, but not in front of
+      the moderator on arrival.
+- [ ] **`sections.ts` is inverted against the live nav**: it ships *Content Overview* (which the live
+      sidebar does **not** show) and omits *Bulk Image Manager* (which it does). That page now exists.
 - [ ] **"Talked to a mod"** — a header button opening a *Chats with Mods* modal listing chat ids.
       🎥 *"You get to see if they've talked to a moderator previously."*
       **Partially built:** `ChatContactPanel` already shows a chats-count and last-contact warning from
@@ -95,6 +134,13 @@ Ported but incomplete. The header items are visible on every section in Retool, 
 - [x] Balance **and lifetime** for Yellow/Blue/Green (fixed 2026-08-09).
 - [x] Moderator name on each activity row; per-transaction buzz colour; the shared-IP / alt-account
       view (`AddressesPanel`) — all already built. Listed so nobody rebuilds them from a screenshot.
+- [x] **Confirmed built, from the editor capture — do not rebuild any of these:** Account Notes with
+      add/edit (ours is a list plus strikes and flags, ahead of Retool's single textarea), Paddle and
+      Stripe customer deep links, Mute/Unmute, Ban (with reason code and internal details — richer than
+      Retool's two-button modal), Purge Content, Freshdesk lookup, Refresh Session, Clear Cache,
+      Profile link, the alt-account id count, Followers/Following, and Reports Received — where ours
+      counts **distinct content items** across all six sources while Retool counted report rows over
+      three types.
 
 ### Found by the screenshot audit, absent from every earlier list
 
