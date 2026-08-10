@@ -87,7 +87,7 @@ Ported but incomplete. The header items are visible on every section in Retool, 
 - [ ] **Placement**: Retool put mute / ban / purge / freshdesk / refresh-session / clear-cache in a bar
       on the landing section. Ours are all one section away under Admin. Reachable, but not in front of
       the moderator on arrival.
-- [ ] **`sections.ts` is inverted against the live nav**: it ships *Content Overview* (which the live
+- [x] **`sections.ts` is inverted against the live nav**: it ships *Content Overview* (which the live
       sidebar does **not** show) and omits *Bulk Image Manager* (which it does). That page now exists.
 - [ ] **"Talked to a mod"** — a header button opening a *Chats with Mods* modal listing chat ids.
       🎥 *"You get to see if they've talked to a moderator previously."*
@@ -109,14 +109,14 @@ Ported but incomplete. The header items are visible on every section in Retool, 
       counts them, so "Total 12" can sit beside 4 rows.
 - [ ] **Report coverage is 6 of 11 entity types.** Bounty, BountyEntry, Collection, ResourceReview and
       chat reports are invisible, so an account reported over those reads as clean.
-- [ ] **Buzz: Payments and Receipts side by side**, each with its own type filter, plus a Description
+- [x] **Buzz: Payments and Receipts side by side**, each with its own type filter, plus a Description
       filter and an *After date* picker. Ours is one merged list on a fixed 90-day window with no
       filters. 🎥 buzz is actively used to grant and deduct.
       (The per-transaction **Color** is already rendered — that sub-claim was stale.)
 - [ ] **A second row of aggregate tables** below those two (counterparty × total amount, for payments
       and for receipts) — the other half of the 2×2 grid.
-- [ ] **The send form is missing `EntityType` / `EntityId`**, which Retool's `buzzSendEntityType` carries.
-- [ ] **Deduct Types reference table** beside the send form (which types lower lifetime balance, which
+- [x] **The send form is missing `EntityType` / `EntityId`**, which Retool's `buzzSendEntityType` carries.
+- [x] **Deduct Types reference table** beside the send form (which types lower lifetime balance, which
       can go negative).
 - [ ] **Moderation activity omits the Retool era.** Only `ModActivity` is read; `ReToolActions` is typed
       and queried nowhere, so all pre-migration history is absent while the panel reads as complete.
@@ -144,7 +144,7 @@ Ported but incomplete. The header items are visible on every section in Retool, 
 
 ### Found by the screenshot audit, absent from every earlier list
 
-- [ ] 🔒 **Buzz sending was Senior-Mod-gated in Retool** (`tabbedContainer12`'s second pane carries
+- [x] 🔒 **Buzz sending was Senior-Mod-gated in Retool** (`tabbedContainer12`'s second pane carries
       `current_user.groups.some(i => i.name === "Senior Mod")`). Ours gates it on the general `/users`
       permission — **a restricted capability silently widened**. Highest priority in this block.
 - [ ] **The whole account-edit capability.** An *Enable Edits* toggle over editable **Username, Email,
@@ -164,7 +164,7 @@ Ported but incomplete. The header items are visible on every section in Retool, 
 
 - [ ] 🎥 **Strike the user as part of the TOS action.** *"TOS, affect the reason, also strike the user."*
       Retool did both in one gesture; ours requires leaving for User Lookup per owner.
-- [ ] 🔴 **`violationType` / `violationDetails` are never sent on removal.** `/api/mod/remove-images`
+- [x] 🔴 **`violationType` / `violationDetails` are never sent on removal.** `/api/mod/remove-images`
       accepts a `violationType` **enum** plus a details string and forwards both to the ClickHouse
       `DeleteTOS` event; the port sends only free-text `reason`. **Every removal from this page is
       logged with an empty violation classification** — silent and permanent. The endpoint's own zod
@@ -208,9 +208,9 @@ in the same screen instead of having to click around a bunch."*
       already reported separately as "N already blocked" — the gap is which and why.)
 - [ ] **A "Remaining" column per queue row** — the non-removed count, beside "Images". It is the number
       that says whether an account has already been cleaned up; we show neither.
-- [ ] **`?user=` and `?page=` clobber each other.** Clicking a report on page 3 returns you to page 1;
+- [x] **`?user=` and `?page=` clobber each other.** Clicking a report on page 3 returns you to page 1;
       paging closes the open drill-down. Small code, hit within a minute of working page 2.
-- [ ] Report history capped at 100 where Retool used 300; no *Profile* deep link beside User Lookup.
+- [x] Report history capped at 100 where Retool used 300; no *Profile* deep link beside User Lookup.
 - [ ] **Prompt/negativePrompt dropped** from the cards — for a generated image the prompt is the evidence.
 - [ ] 60-image cap **with no paging wired** — `ImageQueueGrid` already implements cursor paging and the
       page simply doesn't pass a cursor. Retool's button reads *"Grab 5000 images"* and its query had no
@@ -226,7 +226,7 @@ in the same screen instead of having to click around a bunch."*
 
 ## 4. Image Lookup
 
-- [ ] 🎥 **Expose all the columns.** *"you can expose all the columns. Maybe you want to look into the
+- [x] 🎥 **Expose all the columns.** *"you can expose all the columns. Maybe you want to look into the
       hashes or the meta… ingestion, all this stuff."* Retool used `SELECT *`; ours drops `meta` (the
       **prompt**), `hideMeta`, `analysis`, `scanJobs`, `hash`, `pHash`.
 - [ ] 🔴 **It could WRITE, and our code says otherwise.** A screenshot shows **Toggle Minor ON** and
@@ -234,18 +234,18 @@ in the same screen instead of having to click around a bunch."*
       that screen — and `+page.server.ts` asserted "Read-only. Every action … lived in other apps",
       which would have stopped anyone noticing. Comment corrected 2026-08-09; the two actions are still
       unported.
-- [ ] Report `details` fetched and never rendered (Retool's reports table has an explicit **Details**
+- [x] Report `details` fetched and never rendered (Retool's reports table has an explicit **Details**
       column).
-- [ ] `hasImageEvents` is an unguarded ClickHouse call in `load`, so ClickHouse being down turns "no
+- [x] `hasImageEvents` is an unguarded ClickHouse call in `load`, so ClickHouse being down turns "no
       image matches" into an error page.
 - [ ] `ImageReaction.updatedAt` and the image row's `updatedAt` are dropped.
 
 ## 5. Chat Audit
 
 - [x] Content search reachable for spam terms; "Open reports" actually filtered (both fixed 2026-08-09).
-- [ ] The reporter's `details->>'comment'` is fetched and never rendered — for a chat report that
+- [x] The reporter's `details->>'comment'` is fetched and never rendered — for a chat report that
       comment is the entire substance.
-- [ ] `TopChatters` capped at 25 where Retool showed 50 (surfaced, so not silent).
+- [x] `TopChatters` capped at 25 where Retool showed 50 (surfaced, so not silent).
 - [ ] **A sixth tab, "Send Mod Chat"** — a moderator-initiated DM from this screen. In no export, no
       build and no list; the screenshot is the only record. Needs a re-extract to size.
 - [x] **"SPAM Detector" is already built** — it is `SpamGroupsPanel` on the stats tab. Recorded so
@@ -255,7 +255,7 @@ in the same screen instead of having to click around a bunch."*
 
 ## 6. Article Lookup
 
-- [ ] `unlisted` is selected and rendered nowhere — an unlisted article looks identical to a public one.
+- [x] `unlisted` is selected and rendered nowhere — an unlisted article looks identical to a public one.
       Retool's data table shows an **Unlisted** column.
 - [ ] `Article.metadata` dropped (Retool showed a **Metadata** column); confirm nothing
       moderation-bearing lives in it — that half needs the column's live contents.
@@ -295,7 +295,7 @@ in the same screen instead of having to click around a bunch."*
 - [ ] `ReviewGrouped` — **not an unmatched query: it is the dashboard.** `COUNT(*) GROUP BY needsReview`
       plus a pending-report count, i.e. the *Content Needing Review* block. Moved to the Dashboard
       section below.
-- [ ] **`image-help` gates on `/images`**, a group node whose grant is the union of its children — the
+- [x] **`image-help` gates on `/images`**, a group node whose grant is the union of its children — the
       same hazard Front Page Audit documents as its reason for gating on its own path. A moderator
       granted only `/images/to-ingest` gets action rights here.
 

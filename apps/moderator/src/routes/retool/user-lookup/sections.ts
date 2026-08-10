@@ -1,10 +1,21 @@
 // Retool's `navigation1` / `navigation3` widgets, which are the app's real table of contents: User
 // Lookup was navigated sections, not one scrolling page.
 //
-// Order is Retool's. "Bulk Image Manager" is absent because nothing is ported behind it yet (ticket
-// 1.3) and an empty section is worse than none. Add it here when its panel lands.
+// Order is Retool's, and the live sidebar puts Bulk Image Manager third — between Socials & Bio and
+// Buzz. It links out to the standalone page rather than being a section here, because that page is
+// where the batch actions and their confirmations live.
 
 export type Section = { slug: string; label: string };
+
+/** Sections that leave User Lookup. Rendered in the nav in place, carrying the account through. */
+export type SectionLink = { href: (userId: number) => string; label: string };
+
+export const SECTION_LINKS: Record<string, SectionLink> = {
+  'bulk-image-manager': {
+    label: 'Bulk Image Manager',
+    href: (userId) => `/retool/bulk-image-manager?source=user&q=${userId}`,
+  },
+};
 
 export const SECTIONS: Section[] = [
   { slug: 'basic', label: 'Basic User Information' },

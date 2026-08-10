@@ -6,7 +6,7 @@
   import { LINK_CLASS } from '$lib/format';
   import { userUrl } from '$lib/entity-url';
   import type { LayoutData } from './$types';
-  import { ADMIN_SECTIONS, DEFAULT_SECTION, SECTIONS } from './sections';
+  import { ADMIN_SECTIONS, DEFAULT_SECTION, SECTIONS, SECTION_LINKS } from './sections';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
@@ -76,6 +76,18 @@
               {s.label}
             </a>
           </li>
+          <!-- Retool's sidebar puts Bulk Image Manager third. It leaves the page, carrying the account
+               with it, so it renders in position rather than as a section of its own. -->
+          {#if s.slug === 'socials' && data.result}
+            <li>
+              <a
+                href={SECTION_LINKS['bulk-image-manager'].href(data.result.identity.id)}
+                class="block rounded-md px-3 py-1.5 text-sm text-dark-2 hover:bg-dark-5 hover:text-dark-0"
+              >
+                {SECTION_LINKS['bulk-image-manager'].label} ↗
+              </a>
+            </li>
+          {/if}
         {/each}
       </ul>
 
