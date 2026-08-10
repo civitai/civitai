@@ -19,8 +19,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * `Input buffer contains unsupported image format` — and `/api/og` returns 500
  * for the rest of that pod's life. Upstream: vercel/next.js#96301 introduced it,
  * vercel/next.js#96681 fixes it by adding `'VipsForeignLoadSvg'` to the unblock
- * list. We carry that one-line fix as `patches/next.patch` until we are on a
- * Next release that contains it.
+ * list. We carry that one-line fix as `patches/next@16.3.0.patch` until we are on
+ * a Next release that contains it (stable 16.3.1 is not out yet).
  *
  * WHY THIS TEST IS SHAPED THE WAY IT IS. 🔴 The ordering is the whole test.
  * Rendering an `ImageResponse` in a fresh process SUCCEEDS even on a broken
@@ -35,10 +35,10 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * second case's verdict means nothing. The second case is the regression guard.
  *
  * Watched red/green (2026-08-09, Next 16.3.0):
- *   - without patches/next.patch: case 1 PASSES, case 2 FAILS with
- *     "Input buffer contains unsupported image format" — the verbatim
- *     production error.
- *   - with patches/next.patch: both pass.
+ *   - patch REMOVED and reinstalled: case 1 PASSES (harness fine), case 2 FAILS
+ *     with "Input buffer contains unsupported image format" — the verbatim
+ *     production error — and case 3 FAILS naming the missing loader.
+ *   - patch APPLIED: all three pass.
  *
  * SCOPE / WHAT THIS DOES NOT COVER. This runs in-process, so it does not cover
  * packaging failures under `output: 'standalone'` (the OTHER way `/api/og` has
