@@ -53,6 +53,8 @@ let abortCalls: AbortBody[];
 let abortShouldReject: boolean;
 /** Fires when `/api/upload/complete` is requested, to mutate state mid-flight. */
 let onCompleteRequest: (() => void) | null;
+/** Fires when `/api/upload/abort` is requested, so a test can order it against other effects. */
+let onAbortRequest: (() => void) | null;
 
 class FakeXHR {
   readyState = 0;
@@ -147,6 +149,7 @@ function makeFetch(partCount: number) {
     }
     if (url === '/api/upload/abort') {
       abortCalls.push(JSON.parse(init?.body ?? '{}') as AbortBody);
+      onAbortRequest?.();
       // The store fire-and-forgets this response, so only a rejected request can
       // surface as a throw — which is what `abortShouldReject` reproduces.
       if (abortShouldReject) throw new TypeError('Failed to fetch');
@@ -170,6 +173,7 @@ beforeEach(() => {
   abortCalls = [];
   abortShouldReject = false;
   onCompleteRequest = null;
+  onAbortRequest = null;
   partHandler = () => ({ status: 200, etag: 'etag' });
   vi.stubGlobal('XMLHttpRequest', FakeXHR);
   vi.stubGlobal('requestAnimationFrame', (cb: () => void) => setTimeout(cb, 0));
@@ -410,5 +414,65 @@ describe('useS3UploadStore.upload multipart teardown', () => {
     expect(result).toBeUndefined();
     expect(useS3UploadStore.getState().items[0].status).toBe('error');
     expect(abortCalls).toHaveLength(1);
+  });
+});
+
+/**
+ * ORDERING: the terminal row is written BEFORE the session teardown, on both give-up
+ * paths.
+ *
+ * 🔴 This was undefended. The teardown awaits a network round-trip, so aborting first
+ * leaves the row sitting at its last-rendered percentage for that whole window — which
+ * is exactly the "reads to the user as a finished upload that silently never got
+ * added" failure the terminal write exists to prevent. Nothing in the suite pinned the
+ * order, so swapping the two statements on either branch left every test green, and a
+ * merge that reversed them would have been invisible.
+ *
+ * The timeline is recorded from two independent observers: a zustand subscription for
+ * the status write (synchronous inside `setTerminalStatus`) and the abort request
+ * arriving at the fake. Asserting the exact array also pins that exactly ONE abort is
+ * issued, so a duplicated teardown cannot pass either.
+ */
+describe('useS3UploadStore.upload teardown ordering', () => {
+  /** Records 'status' on the first terminal row write and 'abort' when the abort lands. */
+  function recordTimeline(terminal: 'error' | 'aborted') {
+    const timeline: string[] = [];
+    const unsubscribe = useS3UploadStore.subscribe((state) => {
+      if (state.items[0]?.status === terminal && !timeline.includes('status'))
+        timeline.push('status');
+    });
+    onAbortRequest = () => timeline.push('abort');
+    return { timeline, unsubscribe };
+  }
+
+  it('writes the terminal row before aborting when completion fails', async () => {
+    vi.stubGlobal('fetch', makeFetch(1));
+    completeStatus = 503;
+    const { timeline, unsubscribe } = recordTimeline('error');
+
+    try {
+      await useS3UploadStore.getState().upload({ file: makeFile(CHUNK), type: UploadType.Model });
+    } finally {
+      unsubscribe();
+    }
+
+    expect(timeline).toEqual(['status', 'abort']);
+  });
+
+  it('writes the terminal row before aborting when a part fails', async () => {
+    vi.stubGlobal('fetch', makeFetch(2));
+    partHandler = (_url, partNumber) =>
+      partNumber === 2 ? { status: 400 } : { status: 200, etag: 'etag' };
+    const { timeline, unsubscribe } = recordTimeline('error');
+
+    try {
+      await useS3UploadStore
+        .getState()
+        .upload({ file: makeFile(CHUNK * 2), type: UploadType.Model });
+    } finally {
+      unsubscribe();
+    }
+
+    expect(timeline).toEqual(['status', 'abort']);
   });
 });
