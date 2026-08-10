@@ -54,13 +54,37 @@ export const LISTING_SCREENSHOT_ASPECT_MAX = 2.6;
 export const LISTING_SCREENSHOT_MIN_PX = 320;
 
 /**
- * Absolute upper bound on either side of ANY ingested listing asset. A ceiling
- * (the per-kind checks above only enforce MINIMUMS / aspect) that stops a
- * decompression-bomb / absurd-dimension image (e.g. 100000×100000) from reaching
- * the CF upload + `createImage` scan pipeline on the OG-pull path. 8192px is
- * comfortably above any real store icon/cover/screenshot.
+ * Absolute upper bound on either side of ANY listing asset. A ceiling (the
+ * per-kind checks above only enforce MINIMUMS / aspect) that stops a
+ * decompression-bomb / absurd-dimension image (e.g. 100000×100000) from being
+ * stored and rendered as store media. 8192px is comfortably above any real store
+ * icon/cover/screenshot.
  */
 export const LISTING_ASSET_MAX_DIMENSION_PX = 8192;
+
+/**
+ * The ONE expression of the {@link LISTING_ASSET_MAX_DIMENSION_PX} ceiling:
+ * returns the house-style rejection text naming the bound and the offending side,
+ * or `null` when the image is within it. `subject` is what the message calls the
+ * image ("cover", "That image", …).
+ *
+ * Single-sourced because the bound is applied at more than one layer, and an
+ * open-coded copy at each would let them drift: the ingest paths reject early
+ * (before the bytes reach `createImage` + the scan pipeline), while
+ * {@link validateListingImage} is the gate EVERY asset passes at attach whatever
+ * created its `Image` row — the attach gate is ownership-based, so it cannot tell
+ * how a row was made, and an ingest-side check alone is bypassable by attaching
+ * an image uploaded through some other path.
+ */
+export function listingAssetTooLargeReason(
+  subject: string,
+  width: number,
+  height: number
+): string | null {
+  const maxSide = Math.max(width, height);
+  if (maxSide <= LISTING_ASSET_MAX_DIMENSION_PX) return null;
+  return `${subject} is too large (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side, got ${maxSide}px)`;
+}
 
 /** Only real raster image MIME types (mirrors E5 SCREENSHOT_EXTENSIONS). */
 export const LISTING_ASSET_ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/webp'] as const;
@@ -133,6 +157,11 @@ export function validateListingImage(
   if (!width || !height || width <= 0 || height <= 0) {
     return { ok: false, reason: `${kind} has unknown or non-positive dimensions` };
   }
+  // The ceiling applies to EVERY kind (the per-kind rules below are minimums +
+  // aspect; only `icon` carries its own, tighter, maximum). Checked here rather
+  // than only at ingest because this is the one gate every asset passes.
+  const tooLarge = listingAssetTooLargeReason(kind, width, height);
+  if (tooLarge) return { ok: false, reason: tooLarge };
   const aspect = width / height;
   if (kind === 'icon') {
     const minSide = Math.min(width, height);

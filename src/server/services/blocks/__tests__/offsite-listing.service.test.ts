@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import sharp from 'sharp';
 
 import {
+  LISTING_ASSET_MAX_DIMENSION_PX,
   MAX_LISTING_ASSET_SIZE_BYTES,
   validateListingImage,
 } from '~/server/schema/blocks/app-listing.schema';
@@ -1526,5 +1527,68 @@ describe('persistListingAssetImage (measures the uploaded bytes)', () => {
       persistListingAssetImage({ input: HONEST_COVER, userId: CALLER })
     ).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
     expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// persistListingAssetImage — the per-side DIMENSION CEILING
+// ---------------------------------------------------------------------------
+
+/**
+ * The presigned full-resolution upload path (`/api/v1/image-upload` PUT →
+ * `persistAssetImage`) — the one the CLI's `set-cover` / `add-screenshot` and the
+ * web uploader use — enforced NO maximum on either side, while the other two
+ * ingest paths did. A 9000×4000 cover was accepted in production and stored at
+ * full dimensions.
+ *
+ * These vary DIMENSIONS ONLY. Both fixtures are flat PNGs of a few tens of KB —
+ * orders of magnitude under the 4 MiB byte cap — so the byte rule cannot be what
+ * separates the accepted case from the rejected one, and the accepted case proves
+ * the guard is a CEILING rather than a blanket reject.
+ */
+describe('persistListingAssetImage (per-side dimension ceiling)', () => {
+  const KEY = '33333333-3333-4333-8333-333333333333';
+  const COVER = { url: KEY, width: 800, height: 450, mimeType: 'image/png' as const };
+
+  it('rejects the 9000×4000 upload before it reaches the scan pipeline', async () => {
+    storeObject(await flatPng(9000, 4000));
+
+    await expect(persistListingAssetImage({ input: COVER, userId: CALLER })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: `That image is too large (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side, got 9000px).`,
+    });
+    // No `Image` row, so nothing is scanned, stored or attachable.
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+
+  it('rejects an upload one pixel over the ceiling on its TALLER side', async () => {
+    storeObject(await flatPng(4000, LISTING_ASSET_MAX_DIMENSION_PX + 1));
+
+    await expect(persistListingAssetImage({ input: COVER, userId: CALLER })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: `That image is too large (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side, got ${
+        LISTING_ASSET_MAX_DIMENSION_PX + 1
+      }px).`,
+    });
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+
+  it('NEGATIVE CONTROL: an upload AT the ceiling still persists at full size', async () => {
+    const bytes = await flatPng(LISTING_ASSET_MAX_DIMENSION_PX, 4096);
+    storeObject(bytes);
+
+    await expect(persistListingAssetImage({ input: COVER, userId: CALLER })).resolves.toEqual({
+      imageId: 12345,
+    });
+
+    const arg = mockCreateImage.mock.calls[0][0] as {
+      width?: number;
+      height?: number;
+      metadata?: { size?: number };
+    };
+    expect(arg).toMatchObject({ width: LISTING_ASSET_MAX_DIMENSION_PX, height: 4096 });
+    // The rejected fixtures above are the same KIND of object as this accepted
+    // one — a flat PNG well inside the byte cap. Only the dimensions differ.
+    expect(arg.metadata?.size).toBeLessThan(MAX_LISTING_ASSET_SIZE_BYTES);
   });
 });

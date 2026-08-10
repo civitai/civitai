@@ -5,7 +5,10 @@ import { TRPCError } from '@trpc/server';
 import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
-import { MAX_LISTING_ASSET_SIZE_BYTES } from '~/server/schema/blocks/app-listing.schema';
+import {
+  listingAssetTooLargeReason,
+  MAX_LISTING_ASSET_SIZE_BYTES,
+} from '~/server/schema/blocks/app-listing.schema';
 import {
   assertNoOnPlatformSurface,
   validateExternalUrl,
@@ -2644,12 +2647,25 @@ export async function rejectExternalRequest(opts: {
  * The byte cap is the LOOSEST per-kind cap: bytes above it satisfy no kind, and the
  * kind is not known until attach, so it is the only size rejection that can happen
  * this early.
+ *
+ * The DIMENSION ceiling does not need the kind either — it is the same for all of
+ * them — so it is applied here too, on the measured (never the declared) pair. A
+ * byte cap does not bound decoded dimensions: a small, highly-compressed file can
+ * decode to an enormous canvas, and the presigned-upload path had no ceiling at
+ * all, so an image far above the bound was stored at full size and only its
+ * MINIMUMS were ever checked. Rejecting here keeps the bytes out of `createImage`
+ * + the scan pipeline; {@link validateListingImage} re-applies the same bound at
+ * attach for rows this path did not create.
  */
-const measureListingAssetUpload = (key: string) =>
-  measureUploadedImage(key, {
+const measureListingAssetUpload = async (key: string) => {
+  const measured = await measureUploadedImage(key, {
     maxBytes: MAX_LISTING_ASSET_SIZE_BYTES,
     subject: 'listing media',
   });
+  const tooLarge = listingAssetTooLargeReason('That image', measured.width, measured.height);
+  if (tooLarge) throw new TRPCError({ code: 'BAD_REQUEST', message: `${tooLarge}.` });
+  return measured;
+};
 
 /**
  * Materialise an uploaded image into an `Image` row (owned by the caller) and
