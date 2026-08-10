@@ -1861,7 +1861,9 @@ export async function getJudgedEntries(
     return [];
   }
 
-  // Exclude users who won a challenge within the cooldown period, scoped by event
+  // Exclude users who won a challenge within the cooldown period, scoped by event. Wins in a user
+  // challenge are excluded from the lookback for the same reason user challenges skip the cooldown
+  // below: the two prize pools are independent in both directions.
   let recentWinnerIds = new Set<number>();
   if (source === ChallengeSource.User) {
     // Paid user challenges never apply the winner cooldown — a recent daily-challenge win
@@ -1888,6 +1890,7 @@ export async function getJudgedEntries(
       JOIN "Challenge" c ON c.id = cw."challengeId"
       WHERE cw."createdAt" > now() - ${cooldownInterval}::interval
         AND c.status = 'Completed'
+        AND c."source" <> 'User'
         ${eventCondition}
     `;
     recentWinnerIds = new Set(recentWinners.map((w) => w.userId));
@@ -1899,6 +1902,7 @@ export async function getJudgedEntries(
       JOIN "Challenge" c ON c.id = cw."challengeId"
       WHERE cw."createdAt" > now() - ${config.winnerCooldown}::interval
         AND c.status = 'Completed'
+        AND c."source" <> 'User'
     `;
     recentWinnerIds = new Set(recentWinners.map((w) => w.userId));
   }
