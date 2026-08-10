@@ -1,9 +1,9 @@
-# Bulk Image Manager.json
+# bulk-image-manager-.json
 
 queries: 40   components: 60
 resources: JavascriptQuery, REST-WithoutResource, retool_db, Replicated_Read_Prod
 
-## component types (layout is NOT ported — this is only a scale signal)
+## component types (scale signal; the structure itself is below)
   ButtonWidget2: 15
   TextInputWidget2: 8
   Function: 7
@@ -21,6 +21,24 @@ resources: JavascriptQuery, REST-WithoutResource, retool_db, Replicated_Read_Pro
   DrawerFrameWidget: 1
   ToggleButtonWidget: 1
   JSONEditorWidget: 1
+
+## layout — panes, containers and modals
+  Retool's shape. A container with several PANES is a tab group: port it as SUB-PAGES,
+  one route per pane, not as one long page — a moderator who had tabs and now scrolls
+  reports the tool as broken. A modal is a dialog, not an inlined panel.
+  "only visible when" is a role/state gate that appears in NO query — port it too.
+
+### group1   [ContainerWidget2] — 1 pane(s)
+  - "View 1"  [bd48f]
+      c 3 w 5  text7 [TextWidget2]
+      c 0 w12  progressBar1 [ProgressBarWidget]
+
+### collapsibleContainer1   [ContainerWidget2] — 1 pane(s)
+  - "View 1"  [38531]
+      c 0 w 9  textArea3 [TextAreaWidget]
+      c 9 w 3  button10 [ButtonWidget2] "Copy links to selected images"
+      c 0 w 9  collapsibleTitle1 [TextWidget2]   (not in a pane)
+      c 9 w 3  collapsibleToggle1 [ToggleButtonWidget] "{{ self.value ? 'Hide' : 'Show' }}"   (not in a pane)
 
 ## queries
 

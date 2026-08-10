@@ -1,9 +1,9 @@
-# User Reports.json
+# user-reports.json
 
 queries: 34   components: 57
 resources: JavascriptQuery, REST-WithoutResource, retool_db, Replicated_Read_Prod, Clickhouse
 
-## component types (layout is NOT ported — this is only a scale signal)
+## component types (scale signal; the structure itself is below)
   ButtonWidget2: 17
   Function: 7
   TextWidget2: 7
@@ -20,6 +20,40 @@ resources: JavascriptQuery, REST-WithoutResource, retool_db, Replicated_Read_Pro
   ProgressBarWidget: 1
   DrawerFrameWidget: 1
   TabsWidget2: 1
+
+## tabs & option sets — READ THESE, they are functionality
+  Tab labels are the app's table of contents; dropdown options are canned workflows that
+  exist in no query. A tab you did not port is a capability you did not port.
+
+### tabbedContainer1   [ContainerWidget2]
+    - ModActivity({{ ModActTable.value.length }})
+    - Reports({{ ReceivedReports.data.id.length }})
+    - UserReport History
+
+### tabs1   [TabsWidget2]
+    - Tab 1
+    - Tab 2
+    - Tab 3
+
+## layout — panes, containers and modals
+  Retool's shape. A container with several PANES is a tab group: port it as SUB-PAGES,
+  one route per pane, not as one long page — a moderator who had tabs and now scrolls
+  reports the tool as broken. A modal is a dialog, not an inlined panel.
+  "only visible when" is a role/state gate that appears in NO query — port it too.
+
+### group1   [ContainerWidget2] — 1 pane(s)
+  - "View 1"  [bd48f]
+      c 3 w 5  text7 [TextWidget2]
+      c 0 w12  progressBar1 [ProgressBarWidget]
+
+### tabbedContainer1   [ContainerWidget2] — 3 pane(s), tab bar tabs1
+  - "ModActivity({{ ModActTable.value.length }})"  [aa085]
+      c 0 w12  tabs1 [TabsWidget2]
+      c 0 w12  table5 [TableWidget2]
+  - "Reports({{ ReceivedReports.data.id.length }})"  [db4e2]
+      c 0 w12  table4 [TableWidget2]
+  - "UserReport History"  [39659]
+      c 0 w12  table3 [TableWidget2]
 
 ## queries
 

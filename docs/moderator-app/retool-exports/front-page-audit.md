@@ -1,9 +1,9 @@
-# Front Page Audit.json
+# front-page-audit-.json
 
 queries: 16   components: 19
 resources: Replicated_Read_Prod, Prod, retool_db, JavascriptQuery
 
-## component types (layout is NOT ported — this is only a scale signal)
+## component types (scale signal; the structure itself is below)
   Function: 8
   State: 4
   Frame: 1
@@ -13,6 +13,17 @@ resources: Replicated_Read_Prod, Prod, retool_db, JavascriptQuery
   TextAreaWidget: 1
   ButtonWidget2: 1
   JSONEditorWidget: 1
+
+## layout — panes, containers and modals
+  Retool's shape. A container with several PANES is a tab group: port it as SUB-PAGES,
+  one route per pane, not as one long page — a moderator who had tabs and now scrolls
+  reports the tool as broken. A modal is a dialog, not an inlined panel.
+  "only visible when" is a role/state gate that appears in NO query — port it too.
+
+### modal1   [ModalWidget] — MODAL
+    c 0 w 7  radioGroup1 [RadioGroupWidget2]
+    c 0 w10  textArea1 [TextAreaWidget]
+    c 1 w 8  button1 [ButtonWidget2] "ToS {{customComponent1.model.images.filter(image ="
 
 ## queries
 

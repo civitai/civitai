@@ -1,9 +1,9 @@
-# Moderation Status.json
+# moderation-status-.json
 
 queries: 77   components: 197
 resources: retool_db, Replicated_Read_Prod, REST-WithoutResource
 
-## component types (layout is NOT ported — this is only a scale signal)
+## component types (scale signal; the structure itself is below)
   TextWidget2: 73
   ButtonWidget2: 51
   Function: 21
@@ -18,6 +18,248 @@ resources: retool_db, Replicated_Read_Prod, REST-WithoutResource
   SelectWidget2: 1
   ImageWidget2: 1
   TextAreaWidget: 1
+
+## tabs & option sets — READ THESE, they are functionality
+  Tab labels are the app's table of contents; dropdown options are canned workflows that
+  exist in no query. A tab you did not port is a capability you did not port.
+
+### tabbedContainer1   [ContainerWidget2]
+    - Moderation Status
+    - Image Help
+    - Graphs
+    - Who is who?
+
+### tabs1   [TabsWidget2]
+    - Tab 1
+    - Tab 2
+    - Tab 3
+
+## layout — panes, containers and modals
+  Retool's shape. A container with several PANES is a tab group: port it as SUB-PAGES,
+  one route per pane, not as one long page — a moderator who had tabs and now scrolls
+  reports the tool as broken. A modal is a dialog, not an inlined panel.
+  "only visible when" is a role/state gate that appears in NO query — port it too.
+
+### container1   [ContainerWidget2] — 1 pane(s)  (inside tabbedContainer1)
+  - "View 1"  [b8068]
+      c 4 w 4  button74 [ButtonWidget2] "Urgent Content ({{ UrgentReports.data.id.length }}"
+      c 0 w 6  container2 [ContainerWidget2]
+      c 6 w 6  container8 [ContainerWidget2]
+      c 6 w 6  container3 [ContainerWidget2]
+      c 0 w 6  container4 [ContainerWidget2]
+      c 0 w 6  container10 [ContainerWidget2]
+      c 0 w 8  text7 [TextWidget2]   (not in a pane)
+
+### container2   [ContainerWidget2] — 1 pane(s)  (inside container1)
+  - "View 1"  [b8068]
+      c 4 w 3  button36 [ButtonWidget2] "{{formatDataAsArray(ReviewGrouped.data).find(i=>i."
+      c 7 w 5  text68 [TextWidget2]
+      c 0 w 3  text1 [TextWidget2]
+      c 3 w 1  button39 [ButtonWidget2]
+      c 0 w12  divider2 [DividerWidget]
+      c 7 w 5  text69 [TextWidget2]
+      c 0 w 3  text8 [TextWidget2]
+      c 3 w 1  button40 [ButtonWidget2]
+      c 4 w 3  button2 [ButtonWidget2] "{{formatDataAsArray(ReviewGrouped.data).find(i=>i."
+      c 0 w12  divider4 [DividerWidget]
+      c 4 w 3  button64 [ButtonWidget2] "{{formatDataAsArray(ReviewGrouped.data).find(i=>i."
+      c 0 w 4  text88 [TextWidget2]
+      c 7 w 5  text89 [TextWidget2]
+      c 0 w12  divider21 [DividerWidget]
+      c 0 w 4  text93 [TextWidget2]
+      c 7 w 5  text94 [TextWidget2]
+      c 4 w 3  button68 [ButtonWidget2] "{{formatDataAsArray(ReviewGrouped.data).find(i=>i."
+      c 0 w12  divider19 [DividerWidget]
+      c 3 w 1  button41 [ButtonWidget2]
+      c 4 w 3  button3 [ButtonWidget2] "{{formatDataAsArray(ReviewGrouped.data).find(i=>i."
+      c 0 w 3  text9 [TextWidget2]
+      c 7 w 5  text90 [TextWidget2]
+      c 0 w12  divider22 [DividerWidget]
+      c 4 w 3  button4 [ButtonWidget2] "{{formatDataAsArray(ReviewGrouped.data).find(i=>i."
+      c 0 w 3  text43 [TextWidget2]
+      c 0 w12  divider5 [DividerWidget]
+      c 0 w 3  text10 [TextWidget2]
+      c 4 w 3  button59 [ButtonWidget2] "{{TagQueue.data.id.length > 100 ? '100+' : TagQueu"
+      c 7 w 5  text52 [TextWidget2]
+      c 0 w12  divider12 [DividerWidget]
+      c 0 w12  group8 [ContainerWidget2]
+      c 0 w12  group10 [ContainerWidget2]
+      c 0 w12  group11 [ContainerWidget2]
+      c 0 w12  group12 [ContainerWidget2]
+      c 0 w12  containerTitle1 [TextWidget2]   (not in a pane)
+
+### container3   [ContainerWidget2] — 1 pane(s)  (inside container1)
+  - "View 1"  [b8068]
+      c 0 w 5  text13 [TextWidget2]
+      c 5 w 3  button7 [ButtonWidget2] "{{OLDReports.data.Model[0]}}"
+      c 8 w 4  text53 [TextWidget2]
+      c 8 w 4  text57 [TextWidget2]
+      c 0 w 5  text14 [TextWidget2]
+      c 5 w 3  button8 [ButtonWidget2] "{{OLDReports.data.Comment[0]}}"
+      c 8 w 4  text55 [TextWidget2]
+      c 8 w 4  text56 [TextWidget2]
+      c 0 w 5  text15 [TextWidget2]
+      c 5 w 3  button9 [ButtonWidget2] "{{OLDReports.data.CommentV2[0]}}"
+      c 8 w 4  text58 [TextWidget2]
+      c 5 w 3  button10 [ButtonWidget2] "{{OLDReports.data.ResourceReview[0]}}"
+      c 0 w 5  text16 [TextWidget2]
+      c 8 w 4  text59 [TextWidget2]
+      c 8 w 4  text60 [TextWidget2]
+      c 0 w 5  text17 [TextWidget2]
+      c 5 w 3  button11 [ButtonWidget2] "{{OLDReports.data.Article[0]}}"
+      c 8 w 4  text61 [TextWidget2]
+      c 5 w 3  button12 [ButtonWidget2] "{{OLDReports.data.Post[0]}}"
+      c 0 w 5  text18 [TextWidget2]
+      c 0 w 5  text36 [TextWidget2]
+      c 5 w 3  button21 [ButtonWidget2] "{{OLDReports.data.User[0]}}"
+      c 8 w 4  text62 [TextWidget2]
+      c 0 w 5  text37 [TextWidget2]
+      c 5 w 3  button22 [ButtonWidget2] "{{OLDReports.data.Collection[0]}}"
+      c 0 w 5  text38 [TextWidget2]
+      c 5 w 3  button23 [ButtonWidget2] "{{OLDReports.data.Bounty[0]}}"
+      c 0 w 5  text39 [TextWidget2]
+      c 5 w 3  button24 [ButtonWidget2] "{{OLDReports.data.BountyEntry[0]}}"
+      c 0 w 5  text44 [TextWidget2]
+      c 5 w 3  button35 [ButtonWidget2] "{{OLDReports.data.Chat[0]}}"
+      c 8 w 4  text63 [TextWidget2]
+      c 8 w 4  text64 [TextWidget2]
+      c 0 w12  divider1 [DividerWidget]
+      c 0 w12  containerTitle2 [TextWidget2]   (not in a pane)
+
+### container4   [ContainerWidget2] — 1 pane(s)  (inside container1)
+  - "View 1"  [b8068]
+      c 0 w12  group1 [ContainerWidget2]
+      c 0 w 8  group9 [ContainerWidget2]
+      c 0 w12  containerTitle3 [TextWidget2]   (not in a pane)
+
+### tabbedContainer1   [ContainerWidget2] — 4 pane(s), tab bar tabs1
+  - "Moderation Status"  [fac9d]
+      c 0 w12  container1 [ContainerWidget2]
+  - "Image Help"  [954d7]
+      c 2 w 2  select1 [SelectWidget2] "Help Requests"
+      c 5 w 2  text49 [TextWidget2]
+      c 8 w 2  button42 [ButtonWidget2] "Aid has been supplied"
+      c 5 w 2  text50 [TextWidget2]
+      c 2 w 8  gridView1 [ListViewWidget2]
+  - "Graphs"  [af576]
+      c 0 w 2  button43 [ButtonWidget2] "Load Graphs"
+      c 0 w 4  chart1 [PlotlyChartWidget] "Model Uploads"
+      c 4 w 4  chart2 [PlotlyChartWidget] "Image Uploads"
+      c 6 w 4  text79 [TextWidget2]
+      c 0 w 3  text70 [TextWidget2]
+      c 0 w 6  table1 [TableWidget2]
+      c 6 w 6  table2 [TableWidget2]
+  - "Who is who?"  [db300]
+      c 0 w 4  textArea1 [TextAreaWidget] "Label"
+      c 0 w12  tabs1 [TabsWidget2]   (not in a pane)
+
+### container6   [ContainerWidget2] — 1 pane(s)  (inside gridView1)
+  - "View 1"  [5ea16]
+      c 0 w12  image1 [ImageWidget2]
+      c 0 w12  text46 [TextWidget2]
+      c 0 w12  text48 [TextWidget2]
+      c 0 w12  containerTitle5 [TextWidget2]   (not in a pane)
+
+### container7   [ContainerWidget2] — 1 pane(s)  (inside listView1)
+  - "View 1"  [c7c92]
+      c 0 w 3  text65 [TextWidget2]
+      c 3 w 3  button44 [ButtonWidget2] "{{item.count}}"
+      c 6 w 5  text66 [TextWidget2]
+      c 0 w12  containerTitle6 [TextWidget2]   (not in a pane)
+
+### container8   [ContainerWidget2] — 1 pane(s)  (inside container1)
+  - "View 1"  [77aae]
+      c 0 w12  listView1 [ListViewWidget2]
+      c 0 w12  container9 [ContainerWidget2]
+      c 0 w12  containerTitle7 [TextWidget2]   (not in a pane)
+
+### group1   [ContainerWidget2] — 1 pane(s)  (inside container4)
+  - "View 1"  [12d7c]
+      c 2 w 1  button69 [ButtonWidget2] "Split"
+      c 3 w 1  button38 [ButtonWidget2]
+      c 4 w 3  button13 [ButtonWidget2] "{{ PGTime.value }} behind"
+      c 7 w 5  text42 [TextWidget2]
+      c 0 w 2  text19 [TextWidget2]
+      c 0 w12  divider23 [DividerWidget]
+      c 0 w 3  text71 [TextWidget2]
+      c 3 w 1  button53 [ButtonWidget2]
+      c 4 w 3  button45 [ButtonWidget2] "{{ PG13Time.value }} behind"
+      c 7 w 5  text72 [TextWidget2]
+      c 0 w12  divider13 [DividerWidget]
+      c 0 w 4  text20 [TextWidget2]
+      c 4 w 3  button15 [ButtonWidget2] "{{ArticleCount.data.count[0]}}"
+      c 7 w 1  button32 [ButtonWidget2]
+      c 0 w12  divider7 [DividerWidget]
+      c 4 w 3  button16 [ButtonWidget2] "{{BountyCount.data.count[0]}}"
+      c 7 w 1  button33 [ButtonWidget2]
+      c 0 w 4  text21 [TextWidget2]
+      c 0 w12  divider24 [DividerWidget]
+      c 4 w 3  button78 [ButtonWidget2] "{{ Inquisitor1Queue.data.result }}"
+      c 0 w 4  text96 [TextWidget2]
+
+### group7   [ContainerWidget2] — 1 pane(s)  (inside container9)
+  - "View 1"  [b8691]
+      c 3 w 3  button30 [ButtonWidget2] "{{ModelReview.data.needsreview[0]}}"
+      c 0 w 3  text41 [TextWidget2]
+
+### container9   [ContainerWidget2] — 1 pane(s)  (inside container8)
+  - "View 1"  [b8691]
+      c 0 w11  group7 [ContainerWidget2]
+      c 0 w12  containerTitle8 [TextWidget2]   (not in a pane)
+
+### group8   [ContainerWidget2] — 1 pane(s)  (inside container2)
+  - "View 1"  [7f57f]
+      c 0 w 3  text80 [TextWidget2]
+      c 4 w 3  button52 [ButtonWidget2] "{{RatingQueue.data.count[0]}}"
+      c 7 w 5  text81 [TextWidget2]
+      c 0 w12  divider25 [DividerWidget]
+
+### group9   [ContainerWidget2] — 1 pane(s)  (inside container4)
+  - "View 1"  [052a4]
+      c 0 w 6  text82 [TextWidget2]
+      c 6 w 4  button54 [ButtonWidget2] "{{ModelCount.data.count[0]}}"
+      c11 w 1  button55 [ButtonWidget2]
+
+### container10   [ContainerWidget2] — 1 pane(s)  (inside container1)
+  - "View 1"  [b8068]
+      c 0 w 4  text83 [TextWidget2]
+      c 4 w 3  button56 [ButtonWidget2] "{{ BlockedImagesTask.data.count[0] }}"
+      c 7 w 5  text84 [TextWidget2]
+      c 0 w12  divider17 [DividerWidget]
+      c 0 w 4  text85 [TextWidget2]
+      c 4 w 3  button57 [ButtonWidget2] "{{ CivitModelsData.data.id.length }}"
+      c 7 w 1  button58 [ButtonWidget2]
+      c 0 w12  divider18 [DividerWidget]
+      c 0 w 4  text87 [TextWidget2]
+      c 4 w 3  button62 [ButtonWidget2] "{{ TrainingCount.data.count[0] }}"
+      c 0 w 4  text95 [TextWidget2]
+      c 4 w 3  button75 [ButtonWidget2] "{{formatDataAsArray(ReviewGrouped.data).find(i=>i."
+      c 0 w12  table10 [TableWidget2]
+      c 0 w12  containerTitle9 [TextWidget2]   (not in a pane)
+
+### group10   [ContainerWidget2] — 1 pane(s)  (inside container2)
+  - "View 1"  [7f57f]
+      c 0 w 3  text100 [TextWidget2]
+      c 4 w 3  button80 [ButtonWidget2] "{{ErrorRatingQueue.data.count[0]}}"
+      c 0 w12  divider26 [DividerWidget]
+
+### group11   [ContainerWidget2] — 1 pane(s)  (inside container2)
+  - "View 1"  [7f57f]
+      c 0 w 3  text101 [TextWidget2]
+      c 4 w 3  button81 [ButtonWidget2] "{{ComicReview.data.count[0]}}"
+      c 0 w12  divider27 [DividerWidget]
+
+### group12   [ContainerWidget2] — 1 pane(s)  (inside container2)
+  - "View 1"  [7f57f]
+      c 0 w 4  text102 [TextWidget2]
+      c 4 w 3  button82 [ButtonWidget2] "{{ArticleReview.data.count[0]}}"
+      c 0 w12  divider28 [DividerWidget]
+
+### gridView1   (1)
+    c 0 w12  container6 [ContainerWidget2]
+
+### listView1   (1)
+    c 0 w12  container7 [ContainerWidget2]
 
 ## queries
 

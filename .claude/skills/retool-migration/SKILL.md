@@ -125,8 +125,22 @@ grep -o '\\"_labels\\",\[[^]]*\]' "<export.json>"        # every option set in t
 ```
 
 Expect volume — real apps run 77–170 queries, and many are variants of one lookup, dead experiments,
-or Retool plumbing (`Function`, `State`, `Timer`). That does not license skipping them; it licenses
-*classifying* them. See §2.
+or Retool plumbing (`State`, `Timer`). That does not license skipping them; it licenses *classifying*
+them. See §2.
+
+🔴 **A `Function` query is NOT plumbing — open every one.** This is where Retool keeps the lists that
+have no table behind them, and the extractor renders it as a bare name with no SQL, which reads exactly
+like glue. `TosReasons` (Bulk Image Manager **and** User Reports) is a `Function`, and it holds the
+eleven canned TOS removal reasons, the **user-facing message** each one sends, and the flag
+(`poi` / `minor` / `tag`) each one sets — a whole removal workflow, absent from the port until a
+post-hoc review dug it out of the raw JSON. `BanReasons` in Bulk Ban is the same shape.
+
+**A picker's options are a capability.** They come from three places and only one of them is in the
+query list: a static `_labels` set on the widget, a `Function` like the above, or a query bound to the
+widget (`SELECT DISTINCT type FROM buzzTransactions` behind User Lookup's buzz *Reason*). Port the
+source, not a hand-written subset of what you saw in a screenshot — a shortened list silently removes
+choices a moderator relies on, and no review that reads only the code can see it. Check the widget's
+`dataBindings` in `--json` output for what feeds it.
 
 ## 2. Classify every query before building — no partial ports
 
@@ -140,7 +154,7 @@ Before writing code, put **every** query into exactly one bucket:
 | --- | --- |
 | **port** | Real functionality. Build it. |
 | **equivalent** | Covered by a different shape here — say which. Retool's twelve per-type COUNTs become one list. |
-| **plumbing** | Retool-side glue with no server meaning: `State`, table grouping, `CurrentUTCTime`, pickers. |
+| **plumbing** | Retool-side glue with no server meaning: `State`, table grouping, `CurrentUTCTime`. |
 | **superseded** | A v1 whose v2 is also present, or a duplicate. Name the winner. |
 | **blocked** | Needs a key, a system, or a decision we do not have. Say exactly what unblocks it. |
 

@@ -3,7 +3,7 @@
 queries: 10   components: 21
 resources: Replicated_Read_Prod, Clickhouse
 
-## component types (layout is NOT ported — this is only a scale signal)
+## component types (scale signal; the structure itself is below)
   TextWidget2: 7
   TableWidget2: 7
   TextInputWidget2: 2
@@ -26,6 +26,40 @@ resources: Replicated_Read_Prod, Clickhouse
     - Tab 1
     - Tab 2
     - Tab 3
+
+## layout — panes, containers and modals
+  Retool's shape. A container with several PANES is a tab group: port it as SUB-PAGES,
+  one route per pane, not as one long page — a moderator who had tabs and now scrolls
+  reports the tool as broken. A modal is a dialog, not an inlined panel.
+  "only visible when" is a role/state gate that appears in NO query — port it too.
+
+### container1   [ContainerWidget2] — 1 pane(s)
+  - "View 1"  [9b145]
+      c 0 w 2  imageInput [TextInputWidget2] "Image Id"
+      c 2 w 2  button1 [ButtonWidget2] "Search"
+      c 5 w 3  text3 [TextWidget2]
+      c 0 w 3  textInput1 [TextInputWidget2] "Image URL"
+      c 3 w 3  text6 [TextWidget2]
+      c 0 w12  tabbedContainer1 [ContainerWidget2]
+      c 0 w12  containerTitle1 [TextWidget2]   (not in a pane)
+
+### tabbedContainer1   [ContainerWidget2] — 4 pane(s), tab bar tabs1  (inside container1)
+  - "ModActivity"  [30533]
+      c 0 w 6  text1 [TextWidget2]
+      c 0 w 8  table3 [TableWidget2]
+      c 0 w 6  text2 [TextWidget2]
+      c 0 w 9  table4 [TableWidget2]
+      c 0 w 6  text4 [TextWidget2]
+      c 0 w 9  table5 [TableWidget2]
+      c 0 w 3  text5 [TextWidget2]
+      c 0 w 9  table6 [TableWidget2]
+  - "Reactions"  [eadc7]
+      c 0 w12  table1 [TableWidget2]
+  - "Tags"  [3c65e]
+      c 0 w12  table2 [TableWidget2]
+  - "ShadowTags"  [a3e2c]
+      c 0 w 9  table7 [TableWidget2]
+      c 0 w12  tabs1 [TabsWidget2]   (not in a pane)
 
 ## queries
 

@@ -227,8 +227,32 @@ Open, with the evidence each audit produced:
 
 ## 2. Bulk Image Manager
 
+- [ ] 🔴 **`TosReasons` — the removal reason picker, and its user-facing messages.** Found 2026-08-10
+      by re-extracting the raw export; it appears in **no** committed inventory because it is typed
+      `Function`, which the skill said to bucket as plumbing. `tosReasonsRadio` is a radio group over
+      eleven reasons, each carrying **the message the user is sent** and, for three of them, the flag
+      to set:
+
+      | Label | Message sent to the user | Sets |
+      | --- | --- | --- |
+      | Depicting Real People | Depicting real people is not allowed. | `poi` |
+      | Minor displayed in mature context | Minors displayed in mature context is not allowed. | `minor` |
+      | NSFW potential minor in a school environment | NSFW potential minors in a school environment is not allowed | |
+      | Realistic minor | Realistic images of minors is not allowed. | |
+      | Bestiality | Bestiality is not allowed. | `tag` |
+      | Rape/Forced Sex | Depicting rape and domestic abuse is not allowed. | |
+      | Scat/Fecal matter | Fecal matter, gaseous emission, object or lifeform being ejected from an anus is not allowed | |
+      | Graphic Violence/Gore | Graphic Violence and/or gore is not allowed | |
+      | Non AI content | CivitAI is for posting AI-generated images or videos, go here to start generating some https://civitai.com/generate | |
+      | Likeness/DMCA | Person depicted has requested to have images taken down | |
+      | Other | free text from the box beside it | |
+
+      Ours offers the `violationType` enum plus a free-text reason: the canned messages and the
+      automatic flagging are both absent, so every moderator writes their own wording and sets POI or
+      minor by hand afterwards. **The same widget is on User Reports** — fix once, in `ImageActionBar`.
 - [ ] 🎥 **Strike the user as part of the TOS action.** *"TOS, affect the reason, also strike the user."*
-      Retool did both in one gesture; ours requires leaving for User Lookup per owner.
+      Retool did both in one gesture; ours requires leaving for User Lookup per owner. The export's
+      `strikeCheckbox` ("Strike User's Account") is the control, on **both** this page and User Reports.
 - [x] 🔴 **`violationType` / `violationDetails` are never sent on removal.** `/api/mod/remove-images`
       accepts a `violationType` **enum** plus a details string and forwards both to the ClickHouse
       `DeleteTOS` event; the port sends only free-text `reason`. **Every removal from this page is
@@ -256,6 +280,10 @@ Open, with the evidence each audit produced:
 🎥 *"press the report and then their images load below… previous removals, previous reports… everything
 in the same screen instead of having to click around a bunch."*
 
+- [ ] 🔴 **`tosReasonsRadio` + `strikeCheckbox`** — this page carries the same two widgets as Bulk
+      Image Manager, so the eleven canned TOS reasons, their user-facing messages, the `poi`/`minor`/
+      `tag` flagging and "Strike User's Account" are missing here too. See §2 for the full table; the
+      fix belongs in the shared `ImageActionBar`.
 - [x] Queue and account side by side (2026-08-09 — was stacked). **The screenshot settles what Retool
       did**: history tabs top-left, queue table top-right, image grid full-width below. So ours is a
       deliberate improvement, not parity. Caveat: the split is `xl:` only, so it still stacks below
@@ -307,6 +335,10 @@ in the same screen instead of having to click around a bunch."*
 
 ## 5. Chat Audit
 
+- [ ] **The reports tab has no Status filter.** Retool's `select1` ("Status", bound to
+      `ChatReport.data`) let a moderator pick; ours hardcodes `DEFAULT_REPORT_STATUSES`, so resolved
+      chat reports cannot be reached at all. Same shape as the User Lookup reports filter fixed on
+      2026-08-09. `select2` ("Username", bound to `FindChatById.data`) is the second half.
 - [x] Content search reachable for spam terms; "Open reports" actually filtered (both fixed 2026-08-09).
 - [x] The reporter's `details->>'comment'` is fetched and never rendered — for a chat report that
       comment is the entire substance.
