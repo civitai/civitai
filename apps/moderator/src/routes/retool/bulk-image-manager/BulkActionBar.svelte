@@ -5,8 +5,10 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
+  import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import { num } from '$lib/format';
+  import { VIOLATION_TYPES } from './sources';
 
   let {
     selected,
@@ -23,6 +25,7 @@
   const ids = $derived([...selected].join(','));
   const count = $derived(selected.size);
 
+  let violationType = $state('none');
   let confirming = $state<'remove' | null>(null);
   let notifying = $state(false);
   let flagging = $state(false);
@@ -82,7 +85,29 @@
           {#if ownerCount > 1}across <strong>{ownerCount}</strong> accounts{/if}? Their owners are not
           notified unless you also send a message.
         </p>
-        <Input name="reason" placeholder="Reason (optional, recorded with the removal)" class="mb-2" />
+        <div class="mb-2 flex flex-wrap gap-2">
+          <!-- The endpoint classifies removals by this enum and ships it to ClickHouse; free text
+               alone left every removal from this page unclassified. -->
+          <Select.Root type="single" bind:value={violationType}>
+            <Select.Trigger class="w-52">
+              {violationType === 'none' ? 'Violation type (optional)' : violationType}
+            </Select.Trigger>
+            <Select.Content>
+              <Select.Item value="none">No violation type</Select.Item>
+              {#each VIOLATION_TYPES as v (v)}
+                <Select.Item value={v}>{v}</Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+          {#if violationType !== 'none'}
+            <input type="hidden" name="violationType" value={violationType} />
+          {/if}
+          <Input
+            name="reason"
+            placeholder="Reason (optional, recorded with the removal)"
+            class="min-w-48 flex-1"
+          />
+        </div>
         <div class="flex gap-2">
           <Button type="submit" size="sm" variant="destructive" disabled={submitting}>
             {submitting ? 'Removing…' : `Remove ${num(count)}`}

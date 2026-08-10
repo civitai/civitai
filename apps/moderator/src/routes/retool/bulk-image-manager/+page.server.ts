@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess } from '$lib/server/access';
 import { parseForm, parseIdList, parseQuery } from '$lib/server/query';
-import { BULK_SOURCES } from './sources';
+import { BULK_SOURCES, VIOLATION_TYPES } from './sources';
 import { MAX_INT4, usersByIds } from '$lib/server/users.service';
 import { resolveUserId } from '$lib/server/user-lookup.service';
 import { removeImages, restoreImages, setImageFlag } from '$lib/server/user-actions.service';
@@ -79,7 +79,10 @@ export const actions: Actions = {
   remove: async ({ request, locals }) => {
     if (!canAccess(locals.user, '/users')) return actionFail('Not permitted.');
     const input = parseForm(
-      idsSchema.extend({ reason: z.string().trim().max(500).optional() }),
+      idsSchema.extend({
+        reason: z.string().trim().max(500).optional(),
+        violationType: z.enum(VIOLATION_TYPES).optional(),
+      }),
       await request.formData()
     );
     if (typeof input === 'string') return actionFail(input);
@@ -87,6 +90,7 @@ export const actions: Actions = {
     const result = await removeImages({
       imageIds: input.imageIds,
       reason: input.reason || undefined,
+      violationType: input.violationType,
       moderatorId: locals.user.id,
     });
     if (!result.ok) return actionFail(result.error);

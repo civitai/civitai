@@ -28,12 +28,15 @@
     account,
     userId,
     canAct,
+    canSendBuzz,
     form,
   }: {
     subscription: Subscription;
     account: Promise<Account> | null;
     userId: number;
     canAct: boolean;
+    /** Buzz sending was Senior-Mod-gated in Retool. */
+    canSendBuzz: boolean;
     form: FormResult;
   } = $props();
 
@@ -174,7 +177,7 @@
         <p class="text-sm text-red-300">Could not load Buzz balance.</p>
       {/await}
 
-      {#if canAct}
+      {#if canSendBuzz}
         {#if error}
           <div
             class="mt-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"

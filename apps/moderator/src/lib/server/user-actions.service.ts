@@ -553,6 +553,9 @@ async function inChunks(
 export async function removeImages(input: {
   imageIds: number[];
   reason?: string;
+  /** The endpoint's `ViolationType` enum. It rides onto the ClickHouse `DeleteTOS` event, so omitting
+   *  it files the removal with no classification at all — silent and unrecoverable after the fact. */
+  violationType?: string;
   moderatorId: number;
 }): Promise<CountResult> {
   if (!input.imageIds.length) return { ok: false, error: 'Select at least one image.' };
@@ -560,7 +563,13 @@ export async function removeImages(input: {
   const result = await inChunks(input.imageIds, (chunk) =>
     postMainAppJson(
       '/api/mod/remove-images',
-      { imageIds: chunk, moderatorId: input.moderatorId, reason: input.reason },
+      {
+        imageIds: chunk,
+        moderatorId: input.moderatorId,
+        reason: input.reason,
+        ...(input.violationType ? { violationType: input.violationType } : {}),
+        ...(input.reason ? { violationDetails: input.reason } : {}),
+      },
       'Image removal'
     )
   );

@@ -87,6 +87,7 @@
         {account}
         userId={result.identity.id}
         canAct={data.canAct}
+        canSendBuzz={data.canSendBuzz}
         {form}
       />
       <BuzzHistoryPanel userId={result.identity.id} />

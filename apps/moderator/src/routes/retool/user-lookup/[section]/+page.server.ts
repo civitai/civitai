@@ -1,7 +1,7 @@
 import { error, fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
-import { canAccess } from '$lib/server/access';
+import { canAccess, isSenior } from '$lib/server/access';
 import { parseForm, userIdSchema } from '$lib/server/query';
 import { isSection } from '../sections';
 import {
@@ -322,7 +322,10 @@ export const actions: Actions = {
   },
 
   sendBuzz: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return buzzFail('Not permitted.');
+    // Retool gated the Buzz Transaction pane on the Senior Mod group; gating on /users alone handed a
+    // restricted capability to every moderator who could reach the page.
+    if (!canAccess(locals.user, '/users') || !isSenior(locals.user))
+      return buzzFail('Sending or deducting Buzz requires a senior moderator.');
     const input = parseForm(
       userIdSchema.extend({
         amount: z.coerce.number().int().positive().max(1_000_000),

@@ -201,6 +201,17 @@ export function navForUser(user: RoleUser): NavLink[] {
 }
 
 // Longest-matching path wins, so a sub-path resolves to the nav entry that owns it; unmatched = denied.
+/**
+ * A capability restricted to senior moderators, independent of which pages a role can reach. Retool
+ * expressed these as `current_user.groups.some(i => i.name === "Senior Mod")` on a pane — a condition
+ * that appears in no query, so porting the pane without it silently widens the capability. Buzz
+ * sending is the one this was found on.
+ */
+export function isSenior(user: RoleUser): boolean {
+  const roles = user?.roles ?? [];
+  return roles.includes('moderator:senior') || roles.includes(SUPER_ROLE);
+}
+
 export function canAccess(user: RoleUser, pathname: string): boolean {
   const matches = grants.filter((g) => pathname === g.path || pathname.startsWith(`${g.path}/`));
   if (!matches.length) return false;
