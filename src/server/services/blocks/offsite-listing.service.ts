@@ -6,6 +6,11 @@ import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
+  LISTING_ASSET_ALLOWED_MIME,
+  LISTING_ASSET_FORMAT_TO_MIME,
+  MAX_LISTING_ASSET_SIZE_BYTES,
+} from '~/server/schema/blocks/app-listing.schema';
+import {
   assertNoOnPlatformSurface,
   validateExternalUrl,
 } from '~/server/schema/blocks/external-app.schema';
@@ -2639,31 +2644,88 @@ export async function rejectExternalRequest(opts: {
 // ---------------------------------------------------------------------------
 
 /**
- * Materialise a CF-uploaded image into an `Image` row (owned by the caller) and
+ * Measure the bytes at `key` and return the values to persist.
+ *
+ * The per-kind geometry/size/MIME rules the attach procs enforce
+ * (`validateListingImage`) read `Image.width` / `height` / `mimeType` /
+ * `metadata.size`. Those come from here, so they are measured rather than taken
+ * from the uploader — otherwise every one of those bounds is self-reported.
+ *
+ * What this buys is narrower than "the columns match the object": the presigned
+ * PUT stays usable for its full expiry, so the same key can be overwritten after
+ * this read. It guarantees the values were TRUE OF REAL BYTES AT PROBE TIME, not
+ * that they still describe whatever the key holds later.
+ *
+ * The two rejections below cannot be deferred to the attach proc's per-kind
+ * checks, because the kind is not known until attach: bytes over the loosest cap
+ * (no kind accepts them) and a format outside the allowlist.
+ */
+async function measureListingAssetUpload(key: string) {
+  const { probeStoredImage, StoredImageProbeError } =
+    await import('~/server/utils/stored-image-probe');
+
+  let probe;
+  try {
+    probe = await probeStoredImage(key, { maxBytes: MAX_LISTING_ASSET_SIZE_BYTES });
+  } catch (err) {
+    if (!(err instanceof StoredImageProbeError)) throw err;
+    if (err.reason === 'store-unavailable') {
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: "We couldn't read that upload back to check it. Try again.",
+      });
+    }
+    const message =
+      err.reason === 'missing'
+        ? "We couldn't find that upload — upload the image again."
+        : err.reason === 'too-large'
+          ? `that image is over the ${MAX_LISTING_ASSET_SIZE_BYTES / 1024 / 1024} MiB limit for listing media`
+          : "That image couldn't be read. Try a different PNG, JPEG or WebP.";
+    throw new TRPCError({ code: 'BAD_REQUEST', message });
+  }
+
+  const mimeType = LISTING_ASSET_FORMAT_TO_MIME[probe.format];
+  if (!mimeType) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `unsupported image type "${probe.format}" (allowed: ${LISTING_ASSET_ALLOWED_MIME.join(
+        ', '
+      )})`,
+    });
+  }
+  return { width: probe.width, height: probe.height, mimeType, sizeBytes: probe.sizeBytes };
+}
+
+/**
+ * Materialise an uploaded image into an `Image` row (owned by the caller) and
  * return its numeric id, so the submit form's asset step can attach it to the
  * draft listing via the P1 asset-CRUD procs. Kicks off the standard ingestion/scan
  * pipeline (`createImage` with default ingestion) — the P1 attach proc enforces
- * `ingestion === Scanned` + the per-kind image validation, so this proc does NOT
- * re-validate dimensions/mime (it only persists). `createImage` is dynamically
- * imported so the heavy `image.service` module stays out of this service's static
- * graph (mirrors the router's dynamic-import discipline + keeps the unit tests,
- * which mock only `dbRead`/`dbWrite`, light).
+ * `ingestion === Scanned` + the per-kind image validation.
+ *
+ * The persisted dimensions / MIME / byte size are DERIVED FROM THE STORED BYTES
+ * (see {@link measureListingAssetUpload}); the same fields on the input are
+ * ignored. `createImage` and the probe are dynamically imported so the heavy
+ * `image.service` / `sharp` graphs stay out of this service's static graph
+ * (mirrors the router's dynamic-import discipline + keeps the unit tests, which
+ * mock only `dbRead`/`dbWrite`, light).
  */
 export async function persistListingAssetImage(opts: {
   input: PersistListingAssetImageInput;
   userId: number;
 }): Promise<{ imageId: number }> {
   const { input, userId } = opts;
+  const measured = await measureListingAssetUpload(input.url);
   const { createImage } = await import('~/server/services/image.service');
   const image = await createImage({
     url: input.url,
     name: input.name ?? undefined,
     type: 'image',
-    width: input.width,
-    height: input.height,
-    mimeType: input.mimeType,
+    width: measured.width,
+    height: measured.height,
+    mimeType: measured.mimeType,
     // The P1 image validator reads the byte size from `Image.metadata.size`.
-    metadata: input.sizeBytes != null ? { size: input.sizeBytes } : undefined,
+    metadata: { size: measured.sizeBytes },
     userId,
   });
   return { imageId: image.id };
