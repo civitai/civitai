@@ -54,6 +54,8 @@ vi.mock('~/server/db/client', () => ({ dbWrite: {}, dbRead: {} }));
 // every .ts under src/pages/api as an API route and its route-type validator
 // rejects a test module.
 import handler from '~/pages/api/upload/complete';
+// Mocked in ~/__tests__/setup as vi.fn(); imported here so the LOG PAYLOAD is assertable.
+import { logToAxiom } from '~/server/logging/client';
 
 function makeRes() {
   const headers: Record<string, string> = {};
@@ -233,5 +235,94 @@ describe('/api/upload/complete — error classification', () => {
     const res = makeRes();
     await handler(makeReq(), res);
     expect(res.statusCode).toBe(500);
+  });
+});
+
+describe('/api/upload/complete — the completion LOG must record the completion SHAPE', () => {
+  /**
+   * WHY THIS EXISTS. A multipart completion can resolve WITHOUT THROWING and still
+   * leave the session unfinished with no object in the bucket. S3 documents that
+   * CompleteMultipartUpload "can contain either a success or an error" and that an
+   * error "might be embedded in the 200 OK response" — so a non-throwing call is not
+   * proof of a finalized object.
+   *
+   * That happened in production: rows were registered 472 ms after a completion the
+   * SDK reported as successful, for sessions the backend still lists as unfinished
+   * with no object. The rows are then indistinguishable from healthy ones, and the
+   * log had nothing in it to tell them apart after the fact.
+   *
+   * 🔴 These assert the PAYLOAD, not that logging happened. Asserting only that
+   * logToAxiom was called passes with the bug fully present — the old payload had no
+   * partCount, no location and no etag, which is exactly why the incident could not
+   * be diagnosed from logs.
+   */
+  const logged = () => {
+    const calls = vi.mocked(logToAxiom).mock.calls.map((c) => c[0] as Record<string, unknown>);
+    return calls.find((c) => c?.name === 's3-upload-complete');
+  };
+
+  const reqWithParts = (parts: unknown) =>
+    ({
+      method: 'POST',
+      body: {
+        // Bucket value is irrelevant to what these tests assert; kept generic on
+        // purpose rather than naming a real one.
+        bucket: 'test-bucket',
+        key: 'some/key.safetensors',
+        type: 'model',
+        uploadId: 'test-upload-id',
+        parts,
+        backend: 'b2',
+      },
+      headers: {},
+      socket: { remoteAddress: '127.0.0.1' },
+    } as unknown as NextApiRequest);
+
+  beforeEach(() => vi.mocked(logToAxiom).mockClear());
+
+  it('records partCount, location and etag on a successful completion', async () => {
+    mockCompleteMultipartUpload.mockResolvedValue({ Location: 'https://cdn/x', ETag: '"abc123"' });
+    await handler(makeReq(), makeRes());
+    const ev = logged();
+    expect(ev).toBeDefined();
+    expect(ev?.partCount).toBe(1);
+    expect(ev?.location).toBe('https://cdn/x');
+    expect(ev?.etag).toBe('"abc123"');
+  });
+
+  it('THE MOTIVATING CASE: a completion that resolves with NO Location is still logged as such', async () => {
+    // The silent-empty shape. Before this change the event carried no `location` key
+    // at all, so this run and a healthy one produced identical log lines.
+    mockCompleteMultipartUpload.mockResolvedValue({});
+    const res = makeRes();
+    await handler(reqWithParts([{ ETag: 'e', PartNumber: 1 }]), res);
+    const ev = logged();
+    expect(ev).toBeDefined();
+    expect(ev).toHaveProperty('location');
+    expect(ev?.location).toBeNull();
+    expect(ev?.etag).toBeNull();
+    // Behaviour is deliberately unchanged — this commit adds visibility only.
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('partCount reflects the manifest length, so a truncated manifest is visible', async () => {
+    mockCompleteMultipartUpload.mockResolvedValue({ Location: 'https://cdn/y', ETag: '"e"' });
+    await handler(
+      reqWithParts([
+        { ETag: 'a', PartNumber: 1 },
+        { ETag: 'b', PartNumber: 2 },
+        { ETag: 'c', PartNumber: 3 },
+      ]),
+      makeRes()
+    );
+    expect(logged()?.partCount).toBe(3);
+  });
+
+  it('a non-array parts body logs partCount null rather than throwing', async () => {
+    mockCompleteMultipartUpload.mockResolvedValue({ Location: 'https://cdn/z', ETag: '"e"' });
+    const res = makeRes();
+    await handler(reqWithParts(undefined), res);
+    expect(logged()?.partCount).toBeNull();
+    expect(res.statusCode).toBe(200);
   });
 });
