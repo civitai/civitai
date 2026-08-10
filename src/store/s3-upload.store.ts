@@ -301,6 +301,47 @@ export const useS3UploadStore = create<StoreProps>()(
               }),
             });
 
+          // Best-effort teardown of the server-side multipart session. EVERY failure
+          // path that gives up after the session was created has to run this, or the
+          // upload stays open indefinitely and the parts already transferred keep
+          // accruing storage with nothing left to finalize them.
+          //
+          // The rejection is deliberately swallowed rather than surfaced: this is
+          // cleanup, not part of the caller's outcome. Both callers' contract is to
+          // return undefined with a terminal row already written, so raising here
+          // would replace the real cause (the part error, or the failed completion)
+          // with an incidental teardown error at every call site. The abort endpoint
+          // also treats an already-gone upload as success, so a throw on this path is
+          // genuinely exceptional — it gets logged, not raised.
+          const abortUploadQuietly = async () => {
+            try {
+              await abortUpload();
+            } catch (err) {
+              console.error('Failed to abort upload');
+              console.error(err);
+            }
+          };
+
+          // Write a terminal row state without letting a failure here pre-empt the
+          // teardown above. updateFile() throws 'index out of bounds' when the row has
+          // already been dropped from the store (clear(), or a navigation that reset
+          // the list) — and that is precisely a case where the session still needs
+          // aborting, so the two must not share a try block.
+          const setTerminalStatus = (status: UploadStatus) => {
+            try {
+              updateFile(pendingItem.uuid, {
+                status,
+                progress: 0,
+                speed: 0,
+                timeRemaining: 0,
+                uploaded: 0,
+              });
+            } catch (err) {
+              console.error('Failed to write terminal upload status');
+              console.error(err);
+            }
+          };
+
           const completeUpload = () =>
             withRetries(
               async (remainingAttempts) => {
@@ -483,19 +524,8 @@ export const useS3UploadStore = create<StoreProps>()(
           cancelProgress();
 
           if (failureStatus) {
-            try {
-              updateFile(pendingItem.uuid, {
-                status: failureStatus,
-                progress: 0,
-                speed: 0,
-                timeRemaining: 0,
-                uploaded: 0,
-              });
-              await abortUpload();
-            } catch (err) {
-              console.error('Failed to abort upload');
-              console.error(err);
-            }
+            setTerminalStatus(failureStatus);
+            await abortUploadQuietly();
             return;
           }
 
@@ -511,14 +541,18 @@ export const useS3UploadStore = create<StoreProps>()(
           // Every bailout here has to leave a terminal 'error' behind: the bytes are in
           // the bucket but no file record exists, and a row left mid-progress reads to
           // the user as a finished upload that silently never got added.
+          //
+          // It also has to tear the multipart session down. A failed completion leaves
+          // the session open with every transferred part still stored and billable, and
+          // nothing else ever closes it — the part-failure branch above has always
+          // aborted, but this sibling path returned without doing so, so each failed
+          // completion leaked one upload permanently. Both terminal outcomes need it:
+          // 422 (invalid/incomplete parts) leaves a live session holding every part,
+          // and 409 (already finalized or aborted) is harmless because the abort
+          // endpoint treats an upload that is already gone as success.
           if (!completeResult?.ok) {
-            updateFile(pendingItem.uuid, {
-              status: 'error',
-              progress: 0,
-              speed: 0,
-              timeRemaining: 0,
-              uploaded: 0,
-            });
+            setTerminalStatus('error');
+            await abortUploadQuietly();
             return;
           }
 
