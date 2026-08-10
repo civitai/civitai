@@ -26,7 +26,16 @@ const DANGEROUS_PATTERNS = [
   {
     pattern: /prettier[^;&|]*--write[^;&|]*\*\*/i,
     reason:
-      'A repo-wide `prettier --write` rewrites ~1000 committed files (the repo is not prettier-2-clean) and reformats other people\'s uncommitted work in place. Use `pnpm run prettier:write`, which scopes to dirty files.',
+      "A repo-wide `prettier --write` rewrites ~1000 committed files (the repo is not prettier-2-clean) and reformats other people's uncommitted work in place. Use `pnpm run prettier:write`, which scopes to dirty files.",
+  },
+  {
+    // The glob rule above misses the commoner spellings. `--write` must name FILES: the next token
+    // has to carry an extension, so `--write .`, `--write src` and `--write src/` are refused while
+    // `--write "src/a.ts" "src/b.ts"` passes. Explicit per-file writes are allowlisted in settings,
+    // so these two patterns are the only thing between that grant and a ~1000-file commit.
+    pattern: /prettier[^;&|]*--write\s+(?!["']?[^\s;&|"']*\.[a-z]{1,6}\b)/i,
+    reason:
+      'Name the files explicitly (`--write "src/a.ts"`), or use `pnpm run prettier:write`, which scopes to what git reports as dirty. A directory or bare `.` target reformats the whole repo.',
   },
 ];
 
