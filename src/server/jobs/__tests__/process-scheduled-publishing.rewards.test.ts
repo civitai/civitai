@@ -8,6 +8,7 @@ const {
   mockSetLastRun,
   mockLogToAxiom,
   mockProcessEngagement,
+  mockCreateNotification,
   jobDate,
 } = vi.hoisted(() => ({
   mockDbWrite: {
@@ -22,6 +23,7 @@ const {
   mockSetLastRun: vi.fn(),
   mockLogToAxiom: vi.fn(() => Promise.resolve()),
   mockProcessEngagement: vi.fn(),
+  mockCreateNotification: vi.fn(),
   jobDate: { lastRun: new Date(0) },
 }));
 
@@ -46,8 +48,12 @@ vi.mock('~/server/services/model-version.service', () => ({
   bustMvCache: vi.fn(),
   publishModelVersionsWithEarlyAccess: vi.fn(),
 }));
-vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
-vi.mock('~/server/services/nsfwLevels.service', () => ({ updateComicNsfwLevels: vi.fn() }));
+vi.mock('~/server/services/notification.service', () => ({
+  createNotification: mockCreateNotification,
+}));
+vi.mock('~/server/services/nsfwLevels.service', () => ({
+  updateComicNsfwLevels: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/jobs/job', () => ({
   createJob: (_n: string, _c: string, fn: unknown) => fn,
   getJobDate: async () => [jobDate.lastRun, mockSetLastRun] as const,
@@ -56,18 +62,36 @@ vi.mock('~/server/jobs/job', () => ({
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
 
 type Row = { id: number; userId: number };
+type Chapter = {
+  projectId: number;
+  position: number;
+  userId: number;
+  projectName: string;
+  chapterName: string;
+  username: string | null;
+};
+type Follower = { projectId: number; userId: number };
 
 // Routed on SQL text rather than call order so adding a read doesn't shift these.
 const stubReads = ({
   scheduled = [],
   newlyLive = [],
+  chapters = [],
+  followers = [],
 }: {
   scheduled?: Row[];
   newlyLive?: Row[];
+  chapters?: Chapter[];
+  followers?: Follower[];
 }) => {
   mockDbWrite.$queryRaw.mockImplementation(async (...args: unknown[]) => {
     const sql = (args[0] as string[]).join(' ');
-    if (sql.includes('"ComicChapter"')) return [];
+    // There is no "ComicEngagement" table — prod answers 42P01. Throwing rather than
+    // returning [] keeps a revert from reading as "this project has no followers".
+    if (sql.includes('"ComicEngagement"'))
+      throw new Error('relation "ComicEngagement" does not exist');
+    if (sql.includes('"ComicProjectEngagement"')) return followers;
+    if (sql.includes('"ComicChapter"')) return chapters;
     if (sql.includes('JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"')) return scheduled;
     if (sql.includes('FROM "Post" p')) return newlyLive;
     return [];
@@ -184,6 +208,49 @@ describe('processScheduledPublishing :: first daily post reward', () => {
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'warning', message: expect.stringContaining('row limit') })
     );
+  });
+});
+
+describe('processScheduledPublishing :: comic chapter notifications', () => {
+  const chapter: Chapter = {
+    projectId: 5,
+    position: 2,
+    userId: 50,
+    projectName: 'Proj',
+    chapterName: 'Ch2',
+    username: 'author',
+  };
+
+  it('notifies the project followers when a scheduled chapter goes live', async () => {
+    stubReads({
+      chapters: [chapter],
+      followers: [
+        { projectId: 5, userId: 101 },
+        { projectId: 5, userId: 102 },
+      ],
+    });
+    await runJob();
+    expect(mockCreateNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'new-comic-chapter',
+        key: 'new-comic-chapter:5:2',
+        userIds: [101, 102],
+      })
+    );
+  });
+
+  // The follower read sits ahead of every publish side effect and outside the
+  // transaction, so a failure there takes down the whole run — after the chapters
+  // have already flipped to Published, which is what makes the loss permanent.
+  it('completes the rest of the run once a chapter batch is handled', async () => {
+    stubReads({
+      chapters: [chapter],
+      followers: [{ projectId: 5, userId: 101 }],
+      newlyLive: [{ id: 9, userId: 90 }],
+    });
+    await runJob();
+    expect(mockApply).toHaveBeenCalledWith({ postId: 9, posterId: 90 });
+    expect(mockSetLastRun).toHaveBeenCalled();
   });
 });
 

@@ -166,7 +166,7 @@ export const processScheduledPublishing = createJob(
 
       // Batch-fetch all followers for affected projects in a single query
       const allFollowers = await dbWrite.$queryRaw<{ projectId: number; userId: number }[]>`
-        SELECT "projectId", "userId" FROM "ComicEngagement"
+        SELECT "projectId", "userId" FROM "ComicProjectEngagement"
         WHERE "projectId" IN (${Prisma.join(projectIds)}) AND "type" = 'Notify'
       `;
       const followersByProject = new Map<number, number[]>();
