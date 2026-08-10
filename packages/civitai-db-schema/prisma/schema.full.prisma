@@ -1774,6 +1774,7 @@ model Image {
   collections         Collection[]
   connections         ImageConnection[]
   UserProfile         UserProfile[]
+  userProfileSfwCover UserProfile[]         @relation("UserProfileSfwCoverImage")
   clubCover           Club[]                @relation("coverImage")
   clubHeader          Club[]                @relation("headerImage")
   clubAvatar          Club[]                @relation("avatarImage")
@@ -6475,6 +6476,13 @@ model UserProfile {
   bio                     String?
   message                 String?
   messageAddedAt          DateTime?
+  // SFW (green domain) overrides. Null means "inherit the field above"; a set
+  // value replaces it on civitai.com only.
+  sfwCoverImageId         Int?
+  sfwCoverImage           Image?    @relation("UserProfileSfwCoverImage", fields: [sfwCoverImageId], references: [id], onDelete: SetNull)
+  sfwBio                  String?
+  sfwMessage              String?
+  sfwMessageAddedAt       DateTime?
   location                String?
   nsfw                    Boolean   @default(false)
   privacySettings         Json      @default("{\"showFollowerCount\":true,\"showFollowingCount\":true,\"showReviewsRating\":true}")
