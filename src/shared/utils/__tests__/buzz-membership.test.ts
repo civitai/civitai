@@ -3,6 +3,7 @@ import {
   BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
   getBuzzMembershipPrice,
   getSubscriptionDisplayBuzzType,
+  isMembershipActive,
 } from '~/shared/utils/buzz-membership';
 import { getBuzzCurrencyConfig } from '~/shared/constants/currency.constants';
 import { buzzAccountTypes } from '~/shared/constants/buzz.constants';
@@ -34,6 +35,28 @@ describe('getBuzzMembershipPrice', () => {
     expect(getBuzzMembershipPrice({ unitAmount: 1000 })).toBe(12_500); // bronze $10
     expect(getBuzzMembershipPrice({ unitAmount: 2500 })).toBe(31_250); // silver $25
     expect(getBuzzMembershipPrice({ unitAmount: 5000 })).toBe(62_500); // gold $50
+  });
+});
+
+describe('isMembershipActive', () => {
+  const now = new Date('2026-08-10T00:00:00Z');
+  const future = new Date('2026-09-10T00:00:00Z');
+  const past = new Date('2026-07-10T00:00:00Z');
+
+  it('holds while the paid-for period is still running', () => {
+    expect(isMembershipActive({ isBadState: false, currentPeriodEnd: future }, now)).toBe(true);
+  });
+
+  it('lapses once the period ends', () => {
+    expect(isMembershipActive({ isBadState: false, currentPeriodEnd: past }, now)).toBe(false);
+  });
+
+  it('does not count a subscription in a bad state', () => {
+    expect(isMembershipActive({ isBadState: true, currentPeriodEnd: future }, now)).toBe(false);
+  });
+
+  it('treats a missing bad-state flag as good standing', () => {
+    expect(isMembershipActive({ currentPeriodEnd: future }, now)).toBe(true);
   });
 });
 

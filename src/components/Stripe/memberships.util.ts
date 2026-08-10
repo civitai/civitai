@@ -8,7 +8,19 @@ import { trpc } from '~/utils/trpc';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
-import { BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE } from '~/shared/utils/buzz-membership';
+import {
+  BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
+  isMembershipActive,
+} from '~/shared/utils/buzz-membership';
+import type { AllUserSubscriptions } from '~/server/services/subscriptions.service';
+
+// getAllUserSubscriptions leaves product.metadata as raw JSON and exposes the parsed copy as
+// productMeta; getUserSubscription puts the parsed copy on product.metadata. Reshape so
+// consumers read parsed metadata regardless of which query answered.
+const withParsedProductMeta = (subscription: AllUserSubscriptions[number]) => ({
+  ...subscription,
+  product: { ...subscription.product, metadata: subscription.productMeta },
+});
 
 export const useActiveSubscription = ({
   checkWhenInBadState,
@@ -59,17 +71,8 @@ export const useActiveSubscription = ({
     ? allSubscriptions?.find((s) => s.buzzType === BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE)
     : undefined;
 
-  // getAllUserSubscriptions leaves product.metadata as raw JSON and exposes the parsed copy
-  // as productMeta; getUserSubscription puts the parsed copy on product.metadata. Reshape so
-  // consumers of this hook read parsed metadata regardless of which query answered.
   const activeSubscription =
-    subscription ??
-    (buzzMembership
-      ? {
-          ...buzzMembership,
-          product: { ...buzzMembership.product, metadata: buzzMembership.productMeta },
-        }
-      : null);
+    subscription ?? (buzzMembership ? withParsedProductMeta(buzzMembership) : null);
 
   const meta = activeSubscription?.product?.metadata as SubscriptionProductMetadata;
 
@@ -85,6 +88,38 @@ export const useActiveSubscription = ({
     isFreeTier: (meta?.tier ?? currentUser?.tier ?? 'free') === 'free',
     tier: meta?.tier ?? currentUser?.tier ?? 'free',
     meta,
+  };
+};
+
+/**
+ * The membership the user currently holds in ANY slot — every colour plus the perks one.
+ * `useActiveSubscription` reads a single colour slot (plus an opt-in perks fallback), so on
+ * green it answers "no membership" for someone holding a yellow one. Use this where the
+ * question is "does this user hold a membership at all", such as gating a perks purchase.
+ */
+export const useAnyActiveMembership = () => {
+  const currentUser = useCurrentUser();
+  const { data, isLoading, isFetching } = trpc.subscriptions.getAllUserSubscriptions.useQuery(
+    undefined,
+    { enabled: !!currentUser }
+  );
+
+  const active = (data ?? []).filter((s) => isMembershipActive(s));
+  // Green and yellow can both be active at once, and a perks purchase has to wait out the
+  // LAST of them, so the latest expiry is the one worth reporting. The perks row wins when
+  // present: nothing else can be active alongside it, and picking it lets the card the user
+  // already holds read as theirs rather than as a blocked purchase.
+  const subscription =
+    active.find((s) => s.buzzType === BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE) ??
+    active.reduce<(typeof active)[number] | undefined>(
+      (latest, current) =>
+        !latest || current.currentPeriodEnd > latest.currentPeriodEnd ? current : latest,
+      undefined
+    );
+
+  return {
+    subscription: subscription ? withParsedProductMeta(subscription) : null,
+    subscriptionLoading: !currentUser ? false : isLoading || isFetching,
   };
 };
 

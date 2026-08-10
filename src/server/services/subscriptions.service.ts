@@ -30,6 +30,7 @@ import {
 import {
   BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
   getBuzzMembershipPrice,
+  isMembershipActive,
 } from '~/shared/utils/buzz-membership';
 
 // const baseUrl = getBaseUrl();
@@ -532,7 +533,7 @@ export const purchaseMembershipWithBuzz = async ({
     throw new Error('Memberships can only be purchased with Green or Yellow Buzz');
 
   const existing = await getAllUserSubscriptions(userId);
-  if (existing.some((s) => !s.isBadState && s.currentPeriodEnd > new Date()))
+  if (existing.some((s) => isMembershipActive(s)))
     throw new Error(
       'You already have an active membership. Let it lapse before purchasing one with Buzz.'
     );
