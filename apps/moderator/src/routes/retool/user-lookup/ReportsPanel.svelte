@@ -13,6 +13,7 @@
   } from '$lib/reports';
   import { fetchUserReports, type ReportRow } from './user-reports';
   import ListCard from './ListCard.svelte';
+  import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
 
   type Result = NonNullable<LayoutData['result']>;
 
@@ -33,6 +34,29 @@
   // promise and the template re-awaits — no state to go stale.
   let statusFilter = $state<string[]>([]);
   const reports = $derived(browser ? fetchUserReports(userId, statusFilter) : null);
+
+  // Retool's select13 (Reason) and select47 (ReportType), both client-side over the fetched rows.
+  let receivedFilters = $state<Record<string, string>>({});
+  let submittedFilters = $state<Record<string, string>>({});
+  const rowFields = (rows: ReportRow[]): FilterField[] => [
+    {
+      kind: 'select',
+      key: 'reason',
+      label: 'Reason',
+      options: [...new Set(rows.map((r) => r.reason))].sort().map((x) => [x, x]),
+    },
+    {
+      kind: 'select',
+      key: 'entityType',
+      label: 'Type',
+      options: [...new Set(rows.map((r) => r.entityType))].sort().map((x) => [x, x]),
+    },
+  ];
+  const filterRows = (rows: ReportRow[], f: Record<string, string>) =>
+    rows.filter(
+      (r) =>
+        (!f.reason || r.reason === f.reason) && (!f.entityType || r.entityType === f.entityType)
+    );
 
   const toggleStatus = (status: string) => {
     statusFilter = statusFilter.includes(status)
@@ -174,7 +198,14 @@
         hint="Who reported it, what for, and who resolved it."
       >
         {#snippet children(limit)}
-          {@render reportList(result.received, limit, true)}
+          {@const received = filterRows(result.received, receivedFilters)}
+          <ListFilterBar
+            fields={rowFields(result.received)}
+            bind:values={receivedFilters}
+            matched={received.length}
+            total={result.received.length}
+          />
+          {@render reportList(received, limit, true)}
         {/snippet}
       </ListCard>
 
@@ -185,7 +216,14 @@
         hint="What they reported and how it was resolved."
       >
         {#snippet children(limit)}
-          {@render reportList(result.submitted, limit, false)}
+          {@const submitted = filterRows(result.submitted, submittedFilters)}
+          <ListFilterBar
+            fields={rowFields(result.submitted)}
+            bind:values={submittedFilters}
+            matched={submitted.length}
+            total={result.submitted.length}
+          />
+          {@render reportList(submitted, limit, false)}
         {/snippet}
       </ListCard>
     </section>

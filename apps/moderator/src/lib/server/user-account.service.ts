@@ -34,34 +34,42 @@ export type UserReview = {
   modelId: number | null;
   tosViolation: boolean | null;
   exclude: boolean | null;
+  nsfw: boolean | null;
+  /** The review TEXT. Retool's pane searched it, and deleting a review on rating and date alone is
+   *  deciding without reading it. */
+  details: string | null;
   modelCreator: string | null;
   /** Null when the review has no helper row at all, which is not the same as zero images. */
   imageCount: number | null;
 };
 
-export async function getReviews(userId: number, limit = 25): Promise<Capped<UserReview>> {
-  return dbRead
-    .selectFrom('ResourceReview as rr')
-    .innerJoin('Model as m', 'm.id', 'rr.modelId')
-    .innerJoin('User as u', 'u.id', 'm.userId')
-    // Retool's SubmittedReviewImageCount, folded in rather than run as a second query keyed on the ids
-    // the first returned. A review carrying images is a different thing from a bare rating.
-    .leftJoin('ResourceReviewHelper as h', 'h.resourceReviewId', 'rr.id')
-    .select([
-      'rr.id',
-      'rr.createdAt',
-      'rr.rating',
-      'rr.modelId',
-      'rr.tosViolation',
-      'rr.exclude',
-      'u.username as modelCreator',
-      'h.imageCount',
-    ])
-    .where('rr.userId', '=', userId)
-    .orderBy('rr.createdAt', 'desc')
-    .limit(limit + 1)
-    .execute()
-    .then((rows) => capped(rows, limit));
+export async function getReviews(userId: number, limit = 100): Promise<Capped<UserReview>> {
+  return (
+    dbRead
+      .selectFrom('ResourceReview as rr')
+      .innerJoin('Model as m', 'm.id', 'rr.modelId')
+      .innerJoin('User as u', 'u.id', 'm.userId')
+      // Retool's SubmittedReviewImageCount, folded in rather than run as a second query keyed on the ids
+      // the first returned. A review carrying images is a different thing from a bare rating.
+      .leftJoin('ResourceReviewHelper as h', 'h.resourceReviewId', 'rr.id')
+      .select([
+        'rr.id',
+        'rr.createdAt',
+        'rr.rating',
+        'rr.modelId',
+        'rr.tosViolation',
+        'rr.exclude',
+        'rr.nsfw',
+        'rr.details',
+        'u.username as modelCreator',
+        'h.imageCount',
+      ])
+      .where('rr.userId', '=', userId)
+      .orderBy('rr.createdAt', 'desc')
+      .limit(limit + 1)
+      .execute()
+      .then((rows) => capped(rows, limit))
+  );
 }
 
 // Reviews RECEIVED on this user's models (Retool's ReceivedReviews, behind the tab that was never
@@ -79,30 +87,35 @@ export type ReceivedReview = {
   reviewer: string | null;
 };
 
-export async function getReceivedReviews(userId: number, limit = 25): Promise<Capped<ReceivedReview>> {
-  return dbRead
-    .selectFrom('ResourceReview as rr')
-    .innerJoin('Model as m', 'm.id', 'rr.modelId')
-    .innerJoin('User as u', 'u.id', 'rr.userId')
-    .select([
-      'rr.id',
-      'rr.createdAt',
-      'rr.rating',
-      'rr.exclude',
-      'rr.details',
-      'rr.modelId',
-      'm.name as modelName',
-      'rr.userId as reviewerId',
-      'u.username as reviewer',
-    ])
-    .where('m.userId', '=', userId)
-    // Retool showed a creator's own reviews of their own models among the reviews they received; they
-    // are self-authored and carry no signal about how the model was received.
-    .where('rr.userId', '!=', userId)
-    .orderBy('rr.createdAt', 'desc')
-    .limit(limit + 1)
-    .execute()
-    .then((rows) => capped(rows, limit));
+export async function getReceivedReviews(
+  userId: number,
+  limit = 100
+): Promise<Capped<ReceivedReview>> {
+  return (
+    dbRead
+      .selectFrom('ResourceReview as rr')
+      .innerJoin('Model as m', 'm.id', 'rr.modelId')
+      .innerJoin('User as u', 'u.id', 'rr.userId')
+      .select([
+        'rr.id',
+        'rr.createdAt',
+        'rr.rating',
+        'rr.exclude',
+        'rr.details',
+        'rr.modelId',
+        'm.name as modelName',
+        'rr.userId as reviewerId',
+        'u.username as reviewer',
+      ])
+      .where('m.userId', '=', userId)
+      // Retool showed a creator's own reviews of their own models among the reviews they received; they
+      // are self-authored and carry no signal about how the model was received.
+      .where('rr.userId', '!=', userId)
+      .orderBy('rr.createdAt', 'desc')
+      .limit(limit + 1)
+      .execute()
+      .then((rows) => capped(rows, limit))
+  );
 }
 
 // BOUNTIES (Retool's BountyList / BountyEntryList — a whole tab pair that was never ported). Both
@@ -113,12 +126,14 @@ export type UserBounty = {
   createdAt: Date;
   expiresAt: Date;
   complete: boolean;
+  type: string;
+  description: string | null;
   /** Summed across benefactors — Retool's join emitted one row per benefactor, so a bounty with three
    *  backers appeared three times, each showing only that backer's share. */
   unitAmount: number;
 };
 
-export async function getBounties(userId: number, limit = 25): Promise<Capped<UserBounty>> {
+export async function getBounties(userId: number, limit = 100): Promise<Capped<UserBounty>> {
   const rows = await dbRead
     .selectFrom('Bounty as b')
     .leftJoin('BountyBenefactor as bb', 'bb.bountyId', 'b.id')
@@ -128,10 +143,20 @@ export async function getBounties(userId: number, limit = 25): Promise<Capped<Us
       'b.createdAt',
       'b.expiresAt',
       'b.complete',
+      'b.type',
+      'b.description',
       eb.fn.coalesce(eb.fn.sum<string>('bb.unitAmount'), sql<string>`0`).as('unitAmount'),
     ])
     .where('b.userId', '=', userId)
-    .groupBy(['b.id', 'b.name', 'b.createdAt', 'b.expiresAt', 'b.complete'])
+    .groupBy([
+      'b.id',
+      'b.name',
+      'b.createdAt',
+      'b.expiresAt',
+      'b.complete',
+      'b.type',
+      'b.description',
+    ])
     .orderBy('b.createdAt', 'desc')
     .limit(limit + 1)
     .execute();
@@ -149,7 +174,10 @@ export type UserBountyEntry = {
   description: string | null;
 };
 
-export async function getBountyEntries(userId: number, limit = 25): Promise<Capped<UserBountyEntry>> {
+export async function getBountyEntries(
+  userId: number,
+  limit = 25
+): Promise<Capped<UserBountyEntry>> {
   return dbRead
     .selectFrom('BountyEntry as be')
     .innerJoin('Bounty as b', 'b.id', 'be.bountyId')
@@ -221,9 +249,10 @@ const threadEntityId = sql<number | null>`coalesce(${sql.join(
 
 const threadEntityType = sql<string | null>`case ${sql.join(
   THREAD_TARGETS.map(
-    (c) => sql`when coalesce(root.${sql.ref(c)}, t.${sql.ref(c)}) is not null then ${sql.lit(
-      c.replace(/Id$/, '')
-    )}`
+    (c) =>
+      sql`when coalesce(root.${sql.ref(c)}, t.${sql.ref(c)}) is not null then ${sql.lit(
+        c.replace(/Id$/, '')
+      )}`
   ),
   sql` `
 )} end`;
@@ -418,24 +447,26 @@ export type AvailableCosmetic = { id: number; name: string };
 // badge — the exact case a moderator is asked about — behind a panel that then read "already holds
 // every badge".
 export async function getAvailableBadges(userId: number): Promise<AvailableCosmetic[]> {
-  return dbRead
-    .selectFrom('Cosmetic as c')
-    .select(['c.id', 'c.name'])
-    .where('c.type', '=', 'Badge')
-    .where((eb) =>
-      eb.not(
-        eb.exists(
-          eb
-            .selectFrom('UserCosmetic as uc')
-            .select('uc.cosmeticId')
-            .whereRef('uc.cosmeticId', '=', 'c.id')
-            .where('uc.userId', '=', userId)
+  return (
+    dbRead
+      .selectFrom('Cosmetic as c')
+      .select(['c.id', 'c.name'])
+      .where('c.type', '=', 'Badge')
+      .where((eb) =>
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('UserCosmetic as uc')
+              .select('uc.cosmeticId')
+              .whereRef('uc.cosmeticId', '=', 'c.id')
+              .where('uc.userId', '=', userId)
+          )
         )
       )
-    )
-    // Newest first — a moderator asked to grant a badge is almost always asked about a recent one.
-    .orderBy('c.id', 'desc')
-    .execute();
+      // Newest first — a moderator asked to grant a badge is almost always asked about a recent one.
+      .orderBy('c.id', 'desc')
+      .execute()
+  );
 }
 
 // NOTIFICATIONS the user has been sent (Retool's GetNotifications / ViewNotifications, which read the
@@ -590,7 +621,7 @@ export async function getModActivity(userId: number, limit = 40): Promise<ModAct
     entityId: r.entityId,
     createdAt: r.createdAt,
     moderatorId: r.userId,
-    moderatorUsername: r.userId ? (byId.get(r.userId)?.username ?? null) : null,
+    moderatorUsername: r.userId ? byId.get(r.userId)?.username ?? null : null,
   }));
 }
 
@@ -641,12 +672,14 @@ export async function getTrainingRuns(
       sql<string | null>`mv."trainingDetails"::json ->> 'type'`.as('trainingType'),
       sql<
         number | null
-      >`nullif(mv."trainingDetails"::json -> 'params' ->> 'maxTrainEpochs', '')::int`.as('maxEpochs'),
+      >`nullif(mv."trainingDetails"::json -> 'params' ->> 'maxTrainEpochs', '')::int`.as(
+        'maxEpochs'
+      ),
       sql<number | null>`nullif(mf.metadata::json ->> 'numImages', '')::int`.as('numImages'),
       sql<string | null>`mf.metadata::json ->> 'shareDataset'`.as('sharedDataset'),
-      sql<
-        number | null
-      >`json_array_length(mf.metadata::json -> 'trainingResults' -> 'epochs')`.as('currentEpoch'),
+      sql<number | null>`json_array_length(mf.metadata::json -> 'trainingResults' -> 'epochs')`.as(
+        'currentEpoch'
+      ),
       // Cost is the sum of the `credit` entries in transactionData; older rows carry only a
       // transactionId with no amount, and those read as unknown rather than zero.
       sql<number | null>`(
@@ -778,25 +811,25 @@ export async function getBuzzHistory(
   const byId = await usersByIds(ids);
 
   const mapped: BuzzTransaction[] = page.map((r) => {
-      const id = Number(r.counterpartyId);
-      const isUser = USER_ACCOUNT_TYPES.has(r.counterpartyType) && id > 0;
-      return {
-        transactionId: r.transactionId,
-        // ClickHouse returns `YYYY-MM-DD HH:MM:SS` with no zone; `new Date()` would read that as LOCAL
-        // time and shift every row by the viewer's offset, putting it on a different day from the IP and
-        // prompt timestamps it is meant to line up with.
-        date: clickhouseDate(r.date),
-        direction: r.direction === 'in' ? 'in' : 'out',
-        amount: Number(r.amount),
-        color: BUZZ_COLORS[r.accountType] ?? r.accountType,
-        type: r.type,
-        description: r.description,
-        counterpartyId: id,
-        counterpartyName: isUser ? (byId.get(id)?.username ?? null) : null,
-        counterpartyLabel: isUser ? null : counterpartyLabel(r.counterpartyType, id),
-        externalTransactionId: r.externalTransactionId || null,
-      };
-    });
+    const id = Number(r.counterpartyId);
+    const isUser = USER_ACCOUNT_TYPES.has(r.counterpartyType) && id > 0;
+    return {
+      transactionId: r.transactionId,
+      // ClickHouse returns `YYYY-MM-DD HH:MM:SS` with no zone; `new Date()` would read that as LOCAL
+      // time and shift every row by the viewer's offset, putting it on a different day from the IP and
+      // prompt timestamps it is meant to line up with.
+      date: clickhouseDate(r.date),
+      direction: r.direction === 'in' ? 'in' : 'out',
+      amount: Number(r.amount),
+      color: BUZZ_COLORS[r.accountType] ?? r.accountType,
+      type: r.type,
+      description: r.description,
+      counterpartyId: id,
+      counterpartyName: isUser ? byId.get(id)?.username ?? null : null,
+      counterpartyLabel: isUser ? null : counterpartyLabel(r.counterpartyType, id),
+      externalTransactionId: r.externalTransactionId || null,
+    };
+  });
 
   return {
     days,

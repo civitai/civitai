@@ -82,10 +82,7 @@ All **34** option-bearing widgets in the export (22 Select, 7 Checkbox, 1 RadioG
       action**. The first fix shipped all 28 ledger types in both directions, making `deduct + Reward`
       selectable. Now send → Reward/Refund, deduct → Purchase/ChargeBack/AuthorizedPurchase, matching
       the Deduct Types table beside it. Widening either list is a mod-team decision, not a default.
-- [ ] **Filter rows missing entirely on two panes** — Submitted Reviews (Rating, TOS Violation?, NSFW?,
-      Excluded?, Search Review Content = 5 entry points) and Bounties (Type, Complete, Name Contains,
-      Description Contains = 4). Mod Activity's Action/Type filters and Reports Submitted's Reason and
-      ReportType filters are the same gap.
+- [x] **Filter rows** (2026-08-10 — shared `ListFilterBar`, client-side over the fetched rows as Retool's were, each showing "N of M" so a filtered-empty list never reads as an empty account). Reviews written: Rating / ToS / NSFW / Excluded / Search content, and the review TEXT now renders — it was fetched and dropped, so reviews were deleted on rating and date alone. Reviews received: Rating / Search. Bounties: Type / Complete / Name / Description. Mod Activity: Action / Type. Reports: Reason / Type on both lists. Caps raised 25 -> 100 so the filters have a corpus.
 - [x] **Full name (`name`)** (2026-08-10 — selected in `getIdentity` and editable behind Enable Edits).
 - [x] **`onboarding` (Accepted TOS) and `excludeFromLeaderboards`** (2026-08-10 — header chips, shown only when notable).
 - [x] **`UpdateBuzzEligible` could not succeed and had no UI.** `setRewardsEligibility` posted

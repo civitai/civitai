@@ -3,6 +3,7 @@
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import type { Account } from './user-account';
   import ListCard from './ListCard.svelte';
+  import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
 
   let {
     account,
@@ -10,6 +11,31 @@
   }: { account: Promise<Account> | null; civitaiUrl: string } = $props();
 
   const bountyUrl = (bountyId: number) => `${civitaiUrl}/bounties/${bountyId}`;
+
+  // Retool's select29 / select30 / textInput8 / textInput9. Type options come from the rows, as
+  // Retool's did — a fixed BountyType list here would drift from the enum.
+  let bountyFilters = $state<Record<string, string>>({});
+  const bountyFields = (rows: Account['bounties']['items']): FilterField[] => [
+    {
+      kind: 'select',
+      key: 'type',
+      label: 'Type',
+      options: [...new Set(rows.map((b) => b.type))].sort().map((t) => [t, t]),
+    },
+    { kind: 'select', key: 'complete', label: 'Complete', options: [['yes', 'Yes'], ['no', 'No']] },
+    { kind: 'search', key: 'name', label: 'Name contains' },
+    { kind: 'search', key: 'desc', label: 'Description contains' },
+  ];
+  const has = (v: string | null | undefined, q: string) =>
+    !q || (v ?? '').toLowerCase().includes(q.toLowerCase());
+  const filterBounties = (rows: Account['bounties']['items']) =>
+    rows.filter(
+      (b) =>
+        (!bountyFilters.type || b.type === bountyFilters.type) &&
+        (!bountyFilters.complete || (b.complete ? 'yes' : 'no') === bountyFilters.complete) &&
+        has(b.name, bountyFilters.name ?? '') &&
+        has(b.description, bountyFilters.desc ?? '')
+    );
 </script>
 
 <section class="mb-4 grid gap-4 lg:grid-cols-2">
@@ -19,14 +45,21 @@
     </div>
   {:then result}
     {#if result}
+      {@const bounties = filterBounties(result.bounties.items)}
       <ListCard
         title="Bounties funded"
-        total={result.bounties.items.length} capped={result.bounties.truncated}
+        total={bounties.length} capped={result.bounties.truncated}
         hint="Created by this user, with the total pledged across all benefactors."
       >
         {#snippet children(limit)}
+          <ListFilterBar
+            fields={bountyFields(result.bounties.items)}
+            bind:values={bountyFilters}
+            matched={bounties.length}
+            total={result.bounties.items.length}
+          />
           <ul class="space-y-1 text-sm">
-            {#each result.bounties.items.slice(0, limit) as b (b.id)}
+            {#each bounties.slice(0, limit) as b (b.id)}
               <li class="flex flex-wrap items-baseline gap-x-2">
                 <a href={bountyUrl(b.id)} target="_blank" rel="noreferrer" class="truncate {LINK_CLASS}">
                   {b.name}

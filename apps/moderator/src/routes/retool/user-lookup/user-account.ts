@@ -1,49 +1,26 @@
+import type {
+  UserReview,
+  ReceivedReview as ReceivedReviewRow,
+  UserBounty,
+  UserBountyEntry,
+} from '$lib/server/user-account.service';
+import type { Jsonified } from '$lib/format';
+
 // The `/api/user-account` payload, declared once. Two panels render slices of it — Subscription takes
 // the Buzz balance, UserContent takes the lists — and each previously declared its own copy and issued
 // its own fetch, so every lookup ran the whole endpoint twice, including the 744M-row reaction scan.
 //
-// Declared here rather than imported from `$lib/server/*`: this crosses a JSON boundary, so `Date`
-// arrives as `string`, and importing a server module into a component invites it into the client bundle.
+// The row shapes are DERIVED from the service's, through `Jsonified` for the Date→string boundary.
+// Hand-copied duplicates drifted within a day: `nsfw` and `details` were added to the query and stayed
+// invisible to the panel. A `import type` is erased at build, so no server code reaches the bundle.
 
-export type Review = {
-  id: number;
-  createdAt: string;
-  rating: number | null;
-  modelId: number | null;
-  tosViolation: boolean | null;
-  exclude: boolean | null;
-  modelCreator: string | null;
-  imageCount: number | null;
-};
+export type Review = Jsonified<UserReview>;
 
-export type ReceivedReview = {
-  id: number;
-  createdAt: string;
-  rating: number | null;
-  exclude: boolean | null;
-  details: string | null;
-  modelId: number | null;
-  modelName: string | null;
-  reviewerId: number;
-  reviewer: string | null;
-};
+export type ReceivedReview = Jsonified<ReceivedReviewRow>;
 
-export type Bounty = {
-  id: number;
-  name: string;
-  createdAt: string;
-  expiresAt: string;
-  complete: boolean;
-  unitAmount: number;
-};
+export type Bounty = Jsonified<UserBounty>;
 
-export type BountyEntry = {
-  id: number;
-  bountyId: number;
-  bountyName: string;
-  createdAt: string;
-  description: string | null;
-};
+export type BountyEntry = Jsonified<UserBountyEntry>;
 
 export type Comment = {
   id: number;

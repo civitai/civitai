@@ -7,6 +7,48 @@
   import type { SubmitFunction } from '@sveltejs/kit';
   import type { FormResult } from './form-result';
   import ListCard from './ListCard.svelte';
+  import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
+
+  const YES_NO: [string, string][] = [
+    ['yes', 'Yes'],
+    ['no', 'No'],
+  ];
+  const RATINGS: [string, string][] = [1, 2, 3, 4, 5].map((n) => [String(n), `${n}★`]);
+
+  // Retool's select25 / select24 / select23 / select22 / textInput1.
+  const WRITTEN_FILTERS: FilterField[] = [
+    { kind: 'select', key: 'rating', label: 'Rating', options: RATINGS },
+    { kind: 'select', key: 'tos', label: 'ToS', options: YES_NO },
+    { kind: 'select', key: 'nsfw', label: 'NSFW', options: YES_NO },
+    { kind: 'select', key: 'exclude', label: 'Excluded', options: YES_NO },
+    { kind: 'search', key: 'q', label: 'Search content' },
+  ];
+  const RECEIVED_FILTERS: FilterField[] = [
+    { kind: 'select', key: 'rating', label: 'Rating', options: RATINGS },
+    { kind: 'search', key: 'q', label: 'Search content' },
+  ];
+
+  let writtenFilters = $state<Record<string, string>>({});
+  let receivedFilters = $state<Record<string, string>>({});
+
+  const bool = (v: boolean | null | undefined) => (v ? 'yes' : 'no');
+  const matches = (
+    f: Record<string, string>,
+    r: { rating?: number | null; details?: string | null }
+  ) =>
+    (!f.rating || String(r.rating ?? '') === f.rating) &&
+    (!f.q || (r.details ?? '').toLowerCase().includes(f.q.toLowerCase()));
+
+  const filterWritten = (rows: Account['reviews']['items']) =>
+    rows.filter(
+      (r) =>
+        matches(writtenFilters, r) &&
+        (!writtenFilters.tos || bool(r.tosViolation) === writtenFilters.tos) &&
+        (!writtenFilters.nsfw || bool(r.nsfw) === writtenFilters.nsfw) &&
+        (!writtenFilters.exclude || bool(r.exclude) === writtenFilters.exclude)
+    );
+  const filterReceived = (rows: Account['receivedReviews']['items']) =>
+    rows.filter((r) => matches(receivedFilters, r));
 
   let {
     account,
@@ -47,13 +89,22 @@
     </div>
   {:then result}
     {#if result}
-      <ListCard title="Reviews written" total={result.reviews.items.length} capped={result.reviews.truncated}>
+      {@const written = filterWritten(result.reviews.items)}
+      <ListCard title="Reviews written" total={written.length} capped={result.reviews.truncated}>
         {#snippet children(limit)}
+          <!-- Retool's filter row. The bulk buttons below act on what is SELECTED, so filtering to the
+               review in question is how a moderator avoids acting on the newest 25 by accident. -->
+          <ListFilterBar
+            fields={WRITTEN_FILTERS}
+            bind:values={writtenFilters}
+            matched={written.length}
+            total={result.reviews.items.length}
+          />
           <form method="POST" action="?/contentAction" use:enhance={onSubmit}>
             <input type="hidden" name="userId" value={userId} />
             <input type="hidden" name="kind" value="reviews" />
             <ul class="space-y-1 text-sm">
-              {#each result.reviews.items.slice(0, limit) as r (r.id)}
+              {#each written.slice(0, limit) as r (r.id)}
                 <li class="flex flex-wrap items-baseline gap-x-2">
                   {#if canAct}
                     <input type="checkbox" name="reviewIds" value={r.id} class={CHECKBOX} />
@@ -68,8 +119,12 @@
                     <span class="text-xs text-dark-2">{r.imageCount} img</span>
                   {/if}
                   {#if r.tosViolation}<Badge variant="destructive">ToS</Badge>{/if}
+                  {#if r.nsfw}<Badge variant="secondary">NSFW</Badge>{/if}
                   {#if r.exclude}<Badge variant="secondary">excluded</Badge>{/if}
                   <span class="text-xs text-dark-2">{dateTime(r.createdAt)}</span>
+                  {#if r.details}
+                    <p class="w-full wrap-break-word text-dark-1">{r.details}</p>
+                  {/if}
                 </li>
               {/each}
             </ul>
@@ -90,14 +145,21 @@
         {/snippet}
       </ListCard>
 
+      {@const received = filterReceived(result.receivedReviews.items)}
       <ListCard
         title="Reviews received"
-        total={result.receivedReviews.items.length} capped={result.receivedReviews.truncated}
+        total={received.length} capped={result.receivedReviews.truncated}
         hint="On this user's models, by others. A burst of 1★ from few accounts is the signal."
       >
         {#snippet children(limit)}
+          <ListFilterBar
+            fields={RECEIVED_FILTERS}
+            bind:values={receivedFilters}
+            matched={received.length}
+            total={result.receivedReviews.items.length}
+          />
           <ul class="space-y-1 text-sm">
-            {#each result.receivedReviews.items.slice(0, limit) as r (r.id)}
+            {#each received.slice(0, limit) as r (r.id)}
               <li class="flex flex-wrap items-baseline gap-x-2">
                 <a href="?q={r.reviewerId}" class={LINK_CLASS}>
                   {r.reviewer ?? `#${r.reviewerId}`}

@@ -3,6 +3,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { entityUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime } from '$lib/format';
+  import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
 
   export type ModActivityRow = {
     id: number;
@@ -30,6 +31,29 @@
   );
 
   const rowUrl = (row: ModActivityRow) => entityUrl(civitaiUrl, row.entityType, row.entityId);
+
+  // Retool's select39 (Action) and select40 (Type), options taken from the rows as Retool's were.
+  let filters = $state<Record<string, string>>({});
+  const fields = (rows: ModActivityRow[]): FilterField[] => [
+    {
+      kind: 'select',
+      key: 'activity',
+      label: 'Action',
+      options: [...new Set(rows.map((r) => r.activity))].sort().map((x) => [x, x]),
+    },
+    {
+      kind: 'select',
+      key: 'entityType',
+      label: 'Type',
+      options: [...new Set(rows.map((r) => r.entityType))].sort().map((x) => [x, x]),
+    },
+  ];
+  const filterRows = (rows: ModActivityRow[]) =>
+    rows.filter(
+      (r) =>
+        (!filters.activity || r.activity === filters.activity) &&
+        (!filters.entityType || r.entityType === filters.entityType)
+    );
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -47,8 +71,15 @@
     {:else if rows.length === 0}
       <p class="text-sm text-dark-2">No recorded moderator activity.</p>
     {:else}
+      {@const shown = filterRows(rows)}
+      <ListFilterBar
+        fields={fields(rows)}
+        bind:values={filters}
+        matched={shown.length}
+        total={rows.length}
+      />
       <ul class="space-y-1.5 text-sm">
-        {#each expanded ? rows : rows.slice(0, COLLAPSED) as row (row.id)}
+        {#each expanded ? shown : shown.slice(0, COLLAPSED) as row (row.id)}
           {@const url = rowUrl(row)}
           <li class="flex flex-wrap items-baseline gap-x-2">
             <span class="text-dark-2">{dateTime(row.createdAt)}</span>
