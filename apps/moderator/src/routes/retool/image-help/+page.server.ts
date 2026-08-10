@@ -4,12 +4,16 @@ import type { Actions, PageServerLoad } from './$types';
 import { canAccess } from '$lib/server/access';
 import { parseForm, parseQuery } from '$lib/server/query';
 import {
+  HELP_TYPES,
+  createHelpRequest,
   getHelpRequestImages,
   getOpenHelpRequests,
   resolveHelpRequest,
 } from '$lib/server/image-help.service';
 
-const querySchema = z.object({ request: z.coerce.number().int().positive().optional().catch(undefined) });
+const querySchema = z.object({
+  request: z.coerce.number().int().positive().optional().catch(undefined),
+});
 
 export const load: PageServerLoad = async ({ url, locals }) => {
   const { request } = parseQuery(url, querySchema);
@@ -33,7 +37,8 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 
 export const actions: Actions = {
   resolve: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/retool/image-help')) return fail(400, { error: 'Not permitted.' });
+    if (!canAccess(locals.user, '/retool/image-help'))
+      return fail(400, { error: 'Not permitted.' });
     const input = parseForm(
       z.object({ requestId: z.coerce.number().int().positive() }),
       await request.formData()
@@ -46,8 +51,37 @@ export const actions: Actions = {
       handledBy: locals.user.username ?? String(locals.user.id),
     });
     if (!result.ok)
-      return fail(400, { error: 'Already handled by someone else — reload to see the current queue.' });
+      return fail(400, {
+        error: 'Already handled by someone else — reload to see the current queue.',
+      });
 
     return { success: true, resolved: input.requestId };
+  },
+
+  /**
+   * Retool's `Get*` → `Store*` pair. `createdBy` takes the Civitai username per the migration skill's
+   * attribution rule, so the column now holds two naming schemes — Retool display names historically,
+   * usernames going forward.
+   */
+  file: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/retool/image-help'))
+      return fail(400, { error: 'Not permitted.' });
+    const author = locals.user.username;
+    if (!author)
+      return fail(400, { error: 'Your account has no username to attribute the request to.' });
+
+    const input = parseForm(z.object({ type: z.enum(HELP_TYPES) }), await request.formData());
+    if (typeof input === 'string') return fail(400, { error: input });
+
+    const result = await createHelpRequest({ type: input.type, createdBy: author });
+    if (!result.ok) return fail(400, { error: result.error ?? 'Could not file the request.' });
+
+    return {
+      success: true,
+      filed: result.count,
+      warning: result.truncated
+        ? `More than ${result.count} are waiting; this request covers the newest ${result.count}.`
+        : undefined,
+    };
   },
 };

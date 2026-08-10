@@ -9,6 +9,13 @@
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
+  // `needsReview` values, so these are the wire values as well as the labels.
+  const HELP_TYPE_LABELS = [
+    ['minor', 'Minor review'],
+    ['poi', 'POI review'],
+    ['reported', 'Reported images'],
+  ] as const;
+
   let submitting = $state(false);
   const onSubmit = writeEnhancer({
     reload: true,
@@ -28,6 +35,39 @@
   >
     {form.error}
   </div>
+{:else if form && 'warning' in form && form.warning}
+  <div
+    class="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200"
+    role="status"
+  >
+    {form.warning}
+  </div>
+{:else if form && 'filed' in form && form.filed != null}
+  <div
+    class="mb-4 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200"
+    role="status"
+  >
+    Filed a request covering {num(form.filed)} images.
+  </div>
+{/if}
+
+<!-- Retool's three "file the current backlog" buttons. Without them this page only drains requests
+     Retool made, so it empties for good once Retool is switched off. -->
+{#if data.canAct}
+  <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
+    <h2 class="mb-1 text-sm font-semibold text-white">Ask for help</h2>
+    <p class="mb-3 text-xs text-dark-2">
+      Files everything currently waiting for review as one request for the team to work through.
+    </p>
+    <div class="flex flex-wrap gap-2">
+      {#each HELP_TYPE_LABELS as [type, label] (type)}
+        <form method="POST" action="?/file" use:enhance={onSubmit}>
+          <input type="hidden" name="type" value={type} />
+          <Button type="submit" variant="outline" size="sm" disabled={submitting}>{label}</Button>
+        </form>
+      {/each}
+    </div>
+  </section>
 {/if}
 
 {#if !data.requests.length}

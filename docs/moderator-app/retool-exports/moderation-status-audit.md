@@ -1,123 +1,164 @@
 # Moderation Status — coverage classification
 
-All 77 queries bucketed per the migration skill's §2, before any code.
+All 77 queries bucketed per the migration skill's §2.
 
-**What the app is.** Not a lookup tool — a **board**. Five unrelated things share one Retool page
-because Retool made tabs cheap, and the tracker already says to port them independently. Grouping them
-here is the point of this pass: as one page it is 77 queries, as five it is five small slices, three of
-which are already largely built.
+> **Rewritten 2026-08-10 after the export-vs-build fidelity review.** The previous version was wrong in
+> two load-bearing ways and those two errors hid most of this app. They are recorded here rather than
+> deleted, because both are mistakes the next classification could repeat:
+>
+> 1. **"Group E is 35 backfill jobs and timers, not UI."** There is **no `Timer` plugin in the export
+>    at all**. Every one of the 35 is fired by a button click. They are not jobs; they are a manual
+>    acknowledgement protocol (see group E below).
+> 2. **"This export predates the extractor upgrades, so it carries no layout and no option sets."** It
+>    carries both. Acting on that sentence is why nobody noticed that **three of the four top-level
+>    tabs are unported**.
+>
+> The old summary table also said group A was "3 | built" while its own body correctly described six
+> queries including three producers. Where a doc disagrees with itself, believe the body.
+
+**What the app is.** A **board**, not a lookup tool: several unrelated surfaces share one Retool page.
+Splitting it is still right. But "split it" was read as "most of it is already covered elsewhere", and
+that does not survive contact with the SQL.
+
+**Fidelity verdict: 8 present, 4 partial/divergent, 4 correctly omitted, 61 absent.** 3 of 77 built.
 
 | Group | Queries | State |
 | --- | --- | --- |
-| A. Help requests | 3 | **Unblocked and built in this slice** |
-| B. Queue stats / throughput | 21 | Overlaps the existing dashboard |
-| C. Report triage | 6 | Largely shipped |
-| D. Rating / tag review | 12 | Largely shipped |
-| E. Backfill jobs and timers | 35 | **Not UI** — Retool workflows, cron decision |
+| A. Help requests | 6 | Consumer built; **all three producers absent** |
+| B. Queue stats / throughput | 21 | Counts exist; the comparison they sat in does not |
+| C. Report triage | 6 | 2 confirmed covered, 2 partial, 2 absent |
+| D. Rating / tag review | 12 | 2 confirmed covered, 2 had count bugs (fixed), rest absent |
+| E. Task acknowledgement protocol | 35 | **Not cron.** Absent, and misclassified |
+| Dead in Retool too | 5 | Correctly omitted — no widget binds them |
 
-## A. Help requests — port (9)
+## Tabs — the structural finding
 
-The only group with no counterpart anywhere in the app.
+`tabbedContainer1` has four panes and **one is ported**:
 
-**Corrected 2026-08-09.** This was first written as 3 queries, with `GetMinors`/`GetPoI`/`GetReported`
-and `StoreMinors`/`StorePoI`/`StoreReported` filed under group E as backfill jobs. They are not: they
-are the **producers** of this queue. Each `Get*` selects a batch of image ids and its `Store*` files
-them into `ModerationImageHelp`, which is why that table has four GUI-mode writers rather than one:
+| Pane | State |
+| --- | --- |
+| Moderation Status | The board itself — counts, lag indicators, `AutoBlockedUsers`. **Absent** |
+| Image Help | Built as `/retool/image-help` |
+| Graphs | `button43` "Load Graphs" → `HourlyImages`, `HourlyModels`, `RRatingStats`, `ResearchRating`. **Absent** |
+| Who is who? | `textArea1` + a nested 3-tab `tabs13`. **Absent, and unscopable from the export** |
+
+Three of the app's six `TableWidget2`s are unaccounted for. `Who is who?` needs a screenshot before it
+can be estimated — do not guess from the query list.
+
+## A. Help requests — 6 queries, consumer only
+
+`/retool/image-help` reads `ModerationImageHelp` and marks rows handled. **Nothing writes it.**
 
 | Producer | Batch it files |
 | --- | --- |
 | `GetMinors` → `StoreMinors` | `Image WHERE needsReview = 'minor' AND ingestion IS NOT NULL` |
 | `GetPoI` → `StorePoI` | `Image WHERE needsReview = 'poi' AND ingestion IS NOT NULL` |
-| `GetReported` → `StoreReported` | `ImageReport ⋈ Report WHERE r.status = 'Pending'` |
+| `GetReported` → `StoreReported` | reported images awaiting review |
 
-So `ModerationImageHelp.type` is which of those three raised it, and most rows are **machine-raised
-batches needing a rating or a flag decision**, not a colleague's ad-hoc question. That is the missing
-context for what the page is for — a queue of "these images need a second pair of eyes", grouped by
-why.
+Each `Get*` is a plain button (`button39`/`button40`/`button41`, `runWhenModelUpdates: false`) whose
+success handler runs its `Store*` with the changeset
+`{createdBy: current_user.fullName, imageIds: JSON.stringify(Get*.data), createdAt: moment(), type: 'minor'|'poi'|'reported'}`,
+then re-runs `GetHelpers`.
 
-The three producers are cron-shaped (a timer scoops the batch), so they belong to the same
-Workflows/cron decision as group E — but they are *not* backfills, and the queue they feed is a live
-moderator surface.
+**This is why the slice cannot be called done.** After Retool is switched off the 37 open rows drain and
+nothing creates a 38th. The `retool_db` migration does not fix it — the data moves, the producer does
+not. Per the skill's attribution rule, `createdBy` takes `locals.user.username`.
 
-| Query | Notes |
-| --- | --- |
-| `GetHelpers` | `SELECT * FROM "ModerationImageHelp" WHERE "isHandled" = false` — the open queue. `retool_db`, already typed in `moderator-db-types.ts` (37 rows). |
-| `GetImageData` | The images behind the selected request: `WHERE i.id = ANY(<imageIds>)`, returning `needsReview`, `blockedFor`, `ingestion`. `imageIds` is a **jsonb array**, so the port unpacks it rather than trusting a client-supplied list. |
-| `UpdateHelpRequest` | GUI-mode write → `ModerationImageHelp`. Marks handled. |
+## B. Queue stats — 21 queries
 
-⚠️ `GetImageData` hardcodes `https://civitai.red/images/` — the wrong site, the same defect found in
-Bulk Image Manager's `PostQuery`. Links come from `$lib/entity-url` instead.
+The counts exist on the dashboard. What does not exist is **the comparison they were embedded in**, and
+that was the point of the board:
 
-⚠️ `createdBy`/`handledBy` are **text names, not user ids** — a documented quirk of the Retool schema.
-The port preserves it (writing the moderator's username) rather than silently changing the column's
-meaning; changing it is part of moving these tables off Retool's database.
+- `listView1` was bound to `ReportTransformer`, a `Function` joining `Reports` (per-type pending counts)
+  to `RecentReports` (last resolved report per entity type, a 12-way UNION) to emit
+  `{type, count, color, modname, time}` — *"images: 312, last touched by `<mod>` 14 minutes ago"* —
+  coloured against a per-type `thresholds` table (`csam: [10,6,4,2,0]`, `minors: [1000,700,400,200,0]`).
+  That threshold table is a **hardcoded operating standard that appears in no query**.
+- `RecentRating` / `RecentTagger` / `RecentReportImage` are the same idea for the rating and tag queues.
+- `HourlyImages` / `HourlyModels` / `RRatingStats` / `ResearchRating` are the **Graphs tab**, not this
+  surface.
 
-## B. Queue stats / throughput — equivalent, mostly (21)
+`RRatingStats` **did** render (`table1`); `TaggerRatio` never did — its on-screen partner was
+`ResearchRating`. The tracker had that pairing backwards.
 
-`HourlyImages`, `HourlyModels`, `ArticleCount`, `ArticleTimer`, `BountyCount`, `BountyTimer`,
-`ModelCount`, `ModelTimer`, `TrainingCount`, `MinorTimers`, `PoITimers`, `TagTimer`, `FPATaskTimers`,
-`RRatingStats`, `TaggerRatio`, `MuteStats`, `RatingTaggers`, `RecentRating`, `RecentTagger`,
-`ArticleCheck`, `BountyCheck`.
+## C. Report triage — 6 queries
 
-Counters and two Plotly charts. The moderator dashboard already owns this surface. **Two are worth
-lifting because they measure the moderators rather than the queue**, and nothing else does:
+- `UrgentReports` — **PRESENT**, predicate-for-predicate (`reports.service.ts`).
+- `ActionReport` — **PRESENT** via `setReportStatus`.
+- `Reports` / `OLDReports` — **PARTIAL**. Counts covered; the colour/threshold and "who last, how long
+  ago" are not (group B). Retool excluded only `Automated`; our badges now count every reason.
+- `RecentReports` / `RecentReportImage` — **ABSENT** (group B).
+- `ActionAllPostReports` — **ABSENT**. Selects pending post-reports where *every* image in the post is
+  already `nsfwLevel = 32`, i.e. reports the content has already resolved. `/reports/[slug]` actions one
+  at a time; the **batch selector** is what is missing, not the verb.
 
-- `RRatingStats` — `COUNT(*) FROM "ModActivity" WHERE activity = 'setNsfwLevel' GROUP BY user`: who is
-  actually re-rating. Directly meaningful now that Front Page Audit writes exactly that activity.
-- `TaggerRatio`, `RatingTaggers` — agreement rate between taggers.
+## D. Rating / tag review — 12 queries
 
-The rest are `COUNT(*) … GROUP BY date_trunc('hour', …)` over the last 200 hours; port only if the
-dashboard is missing that view, and as dashboard cards, not a new page.
+- `ReviewGrouped` — **PRESENT**. Its seven buckets (`poi`, `reported`, `csam`, `minor`, `tag`,
+  `newUser`, `appeal`) are split across `getImageReviewCounts` + `appeals` + `reported`, and all three
+  UNION arms match.
+- `ErrorRatingQueue` — **PRESENT**, identical window and predicates.
+- `TagQueue` — **was DIVERGENT, fixed.** The count dropped Retool's `JOIN "Image" … nsfwLevel < 32`
+  while the queue page kept it, so blocked images inflated a badge that could never reach zero.
+- `RatingQueue` — **was DIVERGENT, fixed.** Dropped Retool's second admission branch
+  `OR (irr.total <= -5 AND irr."createdAt" < NOW() - INTERVAL '10 hours')` — the *disagreement* case.
+- `GetSplitQueue` / `SplitCurrent` / `SplitCatchup` — **ABSENT, and not rating review.** `button69`
+  "Split", tooltip **"Only do this if it's 4 or more hours behind"**, forks the front-page sweep into a
+  current and a catch-up stream by writing `FrontPageTimers` and `FrontPageTimers_catchup`. The tooltip
+  is an operating rule that exists in no query.
+- `UnpublishingReasons` — **ABSENT**, and it is **Models**, not articles.
+- `LookUpTags` — correctly omitted (five hardcoded ids, no binding).
 
-## C. Report triage — equivalent (6)
+## E. Task acknowledgement protocol — 35 queries, NOT cron
 
-`Reports`, `OLDReports`, `RecentReports`, `RecentReportImage`, `UrgentReports`, `ActionReport`,
-`ActionAllPostReports`. (`GetReported`/`StoreReported` moved to group A — they feed the help queue.)
+Every `*Insert` / `*Check` / `pg` / `pg13` / `r` / `x` / `xxx` / `*_catchup` is `runWhenModelUpdates:
+false`, fired from a button (`button32 → ArticleCheck`, `button55 → ModelInsert`, `button13 → pg`, …).
+Each changeset is `{task: '<name>', lastUpdate: moment(), lastUpdateBy: current_user.firstName}` into
+`Mods_TaskTimers`.
 
-`/reports/*` and the dashboard's "Most reported" own this. `UrgentReports` is already shipped.
-`ActionReport`/`ActionAllPostReports` remain deliberately un-ported — actioning lives on `/reports`,
-which owns the side effects (recorded in the handover).
+It is a **coordination protocol**: *"I have swept this queue up to now."* The paired `*Timer` query reads
+it back and the `Function`s (`PGTime`, `FPATimer`, `newUserValue`, `CatchupTime`) turn it into the "N
+behind" indicator on the board. Same mechanism the Front Page Audit slice already recorded as unported
+(`FrontPageTimers`).
 
-## D. Rating / tag review — equivalent (12)
+Routing this to the Workflows/cron slice would build a scheduler for something no scheduler ever ran,
+and still leave the indicators unbuilt.
 
-`RatingQueue`, `ErrorRatingQueue`, `TagQueue`, `ResearchRating`, `LookUpTags`, `ReviewGrouped`,
-`blockedTagInsert`, `blockedTagTimer`, `GetSplitQueue`, `SplitCurrent`, `SplitCatchup`,
-`UnpublishingReasons`.
+Two members are not protocol at all and are misfiled here:
 
-`/images/ratings`, `/images/tags`, `/images/downleveled` and `/blocklists` cover this. **Check before
-building anything here** — `ReviewGrouped` and `GetSplitQueue` are the two whose shape I could not
-match to an existing page from the SQL alone.
+- `BlockedImagesTask` — images `ingestion = 'Blocked'` whose `blockedFor` is **not** one of
+  `moderated`/`Moderated`/`CSAM`/`AiNotVerified` since the last sweep: blocked for an *unusual* reason,
+  needing a look.
+- `CivitModelsData` — `Model WHERE userId = -1 AND status = 'Published'` updated since the last check
+  (official-account publishes), opened as a modal (`button57 → modalFrame1 → table5`).
 
-## E. Backfill jobs and timers — NOT UI (35)
+## Correctly omitted — nothing binds them
 
-`MinorInsert`, `PoIInsert`, `ModelInsert`, `CivitModelInsert`, `newUserInsert`, `newUserTimer`,
-`ImageSfwData`, `ImageSfwDataCatchup`, `ImagePG13Data`, `pg`, `pg13`, `pg_catchup`, `r`, `x`, `xxx`,
-`FPATaskTimers_catchup`, `TagTimerCatchup`,
-`FindSHA`, `LogSHA256`, `BlockedImagesTask`, `TaskCheckerBlocked`, `AutoBlockedUsers`,
-`CivitModelCheck`, `CivitModelsData`, `HolidayPostsBulbs`, `ComicReview`, `ModelReview`,
-`ArticleReview`, `blockedTagTimer`, and the remaining `*_catchup` variants.
+`HolidayPostsBulbs` (bound to a `textInput1` that does not exist), `LookUpTags`, `RatingTaggers`,
+`TaggerRatio`, `MuteStats`. Verified against every widget's `dataBindings`, `options` and `label`.
 
-**These are scheduled work, not a page.** They write Retool-only tables (`Mods_TaskTimers`,
-`ModerationSHA`) or backfill main-app columns on a timer. Several look like duplicates of existing
-main-app jobs.
+Also broken **in Retool**, so not gaps: `button78` renders a nonexistent `Inquisitor1Queue`; `button59`
+renders `TagQueue.data.id.length` where `TagQueue` selects only a COUNT; `table11` binds a nonexistent
+`query1`; `button45` has `hidden: "1"`.
 
-They belong to the **Workflows decision**, not to this slice — see the handover. Porting any of them
-into a page would be building a UI for a cron job.
+## Other absent capabilities
 
-## Decisions taken without asking
+- `AutoBlockedUsers` — `ModActivity WHERE activity = 'autoMuteScam'` joined to the muted user
+  (`table10` on the main board): the audit trail of automatic scam mutes. `autoMuteScam` appears
+  nowhere in `apps/moderator`.
+- `ModelReview`, `TrainingCount`, `UnpublishingReasons` — three model-side surfaces. **There is no
+  models route in this app at all.**
+- `FindSHA` / `LogSHA256` — a takedown-hash ledger into `ModerationSHA`. The interactive half was
+  ad-hoc (`FindMatchingHash` hardcodes one hash), but the ledger write has no counterpart.
 
-**This slice ports group A only.** B, C and D are already served; E is not UI. Building a
-"Moderation Status" page that reproduces Retool's board would mean five unrelated tools behind one
-route, which is why the tracker said to split it. Help requests gets its own page, named for what it
-does.
+## Build order
 
-**`imageIds` is unpacked server-side.** Retool passed the array through the client
-(`select1.data.find(…).imageIds.id`). The port reads the row by id and expands the jsonb itself, so a
-moderator cannot be handed a request for one set of images and act on another.
-
-## Open
-
-- `ReviewGrouped` and `GetSplitQueue` (group D) — confirm against `/images/*` before assuming covered.
-- Group B's two moderator-performance queries are worth a dashboard card; not built here.
-- This export predates both extractor upgrades, so its 197 components carry **no** option sets and
-  **no** layout. 51 of them are buttons. Re-extract before trusting that group A is the only gap.
+1. **The three help-request producers.** Smallest, and it is what stops `/retool/image-help` dying at
+   cutover.
+2. **The board**: per-queue lag from `Mods_TaskTimers`, the "last touched by / how long ago" column, the
+   threshold colouring, `AutoBlockedUsers`.
+3. **`ActionAllPostReports`** batch selector, and `BlockedImagesTask` / `CivitModelsData` as review
+   counts.
+4. **Graphs tab.**
+5. **`Who is who?`** — blocked on a screenshot.
+6. **Model-side surfaces** — blocked on there being a models route.

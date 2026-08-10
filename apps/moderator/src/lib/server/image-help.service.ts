@@ -32,7 +32,11 @@ const MAX_INT4 = 2_147_483_647;
 function parseImageIds(value: unknown): number[] {
   const raw = Array.isArray(value) ? value : [];
   const ids = raw.map((v) =>
-    typeof v === 'number' ? v : typeof v === 'object' && v ? Number((v as { id?: unknown }).id) : NaN
+    typeof v === 'number'
+      ? v
+      : typeof v === 'object' && v
+      ? Number((v as { id?: unknown }).id)
+      : NaN
   );
   return [...new Set(ids.filter((n) => Number.isInteger(n) && n > 0 && n <= MAX_INT4))];
 }
@@ -71,19 +75,77 @@ export async function getHelpRequestImages(requestId: number): Promise<HelpImage
 
   return dbRead
     .selectFrom('Image')
-    .select([
-      'id',
-      'url',
-      'name',
-      'type',
-      'nsfwLevel',
-      'needsReview',
-      'blockedFor',
-      'ingestion',
-    ])
+    .select(['id', 'url', 'name', 'type', 'nsfwLevel', 'needsReview', 'blockedFor', 'ingestion'])
     .where('id', 'in', ids)
     .orderBy('id', 'desc')
     .execute() as Promise<HelpImage[]>;
+}
+
+// PRODUCERS (Retool's GetMinors/GetPoI/GetReported → StoreMinors/StorePoI/StoreReported).
+//
+// Without these the page is a consumer with no producer: it drains rows Retool created and, once Retool
+// is switched off, empties permanently. Moving the moderator database does not fix that — the data
+// moves, the producer does not.
+//
+// In Retool each was a button whose success handler filed the batch it had just selected. Same shape
+// here, in one action, because the two halves were never independently useful.
+export const HELP_TYPES = ['minor', 'poi', 'reported'] as const;
+export type HelpType = (typeof HELP_TYPES)[number];
+
+// Retool filed the whole backlog. `imageIds` is a jsonb array read back in full on every page load, so
+// an unbounded file-everything writes a row nothing can render. The cap is disclosed to the caller
+// rather than silently applied — a request that covers 500 of 4,000 must not read as covering all of them.
+const HELP_BATCH_CAP = 500;
+
+async function getHelpCandidates(type: HelpType): Promise<number[]> {
+  if (type === 'reported') {
+    const rows = await dbRead
+      .selectFrom('ImageReport as ir')
+      .innerJoin('Report as r', 'r.id', 'ir.reportId')
+      .select('ir.imageId as id')
+      .where('r.status', '=', 'Pending')
+      .orderBy('ir.imageId', 'desc')
+      .limit(HELP_BATCH_CAP + 1)
+      .execute();
+    return [...new Set(rows.map((r) => r.id))];
+  }
+
+  const rows = await dbRead
+    .selectFrom('Image')
+    .select('id')
+    .where('needsReview', '=', type)
+    .where('ingestion', 'is not', null)
+    .orderBy('id', 'desc')
+    .limit(HELP_BATCH_CAP + 1)
+    .execute();
+  return rows.map((r) => r.id);
+}
+
+export async function createHelpRequest(input: {
+  type: HelpType;
+  createdBy: string;
+}): Promise<{ ok: boolean; count: number; truncated: boolean; error?: string }> {
+  const found = await getHelpCandidates(input.type);
+  const truncated = found.length > HELP_BATCH_CAP;
+  const imageIds = found.slice(0, HELP_BATCH_CAP);
+
+  // Filing an empty request puts a row in the queue that renders as an empty grid and can only be
+  // resolved by hand.
+  if (!imageIds.length)
+    return { ok: false, count: 0, truncated: false, error: 'Nothing is waiting for this type.' };
+
+  await getModeratorDb()
+    .insertInto('ModerationImageHelp')
+    .values({
+      createdBy: input.createdBy,
+      type: input.type,
+      // The column is jsonb; the driver would otherwise send a Postgres int array.
+      imageIds: JSON.stringify(imageIds),
+      isHandled: false,
+    })
+    .execute();
+
+  return { ok: true, count: imageIds.length, truncated };
 }
 
 /**
