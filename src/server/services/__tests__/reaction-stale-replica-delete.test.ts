@@ -35,6 +35,12 @@ const REACTION_MODELS = [
   ['bountyEntry', 'bountyEntryReaction', 'bountyEntryId'],
 ] as const satisfies readonly (readonly [ReactionEntityType, string, string])[];
 
+// The subset whose deletes queue a metric update, i.e. the ones with an
+// `if (count > 0)` guard to regress.
+const METRIC_MODELS = REACTION_MODELS.filter(([entityType]) =>
+  ['question', 'answer', 'post', 'article', 'bountyEntry'].includes(entityType)
+);
+
 const { mockDbWrite, mockDbReplica, mockQueueUpdate } = vi.hoisted(() => {
   const build = () =>
     Object.fromEntries(
@@ -142,8 +148,27 @@ describe('toggleReaction — replica-lag un-react', () => {
       expect(mockDbWrite[model].rows).toHaveLength(0);
       expect(result).toBe('removed');
 
+      // Exact shape, not merely "no id": a delete missing userId or reaction is
+      // still natural-key-shaped and would wipe every user's reaction on the entity.
       const [{ where }] = mockDbWrite[model].deleteMany.mock.calls[0];
-      expect(where).not.toHaveProperty('id');
+      expect(where).toEqual({ [foreignKey]: 7, userId: 5, reaction: 'Heart' });
+    }
+  );
+
+  it.each(METRIC_MODELS)(
+    'does not queue a %s metric update when the delete matched no row',
+    async (entityType, model, foreignKey) => {
+      seed(model, [{ id: 111, [foreignKey]: 7, userId: 5, reaction: 'Heart' }], []);
+
+      const result = await toggleReaction({
+        entityType,
+        entityId: 7,
+        userId: 5,
+        reaction: 'Heart',
+      });
+
+      expect(result).toBe('noop');
+      expect(mockQueueUpdate).not.toHaveBeenCalled();
     }
   );
 });
