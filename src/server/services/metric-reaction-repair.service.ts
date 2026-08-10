@@ -122,6 +122,14 @@ export async function repairReactionMetrics(
    * to the replay position means the stamp is always older than anything the
    * replica cannot yet see, whatever the lag. On a primary the function returns
    * NULL and this falls back to `now()`.
+   *
+   * Cost of a now-ish stamp, which matters before anyone runs another BULK repair:
+   * consumers doing a rolling window over `createdAt` see the `-1` but not the old
+   * `+1` it cancels, so historical corrections read as fresh un-reactions. Measured
+   * after the 2026-08-07 backfill: 3,197,222 removals on one day against a ~18k/day
+   * baseline, leaving 17,247 orphaned removals inside the image leaderboards' 30-day
+   * window. `original createdAt + 1s` would avoid both that and the ReplacingMergeTree
+   * key collision that stamping at the original `createdAt` exactly would cause.
    */
   const { rows: clockRows } = await pgDbRead.query<{ removalAt: string }>(
     `SELECT to_char(
