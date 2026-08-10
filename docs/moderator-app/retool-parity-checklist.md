@@ -271,7 +271,7 @@ in the same screen instead of having to click around a bunch."*
       pieces rather than deciding them together:**
       - `FrontPageTimers` (shared resume point) is **arguably moot at that volume** — its whole value is
         stopping two moderators re-checking the same images. The URL sharing already there may suffice.
-      - `RatingChanges` and `research_ratings` are an audit log and a research dataset — **independent
+      - `RatingChanges` is an audit log, **independent
         of volume**, so decide them on their own merits.
 - [ ] **The tag chips are a fixed votable vocabulary, not the image's tags.** Every card in the
       screenshot carries the same 11 moderation tags regardless of content, so a moderator could **add**

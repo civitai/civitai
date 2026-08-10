@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
-import { dbRead, dbWrite } from './db';
+import { dbRead } from './db';
+import { voteOnImageTags } from './user-actions.service';
 import type { MediaType } from '$lib/media/edge-url';
 
 // Retool's Front Page Audit: a PROACTIVE sweep of newly scanned content at one rating, not a request
@@ -122,25 +123,19 @@ export async function getSweep(input: {
 }
 
 /**
- * Retool's `TagVote`. A moderator disagreeing with a moderation TAG is a different act from changing
- * the image's rating — the tag vote corrects the tagger, the rating corrects the image.
+ * Goes through `/api/mod/retool/image` → `tagVote` rather than writing `TagsOnImageVote` directly.
+ * That endpoint applies the moderator vote WEIGHT via the main app's `addTagVotes`/`removeTagVotes`
+ * — a raw ±1 row never crosses `apply-voted-tags`' ±5 threshold, so the tag would stay on the image
+ * and only pick up `needsReview`. Writing the weight by hand here would be a second copy of a number
+ * that lives in the main app.
  */
-/**
- * A moderator's vote weighs 10, not 1. `apply-voted-tags` disables a moderation tag on
- * `SUM(IIF(vote < -5, 1, 0)) > 0` and restores one on `vote > 5`, so a ±1 vote never crosses either
- * threshold — the tag stays on the image and only picks up `needsReview`. Same value as the main app's
- * `MODERATOR_VOTE_WEIGHT`.
- */
-const MODERATOR_VOTE_WEIGHT = 10;
-
 export async function voteOnTag(input: {
   imageId: number;
   tagId: number;
-  userId: number;
   direction: 'up' | 'down';
 }): Promise<{ ok: boolean; error?: string }> {
   // The tag must actually be a Moderation tag on THIS image. Retool trusted the client with both ids,
-  // so a forged tagId wrote a vote for an unrelated tag — or raised an FK error and 500'd.
+  // so a forged tagId wrote a vote for an unrelated tag.
   const attached = await dbRead
     .selectFrom('TagsOnImageDetails as toi')
     .innerJoin('Tag as t', 't.id', 'toi.tagId')
@@ -151,21 +146,8 @@ export async function voteOnTag(input: {
     .executeTakeFirst();
   if (!attached) return { ok: false, error: 'That tag is not a moderation tag on this image.' };
 
-  const vote = input.direction === 'up' ? MODERATOR_VOTE_WEIGHT : -MODERATOR_VOTE_WEIGHT;
-
-  await dbWrite
-    .insertInto('TagsOnImageVote')
-    .values({
-      imageId: input.imageId,
-      tagId: input.tagId,
-      userId: input.userId,
-      vote,
-      createdAt: new Date(),
-    })
-    .onConflict((oc) =>
-      oc.columns(['imageId', 'tagId', 'userId']).doUpdateSet({ vote, createdAt: new Date() })
-    )
-    .execute();
-
-  return { ok: true };
+  const result = await voteOnImageTags([
+    { imageId: input.imageId, tagId: input.tagId, vote: input.direction === 'up' ? 1 : -1 },
+  ]);
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }

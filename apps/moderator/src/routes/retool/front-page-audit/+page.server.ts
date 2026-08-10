@@ -88,7 +88,7 @@ export const actions: Actions = {
     );
     if (typeof input === 'string') return actionFail(input);
 
-    const result = await voteOnTag({ ...input, userId: locals.user.id });
+    const result = await voteOnTag(input);
     if (!result.ok) return actionFail(result.error ?? 'Could not record that vote.');
     return { success: true, votedTag: input.tagId };
   },

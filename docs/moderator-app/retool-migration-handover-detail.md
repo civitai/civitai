@@ -94,11 +94,11 @@ node .claude/skills/retool-migration/extract.mjs "<export.json>"
 - [ ] Re-extract `user-reports` and re-check its audit against the surfaced option sets
 - [ ] Re-extract the three not-yet-started apps before their slices begin
 
-## 2d. Three schemas Front Page Audit needs before it can resume or log
+## 2d. Two schemas Front Page Audit needs before it can resume or log
 
 The sweep itself is built and works without these. What they gate is **coordination and audit**: the
-shared resume point, and the two logs of every rating correction. All three are writes, so none was
-guessed at.
+shared resume point and the audit log. (A third, `research_ratings`, is closed — the main app
+deliberately dropped it.)
 
 Retool wrote the first two through **GUI-mode queries**, which record the target table and *no column
 list* — so the export cannot tell us the shape, and neither table is in `moderator-db-types.ts`.
@@ -118,7 +118,10 @@ list* — so the export cannot tell us the shape, and neither table is in `moder
       corrections and the largest table in the migration. Written by `LogNsfwLevel`/`LogNsfwLevel2`
       (one table, two GUI-mode queries). Same `information_schema` query as above.
 
-- [ ] **`research_ratings`** (main DB). Retool inserts `(userId, imageId, nsfwLevel)` with
+- [x] **`research_ratings` — CLOSED, deliberately dead.** `/api/mod/retool/image` documents it:
+      *"the deprecated `research_ratings` insert from the original Retool query is intentionally dropped
+      (Knights of New Order replaced that data source)."* Do NOT port it. Original note follows.
+- [ ] ~~**`research_ratings`** (main DB). Retool inserts~~ `(userId, imageId, nsfwLevel)` with
       `ON CONFLICT ("userId","imageId") DO UPDATE`, on the `Prod` resource — but the table is **not in
       `@civitai/db-schema/kysely`**, so it is either missing from `schema.full.prisma` or marked
       `@no-type`. Confirm which; if it should be typed, it needs a schema addition and

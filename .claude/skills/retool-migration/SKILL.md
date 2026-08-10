@@ -179,6 +179,39 @@ endpoints between them, including every destructive one (`ban-user`, `remove-ima
 write and lose everything the endpoint does around it — search-index sync, ClickHouse tracking,
 notifications, cache busting.
 
+### Look up the main app's endpoints BEFORE deciding something is unported
+
+**Do this for every query that hits REST, and for every capability you are about to call missing.** The
+main app already carries most of the privileged writes, and three times in one day a capability filed
+as "a write surface we never built" turned out to be one call:
+
+```bash
+ls src/pages/api/mod/ src/pages/api/mod/retool/          # the whole mod surface
+sed -n '1,40p' src/pages/api/mod/retool/user.ts          # the header comment lists every action
+grep -rn "action:" src/pages/api/mod/retool/*.ts | head  # action names per resource
+```
+
+**Read the endpoint's zod schema, not its name.** It is the authoritative contract, and it is usually
+richer than the Retool query that called it:
+
+| Found this way | What it was filed as |
+| --- | --- |
+| `/api/mod/retool/user` → `updateIdentity` (username/email/name), `toggleModerator` | "the whole account-edit capability, a write surface we never built" |
+| `/api/mod/remove-images` → `violationType` **enum** + `violationDetails` | free-text `reason`, so every removal logged unclassified |
+| `/api/mod/update-image-flag` | Image Lookup "is read-only" — a comment that was simply wrong |
+
+Two further things the schemas give you free:
+
+- **`privileged:` markers are the per-capability permissions** the tickets ask for
+  (`retoolUpdateIdentity`, `retoolToggleModerator`). Wire the action to them; do not invent a
+  local role check for something the endpoint already gates.
+- **An endpoint often accepts more than Retool sent.** `remove-images` takes `userId` *or* `imageIds`;
+  Retool's `nukeUser` used the first and its bulk path the second. Reading only the query you were
+  handed hides the other half.
+
+When a Retool query looks nonsensical — a dangling binding, a hardcoded id, a `SELECT *` feeding a
+button — **check whether the real work happens in an endpoint** before concluding the app did nothing.
+
 Two blind spots in the export itself, both of which need a screenshot to close:
 
 - **No event handlers.** Nothing records what a button, row or modal click actually triggered. A table

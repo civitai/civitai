@@ -149,6 +149,19 @@ export async function toggleModerator(input: {
   return { ok: true };
 }
 
+/**
+ * Retool's `TagVote`, through `/api/mod/retool/image`. The endpoint applies the moderator vote weight
+ * itself, so callers pass a plain ±1 and the number that decides whether a tag is disabled stays in
+ * one place — the main app's `addTagVotes`.
+ */
+export async function voteOnImageTags(
+  votes: { imageId: number; tagId: number; vote: -1 | 0 | 1 }[]
+): Promise<ActionResult> {
+  if (!votes.length) return { ok: false, error: 'No votes to record.' };
+  const result = await callRetoolEndpoint('image', { action: 'tagVote', votes }, 'Tag vote');
+  return result.ok ? { ok: true } : result;
+}
+
 const countOf = (body: Record<string, unknown>, keys: string[]) =>
   keys.reduce((sum, k) => sum + (typeof body[k] === 'number' ? (body[k] as number) : 0), 0);
 
