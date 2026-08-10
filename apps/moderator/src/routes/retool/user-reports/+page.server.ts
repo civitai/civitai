@@ -191,6 +191,9 @@ export const actions: Actions = {
       idsSchema.extend({
         reason: z.string().trim().max(500).optional(),
         violationType: z.enum(VIOLATION_TYPES).optional(),
+        // Retool's TosReasons carried a flag alongside the message; setting it is part of the same
+        // gesture, so a POI removal does not need a second pass to mark the images.
+        alsoFlag: z.enum(['poi', 'minor', 'tag']).optional(),
       }),
       await request.formData()
     );
@@ -202,6 +205,16 @@ export const actions: Actions = {
       violationType: input.violationType,
       moderatorId: locals.user.id,
     });
+
+    // The flag the canned reason implies, applied in the same gesture. Best-effort: the removal has
+    // already landed, so a flag failure must not report the removal as failed.
+    if (input.alsoFlag === 'poi' || input.alsoFlag === 'minor')
+      await setImageFlag({
+        imageIds: input.imageIds,
+        flag: input.alsoFlag,
+        value: true,
+        moderatorId: locals.user.id,
+      });
     // The SERVER's count, not the submitted one: a partial removal must not read as a full one.
     if (!result.ok) return scopedFail('images', result.error);
     return { success: true, imageResult: `Removed ${result.count} of ${input.imageIds.length}.` };

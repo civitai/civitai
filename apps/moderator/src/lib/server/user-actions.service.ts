@@ -630,16 +630,24 @@ const CHUNK = 100;
 
 async function inChunks(
   imageIds: number[],
-  send: (chunk: number[]) => Promise<JsonResult>
+  send: (chunk: number[]) => Promise<JsonResult>,
+  /** Attribution for the chunk that just landed. Runs INSIDE the loop on purpose: written after it,
+   *  a later chunk's timeout returns early and the images already actioned end up with no record of
+   *  who actioned them — the exact thing the per-image rows exist to prevent. */
+  onSent?: (chunk: number[]) => Promise<void>
 ): Promise<CountResult> {
   let affected = 0;
   for (let i = 0; i < imageIds.length; i += CHUNK) {
-    const result = await send(imageIds.slice(i, i + CHUNK));
+    const chunk = imageIds.slice(i, i + CHUNK);
+    const result = await send(chunk);
     if (!result.ok)
       return affected > 0
         ? { ok: false, error: `${result.error} ${affected} images were already actioned — reload.` }
         : result;
-    affected += countOf(result.body, ['images']);
+    const count = countOf(result.body, ['images']);
+    affected += count;
+    // A chunk that matched nothing gets no attribution: those ids do not exist.
+    if (count > 0) await onSent?.(chunk);
   }
   return { ok: true, count: affected };
 }
@@ -654,38 +662,39 @@ export async function removeImages(input: {
 }): Promise<CountResult> {
   if (!input.imageIds.length) return { ok: false, error: 'Select at least one image.' };
 
-  const result = await inChunks(input.imageIds, (chunk) =>
-    postMainAppJson(
-      '/api/mod/remove-images',
-      {
-        imageIds: chunk,
-        moderatorId: input.moderatorId,
-        reason: input.reason,
-        ...(input.violationType ? { violationType: input.violationType } : {}),
-        ...(input.reason ? { violationDetails: input.reason } : {}),
-      },
-      'Image removal'
-    )
+  const result = await inChunks(
+    input.imageIds,
+    (chunk) =>
+      postMainAppJson(
+        '/api/mod/remove-images',
+        {
+          imageIds: chunk,
+          moderatorId: input.moderatorId,
+          reason: input.reason,
+          ...(input.violationType ? { violationType: input.violationType } : {}),
+          ...(input.reason ? { violationDetails: input.reason } : {}),
+        },
+        'Image removal'
+      ),
+    // One row per image: ModActivity keys on content id, so a single "removed 300" row would leave
+    // 299 images with no record of who removed them.
+    (chunk) =>
+      Promise.all(
+        chunk.map((id) =>
+          recordModActivity({
+            userId: input.moderatorId,
+            entityType: 'image',
+            entityId: id,
+            activity: 'bulkRemove',
+          })
+        )
+      ).then(() => undefined)
   );
   if (!result.ok) return result;
 
-  const affected = result.count;
-  if (affected === 0)
+  if (result.count === 0)
     return { ok: false, error: 'Nothing changed — those images may already be gone. Reload.' };
-
-  // One row per image: ModActivity keys on content id, so a single "removed 300" row would leave 299
-  // images with no record of who removed them.
-  await Promise.all(
-    input.imageIds.map((id) =>
-      recordModActivity({
-        userId: input.moderatorId,
-        entityType: 'image',
-        entityId: id,
-        activity: 'bulkRemove',
-      })
-    )
-  );
-  return { ok: true, count: affected };
+  return result;
 }
 
 export async function restoreImages(input: {
@@ -694,32 +703,33 @@ export async function restoreImages(input: {
 }): Promise<CountResult> {
   if (!input.imageIds.length) return { ok: false, error: 'Select at least one image.' };
 
-  const result = await inChunks(input.imageIds, (chunk) =>
-    postMainAppJson(
-      '/api/mod/restore-images',
-      // `userId` is the ClickHouse actor on the Restore event; without it the restore is
-      // unattributable on that side even though ModActivity records it locally.
-      { imageIds: chunk, userId: input.moderatorId },
-      'Image restore'
-    )
+  const result = await inChunks(
+    input.imageIds,
+    (chunk) =>
+      postMainAppJson(
+        '/api/mod/restore-images',
+        // `userId` is the ClickHouse actor on the Restore event; without it the restore is
+        // unattributable on that side even though ModActivity records it locally.
+        { imageIds: chunk, userId: input.moderatorId },
+        'Image restore'
+      ),
+    (chunk) =>
+      Promise.all(
+        chunk.map((id) =>
+          recordModActivity({
+            userId: input.moderatorId,
+            entityType: 'image',
+            entityId: id,
+            activity: 'bulkRestore',
+          })
+        )
+      ).then(() => undefined)
   );
   if (!result.ok) return result;
 
-  const affected = result.count;
-  if (affected === 0)
+  if (result.count === 0)
     return { ok: false, error: 'Nothing changed — those images may already be gone. Reload.' };
-
-  await Promise.all(
-    input.imageIds.map((id) =>
-      recordModActivity({
-        userId: input.moderatorId,
-        entityType: 'image',
-        entityId: id,
-        activity: 'bulkRestore',
-      })
-    )
-  );
-  return { ok: true, count: affected };
+  return result;
 }
 
 // IMAGE FLAGS (Retool's TogglePoIMakeSureToEdit — its name is a warning that it was edited in place

@@ -48,6 +48,11 @@
   let submitting = $state(false);
 
   const selected = new SvelteSet<string | number>();
+  const blockedIds = $derived(
+    new Set<string | number>(
+      suspect.items.filter((i) => i.ingestion === 'Blocked').map((i) => i.id)
+    )
+  );
 
   // This panel owns its writes so a success can tear down what it armed. Inferring that from the
   // returned `warning` left a strike form open with a live submit after the strike had landed.
@@ -202,6 +207,7 @@
     {onSubmit}
     {submitting}
     notify={false}
+    blockedIds={blockedIds}
   />
 {/if}
 

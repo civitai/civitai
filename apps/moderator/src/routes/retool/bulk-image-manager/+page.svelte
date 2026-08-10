@@ -41,6 +41,13 @@
     untrack(() => selected.clear());
   });
 
+  // Restore is only safe on already-blocked images; the bar warns when a selection includes others.
+  const blockedIds = $derived(
+    new Set<string | number>(
+      (data.batch?.items ?? []).filter((i) => i.ingestion === 'Blocked').map((i) => i.id)
+    )
+  );
+
   const ownerOfImage = $derived(new Map((data.batch?.items ?? []).map((i) => [i.id, i.userId])));
   const selectedOwnerCount = $derived(
     new Set([...selected].map((id) => ownerOfImage.get(Number(id))).filter((id) => id != null)).size
@@ -166,6 +173,7 @@
       {onSubmit}
       {submitting}
       ownerCount={selectedOwnerCount}
+      blockedIds={blockedIds}
     />
   {/if}
 

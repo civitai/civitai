@@ -9,6 +9,7 @@
   import { cn } from '@civitai/ui/utils.js';
   import { num } from '$lib/format';
   import { VIOLATION_TYPES } from '$lib/violations';
+  import { TOS_REASONS, type CannedReason } from '$lib/moderation-reasons';
 
   let {
     selected,
@@ -18,6 +19,7 @@
     ownerCount = 1,
     notify = true,
     flags = true,
+    blockedIds,
   }: {
     selected: SvelteSet<string | number>;
     /** Every id currently on screen, for the select-all helpers. */
@@ -28,13 +30,43 @@
     ownerCount?: number;
     notify?: boolean;
     flags?: boolean;
+    /** Which of `selectable` are currently blocked, so Restore can warn about the rest. */
+    blockedIds?: Set<string | number>;
   } = $props();
 
   const ids = $derived([...selected].join(','));
   const count = $derived(selected.size);
+  const unblockedSelected = $derived(
+    blockedIds ? [...selected].filter((id) => !blockedIds.has(id)).length : 0
+  );
+
+  let tosReason = $state<string | null>(null);
+  let reason = $state('');
+  let pendingFlag = $state<CannedReason['flag']>(undefined);
+
+  // Retool's radio mapped its `reason` token (poi/minor/tag) onto the removal and its `value` onto the
+  // message. The violation enum is ours — a canned reason that names one pre-selects it.
+  const TOS_VIOLATION: Record<string, string> = {
+    'Depicting Real People': 'realPerson',
+    'Minor displayed in mature context': 'animatedMinorNsfw',
+    'NSFW potential minor in a school environment': 'schoolNsfw',
+    'Realistic minor': 'realisticMinor',
+    Bestiality: 'bestiality',
+    'Rape/Forced Sex': 'sexualViolence',
+    'Scat/Fecal matter': 'fecalMatter',
+    'Graphic Violence/Gore': 'gore',
+    'Non AI content': 'non-ai',
+  };
+
+  const applyTosReason = (r: CannedReason) => {
+    tosReason = r.label;
+    reason = r.message;
+    pendingFlag = r.flag;
+    violationType = TOS_VIOLATION[r.label] ?? 'none';
+  };
 
   let violationType = $state('none');
-  let confirming = $state<'remove' | null>(null);
+  let confirming = $state<'remove' | 'restore' | null>(null);
   let notifying = $state(false);
   let flagging = $state(false);
 
@@ -50,6 +82,9 @@
       notifying = false;
       flagging = false;
       violationType = 'none';
+      tosReason = null;
+      reason = '';
+      pendingFlag = undefined;
     }
   });
 
@@ -84,6 +119,9 @@
         {#if selectable.length > 100}
           <Button size="sm" variant="outline" onclick={() => selectAll(100)}>Select 100</Button>
         {/if}
+        {#if selectable.length > 50}
+          <Button size="sm" variant="outline" onclick={() => selectAll(50)}>Select 50</Button>
+        {/if}
       {/if}
       {#if count > 0}
         <Button size="sm" variant="outline" onclick={() => selected.clear()}>Unselect all</Button>
@@ -96,10 +134,10 @@
       <Button size="sm" variant="destructive" onclick={() => (confirming = 'remove')}>
         Remove selected
       </Button>
-      <form method="POST" action="?/restore" use:enhance={onSubmit}>
-        <input type="hidden" name="imageIds" value={ids} />
-        <Button type="submit" size="sm" disabled={submitting}>Restore selected</Button>
-      </form>
+      <!-- Confirmed like Remove. It sits next to a destructive button and is itself destructive in a
+           way that reads as safe: restore clears needsReview, poi and blockedFor, republishes at
+           `ingestion = 'Scanned'` and disables the review tags, with no record of the prior values. -->
+      <Button size="sm" onclick={() => (confirming = 'restore')}>Restore selected</Button>
       {#if notify}
         <Button size="sm" onclick={() => (notifying = true)}>Notify owners</Button>
       {/if}
@@ -118,6 +156,33 @@
           {#if ownerCount > 1}across <strong>{ownerCount}</strong> accounts{/if}? Their owners are not
           notified unless you also send a message.
         </p>
+        <!-- Retool's TosReasons radio. Picking one fills the reason with the wording the user is
+             sent, and pre-selects the violation type and the flag it implies — moderators were
+             otherwise writing eleven standard messages by hand. -->
+        <div class="mb-2 flex flex-wrap gap-1.5">
+          {#each TOS_REASONS as r (r.label)}
+            <button
+              type="button"
+              onclick={() => applyTosReason(r)}
+              aria-pressed={tosReason === r.label}
+              class={cn(
+                'rounded-md border px-2 py-1 text-xs',
+                tosReason === r.label
+                  ? 'border-primary bg-primary/15 text-white'
+                  : 'border-dark-4 text-dark-2 hover:bg-dark-5 hover:text-dark-0'
+              )}
+            >
+              {r.label}
+            </button>
+          {/each}
+        </div>
+        {#if pendingFlag}
+          <p class="mb-2 text-xs text-amber-200">
+            This reason also sets <strong>{pendingFlag}</strong> on the selected images.
+          </p>
+          <input type="hidden" name="alsoFlag" value={pendingFlag} />
+        {/if}
+
         <div class="mb-2 flex flex-wrap gap-2">
           <!-- The endpoint classifies removals by this enum and ships it to ClickHouse; free text
                alone left every removal from this page unclassified. -->
@@ -137,6 +202,7 @@
           {/if}
           <Input
             name="reason"
+            bind:value={reason}
             placeholder="Reason (optional, recorded with the removal)"
             class="min-w-48 flex-1"
           />
@@ -144,6 +210,35 @@
         <div class="flex gap-2">
           <Button type="submit" size="sm" variant="destructive" disabled={submitting}>
             {submitting ? 'Removing…' : `Remove ${num(count)}`}
+          </Button>
+          <Button type="button" size="sm" variant="outline" onclick={() => (confirming = null)}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+    </form>
+  {/if}
+
+  {#if confirming === 'restore'}
+    <form method="POST" action="?/restore" use:enhance={onSubmit} class="mt-3">
+      <input type="hidden" name="imageIds" value={ids} />
+      <div class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
+        <p class="mb-2 text-sm text-white">
+          Restore <strong>{num(count)}</strong> images? This clears <code>needsReview</code>,
+          <code>poi</code> and <code>blockedFor</code>, republishes them, and disables their review
+          tags. The previous values are not recorded anywhere.
+        </p>
+        {#if unblockedSelected > 0}
+          <!-- Restore is meant for already-blocked images; most sources return every image an account
+               owns, so a Select-all here silently clears the review queue for the rest. -->
+          <p class="mb-2 text-sm text-amber-200">
+            {num(unblockedSelected)} of these are not currently blocked — restoring those drops them out
+            of the POI and minor review queues.
+          </p>
+        {/if}
+        <div class="flex gap-2">
+          <Button type="submit" size="sm" disabled={submitting}>
+            {submitting ? 'Restoring…' : `Restore ${num(count)}`}
           </Button>
           <Button type="button" size="sm" variant="outline" onclick={() => (confirming = null)}>
             Cancel
