@@ -83,8 +83,19 @@ export function useSubmitCreatorShopForm({
     !!(item?.cosmetic?.data as { animated?: boolean } | null)?.animated
   );
   const [rightsAffirmed, setRightsAffirmed] = useState(false);
-  const [sellableByOthers, setSellableByOthers] = useState(false);
-  const [sellerShare, setSellerShare] = useState(0);
+  const itemResale = (item?.meta ?? null) as {
+    sellableByOthers?: boolean;
+    sellerShare?: number;
+  } | null;
+  const itemSellableByOthers = !!itemResale?.sellableByOthers;
+  const itemSellerShare = itemResale?.sellerShare ?? 0;
+  const [sellableByOthers, setSellableByOthers] = useState(itemSellableByOthers);
+  const [sellerShare, setSellerShare] = useState(itemSellerShare);
+  const resaleChanged =
+    sellableByOthers !== itemSellableByOthers ||
+    // A share edit under a switched-off toggle is not a change: the server
+    // stores 0 either way, so treating it as one would offer a pointless save.
+    (sellableByOthers && sellerShare !== itemSellerShare);
   const itemAcceptsBlueBuzz = !!(item?.meta as { acceptsBlueBuzz?: boolean } | null)
     ?.acceptsBlueBuzz;
   const [acceptsBlueBuzz, setAcceptsBlueBuzz] = useState(itemAcceptsBlueBuzz);
@@ -131,9 +142,12 @@ export function useSubmitCreatorShopForm({
   // `null === userId` is false there, so a cosmetic without a creator — an
   // official one — is refused. Treating a missing creator as permission would
   // demand a price the save then rejects.
-  const canEditEconomics =
+  //
+  // It gates the resale terms as well, which the server refuses from a
+  // cross-lister on the same rule.
+  const canEditOwnerFields =
     !isEdit || !!currentUser?.isModerator || item?.cosmetic?.createdById === currentUser?.id;
-  const economicsEditable = isSticker && canEditEconomics;
+  const economicsEditable = isSticker && canEditOwnerFields;
   // Permission and obligation are different questions, and the server only ever
   // answered the first: a moderator MAY change another creator's economics, but
   // nothing says an unrelated edit should force them to invent values for a
@@ -330,6 +344,10 @@ export function useSubmitCreatorShopForm({
         if (isSticker && pricePerUse !== undefined && pricePerUse !== existingEconomics.pricePerUse)
           payload.pricePerUse = pricePerUse;
         if (acceptsBlueBuzzChanged) payload.acceptsBlueBuzz = acceptsBlueBuzz;
+        if (resaleChanged) {
+          payload.sellableByOthers = sellableByOthers;
+          payload.sellerShare = sellableByOthers ? sellerShare : 0;
+        }
         await updateItem.mutateAsync(payload);
       } else {
         await submitItem.mutateAsync({
@@ -411,6 +429,11 @@ export function useSubmitCreatorShopForm({
     setSellableByOthers,
     sellerShare,
     setSellerShare,
+    canEditOwnerFields,
+    resaleChanged,
+    // What existing resellers keep if the creator lowers the share — the whole
+    // point of showing them the field on a live item.
+    itemSellerShare,
     acceptsBlueBuzz,
     setAcceptsBlueBuzz,
     acceptsBlueBuzzChanged,

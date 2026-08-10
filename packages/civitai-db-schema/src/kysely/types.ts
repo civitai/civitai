@@ -3723,6 +3723,13 @@ export type UserCosmetic = {
   forType: CosmeticEntity | null;
   remaining: number | null;
 };
+export type UserCosmeticShopItemResale = {
+  userId: number;
+  shopItemId: number;
+  sellerShare: number;
+  index: Generated<number>;
+  createdAt: Generated<Timestamp>;
+};
 export type UserCosmeticShopItemWishlist = {
   userId: number;
   shopItemId: number;
@@ -4302,6 +4309,7 @@ export type DB = {
   TrustedSpokeDomain: TrustedSpokeDomain;
   User: User;
   UserCosmetic: UserCosmetic;
+  UserCosmeticShopItemResale: UserCosmeticShopItemResale;
   UserCosmeticShopItemWishlist: UserCosmeticShopItemWishlist;
   UserCosmeticShopPurchaseCosmetic: UserCosmeticShopPurchaseCosmetic;
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;

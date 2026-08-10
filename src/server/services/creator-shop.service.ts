@@ -93,6 +93,8 @@ import type {
   GetEarlyAccessPricesInput,
   GetPublicShopItemsInput,
   GetReviewQueueInput,
+  GetShopItemResellersInput,
+  ReorderResoldItemsInput,
   ResoldItemInput,
   ReviewCreatorShopItemInput,
   SubmitCreatorShopItemInput,
@@ -399,10 +401,10 @@ const getOwnedItemOrThrow = async (id: number, userId: number, isModerator = fal
       cosmeticId: true,
       unitAmount: true,
       status: true,
+      title: true,
       meta: true,
       addedById: true,
       // Prior values, so an edit can record what it moved from.
-      title: true,
       description: true,
       availableQuantity: true,
       cosmetic: { select: { id: true, createdById: true, type: true, data: true } },
@@ -428,6 +430,8 @@ export const updateCreatorShopItem = async ({
   price,
   availableQuantity,
   acceptsBlueBuzz,
+  sellableByOthers,
+  sellerShare,
   offsets,
   slug,
   uses,
@@ -493,6 +497,8 @@ export const updateCreatorShopItem = async ({
       description !== undefined ||
       imageUrl !== undefined ||
       acceptsBlueBuzz !== undefined ||
+      sellableByOthers !== undefined ||
+      sellerShare !== undefined ||
       offsetsChange ||
       slugChange ||
       economicsChange)
@@ -604,6 +610,15 @@ export const updateCreatorShopItem = async ({
   const bigPriceChange =
     price != null && base > 0 && Math.abs(price - base) / base > PRICE_REVIEW_THRESHOLD;
 
+  // Resale terms are an offer to future resellers, not a term of anyone's
+  // existing listing — those carry their own `sellerShare` on the resale row, so
+  // nothing here can reach a creator who already listed the item.
+  const resaleChanged = sellableByOthers !== undefined || sellerShare !== undefined;
+  const nextSellableByOthers = sellableByOthers ?? meta.sellableByOthers ?? false;
+  // Mirrors submit: an item nobody may resell carries no share, so switching
+  // resale off and back on can't quietly restore an old number.
+  const nextSellerShare = nextSellableByOthers ? sellerShare ?? meta.sellerShare ?? 0 : 0;
+
   // Published re-enters review only on a >±25% price change (a small tweak stays
   // live). RequestedChanges & PendingReview edits (re)enter the queue.
   const backToReview =
@@ -669,6 +684,9 @@ export const updateCreatorShopItem = async ({
   const updatedMeta: CosmeticShopItemMeta = {
     ...meta,
     ...(acceptsBlueBuzz !== undefined ? { acceptsBlueBuzz } : {}),
+    ...(resaleChanged
+      ? { sellableByOthers: nextSellableByOthers, sellerShare: nextSellerShare }
+      : {}),
     ...(artwork
       ? {
           autoChecks: artwork.checks,
@@ -707,6 +725,55 @@ export const updateCreatorShopItem = async ({
   });
 };
 
+/**
+ * Withdrawing an item from sale ends every resale listing of it, and tells the
+ * creators who were selling it. They are not left with a dead card, and — since
+ * the listing carried the share they were promised — they don't silently keep a
+ * claim to terms on an item that no longer sells.
+ *
+ * Coming back is deliberately not the mirror image of this: re-listing re-enters
+ * review (see `setCreatorShopItemListed` / `unarchiveCreatorShopItem`), so the
+ * withdraw → re-list cycle can't be used as a cheap way to clear your resellers
+ * and re-offer the item on worse terms.
+ */
+const endResaleListings = async ({ shopItemId, title }: { shopItemId: number; title: string }) => {
+  const listings = await dbRead.userCosmeticShopItemResale.findMany({
+    where: { shopItemId },
+    select: { userId: true, user: { select: { username: true } } },
+  });
+  await dbWrite.userCosmeticShopItemResale.deleteMany({ where: { shopItemId } });
+  if (!listings.length) return;
+
+  const at = Date.now();
+  // The listings are already gone; failing the withdrawal over an undelivered
+  // notification would leave the creator unable to retry it, and one bad row
+  // shouldn't cost the other resellers their notice either.
+  const results = await Promise.allSettled(
+    listings.map(({ userId, user }) =>
+      createNotification({
+        type: 'creator-shop-resale-ended',
+        userId,
+        category: NotificationCategory.System,
+        // Stamped: an item can be withdrawn, brought back, and withdrawn again.
+        key: `creator-shop-resale-ended:${shopItemId}:${userId}:${at}`,
+        details: { title, username: user.username ?? undefined },
+      })
+    )
+  );
+  const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (failures.length)
+    logToAxiom({
+      level: 'error',
+      message: 'Failed to notify resellers of a withdrawn shop item',
+      data: {
+        shopItemId,
+        failed: failures.length,
+        total: results.length,
+        errors: failures.map((f) => f.reason),
+      },
+    });
+};
+
 export const archiveCreatorShopItem = async ({
   userId,
   isModerator,
@@ -719,17 +786,13 @@ export const archiveCreatorShopItem = async ({
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
   if (existing.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Item is already archived');
-  const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
   const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },
-    data: {
-      status: CosmeticShopItemStatus.Archived,
-      archivedAt: new Date(),
-      // Remember where to restore it to when unarchived.
-      meta: { ...meta, preArchiveStatus: existing.status } as Prisma.InputJsonValue,
-    },
+    data: { status: CosmeticShopItemStatus.Archived, archivedAt: new Date() },
     select: creatorShopItemSelect,
   });
+
+  await endResaleListings({ shopItemId: id, title: existing.title });
 
   // D14: withdrawing a cosmetic delists every pack that bundles it. `listed`,
   // not Archived, so the pack's creator can swap the member out and relist.
@@ -752,7 +815,13 @@ export const archiveCreatorShopItem = async ({
 
 /**
  * Delisting withdraws an item from individual sale while leaving it Published,
- * so other creators can still bundle it. Archiving removes it from both.
+ * so other creators can still bundle it. Archiving removes it from both. Either
+ * way the item's resale listings end.
+ *
+ * Coming back is not free: re-listing re-enters review rather than going
+ * straight back on sale. Without that, withdraw → re-list would be a one-click
+ * way to clear every reseller and re-offer the item at a worse share, which is
+ * exactly the bait-and-switch grandfathering exists to prevent.
  */
 export const setCreatorShopItemListed = async ({
   userId,
@@ -771,9 +840,21 @@ export const setCreatorShopItemListed = async ({
 
   const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },
-    data: { listed },
+    data: {
+      listed,
+      ...(listed
+        ? {
+            status: CosmeticShopItemStatus.PendingReview,
+            rejectionReason: null,
+            reviewedById: null,
+            reviewedAt: null,
+          }
+        : {}),
+    },
     select: creatorShopItemSelect,
   });
+
+  if (!listed) await endResaleListings({ shopItemId: id, title: existing.title });
 
   // A delisted item can't sit in a featured slot, same as an archived one.
   if (!listed && existing.addedById) {
@@ -801,6 +882,8 @@ export const unarchiveCreatorShopItem = async ({
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
   if (existing.status !== CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Only archived items can be restored');
+  // `preArchiveStatus` is a leftover from when restoring returned an item to
+  // where it was; it now re-enters review either way, so drop any stored value.
   const { preArchiveStatus, ...meta } = (existing.meta ?? {}) as CosmeticShopItemMeta & {
     preArchiveStatus?: CosmeticShopItemStatus;
   };
@@ -809,8 +892,13 @@ export const unarchiveCreatorShopItem = async ({
   return dbWrite.cosmeticShopItem.update({
     where: { id },
     data: {
-      status: preArchiveStatus ?? CosmeticShopItemStatus.Published,
+      // Same rule as re-listing: archiving ended this item's resale listings, so
+      // bringing it back is a fresh submission, not an undo.
+      status: CosmeticShopItemStatus.PendingReview,
       archivedAt: null,
+      rejectionReason: null,
+      reviewedById: null,
+      reviewedAt: null,
       meta: meta as Prisma.InputJsonValue,
     },
     select: creatorShopItemSelect,
@@ -829,13 +917,13 @@ export const deleteCreatorShopItem = async ({
   // Deleting wipes purchase records — a moderator-only action; creators archive.
   if (!isModerator) throw throwAuthorizationError('Only moderators can delete shop items');
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
-  // Hard delete. FK cascades wipe the purchase records (sales totals) and any
-  // official-shop section links. Buyers keep what they bought: UserCosmetic is
-  // keyed by cosmeticId and the Cosmetic row is intentionally left in place.
+  // Hard delete. FK cascades wipe the purchase records (sales totals), any
+  // official-shop section links, and other creators' resale listings. Buyers
+  // keep what they bought: UserCosmetic is keyed by cosmeticId and the Cosmetic
+  // row is intentionally left in place.
   await dbWrite.cosmeticShopItem.delete({ where: { id } });
 
-  // Free its featured slot. Stale ids in other creators' resoldItemIds
-  // self-heal — the lookups drop ids that no longer resolve to an item.
+  // Free its featured slot.
   if (existing.addedById) {
     const settings = await getCreatorShopSettings({ userId: existing.addedById });
     const featuredItemIds = settings.featuredItemIds ?? [];
@@ -854,10 +942,25 @@ export const deleteCreatorShopItem = async ({
 export const getCreatorShopManageItems = async ({ userId }: { userId: number }) => {
   const items = await dbRead.cosmeticShopItem.findMany({
     where: { addedById: userId },
-    select: creatorShopItemSelect,
+    // The reseller count tells the creator what's at stake before they touch the
+    // item's resale terms — existing resellers keep the ones they listed under.
+    // Deleted accounts are filtered out to match `getShopItemResellers`, or the
+    // count disagrees with the list the creator opens from it.
+    select: {
+      ...creatorShopItemSelect,
+      _count: {
+        select: {
+          ...creatorShopItemSelect._count.select,
+          resales: { where: { user: { deletedAt: null } } },
+        },
+      },
+    },
     orderBy: { createdAt: 'desc' },
   });
-  return items.map(withRemaining);
+  return items.map(({ _count, ...item }) => ({
+    ...withRemaining({ ...item, _count }),
+    resellerCount: _count.resales,
+  }));
 };
 
 // ---------------------------------------------------------------------------
@@ -897,7 +1000,17 @@ export const getCreatorShop = async ({
   if (viewerPairIds.includes(userId)) throw throwNotFoundError('Shop not found');
 
   const now = new Date();
-  const resoldIds = settings.resoldItemIds ?? [];
+  // The resale rows ARE the permission and the terms: a listing survives its
+  // creator switching resale back off, and carries the share it was made under.
+  const resales = preview
+    ? []
+    : await dbRead.userCosmeticShopItemResale.findMany({
+        where: { userId },
+        orderBy: [{ index: 'asc' }, { shopItemId: 'asc' }],
+        select: { shopItemId: true, sellerShare: true },
+      });
+  const resoldIds = resales.map((r) => r.shopItemId);
+  const resaleShares = new Map(resales.map((r) => [r.shopItemId, r.sellerShare]));
   // Blocks remove a resold item from the storefront: owner↔item-creator (the
   // block forbids the resale pairing; the owner still sees it in their manage
   // list so they can remove it) and viewer↔item-creator (a creator who blocked
@@ -932,11 +1045,13 @@ export const getCreatorShop = async ({
       where: {
         ...(preview ? {} : { id: { in: resoldIds } }),
         status: CosmeticShopItemStatus.Published,
-        // Delisted items stay Published (still bundlable) but are off sale, so
-        // no individual-sale surface may show them — resale included.
+        // Withdrawing an item ends its resale listings outright (see
+        // `endResaleListings`), so a delisted one has nothing left to show.
         listed: true,
         ...hideStickers(stickersEnabled, packsEnabled),
-        meta: { path: ['sellableByOthers'], equals: true },
+        // Preview has no resale rows to draw on, so it falls back to any item
+        // currently on offer for resale.
+        ...(preview ? { meta: { path: ['sellableByOthers'], equals: true } } : {}),
         // Hide resold items whose owner has since made their shop private.
         addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
         ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
@@ -976,12 +1091,14 @@ export const getCreatorShop = async ({
     },
   });
   const cosmetics = items.map(sanitize);
-  // Resold items keep the seller share so the buyer can see the split at checkout.
+  // Resold items keep the seller share so the buyer can see the split at
+  // checkout — the listing's own, so it matches what the payout will pay.
   const sanitizeResold = (item: (typeof resoldItems)[number]) => ({
     ...item,
     meta: {
       purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
-      sellerShare: (item.meta as CosmeticShopItemMeta)?.sellerShare ?? 0,
+      sellerShare:
+        resaleShares.get(item.id) ?? (item.meta as CosmeticShopItemMeta)?.sellerShare ?? 0,
       acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
       ...packDisplayMeta(item.meta as CosmeticShopItemMeta | null),
     },
@@ -1146,8 +1263,12 @@ export const getPublicShopItemsForResale = async ({
   query,
   stickersEnabled,
 }: GetPublicShopItemsInput & { userId: number; stickersEnabled?: boolean }) => {
-  const settings = await getCreatorShopSettings({ userId });
-  const alreadyResold = settings.resoldItemIds ?? [];
+  const alreadyResold = (
+    await dbRead.userCosmeticShopItemResale.findMany({
+      where: { userId },
+      select: { shopItemId: true },
+    })
+  ).map((r) => r.shopItemId);
   // A block in either direction removes the pairing from the resale gallery.
   const blockedPairIds = await getBlockedPairIds(userId);
   const raw = await dbRead.cosmeticShopItem.findMany({
@@ -1202,9 +1323,8 @@ export const getPublicShopItemsForResale = async ({
     sellerShare: (meta as CosmeticShopItemMeta | null)?.sellerShare ?? 0,
     // Already in this creator's shop — the picker shows it as added/removable.
     isResold: alreadyResold.includes(i.id),
-    // Delisted items stay in the picker, badged. Resale is by reference, so one
-    // that's temporarily off sale starts working again when its creator relists
-    // — hiding it would just make the reseller find it again later.
+    // Delisted items stay in the picker, badged but unaddable — hiding them
+    // would just make the reseller hunt for the item again once it's back.
     listed: i.listed,
   }));
   return { items, nextCursor };
@@ -1214,7 +1334,7 @@ export const getPublicShopItemsForResale = async ({
 const getResellableItemOrThrow = async (shopItemId: number, userId: number) => {
   const item = await dbRead.cosmeticShopItem.findUnique({
     where: { id: shopItemId },
-    select: { id: true, status: true, addedById: true, meta: true },
+    select: { id: true, status: true, listed: true, addedById: true, meta: true },
   });
   if (!item) throw throwNotFoundError('Shop item not found');
   const meta = (item.meta ?? {}) as CosmeticShopItemMeta;
@@ -1222,6 +1342,11 @@ const getResellableItemOrThrow = async (shopItemId: number, userId: number) => {
     throw throwAuthorizationError('This item is not available for other creators to sell');
   if (item.status !== CosmeticShopItemStatus.Published)
     throw throwBadRequestError('Only published items can be resold');
+  // Existing listings outlive the creator pulling the item off sale, so a new
+  // one must not be creatable while it's off — otherwise delisting is undone by
+  // anyone who adds it, and a row could exist that was never a live agreement.
+  if (!item.listed)
+    throw throwBadRequestError('This item is not currently for sale — try again if it comes back');
   if (item.addedById === userId) throw throwBadRequestError('This is already your own item');
   // NotFound (not authorization) so the block itself isn't revealed, mirroring
   // the read-side block enforcement.
@@ -1234,48 +1359,124 @@ export const addResoldItem = async ({
   userId,
   shopItemId,
 }: ResoldItemInput & { userId: number }) => {
-  await getResellableItemOrThrow(shopItemId, userId);
-  const settings = await getCreatorShopSettings({ userId });
-  const resoldItemIds = settings.resoldItemIds ?? [];
-  if (resoldItemIds.includes(shopItemId))
-    throw throwBadRequestError('You are already reselling this item');
-  return updateCreatorShopSettings({ userId, resoldItemIds: [...resoldItemIds, shopItemId] });
+  const item = await getResellableItemOrThrow(shopItemId, userId);
+  const existing = await dbRead.userCosmeticShopItemResale.findUnique({
+    where: { userId_shopItemId: { userId, shopItemId } },
+    select: { shopItemId: true },
+  });
+  if (existing) throw throwBadRequestError('You are already reselling this item');
+  // Append after the current last index rather than counting rows: removing a
+  // listing doesn't reindex the rest, so a count can collide with an index that
+  // is still in use ([0, 2] → 2).
+  const { _max } = await dbRead.userCosmeticShopItemResale.aggregate({
+    where: { userId },
+    _max: { index: true },
+  });
+  // The row records the share on offer right now and is never rewritten: from
+  // here on this reseller is paid what they signed up for, whatever the original
+  // creator changes the item to later.
+  return dbWrite.userCosmeticShopItemResale.create({
+    data: {
+      userId,
+      shopItemId,
+      sellerShare: (item.meta as CosmeticShopItemMeta | null)?.sellerShare ?? 0,
+      index: (_max.index ?? -1) + 1,
+    },
+  });
 };
 
 export const removeResoldItem = async ({
   userId,
   shopItemId,
 }: ResoldItemInput & { userId: number }) => {
-  const settings = await getCreatorShopSettings({ userId });
-  const resoldItemIds = (settings.resoldItemIds ?? []).filter((id) => id !== shopItemId);
-  return updateCreatorShopSettings({ userId, resoldItemIds });
+  // Deleting the row drops the grandfathered share with it — relisting later is
+  // a fresh agreement to whatever the item offers then.
+  await dbWrite.userCosmeticShopItemResale.deleteMany({ where: { userId, shopItemId } });
+};
+
+// Storefront order for the resold section. Ids the caller doesn't resell are
+// ignored rather than rejected — a stale client list shouldn't fail the drop.
+export const reorderResoldItems = async ({
+  userId,
+  shopItemIds,
+}: ReorderResoldItemsInput & { userId: number }) => {
+  await dbWrite.$transaction(
+    shopItemIds.map((shopItemId, index) =>
+      dbWrite.userCosmeticShopItemResale.updateMany({
+        where: { userId, shopItemId },
+        data: { index },
+      })
+    )
+  );
 };
 
 // The creator's own resell listings, in their saved order — powers the manage
 // picker's reorder list. Unlike the storefront query this keeps items whose
 // source shop is currently private so the owner can still see and remove them.
 export const getResoldItemsForManage = async ({ userId }: { userId: number }) => {
-  const settings = await getCreatorShopSettings({ userId });
-  const resoldIds = settings.resoldItemIds ?? [];
-  if (!resoldIds.length) return [];
-  const rows = await dbRead.cosmeticShopItem.findMany({
-    where: { id: { in: resoldIds } },
+  const rows = await dbRead.userCosmeticShopItemResale.findMany({
+    where: { userId },
+    orderBy: [{ index: 'asc' }, { shopItemId: 'asc' }],
     select: {
-      id: true,
-      unitAmount: true,
-      meta: true,
-      cosmetic: { select: { id: true, name: true, type: true, data: true } },
-      addedBy: { select: { id: true, username: true, image: true } },
+      sellerShare: true,
+      shopItem: {
+        select: {
+          id: true,
+          unitAmount: true,
+          cosmetic: { select: { id: true, name: true, type: true, data: true } },
+          addedBy: { select: { id: true, username: true, image: true } },
+        },
+      },
     },
   });
-  const byId = new Map(rows.map((r) => [r.id, r]));
-  return resoldIds
-    .map((id) => byId.get(id))
-    .filter((r): r is (typeof rows)[number] => !!r)
-    .map(({ meta, ...r }) => ({
-      ...r,
-      sellerShare: (meta as CosmeticShopItemMeta | null)?.sellerShare ?? 0,
+  return rows.map(({ shopItem, sellerShare }) => ({ ...shopItem, sellerShare }));
+};
+
+// Who resells one of your items, and on what terms — the question the settings
+// blob couldn't answer without scanning every user. Ordered oldest-first, so the
+// creators with the longest-standing grandfathered terms read first.
+export const getShopItemResellers = async ({
+  shopItemId,
+  userId,
+  isModerator,
+}: GetShopItemResellersInput & { userId: number; isModerator?: boolean }) => {
+  await getOwnedItemOrThrow(shopItemId, userId, isModerator);
+  const rows = await dbRead.userCosmeticShopItemResale.findMany({
+    where: { shopItemId },
+    orderBy: { createdAt: 'asc' },
+    select: {
+      sellerShare: true,
+      createdAt: true,
+      user: { select: { id: true, username: true, image: true, deletedAt: true } },
+    },
+  });
+  return rows
+    .filter((r) => !r.user.deletedAt)
+    .map(({ user: { deletedAt, ...user }, sellerShare, createdAt }) => ({
+      user,
+      sellerShare,
+      listedAt: createdAt,
     }));
+};
+
+/**
+ * Headline resale numbers for the manage view, both directions of the table in
+ * one round trip. `resellers` is DISTINCT creators, not listings — one creator
+ * reselling three of your items is one creator.
+ */
+export const getCreatorShopResaleStats = async ({ userId }: { userId: number }) => {
+  const [stats] = await dbRead.$queryRaw<
+    { resellers: number; resoldItems: number; reselling: number }[]
+  >`
+    SELECT
+      COUNT(DISTINCT r."userId") FILTER (WHERE si."addedById" = ${userId})::int AS "resellers",
+      COUNT(DISTINCT r."shopItemId") FILTER (WHERE si."addedById" = ${userId})::int AS "resoldItems",
+      COUNT(*) FILTER (WHERE r."userId" = ${userId})::int AS "reselling"
+    FROM "UserCosmeticShopItemResale" r
+    JOIN "CosmeticShopItem" si ON si.id = r."shopItemId"
+    WHERE si."addedById" = ${userId} OR r."userId" = ${userId}
+  `;
+  return stats ?? { resellers: 0, resoldItems: 0, reselling: 0 };
 };
 
 // ---------------------------------------------------------------------------
@@ -1602,6 +1803,7 @@ export const takedownCosmeticShopItem = async ({
   // Official-shop placements are curated rows, not a status filter — drop them
   // or the item keeps rendering in its section.
   await dbWrite.cosmeticShopSectionItem.deleteMany({ where: { shopItemId: id } });
+  await endResaleListings({ shopItemId: id, title: item.title });
 
   if (item.addedById) {
     const settings = await getCreatorShopSettings({ userId: item.addedById });
