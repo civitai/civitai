@@ -163,6 +163,16 @@ dev server's file watcher; see the root [`CLAUDE.md`](../CLAUDE.md) for the full
 `svelte-check`'s **WARNING** lines as well as its errors: `state_referenced_locally` is a real bug and
 appears nowhere else.
 
+🔴 **Never write an optional parameter (`n?: number`) in a function signature in a `.svelte` file.**
+Svelte 5's TS stripping erases type *annotations* but leaves the `?`, so rollup receives invalid JS and
+**only `build` fails** — `typecheck` is clean, dev serves the page, and every review passes. Use a
+default (`n = 0`) or an explicit union (`e: SubmitEvent | null = null`) instead. A `?` inside a *type*
+(`{ reset: (id?: string) => void }`) is fine: the whole annotation is erased.
+
+That asymmetry is the reason to run `build` **once** before handing work over, even though it is not
+part of the edit→verify loop. Once — not as a diagnostic loop. It took two of these to reach production
+unnoticed because the loop that would have caught them is the one we tell you not to run.
+
 ## Reviews: run these before calling a segment done
 
 Three agents, on the diff for the segment:
@@ -174,6 +184,12 @@ Three agents, on the diff for the segment:
 | `svelte-abstraction-review` | Duplication, missing components, placement |
 
 Each takes the app directory as its scope and reads that app's `CLAUDE.md` for local deltas.
+
+**After fixing a non-trivial bug, and after extracting or changing a shared component, run
+`svelte-recurrence-sweep`.** It takes one known defect and finds every other place that shape exists,
+across all three apps. The three reviews above are each scoped to the segment in front of them, so a
+bug fixed in one page stays live in its sibling until somebody happens to remember — which is exactly
+how two `$effect` bugs survived in `apps/moderator` for days after being fixed next door.
 
 A segment with unresolved findings is not done, and neither is one that only typechecks — **look at the
 page**. Typecheck and build pass on plenty of pages that render blank.

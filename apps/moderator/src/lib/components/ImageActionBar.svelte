@@ -88,7 +88,9 @@
     }
   });
 
-  const selectAll = (n?: number) => {
+  // `n = 0`, not `n?: number` — an optional-parameter `?` survives Svelte 5's TS stripping and reaches
+  // rollup as invalid JS. It breaks `build` ONLY: typecheck and dev both pass.
+  const selectAll = (n = 0) => {
     for (const id of n ? selectable.slice(0, n) : selectable) selected.add(id);
   };
 </script>

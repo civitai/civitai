@@ -34,7 +34,9 @@
     tos || noPrompt || levels.length > 0 || !!from || !!to || !!prompt || !!negativePrompt
   );
 
-  function apply(e?: SubmitEvent) {
+  // `= null`, not `e?: SubmitEvent` — an optional-parameter `?` survives Svelte 5's TS stripping and
+  // reaches rollup as invalid JS. It breaks `build` ONLY: typecheck and dev both pass.
+  function apply(e: SubmitEvent | null = null) {
     e?.preventDefault();
     const url = new URL(pageState.url);
     const set = (key: string, value: string) => {
