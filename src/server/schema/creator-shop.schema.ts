@@ -51,7 +51,7 @@ export const packItemFloor = (type: CosmeticType): number => {
 export const COSMETIC_PRICE_FLOOR_MIN = Math.min(
   ...Object.values(CosmeticType).map((type) => cosmeticPriceFloor(type))
 );
-export const CREATOR_SHOP_SUBMISSION_FEE = 10000;
+export const CREATOR_SHOP_SUBMISSION_FEE = 5000;
 /**
  * Packs list for less. The fee prices the review a submission costs, and a pack
  * has no artwork to validate — every member was reviewed and paid for when it
