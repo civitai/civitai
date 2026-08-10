@@ -7,6 +7,7 @@ import { createNotification } from '~/server/services/notification.service';
 import { resetProhibitedRequestCount } from '~/server/services/orchestrator/promptAuditing';
 import { cancelSubscription, reinstateSubscription } from '~/server/services/stripe.service';
 import { updateUserById } from '~/server/services/user.service';
+import { PROTECTED_USER_IDS } from '~/server/services/user-restriction.service';
 import { UserRestrictionStatus } from '~/shared/utils/prisma/enums';
 
 /**
@@ -88,7 +89,13 @@ export async function resolveUserRestriction({
     category: NotificationCategory.System,
     userId: restriction.userId,
     details: { resolvedMessage: resolvedMessage ?? '' },
-  }).catch();
+  }).catch((error) =>
+    logToAxiom({
+      name: 'restriction-resolved-notify-failed',
+      type: 'error',
+      message: (error as Error).message,
+    })
+  );
 
   try {
     if (restriction.user?.email) {
@@ -121,7 +128,10 @@ export async function resolveUserRestriction({
 
 export type OverturnPendingReviewMuteResult =
   | { unmuted: true; userRestrictionId: number }
-  | { unmuted: false; skipped: 'no-pending-restriction' };
+  | {
+      unmuted: false;
+      skipped: 'protected' | 'moderator' | 'manually-muted' | 'no-pending-restriction';
+    };
 
 /**
  * Service-facing "they shouldn't have been muted": overturns the user's open
@@ -137,6 +147,18 @@ export async function overturnPendingReviewMute({
   resolvedMessage?: string;
   moderatorId: number;
 }): Promise<OverturnPendingReviewMuteResult> {
+  if (PROTECTED_USER_IDS.has(userId)) return { unmuted: false, skipped: 'protected' };
+
+  const user = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: { isModerator: true, mutedAt: true },
+  });
+  if (!user) throw new Error(`No user with id ${userId}`);
+  if (user.isModerator) return { unmuted: false, skipped: 'moderator' };
+  // Only a moderator's verdict writes `mutedAt`, so a non-null value is a human
+  // decision that no service caller may reverse.
+  if (user.mutedAt) return { unmuted: false, skipped: 'manually-muted' };
+
   const restriction = await dbWrite.userRestriction.findFirst({
     where: { userId, type: 'generation', status: UserRestrictionStatus.Pending },
     orderBy: { createdAt: 'desc' },

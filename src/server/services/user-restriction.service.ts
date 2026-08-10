@@ -11,7 +11,7 @@ import { userUpdateCounter } from '~/server/prom/client';
 import { createNotification } from '~/server/services/notification.service';
 import { UserRestrictionStatus } from '~/shared/utils/prisma/enums';
 
-const PROTECTED_USER_IDS = new Set<number>([
+export const PROTECTED_USER_IDS = new Set<number>([
   constants.system.user.id,
   constants.system.officialUserId,
 ]);
@@ -35,9 +35,6 @@ async function bestEffort(name: string, userId: number, fn: () => Promise<unknow
  * `mutedAt` is deliberately not written. It marks a moderator's uphold, and
  * `confirm-mutes` cancels the user's memberships off a recent non-null value —
  * so setting it here would bill-punish an unreviewed account.
- *
- * Resolving means the mute landed; the session refresh and notification after it
- * are best-effort, so a caller that gets a result can always trust it and audit it.
  */
 export async function applyPendingReviewMute({
   userId,

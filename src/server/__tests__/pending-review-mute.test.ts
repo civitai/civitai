@@ -39,6 +39,7 @@ const {
   trackUserActivity,
   userUpdateCounterInc,
   refreshSession,
+  createNotification,
 } = vi.hoisted(() => {
   const store = {
     users: new Map<number, UserRow>(),
@@ -135,6 +136,7 @@ const {
     trackUserActivity: vi.fn(async () => undefined),
     userUpdateCounterInc: vi.fn(),
     refreshSession: vi.fn(async () => undefined),
+    createNotification: vi.fn(async () => undefined),
   };
 });
 
@@ -148,7 +150,7 @@ vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
-  createNotification: vi.fn(async () => undefined),
+  createNotification,
 }));
 vi.mock('~/server/services/moderator.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeratorService>()),
@@ -171,11 +173,6 @@ vi.mock('~/server/clickhouse/client', () => ({
     userActivity = trackUserActivity;
   },
 }));
-
-// `~/server/utils/endpoint-helpers` is deliberately NOT mocked. The token check
-// is the endpoint's only access control, so stubbing the wrapper out would make
-// deleting it a silent, green-passing change. The env defaults it needs at
-// module load live in src/__tests__/setup.ts.
 
 import muteHandler from '~/pages/api/mod/mute-user-pending-review';
 import overturnHandler from '~/pages/api/mod/overturn-user-mute';
@@ -525,6 +522,61 @@ describe('POST /api/mod/overturn-user-mute', () => {
     expect(trackUserActivity).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'Unmuted', targetUserId: USER_ID })
     );
+  });
+
+  it('audits the overturn even when the notification fails', async () => {
+    await applyPendingReviewMute({ userId: USER_ID, triggers, updateSource: 'test' });
+    createNotification.mockRejectedValueOnce(new Error('notification service down'));
+
+    const { status, body } = await call(overturnHandler, {
+      body: { userId: USER_ID, reason: 'mistake' },
+    });
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ userId: USER_ID, unmuted: true });
+    expect(trackModActivity).toHaveBeenCalledOnce();
+    expect(trackUserActivity).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['the system actor', constants.system.user.id, 'protected'],
+    ['the official brand account', constants.system.officialUserId, 'protected'],
+    ['a moderator', MOD_ID, 'moderator'],
+  ])('refuses to overturn %s', async (_label, userId, skipped) => {
+    store.users.set(userId, makeUser(userId, { isModerator: userId === MOD_ID, muted: true }));
+    store.restrictions.push({
+      id: 1,
+      userId,
+      type: 'generation',
+      status: 'Pending',
+      triggers: [],
+      createdAt: new Date(),
+    });
+
+    const result = await overturnPendingReviewMute({ userId, moderatorId: -1 });
+
+    expect(result).toEqual({ unmuted: false, skipped });
+    expect(store.restrictions[0].status).toBe('Pending');
+    expect(store.users.get(userId)).toMatchObject({ muted: true });
+  });
+
+  it('refuses to overturn a mute a moderator made by hand, which mutedAt marks', async () => {
+    await setUserMuted({ userId: USER_ID, muted: true });
+    store.restrictions.push({
+      id: 1,
+      userId: USER_ID,
+      type: 'generation',
+      status: 'Pending',
+      triggers: [],
+      createdAt: new Date(),
+    });
+
+    const result = await overturnPendingReviewMute({ userId: USER_ID, moderatorId: -1 });
+
+    expect(result).toEqual({ unmuted: false, skipped: 'manually-muted' });
+    expect(store.restrictions[0].status).toBe('Pending');
+    expect(store.users.get(USER_ID)).toMatchObject({ muted: true });
+    expect(reinstateSubscription).not.toHaveBeenCalled();
   });
 
   it('is a no-op when there is nothing open to overturn', async () => {
