@@ -19,9 +19,7 @@ const ruleTesterConfig: Record<string, unknown> = {
   parser: require.resolve('@typescript-eslint/parser'),
   parserOptions: { ecmaVersion: 'latest', sourceType: 'module' },
 };
-const ruleTester = new RuleTester(
-  ruleTesterConfig as ConstructorParameters<typeof RuleTester>[0]
-);
+const ruleTester = new RuleTester(ruleTesterConfig as ConstructorParameters<typeof RuleTester>[0]);
 
 ruleTester.run('no-io-in-transaction', rule, {
   valid: [
@@ -45,6 +43,25 @@ ruleTester.run('no-io-in-transaction', rule, {
     // Non-awaited (fire-and-forget) I/O is out of scope: the rule only governs
     // awaited calls that consume the txn's wall-clock budget.
     `async function f(){ await db.$transaction(async (tx) => { fetch('x'); await tx.user.update({}); }); }`,
+
+    // ---- Kysely: db.transaction().execute(cb) ----
+    // Only trx.* query-builder calls inside the callback.
+    `async function f(){ await db.transaction().execute(async (trx) => { await trx.updateTable('User').set({}).execute(); }); }`,
+    // I/O performed AFTER the transaction resolves.
+    `async function f(){ const r = await db.transaction().execute(async (trx) => trx.selectFrom('User').execute()); await fetch('x'); }`,
+    // A denylisted NAME that is actually a method on the trx client must be allowed.
+    `async function f(){ await db.transaction().execute(async (trx) => { await trx.thing.refresh(); }); }`,
+    // NEGATIVE CONTROL for the Kysely matcher: `.execute(cb)` is only a transaction
+    // when its receiver chain contains `.transaction()`. Without that, an unrelated
+    // `execute`-named API taking a callback must NOT open a transaction context —
+    // otherwise the matcher flags I/O in every such callback in the repo.
+    `async function f(){ await queue.execute(async () => { await fetch('x'); }); }`,
+    // Both matchers require an INLINE callback. Drop that check and these reach
+    // `fn.params` with `fn === undefined` and crash the rule against whatever file
+    // is being linted — a failure with no violation attached to it. RuleTester
+    // reports a rule crash as a test failure, so these are what kill that mutation.
+    `async function f(){ await db.transaction().execute(); }`,
+    `async function f(){ await db.$transaction(); }`,
 
     // ---- REGRESSION GUARD (FALSE NEGATIVE, current behavior) ----
     // A non-inline (named) $transaction callback is NOT analyzed: the rule only
@@ -98,6 +115,37 @@ ruleTester.run('no-io-in-transaction', rule, {
     {
       code: `async function f(){ await db.$transaction(async (tx) => { await imagesSearchIndex.queueUpdate([]); }); }`,
       errors: [{ messageId: 'ioInTx', data: { name: 'queueUpdate' } }],
+    },
+
+    // ---- Kysely: db.transaction().execute(cb) ----
+    // Bare fetch inside a Kysely interactive transaction.
+    {
+      code: `async function f(){ await db.transaction().execute(async (trx) => { await fetch('x'); }); }`,
+      errors: [{ messageId: 'ioInTx', data: { name: 'fetch' } }],
+    },
+    // Builder chain between .transaction() and .execute() must not defeat detection.
+    {
+      code: `async function f(){ await db.transaction().setIsolationLevel('serializable').execute(async (trx) => { await logToAxiom({}); }); }`,
+      errors: [{ messageId: 'ioInTx', data: { name: 'logToAxiom' } }],
+    },
+    // trx.* work is allowed; the search-index queue call beside it is not.
+    {
+      code: `async function f(){ await db.transaction().execute(async (trx) => { await trx.updateTable('Image').set({}).execute(); await imagesSearchIndex.queueUpdate([]); }); }`,
+      errors: [{ messageId: 'ioInTx', data: { name: 'queueUpdate' } }],
+    },
+    // Nested Kysely transactions: inner-callback I/O is still inside a transaction.
+    {
+      code: `async function f(){ await kyselyWrite.transaction().execute(async (trx) => { await kyselyWrite.transaction().execute(async (trx2) => { await fetch('x'); }); }); }`,
+      errors: [{ messageId: 'ioInTx', data: { name: 'fetch' } }],
+    },
+    // Mixed nesting, with the I/O in the OUTER (Kysely) callback so that only the
+    // Kysely matcher can flag it. Putting the I/O inside the inner Prisma callback
+    // instead would be VACUOUS — `$transaction` alone already establishes a context
+    // there, so that fixture passes even with Kysely support removed (verified by
+    // mutation; it is why this one is shaped this way).
+    {
+      code: `async function f(){ await kyselyWrite.transaction().execute(async (trx) => { await db.$transaction(async (tx) => { await tx.user.update({}); }); await fetch('x'); }); }`,
+      errors: [{ messageId: 'ioInTx', data: { name: 'fetch' } }],
     },
 
     // ---- REGRESSION GUARD (FALSE POSITIVE, current behavior) ----

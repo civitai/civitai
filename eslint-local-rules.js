@@ -10,8 +10,34 @@
 /**
  * no-io-in-transaction
  *
- * Flags awaited external / non-database I/O inside a Prisma interactive
- * transaction callback — `db.$transaction(async (tx) => { ... })`.
+ * Flags awaited external / non-database I/O inside an interactive transaction
+ * callback, in either of this repo's two forms:
+ *   - Prisma — `db.$transaction(async (tx) => { ... })`
+ *   - Kysely — `db.transaction().execute(async (trx) => { ... })`
+ *
+ * 🔴 THE KYSELY MATCHER IS FORWARD-LOOKING AND CURRENTLY MATCHES NOTHING. Say so
+ * rather than claiming coverage this does not have. Measured: the only Kysely
+ * `.transaction().execute(cb)` sites in the monorepo are in `apps/auth` (1) and
+ * `apps/creator-studio` (2), and neither is lintable — `pnpm lint` is
+ * `eslint src/`, CI filters changed files to `^(src|packages)/`, and
+ * creator-studio has its own `root: true` config without this plugin. `src/` and
+ * `packages/` have ZERO. So the reason to have it is that `src/server/db/kyselyDb.ts`
+ * builds four Kysely clients today and porting will move transactional units
+ * across — not that it is catching anything now. Extending lint scope to `apps/`
+ * is the separate change that would make it bite.
+ *
+ * Keyed to the literal string `$transaction`, this rule would have gone silently
+ * inert as that porting happened, and its fixtures are SOURCE STRINGS, so the
+ * suite would stay green while the detector stopped finding anything.
+ *
+ * KNOWN GAPS (measured, not hypothetical — all currently zero occurrences):
+ *   - `const t = db.transaction(); await t.execute(cb)` — the builder must be
+ *     called inline; a variable breaks the receiver walk.
+ *   - `await getTx().execute(cb)` — same reason.
+ *   - `db.startTransaction()` — Kysely's CONTROLLED transaction has no callback,
+ *     so there is no lexical boundary and this strategy structurally cannot see
+ *     it. I/O between it and `commit()` burns the same budget, invisibly.
+ *   - a named (non-inline) callback, same as the Prisma gap noted below.
  *
  * Interactive transactions hold a DB connection open under a wall-clock
  * timeout (Prisma default 5000ms, or an explicit `{ timeout }`). An awaited
@@ -116,13 +142,13 @@ const noIoInTransaction = {
     type: 'problem',
     docs: {
       description:
-        'Disallow awaited external/network I/O inside a Prisma interactive $transaction callback (blows the txn timeout budget).',
+        'Disallow awaited external/network I/O inside an interactive transaction callback — Prisma `$transaction(cb)` or Kysely `transaction().execute(cb)` (blows the txn timeout budget).',
       recommended: true,
     },
     schema: [],
     messages: {
       ioInTx:
-        "Awaited '{{name}}(...)' performs external I/O inside a $transaction callback — it consumes the transaction's timeout budget. Do this after the transaction commits, or make it fire-and-forget. If intentional, add: // eslint-disable-next-line local-rules/no-io-in-transaction -- <reason>",
+        "Awaited '{{name}}(...)' performs external I/O inside a transaction callback — it consumes the transaction's timeout budget. Do this after the transaction commits, or make it fire-and-forget. If intentional, add: // eslint-disable-next-line local-rules/no-io-in-transaction -- <reason>",
     },
   },
   create(context) {
@@ -132,17 +158,57 @@ const noIoInTransaction = {
     // Function nodes that are transaction callbacks -> their tx param name set.
     const txCallbackFns = new WeakMap();
 
-    function isTransactionCall(node) {
+    /** The call's first argument is an inline function — i.e. an interactive callback. */
+    function hasInlineCallback(node) {
+      const first = node.arguments && node.arguments[0];
+      return (
+        !!first && (first.type === 'ArrowFunctionExpression' || first.type === 'FunctionExpression')
+      );
+    }
+
+    /** `<method>(...)` where the method name matches. */
+    function isMethodCall(node, name) {
       return (
         node.type === 'CallExpression' &&
         node.callee.type === 'MemberExpression' &&
         node.callee.property &&
         node.callee.property.type === 'Identifier' &&
-        node.callee.property.name === '$transaction' &&
-        node.arguments.length > 0 &&
-        (node.arguments[0].type === 'ArrowFunctionExpression' ||
-          node.arguments[0].type === 'FunctionExpression')
+        node.callee.property.name === name
       );
+    }
+
+    /** Prisma: `db.$transaction(async (tx) => ...)`. The array/batch form has no callback. */
+    function isPrismaTransactionCall(node) {
+      return isMethodCall(node, '$transaction') && hasInlineCallback(node);
+    }
+
+    /**
+     * Kysely: `db.transaction().execute(async (trx) => ...)`, including builder
+     * chains such as `.transaction().setIsolationLevel('serializable').execute(cb)`.
+     *
+     * Anchored on `.execute(<inline function>)` and then walking the receiver
+     * chain back to a `.transaction()` call. Both halves are needed: every Kysely
+     * query builder ends in `.execute()`, but only the transaction builder's takes
+     * a callback, and only a `.transaction()` receiver makes it a transaction.
+     */
+    function isKyselyTransactionCall(node) {
+      if (!isMethodCall(node, 'execute') || !hasInlineCallback(node)) return false;
+      let cur = node.callee.object;
+      while (cur) {
+        if (cur.type === 'CallExpression') {
+          if (isMethodCall(cur, 'transaction')) return true;
+          cur = cur.callee;
+        } else if (cur.type === 'MemberExpression') {
+          cur = cur.object;
+        } else {
+          return false;
+        }
+      }
+      return false;
+    }
+
+    function isTransactionCall(node) {
+      return isPrismaTransactionCall(node) || isKyselyTransactionCall(node);
     }
 
     return {
@@ -423,8 +489,15 @@ function canonicalModulePath(specifier, fromFile) {
     const resolved = posixNormalize(`${posixDirname(posixFile)}/${specifier}`);
     // Absolute (how ESLint actually invokes the rule): must land under the
     // repo's OWN src/, not a workspace package's.
-    if (resolved.startsWith('/')) {
-      return resolved.startsWith(`${REPO_SRC}/`)
+    //
+    // A Windows absolute path is `C:/…` after the separator swap above, not
+    // `/…`, so testing only for a leading slash sent every absolute filename
+    // down the repo-relative branch, where it matches neither `src/` nor
+    // anything else and canonicalises to null. Effect: on Windows this rule
+    // silently stopped matching RELATIVE specifiers — inert locally, working in
+    // CI, with the test suite red only on the developer's machine.
+    if (isPosixAbsolute(resolved)) {
+      return isUnderRepoSrc(resolved)
         ? stripModuleExtension(resolved.slice(REPO_SRC.length + 1))
         : null;
     }
@@ -444,6 +517,27 @@ const pathSep = require('path').sep;
 // The repo root is this file's own directory (ESLint loads `eslint-local-rules`
 // from it), so `<root>/src` is exactly what the `~` alias points at.
 const REPO_SRC = require('path').resolve(__dirname, 'src').split(pathSep).join('/');
+/** Absolute after the separator swap: posix `/x`, Windows `C:/x`, or UNC `//host/share`. */
+function isPosixAbsolute(p) {
+  return p.startsWith('/') || /^[A-Za-z]:\//.test(p);
+}
+
+/**
+ * Windows filenames are case-insensitive but `startsWith` is not, and ESLint is
+ * not guaranteed to hand us the same casing `path.resolve` produced: the CLI
+ * normalises the drive to uppercase via `process.cwd()`, while an editor or LSP
+ * passing an explicit path may not. A `c:\…` filename then fails the REPO_SRC
+ * comparison and the rule goes silently inert — the same failure mode as the
+ * leading-slash bug, one layer down. Linux stays byte-exact, where casing is
+ * genuinely significant.
+ */
+const CASE_INSENSITIVE_PATHS = pathSep === '\\';
+function isUnderRepoSrc(p) {
+  const prefix = `${REPO_SRC}/`;
+  const head = p.slice(0, prefix.length);
+  return CASE_INSENSITIVE_PATHS ? head.toLowerCase() === prefix.toLowerCase() : head === prefix;
+}
+
 function posixDirname(p) {
   const i = p.lastIndexOf('/');
   return i === -1 ? '.' : p.slice(0, i) || '/';
@@ -455,7 +549,10 @@ function posixNormalize(p) {
     if (seg === '..') out.pop();
     else out.push(seg);
   }
-  return `${p.startsWith('/') ? '/' : ''}${out.join('/')}`;
+  // A UNC path's leading `//` is part of the root, not a redundant separator —
+  // collapsing it to `/` yields a path that can never match REPO_SRC.
+  const root = p.startsWith('//') ? '//' : p.startsWith('/') ? '/' : '';
+  return `${root}${out.join('/')}`;
 }
 
 /**
