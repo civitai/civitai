@@ -160,6 +160,12 @@ export default defineNextConfig(
       'redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series',
       '@opentelemetry/sdk-node', '@opentelemetry/instrumentation', '@opentelemetry/instrumentation-http',
       '@opentelemetry/instrumentation-redis', '@prisma/instrumentation',
+      // NOTE: the logs-pipeline packages (@opentelemetry/api, /api-logs, /sdk-logs,
+      // /exporter-logs-otlp-proto) are deliberately NOT externalized here. Adding them
+      // fails the image build, so it needs to be its own change with a full build as its
+      // gate. The logs bridge does not depend on it: it binds to the Logs API lazily, so
+      // a second bundled module copy is survivable, and `no_provider` on its skip counter
+      // is the runtime signal if one ever appears.
       '@pyroscope/nodejs', '@datadog/pprof',
     ],
     // Several entry points read markdown from src/static-content at runtime via fs
