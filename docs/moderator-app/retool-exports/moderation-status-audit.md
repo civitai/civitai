@@ -168,7 +168,13 @@ Ticked items shipped 2026-08-10.
    put them behind a "Load Graphs" button — they are unindexed aggregates. Inline SVG, no charting
    dependency. Recovering the split also recovered the `FrontPageTimers` column list that the Front
    Page Audit slice recorded as unknown.
-5. [ ] **`FindSHA`/`LogSHA256`** — takedown-hash ledger into `ModerationSHA`. Unblocked; small.
+5. [x] **`FindSHA`/`LogSHA256`** — built as `/retool/takedown-hashes`: a SHA256 lookup ("has this file
+   been taken down before?") plus a record action that diffs against the ledger first. The export could
+   not supply the ledger's columns — `LogSHA256` is a GUI BULK_INSERT with an EMPTY changeset, the same
+   gap as the Front Page Audit rating logs — so they came from `retool-db.mjs --describe ModerationSHA`:
+   `SHA256 text`, `ModelVersionId integer`. **Retool's finder selected the MODEL id while the ledger
+   column is `ModelVersionId`**; the port follows the column, since a hash belongs to a file and a file
+   hangs off a version. Worth checking the existing 30k rows before anything depends on them.
 6. [ ] **`Who is who?`** — BLOCKED on a Retool screenshot. Its panes are not enumerated in the export
    and three of the app's six tables are still unaccounted for. Do not estimate it from the query list.
 7. [ ] **Model-side surfaces** (`ModelReview`, `TrainingCount`, `UnpublishingReasons`) — BLOCKED on

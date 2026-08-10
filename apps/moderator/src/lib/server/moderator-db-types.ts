@@ -95,6 +95,17 @@ export type FrontPageTimers = {
 };
 
 /**
+ * Hashes of files from models that were taken down, so the same file is recognisable if re-uploaded.
+ * Column names are Retool's, verified against the live table — the export's BULK_INSERT carried an
+ * empty changeset and could not say.
+ */
+export type ModerationSHA = {
+  id: Generated<number>;
+  SHA256: string | null;
+  ModelVersionId: number | null;
+};
+
+/**
  * Retool's own action log. Free text with no foreign keys — the user id is embedded in `ActionType`
  * and queried with LIKE. Read-only archive; new activity belongs in ModActivity.
  */
@@ -115,5 +126,6 @@ export type ModeratorDB = {
   FrontPageTimers: FrontPageTimers;
   /** Same shape; the catch-up stream's resume point is a separate table, as Retool had it. */
   FrontPageTimers_catchup: FrontPageTimers;
+  ModerationSHA: ModerationSHA;
   ReToolActions: ReToolActions;
 };

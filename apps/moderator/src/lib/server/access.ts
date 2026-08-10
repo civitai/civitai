@@ -105,6 +105,7 @@ export const NAVIGATION: NavLink[] = [
       { path: '/retool/front-page-audit', label: 'Front Page Audit' },
       { path: '/retool/image-help', label: 'Image Help Requests' },
       { path: '/retool/queue-stats', label: 'Queue Stats' },
+      { path: '/retool/takedown-hashes', label: 'Takedown Hashes' },
       { path: '/retool/bulk-ban', label: 'Bulk Ban' },
     ],
   },
