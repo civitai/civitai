@@ -419,13 +419,40 @@ export const BUZZ_TYPES = ['yellow', 'blue', 'green'] as const;
 // `type` is the LEDGER LABEL and must be sent explicitly. Omitting it either has the buzz service
 // reject the body — the grant silently never happens — or defaults it to 0, which is `Tip`, so a
 // moderator's compensation is recorded as a tip from account 0 and counted as one by every downstream
-// report. Values mirror the main app's TransactionType enum (src/shared/constants/buzz.constants.ts);
-// every main-app caller of createTransaction passes one.
+// report.
+//
+// The WHOLE enum, mirroring the main app's TransactionType (src/shared/constants/buzz.constants.ts).
+// Retool's "Reason" picker was `SELECT DISTINCT type FROM buzzTransactions` — every category in live
+// use — so a short hand-picked list is a moderator unable to file a transaction as what it actually is.
 export const BUZZ_TRANSACTION_TYPES = {
-  compensation: 21,
-  reward: 5,
-  refund: 7,
-  chargeback: 11,
+  Tip: 0,
+  Dues: 1,
+  Generation: 2,
+  Boost: 3,
+  Incentive: 4,
+  Reward: 5,
+  Purchase: 6,
+  Refund: 7,
+  Bounty: 8,
+  BountyEntry: 9,
+  Training: 10,
+  ChargeBack: 11,
+  Donation: 12,
+  ClubMembership: 13,
+  ClubMembershipRefund: 14,
+  ClubWithdrawal: 15,
+  ClubDeposit: 16,
+  Withdrawal: 17,
+  Redeemable: 18,
+  Sell: 19,
+  AuthorizedPurchase: 20,
+  Compensation: 21,
+  Appeal: 22,
+  Bank: 23,
+  Extract: 24,
+  Fee: 25,
+  Bid: 26,
+  LicenseFee: 27,
 } as const;
 
 export type BuzzTransactionType = keyof typeof BUZZ_TRANSACTION_TYPES;

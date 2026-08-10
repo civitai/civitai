@@ -43,4 +43,52 @@ export const PROFILE_FIELDS = [
   ['location', 'Location'],
 ] as const;
 
-export const BUZZ_TRANSACTION_TYPES = ['compensation', 'reward', 'refund', 'chargeback'] as const;
+// Retool's "Reason" picker, which read `SELECT DISTINCT type FROM buzzTransactions` — every category
+// in live use. Mirrors `BUZZ_TRANSACTION_TYPES` in user-actions.service.ts, which owns the numeric
+// values the buzz API wants; a name added there and not here is simply unofferable.
+export const BUZZ_TRANSACTION_TYPES = [
+  'Compensation',
+  'Reward',
+  'Refund',
+  'ChargeBack',
+  'Appeal',
+  'Tip',
+  'Dues',
+  'Generation',
+  'Boost',
+  'Incentive',
+  'Purchase',
+  'AuthorizedPurchase',
+  'Bounty',
+  'BountyEntry',
+  'Training',
+  'Donation',
+  'ClubMembership',
+  'ClubMembershipRefund',
+  'ClubWithdrawal',
+  'ClubDeposit',
+  'Withdrawal',
+  'Redeemable',
+  'Sell',
+  'Bank',
+  'Extract',
+  'Fee',
+  'Bid',
+  'LicenseFee',
+] as const;
+
+/** Retool's `buzzSendEntityType` — a closed list, not free text. */
+export const BUZZ_ENTITY_TYPES = ['Collection', 'Image', 'Model'] as const;
+
+/** Retool's `buzzSendAction` labels. */
+export const BUZZ_ACTIONS: [string, string][] = [
+  ['send', 'Send Buzz to User'],
+  ['deduct', 'Deduct Buzz from User'],
+];
+
+/** Retool's `buzzType`. */
+export const BUZZ_COLORS: [string, string][] = [
+  ['yellow', 'Yellow Buzz'],
+  ['blue', 'Blue Buzz'],
+  ['green', 'Green Buzz'],
+];

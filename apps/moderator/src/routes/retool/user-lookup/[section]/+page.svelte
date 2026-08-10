@@ -1,5 +1,7 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { page } from '$app/state';
+  import { cn } from '@civitai/ui/utils.js';
   import type { PageData } from './$types';
   import type { FormResult } from '../form-result';
   import { writeEnhancer } from '$lib/form-action';
@@ -8,7 +10,9 @@
   import AccountActionsPanel from '../AccountActionsPanel.svelte';
   import AddressesPanel from '../AddressesPanel.svelte';
   import BountiesPanel from '../BountiesPanel.svelte';
+  import BuzzBalances from '../BuzzBalances.svelte';
   import BuzzHistoryPanel from '../BuzzHistoryPanel.svelte';
+  import BuzzTransactionPanel from '../BuzzTransactionPanel.svelte';
   import ChatContactPanel from '../ChatContactPanel.svelte';
   import CommentsPanel from '../CommentsPanel.svelte';
   import ContentCounts from '../ContentCounts.svelte';
@@ -49,6 +53,20 @@
     onSuccess: () => (version += 1),
     busy: (value) => (submitting = value),
   });
+
+  // In the URL so a moderator can hand a colleague the tab they are looking at, and so the browser
+  // back button leaves the transaction form rather than the whole section.
+  const buzzTab = $derived(page.url.searchParams.get('buzzTab') === 'send' ? 'send' : 'view');
+  const buzzTabHref = (tab: string) => {
+    const params = new URLSearchParams(page.url.search);
+    params.set('buzzTab', tab);
+    return `?${params}`;
+  };
+  const buzzTabClass = (active: boolean) =>
+    cn(
+      'rounded-md px-3 py-1.5 text-sm',
+      active ? 'bg-dark-4 text-white' : 'text-dark-2 hover:bg-dark-5 hover:text-dark-0'
+    );
 </script>
 
 {#if result}
@@ -82,15 +100,24 @@
       />
       <CosmeticsPanel {account} />
     {:else if section === 'buzz'}
-      <SubscriptionPanel
-        subscription={result.subscription}
-        {account}
-        userId={result.identity.id}
-        canAct={data.canAct}
-        canSendBuzz={data.canSendBuzz}
-        {form}
-      />
-      <BuzzHistoryPanel userId={result.identity.id} />
+      <!-- Retool's two Buzz tabs, with the balances above both. Only a senior moderator saw the
+           transaction pane, so the tab itself is gated, not just the submit. -->
+      <BuzzBalances {account} />
+      {#if data.canSendBuzz}
+        <div class="mb-4 flex gap-1">
+          <a href={buzzTabHref('view')} class={buzzTabClass(buzzTab === 'view')}>View Buzz</a>
+          <a href={buzzTabHref('send')} class={buzzTabClass(buzzTab === 'send')}>
+            Buzz Transaction
+          </a>
+        </div>
+      {/if}
+
+      {#if buzzTab === 'send' && data.canSendBuzz}
+        <BuzzTransactionPanel userId={result.identity.id} {form} />
+      {:else}
+        <SubscriptionPanel subscription={result.subscription} />
+        <BuzzHistoryPanel userId={result.identity.id} />
+      {/if}
     {:else if section === 'prompts'}
       <PromptAuditPanel {signals} />
     {:else if section === 'shop'}

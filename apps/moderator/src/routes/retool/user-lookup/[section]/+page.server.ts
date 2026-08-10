@@ -37,6 +37,7 @@ import {
   unmuteAndClearTimed,
 } from '$lib/server/user-actions.service';
 import { resolveUsername } from '$lib/server/user-lookup.service';
+import { BUZZ_ENTITY_TYPES } from '../enforcement-options';
 
 // The lookup itself lives in the layout so it survives moving between sections; this only validates
 // the slug, so an unknown one 404s rather than rendering the fallback panel.
@@ -380,9 +381,14 @@ export const actions: Actions = {
         amount: z.coerce.number().int().positive().max(1_000_000),
         buzzType: z.enum(BUZZ_TYPES),
         action: z.enum(['send', 'deduct']),
-        transactionType: z.enum(BUZZ_TRANSACTION_TYPE_KEYS).catch('compensation'),
+        // NOT `.catch()`: silently substituting a default would file a chargeback as a compensation
+        // in the ledger. Retool made Reason a required field.
+        transactionType: z.enum(BUZZ_TRANSACTION_TYPE_KEYS),
         description: z.string().trim().min(1).max(500),
-        entityType: z.string().trim().max(50).optional(),
+        entityType: z
+          .enum(BUZZ_ENTITY_TYPES)
+          .optional()
+          .or(z.literal('').transform(() => undefined)),
         entityId: z.coerce.number().int().positive().max(2_147_483_647).optional(),
       }),
       await request.formData()
