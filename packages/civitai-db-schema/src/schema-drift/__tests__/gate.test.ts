@@ -298,12 +298,20 @@ describe('evaluateGate against the real schema and snapshot', () => {
   });
 
   it('tiers the 2026-08-03 backlog the way the README describes it', () => {
-    const byTier = { enforced: 0, pending: 0 };
-    for (const entry of baseline.entries) byTier[entry.tier] += 1;
-    // Every missing column is pending; every missing FK, nullability and uniqueness finding
-    // in this backlog sits on columns the database already has.
-    expect(byTier.pending).toBe(baseline.entries.filter((e) => e.kind === 'missing-column').length);
-    expect(byTier.enforced).toBeGreaterThan(40);
+    const known = new Set(catalog.columns.map((c) => `${c.table} ${c.column}`));
+    // Pending is "the snapshot has no column to hang a constraint on": every missing column,
+    // plus any missing FK still waiting on one of its own columns. Nullability and uniqueness
+    // are emitted only for surface the differ found, so they are never pending.
+    const expectedPending = baseline.entries.filter(
+      (e) =>
+        e.kind === 'missing-column' ||
+        (e.kind === 'missing-foreign-key' && e.columns.some((c) => !known.has(`${e.table} ${c}`)))
+    );
+    expect(baseline.entries.filter((e) => e.tier === 'pending')).toEqual(expectedPending);
+    // Positive controls on both sides: an empty `expectedPending` would match a tier field
+    // that had stopped being set at all.
+    expect(expectedPending.length).toBeGreaterThan(10);
+    expect(baseline.entries.filter((e) => e.tier === 'enforced').length).toBeGreaterThan(40);
   });
 
   it('reports no referential-action finding, because this catalog cannot support one', () => {
@@ -790,10 +798,16 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
       const workBaseline = freshCopy(committed.entries);
       const result = await gate(['--update-baseline', '--baseline', workBaseline]);
       expect(result.code).toBe(0);
-      expect(result.stdout).toMatch(/Wrote 61 accepted finding\(s\)/);
+      // Counted off the committed baseline rather than a literal: a refresh that wrote a
+      // different number than it read is exactly the staleness this pins, and ordinary
+      // schema work moves the total without saying anything about the refresh.
+      const n = committed.entries.length;
+      expect(result.stdout).toMatch(new RegExp(`Wrote ${n} accepted finding\\(s\\)`));
       // The PAIR, not a bare zero: "0 absorbed" and "nothing was compared" must not be the
       // same output. This is what makes the escalation report falsifiable.
-      expect(result.stdout).toMatch(/escalations absorbed: 0 \(compared against 61 previous/);
+      expect(result.stdout).toMatch(
+        new RegExp(`escalations absorbed: 0 \\(compared against ${n} previous`)
+      );
     });
 
     it('is byte-idempotent — a no-op refresh rewrites the same file', async () => {
@@ -841,7 +855,9 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
       expect(result.stdout).toMatch(/not "no escalations found"/);
       expect(result.stderr).not.toMatch(/Cannot read properties/);
       // the refresh still completed
-      expect((JSON.parse(readFileSync(path, 'utf8')) as Baseline).entries).toHaveLength(61);
+      expect((JSON.parse(readFileSync(path, 'utf8')) as Baseline).entries).toHaveLength(
+        committed.entries.length
+      );
     });
 
     it('says it SKIPPED when there was no previous baseline at all', async () => {

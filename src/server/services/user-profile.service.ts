@@ -225,11 +225,12 @@ export const updateUserProfile = async ({
   domain,
   ...profile
 }: UserProfileUpdateSchema & { userId: number; domain?: ColorDomain }) => {
-  // sessionUserId so the profile comes back unresolved — `current` is compared against
-  // the incoming announcement text, and a domain-resolved copy would be the wrong side.
+  // `sessionUserId` is what populates the `default*`/`sfw*` fields compared below — they are
+  // withheld from anyone who can't edit the profile. Drop it and both read back null, so every
+  // save looks like a changed announcement and re-stamps `messageAddedAt`.
   const current = await getUserWithProfile({ id: userId, sessionUserId: userId }); // Ensures user exists && has a profile record.
 
-  // We can safeuly update creatorCardStatsPreferences out of the transaction as it's not critical
+  // We can safely update creatorCardStatsPreferences out of the transaction as it's not critical
   if (creatorCardStatsPreferences) {
     // Parameterised: the payload is bound, not spliced into a string literal.
     // `JSON.stringify` escapes `"` and `\` but not `'`, so a preference value holding an
