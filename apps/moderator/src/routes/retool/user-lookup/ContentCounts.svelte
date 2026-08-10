@@ -32,6 +32,15 @@
           {/if}
         </div>
         <div class="text-xs text-dark-2">{item.label}</div>
+        <!-- Retool's per-flag breakdown. Only non-zero flags render: a row of zeroes is noise, and the
+             absence of a flag here means none, since the query counts every row. -->
+        {#if item.flags?.length}
+          <div class="mt-0.5 flex flex-wrap gap-x-2 text-xs text-amber-300">
+            {#each item.flags as f (f.label)}
+              <span>{num(f.count)} {f.label}</span>
+            {/each}
+          </div>
+        {/if}
       </div>
     {/each}
   </div>

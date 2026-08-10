@@ -44,7 +44,13 @@ export type UserIdentity = {
   excludeFromLeaderboards: boolean | null;
 };
 
-export type UserCount = { label: string; count: number; profilePath: string | null };
+export type UserCount = {
+  label: string;
+  count: number;
+  profilePath: string | null;
+  /** Retool's per-flag breakdown, on the two entities that had one. Absent elsewhere, not zero. */
+  flags?: { label: string; count: number }[];
+};
 export type UserCounts = UserCount[];
 
 // Retool's UserStats selected `ratingAllTime`, which no longer exists on UserStat — thumbs up/down
@@ -332,16 +338,72 @@ const COUNT_SOURCES = [
   ['Reviews', 'ResourceReview', null],
 ] as const;
 
+/**
+ * Retool's `ModelCount` and `CommentCount` carried a per-flag breakdown beside the total, and the port
+ * kept only the total. "412 models" and "412 models, 9 of them ToS-violating, 3 POI" are different
+ * facts about an account, and the second is the one a moderator is looking for.
+ *
+ * Only these two entities had a breakdown in Retool; the rest report a bare count, and an absent
+ * breakdown is "not counted", not "all zero".
+ */
+async function getModelFlags(userId: number) {
+  const r = await dbRead
+    .selectFrom('Model')
+    .select((eb) => [
+      eb.fn.count<string>(sql`CASE WHEN "nsfw" THEN 1 END`).as('nsfw'),
+      eb.fn.count<string>(sql`CASE WHEN "tosViolation" THEN 1 END`).as('tos'),
+      eb.fn.count<string>(sql`CASE WHEN "poi" THEN 1 END`).as('poi'),
+      eb.fn.count<string>(sql`CASE WHEN "locked" THEN 1 END`).as('locked'),
+      eb.fn.count<string>(sql`CASE WHEN "deletedAt" IS NOT NULL THEN 1 END`).as('deleted'),
+    ])
+    .where('userId', '=', userId)
+    .executeTakeFirst();
+  return [
+    { label: 'NSFW', count: Number(r?.nsfw ?? 0) },
+    { label: 'ToS', count: Number(r?.tos ?? 0) },
+    { label: 'POI', count: Number(r?.poi ?? 0) },
+    { label: 'locked', count: Number(r?.locked ?? 0) },
+    { label: 'deleted', count: Number(r?.deleted ?? 0) },
+  ].filter((f) => f.count > 0);
+}
+
+async function getCommentFlags(userId: number) {
+  const r = await dbRead
+    .selectFrom('Comment')
+    .select((eb) => [
+      eb.fn.count<string>(sql`CASE WHEN "tosViolation" THEN 1 END`).as('tos'),
+      eb.fn.count<string>(sql`CASE WHEN "hidden" THEN 1 END`).as('hidden'),
+    ])
+    .where('userId', '=', userId)
+    .executeTakeFirst();
+  return [
+    { label: 'ToS', count: Number(r?.tos ?? 0) },
+    { label: 'hidden', count: Number(r?.hidden ?? 0) },
+  ].filter((f) => f.count > 0);
+}
+
 async function getCounts(userId: number): Promise<UserCounts> {
-  return Promise.all(
-    COUNT_SOURCES.map(async ([label, table, profilePath]) => {
-      const r = await dbRead
-        .selectFrom(table)
-        .select((eb) => eb.fn.countAll<string>().as('count'))
-        .where('userId', '=', userId)
-        .executeTakeFirst();
-      return { label, count: Number(r?.count ?? 0), profilePath };
-    })
+  const [counts, modelFlags, commentFlags] = await Promise.all([
+    Promise.all(
+      COUNT_SOURCES.map(async ([label, table, profilePath]) => {
+        const r = await dbRead
+          .selectFrom(table)
+          .select((eb) => eb.fn.countAll<string>().as('count'))
+          .where('userId', '=', userId)
+          .executeTakeFirst();
+        return { label, count: Number(r?.count ?? 0), profilePath };
+      })
+    ),
+    getModelFlags(userId),
+    getCommentFlags(userId),
+  ]);
+
+  return counts.map((c) =>
+    c.label === 'Models'
+      ? { ...c, flags: modelFlags }
+      : c.label === 'Model comments'
+      ? { ...c, flags: commentFlags }
+      : c
   );
 }
 

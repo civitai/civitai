@@ -10,6 +10,7 @@ import { ReportEntity, ReportStatus, reportReasons } from '$lib/reports';
 import { getReportHistory, getReports, setReportStatus } from '$lib/server/reports.service';
 import {
   addUserStrike,
+  getUserNotes,
   getUserStrikes,
   sendModNotification,
 } from '$lib/server/moderation-memory.service';
@@ -74,7 +75,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   // Reaching the queue is an investigation permission; acting on a report or an account is not.
   const canAct = canAccess(locals.user, '/users');
 
-  const [reports, history, suspect, strikes] = await Promise.all([
+  const [reports, history, suspect, strikes, notes] = await Promise.all([
     // The SAME query `/reports/user` runs. A parallel one diverged from the sidebar's counts on which
     // reasons it excluded, so the badge and this heading disagreed about one queue.
     getReports({
@@ -87,6 +88,9 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     getReportHistory(ReportEntity.User),
     user ? getSuspectImages(user, filters, { cursor }) : null,
     user ? getUserStrikes(user) : null,
+    // Retool put the suspect's notes on this page. "Shipped in User Lookup" is true of the dataset and
+    // false of this screen: deciding on a strike without the prior note is the thing notes exist to stop.
+    user ? getUserNotes(user, locals.user.username ?? null) : null,
   ]);
 
   // The report row carries the suspect's id but not their state; hydrate through the shared helper
@@ -116,6 +120,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       negativePrompt,
     },
     strikes,
+    notes,
     canAct,
     // The queue and the selected suspect sit side by side, which needs the full content width.
     wide: true,

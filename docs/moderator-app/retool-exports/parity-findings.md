@@ -49,7 +49,7 @@ are about to act on an unticked box, check the code first; that is how this file
       reinstated, the user is never told.
 - [x] `CsamReport` read nowhere — an account with a CSAM report filed against it looks clean
 - [x] Moderation Activity omits `ReToolActions`. **Cannot be joined**: that table records App/User/ActionType with NO subject id, so it is a run-level log, not per-account history. Fixed the false claim instead — the empty state now says pre-migration Retool actions are not recorded per-account rather than "no recorded moderator activity"
-- [ ] Model/comment breakdowns (`NumTos`, `NumPoi`, `NumNSFW`, `NumLocked`, `NumDeleted`,
+- [x] Model/comment breakdowns (`NumTos`, `NumPoi`, `NumNSFW`, `NumLocked`, `NumDeleted`,
       `NumTOSViolations`, `NumHidden`) collapsed to a single `COUNT(*)`
 - [x] Reviews can be deleted without their text (`details`) ever being shown
 - [x] Report `details` / `internalNotes` shipped to the browser and never rendered — the reporter's own
@@ -74,10 +74,27 @@ are about to act on an unticked box, check the code first; that is how this file
 - [x] `profile` / `bounty` flags dropped (blast-radius warnings)
 - [x] `GetImageCount` was per-queue-row in Retool; now only for the selected user, so the queue no
       longer shows which accounts have content worth reviewing
-- [ ] The suspect's history datasets (ClickHouse activities, Retool actions, notes, received reports)
-      are "shipped in User Lookup" — true of the datasets, false of this page
+- [x] The suspect's history datasets were "shipped in User Lookup" — true of the datasets, false of
+      this page. Strikes and now **notes** render here beside the strike form, which is where they
+      change a decision. ClickHouse activity and received reports stay a deep link (both are heavy and
+      neither is read while filing a strike), and `ReToolActions` has no subject key, so it cannot be
+      shown per-account anywhere.
 - [x] `ReportHistory` 300 → 100
 - [x] Pagination links drop the `user` param, closing the suspect drill-down
+
+## Found 2026-08-10 while resolving the two unidentified Buzz tables
+
+- [x] **The Buzz ledger showed bank rows to everyone.** `table23`/`table24` bind to
+      `admin || <two hardcoded names> ? Payments.data : formatDataAsArray(Payments.data).filter(i => i.type !== 'bank')`
+      — so ordinary moderators did NOT see `type = 'bank'` transactions. The restriction lived in the
+      table's **data binding**, not in a query or a pane's `only visible when`, which is why every pass
+      over the queries and the layout missed it and the port widened access without anyone noticing.
+      Now gated on `isSenior`; hardcoding names is what left the moderator list stale in three other
+      places. Filtered after mapping so `truncated` still describes the real window.
+- [ ] `table53`/`table54` are `RecGrouped.value` / `PayGrouped.value` — **grouped** views of receipts
+      and payments. Their bodies are NOT recoverable: both appear only as empty `pageCodeFolders`
+      entries. Sibling names in that folder (`GroupPayments`, `UngroupPayments`, `PaymentsGroup`)
+      suggest a group/ungroup toggle over the same two tables. Needs a screenshot to port.
 
 ## Chat Audit — 5 findings, 4 fixed
 

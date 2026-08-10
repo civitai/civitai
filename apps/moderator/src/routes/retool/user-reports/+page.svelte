@@ -73,6 +73,7 @@
           suspect={data.suspect}
           filters={data.filters}
           strikes={data.strikes}
+          notes={data.notes ?? []}
           canAct={data.canAct}
           civitaiUrl={data.civitaiUrl}
           strikeError={scoped('strike')}

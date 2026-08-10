@@ -774,7 +774,8 @@ const counterpartyLabel = (accountType: string, id: number) =>
 export async function getBuzzHistory(
   userId: number,
   days = 90,
-  limit = 200
+  /** `includeBank` is an access decision, not a filter — see the caller. */
+  { limit = 200, includeBank = true }: { limit?: number; includeBank?: boolean } = {}
 ): Promise<{
   payments: BuzzTransaction[];
   receipts: BuzzTransaction[];
@@ -848,10 +849,15 @@ export async function getBuzzHistory(
     };
   });
 
+  // Retool restricted `bank` rows to admins. Filtered after mapping rather than in the ClickHouse
+  // WHERE so `truncated` still describes the real window — a moderator who cannot see bank rows must
+  // not also be told the window was shorter than it was.
+  const visible = includeBank ? mapped : mapped.filter((t) => t.type !== 'bank');
+
   return {
     days,
     truncated,
-    payments: mapped.filter((t) => t.direction === 'out'),
-    receipts: mapped.filter((t) => t.direction === 'in'),
+    payments: visible.filter((t) => t.direction === 'out'),
+    receipts: visible.filter((t) => t.direction === 'in'),
   };
 }

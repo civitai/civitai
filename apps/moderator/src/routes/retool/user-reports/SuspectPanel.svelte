@@ -21,6 +21,7 @@
     suspect,
     filters,
     strikes,
+    notes,
     canAct,
     civitaiUrl,
     strikeError,
@@ -33,6 +34,7 @@
     suspect: NonNullable<PageData['suspect']>;
     filters: PageData['filters'];
     strikes: NonNullable<PageData['strikes']>;
+    notes: NonNullable<PageData['notes']>;
     canAct: boolean;
     civitaiUrl: string;
     strikeError: string | null;
@@ -175,6 +177,31 @@
           </li>
         {/each}
       </ul>
+    {/if}
+  </div>
+
+  <!-- Retool showed the suspect's notes here. Filing a strike without reading the prior note is what
+       notes exist to prevent, and "it is in User Lookup" is a different screen. -->
+  <div class="mb-4">
+    <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Notes ({notes.length})</h3>
+    {#if notes.length === 0}
+      <p class="text-sm text-dark-2">No notes on this account.</p>
+    {:else}
+      <ul class="space-y-1 text-sm">
+        {#each notes.slice(0, 5) as n (n.id)}
+          <li class="min-w-0">
+            <p class="wrap-break-word whitespace-pre-wrap text-dark-0">{n.notes}</p>
+            <span class="text-xs text-dark-2">
+              {n.lastUpdateBy ?? 'unknown'} · {dateTime(n.lastUpdate)}
+            </span>
+          </li>
+        {/each}
+      </ul>
+      {#if notes.length > 5}
+        <a href={userLookupUrl(suspectId, 'notes')} class="mt-1 inline-block text-xs {LINK_CLASS}">
+          All {notes.length} notes
+        </a>
+      {/if}
     {/if}
   </div>
 
