@@ -715,11 +715,22 @@ const USER_ACCOUNT_TYPES = new Set(['user', 'yellow', 'generation', 'blue', 'gre
 const counterpartyLabel = (accountType: string, id: number) =>
   id === 0 ? 'Civitai' : accountType || `account ${id}`;
 
+/**
+ * Retool ran this as two queries — `Payments` (`fromAccountId = user`, money OUT) and `Receipts`
+ * (`toAccountId = user`, money IN) — shown side by side, each with its own filters. One merged list
+ * cannot answer "what did this account spend" without the reader sorting it by eye, which is the
+ * question a farming or chargeback investigation actually asks.
+ */
 export async function getBuzzHistory(
   userId: number,
   days = 90,
-  limit = 50
-): Promise<{ transactions: BuzzTransaction[]; days: number; truncated: boolean }> {
+  limit = 200
+): Promise<{
+  payments: BuzzTransaction[];
+  receipts: BuzzTransaction[];
+  days: number;
+  truncated: boolean;
+}> {
   const rows = await getClickhouse().$query<{
     transactionId: string;
     date: string;
@@ -728,6 +739,7 @@ export async function getBuzzHistory(
     accountType: string;
     type: string;
     description: string;
+    externalTransactionId: string;
     counterpartyId: string;
     counterpartyType: string;
   }>(`
@@ -745,6 +757,7 @@ export async function getBuzzHistory(
       if(toAccountId = ${userId}, fromAccountType, toAccountType) AS counterpartyType,
       type,
       description,
+      externalTransactionId,
       if(toAccountId = ${userId}, fromAccountId, toAccountId) AS counterpartyId
     FROM default.buzzTransactions
     WHERE date > now() - INTERVAL ${days} DAY
@@ -764,10 +777,7 @@ export async function getBuzzHistory(
   const ids = [...new Set(resolvable.map((r) => Number(r.counterpartyId)))].filter((id) => id > 0);
   const byId = await usersByIds(ids);
 
-  return {
-    days,
-    truncated,
-    transactions: page.map((r) => {
+  const mapped: BuzzTransaction[] = page.map((r) => {
       const id = Number(r.counterpartyId);
       const isUser = USER_ACCOUNT_TYPES.has(r.counterpartyType) && id > 0;
       return {
@@ -784,7 +794,14 @@ export async function getBuzzHistory(
         counterpartyId: id,
         counterpartyName: isUser ? (byId.get(id)?.username ?? null) : null,
         counterpartyLabel: isUser ? null : counterpartyLabel(r.counterpartyType, id),
+        externalTransactionId: r.externalTransactionId || null,
       };
-    }),
+    });
+
+  return {
+    days,
+    truncated,
+    payments: mapped.filter((t) => t.direction === 'out'),
+    receipts: mapped.filter((t) => t.direction === 'in'),
   };
 }

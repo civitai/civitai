@@ -251,6 +251,11 @@
                 required
               />
 
+              <!-- What the grant or deduction is ABOUT; Retool carried both on this form. Optional,
+                   because most adjustments are not tied to an entity. -->
+              <Input name="entityType" placeholder="EntityType (optional)" class="w-44" />
+              <Input name="entityId" type="number" min="1" placeholder="EntityId" class="w-32" />
+
               <Button type="submit" size="sm" disabled={submitting}>
                 {submitting ? 'Working…' : 'Apply'}
               </Button>
@@ -258,6 +263,28 @@
                 Cancel
               </Button>
             </div>
+
+            <!-- Retool's "Deduct Types" reference table, beside this form. Which types lower the
+                 lifetime balance and which may go negative is the fact the moderator needs while
+                 choosing one, and it existed nowhere else. -->
+            <table class="mt-3 w-full max-w-xl text-xs text-dark-2">
+              <thead>
+                <tr class="text-left text-dark-0">
+                  <th class="py-1 pr-4 font-medium">Deduct type</th>
+                  <th class="py-1 pr-4 font-medium">Lowers lifetime</th>
+                  <th class="py-1 font-medium">Can go negative</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each [['Purchase', false, false], ['AuthorizedPurchase', false, true], ['Chargeback', true, true]] as [name, lifetime, negative] (name)}
+                  <tr class="border-t border-dark-4">
+                    <td class="py-1 pr-4">{name}</td>
+                    <td class="py-1 pr-4">{lifetime ? 'yes' : '—'}</td>
+                    <td class="py-1">{negative ? 'yes' : '—'}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
           </form>
         {/if}
       {/if}

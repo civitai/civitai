@@ -330,6 +330,8 @@ export const actions: Actions = {
         action: z.enum(['send', 'deduct']),
         transactionType: z.enum(BUZZ_TRANSACTION_TYPE_KEYS).catch('compensation'),
         description: z.string().trim().min(1).max(500),
+        entityType: z.string().trim().max(50).optional(),
+        entityId: z.coerce.number().int().positive().max(2_147_483_647).optional(),
       }),
       await request.formData()
     );
@@ -342,6 +344,8 @@ export const actions: Actions = {
       action: input.action,
       transactionType: input.transactionType,
       description: input.description,
+      entityType: input.entityType || undefined,
+      entityId: input.entityId,
       moderatorId: locals.user.id,
     });
     if (!result.ok) return buzzFail(result.error);

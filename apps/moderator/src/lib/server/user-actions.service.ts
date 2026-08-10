@@ -374,6 +374,9 @@ export async function sendBuzz(input: {
   action: 'send' | 'deduct';
   transactionType: BuzzTransactionType;
   description: string;
+  /** Retool's `EntityType`/`EntityId` on the send form — what the grant or deduction is ABOUT. */
+  entityType?: string;
+  entityId?: number;
   moderatorId: number;
 }): Promise<ActionResult> {
   if (!Number.isInteger(input.amount) || input.amount <= 0)
@@ -389,6 +392,8 @@ export async function sendBuzz(input: {
       type: BUZZ_TRANSACTION_TYPES[input.transactionType],
       amount: input.amount,
       description: input.description,
+      ...(input.entityType ? { entityType: input.entityType } : {}),
+      ...(input.entityId ? { entityId: input.entityId } : {}),
       // Makes the transaction traceable to a person rather than to "a moderator tool".
       details: { moderatorId: input.moderatorId, source: 'moderator-app/user-lookup' },
     });
