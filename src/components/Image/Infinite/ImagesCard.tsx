@@ -149,7 +149,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                     <MediaHash {...image} />
                   )}
                 </RoutedDialogLink>
-                {safe && <CardStickerOverlay imageId={image.id} />}
+                {safe && features.stickerPlacement && <CardStickerOverlay imageId={image.id} />}
                 <div className="absolute left-2 top-2">
                   <div className="flex flex-nowrap items-center gap-1">
                     <ImageGuard2.BlurToggle radius="xl" h={26} style={{ pointerEvents: 'auto' }} />
@@ -308,14 +308,25 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                 )}
                 {onSite && <OnsiteIndicator isRemix={isRemix} />}
               </div>
-              {!contextProps.hideReactions && (
-                <div className="flex items-center">
-                  <div className="min-w-0 flex-1">
+              {!contextProps.hideReactions &&
+                // The row only becomes a flex container when there is something
+                // to put beside the reactions. `StickerPlacementCardBadge`
+                // returns null with the flag off, so wrapping unconditionally
+                // would still change this card's layout for everyone while
+                // adding nothing — a visual regression with no feature behind
+                // it, on the surface the flag exists to keep clear of.
+                (features.stickerPlacement ? (
+                  <div className="flex items-center">
+                    <div className="min-w-0 flex-1">
+                      <ImageReactions image={image} readonly={!safe || (isScanned && isBlocked)} />
+                    </div>
+                    <StickerPlacementCardBadge imageId={image.id} className="mr-2" />
+                  </div>
+                ) : (
+                  <div>
                     <ImageReactions image={image} readonly={!safe || (isScanned && isBlocked)} />
                   </div>
-                  <StickerPlacementCardBadge imageId={image.id} className="mr-2" />
-                </div>
-              )}
+                ))}
             </>
           )}
         </ImageGuard2>

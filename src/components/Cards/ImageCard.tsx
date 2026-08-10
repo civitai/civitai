@@ -8,6 +8,7 @@ import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { RemixButton } from '~/components/Cards/components/RemixButton';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import cardClasses from '~/components/Cards/Cards.module.css';
@@ -15,6 +16,7 @@ import { ThemeIcon } from '@mantine/core';
 
 export function ImageCard({ data }: Props) {
   const { getImages, ...context } = useImagesContext();
+  const features = useFeatureFlags();
 
   return (
     <AspectRatioImageCard
@@ -24,7 +26,12 @@ export function ImageCard({ data }: Props) {
         name: 'imageDetail',
         state: { imageId: data.id, images: getImages(), ...context },
       }}
-      overlay={({ safe }) => safe && <CardStickerOverlay imageId={data.id} />}
+      overlay={({ safe }) =>
+        // Not mounted at all with the flag off. The overlay renders null there
+        // anyway, but a card is rendered by the hundred and this keeps the
+        // flag-off tree identical to what shipped before it.
+        safe && features.stickerPlacement && <CardStickerOverlay imageId={data.id} />
+      }
       header={
         <div className="flex w-full items-start justify-between">
           {data.type === 'video' && data.metadata && 'duration' in data.metadata && (
@@ -56,7 +63,7 @@ export function ImageCard({ data }: Props) {
               targetUserId={data.user.id}
               disableBuzzTip={data.poi}
             />
-            <StickerPlacementCardBadge imageId={data.id} />
+            {features.stickerPlacement && <StickerPlacementCardBadge imageId={data.id} />}
             {data.hasMeta && (
               <ImageMetaPopover2 imageId={data.id} type={data.type}>
                 <ThemeIcon className={cardClasses.infoChip} variant="light">
