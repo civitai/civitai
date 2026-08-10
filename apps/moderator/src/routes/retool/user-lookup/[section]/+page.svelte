@@ -156,7 +156,12 @@
       />
     {:else}
       <!-- admin + mutes: AccountActionsPanel carries both the enforcement row and the timed-mute list. -->
-      <AccountActionsPanel identity={result.identity} canAct={data.canAct} {form} />
+      <AccountActionsPanel
+        identity={result.identity}
+        canAct={data.canAct}
+        isSenior={data.isSenior}
+        {form}
+      />
     {/if}
   {/key}
 {/if}

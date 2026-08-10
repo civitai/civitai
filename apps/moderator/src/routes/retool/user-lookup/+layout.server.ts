@@ -9,12 +9,14 @@ export const load: LayoutServerLoad = async ({ url, locals }) => {
   const { q } = parseQuery(url, lookupQuerySchema);
   // `canAct` gates the enforcement UI; the actions re-check it server-side regardless.
   const canAct = canAccess(locals.user, '/users');
-  // Buzz sending was Senior-Mod-gated in Retool; the action re-checks this regardless.
-  const canSendBuzz = canAct && isSenior(locals.user);
-  if (!q) return { q, canAct, canSendBuzz, result: null, notFound: false };
+  // Senior gates the capabilities Retool restricted with a pane-level `only visible when`: sending
+  // buzz, and promoting or demoting a moderator. Every action re-checks it regardless.
+  const senior = canAct && isSenior(locals.user);
+  const base = { q, canAct, canSendBuzz: senior, isSenior: senior };
+  if (!q) return { ...base, result: null, notFound: false };
 
   const userId = await resolveUserId(q);
-  if (!userId) return { q, canAct, canSendBuzz, result: null, notFound: true };
+  if (!userId) return { ...base, result: null, notFound: true };
 
-  return { q, canAct, canSendBuzz, result: await getUserLookup(userId), notFound: false };
+  return { ...base, result: await getUserLookup(userId), notFound: false };
 };

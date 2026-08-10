@@ -27,6 +27,12 @@ export type UserIdentity = {
   customerId: string | null;
   paddleCustomerId: string | null;
   rewardsEligibility: string | null;
+  /** Retool showed both as header chips on every section. */
+  csamReportCount: number;
+  /** `Pending` means a SYSTEM restriction nobody has ruled on — the case where `mutedAt` is null and
+   *  the account still reads as muted. `null` when the account has never been restricted. */
+  restrictionStatus: string | null;
+  restrictionType: string | null;
 };
 
 export type UserCount = { label: string; count: number; profilePath: string | null };
@@ -102,9 +108,7 @@ export async function resolveUserId(term: string): Promise<number | null> {
 }
 
 /** The username as stored, for actions that make a moderator type it back to confirm. */
-export async function resolveUsername(
-  userId: number
-): Promise<{ username: string | null } | null> {
+export async function resolveUsername(userId: number): Promise<{ username: string | null } | null> {
   const row = await dbRead
     .selectFrom('User')
     .select('username')
@@ -171,7 +175,9 @@ export async function getCuratorStatus(userId: number): Promise<CuratorStatus> {
     .where('collectionId', 'in', CURATED_COLLECTION_IDS)
     // Retool matched the permission ARRAY literally against '{VIEW,ADD}' / '{VIEW,ADD_REVIEW}', so a
     // curator whose row also carries MANAGE — the most privileged case — did not match at all.
-    .where(sql<boolean>`permissions && ARRAY['ADD','ADD_REVIEW','MANAGE']::"CollectionContributorPermission"[]`)
+    .where(
+      sql<boolean>`permissions && ARRAY['ADD','ADD_REVIEW','MANAGE']::"CollectionContributorPermission"[]`
+    )
     .execute();
   return { isCurator: rows.length > 0, collectionIds: rows.map((r) => r.collectionId) };
 }
@@ -186,18 +192,20 @@ export type LeaderboardRank = {
 };
 
 export async function getLeaderboardRanks(userId: number): Promise<LeaderboardRank[]> {
-  return dbRead
-    .selectFrom('LeaderboardResult')
-    // One row per board: the table holds a row per DAY, so without this a single board contributes
-    // thirty near-identical rows and crowds out the others.
-    .distinctOn('leaderboardId')
-    .select(['leaderboardId', 'position', 'score', 'date'])
-    .where('userId', '=', userId)
-    .where('position', '<', 100)
-    .where('date', '>=', sql<Date>`now() - interval '30 days'`)
-    .orderBy('leaderboardId')
-    .orderBy('date', 'desc')
-    .execute();
+  return (
+    dbRead
+      .selectFrom('LeaderboardResult')
+      // One row per board: the table holds a row per DAY, so without this a single board contributes
+      // thirty near-identical rows and crowds out the others.
+      .distinctOn('leaderboardId')
+      .select(['leaderboardId', 'position', 'score', 'date'])
+      .where('userId', '=', userId)
+      .where('position', '<', 100)
+      .where('date', '>=', sql<Date>`now() - interval '30 days'`)
+      .orderBy('leaderboardId')
+      .orderBy('date', 'desc')
+      .execute()
+  );
 }
 
 async function getIdentity(userId: number): Promise<UserIdentity | null> {
@@ -221,6 +229,20 @@ async function getIdentity(userId: number): Promise<UserIdentity | null> {
       // jsonb path extraction has no builder equivalent.
       sql<string | null>`u.meta #>> '{banDetails,reasonCode}'`.as('banReason'),
       sql<string | null>`u.meta #>> '{banDetails,detailsInternal}'`.as('banDetails'),
+      // Retool joined both of these into the LANDING query — they are header chips there, not
+      // something a moderator has to go looking for. Without them an account with a CSAM report filed
+      // against it renders as clean, and a system auto-mute is indistinguishable from a manual one.
+      sql<number>`(SELECT COUNT(*)::int FROM "CsamReport" cr WHERE cr."userId" = u.id)`.as(
+        'csamReportCount'
+      ),
+      sql<string | null>`(
+        SELECT ur.status::text FROM "UserRestriction" ur
+        WHERE ur."userId" = u.id ORDER BY ur.id DESC LIMIT 1
+      )`.as('restrictionStatus'),
+      sql<string | null>`(
+        SELECT ur.type FROM "UserRestriction" ur
+        WHERE ur."userId" = u.id ORDER BY ur.id DESC LIMIT 1
+      )`.as('restrictionType'),
     ])
     .where('u.id', '=', userId)
     .executeTakeFirst();
@@ -382,7 +404,17 @@ export async function getReportedContent(userId: number): Promise<ReportedConten
         .executeTakeFirst();
       return { label, count: Number(r?.count ?? 0) };
     })
-  );
+  ).then(async (counts) => {
+    // Chat is owned by `ownerId`, so it cannot go through the loop — but leaving it out here while the
+    // rows below list it is exactly the count/rows disagreement the shared list exists to prevent.
+    const chat = await dbRead
+      .selectFrom('Chat')
+      .innerJoin('ChatReport', 'ChatReport.chatId', 'Chat.id')
+      .select((eb) => eb.fn.count<string>('Chat.id').distinct().as('count'))
+      .where('Chat.ownerId', '=', userId)
+      .executeTakeFirst();
+    return [...counts, { label: 'Chat', count: Number(chat?.count ?? 0) }];
+  });
 }
 
 // SUBSCRIPTION (Retool's UserSubscriptionStatus). Postgres only and cheap, so it rides the page load.

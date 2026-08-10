@@ -145,6 +145,10 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return accountFail(input);
+    // The endpoint's own self-action guard compares against the API KEY's owner, not the moderator
+    // clicking — so it does not fire here, and without this a moderator could promote themselves.
+    if (input.userId === locals.user.id)
+      return accountFail('You cannot change your own moderator status.');
 
     const result = await toggleModerator({
       userId: input.userId,
@@ -400,20 +404,22 @@ export const actions: Actions = {
     return { success: true };
   },
 
+  // Scoped to `account`, not `buzz`: the buttons live in the Admin section's action panel, and a
+  // failure scoped elsewhere renders on no section the moderator is looking at.
   setRewardsEligibility: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return buzzFail('Not permitted.');
+    if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');
     const input = parseForm(
       userIdSchema.extend({ eligibility: z.enum(['Eligible', 'Ineligible', 'Protected']) }),
       await request.formData()
     );
-    if (typeof input === 'string') return buzzFail(input);
+    if (typeof input === 'string') return accountFail(input);
 
     const result = await setRewardsEligibility({
       userId: input.userId,
       eligibility: input.eligibility,
       moderatorId: locals.user.id,
     });
-    if (!result.ok) return buzzFail(result.error);
+    if (!result.ok) return accountFail(result.error);
     return { success: true };
   },
 
@@ -491,8 +497,13 @@ export const actions: Actions = {
     const input = parseForm(
       userIdSchema.extend({
         ban: z.enum(['true', 'false']),
-        reasonCode: z.enum(BAN_REASON_CODES).optional().or(z.literal('').transform(() => undefined)),
+        reasonCode: z
+          .enum(BAN_REASON_CODES)
+          .optional()
+          .or(z.literal('').transform(() => undefined)),
         detailsInternal: z.string().trim().max(2000).optional(),
+        detailsExternal: z.string().trim().max(2000).optional(),
+        removeMedia: z.string().optional(),
       }),
       await request.formData()
     );
@@ -503,6 +514,8 @@ export const actions: Actions = {
       ban: input.ban === 'true',
       reasonCode: input.reasonCode,
       detailsInternal: input.detailsInternal || undefined,
+      detailsExternal: input.detailsExternal || undefined,
+      removeMedia: input.removeMedia === 'on',
       moderatorId: locals.user.id,
     });
     if (!result.ok) return accountFail(result.error);

@@ -4,7 +4,8 @@
   import type { LayoutData } from './$types';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { entityUrl } from '$lib/entity-url';
-  import { reportStatusVariant } from '$lib/reports';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { reportStatusVariant, reportStatuses } from '$lib/reports';
   import { fetchUserReports, type ReportRow } from './user-reports';
   import ListCard from './ListCard.svelte';
 
@@ -22,10 +23,17 @@
     civitaiUrl: string;
   } = $props();
 
-  // Eighteen joins across six entity types, so the rows arrive after the counts rather than holding
-  // them up.
-  const reports = $derived(browser ? fetchUserReports(userId) : null);
+  // Thirty-odd joins across eleven entity types, so the rows arrive after the counts rather than
+  // holding them up. `statusFilter` is part of the derived expression, so changing it rebuilds the
+  // promise and the template re-awaits — no state to go stale.
+  let statusFilter = $state<string[]>([]);
+  const reports = $derived(browser ? fetchUserReports(userId, statusFilter) : null);
 
+  const toggleStatus = (status: string) => {
+    statusFilter = statusFilter.includes(status)
+      ? statusFilter.filter((s) => s !== status)
+      : [...statusFilter, status];
+  };
 
   const filed = $derived<[string, string][]>([
     ['Total', num(reportsFiled.total)],
@@ -118,6 +126,22 @@
     {/each}
   </ul>
 {/snippet}
+
+<div class="mb-4 flex flex-wrap items-center gap-2">
+  <span class="text-xs tracking-wide text-dark-2 uppercase">Status</span>
+  {#each reportStatuses as s (s)}
+    <Button
+      size="xs"
+      variant={statusFilter.includes(s) ? 'default' : 'outline'}
+      onclick={() => toggleStatus(s)}
+    >
+      {s}
+    </Button>
+  {/each}
+  {#if statusFilter.length}
+    <Button size="xs" variant="ghost" onclick={() => (statusFilter = [])}>Clear</Button>
+  {/if}
+</div>
 
 {#await reports}
   <p class="text-sm text-dark-2">Loading report history…</p>

@@ -23,8 +23,12 @@ export type UserReports = {
   onUser: ReportRow[];
 };
 
-export async function fetchUserReports(userId: number): Promise<UserReports> {
-  const r = await fetch(`/api/user-reports/${userId}`);
+export async function fetchUserReports(
+  userId: number,
+  statuses: string[] = []
+): Promise<UserReports> {
+  const query = statuses.length ? `?status=${statuses.join(',')}` : '';
+  const r = await fetch(`/api/user-reports/${userId}${query}`);
   if (!r.ok) throw new Error(String(r.status));
   return r.json();
 }

@@ -21,6 +21,22 @@ export const BAN_REASONS = [
 
 export const LINK_TYPES = ['Social', 'Sponsorship', 'Other'] as const;
 
+/** Retool's `presetMutes`. */
+export const MUTE_PRESETS: [number, string][] = [
+  [6, '6h'],
+  [12, '12h'],
+  [24, '24h'],
+  [48, '48h'],
+  [72, '72h'],
+  [168, '1 week'],
+];
+
+export const REWARDS_ELIGIBILITY: [string, string][] = [
+  ['Ineligible', 'Add Buzz-Block'],
+  ['Eligible', 'Remove Buzz-Block'],
+  ['Protected', 'Generator Buzz Earnings'],
+];
+
 export const PROFILE_FIELDS = [
   ['bio', 'Bio'],
   ['message', 'Profile message'],

@@ -128,7 +128,11 @@ export async function updateUserIdentity(input: {
   );
   if (!result.ok) return result;
 
-  await logAction(`updateIdentity:${Object.keys(changed).join(',')}`, input.userId, input.moderatorId);
+  await logAction(
+    `updateIdentity:${Object.keys(changed).join(',')}`,
+    input.userId,
+    input.moderatorId
+  );
   return { ok: true };
 }
 
@@ -377,6 +381,11 @@ export async function setBanned(input: {
   ban: boolean;
   reasonCode?: string;
   detailsInternal?: string;
+  /** Read back by the appeal flow. Never emailed, so it is safe to collect here. */
+  detailsExternal?: string;
+  /** The endpoint blocks media only for `SexualMinor` unless this is set — a Nudify or Harassment ban
+   *  otherwise leaves every image up and needs a second, separate purge. */
+  removeMedia?: boolean;
   moderatorId: number;
 }): Promise<ActionResult> {
   const current = await dbWrite
@@ -393,6 +402,8 @@ export async function setBanned(input: {
   const params: Record<string, string> = { userId: String(input.userId) };
   if (input.ban && input.reasonCode) params.reasonCode = input.reasonCode;
   if (input.ban && input.detailsInternal) params.detailsInternal = input.detailsInternal;
+  if (input.ban && input.detailsExternal) params.detailsExternal = input.detailsExternal;
+  if (input.ban && input.removeMedia) params.removeMedia = 'true';
 
   const result = await callMainApp('/api/mod/ban-user', params, 'Ban endpoint');
   if (!result.ok) return result;
@@ -475,11 +486,19 @@ export async function setRewardsEligibility(input: {
   eligibility: string;
   moderatorId: number;
 }): Promise<ActionResult> {
-  const result = await callMainApp(
-    '/api/mod/set-rewards-eligibility',
-    { userId: String(input.userId), eligibility: input.eligibility },
-    'Rewards eligibility'
-  );
+  // Body, not query string: the endpoint parses `req.body`, and `modId` is required — it is what drives
+  // its own ModActivity row, the multiplier cache refresh and the user's notification.
+  const result = await postJson({
+    path: '/api/mod/set-rewards-eligibility',
+    body: {
+      userId: input.userId,
+      eligibility: input.eligibility,
+      modId: input.moderatorId,
+    },
+    label: 'Rewards eligibility',
+    auth: 'webhook',
+    timeoutMs: 15_000,
+  });
   if (!result.ok) return result;
 
   await logAction(`rewardsEligibility:${input.eligibility}`, input.userId, input.moderatorId);

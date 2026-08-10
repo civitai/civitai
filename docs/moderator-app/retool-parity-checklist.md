@@ -70,6 +70,67 @@ tracker only ever listed nine of the parent's **thirteen** subtasks. Export pull
 
 Ported but incomplete. The header items are visible on every section in Retool, not buried in one.
 
+### 1a. Found by the export-vs-build and endpoint audits, 2026-08-09
+
+Both passes ran against the whole slice. Fixed in the same session:
+
+- [x] **`UpdateBuzzEligible` could not succeed and had no UI.** `setRewardsEligibility` posted
+      query-string params to an endpoint that parses `req.body` and requires `modId` — every call 500'd.
+      Now a body POST carrying `modId`, with Retool's three buttons (Add Buzz-Block / Remove Buzz-Block
+      / Generator Buzz Earnings) on the Admin section.
+- [x] **`ToggleMod` was built but unreachable** — no UI posted to it. Now on the Admin section behind
+      the senior gate, **plus a local self-action check**: the endpoint's own guard compares against the
+      API key's owner, not the moderator clicking, so it never fires from the spoke.
+- [x] **`/api/mod/ban-user` accepted three parameters the form never sent.** `detailsExternal` (read by
+      the appeal flow) and `removeMedia` are now on the ban form — without the latter a Nudify or
+      Harassment ban leaves every image up and needs a separate purge.
+- [x] **`presetMutes` was a free-text hours box.** Now Retool's 6h/12h/24h/48h/72h/1 week.
+
+Open, with the evidence each audit produced:
+
+- [ ] 🔴 **Timed mutes never expire.** `addTimedMute` writes the moderator-DB row and sets
+      `muted`/`mutedAt`, but **not `User.muteExpiresAt`** — the only thing that lifts a timed mute is
+      the main app's `processTimedUnmutes`, which selects on that column. So a 24-hour mute is
+      permanent while the panel renders it as expiring. **This cannot be fixed locally**: the main app
+      uses `muteExpiresAt !== null` to mean "this mute came from strikes", so a spoke-set value would
+      let a strike expiry silently clear a moderator's mute. Needs an `expiresAt`/`muteHours` parameter
+      on `retool/user → mute`, main-app side.
+- [ ] **Strikes write a second, disconnected ledger.** `addUserStrike` inserts into the moderator DB's
+      legacy `UserStrikes`; the main app owns `UserStrike` via `retool/strike → create`. Missing from
+      the local path: escalation (≥2 points auto-mutes 3 days, ≥3 indefinite + session invalidation),
+      `points`/`expiresAt`, the `StrikeReason` enum, `reportId` attachment, the typed `strike-issued`
+      notification and its email, the auto-strike rate limit, and any way to void. The panel is also
+      blind to every strike the automated pipeline issued. **Still filed as backlog rather than parity
+      — Retool never called that endpoint either** — but this is the largest behavioural gap in the app.
+- [ ] **Local mute / force-logout skip the session SIGNAL.** They revoke tokens and drop the session
+      cache but never `sendSessionSignal`, so a connected user is not pushed out until their client
+      next refreshes. Same in `unmuteAndClearTimed` and `revokeTimedMute`.
+- [ ] **Cosmetic grant and shop refund miss the owned-sticker cache bust.** A granted sticker is not
+      sendable, and a refunded one stays sendable, for up to 5 minutes (`USER_OWNED_STICKER`, no
+      stale-while-revalidate). One `bustCachedObject` either way.
+- [ ] **"Remove Badges" (`RemoveCosmetics`) unported** — `ShopPanel` can grant but not remove. The safe
+      path exists: `retool/cosmetic → unassign`.
+- [ ] **Every `retool/*` call attributes to the API key's owner**, not the acting moderator: one shared
+      `CIVITAI_MOD_API_KEY` confers each `privileged:` capability on everyone who can reach the page,
+      shares the per-actor rate limits, and puts the key owner on every `retoolAudit` row. Either mint
+      per-moderator keys (the endpoints resolve a real user from the bearer token) or state that
+      `isSenior` is the real control — and `updateIdentity` currently has no senior gate at all.
+- [ ] **Filter rows missing on five list panels**, each with the same failure: destructive checkboxes
+      sitting on top of a fixed newest-25. Reviews (Rating / TOS Violation? / NSFW? / Excluded? /
+      Search Review Content — and the review **text** is never rendered, so reviews are deleted on
+      rating and date alone), Comments (search), Bounties (Type / Complete / Name / Description),
+      Reports (reason filter — status is done), Prompt Audit (Filter Prompt / # of Prompts).
+- [ ] **Bulk review/comment deletion has no confirmation step.** Retool gated it behind a modal; ban
+      and purge here got confirmations, these did not.
+- [ ] **Notifications: three dropped pieces** — the "Number of Notifs" control (hardcoded 25), Delete
+      Notification, and `notificationLink`. The last is live on the receiving end:
+      `system-announcement`'s `prepareMessage` reads `details.url`, and the send form posts `message`
+      only.
+- [ ] **`GensPerResource` look-back days hardcoded to 30** — the service takes the parameter, nothing
+      passes it.
+- [ ] **Cover image and profile picture not shown.** Retool had "Look at Cover Image" / "Look at PFP";
+      checking those for TOS content was an in-tool action.
+
 - [ ] **Header: the strike chip, subscription tier and Force Logout are missing from it.** (The header
       itself, and lookup by id / username / email, are **already done** — `+layout.svelte` keeps
       username, id and the banned/muted/deleted/moderator badges on every section, and `resolveUserId`
@@ -97,18 +158,19 @@ Ported but incomplete. The header items are visible on every section in Retool, 
       this page. 🎥 *"You get to see if there's a user report on their account."*
       **Partially built:** `getReportsOnUser` already filters to Pending/Processing and `ReportsPanel`
       renders an amber block. Missing is the header placement and any way to action it from here.
-- [ ] **CSAM banner** — a `CsamReport` against the account shown clearly at the top. `CsamReport` is
-      currently read nowhere in the app.
+- [x] **CSAM banner** (2026-08-09 — `getIdentity` counts `CsamReport` and the layout header carries a
+      `CSAM report ×N` chip on every section).
 - [ ] **Mute state must distinguish system from manual.** 🎥 *"if they're muted, if they're muted,
-      overturned or pending."* `UserRestriction` is read nowhere, so a system auto-mute renders as an
-      unexplained manual one, and unmuting here skips the Overturn path entirely.
-- [ ] **Reports: a Status filter, and the 50-row cap.** Screenshot shows **803 rows** for one account.
-      (Correction: ours is *not* one merged list — `ReportsPanel` already renders received and filed as
-      two lists plus a banner. The real gaps are the filter and the cap.)
-- [ ] `getReportsSubmitted` drops the commonest kind (reports against accounts) while the tile above it
-      counts them, so "Total 12" can sit beside 4 rows.
-- [ ] **Report coverage is 6 of 11 entity types.** Bounty, BountyEntry, Collection, ResourceReview and
-      chat reports are invisible, so an account reported over those reads as clean.
+      overturned or pending."* **Partially built** (2026-08-09): the header now shows the latest
+      `UserRestriction` as `<type>: <status>`, so a system auto-mute no longer reads as a manual one.
+      Still missing: unmuting from here goes straight to the mute toggle and skips the Overturn path.
+- [x] **Reports: a Status filter, and the 50-row cap** (2026-08-09 — status chips filter server-side and
+      the cap is 200 per list; the filter is part of the derived fetch, so changing it refetches).
+- [x] `getReportsSubmitted` drops the commonest kind (2026-08-09 — `UserReport` and `ChatReport` are
+      both in the submitted query now, so the tile and the rows agree).
+- [x] **Report coverage is 6 of 11 entity types** (2026-08-09 — Bounty, BountyEntry, Collection and
+      ResourceReview joined the shared `REPORT_SOURCES`; Chat is fetched beside it because it owns by
+      `ownerId`, and it was added to the count tiles at the same time so counts and rows still agree).
 - [x] **Buzz: Payments and Receipts side by side**, each with its own type filter, plus a Description
       filter and an *After date* picker. Ours is one merged list on a fixed 90-day window with no
       filters. 🎥 buzz is actively used to grant and deduct.
@@ -147,11 +209,14 @@ Ported but incomplete. The header items are visible on every section in Retool, 
 - [x] 🔒 **Buzz sending was Senior-Mod-gated in Retool** (`tabbedContainer12`'s second pane carries
       `current_user.groups.some(i => i.name === "Senior Mod")`). Ours gates it on the general `/users`
       permission — **a restricted capability silently widened**. Highest priority in this block.
-- [x] **The whole account-edit capability.** An *Enable Edits* toggle over editable **Username, Email,
-      Full Name**, plus a Quick Info checkbox block — Muted, Banned, Moderator, Accepted TOS, Excluded
-      Leaderboards, Buzz-Blocked, FP Curator — with a Save button. Nothing in the build can edit any of
-      it. (The *sub-permission* that should guard it is a backlog item; the capability itself is parity.)
-- [~] **Admin actions**: Make/Remove Moderator, Add/Remove **Buzz-Block**, Generator Buzz Earnings.
+- [~] **The account-edit capability.** Username and Email are editable behind the *Enable Edits*
+      toggle. **Still missing** (this was ticked in error — caught by the 2026-08-09 fidelity pass):
+      **Full Name**, which `updateIdentity` and `/api/mod/retool/user` both already accept, and the
+      whole **Quick Info checkbox block** — Accepted TOS (`onboarding`), Excluded Leaderboards,
+      Buzz-Blocked, FP Curator, plus `browsingLevel`/`showNsfw`/`blurNsfw`. `UserContent` selects all
+      of them and none reaches the DOM. (The *sub-permission* that should guard it is a backlog item.)
+- [x] **Admin actions**: Make/Remove Moderator, Add/Remove **Buzz-Block**, Generator Buzz Earnings
+      (2026-08-09 — all three on the Admin section; see 1a).
 - [ ] **Notifications**: a **Delete Notification** action and a **Link** field on the send form; ours is
       message-only with no delete.
 - [ ] **Browsing level shown** ("Viewing: PG, PG13, R, X, XXX, Blocked") and a **Comment Spammer** alert
@@ -178,8 +243,8 @@ Ported but incomplete. The header items are visible on every section in Retool, 
       badged `blocked: <reason>`, because `imageBase()` applies no ingestion filter. What Retool had and
       we lack is the client-side *toggle* — "Show only ToS'd" / "Clear Filter" — plus a removed-only
       view for the non-user sources.)
-- [ ] **Bulk selection helpers** — Select All / Select 100 / Unselect All. Multiselect works, but only
-      click-by-click, so a 200-image batch is 200 clicks.
+- [x] **Bulk selection helpers** — Select All / Select 100 / Unselect All (2026-08-09, in the shared
+      `ImageActionBar` that Bulk Image Manager and User Reports both use).
 - [ ] `negativePrompt` is selected and rendered nowhere.
 - [ ] **Image-only account nuke** (`remove-images` with `userId`, no id list) — absent; the user source
       caps at 200.
@@ -195,26 +260,26 @@ in the same screen instead of having to click around a bunch."*
       did**: history tabs top-left, queue table top-right, image grid full-width below. So ours is a
       deliberate improvement, not parity. Caveat: the split is `xl:` only, so it still stacks below
       1280px — the exact failure it was meant to fix.
-- [ ] 🔴 **The image grid's entire filter bar.** Retool had, above the suspect's images: *Show only
-      ToS'd*, *Clear Filter*, *No Prompt Only*, rating checkboxes (PG / PG-13 / R / X / XXX / ToS),
-      *Start Date* / *End Date* / *Reset*, and *Search Prompt* / *Search Neg Prompt*. We have none of
-      it — so 60 unfiltered, unsearchable images is the whole review surface for an account with
-      thousands. Largest single omission in this section.
-- [ ] **No image action path at all.** The grid is display-only: no selection, no remove/restore, no
-      Select All / Select 100. (The *strike* action itself IS on this page; what is missing is tying it
-      to an image removal, as Retool's `strikeCheckbox` did.)
-- [ ] **`blockedFor` is never shown and blocked images are excluded**, so a CSAM removal is
-      indistinguishable from a tag cleanup, and there is no restore path. (The blocked *count* is
-      already reported separately as "N already blocked" — the gap is which and why.)
-- [ ] **A "Remaining" column per queue row** — the non-removed count, beside "Images". It is the number
-      that says whether an account has already been cleaned up; we show neither.
+- [x] 🔴 **The image grid's entire filter bar** (2026-08-09). All of Retool's controls are there — Only
+      ToS'd, No prompt, rating checkboxes incl. Blocked, From/To, Search prompt, Search negative
+      prompt, Clear — filtering **server-side** off the URL, with a match count beside the heading.
+      Retool filtered client-side over one fetched batch; this filters the whole account.
+- [x] **No image action path at all** (2026-08-09 — multiselect plus remove / restore / POI / minor via
+      the shared `ImageActionBar`, with Select all and Select 100. Owner notification is deliberately
+      not duplicated: the panel's own Notify already targets this account).
+- [x] **`blockedFor` is never shown and blocked images are excluded** (2026-08-09 — blocked images are
+      now in the grid, badged `blocked: <reason>`). Still open: **no restore path** from this page,
+      tracked under "No image action path at all" below.
+- [x] **A "Remaining" column per queue row** (2026-08-09 — every row reads "N of M images left", one
+      grouped count over the 50 suspects on the page).
 - [x] **`?user=` and `?page=` clobber each other.** Clicking a report on page 3 returns you to page 1;
       paging closes the open drill-down. Small code, hit within a minute of working page 2.
 - [x] Report history capped at 100 where Retool used 300; no *Profile* deep link beside User Lookup.
-- [ ] **Prompt/negativePrompt dropped** from the cards — for a generated image the prompt is the evidence.
-- [ ] 60-image cap **with no paging wired** — `ImageQueueGrid` already implements cursor paging and the
-      page simply doesn't pass a cursor. Retool's button reads *"Grab 5000 images"* and its query had no
-      `LIMIT` at all.
+- [x] **Prompt/negativePrompt dropped** from the cards (2026-08-09 — prompt renders on the card, clamped
+      to 3 lines with the full text on hover; `negativePrompt` is selected, awaiting the search filters
+      above that are the only thing that reads it).
+- [x] 60-image cap **with no paging wired** (2026-08-09 — cursor paging wired; the whole account is
+      reachable 60 at a time, and the filters narrow it server-side rather than the batch).
 - [ ] The suspect's history — Retool's top-left was a three-tab panel **ModActivity / Reports / UserReport
       History** with actor and reason per row. **Strikes are the one piece already here**; mod activity,
       notes and received reports are not.

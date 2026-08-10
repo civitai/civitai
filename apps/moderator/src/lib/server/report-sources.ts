@@ -11,6 +11,14 @@ export const REPORT_SOURCES = [
   ['Article', 'Article', 'ArticleReport', 'articleId'],
   ['Comment', 'Comment', 'CommentReport', 'commentId'],
   ['CommentV2', 'CommentV2', 'CommentV2Report', 'commentV2Id'],
+  ['Bounty', 'Bounty', 'BountyReport', 'bountyId'],
+  ['BountyEntry', 'BountyEntry', 'BountyEntryReport', 'bountyEntryId'],
+  ['Collection', 'Collection', 'CollectionReport', 'collectionId'],
+  ['ResourceReview', 'ResourceReview', 'ResourceReviewReport', 'resourceReviewId'],
 ] as const;
+
+/** `Chat` owns by `ownerId`, not `userId`, so it cannot join through the loop above. Reported chats
+ *  are fetched separately rather than left invisible. */
+export const CHAT_REPORT_SOURCE = ['Chat', 'Chat', 'ChatReport', 'chatId'] as const;
 
 export type ReportSource = (typeof REPORT_SOURCES)[number];

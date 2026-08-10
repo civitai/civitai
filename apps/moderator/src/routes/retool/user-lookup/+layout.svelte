@@ -55,7 +55,20 @@
     </h2>
     <code class="text-sm text-dark-2">#{identity.id}</code>
     {#if identity.bannedAt}<Badge variant="destructive">banned</Badge>{/if}
+    <!-- Retool put both of these in the persistent header. A CSAM report against the account is the
+         single most important thing on the screen, and a Pending restriction is a SYSTEM mute nobody
+         has ruled on — without it that account reads as an unexplained manual mute. -->
+    {#if identity.csamReportCount > 0}
+      <Badge variant="destructive">
+        CSAM report{identity.csamReportCount > 1 ? ` ×${identity.csamReportCount}` : ''}
+      </Badge>
+    {/if}
     {#if identity.muted}<Badge variant="destructive">muted</Badge>{/if}
+    {#if identity.restrictionStatus}
+      <Badge variant={identity.restrictionStatus === 'Pending' ? 'destructive' : 'secondary'}>
+        {identity.restrictionType ?? 'restriction'}: {identity.restrictionStatus}
+      </Badge>
+    {/if}
     {#if identity.deletedAt}<Badge variant="secondary">deleted</Badge>{/if}
     {#if identity.isModerator}<Badge variant="secondary">moderator</Badge>{/if}
     {#if data.result?.curator.isCurator}<Badge variant="secondary">curator</Badge>{/if}

@@ -12,13 +12,17 @@
   import { LINK_CLASS, dateTime } from '$lib/format';
   import type { FormResult } from './form-result';
   import { fetchSupport } from './user-support';
-  import { BAN_REASONS } from './enforcement-options';
+  import { BAN_REASONS, MUTE_PRESETS, REWARDS_ELIGIBILITY } from './enforcement-options';
 
   type Identity = NonNullable<LayoutData['result']>['identity'];
 
 
-  let { identity, canAct, form }: { identity: Identity; canAct: boolean; form: FormResult } =
-    $props();
+  let {
+    identity,
+    canAct,
+    isSenior,
+    form,
+  }: { identity: Identity; canAct: boolean; isSenior: boolean; form: FormResult } = $props();
 
   const error = $derived(form?.scope === 'account' ? form.error : null);
 
@@ -27,6 +31,7 @@
   let purgeConfirm = $state('');
   let showTimedMute = $state(false);
   let reasonCode = $state('');
+  let muteHours = $state(24);
 
   // One flag for the whole panel: these actions all act on the same account, and none of them is safe to
   // interleave with another.
@@ -128,8 +133,21 @@
         <input type="hidden" name="userId" value={identity.id} />
         <div class="flex flex-wrap items-end gap-2">
           <label class="text-xs text-dark-2">
-            Hours
-            <Input name="hours" type="number" min="1" value="24" class="mt-1 w-24" required />
+            Duration
+            <!-- Retool's presetMutes. A free-text hours box invites 240 where someone meant 24. -->
+            <div class="mt-1 flex gap-1">
+              {#each MUTE_PRESETS as [value, label] (value)}
+                <Button
+                  type="button"
+                  size="xs"
+                  variant={muteHours === value ? 'default' : 'outline'}
+                  onclick={() => (muteHours = value)}
+                >
+                  {label}
+                </Button>
+              {/each}
+            </div>
+            <input type="hidden" name="hours" value={muteHours} />
           </label>
           <label class="flex-1 text-xs text-dark-2">
             Reason
@@ -138,6 +156,47 @@
           <Button type="submit" size="sm" disabled={submitting}>Apply</Button>
         </div>
       </form>
+    {/if}
+
+    <div class="mt-4 border-t border-dark-4 pt-4">
+      <h4 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
+        Rewards eligibility{identity.rewardsEligibility
+          ? ` — currently ${identity.rewardsEligibility}`
+          : ''}
+      </h4>
+      <form method="POST" action="?/setRewardsEligibility" use:enhance={onSubmit} class="flex gap-2">
+        <input type="hidden" name="userId" value={identity.id} />
+        {#each REWARDS_ELIGIBILITY as [value, label] (value)}
+          <Button
+            type="submit"
+            name="eligibility"
+            {value}
+            size="sm"
+            variant={identity.rewardsEligibility === value ? 'default' : 'outline'}
+            disabled={submitting}
+          >
+            {label}
+          </Button>
+        {/each}
+      </form>
+    </div>
+
+    {#if isSenior}
+      <div class="mt-4 border-t border-dark-4 pt-4">
+        <h4 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Moderator role</h4>
+        <form method="POST" action="?/toggleModerator" use:enhance={onSubmit} class="flex gap-2">
+          <input type="hidden" name="userId" value={identity.id} />
+          <input type="hidden" name="isModerator" value={identity.isModerator ? 'false' : 'true'} />
+          <Button
+            type="submit"
+            size="sm"
+            variant={identity.isModerator ? 'destructive' : 'default'}
+            disabled={submitting}
+          >
+            {identity.isModerator ? 'Deactivate moderator' : 'Activate moderator'}
+          </Button>
+        </form>
+      </div>
     {/if}
 
     {#if confirming === 'purge'}
@@ -180,7 +239,7 @@
           <p class="mb-2 text-sm text-white">
             {#if confirming === 'ban'}
               Ban <strong>{identity.username ?? identity.id}</strong>? Unpublishes their models and
-              notifies them. Images stay up unless the reason is Sexual Minor.
+              notifies them. Images stay up unless the reason is Sexual Minor, or you tick below.
             {:else}
               Unban <strong>{identity.username ?? identity.id}</strong>?
             {/if}
@@ -197,6 +256,17 @@
               </Select.Content>
             </Select.Root>
             <Textarea name="detailsInternal" rows={2} placeholder="Internal notes (optional)" />
+            <!-- Stored on the ban and read back by the appeal flow. Not emailed to the user. -->
+            <Textarea
+              name="detailsExternal"
+              rows={2}
+              placeholder="Rationale for the appeal record (optional)"
+              class="mt-2"
+            />
+            <label class="mt-2 flex items-center gap-2 text-sm text-dark-0">
+              <input type="checkbox" name="removeMedia" class="size-4 accent-primary" />
+              Also remove their images
+            </label>
           {/if}
           <div class="mt-2 flex gap-2">
             <Button
