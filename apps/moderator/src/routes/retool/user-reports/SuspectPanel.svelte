@@ -1,44 +1,69 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { enhance } from '$app/forms';
-  import type { SubmitFunction } from '@sveltejs/kit';
+  import { page as pageState } from '$app/state';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
+  import { SvelteSet } from 'svelte/reactivity';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
+  import ImageActionBar from '$lib/components/ImageActionBar.svelte';
+  import SuspectFilterBar from './SuspectFilterBar.svelte';
   import type { PageData } from './$types';
+  import { writeEnhancer } from '$lib/form-action';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
 
   let {
     suspectId,
     suspect,
+    filters,
     strikes,
     canAct,
     civitaiUrl,
     strikeError,
     notifyError,
+    imagesError,
+    imageResult,
     warning,
-    onSubmit,
-    submitting,
   }: {
     suspectId: number;
     suspect: NonNullable<PageData['suspect']>;
+    filters: PageData['filters'];
     strikes: NonNullable<PageData['strikes']>;
     canAct: boolean;
     civitaiUrl: string;
     strikeError: string | null;
     notifyError: string | null;
+    imagesError: string | null;
+    imageResult: string | null;
     warning: string | null;
-    onSubmit: SubmitFunction;
-    submitting: boolean;
   } = $props();
 
   let striking = $state(false);
   let notifying = $state(false);
+  let submitting = $state(false);
 
-  // A successful strike or notify closes its form; the page reloads, so `form` is fresh each time.
+  const selected = new SvelteSet<string | number>();
+
+  // This panel owns its writes so a success can tear down what it armed. Inferring that from the
+  // returned `warning` left a strike form open with a live submit after the strike had landed.
+  const onSubmit = writeEnhancer({
+    reload: true,
+    onSuccess: () => {
+      striking = false;
+      notifying = false;
+      selected.clear();
+    },
+    busy: (value) => (submitting = value),
+  });
+
+  // A new batch — a page of the grid, a filter change — must not carry the previous selection: those
+  // ids would still submit, and they belong to images no longer on screen. Keyed on the URL because
+  // `items` is a fresh array after ANY write on the page, which would discard a selection mid-assembly.
   $effect(() => {
-    if (warning !== null) striking = false;
+    pageState.url.search;
+    untrack(() => selected.clear());
   });
 </script>
 
@@ -52,8 +77,10 @@
         {/if}
       </h2>
       <p class="text-xs text-dark-2">
-        Showing the {suspect.items.length} most recent reviewable{suspect.truncated ? ' of more' : ''}.
-        Blocked images are prior enforcement and are counted but not shown.
+        {num(suspect.matched)} match the filters; showing {suspect.items.length}.
+        {#if suspect.total > suspect.blocked}
+          {num(suspect.total - suspect.blocked)} remaining after prior enforcement.
+        {/if}
         <a href={userLookupUrl(suspectId, 'reports')} class={LINK_CLASS}>
           Their reports in User Lookup
         </a>.
@@ -146,17 +173,64 @@
   <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Recent content</h3>
 </section>
 
+<!-- Keyed on the URL, not on `data`: an unrelated write invalidates `load` and would otherwise reset a
+     half-typed filter or an in-progress selection. -->
+{#key pageState.url.search}
+  <SuspectFilterBar {filters} />
+{/key}
+
+{#if imagesError}
+  <div
+    class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
+    role="alert"
+  >
+    {imagesError}
+  </div>
+{:else if imageResult}
+  <div class="mb-3 rounded-md border border-dark-4 bg-dark-6 p-2 text-sm text-dark-0" role="status">
+    {imageResult}
+  </div>
+{/if}
+
+{#if canAct}
+  <ImageActionBar
+    {selected}
+    selectable={suspect.items.map((i) => i.id)}
+    {onSubmit}
+    {submitting}
+    notify={false}
+  />
+{/if}
+
 <ImageQueueGrid
   items={suspect.items}
   {civitaiUrl}
-  empty="This account has no reviewable content."
+  nextCursor={suspect.nextCursor}
+  selected={canAct ? selected : undefined}
+  empty="No images match these filters."
+  endLabel="End of this account's content."
   card={imageCard}
 />
 
-{#snippet imageCard(img: { tosViolation?: boolean; needsReview?: string | null; createdAt?: Date })}
-  <div class="flex flex-wrap items-baseline gap-x-2 p-2 text-xs text-dark-2">
-    {#if img.tosViolation}<Badge variant="destructive">ToS</Badge>{/if}
-    {#if img.needsReview}<Badge variant="secondary">{img.needsReview}</Badge>{/if}
-    <span>{dateTime(img.createdAt ?? null)}</span>
+{#snippet imageCard(img: {
+  tosViolation?: boolean;
+  needsReview?: string | null;
+  createdAt?: Date;
+  ingestion?: string;
+  blockedFor?: string | null;
+  prompt?: string | null;
+})}
+  <div class="flex flex-col gap-1.5 p-2 text-xs text-dark-2">
+    <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+      {#if img.ingestion === 'Blocked'}
+        <Badge variant="destructive">blocked{img.blockedFor ? `: ${img.blockedFor}` : ''}</Badge>
+      {/if}
+      {#if img.tosViolation}<Badge variant="destructive">ToS</Badge>{/if}
+      {#if img.needsReview}<Badge variant="secondary">{img.needsReview}</Badge>{/if}
+      <span>{dateTime(img.createdAt ?? null)}</span>
+    </div>
+    {#if img.prompt}
+      <p class="line-clamp-3 wrap-break-word" title={img.prompt}>{img.prompt}</p>
+    {/if}
   </div>
 {/snippet}

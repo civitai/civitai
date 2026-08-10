@@ -4,6 +4,9 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { cn } from '@civitai/ui/utils.js';
+  import { page as pageState } from '$app/state';
+  import { browser } from '$app/environment';
+  import { fetchQueueImageCounts } from './image-counts';
   import type { PageData } from './$types';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { reportDetail, reportReasonLabel, reportStatusVariant } from '$lib/reports';
@@ -34,10 +37,27 @@
 
   const lastPage = $derived(Math.max(1, Math.ceil(total / perPage)));
 
+  // Deliberately not in `load`: the `remaining` half of this cannot use the covering index and takes
+  // seconds across 50 accounts, which would blank the queue behind it on every write.
+  const imageCounts = $derived(
+    browser && queue.length
+      ? fetchQueueImageCounts(queue.map((r) => r.entityId ?? 0).filter(Boolean))
+      : null
+  );
+
   // Both params have to survive each other: a bare `?user=` sent the moderator back to page 1, and a
   // bare `?page=` closed the account they had open.
   const suspectHref = (entityId: number) => `?page=${page}&user=${entityId}`;
-  const pageHref = (n: number) => (suspectId ? `?page=${n}&user=${suspectId}` : `?page=${n}`);
+
+  // Paging the queue keeps the image filters, which describe the open account, but never the cursor —
+  // it indexes a batch belonging to whatever was on screen before.
+  const pageHref = (n: number) => {
+    const params = new URLSearchParams(pageState.url.search);
+    params.set('page', String(n));
+    params.delete('cursor');
+    if (suspectId) params.set('user', String(suspectId));
+    return `?${params}`;
+  };
 
 </script>
 
@@ -85,6 +105,16 @@
             {#if r.alsoReportedByCount > 0}
               <span class="text-xs text-amber-300">+{num(r.alsoReportedByCount)} also reported</span>
             {/if}
+            {#await imageCounts then counts}
+              {@const c = counts?.[String(r.entityId)]}
+              {#if c}
+                <span class="text-xs text-dark-2">
+                  {num(c.remaining)} of {num(c.total)} images left
+                </span>
+              {/if}
+            {:catch}
+              <span class="text-xs text-dark-3">image counts unavailable</span>
+            {/await}
             <span class="text-xs text-dark-2">{dateTime(r.createdAt)}</span>
           </div>
 

@@ -71,14 +71,15 @@
         <SuspectPanel
           suspectId={data.suspectId}
           suspect={data.suspect}
+          filters={data.filters}
           strikes={data.strikes}
           canAct={data.canAct}
           civitaiUrl={data.civitaiUrl}
           strikeError={scoped('strike')}
           notifyError={scoped('notify')}
+          imagesError={scoped('images')}
+          imageResult={form && 'imageResult' in form ? (form.imageResult ?? null) : null}
           warning={form && 'warning' in form ? (form.warning ?? null) : null}
-          {onSubmit}
-          {submitting}
         />
       {/key}
     {:else}

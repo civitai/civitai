@@ -8,18 +8,26 @@
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import { num } from '$lib/format';
-  import { VIOLATION_TYPES } from './sources';
+  import { VIOLATION_TYPES } from '$lib/violations';
 
   let {
     selected,
+    selectable,
     onSubmit,
     submitting,
-    ownerCount,
+    ownerCount = 1,
+    notify = true,
+    flags = true,
   }: {
     selected: SvelteSet<string | number>;
+    /** Every id currently on screen, for the select-all helpers. */
+    selectable: (string | number)[];
     onSubmit: SubmitFunction;
     submitting: boolean;
-    ownerCount: number;
+    /** How many accounts the selection spans — a removal here can touch accounts not looked up. */
+    ownerCount?: number;
+    notify?: boolean;
+    flags?: boolean;
   } = $props();
 
   const ids = $derived([...selected].join(','));
@@ -39,6 +47,10 @@
       flagging = false;
     }
   });
+
+  const selectAll = (n?: number) => {
+    for (const id of n ? selectable.slice(0, n) : selectable) selected.add(id);
+  };
 </script>
 
 <section
@@ -54,27 +66,43 @@
       {:else}
         <span class="font-semibold text-white">{num(count)}</span> selected
         {#if ownerCount > 1}
-          <span class="text-amber-300">
-            · spanning {ownerCount} accounts
-          </span>
+          <span class="text-amber-300">· spanning {ownerCount} accounts</span>
         {/if}
       {/if}
     </p>
 
-    {#if count > 0 && !confirming && !notifying && !flagging}
-      <div class="flex flex-wrap gap-2">
-        <Button size="sm" variant="destructive" onclick={() => (confirming = 'remove')}>
-          Remove selected
+    <div class="flex flex-wrap gap-2">
+      {#if selectable.length > 0}
+        <Button size="sm" variant="outline" onclick={() => selectAll()}>
+          Select all {num(selectable.length)}
         </Button>
-        <form method="POST" action="?/restore" use:enhance={onSubmit}>
-          <input type="hidden" name="imageIds" value={ids} />
-          <Button type="submit" size="sm" disabled={submitting}>Restore selected</Button>
-        </form>
-        <Button size="sm" onclick={() => (notifying = true)}>Notify owners</Button>
-        <Button size="sm" variant="outline" onclick={() => (flagging = !flagging)}>Flags</Button>
-      </div>
-    {/if}
+        {#if selectable.length > 100}
+          <Button size="sm" variant="outline" onclick={() => selectAll(100)}>Select 100</Button>
+        {/if}
+      {/if}
+      {#if count > 0}
+        <Button size="sm" variant="outline" onclick={() => selected.clear()}>Unselect all</Button>
+      {/if}
+    </div>
   </div>
+
+  {#if count > 0 && !confirming && !notifying && !flagging}
+    <div class="mt-3 flex flex-wrap gap-2">
+      <Button size="sm" variant="destructive" onclick={() => (confirming = 'remove')}>
+        Remove selected
+      </Button>
+      <form method="POST" action="?/restore" use:enhance={onSubmit}>
+        <input type="hidden" name="imageIds" value={ids} />
+        <Button type="submit" size="sm" disabled={submitting}>Restore selected</Button>
+      </form>
+      {#if notify}
+        <Button size="sm" onclick={() => (notifying = true)}>Notify owners</Button>
+      {/if}
+      {#if flags}
+        <Button size="sm" variant="outline" onclick={() => (flagging = !flagging)}>Flags</Button>
+      {/if}
+    </div>
+  {/if}
 
   {#if confirming === 'remove'}
     <form method="POST" action="?/remove" use:enhance={onSubmit} class="mt-3">
@@ -150,9 +178,7 @@
   {#if notifying}
     <form method="POST" action="?/notifyOwners" use:enhance={onSubmit} class="mt-3">
       <input type="hidden" name="imageIds" value={ids} />
-      <p class="mb-2 text-xs text-dark-2">
-        One notification per affected account, not per image.
-      </p>
+      <p class="mb-2 text-xs text-dark-2">One notification per affected account, not per image.</p>
       <Textarea name="message" rows={2} placeholder="What should these users be told?" required />
       <div class="mt-2 flex gap-2">
         <Button type="submit" size="sm" disabled={submitting}>Send</Button>

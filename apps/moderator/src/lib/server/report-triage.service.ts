@@ -22,15 +22,93 @@ export type SuspectImage = {
   postId: number | null;
   tosViolation: boolean;
   needsReview: string | null;
+  ingestion: string;
+  blockedFor: string | null;
+  prompt: string | null;
+  negativePrompt: string | null;
+};
+
+/** Retool's "Images" and "Remaining" queue columns: `remaining` is what a colleague has not already
+ *  removed, and is the number that says whether an account still needs work.
+ *
+ *  ⚠️ Client-fetched, never in `load`. `ingestion` is not in `Image_userId_postId_idx`, so the
+ *  `remaining` case expression turns an Index-Only Scan into a heap scan: measured 67 ms → 8.3 s over
+ *  50 queued users. Retool left the same column commented out. Putting it back in the page load blanks
+ *  the queue for eight seconds on every write. */
+export async function getImageCountsForUsers(
+  userIds: number[]
+): Promise<Map<number, { total: number; remaining: number }>> {
+  const ids = [...new Set(userIds.filter((id) => id > 0))];
+  if (!ids.length) return new Map();
+
+  const rows = await dbRead
+    .selectFrom('Image')
+    .select((eb) => [
+      'userId',
+      eb.fn.countAll<string>().as('total'),
+      eb.fn.count<string>(sql`case when "ingestion" <> 'Blocked' then 1 end`).as('remaining'),
+    ])
+    .where('userId', 'in', ids)
+    .groupBy('userId')
+    .execute();
+
+  return new Map(
+    rows.map((r) => [r.userId, { total: Number(r.total), remaining: Number(r.remaining) }])
+  );
+}
+
+/** A pasted prompt fragment is full of `\(` escapes and `_` tokens. Unescaped, a trailing `\` eats the
+ *  closing `%` and the search silently matches nothing — the account then reads clean for that phrase. */
+const contains = (term: string) => `%${term.replace(/([\\%_])/g, '\\$1')}%`;
+
+export type SuspectImageFilters = {
+  tosOnly: boolean;
+  noPrompt: boolean;
+  levels: number[];
+  from: Date | null;
+  to: Date | null;
+  prompt: string;
+  negativePrompt: string;
+};
+
+export const EMPTY_SUSPECT_FILTERS: SuspectImageFilters = {
+  tosOnly: false,
+  noPrompt: false,
+  levels: [],
+  from: null,
+  to: null,
+  prompt: '',
+  negativePrompt: '',
 };
 
 export async function getSuspectImages(
   userId: number,
-  limit = 60
-): Promise<Capped<SuspectImage> & { total: number; blocked: number }> {
-  const [rows, counts] = await Promise.all([
-    dbRead
-      .selectFrom('Image')
+  filters: SuspectImageFilters = EMPTY_SUSPECT_FILTERS,
+  { limit = 60, cursor }: { limit?: number; cursor?: number } = {}
+): Promise<
+  Capped<SuspectImage> & { total: number; blocked: number; matched: number; nextCursor?: number }
+> {
+  const base = dbRead.selectFrom('Image').where('userId', '=', userId);
+
+  const filtered = (() => {
+    let q = base;
+    if (filters.tosOnly) q = q.where('tosViolation', '=', true);
+    // `meta` is null on an upload and `{}` on a wipe; both are "no prompt" to a moderator.
+    if (filters.noPrompt) q = q.where(sql<boolean>`coalesce("meta" ->> 'prompt', '') = ''`);
+    if (filters.levels.length) q = q.where('nsfwLevel', 'in', filters.levels);
+    if (filters.from) q = q.where('createdAt', '>=', filters.from);
+    if (filters.to) q = q.where('createdAt', '<=', filters.to);
+    if (filters.prompt)
+      q = q.where(sql<boolean>`"meta" ->> 'prompt' ILIKE ${contains(filters.prompt)}`);
+    if (filters.negativePrompt)
+      q = q.where(
+        sql<boolean>`"meta" ->> 'negativePrompt' ILIKE ${contains(filters.negativePrompt)}`
+      );
+    return q;
+  })();
+
+  const [rows, counts, matchedRow] = await Promise.all([
+    (cursor ? filtered.where('id', '<', cursor) : filtered)
       .select([
         'id',
         'url',
@@ -41,32 +119,31 @@ export async function getSuspectImages(
         'postId',
         'tosViolation',
         'needsReview',
+        'ingestion',
+        'blockedFor',
+        sql<string | null>`"meta" ->> 'prompt'`.as('prompt'),
+        sql<string | null>`"meta" ->> 'negativePrompt'`.as('negativePrompt'),
       ])
-      .where('userId', '=', userId)
-      .where('ingestion', '!=', 'Blocked')
       .orderBy('id', 'desc')
       .limit(limit + 1)
       .execute(),
-    // Retool's GetImageCount counted everything, blocked included, and showed the blocked ones — that
-    // is prior enforcement, and a moderator deciding whether to ban wants to see it.
-    //
-    // The grid still hides them (they cannot be reviewed), so the two numbers are reported separately.
-    // A single blended total is what produces "184 images" above "no reviewable images" on the
-    // accounts where a colleague has already removed everything — which reads as a broken panel.
-    dbRead
-      .selectFrom('Image')
+    base
       .select((eb) => [
         eb.fn.countAll<string>().as('total'),
         eb.fn.count<string>(sql`case when "ingestion" = 'Blocked' then 1 end`).as('blocked'),
       ])
-      .where('userId', '=', userId)
       .executeTakeFirst(),
+    filtered.select((eb) => eb.fn.countAll<string>().as('matched')).executeTakeFirst(),
   ]);
 
+  const items = rows.slice(0, limit) as unknown as SuspectImage[];
+  const truncated = rows.length > limit;
   return {
-    items: rows.slice(0, limit) as unknown as SuspectImage[],
-    truncated: rows.length > limit,
+    items,
+    truncated,
+    nextCursor: truncated ? items[items.length - 1]?.id : undefined,
     total: Number(counts?.total ?? 0),
     blocked: Number(counts?.blocked ?? 0),
+    matched: Number(matchedRow?.matched ?? 0),
   };
 }

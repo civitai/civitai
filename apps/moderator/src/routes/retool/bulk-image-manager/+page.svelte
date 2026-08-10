@@ -12,7 +12,7 @@
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import { BULK_SOURCE_LABELS, BULK_SOURCES } from './sources';
-  import BulkActionBar from './BulkActionBar.svelte';
+  import ImageActionBar from '$lib/components/ImageActionBar.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -147,7 +147,13 @@
   </section>
 
   {#if data.canAct}
-    <BulkActionBar {selected} {onSubmit} {submitting} ownerCount={selectedOwnerCount} />
+    <ImageActionBar
+      {selected}
+      selectable={batch.items.map((i) => i.id)}
+      {onSubmit}
+      {submitting}
+      ownerCount={selectedOwnerCount}
+    />
   {/if}
 
   <ImageQueueGrid
