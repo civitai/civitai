@@ -16,7 +16,6 @@ export function ModelVersionReview({ modelId, versionId, thumbsDownCount, thumbs
       <Tooltip
         label={`${Math.round(positiveRating * 100)}% of reviews are positive`}
         openDelay={500}
-        color="gray"
       >
         <div>
           <Anchor

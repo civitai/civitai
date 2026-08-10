@@ -474,16 +474,18 @@ export const updatePostHandler = async ({
         }
       }
 
-      // Give reward for first post of the day
-      await firstDailyPostReward.apply(
-        {
-          postId: updatedPost.id,
-          posterId: updatedPost.userId,
-        },
-        { ip: ctx.ip }
-      );
-
       if (!isScheduled) {
+        // Scheduled posts are rewarded by process-scheduled-publishing when they
+        // actually go live. Granting here would spend the daily cap on the day the
+        // post was scheduled and leave the publish day unrewarded.
+        await firstDailyPostReward.apply(
+          {
+            postId: updatedPost.id,
+            posterId: updatedPost.userId,
+          },
+          { ip: ctx.ip }
+        );
+
         await eventEngine.processEngagement({
           userId: updatedPost.userId,
           type: 'published',

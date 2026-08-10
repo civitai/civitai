@@ -413,7 +413,7 @@ export const cancelExpiredPrepaidMemberships = createJob(
     const uniqueUserIds = [...new Set(allUserIds)];
     if (uniqueUserIds.length > 0) {
       console.log(`Invalidating sessions for ${uniqueUserIds.length} users`);
-      await Promise.all(uniqueUserIds.map((userId) => refreshSession(userId)));
+      await Promise.all(uniqueUserIds.map((userId) => refreshSession(userId, { caller: 'job' })));
     }
 
     console.log(

@@ -1,24 +1,41 @@
-import { suggestedFee } from '$lib/monetization/fee';
 import type { CsvVersionRow } from '$lib/server/models';
 
-// CSV round-trip for bulk licensing-fee editing (early-access 2.2). The creator downloads their versions, edits a
-// single per-image `fee` column in Excel/Sheets, and re-uploads. `versionId` is the immutable join key; the `fee`
-// column is pre-filled with the current fee so untouched rows are no-ops and a blanked cell means "turn off".
+// CSV export of a creator's monetization config — one row per model version, carrying the licensing fee,
+// the paid-access gate and the donation goal together. Export only: there is no import, so this is a
+// record of what a version is set to rather than a round-trip.
+//
+// Deliberately a plain dump. No earnings, no buyer counts, no goal progress — each needs a join that turns
+// this into a report, and those belong in analytics.
 const COLUMNS = [
-  'versionId',
+  'modelId',
+  'modelVersionId',
   'model',
   'version',
+  'modelType',
   'baseModel',
-  'type',
-  'recommendedFee',
-  'fee',
+  'status',
+  'usageControl',
+  'licensingFee',
+  'licensingFeeType',
+  'licensingFeeSettlementCurrency',
+  'accessKind',
+  'timeframeDays',
+  'endsAt',
+  'downloadPrice',
+  'generationPrice',
+  'generationFree',
+  'generationTrialLimit',
+  'donationGoalTitle',
+  'donationGoalAmount',
+  'donationGoalActive',
 ] as const;
 
 // UTF-8 BOM so Excel opens non-ASCII model names correctly.
 const BOM = '﻿';
 
-const csvCell = (v: string | number) => {
-  const s = String(v ?? '');
+const csvCell = (v: string | number | boolean | Date | null | undefined) => {
+  if (v == null) return '';
+  const s = v instanceof Date ? v.toISOString() : String(v);
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 
@@ -27,97 +44,31 @@ export function buildFeeCsv(rows: CsvVersionRow[]): string {
   for (const r of rows) {
     lines.push(
       [
+        r.modelId,
         r.versionId,
         r.modelName,
         r.versionName,
-        r.baseModel,
         r.modelType,
-        suggestedFee({ modelType: r.modelType, baseModel: r.baseModel }),
-        r.licensingFee ?? '',
+        r.baseModel,
+        r.status,
+        r.usageControl,
+        r.licensingFee,
+        r.licensingFeeType,
+        r.licensingFeeSettlementCurrency,
+        r.accessKind,
+        r.timeframeDays,
+        r.endsAt,
+        r.downloadPrice,
+        r.generationPrice,
+        r.generationFree,
+        r.generationTrialLimit,
+        r.donationGoalTitle,
+        r.donationGoalAmount,
+        r.donationGoalActive,
       ]
         .map(csvCell)
         .join(',')
     );
   }
   return BOM + lines.join('\r\n');
-}
-
-// Minimal RFC-4180 tokenizer: handles quoted fields, escaped "" quotes, and CRLF/LF line breaks.
-function tokenize(text: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = '';
-  let quoted = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (quoted) {
-      if (c === '"') {
-        if (text[i + 1] === '"') {
-          field += '"';
-          i++;
-        } else quoted = false;
-      } else field += c;
-    } else if (c === '"') quoted = true;
-    else if (c === ',') {
-      row.push(field);
-      field = '';
-    } else if (c === '\n') {
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = '';
-    } else if (c !== '\r') field += c;
-  }
-  if (field !== '' || row.length > 0) {
-    row.push(field);
-    rows.push(row);
-  }
-  return rows;
-}
-
-export type ParsedFeeEntry = { versionId: number; fee: number | null; row: number };
-export type ParsedFeeCsv =
-  | { ok: false; error: string }
-  | { ok: true; rows: ParsedFeeEntry[]; errors: { row: number; reason: string }[] };
-
-export function parseFeeCsv(text: string): ParsedFeeCsv {
-  // The literal below IS a U+FEFF BOM: Excel prepends one to CSV exports and it must be stripped or
-  // the first header cell never matches.
-  // eslint-disable-next-line no-irregular-whitespace
-  const grid = tokenize(text.replace(/^﻿/, ''));
-  if (grid.length < 2) return { ok: false, error: 'The file has no data rows.' };
-  const header = grid[0].map((h) => h.trim().toLowerCase());
-  const idIdx = header.indexOf('versionid');
-  const feeIdx = header.indexOf('fee');
-  if (idIdx === -1 || feeIdx === -1)
-    return {
-      ok: false,
-      error: 'The file must have "versionId" and "fee" columns — use the downloaded template.',
-    };
-
-  const rows: ParsedFeeEntry[] = [];
-  const errors: { row: number; reason: string }[] = [];
-  for (let i = 1; i < grid.length; i++) {
-    const cells = grid[i];
-    if (cells.every((c) => c.trim() === '')) continue;
-    const rowNo = i + 1; // 1-based line number (the header is line 1)
-    const idRaw = (cells[idIdx] ?? '').trim();
-    const versionId = Number(idRaw);
-    if (!Number.isInteger(versionId) || versionId <= 0) {
-      errors.push({ row: rowNo, reason: `invalid versionId "${idRaw}"` });
-      continue;
-    }
-    const feeRaw = (cells[feeIdx] ?? '').trim();
-    let fee: number | null = null;
-    if (feeRaw !== '') {
-      const n = Number(feeRaw);
-      if (!Number.isFinite(n)) {
-        errors.push({ row: rowNo, reason: `invalid fee "${feeRaw}"` });
-        continue;
-      }
-      fee = n === 0 ? null : n;
-    }
-    rows.push({ versionId, fee, row: rowNo });
-  }
-  return { ok: true, rows, errors };
 }

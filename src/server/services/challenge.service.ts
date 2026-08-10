@@ -2151,8 +2151,6 @@ export async function deleteChallenge(id: number) {
         });
       }
     }
-    // Idempotent via deterministic externalTransactionId prefixes (the buzz service dedups), so
-    // re-refunding an already-Cancelled challenge is a net-zero no-op, not a double-spend.
     await refundUserChallengeFunds(id, 'delete');
   }
 
@@ -4126,12 +4124,15 @@ export async function getWinnerCooldownStatus(
       ? Prisma.sql`AND ch."eventId" = ${challenge.eventId}`
       : Prisma.sql`AND ch."eventId" IS NULL`;
 
+  // A user challenge never applies the cooldown to its own winners, so a win in one must not
+  // consume the System/Mod cooldown either. Keep in sync with getJudgedEntries.
   const [lastWin] = await dbRead.$queryRaw<[{ createdAt: Date; challengeId: number }] | []>`
     SELECT cw."createdAt", cw."challengeId"
     FROM "ChallengeWinner" cw
     JOIN "Challenge" ch ON ch.id = cw."challengeId"
     WHERE cw."userId" = ${userId}
       AND ch.status = 'Completed'
+      AND ch."source" <> 'User'
       AND cw."createdAt" > now() - ${cooldownInterval}::interval
       ${eventCondition}
     ORDER BY cw."createdAt" DESC

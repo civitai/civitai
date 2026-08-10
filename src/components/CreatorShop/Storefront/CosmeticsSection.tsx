@@ -6,7 +6,8 @@ import { SectionHeader } from '~/components/CreatorShop/Storefront/SectionHeader
 import { ShopItemGrid } from '~/components/CreatorShop/Storefront/ShopItemGrid';
 import type { SortKey } from '~/components/CreatorShop/Storefront/storefront.constants';
 import { SORT_OPTIONS } from '~/components/CreatorShop/Storefront/storefront.constants';
-import { creatorShopFilterTypes } from '~/components/CreatorShop/Submit/submit.constants';
+import { shopFilterTypesWithPack } from '~/components/CreatorShop/Submit/submit.constants';
+import { PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
 import { ShopFiltersDropdown } from '~/components/CosmeticShop/ShopFiltersDropdown';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import type { GetShopInput } from '~/server/schema/cosmetic-shop.schema';
@@ -26,7 +27,11 @@ export function CosmeticsSection({
   const cosmetics = useMemo(() => {
     let list = [...items];
     const types = filters.cosmeticTypes;
-    if (types?.length) list = list.filter((c) => types.includes(c.cosmetic.type));
+    // A pack has no type of its own; it matches only the Pack chip.
+    if (types?.length)
+      list = list.filter((c) =>
+        c.cosmetic ? types.includes(c.cosmetic.type) : types.includes(PACK_FILTER_VALUE)
+      );
     switch (sort) {
       case 'price-asc':
         list.sort((a, b) => a.unitAmount - b.unitAmount);
@@ -57,7 +62,7 @@ export function CosmeticsSection({
             <ShopFiltersDropdown
               filters={filters}
               setFilters={setFilters}
-              availableTypes={creatorShopFilterTypes}
+              availableTypes={shopFilterTypesWithPack}
               hideModifiers
             />
           </Group>

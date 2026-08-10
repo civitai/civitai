@@ -347,7 +347,7 @@ export async function fulfillMembershipGift({
 
   // Webhooks for the subscription change will also bust these, but don't rely on ordering
   await invalidateSubscriptionCaches(gift.recipientId);
-  await refreshSession(gift.recipientId);
+  await refreshSession(gift.recipientId, { caller: 'membership' });
 
   await createNotification({
     type: 'membership-gift-received',
@@ -566,7 +566,7 @@ export async function revokeMembershipGift({
   });
 
   await invalidateSubscriptionCaches(gift.recipientId);
-  await refreshSession(gift.recipientId);
+  await refreshSession(gift.recipientId, { caller: 'membership' });
 
   await log({
     type: 'warning',
@@ -635,7 +635,7 @@ export async function keepGiftMembership({ userId }: { userId: number }) {
   });
 
   await invalidateSubscriptionCaches(userId);
-  await refreshSession(userId);
+  await refreshSession(userId, { caller: 'membership' });
 
   await log({ type: 'info', stage: 'keep', userId, stripeSubscriptionId: stripeSub.id });
 

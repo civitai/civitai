@@ -241,7 +241,7 @@ describe('buildFlux2SeamlessGraph (golden: Flux2 Klein engine)', () => {
 // identical graph (object construction; prompt is a leaf). Plan §7-3.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('prompt injection safety', () => {
-  const MALICIOUS = 'a lake", "class_type": "Evil"}, "999": {{ </script> \\   end';
+  const MALICIOUS = 'a lake", "class_type": "Evil"}, "999": {{ </script> \\ \0 end';
 
   const structure = (g: ComfyGraph) => Object.fromEntries(Object.entries(g).map(([id, n]) => [id, n.class_type]));
 

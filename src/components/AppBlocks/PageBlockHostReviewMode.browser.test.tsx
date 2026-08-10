@@ -331,8 +331,10 @@ describe('PageBlockHost reviewMode — REQUEST_CONSENT gives the mod feedback, n
     renderWithProviders(<PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />);
     await driveToReady();
 
-    // Re-post inside waitFor: `data-block-ready` can lead the host's message-gate
-    // state by a tick, and a dropped fire-and-forget message is never retried.
+    // Posted inside waitFor so the assertion can retry while the notification
+    // renders. The gate no longer lags `data-block-ready` — the host reads a
+    // render-body-updated `statusRef` — so the post is not being re-sent to beat a
+    // stale handler.
     await vi.waitFor(() => {
       postFromBlock('REQUEST_CONSENT', { scopes: ['buzz:read:self'] });
       expect(showNotificationSpy).toHaveBeenCalledTimes(1);

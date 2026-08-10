@@ -24,6 +24,10 @@ function ReportCsamUserPage() {
 
   const features = useFeatureFlags();
   const userId = userIds[0];
+  const imageId =
+    typeof router.query.imageId === 'string'
+      ? Number(router.query.imageId) || undefined
+      : undefined;
 
   const handleStepperComplete = () => {
     if (userIds.length > 1) {
@@ -65,6 +69,7 @@ function ReportCsamUserPage() {
         <CsamImageSelection
           onNext={stepperActions.goToNextStep}
           onMissing={handleStepperComplete}
+          imageId={imageId}
         />
       )}
       {currentStep === 2 && (

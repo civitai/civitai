@@ -5,13 +5,39 @@
 import { TRPCError } from '@trpc/server';
 import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { createAxiomLogger, safeError } from '@civitai/axiom/client';
+import type { AxiomDeps, EmitLog } from '@civitai/axiom/client';
 import { env } from '~/env/server';
 
 // The build guard is a Next.js concern, so it lives here in the app shim — not in
 // the app-agnostic @civitai/axiom package. Skip the client during `next build`.
 const noopLog = async (_data: MixedObject, _datastream?: string) => {};
 
-export const logToAxiom = env.IS_BUILD ? noopLog : createAxiomLogger().logToAxiom;
+// 🔴 THIS MODULE IS IN THE **CLIENT** BUNDLE. It looks server-only and is not:
+// `src/pages/_app.tsx` → `~/server/services/system-cache` → `~/server/redis/fail-open-log`
+// reaches it, so anything imported here at module scope is bundled for the browser too.
+// A static `import { emitOtelLog } from '@civitai/telemetry/otel-logs'` here pulled
+// prom-client into the browser graph and broke `next build` with
+// `Can't resolve 'cluster' / 'fs' / 'v8'`. Nothing else catches that — typecheck, eslint
+// and both vitest projects all stayed green, because only the bundler walks this edge.
+//
+// So the OTel sink is REGISTERED, not imported: `src/instrumentation.node.ts` (server-only
+// by construction) calls `setStructuredLogSink(emitOtelLog)` at boot. The type import
+// above is erased at compile time and adds no runtime edge.
+//
+// The sink is read per call from this stable object, so registering it after the logger
+// is built still takes effect. Pinned by a test in @civitai/axiom.
+const sink: AxiomDeps = {};
+
+/**
+ * Attach an additional sink for every structured log record. Server-only callers.
+ * Additive: it cannot change or break the stderr write or the Axiom dual-write, and a
+ * sink that throws is contained by the logger.
+ */
+export function setStructuredLogSink(emitLog: EmitLog): void {
+  sink.emitLog = emitLog;
+}
+
+export const logToAxiom = env.IS_BUILD ? noopLog : createAxiomLogger({}, sink).logToAxiom;
 export { safeError };
 
 /**

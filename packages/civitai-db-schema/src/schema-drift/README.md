@@ -167,7 +167,7 @@ already-parsed JavaScript arrays, which is precisely how the `name[]` bug above 
 invisible to it — so a green suite here is not a claim that the queries behave correctly
 against a real server. Check that by running the tool.
 
-## Measured against production, 2026-08-03
+## Measured against the committed snapshot, 2026-08-05
 
 `__tests__/fixtures/catalog-production-2026-08-03.json` is a point-in-time capture of the
 production constraint catalogs — table and column names, nullability, foreign-key and
@@ -180,22 +180,32 @@ pnpm --filter @civitai/db-schema drift \
 ```
 
 ```
-declared owning-side relations : 474
+declared owning-side relations : 485
 checked against the database   : 445
-skipped (view / absent table)  : 29
+skipped (view / absent table)  : 40
 MISSING foreign key            : 37
 wrong referential action       : 0   <- see below
-MISSING column                 : 11
+MISSING column                 : 12
 nullability checked            : 2383
-nullability drift              : 246
+nullability drift              : 13
 uniqueness declarations checked: 122
 missing unique index           : 1
 ```
 
-The 246 nullability findings are 235 across seven `*Rank` tables, `ChallengeEvent.createdById`,
-`Purchase.userId`, and nine `*Metric.updatedAt` columns. The 11 missing columns are
-`ModelFlag.sfwOnly` and ten `UserRank.thumbs{Up,Down}Count*Rank`. The single uniqueness
-finding is `ImageResource(modelVersionId, name, imageId)`.
+63 findings in total. The 13 nullability findings are `Purchase.userId`,
+`ChallengeEvent.createdById`, nine `*Metric.updatedAt` columns, and
+`CosmeticShopItem.cosmeticId` / `UserCosmeticShopPurchases.cosmeticId`. Those last two are
+artefacts of the snapshot's age, not live drift: the packs migration made them nullable on
+2026-08-04 and the database has it. A recapture drops them. The 12 missing columns are
+`ModelFlag.sfwOnly`, `UserCosmeticShopPurchases.meta`, and ten
+`UserRank.thumbs{Up,Down}Count*Rank`. The single uniqueness finding is
+`ImageResource(modelVersionId, name, imageId)`.
+
+**Nullability was 246 when this tool shipped.** #3592 then marked the seven `*Rank` families'
+columns optional to match the database and 235 of them went away — a real remediation, and
+the reason this section is dated separately from the snapshot. Nothing observed it at the
+time, because no CI job ran this package's suite; the two assertions that pinned those 235
+were red on `main` from the moment #3592 merged until the packages were wired into CI.
 
 **The `0` on referential actions is "not measured", not "clean".** This snapshot predates
 that check and carries no `ON DELETE`/`ON UPDATE` data, so all 408 comparable foreign keys
@@ -241,8 +251,177 @@ named findings survive rather than pinning the totals, so ordinary schema work d
 the suite for reasons that have nothing to do with this tool. Re-run the command above for
 current numbers.
 
-## Not wired into CI
+## In CI
 
-Run by hand today. The root `unit` Vitest project globs `src/**` only, so this package's
-suite runs via `pnpm --filter @civitai/db-schema test` — as do the suites of the seven other
-packages in the same position.
+The root `unit` Vitest project globs `src/**` and `scripts/**` — both root-relative — and the
+`Unit tests` job runs `vitest run --project unit`, so for a while nothing in CI invoked this
+package's suite, or any of the eight other `packages/*` suites. 616 tests, 81 of them this
+tool's, ran only for whoever remembered `pnpm --filter <pkg> test` by hand.
+
+They now run in the `Package unit tests` job, from the `packages/*/vitest.config.*` entries in
+the root `vitest.config.mts`:
+
+```bash
+pnpm run test:packages:run          # all nine package suites
+pnpm --filter @civitai/db-schema test   # just this one
+```
+
+That job asserts a ledger — every workspace package that has a vitest config and a test file
+on disk must appear in the results, having executed at least one non-skipped test — because
+`--project` matching nothing exits 0, and so does a config whose globs stopped resolving, and
+so does a suite that skips itself entirely.
+
+Two things it is worth being precise about, because both are easy to overstate:
+
+- **It is not an interlock.** `main` has branch protection but no `required_status_checks`, so
+  a red `Package unit tests` does not prevent a merge. It renders red rather than
+  red-but-ignored, which is the real difference from the `Unit tests` job.
+- **The workspace gap is not closed, only the `packages/*` part of it.** `apps/*` has four
+  more vitest configs and ~43 test files that still no CI job runs. Same one-line fix — another
+  glob in the same `projects` array — plus teaching the ledger script about `apps/`, which
+  currently hardcodes `packages/`. Deliberately left to a follow-up rather than widened into
+  the change that closed the first part.
+
+## Gating a pull request
+
+`drift:gate` is the CI half. It FAILS on a pull request that makes the gap WORSE, and only
+that — see "What it can and cannot catch" below for why "fails" rather than "blocks".
+
+```bash
+pnpm --filter @civitai/db-schema drift:gate       # verdict; exit 1 on new enforced drift
+pnpm --filter @civitai/db-schema drift:baseline   # accept the current findings
+```
+
+It never opens a database connection. `gate-cli.ts` has no database code path to reach — it
+compares the schema against the committed catalog snapshot and nothing else. That is a
+requirement rather than a convenience: this repo is public and so are its CI logs.
+
+### What it can and cannot catch — read this before trusting it
+
+Because the database side is a **frozen capture**, the gate sees only one direction:
+
+|              |                                                                                   |
+| ------------ | --------------------------------------------------------------------------------- |
+| **Catches**  | a schema edit promising something the captured database did not have              |
+| **Misses**   | anything the _database_ does — a constraint dropped in production is invisible    |
+| **Degrades** | drift on any column created _after_ the capture, which can only ever be warn-only |
+
+That third row is the one to watch. It is **not** a bug a recapture fixes once; it is the
+standing behaviour of comparing against a frozen artefact, and it means blocking coverage
+shrinks as the snapshot ages while the check stays green. That is why the verdict prints the
+snapshot's capture date and age on **every** run, and shouts past 90 days. The honest name for
+this tool is a _schema-edit_ gate; recapturing the snapshot is what keeps it closer to a drift
+gate.
+
+Nothing mechanically enforces it either: `main` has branch protection but **no
+`required_status_checks`**, so a red gate does not stop a merge today. It is a loud, reviewable
+signal, not an interlock. Adding `Schema drift gate` to the required checks is what would make
+"blocks" literally true.
+
+### Why a baseline and not `--strict`
+
+`--strict` fails on any finding, and there are 63 on `main` today. A gate red on every run
+teaches everyone to click through it, so it would be switched off within a week — the same
+reasoning behind the report-only ESLint and Prettier steps in `.github/workflows/lint.yml`.
+
+`drift-baseline.json`, next to this README, records those 63 as accepted. The gate reports
+only what is **not** in it. The baseline is committed, so accepting new drift is a reviewable
+act: the gate tells you the exact command, and the resulting diff shows a reviewer precisely
+which constraint the change gave up on.
+
+The fingerprint excludes the `declared`/`actual` prose — #3589 corrected eight declared
+referential actions and touched no constraint, and folding that in would have retired eight
+entries and raised eight identical-looking new ones. Two things are deliberately folded back
+in, because they _are_ the finding rather than prose about it:
+
+- **nullability direction**, so flipping a field to required against a NULLABLE column cannot
+  inherit the old entry's pass;
+- **a missing foreign key's referenced table**, so repointing a relation from `Image` to `Post`
+  — same model, same field, same constrained column — cannot either.
+
+The file is in `.prettierignore`. Prettier and the generator disagree about its formatting by
+246 lines, so with both formatting it a no-op refresh produced a ~250-line reformat that buried
+the one entry that actually changed — defeating the reason for committing it. The generator
+owns the format; a no-op refresh is now a zero-line diff, and accepting one finding an
+eleven-line one. The catalog snapshot is owned the same way, for the same measured reason:
+with prettier owning it, a content-identical `--dump-catalog` re-dump was a 21,522-line diff.
+
+It is checked against the catalog it was captured with. A baseline measured against a
+different snapshot describes a different database, so the gate exits 2 rather than comparing
+them.
+
+### Two severities, and why the split is structural
+
+Migrations here are applied **by hand**, per environment. A declaration being ahead of the
+database is therefore a normal intermediate state, not a defect — and a gate that could not
+tell that apart from real drift would block every pull request that adds a column.
+
+The discriminator is not a taste ranking. It is: does the finding concern database surface
+that **already exists**?
+
+|              |                                                                |                     |
+| ------------ | -------------------------------------------------------------- | ------------------- |
+| **enforced** | the columns are in the catalog and the constraint is not       | **fails the check** |
+| **pending**  | the column is not in the catalog, so the schema is ahead of it | warns               |
+
+`missing-column` is always pending by construction — the column's absence _is_ the finding.
+`nullability` and `uniqueness` are always enforced by construction — the differ only emits
+them for columns it found. `missing-foreign-key` is the only kind that can be either, decided
+by looking **every** one of its constrained columns up in the catalog: a composite key with one
+column migrated and one not is still pending, because there is nothing to put a constraint on.
+
+**A tier can rise, and a rise fails the check.** A finding accepted as `pending` — "that column does not
+exist yet" — becomes enforceable the moment the migration lands _without_ its constraint. The
+fingerprint does not change, so the gate
+compares the current tier against the tier recorded in the baseline and reports
+`pending -> enforced` as a failure. Without that, the escalation is absorbed into the matched
+count and the run exits 0.
+
+That guard is **forward-looking only today**. Escalation needs an entry that is both `pending`
+and `missing-foreign-key`, and the current baseline has **zero** of those — all 12 pending
+entries are `missing-column`, which is hardcoded `pending` and can never rise. It fires on
+relations accepted from here on, not on anything already in the baseline.
+
+It also has a bypass worth knowing about: a catalog only gains a column via a **recapture**,
+and the documented procedure for a recapture is to refresh the baseline in the same commit —
+which turns the escalation into a tier flip inside a regenerated file rather than a gate
+failure. `drift:baseline` therefore prints every `pending -> enforced` transition it absorbs,
+so it lands in the recapture commit's log instead of nowhere.
+
+An enforced finding is a hazard the moment it merges: declaring `@unique` on a live column
+with no unique index, or flipping a live NULLABLE column to required, makes Prisma hand
+callers a type the database does not back.
+
+### What this gate does not measure
+
+**Referential actions.** The committed snapshot carries no `ON DELETE`/`ON UPDATE` data, so
+all ~408 comparable foreign keys read as "not comparable" and this gate can produce no
+`referential-action` finding at all. A live run does measure them and found **45** — every one
+an `ON UPDATE` `Cascade`-vs-`NoAction` on a hand-written App Blocks foreign key, with zero
+`ON DELETE` mismatches. Since `id` is never updated, they are inert in practice.
+
+They are absorbed here by being structurally unmeasurable, not by being waved through, and the
+verdict prints the count of what it could not compare on its own line rather than a clean
+zero. Recapturing the snapshot from a live database — `drift --dump-catalog` — would bring
+them into scope, at which point all 45 need a baseline entry or a fix before the gate can
+stay green.
+
+### What a developer sees
+
+Adding a column, or a relation on new columns, warns and passes: the schema is ahead of the
+snapshot, which is what an unapplied migration looks like.
+
+Adding drift on a live column fails the check, names the finding, and offers three routes — fix the
+declaration, write and apply the migration, or accept it in the baseline with the reason in
+the PR description.
+
+### Refreshing
+
+- **Accepting a finding:** `drift:baseline`, commit the diff, say why in the PR.
+- **After the drift is genuinely fixed:** the gate lists the entry under "no longer reports"
+  without failing; `drift:baseline` prunes it.
+- **After the catalog snapshot is recaptured:** `drift:baseline` in the same commit. The
+  catalog and the baseline are a pair and the gate enforces that they stay one. Budget for it:
+  a recapture from a live database brings referential actions into scope for the first time,
+  which is ~45 new `enforced` findings arriving at once. Triage them — they are the inert
+  `ON UPDATE` batch described above — rather than accepting the batch in one commit.

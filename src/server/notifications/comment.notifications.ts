@@ -522,6 +522,68 @@ export const commentNotifications = createNotificationProcessor({
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-image-comment');
     `,
   },
+  'new-post-comment': {
+    displayName: 'New comments on your posts',
+    category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
+    prepareMessage: ({ details }) => {
+      // Post.title is nullable AND trims to '' rather than null when cleared, so both are untitled.
+      if (details.postTitle)
+        return {
+          message: `${details.username} commented on your post: "${details.postTitle}"`,
+          url: `/posts/${details.postId}?highlight=${details.commentId}`,
+        };
+
+      // Untitled is the common case for model-gallery posts, and without a disambiguator a creator
+      // gets a run of identical rows. Same fallback new-image-comment uses.
+      let message = `${details.username} commented on your post`;
+      if (details.modelName) message += ` on the ${details.modelName} model`;
+      return { message, url: `/posts/${details.postId}?highlight=${details.commentId}` };
+    },
+    prepareQuery: ({ lastSent }) => `
+      WITH new_post_comment AS (
+        SELECT DISTINCT
+          p."userId" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'version', 2,
+            'postId', p.id,
+            'postTitle', p.title,
+            'commentId', c.id,
+            'username', u.username,
+            'modelName', m.name
+          ) "details"
+        FROM "CommentV2" c
+        JOIN "User" u ON c."userId" = u.id
+        JOIN "Thread" t ON t.id = c."threadId" AND t."postId" IS NOT NULL
+        JOIN "Post" p ON p.id = t."postId"
+        LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+        LEFT JOIN "Model" m ON m.id = mv."modelId"
+        WHERE p."userId" > 0
+          AND c."createdAt" > '${lastSent}'
+          -- Two floors, because this type has no cursor row until its first successful run and so
+          -- inherits the job's GLOBAL last-run: new Date(0) on a fresh DB, and stale by the outage
+          -- duration after any send-notifications outage. Unfloored, one such deploy emits all 110k
+          -- historical post comments (measured; the query returns them in 2.6s, well inside the 20s
+          -- timeout, so nothing downstream stops it).
+          -- The launch date is the guard new-bounty-comment carries. It only bites for the first week
+          -- after it passes, but that is the window where a pre-launch comment could still be emitted.
+          AND c."createdAt" > '2026-08-06'
+          -- After that the rolling window is the one doing the work, and it never goes stale: it bounds
+          -- any first batch to ~7 days (~500 rows at the measured 3/hour) however far the cursor drifted.
+          AND c."createdAt" > NOW() - INTERVAL '7 days'
+          AND c."userId" != p."userId"
+      )
+      SELECT
+        concat('new-comment-post:owner:v2:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
+        "ownerId"    "userId",
+        'new-post-comment' "type",
+        details
+      FROM new_post_comment
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-post-comment');
+    `,
+  },
   'new-article-comment': {
     displayName: 'New comments on your articles',
     category: NotificationCategory.Comment,
@@ -602,6 +664,58 @@ export const commentNotifications = createNotificationProcessor({
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-bounty-comment');
     `,
   },
+  'new-bounty-entry-comment': {
+    displayName: 'New comments on your bounty entries',
+    category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
+    prepareMessage: ({ details }) => ({
+      message: `${details.username} commented on your entry to the "${details.bountyTitle}" bounty`,
+      // The canonical URL directly, rather than threadUrlMap's `/bounties/entries/{id}` — that one
+      // only reaches the entry via a redirect, and threadUrlMap can't build this form because it is
+      // handed the entry id alone, with no bountyId.
+      url: `/bounties/${details.bountyId}/entries/${details.bountyEntryId}?highlight=${details.commentId}`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      WITH new_bounty_entry_comment AS (
+        SELECT DISTINCT
+          be."userId" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'version', 2,
+            'bountyEntryId', be.id,
+            'bountyId', b.id,
+            'bountyTitle', b.name,
+            'commentId', c.id,
+            'username', u.username
+          ) as "details"
+        FROM "CommentV2" c
+        JOIN "User" u ON c."userId" = u.id
+        JOIN "Thread" t ON t.id = c."threadId" AND t."bountyEntryId" IS NOT NULL
+        JOIN "BountyEntry" be ON be.id = t."bountyEntryId"
+        JOIN "Bounty" b ON b.id = be."bountyId"
+        -- BountyEntry."userId" is nullable (SetNull on user delete); NULL > 0 is NULL, so this drops
+        -- orphaned entries as well as system-owned ones.
+        WHERE be."userId" > 0
+          AND c."createdAt" > '${lastSent}'
+          -- A new type has no cursor row until its first successful run, so it inherits the job's
+          -- global last-run: new Date(0) on a fresh DB, stale by the outage duration after any
+          -- send-notifications outage. There are 21,812 historical entry comments across 3,876
+          -- owners. Launch date is the guard new-bounty-comment carries; the rolling window is what
+          -- still holds once that date is behind us.
+          AND c."createdAt" > '2026-08-06'
+          AND c."createdAt" > NOW() - INTERVAL '7 days'
+          AND c."userId" != be."userId"
+      )
+      SELECT
+        concat('new-comment-bounty-entry:owner:v2:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
+        "ownerId"    "userId",
+        'new-bounty-entry-comment' "type",
+        details
+      FROM new_bounty_entry_comment
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-bounty-entry-comment');
+    `,
+  },
   'new-challenge-comment': {
     displayName: 'New comments on your challenges',
     category: NotificationCategory.Comment,
@@ -642,14 +756,11 @@ export const commentNotifications = createNotificationProcessor({
   },
   // Model3D comments — mirror the Model 3-tier (`new-comment` /
   // `new-comment-response` / `new-comment-nested`) but use the CommentV2 +
-  // Thread surface (Model3D never used the V1 `Comment` table). Pilot ships
-  // with these defaulted off (`defaultDisabled: true`) since the audience is
-  // mod-only at launch — opt-in users will subscribe explicitly.
+  // Thread surface (Model3D never used the V1 `Comment` table).
   'new-3d-model-comment': {
     displayName: 'New comments on your 3D models',
     category: NotificationCategory.Comment,
     priority: CommentNotificationPriority.EntityOwner,
-    defaultDisabled: true,
     prepareMessage: ({ details }) => ({
       message: `${details.username} commented on your 3D model: "${details.model3dName}"`,
       url: `/3d-models/${details.model3dId}?highlight=${details.commentId}`,
@@ -688,7 +799,6 @@ export const commentNotifications = createNotificationProcessor({
     displayName: 'New responses to your comments on 3D models',
     category: NotificationCategory.Comment,
     priority: CommentNotificationPriority.DirectResponse,
-    defaultDisabled: true,
     prepareMessage: ({ details }) => ({
       message: `${details.username} responded to your comment on the 3D model "${details.model3dName}"`,
       url: `/3d-models/${details.model3dId}?highlight=${details.commentId}`,
@@ -734,7 +844,6 @@ export const commentNotifications = createNotificationProcessor({
     displayName: 'New nested comments on your 3D models',
     category: NotificationCategory.Comment,
     priority: CommentNotificationPriority.EntityOwner,
-    defaultDisabled: true,
     prepareMessage: ({ details }) => ({
       message: `${details.username} responded to a comment on your 3D model "${details.model3dName}"`,
       url: `/3d-models/${details.model3dId}?highlight=${details.commentId}`,

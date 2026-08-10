@@ -4,7 +4,6 @@
 
 **Author:** Claude (Opus 4.8) · **Date:** 2026-06-17 · **Status:** roadmap / decision-of-record
 **Companions:** [auth-hub-actual-flows.html](./auth-hub-actual-flows.html) (what exists today) ·
-[auth-hub-cutover-review-2026-06-17.md](./auth-hub-cutover-review-2026-06-17.md) (findings, incl. B1/B4) ·
 [plans/oauth-provider-implementation-checklist.md](./oauth-provider-implementation-checklist.md) (§I — the migration step)
 
 > Read `auth-hub-actual-flows.html` first if you haven't — this doc assumes the UC1–UC8 flows and the

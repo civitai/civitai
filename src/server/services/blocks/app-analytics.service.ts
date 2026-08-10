@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
+import { hasInstallSlot, type InstallSlotManifest } from '~/shared/constants/slot-registry';
 import { type AppViews, emptyViews, getAppViews, unavailableViews } from './app-views.service';
 
 /**
@@ -45,6 +46,36 @@ export type AppAnalytics = {
    * even when every counter is 0 — without this a real "no activity yet" app
    * and a never-queried one are byte-identical, and a client renders fabricated
    * zeros as data.
+   *
+   * DECIDED — a caller who owns NO apps is deliberately NOT flagged, and
+   * "ownsNothing" is deliberately not a third value. (Raised twice in review as
+   * "defensible but wants a recorded decision"; this is that record.)
+   *
+   * The discriminator's test is whether the zeros were MEASURED, not whether
+   * they are interesting. `notEntitled` and `notOwned` are both cases where we
+   * ran no aggregate at all, so their zeros are fabricated. Owning nothing is
+   * not that case: an aggregate over an empty owned set genuinely IS zero, so
+   * `getMyAppAnalytics` short-circuits only because the answer is already
+   * knowable — "you have no apps, so you have no installs" is a true statement
+   * about the world, and it is one the caller can already see without a flag.
+   * Flagging it would put every honest new author behind an `unavailable`
+   * branch on their first visit and teach clients to skip the flag that exists
+   * to stop them believing a fabricated zero.
+   *
+   * PRECEDENT — #3581 settled the shape of this answer for the sibling
+   * `getMyRevenue`: ONE value, not two, because `getRevenueForOwner` never
+   * *computes* ownership (it scopes by `appOwnerUserId` in the WHERE clause),
+   * so a not-owned request there returns a truthful zero-row aggregate and
+   * `notOwned` is unproducible — declaring it would force an unreachable branch
+   * into every renderer. Analytics DOES compute ownership up front, which is
+   * why it has the second value revenue cannot have; the rule ("flag only what
+   * was never measured") is identical, and it is what holds this union at two.
+   *
+   * SETTLED BY IMPLEMENTATION — #3613 applied the same rule one level down:
+   * `views` carries its own flag and tracks this one, so the owns-nothing path
+   * leaves views unflagged (`emptyViews()`, never `unavailableViews()`), with a
+   * test pinning it. A third value here would have to move that section and
+   * every renderer branch with it.
    */
   unavailable?: 'notEntitled' | 'notOwned';
   installs: {
@@ -54,6 +85,42 @@ export type AppAnalytics = {
     active: number;
     /** New installs per bucket within the range. */
     series: AnalyticsTimePoint[];
+    /**
+     * TRUE when an install row CANNOT EXIST for the app(s) in scope — every one
+     * of them is page-only, and a page app is stateless by explicit decision
+     * (`src/pages/apps/run/[slug]/[[...path]].tsx`: "STATELESS (Decision 2): no
+     * `block_user_subscriptions` row, no migration"). The zeros above are then a
+     * CATEGORY ERROR, not a measurement of user behaviour.
+     *
+     * This is a THIRD state, and the whole point is that it stays distinct from
+     * the other two:
+     *   1. measured non-zero — a model-slot app with installs;
+     *   2. measured zero — a model-slot app that genuinely has none YET. This
+     *      MUST still render `0`; it is a real, actionable number.
+     *   3. not applicable — this flag.
+     * Collapsing 3 into 2 is the defect (a page author reads `Installs 0` as
+     * "nobody installed me" when nobody CAN). Collapsing 2 into 3 would be a NEW
+     * defect — it would hide a truthful zero behind an excuse.
+     *
+     * PER-SECTION, exactly like `views.unavailable`, and for the same reason:
+     * inapplicability of installs says nothing about the runs / Buzz / loads
+     * counters in the same response, which are genuinely measured for a page
+     * app. A payload-level flag would discard that good data. Distinct NAME on
+     * purpose — `views.unavailable` means "we could not ask"; this means "we
+     * asked, and the question is meaningless for this app".
+     *
+     * 🔴 NEVER set when a counter is non-zero. A `block_user_subscriptions` row
+     * for a page app is not merely hypothetical: `upsertSubscription` applies no
+     * slot check, and `assertLaunchAppForCaller` (blocks.router.ts) admits ANY
+     * page-declaring app — so if `app-blocks-enabled` is ever widened past mods,
+     * rows can appear against a stateless app. If that happens the author must
+     * SEE the number, not an "n/a" that hides it. See `installsNotApplicable`.
+     *
+     * MIXED OWNERSHIP: on the "All my apps" (no `appBlockId`) read the flag is
+     * set only when EVERY owned app is page-only. One installable app in the set
+     * makes the aggregate a real measurement, so it is reported as one.
+     */
+    notApplicable?: boolean;
   };
   runs: {
     /** Generations/runs through the app within the range. */
@@ -113,6 +180,15 @@ export function emptyAnalytics(
     range,
     notOwned,
     ...(unavailable ? { unavailable } : {}),
+    // `installs.notApplicable` is deliberately NOT set on any of these paths.
+    // It is a claim about the app's MANIFEST (page-only ⇒ no install row can
+    // exist), and on every path that reaches here we either never resolved a
+    // manifest (notEntitled / notOwned — the payload-level `unavailable` above
+    // is what tells the client those zeros are fabricated) or the caller owns no
+    // apps at all, where "you have no apps, so you have no installs" is a
+    // truthful measured zero (see the DECIDED note on `unavailable`). Asserting
+    // inapplicability without having read a manifest would fabricate a
+    // DIFFERENT claim in place of the one this payload already makes.
     installs: { total: 0, active: 0, series: [] },
     runs: { count: 0, buzzSpent: 0, series: [] },
     buzzPurchased: { count: 0, buzzAmount: 0, grossCents: 0 },
@@ -151,25 +227,87 @@ export function resolveRange(input: { from?: Date; to?: Date; now?: Date }): App
   return { from, to, granularity };
 }
 
+/** The owned-app fields analytics reads: the id, plus the manifest that decides
+ *  whether an install row is even possible (see `installsNotApplicable`). */
+export type OwnedAppBlock = { id: string; manifest: unknown };
+
 /**
- * The app_block ids the caller owns, optionally narrowed to a single
- * requested id. Returns [] when the requested id isn't theirs (or they
- * own nothing) — the callers then fail closed to an empty result.
+ * The app_blocks the caller owns, optionally narrowed to a single requested id.
+ * Returns [] when the requested id isn't theirs (or they own nothing) — the
+ * callers then fail closed to an empty result.
+ *
+ * The manifest rides along on this ONE query rather than a second round trip:
+ * `getMyAppAnalytics` fans out per approved app row (see the note on
+ * VIEWS_QUERY_TIMEOUT_SECONDS), so an extra query here is paid N times per page
+ * load for a value the same `findMany` already has in hand.
  */
-export async function getOwnedAppBlockIds({
+export async function getOwnedAppBlocks({
   ownerUserId,
   appBlockId,
 }: {
   ownerUserId: number;
   appBlockId?: string;
-}): Promise<string[]> {
+}): Promise<OwnedAppBlock[]> {
   const owned = await dbRead.appBlock.findMany({
     where: { app: { userId: ownerUserId } },
-    select: { id: true },
+    select: { id: true, manifest: true },
   });
-  const ownedIds = owned.map((a) => a.id);
-  if (!appBlockId) return ownedIds;
-  return ownedIds.includes(appBlockId) ? [appBlockId] : [];
+  if (!appBlockId) return owned;
+  return owned.filter((a) => a.id === appBlockId);
+}
+
+/**
+ * The app_block ids the caller owns, optionally narrowed to a single
+ * requested id. Returns [] when the requested id isn't theirs (or they
+ * own nothing) — the callers then fail closed to an empty result.
+ */
+export async function getOwnedAppBlockIds(args: {
+  ownerUserId: number;
+  appBlockId?: string;
+}): Promise<string[]> {
+  return (await getOwnedAppBlocks(args)).map((a) => a.id);
+}
+
+/**
+ * Is the installs section a CATEGORY ERROR for this set of apps? See
+ * `AppAnalytics['installs'].notApplicable` for the three states this keeps
+ * apart. Exported so the rule has exactly one home and one test target.
+ *
+ * `hasInstallSlot` is the SHARED predicate — the same one the marketplace card
+ * (`components/Apps/AppBlockCard.tsx`) and the app detail page use to decide
+ * whether to show the Install CTA. Reusing it keeps the manifest half of that
+ * question in one place.
+ *
+ * 🔴 It is NOT the whole CTA predicate, so do not read this as "the panel and
+ * the product can never disagree". Both CTA sites gate on
+ * `!isExternal && hasInstallSlot(...)`, and this function deliberately omits
+ * BOTH extra conditions: it ignores `isExternal`, and `getOwnedAppBlocks`
+ * applies no `status` filter. So an EXTERNAL listing with model targets, or a
+ * model-slot app that is not yet approved, gets no Install CTA while this
+ * reports a measurement. Both are latent today (prod holds zero external and
+ * zero pending rows) and both are strictly today's behaviour rather than a
+ * regression — but if you widen this, widen it deliberately and say which of
+ * the three axes you are adding.
+ *
+ * The `total`/`active` guard is not belt-and-braces, it is the state-(1) guard —
+ * a real count is ALWAYS reported, even for an app whose slots say it should not
+ * have one. Getting this backwards hides data behind an excuse.
+ */
+export function installsNotApplicable({
+  ownedApps,
+  total,
+  active,
+}: {
+  ownedApps: Array<{ manifest?: unknown }>;
+  total: number;
+  active: number;
+}): boolean {
+  // No apps resolved: nothing to make a claim about. The caller's own
+  // owns-nothing / notOwned handling covers this; see emptyAnalytics.
+  if (ownedApps.length === 0) return false;
+  // Never hide a measured count behind "not applicable".
+  if (total > 0 || active > 0) return false;
+  return !ownedApps.some((a) => hasInstallSlot(a.manifest as InstallSlotManifest | null));
 }
 
 /**
@@ -193,15 +331,19 @@ export async function getMyAppAnalytics({
   now?: Date;
 }): Promise<AppAnalytics> {
   const range = resolveRange({ from, to, now });
-  const ownedIds = await getOwnedAppBlockIds({ ownerUserId: userId, appBlockId });
+  const ownedApps = await getOwnedAppBlocks({ ownerUserId: userId, appBlockId });
+  const ownedIds = ownedApps.map((a) => a.id);
 
   // Fail closed: a specifically-requested id that the caller does not own
   // yields zeroed analytics flagged notOwned (never another owner's data).
   if (appBlockId && ownedIds.length === 0) {
     return emptyAnalytics(range, true);
   }
-  // The caller owns nothing — nothing to report (but not "notOwned", since
-  // they didn't ask for a specific foreign id).
+  // The caller owns nothing — nothing to report, and deliberately NOT flagged
+  // `unavailable`: they didn't ask for a specific foreign id, and an aggregate
+  // over an empty owned set is a truthful measured zero rather than a
+  // placeholder. See the DECIDED note on the `unavailable` field before
+  // "fixing" this into a third discriminator value.
   if (ownedIds.length === 0) {
     return emptyAnalytics(range, false);
   }
@@ -314,6 +456,14 @@ export async function getMyAppAnalytics({
   const apiCalls = invocationsAgg;
   const activeUsers = Number(distinctUsers[0]?.value ?? 0);
   const errorRate = apiCalls > 0 ? errorCount / apiCalls : 0;
+  // Page-only app(s): an install row cannot exist, so the zeros below are a
+  // category error rather than a measurement. Omitted (not `false`) when the
+  // number IS a measurement, matching `views.unavailable`.
+  const notApplicable = installsNotApplicable({
+    ownedApps,
+    total: installsTotal,
+    active: installsActive,
+  });
 
   return {
     range,
@@ -325,6 +475,7 @@ export async function getMyAppAnalytics({
         bucket: r.bucket.toISOString(),
         value: Number(r.value),
       })),
+      ...(notApplicable ? { notApplicable: true } : {}),
     },
     runs: {
       count: runsAgg._count ?? 0,

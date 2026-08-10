@@ -27,8 +27,10 @@ const sqlFor = (type: string) => defs[type].prepareQuery!({ lastSent: '2026-01-0
 const V2_TYPES = [
   'new-review-response',
   'new-image-comment',
+  'new-post-comment',
   'new-article-comment',
   'new-bounty-comment',
+  'new-bounty-entry-comment',
   'new-challenge-comment',
   'new-3d-model-comment',
   'new-3d-model-comment-response',
@@ -85,6 +87,14 @@ describe('comment notifications — shared dedupe key', () => {
     expect(sql).toContain(commentDedupeKeyByVersion);
   });
 
+  it.each(V2_TYPES)('%s stamps details.version, which routes the detail fetch', (type) => {
+    // `comment.detail-fetcher.ts` registers itself for EVERY key in commentNotifications and sends
+    // anything with `version !== 2` to the legacy `Comment` table. Comment and CommentV2 ids
+    // overlap, so a V2 processor that forgets this doesn't fail — it silently attaches a DIFFERENT
+    // comment's body, avatar and username to the notification. Nothing else guards it.
+    expect(sqlFor(type)).toContain(`'version', 2`);
+  });
+
   it('every dedupeKey is derived from commentId only — never from the recipient or the type', () => {
     // A key that varied per user or per type would dedupe nothing; this is the whole mechanism.
     for (const type of [...V1_TYPES, ...V2_TYPES, 'new-thread-response']) {
@@ -93,6 +103,51 @@ describe('comment notifications — shared dedupe key', () => {
       expect(dedupeExpr).toContain(`details->>'commentId'`);
       expect(dedupeExpr).not.toContain('ownerId');
       expect(dedupeExpr).not.toContain('userId');
+    }
+  });
+});
+
+/**
+ * `dedupeKey` collisions are guarded above; `key` collisions have the same blast radius and were not
+ * guarded anywhere. `Notification.key` is UNIQUE, and the drain looks a key up and REUSES the stored
+ * row's `type` and `details` rather than inserting. So two processors sharing a key prefix don't
+ * error — one silently serves the other's message and URL to the wrong recipient.
+ */
+describe('every processor owns a distinct notification key namespace', () => {
+  const keyPrefixes = Object.entries(notificationProcessors).flatMap(([type, def]) => {
+    const query = def.prepareQuery?.({
+      lastSent: '2026-01-01',
+      lastSentDate: new Date('2026-01-01'),
+      clickhouse: undefined,
+    });
+    if (typeof query !== 'string') return [];
+    // The literal that opens the concat feeding the `key` column.
+    const prefix = query
+      .split('"key"')[0]
+      ?.match(/concat\(\s*'([^']*)'/g)
+      ?.pop()
+      ?.match(/'([^']*)'/)?.[1];
+    return prefix ? [{ type, prefix }] : [];
+  });
+
+  it('finds a key prefix for the comment-family processors it is meant to cover', () => {
+    // Guards the extraction above from silently matching nothing and passing vacuously.
+    const covered = keyPrefixes.map((k) => k.type);
+    expect(covered).toContain('new-post-comment');
+    expect(covered).toContain('new-image-comment');
+    expect(keyPrefixes.length).toBeGreaterThan(10);
+  });
+
+  it('no processor can be confused for another by key', () => {
+    for (const a of keyPrefixes) {
+      for (const b of keyPrefixes) {
+        if (a.type === b.type) continue;
+        // Keys are prefix + id, so one prefix being a prefix of another is enough to collide.
+        expect(
+          a.prefix.startsWith(b.prefix),
+          `${a.type} ("${a.prefix}") collides with ${b.type} ("${b.prefix}")`
+        ).toBe(false);
+      }
     }
   });
 });
@@ -204,10 +259,18 @@ describe('a type that claims the dedupe key must render', () => {
         return [{ ...base, version: 2, reviewId: 3, modelId: 1, modelName: 'M' }];
       case 'new-image-comment':
         return [{ ...base, version: 2, imageId: 9, modelName: 'M', modelId: 1 }];
+      // Post.title is nullable, so both shapes have to render.
+      case 'new-post-comment':
+        return [
+          { ...base, version: 2, postId: 6, postTitle: 'P' },
+          { ...base, version: 2, postId: 6, postTitle: null },
+        ];
       case 'new-article-comment':
         return [{ ...base, version: 2, articleId: 4, articleTitle: 'A' }];
       case 'new-bounty-comment':
         return [{ ...base, version: 2, bountyId: 4, bountyTitle: 'B' }];
+      case 'new-bounty-entry-comment':
+        return [{ ...base, version: 2, bountyEntryId: 9, bountyId: 4, bountyTitle: 'B' }];
       case 'new-challenge-comment':
         return [{ ...base, version: 2, challengeId: 4, challengeTitle: 'C' }];
       case 'new-comment':

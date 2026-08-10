@@ -13,6 +13,9 @@ const { mocks } = vi.hoisted(() => ({
     resaleDeleteMany: vi.fn(),
     resaleUpdateMany: vi.fn(),
     shopItemUpdate: vi.fn(),
+    shopItemFindFirst: vi.fn(),
+    shopItemUpdateMany: vi.fn(),
+    packMemberFindMany: vi.fn(),
     cosmeticUpdate: vi.fn(),
     transaction: vi.fn(),
     createNotification: vi.fn(),
@@ -25,7 +28,10 @@ vi.mock('~/server/db/client', () => ({
     cosmeticShopItem: {
       findUnique: mocks.shopItemFindUnique,
       findMany: mocks.shopItemFindMany,
+      // Withdrawing an item also runs the pack delist cascade.
+      findFirst: mocks.shopItemFindFirst,
     },
+    cosmeticShopItemCosmetic: { findMany: mocks.packMemberFindMany },
     user: { findUnique: mocks.userFindUnique },
     userCosmeticShopItemResale: {
       findUnique: mocks.resaleFindUnique,
@@ -40,7 +46,7 @@ vi.mock('~/server/db/client', () => ({
       deleteMany: mocks.resaleDeleteMany,
       updateMany: mocks.resaleUpdateMany,
     },
-    cosmeticShopItem: { update: mocks.shopItemUpdate },
+    cosmeticShopItem: { update: mocks.shopItemUpdate, updateMany: mocks.shopItemUpdateMany },
     cosmetic: { update: mocks.cosmeticUpdate },
     $transaction: mocks.transaction,
   },
@@ -469,6 +475,11 @@ describe('withdrawing an item ends its resale listings', () => {
       { userId: RESELLER_ID, user: { username: 'reseller' } },
     ]);
     mocks.userFindUnique.mockResolvedValue({ settings: { creatorShop: {} } });
+    // The pack delist cascade archiving runs alongside this: no other listing
+    // of the cosmetic survives, and no pack bundles it.
+    mocks.shopItemFindFirst.mockResolvedValue(null);
+    mocks.packMemberFindMany.mockResolvedValue([]);
+    mocks.shopItemUpdateMany.mockResolvedValue({ count: 0 });
   });
 
   it('deletes every listing when the item is delisted', async () => {

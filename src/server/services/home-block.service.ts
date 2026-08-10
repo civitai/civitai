@@ -14,6 +14,7 @@ import type {
   SetHomeBlocksOrderInputSchema,
   UpsertHomeBlockInput,
 } from '~/server/schema/home-block.schema';
+import type { ImageInclude } from '~/server/schema/image.schema';
 import type { getCurrentAnnouncements } from '~/server/services/announcement.service';
 import {
   getCollectionById,
@@ -215,7 +216,14 @@ const imageFeedDefaults = {
   period: MetricTimeframe.Week,
   periodMode: 'published',
   sort: ImageSort.MostReactions,
-  include: [] as never[],
+  // Every one of these is load-bearing for the card, and the feed returns null/[] for
+  // whatever is missing rather than erroring:
+  //   cosmetics + profilePictures -> the creator's avatar and frame
+  //   tagIds -> what useApplyHiddenPreferences matches a viewer's hidden tags against,
+  //             so omitting it silently stops honoring them
+  // getInfiniteImagesHandler appends tagIds for the same reason; this path calls
+  // getAllImagesIndex directly, so it has to ask for them itself.
+  include: ['cosmetics', 'profilePictures', 'tagIds'] as ImageInclude[],
   withMeta: false,
   types: undefined,
 } as const;

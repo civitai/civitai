@@ -4,14 +4,32 @@
 // collects `*.test.ts`). Mirrors the IframeHost `hostRenderDecision` pattern.
 
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
+import type { HostStatus } from './openBuzzPurchaseGate';
 
-export type PageHostStatus =
-  | 'loading'
-  | 'ready'
-  | 'timeout'
-  | 'fatal'
-  | 'no_token'
-  | 'error';
+export type PageHostStatus = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
+
+/**
+ * Collapse PageBlockHost's local `Status` onto the shared `HostStatus` union the
+ * status-gated message handlers speak: `resolveRequestConsent`,
+ * `resolveBuzzPurchaseRequest`, `resolveRequestSignIn`, the inline
+ * OPEN_IMAGE_UPLOAD gate, and NAVIGATE.
+ *
+ * PageBlockHost carries one extra terminal variant — `'error'`, a hard mint
+ * failure — that the shared union does not model. Every gate opens ONLY on
+ * `'ready'` and `'error'` is a disjoint terminal state (the iframe isn't even
+ * rendered), so mapping it to another non-ready sentinel is semantics-preserving:
+ * the gate would return null either way. This just satisfies the union type.
+ *
+ * ONE RULE, ONE PLACE. This shim used to be open-coded at four of those call
+ * sites (NAVIGATE hand-rolled a fifth, slightly different comparison). N copies of
+ * a predicate is N chances to fix N−1 of them; it is centralised here so the
+ * mapping is unit-testable and can only ever be changed in one place. Callers read
+ * it through PageBlockHost's `readGateStatus`, which additionally sources the
+ * status from a render-body-updated ref rather than a stale effect closure.
+ */
+export function toHostGateStatus(status: PageHostStatus): HostStatus {
+  return status === 'error' ? 'no_token' : status;
+}
 
 /**
  * #3/#6: the scopes the minted page JWT ACTUALLY carries — the page manifest's
@@ -30,6 +48,24 @@ export function grantedPageScopes(
   return declaredScopes.filter((s) => !withheld.has(s));
 }
 
+/** What an un-grantable (prod-path) REQUEST_CONSENT should produce. */
+export type UngrantableConsentNotice = {
+  /**
+   * Whether the refusal is surfaced at all — the trigger for BOTH the host toast
+   * and the CONSENT_UNAVAILABLE bridge push. Computed on the UNFILTERED
+   * un-grantable set, so an un-grantable scope outside the known vocabulary
+   * still refuses out loud instead of vanishing.
+   */
+  notify: boolean;
+  /**
+   * The refused scopes safe to NAME back to the block: the un-grantable subset
+   * filtered to the known block-scope vocabulary. Can legitimately be EMPTY
+   * while `notify` is true (every requested scope was unrecognised) — the
+   * refusal is the signal, the names are advisory.
+   */
+  scopes: string[];
+};
+
 /**
  * Issue B (defensive UX): decide whether a REQUEST_CONSENT whose grantable set is
  * EMPTY should surface a user-visible "not available in this preview" message
@@ -46,26 +82,45 @@ export function grantedPageScopes(
  *     at mint (e.g. a dev-tunnel token that stripped a scope the tunnel allowlist
  *     doesn't carry), so the block's consent round-trip can never resolve it.
  *
- * Returns the un-grantable subset (requested − granted − missing), sorted+deduped.
- * Returns EMPTY when the hint is absent/garbage OR everything requested is already
- * granted — the caller then keeps the silent no-op (no fragile heuristic: without
- * an explicit requested scope proven un-grantable, we never toast).
+ * `notify` is false when the hint is absent/garbage OR everything requested is
+ * already granted — the caller then keeps the silent no-op (no fragile heuristic:
+ * without an explicit requested scope proven un-grantable, we never surface).
+ *
+ * 🔴 WHY THIS RETURNS TWO FIELDS RATHER THAN ONE LIST (same split, and same
+ * reason, as `resolveReviewConsentNotice` below). `rawScopesHint` is UNTRUSTED —
+ * it is whatever the block's own frame posted, so it can carry markup, junk, or a
+ * 5 KB string. The returned `scopes` therefore pass `isKnownBlockScope`, so only
+ * the fixed platform vocabulary is ever echoed back out of the host.
+ *
+ * That filter must NOT reach the DECISION. The un-grantable set is the trigger as
+ * well as the payload: filter the trigger and a block requesting an un-grantable
+ * scope the vocabulary doesn't know would get no toast and no bridge message at
+ * all — the exact silent dead end this whole path exists to remove, reintroduced
+ * by the security fix. So the decision is taken on the unfiltered set and only the
+ * NAMES are filtered.
+ *
+ * Splitting it also depends on `isKnownBlockScope` being an OWN-property test: it
+ * used to use `in`, which walks the prototype chain and let 12 inherited
+ * `Object.prototype` keys (`constructor`, `__proto__`, `toString`, …) through as
+ * "known scopes". Fixed at the predicate; pinned again in the unit tests here,
+ * because this is a caller that feeds untrusted runtime input to it.
  */
-export function resolveUngrantableConsentScopes(
+export function resolveUngrantableConsentNotice(
   rawScopesHint: unknown,
   grantedScopes: string[],
   missingScopes: string[] | undefined
-): string[] {
-  if (!Array.isArray(rawScopesHint)) return [];
-  const requested = rawScopesHint.filter(
-    (s): s is string => typeof s === 'string' && s.length > 0
-  );
-  if (requested.length === 0) return [];
+): UngrantableConsentNotice {
+  if (!Array.isArray(rawScopesHint)) return { notify: false, scopes: [] };
+  const requested = rawScopesHint.filter((s): s is string => typeof s === 'string' && s.length > 0);
+  if (requested.length === 0) return { notify: false, scopes: [] };
   const granted = new Set<string>(grantedScopes);
   const missing = new Set<string>(missingScopes ?? []);
-  return Array.from(
+  const ungrantable = Array.from(
     new Set(requested.filter((s: string) => !granted.has(s) && !missing.has(s)))
   ).sort();
+  // Decision on the UNFILTERED set — see above.
+  if (ungrantable.length === 0) return { notify: false, scopes: [] };
+  return { notify: true, scopes: ungrantable.filter((s) => isKnownBlockScope(s)) };
 }
 
 /** What a reviewMode REQUEST_CONSENT should surface to the moderator. */
@@ -87,7 +142,7 @@ export type ReviewConsentNotice = {
  * round-trip can NEVER resolve. Dropping it silently (the old behaviour) left the
  * app parked on its consent card with zero feedback at the reviewer.
  *
- * Differs from `resolveUngrantableConsentScopes` in exactly one way, and that
+ * Differs from `resolveUngrantableConsentNotice` in exactly one way, and that
  * difference is the bug this fixes: with NO usable `scopes` hint the prod path
  * must stay silent (it can't tell "already granted" from "clamped"), but in
  * review there is nothing to tell apart — consent is structurally unavailable, so
@@ -289,7 +344,11 @@ export function resolveResourcePickerRequest(raw: unknown): ResourcePickerReques
       ? obj.baseModelGroup
       : undefined;
 
-  return { requestId: obj.requestId, resourceType: canonical, ...(baseModelGroup ? { baseModelGroup } : {}) };
+  return {
+    requestId: obj.requestId,
+    resourceType: canonical,
+    ...(baseModelGroup ? { baseModelGroup } : {}),
+  };
 }
 
 // ── OPEN_CHECKPOINT_PICKER (parity with the model-slot IframeHost) ────────────
@@ -463,9 +522,7 @@ export function resolveGetImagesByIdsRequest(raw: unknown): GetImagesByIdsReques
   const obj = raw as Record<string, unknown>;
   if (typeof obj.requestId !== 'string' || obj.requestId.length === 0) return null;
   const imageIds = Array.isArray(obj.imageIds)
-    ? obj.imageIds.filter(
-        (n): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0
-      )
+    ? obj.imageIds.filter((n): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0)
     : [];
   return { requestId: obj.requestId, imageIds };
 }
@@ -617,9 +674,7 @@ export function worstReachableLaunchMs(): number {
 
 /** Terminal statuses a bounded auto-retry may attempt to recover from. */
 export function isAutoRetryableStatus(status: PageHostStatus): boolean {
-  return (
-    status === 'timeout' || status === 'fatal' || status === 'no_token' || status === 'error'
-  );
+  return status === 'timeout' || status === 'fatal' || status === 'no_token' || status === 'error';
 }
 
 /**

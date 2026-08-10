@@ -135,7 +135,7 @@ describe('purchaseCosmeticShopItem payouts', () => {
   it('a block between buyer and creator rejects the purchase before any charge', async () => {
     mocks.getBlockedPairIds.mockResolvedValue([CREATOR_ID]);
 
-    await expect(purchase()).rejects.toThrow('Cosmetic is not available');
+    await expect(purchase()).rejects.toThrow('is not available');
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 
@@ -413,8 +413,8 @@ describe('purchaseCosmeticShopItem payouts', () => {
     mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ listed: false }));
     mocks.resaleFindUnique.mockResolvedValue({ sellerShare: 20 });
 
-    await expect(purchase(RESELLER_ID)).rejects.toThrow('Cosmetic is not available');
-    await expect(purchase(undefined)).rejects.toThrow('Cosmetic is not available');
+    await expect(purchase(RESELLER_ID)).rejects.toThrow('This cosmetic is not available');
+    await expect(purchase(undefined)).rejects.toThrow('This cosmetic is not available');
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 
@@ -422,8 +422,8 @@ describe('purchaseCosmeticShopItem payouts', () => {
     mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ status: 'Archived', listed: false }));
     mocks.resaleFindUnique.mockResolvedValue({ sellerShare: 20 });
 
-    await expect(purchase(RESELLER_ID)).rejects.toThrow('Cosmetic is not available');
-    await expect(purchase(CREATOR_ID)).rejects.toThrow('Cosmetic is not available');
+    await expect(purchase(RESELLER_ID)).rejects.toThrow('This cosmetic is not available');
+    await expect(purchase(CREATOR_ID)).rejects.toThrow('This cosmetic is not available');
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 
@@ -433,7 +433,7 @@ describe('purchaseCosmeticShopItem payouts', () => {
     mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ status: 'PendingReview' }));
     mocks.resaleFindUnique.mockResolvedValue({ sellerShare: 20 });
 
-    await expect(purchase(RESELLER_ID)).rejects.toThrow('Cosmetic is not available');
+    await expect(purchase(RESELLER_ID)).rejects.toThrow('This cosmetic is not available');
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 
@@ -581,7 +581,7 @@ describe('purchaseCosmeticShopItem sticker gate', () => {
     mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type: 'Sticker' }));
     await expect(
       purchaseCosmeticShopItem({ userId: BUYER_ID, shopItemId: SHOP_ITEM_ID })
-    ).rejects.toThrow('Cosmetic is not available');
+    ).rejects.toThrow('is not available');
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 

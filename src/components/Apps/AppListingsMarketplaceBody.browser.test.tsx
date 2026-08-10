@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { useRouter } from 'next/router';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -141,6 +141,71 @@ beforeEach(() => {
   clearRecentlyOpenedApps();
 });
 
+/**
+ * Captured BEFORE any `vi.useFakeTimers()` call so the virtual-clock helper can
+ * still yield a REAL macrotask while virtual time stands still — `setTimeout` is
+ * faked inside the test, so the obvious `new Promise((r) => setTimeout(r, 0))`
+ * would never resolve.
+ */
+const realSetTimeout = globalThis.setTimeout.bind(globalThis);
+
+/**
+ * 🔴 The virtual clock must never escape a test. A `finally` inside the test body
+ * does NOT run when a test TIMES OUT (the awaited promise never settles) — and a
+ * timer test is exactly where that happens — which would leave every subsequent
+ * test in this file on a frozen clock. Same leak, same fix as
+ * `src/server/services/blocks/__tests__/app-views.service.test.ts`.
+ *
+ * Vitest runs `afterEach` hooks in reverse registration order, so this runs
+ * BEFORE the setup file's `await cleanup()` — the unmount never sees a frozen
+ * clock either.
+ *
+ * MEASURED, so nobody re-derives it: the leak is REAL but its consequence here
+ * is currently benign. Delete this hook and `vi.isFakeTimers()` is `true` at the
+ * top of the very next test (probed, red); every test in the file nonetheless
+ * still passes, because none of the ones that follow depends on `setTimeout`.
+ * So this is a preventative invariant, NOT a regression guard — it is what
+ * stands between an unexplainable hang and the day a later test grows a timer
+ * dependency.
+ */
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+/**
+ * Install the virtual clock, restricted to the timer functions.
+ *
+ * `Date`, `performance`, `requestAnimationFrame`, `queueMicrotask` and
+ * `MessageChannel` stay REAL, so React's scheduler, Mantine and the Playwright
+ * driver behave exactly as they do under real timers. The only thing that
+ * becomes virtual is how long a `setTimeout` takes to fire — which is precisely
+ * the 300ms `useDebouncedValue` under test. (Same restriction, same reason as
+ * `src/components/AppBlocks/PageBlockHostAutoRetry.browser.test.tsx`.)
+ */
+function useVirtualClock() {
+  vi.useFakeTimers({
+    toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+  });
+}
+
+/**
+ * Move virtual time forward by exactly `ms`, then let React commit whatever the
+ * fired timers scheduled. `advance(0)` is therefore also the "flush pending
+ * renders + effects" primitive: it fires nothing, it only drains the queues.
+ *
+ * The real-macrotask yield is load-bearing — advancing virtual time alone gives
+ * the page only microtasks, so a passive effect scheduled on React's
+ * MessageChannel would not have run by the time the next assertion reads
+ * `router.replace`.
+ */
+async function advance(ms: number) {
+  await vi.advanceTimersByTimeAsync(ms);
+  for (let i = 0; i < 5; i++) {
+    await vi.advanceTimersByTimeAsync(0);
+    await new Promise((resolve) => realSetTimeout(resolve, 0));
+  }
+}
+
 /** Open the collapsed Filters dropdown — kind/category live inside it now. */
 async function openFilters() {
   await userEvent.click(page.getByRole('button', { name: 'Filters' }));
@@ -199,33 +264,67 @@ describe('AppListingsMarketplaceBody', () => {
       .mock.calls.map(([url]) => (url as { query?: Record<string, unknown> }).query ?? {});
   }
 
+  /** The subset of `router.replace` calls that wrote the search term. */
+  function searchWrites(): Record<string, unknown>[] {
+    return replacedQueries().filter((q) => 'query' in q);
+  }
+
   test('🔴 the search box does NOT write the URL per keystroke — only the debounced value', async () => {
+    /**
+     * 🔴 THE CLOCK IS VIRTUAL, THE BEHAVIOUR IS NOT.
+     *
+     * This test used to RACE the fills against the 300ms debounce: it typed, then
+     * asserted zero writes, and was correct only while the typing finished inside
+     * the window. The margin was never as wide as the old comment assumed. An
+     * earlier six-fill version took ~396ms against the 300ms budget and was cut to
+     * two fills to buy room; the two-fill version then measured 338ms end-to-end
+     * on an unrelated branch, and it went RED on civitai#3627's preview run
+     * (1 failed / 1258 passed of 1259) ten minutes after a sibling PR ran the same
+     * code 1259/1259 green. Machine load, not a regression — a red nobody can act
+     * on. Instrumented here, `fill()` alone measured 41–142ms per call across five
+     * consecutive runs on an IDLE box: a 3.4x spread with nothing competing, which
+     * is why widening the margin was never going to hold.
+     *
+     * Freezing `setTimeout` removes the dependency outright. The fills now take as
+     * long as the runner needs and virtual time does not move while they do, so
+     * the debounce cannot elapse mid-typing however slow the box is. Nothing about
+     * the component changes: the same `useDebouncedValue` arms the same
+     * `setTimeout`, the same effect echoes it into the URL.
+     */
+    useVirtualClock();
+
     renderWithProviders(<AppListingsMarketplaceBody />);
     const search = page.getByLabelText('Search');
 
-    /**
-     * ⚠️ TWO fills, not six. The original version did six sequential
-     * `fill()`s and asserted ZERO writes afterwards — but each awaited `fill()`
-     * measured ~66ms, so the six took ~396ms against a 300ms debounce. It passed
-     * only because the assertion ran before the timer's callback; one slow fill
-     * and the debounce elapses mid-loop, a write lands, and the test goes red on
-     * a machine hiccup rather than on a regression. Two fills is well inside the
-     * window on any machine, and still distinguishes per-keystroke writes (which
-     * would be 2) from debounced ones (0 so far).
-     */
+    // TWO fills, because two is what distinguishes the regression: a box wired
+    // straight through to the URL writes once PER keystroke (2 here), a debounced
+    // one writes 0 until the timer fires. More fills would prove nothing extra.
     await search.fill('mat');
     await search.fill('matrix');
 
-    // Nothing written yet — the debounce has not elapsed. This is the assertion
-    // that fails if the input is wired straight through to the URL.
-    expect(replacedQueries().filter((q) => 'query' in q)).toHaveLength(0);
+    // Drain React's render/effect queues so the debounce timer is definitely
+    // ARMED before any of the boundary assertions below read the clock. Without
+    // this the "not yet" assertions could pass because nothing was scheduled yet.
+    await advance(0);
 
-    // …and after it does, exactly ONE write, carrying the FINAL value.
-    await vi.waitFor(() => {
-      const writes = replacedQueries().filter((q) => 'query' in q);
-      expect(writes).toHaveLength(1);
-      expect(writes[0]).toMatchObject({ query: 'matrix' });
-    });
+    // (1) THE GUARD. Zero writes from the typing itself — this is the assertion
+    // that fails if the input is wired straight through to the URL (it would be
+    // 2). It no longer depends on how fast `fill()` ran.
+    expect(searchWrites()).toHaveLength(0);
+
+    // (2) NEGATIVE half of the control: 1ms BEFORE the debounce elapses, still
+    // nothing. Pins that the write is actually gated on the 300ms window rather
+    // than merely arriving late.
+    await advance(299);
+    expect(searchWrites()).toHaveLength(0);
+
+    // (3) POSITIVE half: crossing 300ms produces exactly ONE write, carrying the
+    // FINAL value. Without this half (1) and (2) would both be satisfied by a
+    // search box that never writes the URL at all.
+    await advance(1);
+    const writes = searchWrites();
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({ query: 'matrix' });
   });
 
   test('a `?query=` param seeds the search box and filters the grid', async () => {

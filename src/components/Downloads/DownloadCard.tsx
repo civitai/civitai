@@ -159,7 +159,6 @@ export function DownloadCard({ download, onHide }: Props) {
                 <IconClock size={12} className="text-gray-5 dark:text-dark-3" />
                 <Tooltip
                   label={downloadDate.format('MMMM D, YYYY h:mm A')}
-                  color="dark"
                   withArrow
                   withinPortal
                 >
@@ -172,7 +171,7 @@ export function DownloadCard({ download, onHide }: Props) {
 
             {/* Delete Button - vertically centered */}
             <div className="flex items-center pr-4">
-              <Tooltip label="Remove from history" color="dark" withArrow withinPortal>
+              <Tooltip label="Remove from history" withArrow withinPortal>
                 <ActionIcon
                   variant="subtle"
                   color="gray"

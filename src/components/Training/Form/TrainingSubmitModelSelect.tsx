@@ -42,6 +42,7 @@ import {
   trainingDetailsBaseModelsLtx2,
   trainingDetailsBaseModelsLtx23,
   trainingDetailsBaseModelsMageFlow,
+  trainingDetailsBaseModelsMiniMaxH3,
   trainingDetailsBaseModelsQwen,
   trainingDetailsBaseModelsWan,
   trainingDetailsBaseModelsXL,
@@ -467,6 +468,11 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsLtx23 as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelMiniMaxH3 =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsMiniMaxH3 as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
   const baseModelErnie =
     !!formBaseModel &&
     (trainingDetailsBaseModelsErnie as ReadonlyArray<string>).includes(formBaseModel)
@@ -772,6 +778,18 @@ export const ModelSelect = ({
                       isNew
                     />
                   )}
+                  {features.minimaxh3Training && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="orange"
+                      name="MiniMax H3"
+                      value={baseModelMiniMaxH3}
+                      baseType="minimaxh3"
+                      makeDefaultParams={makeDefaultParams}
+                      isVideo
+                      isNew={new Date() < new Date('2026-09-07')}
+                    />
+                  )}
                 </>
               )}
               {mediaType === 'image' && (
@@ -832,6 +850,7 @@ export const ModelSelect = ({
                   selectedRun.baseType === 'wan' ||
                   selectedRun.baseType === 'ltx2' ||
                   selectedRun.baseType === 'ltx23' ||
+                  selectedRun.baseType === 'minimaxh3' ||
                   selectedRun.baseType === 'hidream-o1' ||
                   selectedRun.baseType === 'anima' ||
                   selectedRun.baseType === 'boogu' ||

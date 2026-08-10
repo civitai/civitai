@@ -76,6 +76,7 @@ const FOREIGN_KEYS_SQL = `
          rc.relname AS ref_table,
          con.confdeltype::text AS on_delete_code,
          con.confupdtype::text AS on_update_code,
+         con.convalidated AS is_validated,
          (SELECT array_agg(a.attname::text ORDER BY k.ord)
             FROM unnest(con.conkey) WITH ORDINALITY AS k(attnum, ord)
             JOIN pg_catalog.pg_attribute a
@@ -166,6 +167,7 @@ export async function readCatalog(
       ref_table: string;
       on_delete_code: string | null;
       on_update_code: string | null;
+      is_validated: boolean | null;
       columns: string[] | null;
       ref_columns: string[] | null;
     }>(FOREIGN_KEYS_SQL, [dbSchema]),
@@ -189,6 +191,9 @@ export async function readCatalog(
     refColumns: assertParsedArray(r.ref_columns, `foreign key ${r.name} (referenced)`),
     onDelete: decodeAction(r.on_delete_code),
     onUpdate: decodeAction(r.on_update_code),
+    // Absent (`undefined`) is normalised to `null` — "the catalog did not say" — never to
+    // `true`. A constraint wrongly read as validated is one nobody ever finishes.
+    validated: r.is_validated ?? null,
   }));
 
   const uniqueIndexes: CatalogUniqueIndex[] = uniqueRows.rows

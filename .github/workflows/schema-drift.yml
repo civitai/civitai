@@ -1,0 +1,108 @@
+name: Schema drift gate
+
+# Fails a pull request that makes the gap between `schema.full.prisma` and the production
+# database WORSE, and only that. Pre-existing drift is warned about, never failed on — the
+# database carries 63 accepted findings today, and a gate red on every run is a gate everyone
+# learns to click through.
+#
+# "Fails", not "blocks": `main` has branch protection but no `required_status_checks`, so a red
+# check here does not currently prevent a merge. This is a loud, reviewable signal. Adding
+# "Schema drift gate" to the required checks is what would make it an interlock.
+#
+# It compares against a COMMITTED SNAPSHOT of the database, so it catches a schema edit that
+# promises something the captured database did not have — and cannot see anything the database
+# itself does. Drift on a column created after the capture is warn-only, so blocking coverage
+# shrinks as the snapshot ages; the verdict prints the snapshot's age on every run for exactly
+# that reason. See the README section "What it can and cannot catch".
+#
+# What "worse" means is decided structurally, not by taste. Migrations in this project are
+# applied BY HAND, per environment, so a declaration being ahead of the database is a normal
+# intermediate state. The gate therefore blocks only on drift that concerns columns the
+# database ALREADY HAS — declaring `@unique` on a live column with no unique index, or
+# flipping a live NULLABLE column to required — and merely warns when the column is not in
+# the catalog snapshot at all, which is what an unapplied migration looks like.
+# `packages/civitai-db-schema/src/schema-drift/gate.ts` carries the full reasoning.
+#
+# THE DATABASE SIDE IS A COMMITTED SNAPSHOT, NOT A CONNECTION. This job opens no database
+# connection and holds no credential; the entry point it runs (`gate-cli.ts`) has no database
+# code path to reach. That is a requirement, not a convenience: this repo is public and so
+# are these logs.
+#
+# Its own workflow file rather than a job in lint.yml, so the drift gate's verdict is a
+# separate, individually-readable check.
+
+on:
+  pull_request:
+    branches: [main, release]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: schema-drift-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Schema drift gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # No `submodules: true`. The gate reads the Prisma schema and a JSON snapshot; nothing
+      # in its import graph reaches event-engine-common.
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Schema drift gate
+        run: |
+          # `set +e` EXPLICITLY, not merely the absence of `set -e`. GitHub runs a `run:` step
+          # with no `shell:` key as `bash -e {0}` — errexit is already on before the first
+          # line of this script, so `set -uo pipefail` does not clear it, and adding pipefail
+          # actively makes it worse: the pipeline below now returns the gate's non-zero
+          # status, so errexit fires on it and the step dies at `tee`. `rc=${PIPESTATUS[0]}`
+          # is never reached and the STALE annotation is skipped PRECISELY when the gate
+          # fires, which is when it matters most.
+          #
+          # Measured with a stubbed gate exiting 1 and printing a STALE line — and the
+          # measurement has to be taken under `bash -e`, because under plain `bash` both
+          # forms look correct, which is exactly how this shipped:
+          #
+          #   form            bash          bash -e
+          #   set -uo         1 annotation  0 annotations   <- what CI actually ran
+          #   set +e -uo      1 annotation  1 annotation
+          #
+          # Positive control: with a PASSING gate all four combinations emit 1, so the
+          # harness can observe an annotation under `-e`.
+          set +e -uo pipefail
+          pnpm --filter @civitai/db-schema drift:gate | tee drift-gate.log
+          rc=${PIPESTATUS[0]}
+          # `pnpm --filter` prints "No projects matched the filters" and EXITS 0. A renamed
+          # package, or a filter typo, would therefore report this gate as passing having
+          # produced no verdict at all. The gate always prints its match line, including when
+          # it blocks, so requiring it distinguishes "ran and found nothing new" from
+          # "did not run".
+          if ! grep -q 'baseline findings reproduced' drift-gate.log; then
+            echo "::error::The drift gate produced no verdict. \`pnpm --filter\` exits 0 when it matches no project, so this job would otherwise have reported success without running the gate."
+            exit 1
+          fi
+          # A STALE note is advisory, so the gate exits 0 and the check renders GREEN — which
+          # means the one signal telling you the gate's blocking coverage is shrinking would
+          # otherwise be a line inside a passing job's log that nobody opens. Promote it to a
+          # workflow annotation so it surfaces on the PR itself.
+          if grep -q 'STALE:' drift-gate.log; then
+            sed -n 's/^ *STALE: //p' drift-gate.log | while IFS= read -r note; do
+              echo "::warning title=Schema drift gate: stale catalog snapshot::$note"
+            done
+          fi
+          # Now propagate the gate's own verdict. Last statement in the step, so everything
+          # above runs on both the passing and the failing path.
+          exit "$rc"

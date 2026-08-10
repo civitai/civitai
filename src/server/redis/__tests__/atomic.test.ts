@@ -27,9 +27,7 @@ describe('hSetWithTTL', () => {
 
     // Script does HSET + HPEXPIRE on the same key in a single EVAL.
     expect(script).toContain("redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])");
-    expect(script).toContain(
-      "redis.call('HPEXPIRE', KEYS[1], ARGV[3], 'FIELDS', 1, ARGV[1])"
-    );
+    expect(script).toContain("redis.call('HPEXPIRE', KEYS[1], ARGV[3], 'FIELDS', 1, ARGV[1])");
 
     expect(options.keys).toEqual(['my:hash']);
     expect(options.arguments).toEqual(['field-1', 'value-1', '5000']);
@@ -87,14 +85,7 @@ describe('hSetMultiWithTTL', () => {
     expect(script).toContain("redis.call('HPEXPIRE'");
     expect(options.keys).toEqual(['tokens:user-1']);
     // ARGV layout: [ttlMs, count, ...fieldNames, ...values]
-    expect(options.arguments).toEqual([
-      '30000',
-      '2',
-      'token-a',
-      'token-b',
-      'invalid',
-      'refresh',
-    ]);
+    expect(options.arguments).toEqual(['30000', '2', 'token-a', 'token-b', 'invalid', 'refresh']);
   });
 
   it('stringifies numeric values (node-redis v5 EVAL rejects raw numbers)', async () => {
@@ -167,5 +158,108 @@ describe('zAddWithTTL', () => {
       /positive finite number/
     );
     expect(client.eval).not.toHaveBeenCalled();
+  });
+});
+
+// 🔴 The reason the helper chunks at all. Lua's `unpack` is bounded by LUAI_MAXCSTACK (8000), and the HSET
+// call inside the script unpacks `1 + 2n` arguments — so at n>=4000 the script aborted BEFORE HSET ran and
+// wrote NOTHING, while the caller's fail-open swallowed the error and reported success. Verified against a
+// real redis:7.4-alpine: n=3999 (argc 7999) OK, n=4000 (argc 8001) `too many results to unpack`.
+//
+// These assert on ARGUMENT COUNT per EVAL rather than on the chunk constant, so they keep failing if someone
+// raises the chunk size for an apparent throughput win.
+describe('hSetMultiWithTTL chunking', () => {
+  const LUA_UNPACK_LIMIT = 8000;
+  const manyFields = (n: number) =>
+    Object.fromEntries(Array.from({ length: n }, (_, i) => [`token-${i}`, 'invalid']));
+
+  it('keeps every EVAL well inside the unpack bound at a field count that used to write nothing', async () => {
+    const client = mockClient();
+    await hSetMultiWithTTL(client, 'k', manyFields(4000), 30_000);
+
+    expect(client.eval.mock.calls.length).toBeGreaterThan(1);
+    for (const [, options] of client.eval.mock.calls) {
+      const n = Number(options.arguments[1]);
+      // HSET unpacks 1 + 2n; HPEXPIRE unpacks 4 + n. HSET binds first.
+      expect(1 + 2 * n).toBeLessThan(LUA_UNPACK_LIMIT / 2);
+    }
+  });
+
+  it('holds that bound at the largest hash observed in production', async () => {
+    const client = mockClient();
+    await hSetMultiWithTTL(client, 'k', manyFields(53_877), 30_000);
+
+    for (const [, options] of client.eval.mock.calls) {
+      expect(1 + 2 * Number(options.arguments[1])).toBeLessThan(LUA_UNPACK_LIMIT / 2);
+    }
+  });
+
+  it('writes every field exactly once across the chunks, in order', async () => {
+    const client = mockClient();
+    await hSetMultiWithTTL(client, 'k', manyFields(2500), 30_000);
+
+    const written: string[] = [];
+    for (const [, options] of client.eval.mock.calls) {
+      const n = Number(options.arguments[1]);
+      written.push(...options.arguments.slice(2, 2 + n));
+      // Values follow the field names, one per field, and the count matches.
+      expect(options.arguments.slice(2 + n)).toHaveLength(n);
+    }
+    expect(written).toHaveLength(2500);
+    expect(new Set(written).size).toBe(2500);
+    expect(written[0]).toBe('token-0');
+    expect(written[2499]).toBe('token-2499');
+  });
+
+  it('still issues ONE EVAL when the whole set fits in a chunk', async () => {
+    const client = mockClient();
+    await hSetMultiWithTTL(client, 'k', manyFields(10), 30_000);
+    expect(client.eval).toHaveBeenCalledTimes(1);
+  });
+
+  // The chunks must not be re-batched into concurrent work: interleaving other clients' commands between
+  // them is the whole point, and a Promise.all would put them back-to-back on the store's one command thread.
+  it('runs chunks sequentially and reports each one', async () => {
+    const client = mockClient();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    client.eval.mockImplementation(async () => {
+      maxInFlight = Math.max(maxInFlight, ++inFlight);
+      await Promise.resolve();
+      inFlight--;
+      return 1;
+    });
+    const chunkSizes: number[] = [];
+
+    await hSetMultiWithTTL(client, 'k', manyFields(2500), 30_000, ({ fieldCount }) =>
+      chunkSizes.push(fieldCount)
+    );
+
+    expect(maxInFlight).toBe(1);
+    expect(chunkSizes).toHaveLength(client.eval.mock.calls.length);
+    expect(chunkSizes.reduce((a, b) => a + b, 0)).toBe(2500);
+  });
+
+  // Chunking makes a PARTIAL write possible, and the caller can only distinguish "landed 2 of 3" from
+  // "landed none" if it knows how far the loop got before the throw.
+  it('reports chunk index and total so a partial write is attributable', async () => {
+    const client = mockClient();
+    const seen: Array<{ chunkIndex: number; chunkTotal: number }> = [];
+    client.eval
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(1)
+      .mockRejectedValueOnce(new Error('READONLY'));
+
+    await expect(
+      hSetMultiWithTTL(client, 'k', manyFields(2500), 30_000, ({ chunkIndex, chunkTotal }) =>
+        seen.push({ chunkIndex, chunkTotal })
+      )
+    ).rejects.toThrow('READONLY');
+
+    // Two chunks landed before the third threw; the caller can report 2 of 3 rather than 0 of 3.
+    expect(seen).toEqual([
+      { chunkIndex: 0, chunkTotal: 3 },
+      { chunkIndex: 1, chunkTotal: 3 },
+    ]);
   });
 });

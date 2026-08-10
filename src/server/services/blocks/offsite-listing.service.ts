@@ -5,6 +5,7 @@ import { TRPCError } from '@trpc/server';
 import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { MAX_LISTING_ASSET_SIZE_BYTES } from '~/server/schema/blocks/app-listing.schema';
 import {
   assertNoOnPlatformSurface,
   validateExternalUrl,
@@ -30,6 +31,7 @@ import {
 } from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionable } from '~/server/services/blocks/app-listing-actionable.service';
 import { computeListingProblems } from '~/server/services/blocks/listing-problems';
+import { measureUploadedImage } from '~/server/services/blocks/measure-uploaded-image';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import {
   deriveContentRatingFromAssets,
@@ -2639,31 +2641,46 @@ export async function rejectExternalRequest(opts: {
 // ---------------------------------------------------------------------------
 
 /**
- * Materialise a CF-uploaded image into an `Image` row (owned by the caller) and
+ * The byte cap is the LOOSEST per-kind cap: bytes above it satisfy no kind, and the
+ * kind is not known until attach, so it is the only size rejection that can happen
+ * this early.
+ */
+const measureListingAssetUpload = (key: string) =>
+  measureUploadedImage(key, {
+    maxBytes: MAX_LISTING_ASSET_SIZE_BYTES,
+    subject: 'listing media',
+  });
+
+/**
+ * Materialise an uploaded image into an `Image` row (owned by the caller) and
  * return its numeric id, so the submit form's asset step can attach it to the
  * draft listing via the P1 asset-CRUD procs. Kicks off the standard ingestion/scan
  * pipeline (`createImage` with default ingestion) — the P1 attach proc enforces
- * `ingestion === Scanned` + the per-kind image validation, so this proc does NOT
- * re-validate dimensions/mime (it only persists). `createImage` is dynamically
- * imported so the heavy `image.service` module stays out of this service's static
- * graph (mirrors the router's dynamic-import discipline + keeps the unit tests,
- * which mock only `dbRead`/`dbWrite`, light).
+ * `ingestion === Scanned` + the per-kind image validation.
+ *
+ * The persisted dimensions / MIME / byte size are DERIVED FROM THE STORED BYTES
+ * (see {@link measureListingAssetUpload}); the same fields on the input are
+ * ignored. `createImage` and the probe are dynamically imported so the heavy
+ * `image.service` / `sharp` graphs stay out of this service's static graph
+ * (mirrors the router's dynamic-import discipline + keeps the unit tests, which
+ * mock only `dbRead`/`dbWrite`, light).
  */
 export async function persistListingAssetImage(opts: {
   input: PersistListingAssetImageInput;
   userId: number;
 }): Promise<{ imageId: number }> {
   const { input, userId } = opts;
+  const measured = await measureListingAssetUpload(input.url);
   const { createImage } = await import('~/server/services/image.service');
   const image = await createImage({
     url: input.url,
     name: input.name ?? undefined,
     type: 'image',
-    width: input.width,
-    height: input.height,
-    mimeType: input.mimeType,
+    width: measured.width,
+    height: measured.height,
+    mimeType: measured.mimeType,
     // The P1 image validator reads the byte size from `Image.metadata.size`.
-    metadata: input.sizeBytes != null ? { size: input.sizeBytes } : undefined,
+    metadata: { size: measured.sizeBytes },
     userId,
   });
   return { imageId: image.id };

@@ -1,7 +1,8 @@
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { isPreview, isProd } from '~/env/other';
+import { isNonProductionDatabase, warnIfDatabaseEnvironmentUnset } from '~/env/database-target';
+import { isProd } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { computeCreatorShopSplit } from '~/server/schema/creator-shop.schema';
@@ -75,6 +76,31 @@ export async function spendStickerUses({
   );
   if (!delta.size) return delta;
 
+  await spendStickerUsesFor({ userId, counts: delta, tx });
+
+  return delta;
+}
+
+/**
+ * The drain itself, over a map of sticker to count.
+ *
+ * Split out because placement charges a use without any rich-text content to
+ * diff — there is no token or span to count, only a chosen sticker. Giving it
+ * its own drain would have been a second path to a balance that already has
+ * rules, which is where this feature's bugs have come from.
+ */
+export async function spendStickerUsesFor({
+  userId,
+  counts,
+  tx,
+}: {
+  userId: number;
+  counts: Map<number, number>;
+  tx?: Prisma.TransactionClient;
+}) {
+  if (!counts.size) return;
+
+  const delta = counts;
   const spend = async (tx: Prisma.TransactionClient) => {
     // Sorted so concurrent submissions lock holdings in the same order. Looping
     // in content order lets two submissions sharing two stickers each take one
@@ -123,8 +149,6 @@ export async function spendStickerUses({
 
   if (tx) await spend(tx);
   else await dbWrite.$transaction(spend);
-
-  return delta;
 }
 
 /**
@@ -155,13 +179,20 @@ export function recordStickerUsage({
   // must not be "fixed" by logging uncharged placements.
   if (!track || !charged.size) return;
 
-  // Preview deploys share CLICKHOUSE_TRACKER_URL with production but run against
-  // the DEV database, so their `entityId`s are ids from a different database —
-  // they'd land in the prod table pointing at unrelated comments, with no column
-  // to tell them apart afterwards. Skipping the emit is deliberate: consumption
-  // still happens, so stickers are fully testable in preview; only the history
-  // is withheld. `isProd` alone is not enough — a preview IS NODE_ENV=production.
-  if (!isProd || isPreview) return;
+  // A deployment that shares the analytics sink with production but runs against a
+  // NON-PRODUCTION database emits `entityId`s from a different database — they'd land
+  // in the shared table pointing at unrelated comments, with no column to tell them
+  // apart afterwards. Skipping the emit is deliberate: consumption still happens, so
+  // stickers stay fully testable there; only the history is withheld. `isProd` alone
+  // is not enough — those deployments are also NODE_ENV=production.
+  //
+  // 🔴 THE TEST IS THE DATABASE, NOT THE ENVIRONMENT. This used to read `isPreview`,
+  // which is a claim about environment identity and NOT about which database is behind
+  // it. A non-production deployment that runs against the PRODUCTION database was
+  // therefore dropping REAL usage history — silently, while still charging for the
+  // placements. See src/env/database-target.ts for why the two cannot be conflated.
+  warnIfDatabaseEnvironmentUnset();
+  if (!isProd || isNonProductionDatabase()) return;
 
   const rows: StickerUsageRow[] = [];
   for (const [cosmeticId, count] of charged)
@@ -251,18 +282,34 @@ export async function purchaseStickerUses({
   // Delisted stickers can still be topped up — delisting stops NEW sales, and
   // stranding someone who already paid punishes them for the creator's
   // decision. Archived (and never-published) cannot: withdrawn is withdrawn.
+  // A sticker sold only inside packs has no listing of its own, and refusing to
+  // top it up would make "packs inherit per-use pricing" decorative. The pack
+  // that sells it authorises the top-up in its place.
   const listing = await dbWrite.cosmeticShopItem.findFirst({
-    where: { cosmeticId, status: CosmeticShopItemStatus.Published },
-    orderBy: { id: 'asc' },
-    select: { id: true, meta: true, addedById: true },
+    where: {
+      status: CosmeticShopItemStatus.Published,
+      OR: [{ cosmeticId }, { members: { some: { cosmeticId } } }],
+    },
+    // Own listing first: its meta is the sticker's own terms, and a pack's
+    // Blue Buzz opt-in is the pack's, not this creator's.
+    orderBy: [{ cosmeticId: 'asc' }, { id: 'asc' }],
+    select: { id: true, meta: true, addedById: true, cosmeticId: true },
   });
   if (!listing) throw throwBadRequestError('This sticker is no longer available');
+
+  // Blue is a per-item creator opt-in. Read off a pack it would be the pack
+  // builder's choice, not the sticker creator's, so a pack-only sticker can't
+  // carry blue into a top-up.
+  const authorisedByPack = listing.cosmeticId !== cosmeticId;
 
   // Same block semantics as buying the sticker outright, and the same generic
   // error so the block isn't revealed.
   if (cosmetic.createdById) {
     const blockedPairIds = await getBlockedPairIds(userId);
-    const sellerIds = [cosmetic.createdById, listing.addedById].filter(
+    // A top-up pays the sticker's creator. When only a pack authorised it, the
+    // pack's builder isn't part of this sale, so a block against them isn't
+    // grounds for refusing.
+    const sellerIds = [cosmetic.createdById, authorisedByPack ? null : listing.addedById].filter(
       (id): id is number => id != null
     );
     if (sellerIds.some((id) => blockedPairIds.includes(id)))
@@ -288,7 +335,7 @@ export async function purchaseStickerUses({
   const listingMeta = (listing.meta ?? {}) as CosmeticShopItemMeta;
   // Blue is a per-item creator opt-in on the listing, exactly as it is when
   // buying the sticker — read from there rather than given a rule of its own.
-  if (payWith !== 'default' && !listingMeta.acceptsBlueBuzz)
+  if (payWith !== 'default' && (authorisedByPack || !listingMeta.acceptsBlueBuzz))
     throw throwBadRequestError('This creator does not accept Blue Buzz');
   const fromAccountTypes: BuzzSpendType[] =
     payWith === 'blue-first' ? ['blue', buzzType] : [buzzType];

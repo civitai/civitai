@@ -198,6 +198,7 @@ async function cmdDashboard(initialWorktree) {
   let logCursor = -1;
   let logLines = [];        // all log entries (raw from daemon)
   let lastSession = null;
+  let allSessions = [];     // roster for the switcher, sorted by port
   let lastRgb = null;
   let lastAuth = null;
   let running = true;
@@ -287,6 +288,24 @@ async function cmdDashboard(initialWorktree) {
       case '\x03': // Ctrl+C
         exitDash();
         break;
+
+      // Cycle sessions. Each worktree is its own session, so this is how you move
+      // between branches you have running side by side.
+      case '\t':
+      case 's': {
+        if (allSessions.length < 2) {
+          flash('Only one session running');
+          break;
+        }
+        const idx = allSessions.findIndex((x) => x.id === sessionId);
+        const next = allSessions[(idx + 1) % allSessions.length];
+        sessionId = next.id;
+        logLines = [];
+        logCursor = 0;
+        lastSession = next;
+        flash(`Session ${next.id} — ${next.branch || '?'} :${next.port}`);
+        break;
+      }
 
       case '/':
       case 'f':
@@ -491,6 +510,15 @@ async function cmdDashboard(initialWorktree) {
       const uptimeStr = s.startedAt ? fmtUptime(Math.floor((Date.now() - new Date(s.startedAt).getTime()) / 1000)) : '';
       info = `${s.branch || '?'}  ${C.dim}port${C.r} ${s.port}  ${statusStr}  ${readyStr}  ${C.dim}up${C.r} ${uptimeStr}`;
     }
+    // Session counter, top-right. `n/N` so you know where you are in the rotation.
+    if (allSessions.length) {
+      const pos = allSessions.findIndex((x) => x.id === sessionId) + 1;
+      const label =
+        allSessions.length > 1
+          ? `${C.b}[${pos}/${allSessions.length} sessions]${C.r}${C.bgBlu}${C.wht}`
+          : `${C.dim}[1 session]${C.r}${C.bgBlu}${C.wht}`;
+      info = `${info}  ${label}`;
+    }
     const infoClean = stripAnsi(info);
     const pad = Math.max(0, cols - title.length - infoClean.length - 1);
     buf.push(CLR_LINE + C.bgBlu + C.wht + C.b + title + C.r + C.bgBlu + ' '.repeat(pad) + C.r + C.bgBlu + info + ' ' + C.r + '\n');
@@ -513,7 +541,17 @@ async function cmdDashboard(initialWorktree) {
         else if (st === 'error' || st === 'crashed') authStr = `  ${C.dim}AUTH:${C.r} ${C.red}${st}${C.r}`;
         else if (lastAuth.enabled) authStr = `  ${C.dim}AUTH:${C.r} ${C.ylw}${st}${C.r}`;
       }
-      buf.push(CLR_LINE + `  ${C.dim}URL:${C.r} ${url}  ${C.dim}Session:${C.r} ${s.id}  ${C.dim}${logCount}${C.r}${rgbStr}${authStr}\n`);
+      // The rgb-proxy backs localhost:3000 only, so the color hostnames reach whichever
+      // session holds that port. Say so explicitly rather than printing URLs that
+      // silently land on a different worktree.
+      let hostStr = '';
+      if (lastRgb?.status === 'running') {
+        hostStr =
+          s.port === 3000
+            ? `  ${C.dim}via${C.r} ${C.grn}civitai-dev.{red,green,blue}${C.r}`
+            : `  ${C.dim}via${C.r} ${C.ylw}localhost only (colors -> :3000)${C.r}`;
+      }
+      buf.push(CLR_LINE + `  ${C.dim}URL:${C.r} ${url}${hostStr}  ${C.dim}Session:${C.r} ${s.id}  ${C.dim}${logCount}${C.r}${rgbStr}${authStr}\n`);
     } else {
       buf.push(CLR_LINE + '\n');
     }
@@ -568,6 +606,7 @@ async function cmdDashboard(initialWorktree) {
         `${searchLabel}  ` +
         `${k('a', 'all')}  ` +
         `${C.dim}\u2502${C.r}  ` +
+        (allSessions.length > 1 ? `${k('s', 'ession')}  ` : '') +
         `${k('r', 'estart')}  ` +
         `${k('c', 'lear')}  ` +
         `${k('x', '-stop')}  ` +
@@ -588,6 +627,18 @@ async function cmdDashboard(initialWorktree) {
       const statusResult = await daemonRequest(`/sessions/${sessionId}`);
       if (statusResult.ok) {
         lastSession = statusResult.data.session;
+      }
+
+      // Roster for the session switcher + header count.
+      const listResult = await daemonRequest('/sessions');
+      if (listResult.ok) {
+        allSessions = (listResult.data.sessions || []).sort((a, b) => a.port - b.port);
+        // Current session disappeared (stopped elsewhere) — fall back to the first.
+        if (allSessions.length && !allSessions.some((x) => x.id === sessionId)) {
+          sessionId = allSessions[0].id;
+          logLines = [];
+          logCursor = 0;
+        }
       }
 
       // Fetch logs (always fetch all, filter client-side)

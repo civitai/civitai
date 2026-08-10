@@ -271,6 +271,19 @@ export const toggleModelLockSchema = z.object({
 export type SetModelMinorInput = z.infer<typeof setModelMinorSchema>;
 export const setModelMinorSchema = z.object({ id: z.number(), minor: z.boolean() });
 
+export type MinorFlagSnapshot = {
+  at: string;
+  source: 'auto' | 'manual';
+  confirmedFrom?: 'auto' | 'manual';
+  confirmedAt?: string;
+  confirmedBy?: number;
+  prevNsfw?: boolean;
+  prevSfwOnly?: boolean;
+  prevGalleryLevel?: number | null;
+  prevLockedProperties?: string[];
+  prevMinorImageIds?: number[];
+};
+
 export type ModelMeta = Partial<{
   unpublishedReason: UnpublishReason;
   customMessage: string;
@@ -290,6 +303,10 @@ export type ModelMeta = Partial<{
   commentsLocked: boolean;
   profanityMatches: string[];
   profanityEvaluation: Pick<ProfanityEvaluation, 'reason' | 'metrics'>;
+  minorFlagSnapshot: MinorFlagSnapshot;
+  minorHashDismissed: { at: string; by: number };
+  minorHashCleared: { at: string };
+  minorHashAccepted: { at: string };
   // Creator Controls: hide public metrics (only while the owner has a valid
   // Creator Program membership — see server/utils/model-metric-privacy.ts).
   hideBuzz: boolean;

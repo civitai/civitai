@@ -271,13 +271,37 @@ If a dev server is running (check via the `dev-server` skill), ask the user to:
 
 ## Post-onboarding: generation coverage & auction featurability (manual DB steps)
 
-Two DB tables are keyed off the constants **by string** but are **not derived from them** — nothing reconciles them, so they must be hand-seeded. Miss one and the feature silently half-works (the generation form still lights up from the constants, so it *looks* done). This bit us with Anima and Krea 2. Neither table is written by app code today; both need a raw SQL INSERT run against each environment (preview → prod) per our manual-migration rule.
+Three DB tables are keyed off the constants **by string or version id** but are **not derived from them** — nothing reconciles them, so they must be hand-seeded. Miss one and the feature silently half-works (the generation form still lights up from the constants, so it *looks* done). This bit us with Anima and Krea 2. None of these tables are written by app code today; each needs a raw SQL INSERT run against each environment (preview → prod) per our manual-migration rule.
 
 See [docs/features/featured-auction-ecosystem-sync.md](docs/features/featured-auction-ecosystem-sync.md) for the full rationale and architecture; the essentials:
 
-### 1. `GenerationBaseModel` — makes resources GENERATABLE (do this for every generatable ecosystem)
+### 0. First: which branch of `GenerationCoverage` will cover this version?
 
-The `GenerationCoverage` SQL view gates whether a resource is generatable. One of its inputs is a plain list of base-model strings in `GenerationBaseModel`. A new base model that isn't in this list is **not generatable** even with full form support (this is what silently broke Krea 2).
+`GenerationCoverage` is a three-branch `OR`. **Read the live definition before writing any SQL** — `SELECT pg_get_viewdef('"GenerationCoverage"'::regclass, true)` — because which branch applies decides which table you need, and picking the wrong one produces SQL that runs cleanly and changes nothing.
+
+| Branch | Condition | Typical ecosystem |
+| --- | --- | --- |
+| 1 | `mv.id IN "EcosystemCheckpoints"` — **no status check, no `NOT m.poi` guard** | file-less API checkpoints, `usageControl = 'Generation'` |
+| 2 | `usageControl = 'ExternalGeneration' AND status = 'Published' AND NOT m.poi` | file-less API checkpoints, mod-published |
+| 3 | files + `allowCommercialUse` + `baseModel IN "GenerationBaseModel"` + `CoveredCheckpoint` | downloadable weights |
+
+`GenerationBaseModel` is consulted by **branch 3 only**. For a file-less API model the row is inert — correct to add for the future, but it is not what makes the model generatable, so don't stop there and assume you're done.
+
+### 1a. `EcosystemCheckpoints` — covers a specific VERSION unconditionally
+
+Keyed by `ModelVersion.id`, not by base model or ecosystem. Needed when the version has no files and is `usageControl = 'Generation'` (branch 2 won't fire). `name` is a free-text label with no behaviour attached — match the base model display name.
+
+```sql
+INSERT INTO "EcosystemCheckpoints" (id, name) VALUES (3207633, 'Qwen 3') ON CONFLICT (id) DO NOTHING;
+```
+
+**This is an unconditional override.** Branch 1 has neither a status check nor a PoI guard, so the version stays covered even if it's later unpublished or the model is flagged. That cuts both ways: it's the only way to exercise generation against a **Draft** version pre-publish, and it's a footgun if you expected coverage to track publish state. When the version is `ExternalGeneration`, prefer letting branch 2 handle it — publishing is then the only step, and unpublishing correctly revokes coverage.
+
+Note that sibling versions on one model page routinely land on **different branches** (e.g. Qwen Image 2.0 via branch 1, 3.0 via branch 2; Seedance 2.0 via branch 1, 2.0 Mini via branch 2). That's expected, not drift.
+
+### 1b. `GenerationBaseModel` — makes downloadable resources GENERATABLE
+
+One of branch 3's inputs is a plain list of base-model strings in `GenerationBaseModel`. A new base model that isn't in this list is **not generatable** even with full form support (this is what silently broke Krea 2).
 
 - **`baseModel` must equal the base model *display name*** (`ModelVersion.baseModel`), e.g. `'Krea 2'`, `'Anima'` — **not** the ecosystem key.
 
@@ -308,7 +332,7 @@ FROM "AuctionBase" ab
 WHERE ab.ecosystem = 'Krea2';
 ```
 
-Surface both INSERTs to the user as SQL that needs to be applied manually to each environment — do not assume they auto-run.
+Surface every INSERT above to the user as SQL that needs to be applied manually to each environment — do not assume they auto-run. State which coverage branch you determined applies, so the reader can check your reasoning rather than just running the SQL.
 
 ## Cross-ecosystem compatibility
 

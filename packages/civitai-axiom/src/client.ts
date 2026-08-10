@@ -46,12 +46,36 @@ export type AxiomLogger = {
 };
 
 /**
+ * An additional sink for the structured line this logger already builds.
+ *
+ * `body` is the exact string written to stderr, so a sink that forwards it verbatim
+ * stays byte-identical to the stderr path and a query written against one matches the
+ * other. `data` is the same payload in object form, for sinks that need fields.
+ *
+ * INJECTED, not imported: this keeps `@civitai/axiom` free of any dependency on (and any
+ * semantics of) whatever transport the app happens to bolt on. See ./env's header —
+ * "App behavior (loggers, policy callbacks) would be injected at the factory instead".
+ *
+ * Must not throw; `logToAxiom` contains it anyway, because a telemetry sink must never
+ * be able to fail the code path it is observing.
+ */
+export type EmitLog = (body: string, data: MixedObject, datastream?: string) => void;
+
+export type AxiomDeps = {
+  emitLog?: EmitLog;
+};
+
+/**
  * Build an Axiom logger. Config defaults come from the package's own env schema
  * (./env); pass a `Partial<AxiomConfig>` to override any value per call (tests,
- * multi-instance, alternate config sources). Axiom has no injected app-behavior
- * deps (it *is* the logger). See the `~/server/logging/client` shim.
+ * multi-instance, alternate config sources). `deps` injects optional app behavior —
+ * default `{}`, so a consumer that passes nothing gets exactly the previous behavior.
+ * See the `~/server/logging/client` shim.
  */
-export function createAxiomLogger(overrides: Partial<AxiomConfig> = {}): AxiomLogger {
+export function createAxiomLogger(
+  overrides: Partial<AxiomConfig> = {},
+  deps: AxiomDeps = {}
+): AxiomLogger {
   const config = { ...loadAxiomEnv(), ...overrides };
 
   const axiom =
@@ -86,19 +110,40 @@ export function createAxiomLogger(overrides: Partial<AxiomConfig> = {}): AxiomLo
       // unguarded stringify could break a caller that previously never hit this line.
       // Contain it: a serialization failure must NEVER break the caller — emit a minimal,
       // stringify-safe fallback (itself wrapped) so the event isn't silently lost.
+      //
+      // ONE serialization, N sinks. The line is built once and then handed to every
+      // sink, so the stderr text and any injected sink's body are the SAME string —
+      // a query written against one path matches on the other — and a hot path that
+      // may be awaited pays for one JSON.stringify rather than one per sink.
+      let line: string;
       try {
-        console.error(JSON.stringify({ _axiom: datastream, ...sendData }));
+        line = JSON.stringify({ _axiom: datastream, ...sendData });
       } catch (err) {
         try {
-          console.error(
-            JSON.stringify({
-              _axiom: datastream,
-              name: (sendData as MixedObject)?.name,
-              _stringifyError: String(err),
-            })
-          );
+          line = JSON.stringify({
+            _axiom: datastream,
+            name: (sendData as MixedObject)?.name,
+            _stringifyError: String(err),
+          });
         } catch {
-          console.error('logToAxiom: failed to serialize event', (sendData as MixedObject)?.name);
+          // Triple fault (even the minimal payload won't serialize). Not JSON — the
+          // consumers of this line all tolerate a non-JSON line, and anything that
+          // tried to build JSON here would be the fourth thing to throw.
+          line = `logToAxiom: failed to serialize event ${String((sendData as MixedObject)?.name)}`;
+        }
+      }
+
+      console.error(line);
+
+      // Additional sink, if one was injected. Deliberately AFTER the stderr write and
+      // contained: an injected sink is app-supplied code, and neither its cost nor its
+      // failure may reach the stderr write above, the Axiom dual-write below, or the
+      // caller. A sink that throws is swallowed here; counting it is the sink's job.
+      if (deps.emitLog) {
+        try {
+          deps.emitLog(line, sendData, datastream);
+        } catch {
+          /* contained — see above */
         }
       }
 

@@ -145,6 +145,9 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
             ) : (
               <ImagesInfinite
                 filterType={isVideo ? 'videos' : 'images'}
+                // The store merge keeps any key these overrides don't mention, and
+                // every one of them ANDs against this tab's single user.
+                disableStoreFilters
                 filters={{
                   ...query,
                   period,

@@ -938,7 +938,7 @@ function ReferralCodeBlock({ code, shareLink }: { code: string; shareLink: strin
               </div>
               <CopyButton value={code}>
                 {({ copied, copy }) => (
-                  <Tooltip label={copied ? 'Copied' : 'Copy code'} color="dark" withArrow>
+                  <Tooltip label={copied ? 'Copied' : 'Copy code'} withArrow>
                     <ActionIcon
                       size="lg"
                       variant="subtle"
@@ -1070,7 +1070,7 @@ function StatBlock({
             </Text>
             {infoSlot ??
               (tooltip && (
-                <Tooltip label={tooltip} color="dark" multiline maw={260} withArrow>
+                <Tooltip label={tooltip} multiline maw={260} withArrow>
                   <IconInfoCircle
                     size={12}
                     style={{ color: 'var(--mantine-color-dimmed)', cursor: 'help' }}
@@ -1244,7 +1244,7 @@ function TierPerksPopover({ tier }: { tier: string }) {
   return (
     <Popover width={320} position="bottom-end" shadow="lg" withArrow withinPortal>
       <Popover.Target>
-        <Tooltip label="See tier perks" color="dark" withArrow>
+        <Tooltip label="See tier perks" withArrow>
           <ActionIcon variant="subtle" size="sm" aria-label="View tier perks">
             <IconInfoCircle size={16} />
           </ActionIcon>
@@ -1511,7 +1511,7 @@ function ExpiringTokensIndicator({
   return (
     <Popover width={260} position="bottom-start" shadow="lg" withArrow withinPortal>
       <Popover.Target>
-        <Tooltip label="Tickets expiring soon" color="dark" withArrow>
+        <Tooltip label="Tickets expiring soon" withArrow>
           <ActionIcon variant="subtle" color="yellow" size="sm" aria-label="View expiring tickets">
             <IconAlertTriangle size={16} />
           </ActionIcon>

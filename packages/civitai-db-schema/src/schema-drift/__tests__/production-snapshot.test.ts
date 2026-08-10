@@ -89,23 +89,55 @@ describe('production catalog snapshot (2026-08-03)', () => {
     expect(found('missing-foreign-key').length).toBeGreaterThanOrEqual(37);
   });
 
-  it('reports the nullability drift concentrated on the Rank tables', () => {
-    const nullability = report.findings.filter((f) => f.kind === 'nullability');
-    const rank = nullability.filter((f) => f.table.endsWith('Rank'));
-    expect(new Set(rank.map((f) => f.table))).toEqual(
-      new Set([
-        'ArticleRank',
-        'BountyEntryRank',
-        'BountyRank',
-        'ClubRank',
-        'CollectionRank',
-        'TagRank',
-        'UserRank',
-      ])
+  it('reports the nullability drift that is still outstanding', () => {
+    // HISTORY, because the shape of this assertion changed for a real reason. When the
+    // detector shipped, 235 of the 246 nullability findings sat on seven `*Rank` tables and
+    // this test pinned exactly that. #3592 then marked those columns optional to match the
+    // database, and the 235 went away — correctly. Nothing noticed, because no CI job ran
+    // this package's suite; the test was red on `main` from the moment #3592 merged until
+    // the packages were wired into CI. So the Rank family is now asserted at ZERO, which
+    // makes this a guard on the REMEDIATION rather than on the defect.
+    // POSITIVE CONTROL ON THE ZERO, and it has to be about the RANK FAMILY specifically.
+    // "no Rank nullability findings" is satisfied just as well by a differ that never looks
+    // at a Rank table at all — measured: making compare.ts `continue` on every model whose
+    // table ends in `Rank` leaves THIS test green and reds only two neighbouring ones, which
+    // is green-for-the-wrong-reason. A count of nullability findings elsewhere cannot see
+    // that, because it proves the KIND is still emitted, not that these seven tables are
+    // still in scope.
+    //
+    // So pin the family's presence using findings of a DIFFERENT kind that the same seven
+    // models must still produce. If the differ stops visiting them, this goes red first.
+    const rankTables = [
+      'ArticleRank',
+      'BountyEntryRank',
+      'BountyRank',
+      'ClubRank',
+      'CollectionRank',
+      'TagRank',
+      'UserRank',
+    ];
+    const rankFkTables = new Set(
+      report.findings
+        .filter((f) => f.kind === 'missing-foreign-key' && f.table.endsWith('Rank'))
+        .map((f) => f.table)
     );
-    expect(rank.length).toBeGreaterThanOrEqual(235);
+    expect(rankTables.filter((t) => !rankFkTables.has(t))).toEqual([]);
+
+    const nullability = report.findings.filter((f) => f.kind === 'nullability');
+    expect(nullability.filter((f) => f.table.endsWith('Rank'))).toEqual([]);
+
+    // Second control, on the nullability check itself: it still finds the 11 that remain, so
+    // an empty Rank result cannot come from nullability detection having stopped running.
+    expect(nullability.length).toBeGreaterThanOrEqual(11);
     expect(found('nullability')).toEqual(
-      expect.arrayContaining(['ChallengeEvent.createdById', 'Purchase.userId'])
+      expect.arrayContaining([
+        'ChallengeEvent.createdById',
+        'Purchase.userId',
+        // Nine `*Metric.updatedAt` columns declared required against a NULLABLE column.
+        'UserMetric.updatedAt',
+        'ModelMetric.updatedAt',
+        'ModelVersionMetric.updatedAt',
+      ])
     );
   });
 

@@ -457,7 +457,7 @@ export async function setUserMuted({ userId, muted }: { userId: number; muted: b
     updateSource: muted ? 'retool:mute' : 'retool:unmute',
   });
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
-  await invalidateSession(userId);
+  await invalidateSession(userId, 'moderation');
   return user;
 }
 
@@ -487,7 +487,7 @@ export async function setUserModerator({
     updateSource: 'retool:setModerator',
   });
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
-  await invalidateSession(userId);
+  await invalidateSession(userId, 'admin');
   return user;
 }
 
@@ -548,7 +548,7 @@ export async function forceUpdateUserIdentity({
   }
 
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
-  await invalidateSession(userId);
+  await invalidateSession(userId, 'moderation');
 
   return { updated: true, user };
 }
@@ -1070,7 +1070,7 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
   await cancelSubscriptionPlan({ userId: user.id }).catch((error) =>
     logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
   );
-  await invalidateSession(id);
+  await invalidateSession(id, 'moderation');
 
   return result;
 };
@@ -1769,7 +1769,7 @@ export const toggleBan = async ({
     updateSource: 'toggleBan',
   });
 
-  await invalidateSession(id);
+  await invalidateSession(id, 'ban');
 
   if (!bannedAt) {
     // Run cleanup operations in parallel groups
@@ -1950,7 +1950,7 @@ export const toggleContestBan = async ({
     updateSource: 'toggleContestBan',
   });
 
-  await refreshSession(id);
+  await refreshSession(id, { caller: 'ban' });
 
   return updatedUser;
 };
@@ -2569,7 +2569,7 @@ export async function updateContentSettings({
   // Otherwise the fire-and-forget can race the next API call / session read
   // and hand back a stale session.user, which then overrides the user's
   // toggle client-side via BrowserSettingsProvider's smart-merge.
-  await refreshSession(userId).catch((err) => {
+  await refreshSession(userId, { caller: 'profile' }).catch((err) => {
     console.error('Failed to refresh session for user', userId, err);
   });
 }

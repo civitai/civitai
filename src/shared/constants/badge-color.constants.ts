@@ -17,6 +17,7 @@ export const modelTypeColors: Partial<Record<ModelType, MantineColor>> = {
   Poses: 'pink',
   Wildcards: 'gray',
   Workflows: 'indigo',
+  ComfyWorkflows: 'grape',
   MotionModule: 'red',
 };
 

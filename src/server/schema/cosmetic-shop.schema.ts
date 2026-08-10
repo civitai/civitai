@@ -24,6 +24,29 @@ export const getPaginatedCosmeticShopItemInput = paginationSchema.merge(
 // system user (-1); creator storefronts attribute as their owner's user id.
 export const CIVITAI_SHOP_ATTRIBUTION = -1;
 
+// One field a creator edit moved. Values are pre-formatted for display (Buzz
+// amounts stay numeric so the UI can group them) and absent when the field was
+// cleared or was never set.
+export type CosmeticShopItemHistoryChange = z.infer<typeof cosmeticShopItemHistoryChange>;
+export const cosmeticShopItemHistoryChange = z.object({
+  field: z.string(),
+  from: z.union([z.string(), z.number()]).nullish(),
+  to: z.union([z.string(), z.number()]).nullish(),
+});
+
+export type CosmeticShopItemHistoryEntry = z.infer<typeof cosmeticShopItemHistoryEntry>;
+export const cosmeticShopItemHistoryEntry = z.object({
+  at: z.string(),
+  userId: z.number(),
+  kind: z.enum(['submitted', 'edited', 'reviewed', 'takedown']),
+  // Status the item landed in after this event.
+  status: z.string().optional(),
+  // Review verdict for `reviewed` entries: approve | reject | request-changes | revert.
+  action: z.string().optional(),
+  note: z.string().optional(),
+  changes: z.array(cosmeticShopItemHistoryChange).optional(),
+});
+
 export type CosmeticShopItemMeta = z.infer<typeof cosmeticShopItemMeta>;
 export const cosmeticShopItemMeta = z.object({
   paidToUserIds: z.array(z.number()).optional(),
@@ -51,6 +74,15 @@ export const cosmeticShopItemMeta = z.object({
     .optional(),
   // sha256 of the submitted artwork bytes — used to block duplicate submissions.
   imageHash: z.string().optional(),
+  // Packs only. A pack has no Cosmetic of its own, so its cover art and size
+  // live here rather than in `Cosmetic.data`. `packMemberCount` is a render
+  // convenience; the join table stays authoritative for what's in the pack.
+  coverUrl: z.string().optional(),
+  // Artwork of the first few members, for packs with no cover of their own.
+  // Snapshotted rather than joined so a storefront card can render it from meta
+  // alone; re-taken whenever the contents change.
+  coverTiles: z.array(z.string()).optional(),
+  packMemberCount: z.number().optional(),
   // Cross-creator selling: whether other creators may resell this item, and the %
   // of price (0-70, out of the creator's 70% pool) the reseller keeps.
   sellableByOthers: z.boolean().optional(),
@@ -79,6 +111,11 @@ export const cosmeticShopItemMeta = z.object({
       at: z.string(),
     })
     .optional(),
+  // Append-only (capped) log of submissions, creator edits, review verdicts and
+  // takedowns, so a re-review can see what changed and what was decided before.
+  // Absent on items that predate it — the UI shows an empty state rather than
+  // implying nothing ever happened.
+  history: z.array(cosmeticShopItemHistoryEntry).optional(),
 });
 
 // Recorded on UserCosmeticShopPurchases.meta at purchase time. The 70% pool can
@@ -102,7 +139,7 @@ export const cosmeticPurchaseMeta = z.object({
     .optional(),
   // Kept by the platform (no recipient), so nothing to claw back — recorded for
   // the takedown summary and for reconciliation.
-  platformCut: z.number().optional(),  
+  platformCut: z.number().optional(),
 });
 
 export type UpsertCosmeticInput = z.infer<typeof upsertCosmeticInput>;
@@ -206,6 +243,8 @@ export const getPreviewImagesInput = z.object({
 
 export type GetShopInput = z.infer<typeof getShopInput>;
 export const getShopInput = z.object({
-  cosmeticTypes: z.array(z.enum(CosmeticType)).optional(),
+  // 'Pack' rides alongside the cosmetic types: a pack has no type of its own,
+  // but a shopper filtering the shelf thinks of it as one more kind of thing.
+  cosmeticTypes: z.array(z.union([z.enum(CosmeticType), z.literal('Pack')])).optional(),
   sectionId: z.number().optional(),
 });

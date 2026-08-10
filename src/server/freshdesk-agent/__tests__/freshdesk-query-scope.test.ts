@@ -139,6 +139,49 @@ describe('checkQueryScope — relations outside the allowed set', () => {
     expect(result.error).toContain('cannot read "ApiKey"');
   });
 
+  /**
+   * The negative counterpart to the ALLOWED sub-select-then-relation fixtures
+   * above. Those only pin that a legal statement of this shape is accepted, and
+   * "accepted" is also what a broken walk returns — so on their own they cannot
+   * tell a working FROM-list tracker from one that has stopped tracking.
+   *
+   * Concretely this pins the ORDER of `fromListAtDepth[depth] = false` and
+   * `depth -= 1` when a sub-select closes: the flag has to be cleared at the
+   * INNER depth, because the list that just ended is the sub-select's. Clearing
+   * it after the decrement wipes the OUTER list's flag instead, and the comma
+   * that follows stops being read as a relation position — so the relation after
+   * it is never audited at all.
+   *
+   * These are balanced, valid SQL, so the paren-balance guard cannot catch them;
+   * they have to assert on the RELATION name, not merely on rejection, or they
+   * would pass by dying to that guard for the wrong reason.
+   *
+   * Depths vary deliberately: the flag is stored per depth index, so a fix that
+   * happened to be right at one nesting level and wrong at another would slip a
+   * single-depth fixture.
+   */
+  it.each([
+    [
+      'a sub-select in the FROM list followed by an out-of-scope relation',
+      'SELECT * FROM (SELECT id FROM "User") x, "Session" s',
+    ],
+    [
+      'a relation, then a sub-select, then an out-of-scope relation',
+      'SELECT * FROM "User" u, (SELECT id FROM "Post") y, "Session" s',
+    ],
+    [
+      'a twice-nested sub-select followed by an out-of-scope relation',
+      'SELECT * FROM (SELECT id FROM (SELECT id FROM "Post") y) x, "Session" s',
+    ],
+  ])('refuses %s', (_label, sql) => {
+    const result = checkQueryScope(sql);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Session"');
+    // Not rejected for being malformed — these are well-formed statements.
+    expect(result.error).not.toContain('unbalanced parentheses');
+  });
+
   it('refuses a disallowed table inside a nested sub-select', () => {
     const result = checkQueryScope(
       'SELECT * FROM "User" WHERE id IN (SELECT "userId" FROM (SELECT "userId" FROM "Session") s)'
@@ -377,5 +420,80 @@ describe('checkQueryScope — shapes it cannot read, and therefore refuses', () 
     expect(result.error).toBe(
       'Error: query_database runs read-only SELECT statements. "INTO" is not available.'
     );
+  });
+});
+
+/**
+ * Paren-unbalanced input — the fixture class every other case in this file
+ * lacks.
+ *
+ * Everything above is well-formed SQL, which is why the walk's depth bookkeeping
+ * was never exercised against text whose real nesting it could not model. The
+ * walk keys EVERY relation decision on `depth` — which `FROM` list a comma
+ * continues, and therefore which tokens sit in relation position — so text that
+ * desynchronises `depth` from the truth gets a verdict that is not about the SQL
+ * a database would parse.
+ *
+ * These used to be accepted. Standing alone they are syntax errors, so that was
+ * inert; it stopped being inert once a caller began WRAPPING the statement in a
+ * bounding subquery, because a wrapper supplies the parentheses the text is
+ * missing. A statement with a stray `)` early and an unclosed `(` late can be
+ * rejected by Postgres on its own and valid once wrapped — and the relation it
+ * reaches through the desynchronised comma was never audited.
+ *
+ * The mechanism is independent of which table is targeted; these fixtures use
+ * relations this file already exercises as out-of-scope.
+ */
+describe('checkQueryScope — paren-unbalanced input', () => {
+  it.each([
+    // The exploit shape: stray `)` at depth 0 leaves the later comma outside any
+    // FROM list the walk thinks is open, so the relation after it is not read as
+    // a relation at all. The trailing unclosed `(` is what makes the WRAPPED
+    // form balance, i.e. valid SQL.
+    [
+      'a stray ")" early and an unclosed "(" late — valid only once wrapped',
+      'SELECT 1) x, "Session" s WHERE s.id = 1 UNION SELECT 0, 0, 0 FROM (SELECT 1',
+    ],
+    ['a bare stray ")"', 'SELECT 1)'],
+    ['a stray ")" in the target list', 'SELECT (1)) FROM "User"'],
+    ['an extra ")" after a balanced sub-select', 'SELECT * FROM (SELECT id FROM "User")) x'],
+    ['an unclosed "(" around a sub-select', 'SELECT * FROM (SELECT id FROM "User"'],
+    ['two unclosed "("', 'SELECT * FROM (SELECT (id FROM "User"'],
+    ['a stray ")" that hides an out-of-scope relation behind a comma', 'SELECT 1) x, "Account" a'],
+  ])('refuses %s', (_label, sql) => {
+    const result = checkQueryScope(sql);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('unbalanced parentheses');
+  });
+
+  // The two directions are separate guards and must be shown to be separately
+  // reachable — a single balance check that only caught one direction would
+  // leave the other half of the class open.
+  it('names the direction: a ")" that closes nothing', () => {
+    expect(checkQueryScope('SELECT 1)')).toEqual({
+      ok: false,
+      error:
+        'Error: unbalanced parentheses in query — a ")" here closes nothing. query_database only runs statements whose parentheses balance.',
+    });
+  });
+
+  it('names the direction: a "(" that was never closed', () => {
+    expect(checkQueryScope('SELECT * FROM (SELECT id FROM "User"')).toEqual({
+      ok: false,
+      error:
+        'Error: unbalanced parentheses in query — a "(" was never closed. query_database only runs statements whose parentheses balance.',
+    });
+  });
+
+  // Positive control for the fixture class: parentheses inside string literals
+  // and quoted identifiers are CONTENT, not structure. If the balance check
+  // counted those it would reject legitimate statements, and the corpus above
+  // would not catch it because none of those fixtures carry a quoted paren.
+  it('does not count parentheses inside string literals or quoted identifiers', () => {
+    expect(checkQueryScope(`SELECT id FROM "User" WHERE username = ')('`)).toEqual({ ok: true });
+    expect(checkQueryScope(`SELECT count(*) FROM "User" WHERE email = '(a@b.c)'`)).toEqual({
+      ok: true,
+    });
   });
 });

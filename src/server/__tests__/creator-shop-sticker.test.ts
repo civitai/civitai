@@ -15,6 +15,7 @@ import {
   isCreatorCosmeticType,
   packItemFloor,
   STICKER_MIN_BUZZ_PER_USE,
+  STICKER_MAX_LONG_EDGE,
   STICKER_MIN_LONG_EDGE,
   stickerPerUseFloor,
 } from '~/server/schema/creator-shop.schema';
@@ -70,17 +71,17 @@ describe('creator-shop sticker submission', () => {
     const pass = (w: number, h: number) => cosmeticDimensionsPass(req, w, h);
 
     it('accepts non-square art in either orientation', () => {
-      expect(pass(273, 241)).toBe(true);
-      expect(pass(241, 273)).toBe(true);
-      expect(pass(128, 128)).toBe(true);
-      expect(pass(256, 128)).toBe(true);
-      expect(pass(128, 256)).toBe(true);
+      expect(pass(STICKER_MIN_LONG_EDGE + 17, STICKER_MIN_LONG_EDGE)).toBe(true);
+      expect(pass(STICKER_MIN_LONG_EDGE, STICKER_MIN_LONG_EDGE + 17)).toBe(true);
+      expect(pass(STICKER_MIN_LONG_EDGE, STICKER_MIN_LONG_EDGE)).toBe(true);
+      expect(pass(STICKER_MAX_LONG_EDGE, STICKER_MAX_LONG_EDGE / 2)).toBe(true);
+      expect(pass(STICKER_MAX_LONG_EDGE / 2, STICKER_MAX_LONG_EDGE)).toBe(true);
     });
 
     it('rejects anything past the ratio cap, both ways round', () => {
-      expect(pass(257, 128)).toBe(false);
-      expect(pass(128, 257)).toBe(false);
-      expect(pass(512, 100)).toBe(false);
+      expect(pass(STICKER_MAX_LONG_EDGE, STICKER_MAX_LONG_EDGE / 2 - 1)).toBe(false);
+      expect(pass(STICKER_MAX_LONG_EDGE / 2 - 1, STICKER_MAX_LONG_EDGE)).toBe(false);
+      expect(pass(STICKER_MAX_LONG_EDGE, 100)).toBe(false);
     });
 
     // Expressed against the derived floor, not a literal: the whole point of

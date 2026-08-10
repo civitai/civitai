@@ -47,6 +47,8 @@ export class BuzzApiError extends Error {
 export type BuzzLogFn = (message: string, ...args: unknown[]) => void;
 
 export type CreateBuzzClientOptions = Partial<BuzzConfig> & {
+  /** Default request timeout for write calls. Absent means unbounded, as before. */
+  transactionTimeoutMs?: number;
   /** Retry attempts on failure (default 3, matching the app's prior behaviour). */
   retries?: number;
   /** Debug logger (app-defined). Defaults to a no-op. */
@@ -85,20 +87,86 @@ export type BuzzRefundMultiTransactionInput = {
   details?: Record<string, unknown> | null;
 };
 
+/**
+ * Per-call overrides for a write.
+ *
+ * `timeoutMs` is opt-in and absent by default, so existing callers keep today's
+ * unbounded behaviour. A caller that holds a lock while it waits needs "this
+ * request is no longer in flight" to become true at some point; without a
+ * timeout there is no such point, and no lock TTL can be sized against it.
+ */
+export type BuzzWriteOptions = {
+  timeoutMs?: number;
+  /** Per-call retry override. `0` disables the client's internal retry entirely. */
+  retries?: number;
+  /**
+   * Which failures are worth retrying. See `isSafeToRetry`.
+   *
+   * A client-side abort does not cancel the server side, so retrying a
+   * *timeout* on a non-idempotent write puts a second request on the wire while
+   * the first may still be executing — with the same external id. A retry is
+   * right for connection-refused, where you know nothing happened; it is wrong
+   * for a timeout, where the outcome is unknown by definition.
+   *
+   * Disabling retries altogether would throw away the safe half: a rolling
+   * restart refuses connections for a few seconds, and absorbing that here costs
+   * milliseconds where a caller's own retry loop is usually far coarser.
+   */
+  shouldRetry?: (error: unknown) => boolean;
+};
+
 /** Body for `refundTransaction`. */
 export type BuzzRefundTransactionInput = {
   description?: string;
   details?: Record<string, unknown> | null;
 };
 
-async function withRetries<T>(fn: () => Promise<T>, retries: number): Promise<T> {
+function safePredicate(predicate: (error: unknown) => boolean, error: unknown) {
+  try {
+    return predicate(error) === true;
+  } catch {
+    return false;
+  }
+}
+
+async function withRetries<T>(
+  fn: () => Promise<T>,
+  retries: number,
+  shouldRetry?: (error: unknown) => boolean
+): Promise<T> {
   try {
     return await fn();
   } catch (error) {
-    if (retries > 0) return withRetries(fn, retries - 1);
+    // Absent predicate keeps the historical behaviour: retry everything. A
+    // predicate that is present but inconclusive — returns a non-true value, or
+    // throws — must NOT retry: for a non-idempotent write, "I don't know" has to
+    // mean "don't send it again", and a throwing predicate would otherwise also
+    // replace the real failure with its own.
+    const retryable = shouldRetry ? safePredicate(shouldRetry, error) : true;
+    if (retries > 0 && retryable) return withRetries(fn, retries - 1, shouldRetry);
     throw error;
   }
 }
+
+/**
+ * Failures where the request provably never reached the server.
+ *
+ * An **allowlist**, deliberately. The rule is *may the server have run this?* —
+ * and a denylist of known-unsafe errors gets that backwards: every 5xx, every
+ * hang-up, and anything added later is retried by default. A 504 in particular
+ * means the *gateway* gave up, which says nothing about whether the write landed;
+ * retrying it sends a second identical write.
+ *
+ * Node's `fetch` reports a failure to connect as a `TypeError` carrying the
+ * syscall code. Those are the only cases where "nothing happened" is knowable.
+ */
+export const isSafeToRetry = (error: unknown) => {
+  const code = (error as { cause?: { code?: string } } | null)?.cause?.code;
+  return (
+    error instanceof TypeError &&
+    (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EAI_AGAIN')
+  );
+};
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
@@ -134,7 +202,7 @@ export type BuzzClient = ReturnType<typeof createBuzzClient>;
 /** Build a buzz-service client. Endpoint defaults to the package env (BUZZ_ENDPOINT),
  *  overridable via options; resolved lazily per-request so a bare import never throws. */
 export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
-  const { retries = 3, log, mapError, ...envOverrides } = options;
+  const { retries = 3, log, mapError, transactionTimeoutMs, ...envOverrides } = options;
 
   function endpoint(): string {
     const value = envOverrides.endpoint ?? loadBuzzEnv().endpoint;
@@ -148,23 +216,38 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
   async function request<T = unknown>(
     urlPart: string,
     init?: RequestInit,
-    opts?: { allow404?: boolean }
+    opts?: {
+      allow404?: boolean;
+      timeoutMs?: number;
+      retries?: number;
+      shouldRetry?: (error: unknown) => boolean;
+    }
   ): Promise<T> {
     try {
-      return await withRetries(async () => {
-        const url = `${endpoint()}${urlPart}`;
-        const response = await fetch(url, init);
-        if (!response.ok) {
-          if (opts?.allow404 && response.status === 404) return null as T;
-          log?.('request failed', {
-            url,
-            status: response.status,
-            statusText: response.statusText,
+      return await withRetries(
+        async () => {
+          const url = `${endpoint()}${urlPart}`;
+          // Opt-in, and absent by default: existing callers keep today's unbounded
+          // behaviour exactly. A caller that needs a bound — one holding a lock, or
+          // relying on "not in flight any more" — passes its own.
+          const response = await fetch(url, {
+            ...init,
+            ...(opts?.timeoutMs ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
           });
-          throw new BuzzApiError(response.status, response.statusText);
-        }
-        return (await response.json()) as T;
-      }, retries);
+          if (!response.ok) {
+            if (opts?.allow404 && response.status === 404) return null as T;
+            log?.('request failed', {
+              url,
+              status: response.status,
+              statusText: response.statusText,
+            });
+            throw new BuzzApiError(response.status, response.statusText);
+          }
+          return (await response.json()) as T;
+        },
+        opts?.retries ?? retries,
+        opts?.shouldRetry
+      );
     } catch (error) {
       if (error instanceof BuzzApiError && mapError) throw mapError(error);
       throw error;
@@ -183,8 +266,20 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
     }
   }
 
-  function post(urlPart: string, body: unknown) {
-    return request(urlPart, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) });
+  // Writes carry the configured bound; reads stay as they were. A caller holding
+  // a lock needs "this request is no longer in flight" to be true at some point,
+  // and without a timeout there is no such point for a lock TTL to be sized
+  // against.
+  function post(urlPart: string, body: unknown, opts?: BuzzWriteOptions) {
+    return request(
+      urlPart,
+      { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) },
+      {
+        timeoutMs: opts?.timeoutMs ?? transactionTimeoutMs,
+        retries: opts?.retries,
+        shouldRetry: opts?.shouldRetry,
+      }
+    );
   }
 
   // ---- Account reads -------------------------------------------------------
@@ -315,8 +410,8 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
     );
 
   // ---- Transaction writes --------------------------------------------------
-  const createTransaction = (transaction: BuzzTransactionInput) =>
-    post('/transaction', toApiTransaction(transaction)) as Promise<CreateTransactionResponse>;
+  const createTransaction = (transaction: BuzzTransactionInput, opts?: BuzzWriteOptions) =>
+    post('/transaction', toApiTransaction(transaction), opts) as Promise<CreateTransactionResponse>;
 
   const createTransactions = (transactions: BuzzTransactionInput[]) =>
     post(
@@ -324,11 +419,15 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
       transactions.map((t) => toApiTransaction(t))
     ) as Promise<CreateTransactionsResponse>;
 
-  const createMultiTransaction = (input: BuzzMultiTransactionInput) =>
-    post('/multi-transactions', toApiTransaction(input)) as Promise<CreateMultiTransactionResponse>;
+  const createMultiTransaction = (input: BuzzMultiTransactionInput, opts?: BuzzWriteOptions) =>
+    post(
+      '/multi-transactions',
+      toApiTransaction(input),
+      opts
+    ) as Promise<CreateMultiTransactionResponse>;
 
-  const refundMultiTransaction = (body: BuzzRefundMultiTransactionInput) =>
-    post('/multi-transactions/refund', body) as Promise<RefundMultiTransactionResponse>;
+  const refundMultiTransaction = (body: BuzzRefundMultiTransactionInput, opts?: BuzzWriteOptions) =>
+    post('/multi-transactions/refund', body, opts) as Promise<RefundMultiTransactionResponse>;
 
   const refundTransaction = (transactionId: string, body: BuzzRefundTransactionInput = {}) =>
     post(`/transactions/${transactionId}/refund`, body) as Promise<RefundTransactionResponse>;

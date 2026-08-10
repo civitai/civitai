@@ -1181,9 +1181,148 @@ const noUnloadableImageFixture = {
   },
 };
 
+// `cursor` only. `nextCursor` is a real API field on this codebase's paginated payloads
+// (model.service.ts and friends), so defaulting to it flags data fixtures that cannot loop.
+// Opt in per-file via `extraKeys` for a fake that spells it that way.
+const CURSOR_KEYS = new Set(['cursor']);
+const TERMINAL_CURSORS = new Set(['0', '']);
+
+function isTerminalCursorValue(node) {
+  if (!node) return false;
+  if (node.type === 'Literal') {
+    if (node.value === null) return true;
+    if (typeof node.value === 'number') return node.value === 0;
+    if (typeof node.value === 'bigint') return node.value === 0n;
+    if (typeof node.value === 'string') return TERMINAL_CURSORS.has(node.value);
+    return false;
+  }
+  if (node.type === 'TemplateLiteral' && node.expressions.length === 0) {
+    return TERMINAL_CURSORS.has(node.quasis[0].value.cooked);
+  }
+  if (node.type === 'Identifier') return node.name === 'undefined';
+  // `cursor: done ? 1 : 0` terminates — one branch is enough.
+  if (node.type === 'ConditionalExpression') {
+    return isTerminalCursorValue(node.consequent) || isTerminalCursorValue(node.alternate);
+  }
+  if (node.type === 'LogicalExpression') {
+    return isTerminalCursorValue(node.left) || isTerminalCursorValue(node.right);
+  }
+  if (node.type === 'TSAsExpression' || node.type === 'TSNonNullExpression') {
+    return isTerminalCursorValue(node.expression);
+  }
+  return false;
+}
+
+function cursorPropertyOf(node, keys) {
+  if (!node || node.type !== 'ObjectExpression') return null;
+  return (
+    node.properties.find(
+      (p) =>
+        p.type === 'Property' &&
+        !p.computed &&
+        ((p.key.type === 'Identifier' && keys.has(p.key.name)) ||
+          (p.key.type === 'Literal' && keys.has(p.key.value)))
+    ) || null
+  );
+}
+
+/** Unwrap `Promise.resolve(x)` / `await x` so a fake written either way is still seen. */
+function unwrapReturned(node) {
+  let current = node;
+  for (let i = 0; i < 4 && current; i++) {
+    if (current.type === 'AwaitExpression') current = current.argument;
+    else if (
+      current.type === 'CallExpression' &&
+      current.callee.type === 'MemberExpression' &&
+      current.callee.object.type === 'Identifier' &&
+      current.callee.object.name === 'Promise' &&
+      current.callee.property.type === 'Identifier' &&
+      current.callee.property.name === 'resolve' &&
+      current.arguments.length === 1
+    ) {
+      current = current.arguments[0];
+    } else break;
+  }
+  return current;
+}
+
+const noUnboundedPagingFake = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description:
+        "Require a test fake that returns a paging cursor to have a return path yielding a terminal cursor, so a regression fails legibly instead of hanging CI. A cursor fake that never returns '0' turns a reverted bound into an infinite loop of await-on-already-resolved promises — a pure microtask loop that starves the macrotask queue, so vitest's setTimeout-based testTimeout never fires.",
+      recommended: true,
+    },
+    schema: [
+      {
+        type: 'object',
+        properties: { extraKeys: { type: 'array', items: { type: 'string' } } },
+        additionalProperties: false,
+      },
+    ],
+    messages: {
+      unboundedPagingFake:
+        "This fake returns a `{{key}}` but has no return path where `{{key}}` is terminal ('0', '', 0, null or undefined), so it never stops paging on its own. If the bound under test is ever removed, the consumer loops forever on already-resolved promises — a pure microtask loop that starves the macrotask queue, so vitest's setTimeout-based `testTimeout` NEVER fires and CI hangs with no assertion failure and nothing to read (measured: 4,194,305 iterations in 4s with a 300ms setTimeout that never ran). Add a cap so the fake terminates itself, and assert the loop stopped early — `if (pages > 50) return { {{key}}: '0', fields: [] };` turns an unreportable hang into `expected 51 to be less than 5` in under a second. See CLAUDE.md, \"A passing test says nothing about how it FAILS\". If the non-termination is the point and the consumer is independently bounded, say so: // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- <reason>",
+    },
+  },
+  create(context) {
+    const options = context.options[0] || {};
+    const keys = new Set([...CURSOR_KEYS, ...(options.extraKeys || [])]);
+    // One entry per function currently being walked. Returns are attributed to the
+    // innermost enclosing function, so a nested callback never satisfies its parent.
+    const stack = [];
+
+    function enter() {
+      stack.push({ cursorNode: null, key: null, terminates: false });
+    }
+
+    function record(returned) {
+      const frame = stack[stack.length - 1];
+      if (!frame) return;
+      const object = unwrapReturned(returned);
+      const prop = cursorPropertyOf(object, keys);
+      if (!prop) return;
+      const key = prop.key.type === 'Identifier' ? prop.key.name : prop.key.value;
+      if (isTerminalCursorValue(prop.value)) frame.terminates = true;
+      else if (!frame.cursorNode) {
+        frame.cursorNode = prop;
+        frame.key = key;
+      }
+    }
+
+    function exit() {
+      const frame = stack.pop();
+      if (!frame || !frame.cursorNode || frame.terminates) return;
+      context.report({
+        node: frame.cursorNode,
+        messageId: 'unboundedPagingFake',
+        data: { key: frame.key },
+      });
+    }
+
+    return {
+      FunctionExpression: enter,
+      ArrowFunctionExpression(node) {
+        enter();
+        // Implicit-return arrow: `() => ({ cursor: '0' })`
+        if (node.body.type !== 'BlockStatement') record(node.body);
+      },
+      FunctionDeclaration: enter,
+      ReturnStatement(node) {
+        if (node.argument) record(node.argument);
+      },
+      'FunctionExpression:exit': exit,
+      'ArrowFunctionExpression:exit': exit,
+      'FunctionDeclaration:exit': exit,
+    };
+  },
+};
+
 module.exports = {
   'no-io-in-transaction': noIoInTransaction,
   'no-module-scope-cache': noModuleScopeCache,
+  'no-unbounded-paging-fake': noUnboundedPagingFake,
   'no-unloadable-image-fixture': noUnloadableImageFixture,
   'no-wholesale-module-mock': noWholesaleModuleMock,
 };

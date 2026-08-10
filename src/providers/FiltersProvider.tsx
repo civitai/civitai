@@ -90,6 +90,7 @@ const imageFilterSchema = z.object({
   remixesOnly: z.boolean().optional(),
   nonRemixesOnly: z.boolean().optional(),
   requiringMeta: z.boolean().optional(),
+  hideChallenges: z.boolean().optional(),
   poiOnly: z.boolean().optional(),
   minorOnly: z.boolean().optional(),
   disablePoi: z.boolean().optional(),

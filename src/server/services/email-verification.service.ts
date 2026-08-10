@@ -109,7 +109,7 @@ export async function requestEmailChange(userId: number, newEmail: string) {
   await sendVerificationEmail(newEmail, user.username || 'User', token);
 
   // Invalidate the user's session to ensure they re-authenticate after email change
-  await refreshSession(userId);
+  await refreshSession(userId, { caller: 'email-verification' });
 
   return { success: true, message: 'Verification email sent' };
 }
@@ -128,7 +128,7 @@ export async function confirmEmailChange(token: string) {
   userUpdateCounter?.inc({ location: 'email-verification.service:confirmEmailChange' });
 
   // Invalidate the user's session after successful email change
-  await refreshSession(userId);
+  await refreshSession(userId, { caller: 'email-verification' });
 
   return { success: true, message: 'Email address updated successfully' };
 }

@@ -6,7 +6,25 @@ import { instrumentationRegistry } from '~/server/prom/client';
 // Side-effect import: registers the challenge state gauges (collect()-based) on the default
 // registry so they are present + scraped even before the first challenge op runs this session.
 import '~/server/prom/challenge.metrics';
+// Side-effect import: registers the session-resolution metrics, including the UNLABELLED
+// session_legacy_decode_total. Unlabelled counters only carry their "healthy is an observable 0" meaning if
+// the module is loaded — otherwise an absent series looks like a dead code path rather than an unloaded one,
+// which is the exact ambiguity that counter exists to remove.
+import '~/server/auth/session-metrics';
+// Same reason (#3665): seeds all 12 (reason, surface) series of
+// civitai_generation_model_substitutions_total at 0. Without this call the
+// counter is registered only by the FIRST substitution on this pod, so
+// `…{surface="api"}` read `no data` until then — indistinguishable from an
+// unwired instrument, on a metric whose entire job is to be read as a gate.
+//
+// Next.js loads an API route lazily, so this runs on the first REQUEST to
+// /api/metrics rather than at pod start — which is exactly soon enough: the
+// only consumer is the scrape, and this module is what serves it, so the series
+// are present in every response that could ever observe them.
+import { ensureRegisterGenerationModelSubstitutionMetrics } from '~/server/metrics/generation-model-substitution.metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+
+ensureRegisterGenerationModelSubstitutionMetrics();
 
 const labels: Record<string, string> = {};
 if (process.env.PODNAME) {

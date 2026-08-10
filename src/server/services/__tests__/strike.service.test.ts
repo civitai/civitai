@@ -529,7 +529,7 @@ describe('strike.service', () => {
           }),
         })
       );
-      expect(mockInvalidateSession).toHaveBeenCalledWith(1);
+      expect(mockInvalidateSession).toHaveBeenCalledWith(1, 'strike');
       expect(mockCreateNotification).toHaveBeenCalledWith(
         expect.objectContaining({ type: 'strike-escalation-muted' })
       );
@@ -568,7 +568,7 @@ describe('strike.service', () => {
           }),
         })
       );
-      expect(mockInvalidateSession).toHaveBeenCalledWith(1);
+      expect(mockInvalidateSession).toHaveBeenCalledWith(1, 'strike');
       expect(mockCreateNotification).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'strike-escalation-muted',
@@ -646,7 +646,7 @@ describe('strike.service', () => {
       expect(mockCreateNotification).toHaveBeenCalledWith(
         expect.objectContaining({ type: 'strike-de-escalation-unmuted' })
       );
-      expect(mockRefreshSession).toHaveBeenCalledWith(1);
+      expect(mockRefreshSession).toHaveBeenCalledWith(1, { caller: 'strike' });
     });
 
     it('<2 points, user flagged (has strikeFlaggedForReview): unmutes and clears flag', async () => {
@@ -1036,7 +1036,7 @@ describe('strike.service', () => {
           updateSource: 'timed-unmute',
         })
       );
-      expect(mockRefreshSession).toHaveBeenCalledWith(100);
+      expect(mockRefreshSession).toHaveBeenCalledWith(100, { caller: 'strike' });
     });
 
     it('counts user when escalation returns unmuted', async () => {

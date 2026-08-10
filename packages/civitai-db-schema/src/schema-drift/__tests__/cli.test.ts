@@ -4,8 +4,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { DbCatalog } from '../types';
+
+/**
+ * Every case in this file spawns the CLI as a real process, which means a cold `tsx`
+ * transpile and a Node start before a single assertion runs. Measured on a developer
+ * machine that is doing other work at the same time, a passing case takes 1.1–3.5s —
+ * against Vitest's 5s default. That margin is not a margin, and the file failed 1–2 of its
+ * 9 cases on every run, a different subset each time, with `Test timed out in 5000ms`.
+ *
+ * A flaky gate is worse than no gate: it reds for reasons unrelated to the change under
+ * review and trains everyone to re-run until green. The dependency here is on how loaded
+ * the machine is, not on anything the code does, so it is removed rather than tolerated.
+ * A real hang still fails, 60s later.
+ */
+vi.setConfig({ testTimeout: 60_000 });
 
 const run = promisify(execFile);
 

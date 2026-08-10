@@ -139,6 +139,74 @@ function postFromBlock(type: string, payload?: unknown) {
   );
 }
 
+/**
+ * Capture host→block posts. `send` targets the iframe's contentWindow, so the
+ * assertable record of what the HOST told the BLOCK is a listener on that
+ * window (same helper shape as PageBlockHostThemeChange / -Storage).
+ *
+ * Attach it AFTER the iframe is in the DOM (i.e. after `driveToReady`); it is
+ * structurally blind to anything posted before it subscribes, which is fine for
+ * the consent path — every message under test is a response to a REQUEST_CONSENT
+ * the test itself posts later.
+ */
+function listenForHostPosts() {
+  const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+  const cw = el.contentWindow;
+  if (!cw) throw new Error('iframe contentWindow missing');
+  const received: Array<{ type: string; payload: unknown }> = [];
+  const handler = (e: MessageEvent) => {
+    const d = e.data as { type?: string; payload?: unknown } | null;
+    if (d && typeof d.type === 'string') received.push({ type: d.type, payload: d.payload });
+  };
+  cw.addEventListener('message', handler);
+  return {
+    received,
+    of: (type: string) => received.filter((m) => m.type === type),
+    clear: () => received.splice(0, received.length),
+    stop: () => cw.removeEventListener('message', handler),
+  };
+}
+
+/**
+ * Record the ORDER of the two host-side effects on the un-grantable branch: the
+ * CONSENT_UNAVAILABLE bridge push and the host toast.
+ *
+ * `listenForHostPosts` above structurally CANNOT do this. `send` →
+ * `contentWindow.postMessage` is delivered asynchronously, so its listener always
+ * runs after the whole handler has returned — a `vi.fn()` toast spy that cannot
+ * throw plus an async delivery means moving `send` below `showNotification` in the
+ * product changes nothing any of those assertions can see.
+ *
+ * The CALL to `postMessage` is synchronous, so patching it on the target window
+ * records the two markers in the order the handler actually performs them. Only
+ * CONSENT_UNAVAILABLE is recorded — the host also posts BLOCK_INIT/TOKEN_REFRESH
+ * through the same window.
+ */
+function recordConsentEffectOrder() {
+  const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+  const cw = el.contentWindow;
+  if (!cw) throw new Error('iframe contentWindow missing');
+  const order: string[] = [];
+  const original = cw.postMessage.bind(cw) as (message: unknown, targetOrigin: string) => void;
+  cw.postMessage = ((message: unknown, targetOrigin: string) => {
+    const type = (message as { type?: string } | null)?.type;
+    if (type === 'CONSENT_UNAVAILABLE') order.push('send');
+    original(message, targetOrigin);
+  }) as unknown as Window['postMessage'];
+  showNotificationSpy.mockImplementation(() => {
+    order.push('toast');
+  });
+  return {
+    order,
+    stop: () => {
+      cw.postMessage = original as unknown as Window['postMessage'];
+      // mockClear() (the beforeEach) keeps implementations — reset so the marker
+      // impl cannot leak into another test.
+      showNotificationSpy.mockReset();
+    },
+  };
+}
+
 // Same-origin so trustTier='internal' yields a pinned (non-opaque) transport
 // whose expectedOrigin equals this frame's origin.
 const SAME_ORIGIN_SRC = `${window.location.origin}/`;
@@ -230,13 +298,13 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     // The block claims a WIDER set than the host withheld — the host must ignore
     // the claim and grant only its server-known missingScopes.
     //
-    // Re-post REQUEST_CONSENT INSIDE the waitFor: driveToReady only guarantees the
-    // DOM `data-block-ready` attribute, but the host's message-gate state can lag
-    // it by a tick — so a single fire-once REQUEST_CONSENT can land while the gate
-    // still reads "not ready", get dropped (see the "before BLOCK_READY is dropped"
-    // test), and never retried → the dialog never opens (a 10s CI-contention flake).
-    // Re-posting until the dialog appears mirrors driveToReady's BLOCK_READY retry;
-    // waitFor exits on the first success, so exactly one post opens exactly one dialog.
+    // Posted inside the waitFor purely so the assertion retries if the DIALOG has
+    // not rendered yet. The gate itself no longer lags: the host reads a
+    // render-body-updated `statusRef`, so once `data-block-ready` is "true" the
+    // handler is live. (This used to say the message-gate state could lag the DOM
+    // attribute by a tick and a dropped fire-and-forget post was never retried —
+    // true before the stale-closure fix, false now.) waitFor exits on the first
+    // success, so exactly one post opens exactly one dialog.
     await vi.waitFor(() => {
       postFromBlock('REQUEST_CONSENT', { scopes: ['ai:write:budgeted', 'buzz:spend:self'] });
       expect(useDialogStore.getState().dialogs).toHaveLength(1);
@@ -288,8 +356,25 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     );
 
     await driveToReady();
-    // baseProps.declaredScopes already carries ai:write:budgeted, so with nothing
-    // missing it is ALREADY granted → benign re-request → no dialog AND no toast.
+
+    // 🔴 POSITIVE CONTROL, and it is not optional. Everything this test asserts is a
+    // ZERO — no dialog, no toast — and a host that simply DROPPED the message
+    // produces that same zero. Before the stale-closure fix that was a live
+    // possibility: the handler closed over `status` and stayed non-ready until a
+    // passive effect re-registered it, so this test could pass without ever
+    // exercising its own subject ("nothing missing is a no-op").
+    //
+    // `models:read:self` is neither granted (not in declaredScopes) nor grantable
+    // (missingScopes is empty), so it is UN-GRANTABLE and must surface a toast —
+    // proving the handler is live under exactly these props before the zero is read.
+    postFromBlock('REQUEST_CONSENT', { scopes: ['models:read:self'] });
+    await vi.waitFor(() => expect(showNotificationSpy).toHaveBeenCalledTimes(1));
+    showNotificationSpy.mockClear();
+
+    // THE SUBJECT: baseProps.declaredScopes already carries ai:write:budgeted, so
+    // with nothing missing it is ALREADY granted → benign re-request → no dialog AND
+    // no toast. This zero is now a measurement, because the control above proved a
+    // non-zero is reachable on this very mount.
     postFromBlock('REQUEST_CONSENT', { scopes: ['ai:write:budgeted'] });
 
     await new Promise((r) => setTimeout(r, 150));
@@ -319,6 +404,193 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     });
     // No consent dialog is opened for an un-grantable scope.
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+
+  /**
+   * The refusal must be observable to the BLOCK, not only to the viewer.
+   *
+   * The host-side toast renders in the HOST frame. Nothing was posted back over
+   * the bridge, so the block could not tell "the user hasn't confirmed the dialog
+   * yet" from "this environment will never grant this scope" — and its own UI kept
+   * telling the developer to retry an action that can never succeed, directly
+   * contradicting the corner toast on the same screen.
+   */
+  test('Issue B: an UN-GRANTABLE REQUEST_CONSENT posts CONSENT_UNAVAILABLE to the block with the refused scopes', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        declaredScopes={['models:read:self']}
+        missingScopes={[]}
+        needsConsent={false}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    const posts = listenForHostPosts();
+    try {
+      // Post exactly ONCE, outside the waitFor. `send` → `contentWindow.postMessage`
+      // is delivered asynchronously, so a post INSIDE a retrying waitFor fires
+      // several REQUEST_CONSENTs before the first CONSENT_UNAVAILABLE lands and the
+      // extra replies arrive later — which makes the count untrustworthy here and
+      // actively broke the benign test's zero below. `driveToReady` already proved
+      // the handler is live (it reads a render-body ref, not a stale closure), so
+      // one post is enough; the waitFor only awaits DELIVERY.
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:write', 'apps:storage:read'] });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+
+      const msg = posts.of('CONSENT_UNAVAILABLE')[0];
+      expect(msg.payload).toEqual({
+        reason: 'ungrantable',
+        // The host's own computed un-grantable set (sorted+deduped), filtered to
+        // the known block-scope vocabulary — not the block's raw hint echoed back.
+        scopes: ['apps:storage:read', 'apps:storage:write'],
+      });
+
+      // ADDITIVE, not a replacement: the viewer-facing toast still fires, and the
+      // un-grantable path still opens no consent dialog.
+      expect(showNotificationSpy).toHaveBeenCalled();
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
+
+  /**
+   * 🔴 The payload is UNTRUSTED BLOCK INPUT until the host filters it.
+   *
+   * `payload.scopes` on a REQUEST_CONSENT is whatever the block's own frame put
+   * there, and the CONSENT_UNAVAILABLE push hands it to block UI to render. The
+   * host therefore names only scopes from the fixed platform vocabulary.
+   *
+   * The decision to refuse is NOT filtered, and that half is the more important
+   * one: the un-grantable set is the trigger as well as the payload, so filtering
+   * the trigger would make a request for an un-grantable scope the vocabulary
+   * doesn't know produce no message and no toast — silently deleting the existing
+   * user-visible behaviour in the name of sanitising it.
+   */
+  test('Issue B: unknown/garbage/oversized scopes are DROPPED from the CONSENT_UNAVAILABLE payload, and the message + toast still fire', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        declaredScopes={['models:read:self']}
+        missingScopes={[]}
+        needsConsent={false}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    const posts = listenForHostPosts();
+    try {
+      // Every requested scope is un-grantable AND outside the vocabulary.
+      postFromBlock('REQUEST_CONSENT', {
+        scopes: ['<img src=x onerror=alert(1)>', 'not:a:real:scope', 'A'.repeat(5000)],
+      });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+
+      // The refusal is still delivered — with NO names, because none survived.
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: [],
+      });
+      // …and the existing host-side behaviour is byte-for-byte unchanged.
+      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('Issue B: a MIXED hint names only the KNOWN scopes in the payload (sorted order preserved)', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        declaredScopes={['models:read:self']}
+        missingScopes={[]}
+        needsConsent={false}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    const posts = listenForHostPosts();
+    try {
+      postFromBlock('REQUEST_CONSENT', {
+        scopes: ['apps:storage:write', 'not:a:real:scope', 'apps:storage:read'],
+      });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: ['apps:storage:read', 'apps:storage:write'],
+      });
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('Issue B: the CONSENT_UNAVAILABLE push happens BEFORE the toast', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        declaredScopes={['models:read:self']}
+        missingScopes={[]}
+        needsConsent={false}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    const rec = recordConsentEffectOrder();
+    try {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:write'] });
+      await vi.waitFor(() => expect(rec.order).toHaveLength(2));
+      // The block's signal must not be reachable only past a notification layer
+      // that can throw. Asserted on the synchronous CALLS — see the helper.
+      expect(rec.order).toEqual(['send', 'toast']);
+    } finally {
+      rec.stop();
+    }
+  });
+
+  test('the BENIGN already-granted REQUEST_CONSENT posts NO CONSENT_UNAVAILABLE (the silent no-op stays silent)', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        missingScopes={[]}
+        needsConsent={false}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    const posts = listenForHostPosts();
+    try {
+      // 🔴 POSITIVE CONTROL. The subject of this test is a ZERO, and a host that
+      // dropped the message — or a listener wired to nothing — produces the same
+      // zero. `models:read:self` is neither granted (absent from declaredScopes)
+      // nor grantable (missingScopes is empty), so it is UN-GRANTABLE and MUST
+      // produce a CONSENT_UNAVAILABLE on this very mount. Watch the count move
+      // before reading the zero. ONE post (see the note in the test above), so the
+      // exactly-one assertion also proves nothing is still in flight when we clear.
+      postFromBlock('REQUEST_CONSENT', { scopes: ['models:read:self'] });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+      posts.clear();
+      showNotificationSpy.mockClear();
+
+      // THE SUBJECT: `ai:write:budgeted` is in declaredScopes and nothing is
+      // withheld, so the block is re-requesting a scope it ALREADY holds. Nothing
+      // is blocked ⇒ no toast AND no bridge message. Emitting here would train
+      // blocks to render a "permission unavailable" state on a working permission.
+      postFromBlock('REQUEST_CONSENT', { scopes: ['ai:write:budgeted'] });
+      await new Promise((r) => setTimeout(r, 150));
+      expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(0);
+      expect(showNotificationSpy).not.toHaveBeenCalled();
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
   });
 
   test('reviewMode surfaces a passive reduced-permissions notice and NEVER a consent modal', async () => {
@@ -432,58 +704,50 @@ describe('PageBlockHost loading indicator (Task 1)', () => {
     expect(page.getByTestId('app-page-loading').query()).toBeNull();
   });
 
-  test(
-    'loader clears after the BLOCK_READY timeout (timeout terminal path)',
-    async () => {
-      // token present so the init controller arms its readiness timeout, but we
-      // NEVER ack BLOCK_READY → after BLOCK_READY_TIMEOUT_MS (10s) onReadyTimeout
-      // flips status 'loading' → 'timeout', clearing the loader and rendering the
-      // fallback.
-      useFakeClock();
-      renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+  test('loader clears after the BLOCK_READY timeout (timeout terminal path)', async () => {
+    // token present so the init controller arms its readiness timeout, but we
+    // NEVER ack BLOCK_READY → after BLOCK_READY_TIMEOUT_MS (10s) onReadyTimeout
+    // flips status 'loading' → 'timeout', clearing the loader and rendering the
+    // fallback.
+    useFakeClock();
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
 
-      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
 
-      // Jump the 10s readiness window on the fake clock instead of sleeping through it.
-      await advancePastWindow(11_000);
-      // The loader must clear and the timeout fallback render.
-      await vi.waitFor(
-        () => {
-          expect(page.getByTestId('app-page-loading').query()).toBeNull();
-        },
-        { timeout: 5_000, interval: 100 }
-      );
-      await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
-    },
-    20_000
-  );
+    // Jump the 10s readiness window on the fake clock instead of sleeping through it.
+    await advancePastWindow(11_000);
+    // The loader must clear and the timeout fallback render.
+    await vi.waitFor(
+      () => {
+        expect(page.getByTestId('app-page-loading').query()).toBeNull();
+      },
+      { timeout: 5_000, interval: 100 }
+    );
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+  }, 20_000);
 
-  test(
-    'loader clears after the token-wait timeout (no_token terminal path)',
-    async () => {
-      // token=null and tokenError=false → no init controller (shouldStartInit
-      // needs a token) and no synchronous error flip; the token-wait effect's
-      // TOKEN_WAIT_TIMEOUT_MS (15s) timer flips status 'loading' → 'no_token',
-      // clearing the loader and rendering the fallback. (With a null token the
-      // iframe still mounts in the loading state, so the overlay is shown first.)
-      useFakeClock();
-      renderWithProviders(
-        <PageBlockHost {...baseProps} token={null} tokenError={false} onConsentGranted={vi.fn()} />
-      );
+  test('loader clears after the token-wait timeout (no_token terminal path)', async () => {
+    // token=null and tokenError=false → no init controller (shouldStartInit
+    // needs a token) and no synchronous error flip; the token-wait effect's
+    // TOKEN_WAIT_TIMEOUT_MS (15s) timer flips status 'loading' → 'no_token',
+    // clearing the loader and rendering the fallback. (With a null token the
+    // iframe still mounts in the loading state, so the overlay is shown first.)
+    useFakeClock();
+    renderWithProviders(
+      <PageBlockHost {...baseProps} token={null} tokenError={false} onConsentGranted={vi.fn()} />
+    );
 
-      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
 
-      await advancePastWindow(16_000);
-      await vi.waitFor(
-        () => {
-          expect(page.getByTestId('app-page-loading').query()).toBeNull();
-        },
-        { timeout: 5_000, interval: 100 }
-      );
-      await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
-    },
-    25_000
-  );
+    await advancePastWindow(16_000);
+    await vi.waitFor(
+      () => {
+        expect(page.getByTestId('app-page-loading').query()).toBeNull();
+      },
+      { timeout: 5_000, interval: 100 }
+    );
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+  }, 25_000);
 });
 
 // Drive the host to the `fatal` terminal state via its REAL status machine:
@@ -509,9 +773,7 @@ describe('PageBlockHost terminal error surface (Task: readable error + Retry)', 
     await driveToFatal();
 
     // Readable message (app name surfaced on the fatal path) — NOT "reported an error".
-    await expect
-      .element(page.getByText('Budgeted Generator failed to load'))
-      .toBeInTheDocument();
+    await expect.element(page.getByText('Budgeted Generator failed to load')).toBeInTheDocument();
     // Retry button present.
     await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     // Loader is gone (no infinite spinner behind the fallback).
@@ -524,62 +786,48 @@ describe('PageBlockHost terminal error surface (Task: readable error + Retry)', 
     );
     await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
 
-    await expect
-      .element(page.getByText("Couldn't authenticate this app"))
-      .toBeInTheDocument();
+    await expect.element(page.getByText("Couldn't authenticate this app")).toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(page.getByTestId('app-page-loading').query()).toBeNull();
   });
 
-  test(
-    'timeout terminal state: readable timeout message + Retry, not the loader',
-    async () => {
-      // token present, never ack BLOCK_READY → readiness timeout (10s) → 'timeout'.
-      useFakeClock();
-      renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
-      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+  test('timeout terminal state: readable timeout message + Retry, not the loader', async () => {
+    // token present, never ack BLOCK_READY → readiness timeout (10s) → 'timeout'.
+    useFakeClock();
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
 
-      await advancePastWindow(11_000);
-      await vi.waitFor(
-        () => {
-          expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
-        },
-        { timeout: 5_000, interval: 100 }
-      );
-      await expect
-        .element(page.getByText("This app didn't load in time"))
-        .toBeInTheDocument();
-      await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-      expect(page.getByTestId('app-page-loading').query()).toBeNull();
-    },
-    20_000
-  );
+    await advancePastWindow(11_000);
+    await vi.waitFor(
+      () => {
+        expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+      },
+      { timeout: 5_000, interval: 100 }
+    );
+    await expect.element(page.getByText("This app didn't load in time")).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(page.getByTestId('app-page-loading').query()).toBeNull();
+  }, 20_000);
 
-  test(
-    'no_token terminal state: readable auth message + Retry, not the loader',
-    async () => {
-      // token=null, no error → token-wait timeout (15s) → 'no_token' → token_error copy.
-      useFakeClock();
-      renderWithProviders(
-        <PageBlockHost {...baseProps} token={null} tokenError={false} onConsentGranted={vi.fn()} />
-      );
-      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+  test('no_token terminal state: readable auth message + Retry, not the loader', async () => {
+    // token=null, no error → token-wait timeout (15s) → 'no_token' → token_error copy.
+    useFakeClock();
+    renderWithProviders(
+      <PageBlockHost {...baseProps} token={null} tokenError={false} onConsentGranted={vi.fn()} />
+    );
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
 
-      await advancePastWindow(16_000);
-      await vi.waitFor(
-        () => {
-          expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
-        },
-        { timeout: 5_000, interval: 100 }
-      );
-      await expect
-        .element(page.getByText("Couldn't authenticate this app"))
-        .toBeInTheDocument();
-      await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-      expect(page.getByTestId('app-page-loading').query()).toBeNull();
-    },
-    25_000
-  );
+    await advancePastWindow(16_000);
+    await vi.waitFor(
+      () => {
+        expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+      },
+      { timeout: 5_000, interval: 100 }
+    );
+    await expect.element(page.getByText("Couldn't authenticate this app")).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(page.getByTestId('app-page-loading').query()).toBeNull();
+  }, 25_000);
 });
 
 describe('PageBlockHost Retry (Task: re-attempt load from terminal fallback)', () => {
@@ -696,41 +944,37 @@ describe('PageBlockHost Retry re-mints the token on AUTH failures (the HIGH)', (
     expect(page.getByTestId('app-page-fallback').query()).toBeNull();
   });
 
-  test(
-    'no_token (token never arrived): Retry calls onRetryToken AND returns to loading',
-    async () => {
-      const onRetryToken = vi.fn();
-      // token=null, no error → token-wait timeout (15s) → `no_token` terminal.
-      useFakeClock();
-      renderWithProviders(
-        <PageBlockHost
-          {...baseProps}
-          token={null}
-          tokenError={false}
-          onConsentGranted={vi.fn()}
-          onRetryToken={onRetryToken}
-        />
-      );
-      // The loader is the precondition — and it also guarantees the render has committed
-      // (so the product's token-wait timer is on the fake clock) before we advance it.
-      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
-      await advancePastWindow(16_000);
-      await vi.waitFor(
-        () => {
-          expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
-        },
-        { timeout: 5_000, interval: 100 }
-      );
-      expect(onRetryToken).not.toHaveBeenCalled();
+  test('no_token (token never arrived): Retry calls onRetryToken AND returns to loading', async () => {
+    const onRetryToken = vi.fn();
+    // token=null, no error → token-wait timeout (15s) → `no_token` terminal.
+    useFakeClock();
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        token={null}
+        tokenError={false}
+        onConsentGranted={vi.fn()}
+        onRetryToken={onRetryToken}
+      />
+    );
+    // The loader is the precondition — and it also guarantees the render has committed
+    // (so the product's token-wait timer is on the fake clock) before we advance it.
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    await advancePastWindow(16_000);
+    await vi.waitFor(
+      () => {
+        expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+      },
+      { timeout: 5_000, interval: 100 }
+    );
+    expect(onRetryToken).not.toHaveBeenCalled();
 
-      await page.getByRole('button', { name: 'Retry' }).click();
+    await page.getByRole('button', { name: 'Retry' }).click();
 
-      expect(onRetryToken).toHaveBeenCalledTimes(1);
-      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
-      expect(page.getByTestId('app-page-fallback').query()).toBeNull();
-    },
-    25_000
-  );
+    expect(onRetryToken).toHaveBeenCalledTimes(1);
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    expect(page.getByTestId('app-page-fallback').query()).toBeNull();
+  }, 25_000);
 
   test('fatal (non-auth): Retry returns to loading + remounts but does NOT re-mint the token', async () => {
     const onRetryToken = vi.fn();
@@ -754,35 +998,31 @@ describe('PageBlockHost Retry re-mints the token on AUTH failures (the HIGH)', (
     expect(onRetryToken).not.toHaveBeenCalled();
   });
 
-  test(
-    'timeout (non-auth): Retry returns to loading but does NOT re-mint the token',
-    async () => {
-      const onRetryToken = vi.fn();
-      // token present, never ack BLOCK_READY → readiness timeout (10s) → `timeout`.
-      useFakeClock();
-      renderWithProviders(
-        <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={onRetryToken} />
-      );
-      // The loader is the precondition — and it also guarantees the render has committed
-      // (so the product's readiness timer is on the fake clock) before we advance it.
-      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
-      await advancePastWindow(11_000);
-      await vi.waitFor(
-        () => {
-          expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
-        },
-        { timeout: 5_000, interval: 100 }
-      );
+  test('timeout (non-auth): Retry returns to loading but does NOT re-mint the token', async () => {
+    const onRetryToken = vi.fn();
+    // token present, never ack BLOCK_READY → readiness timeout (10s) → `timeout`.
+    useFakeClock();
+    renderWithProviders(
+      <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={onRetryToken} />
+    );
+    // The loader is the precondition — and it also guarantees the render has committed
+    // (so the product's readiness timer is on the fake clock) before we advance it.
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    await advancePastWindow(11_000);
+    await vi.waitFor(
+      () => {
+        expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+      },
+      { timeout: 5_000, interval: 100 }
+    );
 
-      await page.getByRole('button', { name: 'Retry' }).click();
+    await page.getByRole('button', { name: 'Retry' }).click();
 
-      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
-      expect(page.getByTestId('app-page-fallback').query()).toBeNull();
-      // Token was fine on a timeout → no re-mint (remount-only path unchanged).
-      expect(onRetryToken).not.toHaveBeenCalled();
-    },
-    20_000
-  );
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    expect(page.getByTestId('app-page-fallback').query()).toBeNull();
+    // Token was fine on a timeout → no re-mint (remount-only path unchanged).
+    expect(onRetryToken).not.toHaveBeenCalled();
+  }, 20_000);
 });
 
 describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
@@ -813,9 +1053,7 @@ describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
   beforeEach(() => {
     // vi.spyOn dedupes to the same mock when fetch is already spied, so its
     // .mock.calls would accumulate across tests — clear it each time.
-    fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response(null, { status: 200 }));
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 200 }));
     fetchSpy.mockClear();
   });
 

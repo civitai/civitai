@@ -1925,7 +1925,7 @@ export type Cosmetic = {
 };
 export type CosmeticShopItem = {
   id: Generated<number>;
-  cosmeticId: number;
+  cosmeticId: number | null;
   unitAmount: number;
   addedById: number | null;
   createdAt: Generated<Timestamp>;
@@ -1941,6 +1941,12 @@ export type CosmeticShopItem = {
   reviewedAt: Timestamp | null;
   rejectionReason: string | null;
   listed: Generated<boolean>;
+};
+export type CosmeticShopItemCosmetic = {
+  shopItemId: number;
+  cosmeticId: number;
+  index: Generated<number>;
+  floorAmount: number;
 };
 export type CosmeticShopSection = {
   id: Generated<number>;
@@ -2875,6 +2881,93 @@ export type Partner = {
   logo: string | null;
   disabled: Generated<boolean>;
 };
+export type Placement = {
+  id: Generated<number>;
+  surface: string;
+  targetType: string;
+  targetId: number;
+  ownerId: number;
+  placerId: number;
+  data: Generated<unknown>;
+  status: string;
+  /**
+   * 'owner' | 'moderator', set with status 'removed'. The two removals refund
+   * opposite amounts, so the status alone cannot settle the money.
+   */
+  removedBy: string | null;
+  /**
+   * What the placer paid into escrow, in Buzz. Kept per row rather than read back from
+   * the space, whose price may move between placement and release.
+   */
+  amount: number;
+  /**
+   * Who sold the thing being placed, when an approved placement owes them a cut.
+   * On the row rather than passed in, because the settlement is resumable and a
+   * sweeper that never saw the argument would strand the seller's share.
+   */
+  sellerId: number | null;
+  /**
+   * Set when a block declined this placement. A block is the owner refusing to
+   * give attention to anyone, and the decline fee is the price of that attention,
+   * so no fee is taken. Stored rather than inferred: settlement is resumable and
+   * must replay the same decision.
+   */
+  feeWaived: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+  expiresAt: Timestamp | null;
+  resolvedAt: Timestamp | null;
+  resolvedById: number | null;
+  /**
+   * A moderator takedown of an already-settled placement. Its own columns because
+   * `resolvedAt`/`resolvedById` record who approved it, and overwriting them on the
+   * one path whose purpose is a moderation record would destroy the approval trail.
+   */
+  takenDownAt: Timestamp | null;
+  takenDownById: number | null;
+};
+export type PlacementSpace = {
+  id: Generated<number>;
+  surface: string;
+  entityType: string;
+  entityId: number;
+  mode: string;
+  /**
+   * What the owner asks. The charged price is min(price, cap) computed at read; a
+   * stored effective price goes stale the moment a membership lapses.
+   */
+  price: number | null;
+  /**
+   * Surface-owned settings, read only by the surface that wrote them — a max
+   * sticker size means nothing to a remix gallery. Kept as JSON so this layer
+   * does not grow a column per surface idea.
+   */
+  settings: Generated<unknown>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
+export type PlacementSuspension = {
+  userId: number;
+  reason: string | null;
+  createdAt: Generated<Timestamp>;
+  createdById: number | null;
+};
+export type PlacementTransaction = {
+  id: Generated<number>;
+  placementId: number;
+  kind: string;
+  transactionId: string | null;
+  amount: number;
+  /**
+   * Failure accounting. Without it a leg that can never succeed is
+   * indistinguishable from one that has not been tried yet, so it stays in the
+   * recovery sweep forever and — past the batch limit — starves it, while the
+   * sweep reports healthy numbers.
+   */
+  attempts: Generated<number>;
+  lastAttemptAt: Timestamp | null;
+  lastError: string | null;
+  createdAt: Generated<Timestamp>;
+};
 export type PlatformDefaultBlock = {
   app_block_id: string;
   slot_id: string;
@@ -3642,9 +3735,15 @@ export type UserCosmeticShopItemWishlist = {
   shopItemId: number;
   createdAt: Generated<Timestamp>;
 };
+export type UserCosmeticShopPurchaseCosmetic = {
+  buzzTransactionId: string;
+  cosmeticId: number;
+  unitAmount: number;
+  meta: unknown | null;
+};
 export type UserCosmeticShopPurchases = {
   userId: number;
-  cosmeticId: number;
+  cosmeticId: number | null;
   shopItemId: number;
   unitAmount: number;
   purchasedAt: Generated<Timestamp>;
@@ -4049,6 +4148,7 @@ export type DB = {
   CommentV2Report: CommentV2Report;
   Cosmetic: Cosmetic;
   CosmeticShopItem: CosmeticShopItem;
+  CosmeticShopItemCosmetic: CosmeticShopItemCosmetic;
   CosmeticShopSection: CosmeticShopSection;
   CosmeticShopSectionItem: CosmeticShopSectionItem;
   CoveredCheckpoint: CoveredCheckpoint;
@@ -4135,6 +4235,10 @@ export type DB = {
   Outbox: Outbox;
   PaidAccess: PaidAccess;
   Partner: Partner;
+  Placement: Placement;
+  PlacementSpace: PlacementSpace;
+  PlacementSuspension: PlacementSuspension;
+  PlacementTransaction: PlacementTransaction;
   platform_default_blocks: PlatformDefaultBlock;
   Post: Post;
   PostHelper: PostHelper;
@@ -4207,6 +4311,7 @@ export type DB = {
   UserCosmetic: UserCosmetic;
   UserCosmeticShopItemResale: UserCosmeticShopItemResale;
   UserCosmeticShopItemWishlist: UserCosmeticShopItemWishlist;
+  UserCosmeticShopPurchaseCosmetic: UserCosmeticShopPurchaseCosmetic;
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
   UserEngagement: UserEngagement;
   UserLink: UserLink;

@@ -5,6 +5,7 @@ import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { dbWrite } from '~/server/db/client';
+import { emitMintAuditToStdout } from '~/server/logging/mint-audit-stdout';
 import { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } from '~/server/redis/client';
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
@@ -100,7 +101,9 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *    synthetic appId and recordScopeInvocation FK-fails on the synthetic
  *    appBlockId, so the ONLY durable trail is the structured
  *    `blocks.dev-token.pending-mint` log event (userId/slug/publishRequestId/
- *    scopes/spendGranted) emitted at mint time (queryable in Axiom/Loki). GATE:
+ *    scopes/spendGranted) emitted at mint time, DUAL-SINKED to Axiom and to stdout
+ *    (`src/server/logging/mint-audit-stdout.ts` — the Axiom sink alone is invisible
+ *    to a stdout-scraping log store). GATE:
  *    durable, per-spend audit rows for pending apps (e.g. a nullable-appBlockId
  *    schema change so recordScopeInvocation can persist) is a GA-gate item before
  *    pending-app dev spend is widened past the mod-only pre-GA posture.
@@ -155,7 +158,9 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *    AUDIT TRAIL: as with the pending path, the no-row path has NO durable
  *    AppBlock-backed audit rows (the synthetic appId/appBlockId don't resolve),
  *    so the ONLY forensic trail is the structured `blocks.dev-token.local-mint`
- *    log event (userId/slug/scopes/spendGranted), queryable in Axiom/Loki.
+ *    log event (userId/slug/scopes/spendGranted), DUAL-SINKED to Axiom and to
+ *    stdout (`src/server/logging/mint-audit-stdout.ts` — the Axiom sink alone is
+ *    invisible to a stdout-scraping log store).
  *    Same GA-gate as the pending path: durable per-spend audit rows are required
  *    before no-row dev spend is widened past the mod-only pre-GA posture.
  *
@@ -274,6 +279,25 @@ const requestSchema = z
     scopes: z.array(z.string().min(1).max(64)).max(32).optional(),
     // OPTIONAL dev-requested per-call Buzz budget; clamped to DEV_BUZZ_BUDGET_CAP.
     buzzBudget: z.number().int().positive().optional(),
+    // EXPLICIT budgeted-spend REQUEST (#3703 step 1). Answers "did the caller ask
+    // to spend real Buzz on THIS mint?" — a question the clamp previously never
+    // asked, so a spend-entitled bearer always got `ai:write:budgeted` implicitly
+    // whenever the scope source declared it.
+    //
+    // It is DELIBERATELY DISTINCT from `scopes` above: `scopes` states what the
+    // APP needs (its manifest), this states what THIS token should carry. Without
+    // the distinction a CLI `--spend` flag would be meaningless, because the
+    // manifest alone would keep granting spend.
+    //
+    // 🔴 STEP 1 IS NON-BREAKING: absent still means "grant" (`?? true` at the call
+    // site below), so every existing client is byte-identical. Flipping that
+    // default to `?? false` is a separate, breaking change.
+    //
+    // Semantics are a STRIP, never an error: `true` from a bearer that is not
+    // spend-entitled mints successfully WITHOUT the scope (every other step in the
+    // clamp belt is a strip; erroring would add a new failure mode on the money
+    // path). Non-optional (absent → 400) is a later, deliberate tightening.
+    requestBudgetedSpend: z.boolean().optional(),
   })
   .refine((b) => !!b.appBlockId || !!b.slug, {
     message: 'one of appBlockId or slug is required',
@@ -380,7 +404,13 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     res.status(400).json({ message: 'Invalid request body', details: parsed.error.flatten() });
     return;
   }
-  const { appBlockId, slug, scopes: requestedScopes, buzzBudget: requestedBudget } = parsed.data;
+  const {
+    appBlockId,
+    slug,
+    scopes: requestedScopes,
+    buzzBudget: requestedBudget,
+    requestBudgetedSpend,
+  } = parsed.data;
 
   // 5. Rate limit — per-user (the stable authenticated identity), client-IP
   // fallback. Same atomic SET NX EX + INCR pattern as submit-version; fail
@@ -511,6 +541,13 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // path it has NO durable AppBlock-backed audit rows (the synthetic appId /
   // appBlockId don't resolve), so the log is the only forensic trail.
   let localManifestSlug: string | null = null;
+  // Set ONLY on the APPROVED path so its structured mint-audit log
+  // (`blocks.dev-token.approved-mint`) can fire. Historically this path emitted NO
+  // mint event at all — it writes rows byte-identical to a production page mint, so
+  // an approved-path dev mint was STRUCTURALLY INVISIBLE and could not be separated
+  // from prod traffic after the fact (#3703). The durable AppBlock-backed rows say
+  // what was INVOKED; they never say what was MINTED, nor on what basis.
+  let approvedAppBlockId: string | null = null;
 
   if (block && block.app && block.app.userId === user.id) {
     // Owned approved row → existing-app mode. But an OWNED-yet-not-approved row
@@ -539,9 +576,8 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         .json({ message: 'dev-token mints page tokens; this app declares no page block' });
       return;
     }
-    const approvedRaw: unknown[] = Array.isArray(block.approvedScopes)
-      ? block.approvedScopes
-      : [];
+    const approvedRaw: unknown[] = Array.isArray(block.approvedScopes) ? block.approvedScopes : [];
+    approvedAppBlockId = block.id;
     resolved = {
       scopeSource: approvedRaw.filter((s): s is string => typeof s === 'string'),
       oauthAllowed: block.app.allowedScopes ?? 0,
@@ -734,11 +770,13 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   //      local-manifest paths (no OauthClient),
   //   d) drop the PAGE_FORBIDDEN money/spend scopes (the page hard rule),
   //   e) if the body requested a subset, intersect with it,
-  //   f) BEARER-CREDENTIAL SPEND CEILING (`keyCanSpend`): strip `ai:write:budgeted`
-  //      unless the bearer credential (personal key OR OAuth consent) carries
-  //      AIServicesWrite. `session.tokenScope` is the resolved bitmask for BOTH
-  //      shapes. `AppBlocksSubmit` is the MINT gate (step 1b), `AIServicesWrite`
-  //      the SPEND gate — never conflated.
+  //   f) SPEND CEILING — TWO independent predicates, both required (#3703 step 1):
+  //      `spendEntitled` = the bearer credential (personal key OR OAuth consent)
+  //      carries AIServicesWrite (`session.tokenScope` is the resolved bitmask for
+  //      BOTH shapes; `AppBlocksSubmit` is the MINT gate at step 1b, `AIServicesWrite`
+  //      the SPEND gate — never conflated), AND `spendRequested` = the caller ASKED
+  //      for budgeted spend on this mint. `ai:write:budgeted` survives only when BOTH
+  //      hold; either alone strips it, silently (the mint still succeeds).
   //   g) force-grant `user:read:self` (self-bound read of the dev's OWN identity;
   //      `/blocks/me` for the harness viewer). SAFE: the token `sub` is ALWAYS the
   //      authenticated caller (never the body), so it can only return the caller's
@@ -746,12 +784,21 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // Every step is a STRIP (no error) so a partially-disallowed request still mints
   // a usable, safely-clamped token. This bearer path is UNCHANGED by the
   // extraction (a parity test locks it).
-  const keyCanSpend = Flags.hasFlag(session.tokenScope ?? 0, TokenScope.AIServicesWrite);
+  // ENTITLEMENT — unchanged: the bearer credential's AIServicesWrite bit.
+  const spendEntitled = Flags.hasFlag(session.tokenScope ?? 0, TokenScope.AIServicesWrite);
+  // INTENT — did the caller ask to spend on THIS mint?
+  //
+  // 🔴 `?? true` IS THE STEP-1 NON-BREAKING DEFAULT AND MUST STAY. A client that
+  // has never heard of `requestBudgetedSpend` behaves EXACTLY as before: absent →
+  // requested. Flipping this token to `?? false` is the breaking step and ships on
+  // its own, behind the adoption evidence the mint-audit events below produce.
+  const spendRequested = requestBudgetedSpend ?? true;
   const granted = clampDevScopes({
     scopeSource: resolved.scopeSource,
     oauthAllowed: resolved.oauthAllowed,
     requestedScopes,
-    keyCanSpend,
+    spendEntitled,
+    spendRequested,
     allowlist: DEV_TOKEN_SCOPE_ALLOWLIST,
   });
 
@@ -768,36 +815,102 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // throws+swallows on the synthetic `pending-<id>` appId, and recordScopeInvocation
   // FK-fails on the synthetic `appBlockId` (no AppBlock row). Without this, a dev
   // minting a spend-capable token against an UN-REVIEWED app leaves no forensic
-  // trail. Emit a structured event (Axiom/Loki-queryable) with the mint metadata —
-  // NEVER the token/secret. Placed AFTER the final scope clamp + budget resolution
+  // trail. Emit a structured event with the mint metadata — NEVER the token/secret.
+  // DUAL SINK: `req.log?.info` (Axiom) plus `emitMintAuditToStdout`, because the
+  // next-axiom logger writes nothing to stdout once AXIOM_* is set and the stdout-
+  // scraped log store therefore cannot see the Axiom copy at all — see
+  // `src/server/logging/mint-audit-stdout.ts` for the mechanism and why both are
+  // required. Placed AFTER the final scope clamp + budget resolution
   // so `scopes`/`spendGranted` reflect the actual minted outcome (7f clamp included).
-  // PENDING-PATH ONLY: the approved path already has durable AppBlock-backed audit
-  // rows (recordSpendAttribution / recordScopeInvocation persist there), so it does
-  // not emit this event. The `mode: 'pending'` field is carried so a future
-  // approved-side log could reuse the same schema.
+  // The `mode` field distinguishes the three mint paths, which since #3703 step 1
+  // ALL emit an event (the approved path emitted none until then — see its branch
+  // below for why its durable rows were not a substitute).
+  //
+  // #3703 step 1 adds TWO things to every one of these events, plus a THIRD event:
+  //
+  //   - `requestBudgetedSpend` — the field EXACTLY as received: `true`, `false`, or
+  //     ABSENT (the key is omitted). Never normalised, because normalising it
+  //     destroys the distinction the adoption gate is built on.
+  //   - `spendGrantBasis` — the DERIVED outcome: 'explicit' (granted because the
+  //     caller asked), 'inferred' (granted only because the step-1 `?? true`
+  //     default filled in for a caller that never asked), or 'none' (not granted).
+  //
+  // BOTH are recorded because ONE value cannot express the pair of questions the
+  // step-3 gate must answer. `spendGrantBasis: 'none'` alone cannot distinguish "the
+  // client asked and was DENIED for lack of entitlement" from "the client never
+  // asked" — opposite conclusions about client adoption, and only the as-received
+  // field separates them. Symmetrically, `requestBudgetedSpend: true` alone does not
+  // say whether the scope was actually granted.
+  //
+  // The step-3 flip is gated on `spendGrantBasis === 'inferred'` falling to zero for
+  // non-internal callers over a rolling window — i.e. nobody is still relying on the
+  // implicit grant. That gate is only measurable because these events exist, which
+  // is why the APPROVED path below is no longer silent.
+  //
+  // 🔴 Flags + identifiers only — NEVER the token, a secret, or PII.
+  const spendGranted = granted.includes('ai:write:budgeted');
+  const spendGrantBasis: 'explicit' | 'inferred' | 'none' = !spendGranted
+    ? 'none'
+    : requestBudgetedSpend === true
+    ? 'explicit'
+    : 'inferred';
+  // `requestBudgetedSpend` is spread so an ABSENT field stays ABSENT in the emitted
+  // event (rather than becoming an invented `false`/`null`), preserving the
+  // three-valued signal the gate reads.
+  const spendAudit = {
+    ...(requestBudgetedSpend === undefined ? {} : { requestBudgetedSpend }),
+    spendGranted,
+    spendGrantBasis,
+  };
+
   if (pendingPublishRequestId) {
-    req.log?.info('blocks.dev-token.pending-mint', {
+    const fields = {
       mode: 'pending',
       userId: user.id,
       slug: resolved.signBlockId,
       publishRequestId: pendingPublishRequestId,
       scopes: granted,
-      spendGranted: granted.includes('ai:write:budgeted'),
-    });
+      ...spendAudit,
+    };
+    req.log?.info('blocks.dev-token.pending-mint', fields);
+    emitMintAuditToStdout('blocks.dev-token.pending-mint', fields);
   } else if (localManifestSlug) {
     // NO-ROW (local-manifest) MINT AUDIT. Same rationale as the pending path:
     // the synthetic `local-<slug>` appId / `page_local_<slug>` appBlockId don't
     // resolve, so there are NO durable AppBlock-backed audit rows — this
-    // structured event (Axiom/Loki-queryable, NEVER the token/secret) is the only
-    // forensic trail for a no-row mint. Placed after the final clamp + budget so
+    // structured event (dual-sinked to Axiom AND stdout, NEVER the token/secret) is
+    // the only forensic trail for a no-row mint. Placed after the final clamp + budget so
     // `scopes`/`spendGranted` reflect the actual minted outcome (7f included).
-    req.log?.info('blocks.dev-token.local-mint', {
+    const fields = {
       mode: 'local',
       userId: user.id,
       slug: localManifestSlug,
       scopes: granted,
-      spendGranted: granted.includes('ai:write:budgeted'),
-    });
+      ...spendAudit,
+    };
+    req.log?.info('blocks.dev-token.local-mint', fields);
+    emitMintAuditToStdout('blocks.dev-token.local-mint', fields);
+  } else if (approvedAppBlockId) {
+    // APPROVED-PATH MINT AUDIT (#3703 step 1) — NEW. This path previously emitted
+    // NOTHING. Unlike the two synthetic-id paths above it DOES write durable rows,
+    // but those rows are byte-identical to a PRODUCTION page mint's, so an
+    // approved-path dev mint could not be told apart from ordinary prod traffic
+    // afterwards, and nothing anywhere recorded on what BASIS spend was granted.
+    // That silence is what makes the step-3 adoption gate blind on this path, so it
+    // is closed here rather than left to the flip.
+    //
+    // Same shape as its siblings (a future consumer can read all three uniformly) —
+    // identifiers already handled by this request only, never the token or a secret.
+    const fields = {
+      mode: 'approved',
+      userId: user.id,
+      slug: resolved.signBlockId,
+      appBlockId: approvedAppBlockId,
+      scopes: granted,
+      ...spendAudit,
+    };
+    req.log?.info('blocks.dev-token.approved-mint', fields);
+    emitMintAuditToStdout('blocks.dev-token.approved-mint', fields);
   }
 
   // 9. The synthetic, revocable PAGE instance id was resolved in step 6:

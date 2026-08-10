@@ -134,7 +134,7 @@ Dashboard (browser, GitHub-org auth) for a run: `https://tekton.civitai.com/#/na
 
 - **Build stuck/slow**: check `build-image` TaskRun + pod logs (above). Common: OOM on Next.js build, BuildKit lock/disk on worker-spare.
 - **Image not picked up**: Flux ImagePolicy `latestImage` not advancing — tag must match `^\d{14}-[a-f0-9]+$`. Check ImageRepository `civitai-prod-release` scan.
-- **Canary rollback**: `get events --field-selector type=Warning` on ns `civitai-dp-prod`; Flagger needs 99% success rate + P99 < 5000ms, rolls back after 5 failed checks. Check `.status.failedChecks` on **both** canaries.
+- **Canary rollback**: `get events --field-selector type=Warning` on the prod namespace. Flagger rolls back when the success-rate / latency checks fail repeatedly; the configured thresholds live in the Canary CR, not here. Check `.status.failedChecks` on **both** canaries.
 - **Prod stuck on old image**: confirm both primaries' images; if policy has the new tag but primaries don't after >10m, the ImageUpdateAutomation commit or Kustomization reconcile is lagging — escalate to talos-infra (`dp-build-deploy` skill).
 
 ## Access levels

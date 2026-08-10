@@ -216,7 +216,14 @@ const hasChargeablePrice = (terms: PaidAccessTerms | undefined) => {
 
 export type ViewerMonetization = {
   paidAccess: PaidAccessRow | undefined;
+  /** What THIS viewer is quoted. The owner and moderators see the stored value, not the capped one. */
   licensingFee: number | null;
+  /**
+   * What a generation actually bills, always capped. The owner sees their stored fee above, so without
+   * this an over-cap creator is shown a number they will never earn — the case in CU 868kn7zu4, where a
+   * free-tier fee of 1 was displayed to its owner while every consumer surface charged 0.1.
+   */
+  effectiveLicensingFee: number | null;
 };
 
 /**
@@ -256,15 +263,25 @@ export async function getViewerMonetization({
       (hasChargeablePrice(rows[v.id]?.terms) || (v.licensingFee ?? 0) > 0)
     );
   });
-  const capTiers = await getCapTiers(cappable.map(ownerOf));
+  const feeBearing = versions.filter((v) => (v.licensingFee ?? 0) > 0 && ownerOf(v) != null);
+  const capTiers = await getCapTiers([...cappable, ...feeBearing].map(ownerOf));
   const cappableIds = new Set(cappable.map((v) => v.id));
 
   const out: Record<number, ViewerMonetization> = {};
   for (const v of versions) {
     const row = rows[v.id];
     const storedFee = v.licensingFee ?? null;
+    const effectiveFee =
+      storedFee != null
+        ? effectiveLicensingFee(
+            storedFee,
+            capTiers.get(ownerOf(v) as number) ?? null,
+            v.modelType,
+            capMediaType(v.baseModel)
+          )
+        : null;
     if (!cappableIds.has(v.id)) {
-      out[v.id] = { paidAccess: row, licensingFee: storedFee };
+      out[v.id] = { paidAccess: row, licensingFee: storedFee, effectiveLicensingFee: effectiveFee };
       continue;
     }
     const tier = capTiers.get(ownerOf(v) as number) ?? null;
@@ -284,6 +301,7 @@ export async function getViewerMonetization({
         : undefined,
       licensingFee:
         storedFee != null ? effectiveLicensingFee(storedFee, tier, v.modelType, mediaType) : null,
+      effectiveLicensingFee: effectiveFee,
     };
   }
   return out;
@@ -430,14 +448,6 @@ export async function writePaidAccessForModelVersion(
     await dbWrite.paidAccess.deleteMany({
       where: { entityType: 'ModelVersion', entityId: versionId },
     });
-    // Reconcile decoupled availability: a version migrated at cutover keeps availability='EarlyAccess'
-    // even though gating now lives in PaidAccess. Removing the gate must return it to 'Public', or
-    // hasEntityAccess (which treats 'EarlyAccess' as not-open) locks non-buyers out permanently — the
-    // natural-expiry job can't rescue it either (its UPDATE joins the now-deleted PaidAccess row).
-    await dbWrite.$executeRaw`
-      UPDATE "ModelVersion" SET "availability" = 'Public'
-      WHERE id = ${versionId} AND "availability" = 'EarlyAccess'
-    `;
     await bustPaidAccessCache('ModelVersion', [versionId]);
     return;
   }

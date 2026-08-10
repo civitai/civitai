@@ -3,6 +3,11 @@ import { dbRead } from '$lib/server/db';
 import { createCache } from '$lib/server/cache';
 import { rangeTtlSeconds } from '$lib/date-range';
 import { currencyMeta } from '$lib/earnings';
+import {
+  accessKindExpression,
+  resolveAccessKind,
+  type AccessKind,
+} from '$lib/monetization/access-kind';
 
 // Per-model earnings — A1 **Part 2**. Reads `orchestration.resourceCompensations`, where the orchestrator now
 // stamps the owner `userId` onto every row (backfilled to 2024-08), so "this creator's models" is a cheap `userId`
@@ -119,7 +124,7 @@ function addCurrency(
 
 type Window = { from: string; to: string; prev: { from: string; to: string } };
 type BuyerFundedRow = { accountType: string; cur: number | string; prev: number | string };
-type AccessRow = BuyerFundedRow & { modelVersionId: number | string; accessKind: string };
+type AccessRow = BuyerFundedRow & { modelVersionId: number | string; accessKind: AccessKind };
 type DonationRow = BuyerFundedRow & { goalId: number | string };
 
 // Half-open windows, unlike the resourceCompensations reads: `buzzTransactions.date` is a DateTime, so an
@@ -134,14 +139,11 @@ const windowBounds = (w: Window) =>
 // Access sales never reach resourceCompensations — the buyer pays the creator directly, so the
 // buzzTransactions row is the only record. Id shape:
 // `<early|permanent>-access-<versionId>-<download|generation>-<buyerId>-<accountType>`. Both prefixes must
-// be matched: rows predating the split are `early-access-` whichever product they were.
+// be matched: rows predating the split are `early-access-` whichever product they were, which is why
+// accessKindExpression can return `unknown` — resolveAccessKind settles those from the version's gate.
 function accessSalesQuery(uid: number, w: Window, versionIdList?: string) {
   return `SELECT toUInt32OrNull(splitByChar('-', externalTransactionId)[3]) AS modelVersionId,
-       multiIf(
-         externalTransactionId LIKE 'permanent-access-%', 'permanentAccess',
-         description LIKE 'Gain access to model%', 'permanentAccess',
-         'earlyAccess'
-       ) AS accessKind,
+       ${accessKindExpression} AS accessKind,
        toAccountType AS accountType,
        ${windowSums(w)}
      FROM buzzTransactions
@@ -192,6 +194,26 @@ async function donationGoalVersions(uid: number, versionIds?: number[]) {
     byGoal.set(Number(g.id), Number(versionId));
   }
   return byGoal;
+}
+
+// The creator's versions currently sold on a permanent gate (`timeframeDays` null — @civitai/buzz's
+// isPermanentGate, expressed in SQL). Owner-scoped rather than filtered by an entityId list so it rides the
+// (ownerId, entityType) index; PaidAccess holds one row per version, so this is the gate as it stands today.
+async function permanentGateVersions(uid: number, versionIds?: number[]) {
+  const rows = await dbRead
+    .selectFrom('PaidAccess')
+    .where('ownerId', '=', uid)
+    .where('entityType', '=', 'ModelVersion')
+    .where('timeframeDays', 'is', null)
+    .select(['entityId'])
+    .execute();
+  const scope = versionIds ? new Set(versionIds) : null;
+  const out = new Set<number>();
+  for (const r of rows) {
+    const id = Number(r.entityId);
+    if (!scope || scope.has(id)) out.add(id);
+  }
+  return out;
 }
 
 async function fetchModelEarnings({
@@ -325,7 +347,10 @@ async function fetchModelPerformance({
     .execute();
   if (!versions.length) return [];
 
-  const versionByGoal = await donationGoalVersions(uid);
+  const [versionByGoal, permanentGates] = await Promise.all([
+    donationGoalVersions(uid),
+    permanentGateVersions(uid),
+  ]);
 
   const idList = versions.map((v) => Number(v.versionId)).join(',');
   // daily_downloads is sorted by (modelId, modelVersionId, …) and unpartitioned, so filtering on modelVersionId
@@ -444,14 +469,16 @@ async function fetchModelPerformance({
     addChannelCurrency(bucket.received, currency, cur, prev);
   };
 
-  for (const r of accessRows)
+  for (const r of accessRows) {
+    const versionId = Number(r.modelVersionId);
     addBuyerFunded(
-      Number(r.modelVersionId),
-      r.accessKind as PerformanceChannel,
+      versionId,
+      resolveAccessKind(r.accessKind, versionId, permanentGates),
       r.accountType,
       Number(r.cur),
       Number(r.prev)
     );
+  }
   for (const r of donationRows) {
     const versionId = versionByGoal.get(Number(r.goalId));
     if (versionId === undefined) continue;
@@ -483,8 +510,8 @@ async function fetchModelPerformance({
 // the creator's version ids (the usage tables have no owner column — Justin's recommendation).
 export const getModelPerformance = createCache({
   // Keys derive from the args, not the payload shape, so a stored value outlives a change to what this
-  // returns. Bump the suffix whenever the returned shape changes.
-  name: 'models:performance:v2',
+  // returns. Bump the suffix whenever the returned shape OR the numbers in it change.
+  name: 'models:performance:v3',
   fetch: fetchModelPerformance,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
@@ -571,7 +598,10 @@ async function fetchModelVersionAnalytics({
   const w: Window = { from, to, prev };
   const versionIds = versions.map((v) => Number(v.id));
   const idList = versionIds.join(',');
-  const versionByGoal = await donationGoalVersions(uid, versionIds);
+  const [versionByGoal, permanentGates] = await Promise.all([
+    donationGoalVersions(uid, versionIds),
+    permanentGateVersions(uid, versionIds),
+  ]);
   const ch = getClickhouse();
   // One query per source, each summing the current + previous window (for the delta chips). The upper bound `to`
   // also fences out the tables' garbage future-dated rows.
@@ -664,14 +694,16 @@ async function fetchModelVersionAnalytics({
     bucket.prev += prevTotal;
     addChannelCurrency(bucket.received, currency, cur, prevTotal);
   };
-  for (const r of accessRows)
+  for (const r of accessRows) {
+    const vid = Number(r.modelVersionId);
     addBuyerFunded(
-      Number(r.modelVersionId),
-      r.accessKind as PerformanceChannel,
+      vid,
+      resolveAccessKind(r.accessKind, vid, permanentGates),
       r.accountType,
       Number(r.cur),
       Number(r.prev)
     );
+  }
   for (const r of donationRows) {
     const versionId = versionByGoal.get(Number(r.goalId));
     if (versionId !== undefined)
@@ -689,7 +721,7 @@ async function fetchModelVersionAnalytics({
 }
 
 export const getModelVersionAnalytics = createCache({
-  name: 'analytics:model-versions:v3',
+  name: 'analytics:model-versions:v4',
   fetch: fetchModelVersionAnalytics,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;

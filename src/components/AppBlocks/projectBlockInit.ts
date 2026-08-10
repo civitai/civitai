@@ -93,18 +93,6 @@ export function projectBlockInitContext(
 }
 
 /**
- * Build the BLOCK_INIT `viewer` object from the slot context.
- *
- * `id` and `username` are documented contract fields blocks use for
- * personalization. The viewer's `status` (ban/mute moderation state) is
- * intentionally NOT sent: no block consumes it, and exposing a viewer's
- * moderation state to untrusted third-party publisher code is a privacy leak
- * with no benefit — a block's authoritative check is its own
- * `/api/v1/blocks/me` call.
- *
- * Returns `null` for anonymous viewers (no numeric viewer id).
- */
-/**
  * Project the color-domain maturity signal into the BLOCK_INIT contract fields.
  *
  * These are ADVISORY (block self-filtering / blur). The values are the
@@ -133,13 +121,92 @@ export function projectBlockInitMaturity(input: {
   return { domain, maxBrowsingLevel };
 }
 
-export function projectBlockInitViewer(
-  context: SlotContext
+/**
+ * Stamp the BLOCK_INIT `viewer` object with the v2 `signedIn` flag.
+ *
+ * 🔴 THIS EXISTS BECAUSE THERE ARE TWO PRODUCERS OF THAT OBJECT, NOT ONE.
+ * `IframeHost` (the model-slot surface) derives the viewer from the slot context
+ * via `projectBlockInitViewer` below. `PageBlockHost` (the W10 full-page
+ * surface) does NOT — it receives an already-resolved `viewer` PROP from the run
+ * route and passes it straight into `buildInitPayload`. The two hosts share no
+ * bridge (the gotcha-#73 class `hostHandlerParity.ts` documents), so a flag
+ * added inside `projectBlockInitViewer` alone reaches exactly half the fleet.
+ * Both paths funnel through THIS function so the stamped shape cannot drift.
+ *
+ * `signedIn` is the literal `true`, never a computed boolean: a present
+ * ViewerInfo IS a signed-in viewer — the host has no way to produce a viewer
+ * object for an anonymous session — so a computed value could only ever be
+ * `true` or a bug. Anonymous is represented by the ABSENCE of the object
+ * (`null`), which is the shape the deployed `isValidBlockInitPayload` guard
+ * requires; see BlockInitPayload.viewer.
+ *
+ * `id` / `username` are DEPRECATED but still stamped through unchanged — the
+ * deployed guard requires the numeric `id`, and 5 of the 9 currently-approved
+ * apps read it for load-bearing logic. See the field docs on
+ * BlockInitPayload.viewer.
+ *
+ * 🔴 `username` IS COALESCED TO `null`, NOT PASSED THROUGH RAW. An `undefined`
+ * username serialises to an ABSENT key over postMessage (structured clone drops
+ * `undefined` object values), and the deployed `isValidBlockInitPayload` guard
+ * distinguishes the two: an explicit `null` is accepted, an ABSENT `username` is
+ * rejected. A rejected payload means the block never initialises at all.
+ *
+ * 🔴 THE POPULATION THAT WAS MEASURED FOR *THIS* FIELD IS NOT ON RECORD. An
+ * earlier draft of this note claimed "16 of 16 extracted guards". 16 matches
+ * NONE of the three counts the population note above `BlockInitPayload` in
+ * types.ts defines (9 guard-executed / 20 deployments / 21 rows), appears
+ * nowhere else in the repo, and could not be reconciled to any of them — so it
+ * has been withdrawn rather than rounded to whichever neighbour looked closest.
+ * Do not re-introduce a count here without saying which enumeration produced it.
+ * The coalesce stands regardless of the number: it is unconditionally correct,
+ * costs nothing, and is the safe side of a distinction the guard demonstrably
+ * makes.
+ *
+ * No current caller can pass `undefined`: the parameter type forbids it, and
+ * BOTH call sites arrive already coalesced — `projectBlockInitViewer` below does
+ * it itself (`source.viewerUsername ?? null`), while `PageBlockHost` passes its
+ * `viewer` PROP straight into this helper and depends on the /apps/run route
+ * having coalesced upstream (`src/pages/apps/run/[slug]/[[...path]].tsx`, where
+ * `viewer` is built as `{ id, username: currentUser.username ?? null }`). That
+ * second one is precisely why the coalesce lives HERE: the guarantee is held by
+ * a route this module does not own and one refactor away from lapsing, and this
+ * helper is the single choke point BOTH hosts funnel through.
+ *
+ * 🔴 THE FIELDS ARE PICKED EXPLICITLY, NEVER SPREAD. `{ ...viewer, signedIn }`
+ * would pass every shape assertion written against a narrow fixture while
+ * forwarding whatever else the caller's object happens to carry — and the
+ * PageBlockHost caller's `viewer` is a route-supplied object, not one this module
+ * built. The projection is the data-minimisation property this module exists for,
+ * and it is pinned by a test that feeds a DELIBERATELY WIDER viewer object than
+ * any host produces — a narrow fixture cannot tell a pick from a spread.
+ */
+export function withSignedInFlag(
+  viewer: { id: number; username: string | null } | null | undefined
 ): BlockInitPayload['viewer'] {
+  if (!viewer) return null;
+  return {
+    id: viewer.id,
+    username: viewer.username ?? null,
+    signedIn: true,
+  };
+}
+
+/**
+ * Build the BLOCK_INIT `viewer` object from the slot context (the model-slot
+ * host's path — see `withSignedInFlag` for why there are two).
+ *
+ * The viewer's `status` (ban/mute moderation state) is intentionally NOT sent:
+ * no block consumes it, and exposing a viewer's moderation state to untrusted
+ * third-party publisher code is a privacy leak with no benefit — a block's
+ * authoritative check is its own `/api/v1/blocks/me` call.
+ *
+ * Returns `null` for anonymous viewers (no numeric viewer id).
+ */
+export function projectBlockInitViewer(context: SlotContext): BlockInitPayload['viewer'] {
   const source = context as Partial<ModelSlotContext>;
   if (typeof source.viewerUserId !== 'number') return null;
-  return {
+  return withSignedInFlag({
     id: source.viewerUserId,
     username: source.viewerUsername ?? null,
-  };
+  });
 }

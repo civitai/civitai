@@ -1,12 +1,12 @@
 .cancelButton {
-  @container (max-width: var(--mantine-breakpoint-sm, 768px)) {
+  @container (max-width: theme('screens.sm')) {
     width: 100%;
     order: 2;
   }
 }
 
 .submitButton {
-  @container (max-width: var(--mantine-breakpoint-sm, 768px)) {
+  @container (max-width: theme('screens.sm')) {
     width: 100%;
     order: 1;
   }

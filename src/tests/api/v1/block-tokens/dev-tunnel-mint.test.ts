@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 /**
@@ -155,7 +155,11 @@ function makeRes() {
       return this;
     }),
   };
-  return res as unknown as NextApiResponse & { _status: number; _body: any; _headers: Record<string, string> };
+  return res as unknown as NextApiResponse & {
+    _status: number;
+    _body: any;
+    _headers: Record<string, string>;
+  };
 }
 
 const MOD = { user: { id: 4242, isModerator: true, bannedAt: null } };
@@ -342,8 +346,119 @@ describe('POST /api/v1/block-tokens — Phase 2 dev-tunnel author-own mint', () 
       })
     );
     // The audit payload must NOT carry the signed token/secret.
-    const payload = log.info.mock.calls.find((c: any[]) => c[0] === 'app-blocks.dev-tunnel.mint')![1];
+    const payload = log.info.mock.calls.find(
+      (c: any[]) => c[0] === 'app-blocks.dev-tunnel.mint'
+    )![1];
     expect(JSON.stringify(payload)).not.toContain('jwt.dev.signed');
+  });
+
+  /**
+   * THE STDOUT MIRROR (#3715). The `req.log?.info` sink above is Axiom-only in
+   * production: next-axiom's `Logger.sendLogs()` prints to the console ONLY when the
+   * AXIOM_* env vars are unset (dist/logger.js:198-202), so with them set nothing
+   * reaches stdout and a stdout-scraping log store cannot see this event at all.
+   *
+   * 🔴 WHY THIS EVENT IS DUAL-SINKED — and it is NOT because it feeds a gate.
+   * `app-blocks.dev-tunnel.mint` is classified `kind: 'audit-only'` in the call-site
+   * ledger: it carries `spendGranted` only, with no `spendGrantBasis` and no
+   * `requestBudgetedSpend`, because the dev-tunnel path has no per-mint request
+   * mechanism to record. #3715 puts this path out of the adoption gate's scope
+   * entirely. The mirror exists for the reason that applies to every mint audit,
+   * gate-bearing or not: a SHORT-WINDOW (~72h measured) forensic copy readable at
+   * incident time, and a second sink that does not depend on one vendor being
+   * reachable. Both halves are asserted; losing either loses a distinct capability.
+   */
+  describe('the app-blocks.dev-tunnel.mint audit event is ALSO mirrored to stdout (#3715)', () => {
+    let logSpy: ReturnType<typeof vi.spyOn>;
+
+    // Nested, so it runs AFTER the outer beforeEach's vi.clearAllMocks().
+    beforeEach(() => {
+      logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    });
+    afterEach(() => {
+      logSpy.mockRestore();
+    });
+
+    /** Every stdout line the handler wrote, parsed back from JSON. */
+    const stdoutEvents = (): Record<string, unknown>[] =>
+      logSpy.mock.calls
+        .map((c: unknown[]) => c[0])
+        .filter((line: unknown): line is string => typeof line === 'string')
+        .flatMap((line: string) => {
+          try {
+            return [JSON.parse(line) as Record<string, unknown>];
+          } catch {
+            return [];
+          }
+        });
+    const mirrorOf = (name: string) => stdoutEvents().find((e) => e.event === name);
+
+    it('POSITIVE CONTROL: the stdout spy observes a real emit, and reports absence for a name nothing emits', async () => {
+      const res = await invoke(DEV_BODY());
+      expect(res._status).toBe(200);
+      expect(stdoutEvents().length).toBeGreaterThan(0);
+      expect(mirrorOf('app-blocks.dev-tunnel.no-such-mint')).toBeUndefined();
+    });
+
+    it('mirrors the event to stdout with the SAME name and the SAME payload as the Axiom sink, NEVER the token', async () => {
+      // RED at base: the mirror did not exist, so nothing was written to stdout.
+      mockBlockRegistry.resolveDevPageBlockForAuthor.mockResolvedValue({
+        ...EPHEMERAL_RESOLUTION,
+        scopes: ['ai:write:budgeted', 'user:read:self'],
+        ephemeralSource: 'brand-new',
+      });
+      const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const req = makeReq(DEV_BODY()) as any;
+      req.log = log;
+      const res = makeRes();
+      await handler(req, res);
+      expect(res._status).toBe(200);
+
+      // Enumerated payload — not a `toContain`, which a differently-shaped object
+      // could satisfy.
+      const mirror = mirrorOf('app-blocks.dev-tunnel.mint');
+      expect(mirror).toEqual({
+        event: 'app-blocks.dev-tunnel.mint',
+        mode: 'brand-new',
+        userId: MOD.user.id,
+        slug: 'my-app',
+        sessionId: 'bki_testsession',
+        scopes: ['ai:write:budgeted', 'user:read:self'],
+        spendGranted: true,
+      });
+      // DUAL-SINK RELATIONSHIP: the mirror is exactly the Axiom payload plus `event`.
+      // Pins the two sinks together so neither can silently drift.
+      const axiom = log.info.mock.calls.find(
+        (c: any[]) => c[0] === 'app-blocks.dev-tunnel.mint'
+      )![1];
+      expect(mirror).toEqual({ event: 'app-blocks.dev-tunnel.mint', ...axiom });
+      // 🔴 No token on the stdout sink either.
+      expect(JSON.stringify(mirror)).not.toContain('jwt.dev.signed');
+    });
+
+    it('a READ-ONLY mint mirrors spendGranted:false (the enumerated value, not the absence of a word)', async () => {
+      mockAppBlocksFlag.isAppBlocksDevTunnelUnsubmittedSpendEnabled.mockResolvedValue(false);
+      mockBlockRegistry.resolveDevPageBlockForAuthor.mockResolvedValue({
+        ...EPHEMERAL_RESOLUTION,
+        scopes: ['user:read:self'],
+        ephemeralSource: 'brand-new',
+      });
+      const res = await invoke(DEV_BODY());
+      expect(res._status).toBe(200);
+      const mirror = mirrorOf('app-blocks.dev-tunnel.mint')!;
+      expect(mirror.spendGranted).toBe(false);
+      expect(mirror.scopes).toEqual(['user:read:self']);
+    });
+
+    it('a path that never mints (resolver → null, 404) mirrors NOTHING', async () => {
+      // The mirror must be tied to the mint, not to the request: a 404 that signs no
+      // token must not fabricate an audit line.
+      mockBlockRegistry.resolveDevPageBlockForAuthor.mockResolvedValue(null);
+      const res = await invoke(DEV_BODY());
+      expect(res._status).toBe(404);
+      expect(mirrorOf('app-blocks.dev-tunnel.mint')).toBeUndefined();
+    });
   });
 
   it('foreign / already-claimed / absent app (resolver → null) → the SAME bare 404, NO token', async () => {

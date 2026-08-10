@@ -1,4 +1,4 @@
-import { Anchor, Button, Popover, Stack, Table, Text } from '@mantine/core';
+import { Anchor, Button, Paper, Popover, Stack, Table, Text } from '@mantine/core';
 import type { CapTier } from '@civitai/buzz';
 import { capUpsellRows, shouldUpsellCap } from '@civitai/buzz';
 
@@ -17,6 +17,7 @@ export function CapUpsell({
   capFor,
   title,
   perLabel,
+  expanded = false,
 }: {
   value: number | null | undefined;
   cap: number;
@@ -25,8 +26,11 @@ export function CapUpsell({
   title: string;
   /** Denominator for a ratio-domain cap, e.g. '10 generations'. Omitted for flat prices. */
   perLabel?: string;
+  /** Render the tiers inline rather than behind the trigger. For a creator already over their cap, who
+   * shouldn't have to click to learn what they're earning. */
+  expanded?: boolean;
 }) {
-  if (!shouldUpsellCap({ value, cap, tier: capTier })) return null;
+  if (!expanded && !shouldUpsellCap({ value, cap, tier: capTier })) return null;
 
   const rows = capUpsellRows(capFor);
   const fmt = (n: number) =>
@@ -36,6 +40,57 @@ export function CapUpsell({
       ? `${n.toLocaleString()} ⚡ / ${perLabel}`
       : `${n.toLocaleString()} ⚡`;
 
+  const body = (
+    <Stack gap="xs">
+      <Text size="sm" fw={500}>
+        {title}
+      </Text>
+      <Table fz="xs" verticalSpacing={4} horizontalSpacing="xs">
+        <Table.Tbody>
+          {rows.map((row) => {
+            const isCurrent = row.tier === capTier;
+            return (
+              <Table.Tr key={row.tier}>
+                <Table.Td fw={isCurrent ? 600 : 400} c={isCurrent ? undefined : 'dimmed'}>
+                  {row.label}
+                  {isCurrent && (
+                    <Text component="span" size="xs" c="blue" ml={4}>
+                      · you
+                    </Text>
+                  )}
+                </Table.Td>
+                <Table.Td
+                  ta="right"
+                  fw={isCurrent ? 600 : 400}
+                  c={isCurrent ? undefined : 'dimmed'}
+                >
+                  {fmt(row.cap)}
+                </Table.Td>
+              </Table.Tr>
+            );
+          })}
+        </Table.Tbody>
+      </Table>
+      <Button
+        component="a"
+        href="/pricing?buzzType=green"
+        target="_blank"
+        size="xs"
+        variant="light"
+        fullWidth
+      >
+        See membership options
+      </Button>
+    </Stack>
+  );
+
+  if (expanded)
+    return (
+      <Paper withBorder p="xs" radius="md">
+        {body}
+      </Paper>
+    );
+
   return (
     <Popover width={300} withArrow shadow="md" position="top-start" withinPortal>
       <Popover.Target>
@@ -43,49 +98,7 @@ export function CapUpsell({
           Want to charge more?
         </Anchor>
       </Popover.Target>
-      <Popover.Dropdown>
-        <Stack gap="xs">
-          <Text size="sm" fw={500}>
-            {title}
-          </Text>
-          <Table fz="xs" verticalSpacing={4} horizontalSpacing="xs">
-            <Table.Tbody>
-              {rows.map((row) => {
-                const isCurrent = row.tier === capTier;
-                return (
-                  <Table.Tr key={row.tier}>
-                    <Table.Td fw={isCurrent ? 600 : 400} c={isCurrent ? undefined : 'dimmed'}>
-                      {row.label}
-                      {isCurrent && (
-                        <Text component="span" size="xs" c="blue" ml={4}>
-                          · you
-                        </Text>
-                      )}
-                    </Table.Td>
-                    <Table.Td
-                      ta="right"
-                      fw={isCurrent ? 600 : 400}
-                      c={isCurrent ? undefined : 'dimmed'}
-                    >
-                      {fmt(row.cap)}
-                    </Table.Td>
-                  </Table.Tr>
-                );
-              })}
-            </Table.Tbody>
-          </Table>
-          <Button
-            component="a"
-            href="/pricing?buzzType=green"
-            target="_blank"
-            size="xs"
-            variant="light"
-            fullWidth
-          >
-            See membership options
-          </Button>
-        </Stack>
-      </Popover.Dropdown>
+      <Popover.Dropdown>{body}</Popover.Dropdown>
     </Popover>
   );
 }
