@@ -1,19 +1,29 @@
 /**
  * Pins the auth-cookie discriminator in `_app.getInitialProps`.
  *
- * A SUCCESSFUL settings fetch returning `session: null` means the token is genuinely
- * expired, so the stale cookie is cleared. An endpoint that swallowed an internal error
- * into `200 {}` carries NO `session` key and is NOT authoritative — clearing the cookie
- * there durably logs out a valid user. The two are told apart ONLY by `'session' in data`,
- * which is a key-presence check that reads as an ordinary null-guard; this file exists so
- * that collapsing it into a truthiness check fails loudly instead of silently logging
- * people out.
+ * `'session' in data` is a key-presence check that reads as an ordinary null-guard, so
+ * collapsing it into a truthiness check looks harmless. It isn't: a response carrying NO
+ * `session` key came from the endpoint's own outer catch and is NOT authoritative, and
+ * clearing the cookie there durably logs out a valid user. This file makes that collapse
+ * fail loudly.
+ *
+ * What the discriminator ACTUALLY covers: the endpoint's outer catch (`200 {}`), a fetch
+ * that rejects or aborts, and a non-OK status.
+ *
+ * What it does NOT cover, and no test here should be read as claiming otherwise: an
+ * authoritative-looking `session: null`. `getServerAuthSession` fails SOFT —
+ * `get-server-auth-session.ts:92,102` do `.catch(() => null)` on both the hub and legacy
+ * lookups — so a hub outage produces `session: null` with the key PRESENT, which `_app`
+ * then treats as "token genuinely expired" and clears the cookie. Closing that needs an
+ * explicit "session lookup degraded" signal from the endpoint; tracked separately.
  *
  * Lives outside `src/pages` deliberately: Next treats every file under there as a route
  * and `next build` rejects a test file, which only that build catches.
  */
+import type * as CookiesNext from 'cookies-next';
 import type { AppContext } from 'next/app';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { civitaiTokenCookieName } from '~/libs/auth';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 
 const h = vi.hoisted(() => ({
@@ -23,7 +33,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('cookies-next', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('cookies-next')>()),
+  ...(await importOriginal<typeof CookiesNext>()),
   getCookie: vi.fn(() => 'dark'),
   getCookies: vi.fn(() => h.jar),
   deleteCookie: h.deleteCookie,
@@ -98,6 +108,13 @@ describe('_app settings bootstrap — auth cookie discriminator', () => {
       h.deleteCookie,
       'an authoritative session: null means the token is genuinely expired — the stale cookie must be cleared'
     ).toHaveBeenCalledTimes(1);
+    // Pins WHICH cookie, not just that one was cleared — without this the argument is
+    // unconstrained and pointing it at a nonexistent name keeps every test green.
+    // NB this pins CURRENT behaviour, and current behaviour is narrower than the jar:
+    // `civitaiTokenCookieName` is the LEGACY `civitai-token` family, while `hasAuthCookie`
+    // above matches `civ-token` too. A session holding only a modern `civ-token` therefore
+    // gets a delete for a name that isn't present. Pre-existing; tracked separately.
+    expect(h.deleteCookie).toHaveBeenCalledWith(civitaiTokenCookieName, expect.anything());
     expect(pageProps.hasAuthCookie).toBe(false);
   });
 
