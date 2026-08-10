@@ -6,7 +6,7 @@
   import { cn } from '@civitai/ui/utils.js';
   import type { PageData } from './$types';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
-  import { reportStatusVariant } from '$lib/reports';
+  import { reportDetail, reportReasonLabel, reportStatusVariant } from '$lib/reports';
   import { userLookupUrl } from '$lib/entity-url';
 
   let {
@@ -34,9 +34,11 @@
 
   const lastPage = $derived(Math.max(1, Math.ceil(total / perPage)));
 
-  // `details` is jsonb; Retool's CASE picked violation over reason, with comment shown separately.
-  const detail = (d: unknown, key: string) =>
-    d && typeof d === 'object' ? ((d as Record<string, unknown>)[key] as string | undefined) : undefined;
+  // Both params have to survive each other: a bare `?user=` sent the moderator back to page 1, and a
+  // bare `?page=` closed the account they had open.
+  const suspectHref = (entityId: number) => `?page=${page}&user=${entityId}`;
+  const pageHref = (n: number) => (suspectId ? `?page=${n}&user=${suspectId}` : `?page=${n}`);
+
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -70,10 +72,10 @@
           <div class="flex flex-wrap items-baseline gap-x-2">
             <Badge variant={reportStatusVariant(r.status)}>{r.status}</Badge>
             <span class="text-dark-0">
-              {detail(r.details, 'violation') ?? detail(r.details, 'reason') ?? r.reason}
+              {reportReasonLabel(r.details, r.reason)}
             </span>
             {#if r.entityId}
-              <a href="?user={r.entityId}" class="font-medium {LINK_CLASS}">
+              <a href={suspectHref(r.entityId)} class="font-medium {LINK_CLASS}">
                 {r.suspect?.username ?? `#${r.entityId}`}
               </a>
             {/if}
@@ -86,8 +88,8 @@
             <span class="text-xs text-dark-2">{dateTime(r.createdAt)}</span>
           </div>
 
-          {#if detail(r.details, 'comment')}
-            <p class="mt-1 wrap-break-word text-dark-1">{detail(r.details, 'comment')}</p>
+          {#if reportDetail(r.details, 'comment')}
+            <p class="mt-1 wrap-break-word text-dark-1">{reportDetail(r.details, 'comment')}</p>
           {/if}
 
           <div class="mt-1 flex flex-wrap items-baseline gap-x-2 text-xs text-dark-2">
@@ -124,11 +126,11 @@
     {#if lastPage > 1}
       <div class="mt-3 flex items-center gap-3 text-sm">
         {#if page > 1}
-          <a href="?page={page - 1}" class={LINK_CLASS}>Previous</a>
+          <a href={pageHref(page - 1)} class={LINK_CLASS}>Previous</a>
         {/if}
         <span class="text-xs text-dark-2">Page {page} of {num(lastPage)}</span>
         {#if page < lastPage}
-          <a href="?page={page + 1}" class={LINK_CLASS}>Next</a>
+          <a href={pageHref(page + 1)} class={LINK_CLASS}>Next</a>
         {/if}
       </div>
     {/if}

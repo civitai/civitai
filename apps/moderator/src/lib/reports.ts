@@ -99,6 +99,18 @@ export const reportPath = (entity: ReportEntity) => `/reports/${reportEntitySlug
 
 export const reportCountKey = (entity: ReportEntity) => `report:${entity}`;
 
+/** `Report.details` is jsonb. Retool's CASE picked `violation` over `reason` and showed `comment`
+ *  separately — the comment is the reporter's own words, and is the only part that says what actually
+ *  happened. Every page that renders a report should show it; several fetched it and dropped it. */
+export const reportDetail = (details: unknown, key: string): string | undefined =>
+  details && typeof details === 'object'
+    ? ((details as Record<string, unknown>)[key] as string | undefined)
+    : undefined;
+
+/** The label Retool showed for a report: the violation, else the stated reason, else the enum. */
+export const reportReasonLabel = (details: unknown, reason: string): string =>
+  reportDetail(details, 'violation') ?? reportDetail(details, 'reason') ?? reason;
+
 export const reportStatusBadgeClass: Record<ReportStatus, string> = {
   Pending: 'bg-yellow-500/15 text-yellow-300',
   Processing: 'bg-orange-500/15 text-orange-300',

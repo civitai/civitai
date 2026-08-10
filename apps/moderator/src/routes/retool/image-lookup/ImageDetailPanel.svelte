@@ -19,7 +19,14 @@
     ['Dimensions', image.width && image.height ? `${num(image.width)}×${num(image.height)}` : '—'],
     ['NSFW level', `${image.nsfwLevel}${image.nsfwLevelLocked ? ' (locked)' : ''}`],
     ['Ingestion', image.ingestion],
+    // Retool's Image Data table was a `SELECT *`; these are the columns a moderator actually reaches
+    // for — the hashes for duplicate hunting, the scan jobs for why ingestion landed where it did.
+    ['Hash', image.hash ?? '—'],
+    ['pHash', image.pHash ?? '—'],
+    ['Meta hidden by uploader', image.hideMeta ? 'yes' : 'no'],
   ]);
+
+  const scanJobs = $derived(image.scanJobs ? JSON.stringify(image.scanJobs, null, 2) : null);
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -91,4 +98,32 @@
       {/each}
     </dl>
   </div>
+
+  {#if image.prompt || image.negativePrompt}
+    <!-- The prompt is the evidence behind a minor/poi call, and it lived in `meta`, which the port was
+         not selecting at all. -->
+    <div class="mt-4 flex flex-col gap-2 text-sm">
+      {#if image.prompt}
+        <div>
+          <div class="text-xs tracking-wide text-dark-2 uppercase">Prompt</div>
+          <p class="wrap-break-word text-dark-0">{image.prompt}</p>
+        </div>
+      {/if}
+      {#if image.negativePrompt}
+        <div>
+          <div class="text-xs tracking-wide text-dark-2 uppercase">Negative prompt</div>
+          <p class="wrap-break-word text-dark-2">{image.negativePrompt}</p>
+        </div>
+      {/if}
+    </div>
+  {:else if image.hideMeta}
+    <p class="mt-4 text-sm text-dark-2">The uploader hid this image's metadata.</p>
+  {/if}
+
+  {#if scanJobs}
+    <details class="mt-4 text-sm">
+      <summary class="text-dark-2">Scan jobs</summary>
+      <pre class="mt-2 overflow-x-auto rounded-md bg-dark-7 p-3 text-xs text-dark-1">{scanJobs}</pre>
+    </details>
+  {/if}
 </section>

@@ -20,7 +20,16 @@ export const load: PageServerLoad = async ({ url }) => {
   // report would otherwise be told "Image #… no longer exists — which is what a ToS removal does", and
   // could reasonably close the report believing the content was found and actioned. An id with no row and
   // no events never existed.
-  const deletedImageId = !result && imageId && (await hasImageEvents(imageId)) ? imageId : null;
+  // Guarded: this is the only ClickHouse call in `load`, and it runs on the MISS path — so without the
+  // catch, ClickHouse being down turns "no image matches" into an error page.
+  let deletedImageId: number | null = null;
+  if (!result && imageId) {
+    try {
+      if (await hasImageEvents(imageId)) deletedImageId = imageId;
+    } catch (e) {
+      console.error('[image-lookup] deleted-image check unavailable', e);
+    }
+  }
 
   return { q, result, deletedImageId, notFound: !result && !deletedImageId };
 };

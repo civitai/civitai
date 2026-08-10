@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { reportStatusVariant } from '$lib/reports';
+  import { reportDetail, reportReasonLabel, reportStatusVariant } from '$lib/reports';
   import { goto } from '$app/navigation';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import {
@@ -53,13 +53,19 @@
           {#if r.entityId}
             <a href={chatUrl(r.entityId)} class={LINK_CLASS}>chat {r.entityId}</a>
           {/if}
-          <span class="text-dark-0">{r.reason}</span>
+          <span class="text-dark-0">{reportReasonLabel(r.details, r.reason)}</span>
           {#if r.reportedByUsername}
             <a href={userLookupUrl(r.reportedByUsername)} class="text-xs {LINK_CLASS}">
               by {r.reportedByUsername}
             </a>
           {/if}
           <span class="text-xs text-dark-2">{dateTime(r.createdAt)}</span>
+          {#if reportDetail(r.details, 'comment')}
+            <!-- For a chat report the comment IS the substance: "this person DM'd me X". -->
+            <p class="w-full wrap-break-word text-xs text-dark-1">
+              {reportDetail(r.details, 'comment')}
+            </p>
+          {/if}
         </li>
       {/each}
     </ul>

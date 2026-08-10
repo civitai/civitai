@@ -124,7 +124,7 @@ export type ReportHistoryRow = {
 
 export async function getReportHistory(
   type: ReportEntity,
-  limit = 100
+  limit = 300
 ): Promise<{ items: ReportHistoryRow[]; truncated: boolean }> {
   const join = reportEntityJoin[type];
   const entityId = sql<number | null>`(select er.${sql.ref(join.fk)} from ${sql.table(

@@ -1,3 +1,4 @@
+import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { usersByIds } from './users.service';
 import type { MediaType } from '../media/edge-url';
@@ -29,6 +30,12 @@ export type ImageDetail = {
   poi: boolean;
   acceptableMinor: boolean;
   scannedAt: Date | null;
+  hideMeta: boolean;
+  hash: string | null;
+  pHash: string | null;
+  scanJobs: unknown;
+  prompt: string | null;
+  negativePrompt: string | null;
 };
 
 export type ImageTag = {
@@ -164,8 +171,16 @@ async function getImage(imageId: number): Promise<ImageDetail | null> {
       'i.poi',
       'i.acceptableMinor',
       'i.scannedAt',
+      'i.hideMeta',
+      'i.hash',
+      'i.pHash',
+      'i.scanJobs',
       'u.username',
       'u.bannedAt as userBannedAt',
+      // Retool's Image Data table was a `SELECT *` — "expose all the columns… the hashes or the meta".
+      // `meta` holds the generation prompt, which is the evidence behind a minor/poi call.
+      sql<string | null>`i."meta" ->> 'prompt'`.as('prompt'),
+      sql<string | null>`i."meta" ->> 'negativePrompt'`.as('negativePrompt'),
     ])
     .where('i.id', '=', imageId)
     .executeTakeFirst();

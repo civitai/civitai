@@ -60,6 +60,11 @@
     {#if article.availability !== 'Public'}
       <Badge variant="secondary">{article.availability}</Badge>
     {/if}
+    <!-- Without this an unlisted article is indistinguishable from a public one, which is exactly the
+         question "why isn't this showing up?" asks. -->
+    {#if article.unlisted}
+      <Badge variant="secondary">unlisted</Badge>
+    {/if}
     {#if article.status !== 'Published'}<Badge variant="secondary">{article.status}</Badge>{/if}
   </div>
 

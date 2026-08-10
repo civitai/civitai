@@ -43,7 +43,7 @@ export type SpamGroup = {
   chats: number;
 };
 
-const TOP_CHATTERS = 25;
+const TOP_CHATTERS = 50;
 const TOP_CHATS = 20;
 
 export async function getChatStats(): Promise<ChatStats> {

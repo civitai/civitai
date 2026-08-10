@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { reportStatusVariant } from '$lib/reports';
+  import { reportDetail, reportStatusVariant } from '$lib/reports';
   import { userLookupUrl } from '$lib/entity-url';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { LINK_CLASS, dateTime } from '$lib/format';
@@ -41,6 +41,12 @@
               </a>
             {/if}
             <span class="text-xs text-dark-2">{dateTime(r.createdAt)}</span>
+            {#if reportDetail(r.details, 'comment')}
+              <!-- The reporter's own words: the only part of a report that says what happened. -->
+              <p class="w-full wrap-break-word text-xs text-dark-1">
+                {reportDetail(r.details, 'comment')}
+              </p>
+            {/if}
           </li>
         {/each}
       </ul>

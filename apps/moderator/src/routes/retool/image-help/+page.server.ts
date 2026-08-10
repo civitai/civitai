@@ -26,7 +26,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     requests,
     selected,
     images,
-    canAct: canAccess(locals.user, '/images'),
+    canAct: canAccess(locals.user, '/retool/image-help'),
     civitaiUrl: env.CIVITAI_APP_URL ?? 'https://civitai.com',
     // Queue left, the request's images right — two columns need the full content width.
     wide: true,
@@ -35,7 +35,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 
 export const actions: Actions = {
   resolve: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/images')) return fail(400, { error: 'Not permitted.' });
+    if (!canAccess(locals.user, '/retool/image-help')) return fail(400, { error: 'Not permitted.' });
     const input = parseForm(
       z.object({ requestId: z.coerce.number().int().positive() }),
       await request.formData()
