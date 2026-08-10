@@ -22,6 +22,15 @@ export const parseIdList = (value: string, max = 5000): number[] =>
     .filter((n) => Number.isInteger(n) && n > 0 && n <= MAX_INT4)
     .slice(0, max);
 
+/** `parseIdList` truncates SILENTLY, which on a destructive action means the screen reports a count it
+ *  did not act on. Use this where the overflow must be told to the operator instead of dropped. */
+export const parseIdListStrict = (value: string, max: number): number[] | string => {
+  const ids = parseIdList(value, Number.MAX_SAFE_INTEGER);
+  return ids.length > max
+    ? `${ids.length} accounts exceeds the limit of ${max} per run. Split the list.`
+    : ids;
+};
+
 /** zod over FormData, with the first message rather than the full issue tree. The form-side twin of
  *  `parseQuery`. */
 export function parseForm<T extends z.ZodType>(schema: T, form: FormData): z.infer<T> | string {

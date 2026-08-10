@@ -2,14 +2,16 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess, isSenior } from '$lib/server/access';
-import { parseForm, parseIdList, parseQuery } from '$lib/server/query';
+import { parseForm, parseIdList, parseIdListStrict, parseQuery } from '$lib/server/query';
 import { BAN_REASON_CODES, setBanned } from '$lib/server/user-actions.service';
 import { addUserNote } from '$lib/server/moderation-memory.service';
 import {
+  getAccountsOnDomains,
   getAccountsOnIps,
   getBanCandidates,
   getEmailDomains,
   getRegistrationIps,
+  getTippersTo,
   resolveUsernamesToIds,
 } from '$lib/server/bulk-ban.service';
 
@@ -19,6 +21,13 @@ const querySchema = z.object({
   ids: z.string().trim().catch(''),
   names: z.string().trim().catch(''),
   ips: z.string().trim().catch(''),
+  domains: z.string().trim().catch(''),
+  // Retool's GetUsers, parameterised. `minAccountId` defaults to its hardcoded 5400000 so the finder
+  // opens on "recently created accounts" rather than on every supporter a creator has ever had.
+  tippedTo: z.string().trim().catch(''),
+  minTip: z.coerce.number().int().min(0).catch(50),
+  minAccountId: z.coerce.number().int().min(0).catch(5_400_000),
+  tipDays: z.coerce.number().int().min(0).catch(0),
 });
 
 const splitList = (value: string) =>
@@ -28,7 +37,16 @@ const splitList = (value: string) =>
     .filter(Boolean);
 
 export const load: PageServerLoad = async ({ url, locals }) => {
-  const { ids, names, ips } = parseQuery(url, querySchema);
+  const {
+    ids,
+    names,
+    ips,
+    domains: domainTerms,
+    tippedTo,
+    minTip,
+    minAccountId,
+    tipDays,
+  } = parseQuery(url, querySchema);
 
   // Mass banning is the highest-blast-radius action in the app; Retool restricted this app to some
   // mods and the walkthrough treats widening it as a decision, not a default.
@@ -37,17 +55,33 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   const fromNames = names ? await resolveUsernamesToIds(splitList(names)) : [];
   const userIds = [...new Set([...parseIdList(ids.replace(/[\s\n]+/g, ',')), ...fromNames])];
 
-  const [candidates, registrationIps, domains, ipAccounts] = await Promise.all([
-    getBanCandidates(userIds),
-    getRegistrationIps(userIds),
-    getEmailDomains(userIds),
-    ips ? getAccountsOnIps(splitList(ips)) : Promise.resolve([]),
-  ]);
+  const [candidates, registrationIps, domains, ipAccounts, domainAccounts, tippers] =
+    await Promise.all([
+      getBanCandidates(userIds),
+      getRegistrationIps(userIds),
+      getEmailDomains(userIds),
+      ips ? getAccountsOnIps(splitList(ips)) : Promise.resolve([]),
+      domainTerms ? getAccountsOnDomains(splitList(domainTerms)) : Promise.resolve([]),
+      tippedTo
+        ? getTippersTo(parseIdList(tippedTo.replace(/[\s\n]+/g, ',')), {
+            minAmount: minTip,
+            minAccountId,
+            days: tipDays,
+          })
+        : Promise.resolve([]),
+    ]);
 
   return {
     ids,
     names,
     ips,
+    domainTerms,
+    domainAccounts,
+    tippedTo,
+    minTip,
+    minAccountId,
+    tipDays,
+    tippers,
     canAct,
     candidates,
     registrationIps,
@@ -73,21 +107,25 @@ export const actions: Actions = {
 
     const input = parseForm(
       z.object({
-        userIds: z.string().transform((s) => parseIdList(s, 1001)),
+        userIds: z.string(),
         reasonCode: z.enum(BAN_REASON_CODES),
         detailsInternal: z.string().trim().max(500).optional(),
         note: z.string().trim().max(1000).optional(),
+        removeMedia: z.coerce.boolean().catch(false),
       }),
       await request.formData()
     );
     if (typeof input === 'string') return actionFail(input);
-    if (!input.userIds.length) return actionFail('No accounts to ban.');
+
+    const userIds = parseIdListStrict(input.userIds, 1000);
+    if (typeof userIds === 'string') return actionFail(userIds);
+    if (!userIds.length) return actionFail('No accounts to ban.');
 
     const banned: number[] = [];
     const failed: number[] = [];
     let consecutiveFailures = 0;
 
-    for (const userId of input.userIds) {
+    for (const userId of userIds) {
       let ok = false;
       // Retool retried the same id; one retry is enough to clear a transient blip without turning a
       // systemic failure into a long loop.
@@ -97,6 +135,7 @@ export const actions: Actions = {
           ban: true,
           reasonCode: input.reasonCode,
           detailsInternal: input.detailsInternal,
+          removeMedia: input.removeMedia,
           moderatorId: locals.user.id,
         });
         ok = result.ok;
@@ -145,16 +184,19 @@ export const actions: Actions = {
 
     const input = parseForm(
       z.object({
-        userIds: z.string().transform((s) => parseIdList(s, 5001)),
+        userIds: z.string(),
         note: z.string().trim().min(1).max(1000),
       }),
       await request.formData()
     );
     if (typeof input === 'string') return actionFail(input);
-    if (!input.userIds.length) return actionFail('No accounts to annotate.');
+
+    const userIds = parseIdListStrict(input.userIds, 5000);
+    if (typeof userIds === 'string') return actionFail(userIds);
+    if (!userIds.length) return actionFail('No accounts to annotate.');
 
     const results = await Promise.all(
-      input.userIds.map((userId) =>
+      userIds.map((userId) =>
         addUserNote({ userId, notes: input.note, author })
           .then(() => true)
           .catch(() => false)
@@ -167,8 +209,8 @@ export const actions: Actions = {
       success: true,
       noted,
       warning:
-        noted < input.userIds.length
-          ? `${input.userIds.length - noted} note(s) could not be written.`
+        noted < userIds.length
+          ? `${userIds.length - noted} note(s) could not be written.`
           : undefined,
     };
   },
