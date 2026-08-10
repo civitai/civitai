@@ -331,6 +331,10 @@ export async function purgeResizeCache({ url }: { url: string }) {
 
 export async function deleteImageFromS3({ id, url }: { id: number; url: string }) {
   if (!env.DATABASE_IS_PROD) return;
+  // Legacy avatar rows hold a full external URL where every other row holds a bucket key.
+  // Handing one to deleteObject as a Key can only fail, and it drags a third party into a
+  // delete that was never ours to perform.
+  if (!url || url.startsWith('http')) return;
 
   try {
     const otherImagesWithSameUrl = await dbWrite.image.findFirst({
@@ -360,7 +364,6 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
         getImageS3Client().deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET!, key: url })
       );
     }
-    await purgeResizeCache({ url: url });
   } catch (error) {
     // Nothing retries this: deleteImages drops the DB row first, so a lost object stays
     // publicly reachable (CDN urls are unsigned) with only this line to find it by.
@@ -373,6 +376,12 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
       error: safeError(error),
     }).catch(() => undefined);
   }
+
+  // Outside the try: a failed object delete is exactly when invalidation matters, because the
+  // bytes are still in the bucket and a live cache entry keeps serving content whose row is
+  // already gone. The `otherImagesWithSameUrl` return above still skips this — that url belongs
+  // to an image that is still live.
+  await purgeResizeCache({ url: url });
 }
 
 export const invalidateManyImageExistence = async (ids: number[]) => {
