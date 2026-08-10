@@ -1,4 +1,4 @@
-import { Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { Button, Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCallback, useMemo } from 'react';
@@ -22,8 +22,16 @@ export function ResourceHitList({ query }: { query: string }) {
     enabled: tab === 'featured',
   });
 
-  const { items, isLoading, isFetching, isFetchingNextPage, fetchNextPage, hasNextPage } =
-    useResourceSelectInfinite({ query });
+  const {
+    items,
+    isLoading,
+    isFetching,
+    isFetchingNextPage,
+    fetchNextPage,
+    hasNextPage,
+    isError,
+    refetch,
+  } = useResourceSelectInfinite({ query });
 
   const {
     items: models,
@@ -136,6 +144,31 @@ export function ResourceHitList({ query }: { query: string }) {
       <div className="p-3 py-5">
         <Center mt="md">
           <Loader />
+        </Center>
+      </div>
+    );
+
+  // A failed query must never render as "No models found" — that states as fact
+  // that no such models exist, which is what sent users hunting for a missing
+  // ecosystem when the picker was actually erroring (2026-07-28, and again since).
+  if (isError && !filtered.length)
+    return (
+      <div className="my-20 p-3 py-5">
+        <Center>
+          <Stack gap="md" align="center" maw={800}>
+            <ThemeIcon size={128} radius={100} color="red" style={{ opacity: 0.5 }}>
+              <IconCloudOff size={80} />
+            </ThemeIcon>
+            <Title order={1} className="inline">
+              Couldn&rsquo;t load models
+            </Title>
+            <Text align="center">
+              Something went wrong on our end — your models are still there. Try again in a moment.
+            </Text>
+            <Button onClick={() => refetch()} variant="light">
+              Retry
+            </Button>
+          </Stack>
         </Center>
       </div>
     );
