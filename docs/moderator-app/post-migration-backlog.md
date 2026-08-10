@@ -72,10 +72,10 @@ findings are done — see the parity checklist.
       this week (a blank optional field rejecting every Buzz transaction, and entity linkage silently
       dropped from the ledger) were both things one real submission would have caught immediately.
       Needs a signed-in session against the auth hub.
-- [ ] 🔒 **Rotate the Freshdesk API key.** It is in the ClickUp ticket body and was in the raw
-      `User Lookup v2` export as `const apiKey = '…'` inside a Function body. Redacted before that file
-      was committed, and never pushed — but it has been on disk and in a ticket, so treat it as
-      disclosed. Removal is not remediation.
+- [x] 🔒 **Support-tool API key** — confirmed 2026-08-10 it was **never committed**: it was redacted
+      before the raw export's only commit, which was never pushed. Nothing to remediate here. It lives
+      in a ClickUp ticket body; whether that warrants rotation is an owner's call, and the specifics
+      belong in the private infra repo rather than a public one.
 
 ## User Lookup
 

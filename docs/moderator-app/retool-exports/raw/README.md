@@ -29,9 +29,13 @@ deleting the file afterwards does not undo that.
 
 The two workflow exports each carried three live credentials — a Discord webhook URL with its token, a
 PagerDuty `routing_key`, and the `run-jobs?token=` webhook token — all in an alert payload, not in a
-query or a header. **They sat in a ClickUp attachment before reaching here, so treat all three as
-disclosed and rotate them regardless of this redaction.** The Hangfire dashboard URL the alert links
-to is redacted as well, under the paths-to-production rule.
+query or a header. The Hangfire dashboard URL the alert links to is redacted as well, under the
+paths-to-production rule.
+
+**Verified 2026-08-10: none of the three was ever committed unredacted.** Both files have a single
+commit in history and that version is already `<REDACTED>`, so **nothing here requires rotation** — an
+earlier note in the tracker said otherwise and was wrong. The live values exist only in the ClickUp
+attachments these came from. Re-sanitize the same three if either export is ever refreshed.
 
 Redaction is not limited to credentials. An internal CIDR and an abuse-domain literal are stripped
 too — network topology and moderation trigger terms are both private-repo material, and the second is

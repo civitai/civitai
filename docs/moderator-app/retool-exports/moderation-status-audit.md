@@ -153,12 +153,26 @@ renders `TagQueue.data.id.length` where `TagQueue` selects only a COUNT; `table1
 
 ## Build order
 
-1. **The three help-request producers.** Smallest, and it is what stops `/retool/image-help` dying at
-   cutover.
-2. **The board**: per-queue lag from `Mods_TaskTimers`, the "last touched by / how long ago" column, the
-   threshold colouring, `AutoBlockedUsers`.
-3. **`ActionAllPostReports`** batch selector, and `BlockedImagesTask` / `CivitModelsData` as review
-   counts.
-4. **Graphs tab.**
-5. **`Who is who?`** — blocked on a screenshot.
-6. **Model-side surfaces** — blocked on there being a models route.
+Ticked items shipped 2026-08-10.
+
+1. [x] **The three help-request producers.** `GetMinors`/`GetPoI`/`GetReported` → `Store*`, as one
+   `file` action on `/retool/image-help`. Batch capped at 500 with the cap disclosed; an empty result
+   is refused rather than filed.
+2. [x] **The board**, on the DASHBOARD rather than a new route — a second page showing the same counts
+   is how two surfaces come to disagree. Threshold colouring (`queue-thresholds.ts`), queue sweeps from
+   `Mods_TaskTimers` **with the acknowledge write**, `AutoBlockedUsers`, and `RecentReports` as a
+   "Recently worked" card.
+3. [x] **`ActionAllPostReports`** as a batch selector on `/reports/post`, plus `BlockedImagesTask` and
+   `CivitModelsData` as since-last-sweep counts.
+4. [x] **Graphs tab** and the **split control**, as `/retool/queue-stats`. Its own route because Retool
+   put them behind a "Load Graphs" button — they are unindexed aggregates. Inline SVG, no charting
+   dependency. Recovering the split also recovered the `FrontPageTimers` column list that the Front
+   Page Audit slice recorded as unknown.
+5. [ ] **`FindSHA`/`LogSHA256`** — takedown-hash ledger into `ModerationSHA`. Unblocked; small.
+6. [ ] **`Who is who?`** — BLOCKED on a Retool screenshot. Its panes are not enumerated in the export
+   and three of the app's six tables are still unaccounted for. Do not estimate it from the query list.
+7. [ ] **Model-side surfaces** (`ModelReview`, `TrainingCount`, `UnpublishingReasons`) — BLOCKED on
+   there being no models route in the app at all. That is a new section, not a port.
+
+**A new route needs granting on `/admin`** before anyone but a `moderator:admin` can reach it —
+`/retool/queue-stats` is the one added here.

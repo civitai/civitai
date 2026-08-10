@@ -441,7 +441,10 @@ Retool's board is the triage entry point, and the walkthrough's colour quote lan
 - [ ] `CIVITAI_MOD_API_KEY`, `RETOOL_DATABASE_URL`, `FRESHDESK_API_KEY` — see the handover.
 - [ ] Three SQL migrations, applied by hand.
 - [ ] Grant five new pages on `/admin`.
-- [ ] **Re-extract every export while access remains** — only `user-lookup-v2` has option sets and
-      layout geometry.
-- [ ] 🔒 **Rotate the Freshdesk API key** that sits in plaintext in the ClickUp ticket body.
-- [ ] **Nothing has been exercised in a browser** beyond two User Reports screens.
+- [x] **Re-extract every export while access remains** — done 2026-08-10; all nine carry option sets
+      and layout geometry, and sanitized copies are committed under `retool-exports/raw/`.
+- [x] 🔒 **Support-tool credential** — never committed (verified 2026-08-10). Ticket-body hygiene is an
+      owner's call; specifics belong in the private infra repo.
+- [ ] **Browser verification is partial.** The moderation team is exercising pages as they go and
+      feeding findings back per session, rather than this being one gated pass. Treat a slice as
+      unverified until someone says otherwise, but do not block porting on it.

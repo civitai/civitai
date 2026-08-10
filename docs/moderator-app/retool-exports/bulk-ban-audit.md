@@ -35,15 +35,27 @@ else's investigation.
 | `LogBans` | GUI write to `ReToolActions`. We log to `ModActivity` via `recordModActivity`, which `setBanned` already does per account. Retool's table is a read-only archive here. |
 | `UserNotes` | GUI write to `UserNotes` — a note on each banned account. `addUserNote` (`moderation-memory.service.ts`) is the same write, and attributes by username per the skill's attribution rule. |
 
-### plumbing / ad-hoc (3)
+### ~~plumbing / ad-hoc (3)~~ — this bucket was WRONG, corrected 2026-08-10
 
-`GetUsers` — accounts that tipped ≥50 to five hardcoded ids, above a hardcoded id floor. A specific
-past investigation, saved. `query15` — unbanned accounts on one hardcoded email domain. `query13` —
-usernames → email domain, for a pasted list.
+The fidelity review found all three misfiled, in both directions. Kept here rather than rewritten
+silently, because the reasoning that produced it is the reasoning to avoid.
 
-**The shapes are real and are ported as inputs**: "accounts on this email domain" and "usernames →
-domains" both fall out of the domain histogram and the username entry point. The hardcoded ids, the
-domain and the four IPs are not carried over.
+The bucket rested on "these are saved past investigations, and their shapes fall out of what we
+built". Neither half held. **No widget in the export binds any of the ban-evasion queries** — they are
+all equally editor-only — so "ad-hoc" was not a distinction the export supports, and it was applied to
+three of the six arbitrarily.
+
+| Query | Was | Actually |
+| --- | --- | --- |
+| `GetUsers` | ad-hoc | **A workflow, and now ported.** Distinct accounts that tipped ≥50 to a set of recipients, floored at recently-created ids: a buzz-farm finder. The only query in this export that ORIGINATES a ban list rather than annotating one, and what the `BuzzCheating` ban reason fed. |
+| `query15` | "falls out of the domain histogram" | **It does not, and it is now ported.** `getEmailDomains` is scoped `WHERE id IN (pasted set)`, so it can COUNT a ring but never GROW one. `query15` searches the whole `User` table by domain — the twin of the IP expansion that was ported. |
+| `query13` | ad-hoc | **Covered** — usernames resolve via `resolveUsernamesToIds` and each candidate's email renders. Belongs in `equivalent`, i.e. misfiled in the opposite direction. |
+
+Its input widget is worth noting: `textArea2` is now bound to `{{ListUsers.data.id.join('\n')}}` and
+disabled, so `query12`/`query13` dangle against a repurposed widget in the current export. The build's
+username entry point is a reasonable reconstruction, not observed live behaviour.
+
+The hardcoded ids, domain and four IPs are still not carried over — parameterising them was right.
 
 ### superseded / blocked (1)
 

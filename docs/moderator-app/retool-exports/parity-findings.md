@@ -211,9 +211,10 @@ New, not previously logged:
 - [x] Multi-select comments to ToS/delete them.
 - [x] Prompts *and blocked prompts* list; editable socials & bio; mod notes that wrap.
 
-⚠️ **The ticket body contains a live Freshdesk API key in plaintext.** It is in ClickUp, not in this
-repo — do not copy it here. It should be rotated and replaced with an env var reference, and this
-finding kept out of any public doc beyond this sentence.
+⚠️ **Ticket bodies for this migration carry credentials in plaintext.** Nothing has reached this repo
+and nothing should: quote the behaviour, never the value, and use an env var reference. Specifics
+belong in the private infra repo — naming the vendor and the ticket here would be an inventory of
+where to look, which this repo's security rules put off-limits.
 
 **Method note:** every one of these came from a screenshot or the ticket text, not from code review or
 the export. The exports describe behaviour; they do not describe what was asked for, and they only

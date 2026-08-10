@@ -14,8 +14,10 @@ actually does.
 | User Reports | [user-reports.md](user-reports.md) | 34 |
 | Chat Audit | [chat-audit.md](chat-audit.md) | 20 |
 | Front Page Audit | [front-page-audit.md](front-page-audit.md) | 16 |
+| Bulk Ban | [bulk-ban.md](bulk-ban.md) | 15 |
 | Image Lookup | [image-lookup.md](image-lookup.md) | 10 |
 | Article Lookup | [article-lookup.md](article-lookup.md) | 3 |
+| Workflows (2) | raw only — see [raw/README.md](raw/README.md) | 2 SQL |
 
 Exports are attached to the **ClickUp subtasks of 868kkxqpn**, one per app — that is where to get them,
 not a local folder.
@@ -28,22 +30,28 @@ Retool's own Postgres these apps actually depend on (7 of 43), and what has to m
 [**moderator-id-mapping.md**](moderator-id-mapping.md) maps Retool's free-text moderator names to real
 user ids — needed before 69,100 notes and strikes can keep their attribution.
 
-## The raw exports are deliberately NOT in this repo
+## The raw exports ARE here now — sanitized
 
-> **They contain live credentials.** `User Lookup v2.json` carries a hardcoded
-> `Authorization: Bearer <32-hex>` header on its REST queries, repeated seven times. Committing the raw
-> JSON would publish a working API token to every clone and to git history permanently.
+This changed once Retool access started going away. [`raw/`](raw/) holds all nine app exports plus the
+two workflow exports, because the inventories are lossy: they render what the extractor knows how to
+render, and the extractor has twice been wrong about what mattered.
 
-They are also ~2.6 MB of transit-encoded blob that no one can read in review, and they go stale the
-moment someone edits the Retool app.
+> **The originals contain live credentials.** `User Lookup v2.json` carried an
+> `Authorization: Bearer <token>` header **seven times**. Every committed copy is redacted.
 
-The inventories here carry the SQL — the part with migration value — and no headers or auth config,
-because `extract.mjs` never reads them. Verified clean before committing.
+**Read [`raw/README.md`](raw/README.md) before touching anything in that directory.** The rule it sets
+is not optional: never overwrite one with a fresh download, sanitize first, verify no secret-shaped
+strings survive, and only then commit. A token in git history is disclosed permanently and deleting the
+file afterwards does not undo it.
 
-## Getting the exports
+The inventories are generated FROM the sanitized files, so regenerate rather than hand-editing — or a
+redacted export quietly grows an unredacted inventory beside it.
 
-Ask the moderation team, or export from Retool directly (app → ⋯ → Export). Keep them **outside the
-repo**; `~/Downloads/Retool/` is where they have lived so far.
+## Getting a fresh export
+
+Ask the moderation team, or export from Retool directly (app → ⋯ → Export). A fresh download is
+**unsanitized**: keep it outside the repo (`~/Downloads/Retool/`) and sanitize before it comes near a
+commit.
 
 ## Regenerating an inventory
 
