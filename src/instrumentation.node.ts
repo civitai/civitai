@@ -58,8 +58,8 @@ registerCpuProfiler();
 // watches the pod's OWN event-loop lag and auto-arms V8's (separate-thread)
 // sampler when lag crosses a threshold — the one mechanism that captures a 504
 // wave's pin. DISARMED by default (no timer, no histogram, zero overhead) unless
-// CPU_PROFILE_LAG_TRIGGER_MS is set (suggested: 1000) on the dp-prod-api
-// deployment. See src/server/cpu-profiler.ts.
+// CPU_PROFILE_LAG_TRIGGER_MS is set (suggested: 1000) in the deployment
+// environment. See src/server/cpu-profiler.ts.
 registerEventLoopStallProfiler();
 
 // Arm Grafana Pyroscope CONTINUOUS wall+cpu profiling. DARK by default: a
@@ -90,7 +90,7 @@ registerEventLoopLongTaskDetector();
 // pinned pod (loop still flushing timers) from a truly-wedged one — retiring the
 // ~15min probe-tolerance band-aid that the httpGet `/api/live` liveness needed
 // because it's served by the same saturated loop. See liveness-heartbeat.ts and
-// the liveness history in datapacket-talos deployment-api.yaml.
+// the liveness-probe history in the deployment manifests.
 registerLivenessHeartbeat();
 
 // Spawn the off-loop event-loop wedge detector. Everything else that watches the
@@ -111,9 +111,9 @@ registerEventLoopWatchdog();
 // loop thread → pin → 504/502/499 on every rollout. The warmer self-requests
 // the hot routes over localhost during startup and flips /api/ready's warm gate
 // only once warm (fail-open). It is OPT-IN via WARMUP_ENABLED (default FALSE —
-// runs ONLY when WARMUP_ENABLED='true', set on the dp-prod SSR/API/heavy pools;
-// elsewhere it no-ops + flips warm immediately). It self-imports lazily so the
-// fetch/route code isn't pulled into the boot path needlessly.
+// runs ONLY when WARMUP_ENABLED='true', set on the production request-serving
+// workloads; elsewhere it no-ops + flips warm immediately). It self-imports
+// lazily so the fetch/route code isn't pulled into the boot path needlessly.
 //
 // CRITICAL: do NOT await this. register() must return so Next can start the
 // HTTP listener — the warmer needs that listener up to self-request, so
