@@ -7,6 +7,7 @@ import { uniq, uniqBy } from 'lodash-es';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache, userImageVideoCountCaches } from '~/server/redis/caches';
 import { firstDailyPostReward } from '~/server/rewards';
+import { getFirstDailyPostRewardedIds } from '~/server/rewards/active/firstDailyPost.reward';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
@@ -324,7 +325,24 @@ export const processScheduledPublishing = createJob(
         windowStart: rewardWindowStart.toISOString(),
       }).catch(() => undefined);
     }
+    // A post can reach this sweep already paid for: anything scheduled before the
+    // reward moved to publish time was granted at schedule time, and an
+    // unpublish/republish crosses the window a second time. The ledger refuses those
+    // as duplicates — but only after the reward has spent the user's daily cap on
+    // them — so they have to be dropped before apply rather than after.
+    const alreadyRewarded = await getFirstDailyPostRewardedIds(publishedPosts).catch((error) => {
+      logToAxiom({
+        name: 'process-scheduled-publishing',
+        type: 'error',
+        message: 'Failed to read prior first daily post rewards; granting unfiltered',
+        error: (error as Error)?.message,
+      }).catch(() => undefined);
+      return new Set<number>();
+    });
+
     for (const post of publishedPosts) {
+      if (alreadyRewarded.has(post.id)) continue;
+
       // Caught per post so one failure can't abort the job — but routed to Axiom
       // rather than swallowed, since base.reward rethrows genuine ClickHouse schema
       // breaks precisely so they stay visible.

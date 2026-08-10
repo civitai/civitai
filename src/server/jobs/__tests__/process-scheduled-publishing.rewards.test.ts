@@ -1,21 +1,29 @@
 import type { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockDbWrite, mockApply, mockSetLastRun, mockLogToAxiom, mockProcessEngagement, jobDate } =
-  vi.hoisted(() => ({
-    mockDbWrite: {
-      $queryRaw: vi.fn(),
-      $executeRaw: vi.fn(),
-      $transaction: vi.fn(),
-      image: { findMany: vi.fn() },
-      comicProject: { updateMany: vi.fn() },
-    },
-    mockApply: vi.fn(),
-    mockSetLastRun: vi.fn(),
-    mockLogToAxiom: vi.fn(() => Promise.resolve()),
-    mockProcessEngagement: vi.fn(),
-    jobDate: { lastRun: new Date(0) },
-  }));
+const {
+  mockDbWrite,
+  mockApply,
+  mockRewardedIds,
+  mockSetLastRun,
+  mockLogToAxiom,
+  mockProcessEngagement,
+  jobDate,
+} = vi.hoisted(() => ({
+  mockDbWrite: {
+    $queryRaw: vi.fn(),
+    $executeRaw: vi.fn(),
+    $transaction: vi.fn(),
+    image: { findMany: vi.fn() },
+    comicProject: { updateMany: vi.fn() },
+  },
+  mockApply: vi.fn(),
+  mockRewardedIds: vi.fn(),
+  mockSetLastRun: vi.fn(),
+  mockLogToAxiom: vi.fn(() => Promise.resolve()),
+  mockProcessEngagement: vi.fn(),
+  jobDate: { lastRun: new Date(0) },
+}));
 
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 
@@ -24,6 +32,9 @@ vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 // modules that build query caches from the db client at import time, so pulling the
 // real one in drops this suite to zero collected tests.
 vi.mock('~/server/rewards', () => ({ firstDailyPostReward: { apply: mockApply } }));
+vi.mock('~/server/rewards/active/firstDailyPost.reward', () => ({
+  getFirstDailyPostRewardedIds: mockRewardedIds,
+}));
 vi.mock('~/server/events', () => ({ eventEngine: { processEngagement: mockProcessEngagement } }));
 vi.mock('~/server/redis/caches', () => ({
   dataForModelsCache: { refresh: vi.fn() },
@@ -76,6 +87,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   jobDate.lastRun = new Date(0);
   mockApply.mockResolvedValue(undefined);
+  mockRewardedIds.mockResolvedValue(new Set<number>());
   mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
     fn({ $executeRaw: vi.fn(), $queryRaw: vi.fn().mockResolvedValue([]) })
   );
@@ -130,6 +142,40 @@ describe('processScheduledPublishing :: first daily post reward', () => {
       expect.objectContaining({ type: 'error', postId: 4 })
     );
     expect(mockSetLastRun).toHaveBeenCalled();
+  });
+
+  // The ledger keys this reward on the post id and never expires it, so re-applying
+  // to a post it already paid for spends the user's daily cap and then gets refused
+  // as a duplicate — 25 Buzz never moves and the day's real post is capped.
+  it('skips posts the reward has already been granted for', async () => {
+    mockRewardedIds.mockResolvedValue(new Set([2]));
+    stubReads({
+      newlyLive: [
+        { id: 2, userId: 20 },
+        { id: 3, userId: 30 },
+      ],
+    });
+    await runJob();
+    expect(mockApply).toHaveBeenCalledTimes(1);
+    expect(mockApply).toHaveBeenCalledWith({ postId: 3, posterId: 30 });
+  });
+
+  it('checks both publish paths against the prior grants, deduped', async () => {
+    stubReads({ scheduled: [{ id: 7, userId: 70 }], newlyLive: [{ id: 7, userId: 70 }] });
+    await runJob();
+    expect(mockRewardedIds).toHaveBeenCalledWith([{ id: 7, userId: 70 }]);
+  });
+
+  // Dropping the sweep's rewards on a ClickHouse blip would lose them for good: the
+  // window only advances forward, so these posts are never reconsidered.
+  it('keeps granting, and says so, when the prior-grant lookup fails', async () => {
+    mockRewardedIds.mockRejectedValue(new Error('clickhouse down'));
+    stubReads({ newlyLive: [{ id: 8, userId: 80 }] });
+    await runJob();
+    expect(mockApply).toHaveBeenCalledWith({ postId: 8, posterId: 80 });
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', message: expect.stringContaining('unfiltered') })
+    );
   });
 
   it('warns instead of silently truncating when the sweep hits its row limit', async () => {
