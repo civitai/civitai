@@ -798,10 +798,19 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
       const workBaseline = freshCopy(committed.entries);
       const result = await gate(['--update-baseline', '--baseline', workBaseline]);
       expect(result.code).toBe(0);
-      expect(result.stdout).toMatch(/Wrote 63 accepted finding\(s\)/);
+      // One entry per finding, counted from the same schema+snapshot pair the CLI reads —
+      // never a literal. The totals move whenever a field lands ahead of its migration, and
+      // pinning them reds this suite for schema work that has nothing to do with the gate.
+      expect(result.stdout).toMatch(
+        new RegExp(`Wrote ${report.findings.length} accepted finding\\(s\\)`)
+      );
       // The PAIR, not a bare zero: "0 absorbed" and "nothing was compared" must not be the
       // same output. This is what makes the escalation report falsifiable.
-      expect(result.stdout).toMatch(/escalations absorbed: 0 \(compared against 63 previous/);
+      expect(result.stdout).toMatch(
+        new RegExp(
+          `escalations absorbed: 0 \\(compared against ${committed.entries.length} previous`
+        )
+      );
     });
 
     it('is byte-idempotent — a no-op refresh rewrites the same file', async () => {
@@ -849,7 +858,9 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
       expect(result.stdout).toMatch(/not "no escalations found"/);
       expect(result.stderr).not.toMatch(/Cannot read properties/);
       // the refresh still completed
-      expect((JSON.parse(readFileSync(path, 'utf8')) as Baseline).entries).toHaveLength(63);
+      expect((JSON.parse(readFileSync(path, 'utf8')) as Baseline).entries).toHaveLength(
+        report.findings.length
+      );
     });
 
     it('says it SKIPPED when there was no previous baseline at all', async () => {
