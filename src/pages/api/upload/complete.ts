@@ -30,7 +30,25 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   }
   try {
     const result = await completeMultipartUpload(bucket, key, uploadId, parts, s3);
-    await logToAxiom({ name: 's3-upload-complete', userId, type, key, uploadId, backend });
+    // Log the SHAPE of the completion, not just that it happened. A completion can
+    // resolve without throwing and still leave the multipart session unfinished with
+    // no object — S3 documents that CompleteMultipartUpload "can contain either a
+    // success or an error" and that an error "might be embedded in the 200 OK
+    // response", so a non-throwing call is not proof of a finalized object. Without
+    // partCount/location/etag there is nothing in the log to tell an apparently-good
+    // completion from a silently-empty one after the fact, and the resulting rows are
+    // indistinguishable from healthy ones. partCount also catches a truncated manifest.
+    await logToAxiom({
+      name: 's3-upload-complete',
+      userId,
+      type,
+      key,
+      uploadId,
+      backend,
+      partCount: Array.isArray(parts) ? parts.length : null,
+      location: result?.Location ?? null,
+      etag: result?.ETag ?? null,
+    });
 
     res.status(200).json(result.Location);
   } catch (e) {
