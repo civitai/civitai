@@ -230,7 +230,7 @@ export const toggleReactionHandler = async ({
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
     });
-    const trackerEvent = await getTrackerEvent(input, result);
+    const trackerEvent = result === 'noop' ? undefined : await getTrackerEvent(input, result);
     if (trackerEvent) {
       await ctx.track
         .reaction({
@@ -240,7 +240,7 @@ export const toggleReactionHandler = async ({
         .catch(handleLogError);
     }
 
-    if (input.entityType === 'image') {
+    if (input.entityType === 'image' && result !== 'noop') {
       const metricTypeFromInput = reactionMetricMap[input.reaction];
       if (metricTypeFromInput) {
         await updateEntityMetric({
