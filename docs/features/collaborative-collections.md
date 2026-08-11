@@ -87,6 +87,28 @@ semantics stay untouched and a decline leaves no residue.
 The roster is readable by anyone who can read the collection. Pending invites are returned only to
 `manage` holders. System-owned (`userId <= 0`) and `mode != null` collections are refused outright.
 
+## Where invites surface
+
+An invitee has to be able to find an invite before it expires, and the collections sidebar is the
+only place that knows about them.
+
+- **Mail button in the sidebar header**, carrying the pending count. This is the one affordance that
+  renders at **zero** invites, which is why it exists at all — everything else below disappears when
+  there is nothing pending, leaving no way in.
+- **A band above the filters** peeking at the two most recent invites, with **View all**.
+- **The invitations modal**, the full inbox, opened from either.
+
+The count lives on the mail button and **nowhere else**. The band deliberately has no badge: it
+would print the same number twice, and it is the button's copy that has to survive the band being
+absent.
+
+`getMyInvites` enriches each row with `itemCount` (accepted items only) and `collaboratorCount`
+(roster plus the owner) so an invitee can judge what they are being handed. Two things constrain it:
+it runs `getCollectionRoster` **per invite**, so the query is bounded by `take: 50`; and it selects
+`read`/`write`/`mode`/`userId` purely to run the collaborator-row rule, then maps them off the
+result. Do not let those columns reach the client — the roster rule needs them, an invite card does
+not.
+
 ## Membership gating
 
 Collaboration is a member feature, at any tier. Both opening submissions and inviting collaborators
@@ -117,6 +139,50 @@ already-issued invites can still be accepted. Only new entries and new collabora
 The closed state uses **two separate copy strings** — one for visitors, one for the owner. The
 visitor string describes the collection's state and never the owner's billing situation. Keep them
 as separate literals; do not template a reason into a shared one.
+
+### Surfacing the gate before the attempt
+
+Because the gate is on the **owner**, a Manager can otherwise pick someone, hit Invite, and get a
+failure they have no way to act on. So `getCollaborators` answers it up front:
+
+```ts
+{ canInvite: boolean, inviteBlockedReason: 'collaboration-disabled' | 'owner-membership' | null }
+```
+
+Three properties hold it together, and all three are load-bearing:
+
+- It **mirrors the refusals `inviteCollaborator` throws**, in the same precedence — lapse first, then
+  membership, with moderators bypassing membership but not lapse. The pre-flight answer and the
+  write path must not be able to disagree; if you add a refusal to one, add it to the other.
+- The reason is returned **only to `manage` holders** (everyone else gets `canInvite: false` with a
+  `null` reason). That is what keeps `'owner-membership'` — which does disclose that the owner has
+  no active membership — inside the set of people already running the collection. It must never
+  widen to read-level callers; the visitor-copy rule above is the same principle.
+- The client keeps the **copy**, the server keeps the **reason**. An owner sees an upgrade CTA to
+  `/pricing`; a Manager sees that the owner needs a membership. Templating one string for both is
+  how the visitor/owner split gets lost.
+
+## Detail header
+
+The header carries the collaboration state: the owner's avatar ringed inside a stack of collaborator
+avatars, `<owner> and N collaborators`, and a popover listing the owner plus the first few
+collaborators with their roles, `+ N more collaborators`, and a link into the collaborators modal
+(**Manage** for `manage` holders, **View all** for everyone else). The count in that sentence
+excludes the owner while the avatar stack includes them — deliberate, since the owner is rendered
+separately everywhere else too.
+
+`manage` holders also get a **Review N** button to `/collections/[id]/review`, from
+`pendingReviewCount` on `collection.getById`. The count is computed only for `manage` holders, and
+it is an exact `count` with **no cap and no mode exclusion** — resist adding either.
+
+The reason that is safe is not in `schema.full.prisma`. That file declares only
+`@@index([collectionId], type: Hash)` on `CollectionItem`, which would make a status-filtered count
+walk the whole collection. Production actually carries
+`CollectionItem_collectionId_status_covered` — a btree on `(collectionId, status, createdAt DESC)`
+— so the count is an index-only scan: measured at **0.5 ms / 4 buffers** on a 190k-item collection
+and **0.8 ms / 73 buffers** for a real 466-row review backlog. This is the same
+schema-diverges-from-production trap as the DB triggers; check `pg_indexes` before sizing a query
+off the Prisma schema.
 
 ## Notifications
 
@@ -153,5 +219,8 @@ no collaborators.
 | Shared seat definition | `src/server/services/collection-invite.utils.ts` |
 | Collaborator-row rule, free-grant baseline | `src/server/services/collection-permission.utils.ts` |
 | Lapse reconciler | `src/server/jobs/reconcile-collection-collaboration.ts` |
+| Pending-review count | `src/server/services/collection.service.ts` (`getPendingReviewCount`) |
 | tRPC surface | `src/server/routers/collection.router.ts` |
-| Roster UI | `src/components/Collections/CollectionCollaborators/` |
+| Roster + invite UI | `src/components/Collections/CollectionCollaborators/` |
+| Header roster summary | `src/components/Collections/CollectionCollaboratorsSummary.tsx` |
+| Sidebar (mail button, invite band) | `src/components/Collections/CollectionsLayout.tsx` |
