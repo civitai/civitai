@@ -456,9 +456,10 @@ describe('pinning', () => {
 
 describe('gallery cursor', () => {
   it('round-trips a well-formed cursor', () => {
-    expect(parseGalleryCursor('123:1:456:789')).toEqual({
+    expect(parseGalleryCursor('123:1:7:456:789')).toEqual({
       seed: 123,
       pinned: 1,
+      position: 7,
       sortKey: 456,
       placementId: 789,
     });
@@ -467,8 +468,12 @@ describe('gallery cursor', () => {
   it.each([
     ['missing', undefined],
     ['empty', ''],
+    // Four parts is the OLD cursor shape, from before `position` joined the
+    // sort key. Rejecting it matters: accepting one would page with a position
+    // of NaN and silently repeat the pinned entries.
+    ['a pre-position cursor', '123:1:456:789'],
     ['too few parts', '123:1:456'],
-    ['non-numeric', 'abc:1:456:789'],
+    ['non-numeric', 'abc:1:7:456:789'],
   ])('treats a %s cursor as a fresh first page', (_label, cursor) => {
     // Not an error: the alternative is NaN interpolated into the ordering
     // expression, which selects a different but stable permutation and looks

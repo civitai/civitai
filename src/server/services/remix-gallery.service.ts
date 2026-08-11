@@ -420,7 +420,8 @@ type GalleryRow = {
   imageId: number;
   placerId: number;
   pinned: number;
-  position: number | null;
+  /** Coalesced in the query, so never null despite the column being nullable. */
+  position: number;
   sortKey: number;
 };
 
@@ -511,11 +512,17 @@ export async function getRemixGallery({
   const seed = parsed?.seed ?? remixGalleryShuffleSeed();
   const levels = onlySelectableLevels(browsingLevel);
 
+  // Every column the ORDER BY sorts on has to appear here, in the same order and
+  // the same direction, or the cursor cannot say where it stopped. `position`
+  // was missing and pinned entries repeated across pages: the tie-break fell
+  // through to `sortKey`, which does not agree with the order pinned rows are
+  // actually shown in.
   const keyset = parsed
     ? Prisma.sql`AND (
         e.pinned < ${parsed.pinned}
-        OR (e.pinned = ${parsed.pinned} AND e."sortKey" < ${parsed.sortKey})
-        OR (e.pinned = ${parsed.pinned} AND e."sortKey" = ${parsed.sortKey} AND e."placementId" < ${parsed.placementId})
+        OR (e.pinned = ${parsed.pinned} AND e.position > ${parsed.position})
+        OR (e.pinned = ${parsed.pinned} AND e.position = ${parsed.position} AND e."sortKey" < ${parsed.sortKey})
+        OR (e.pinned = ${parsed.pinned} AND e.position = ${parsed.position} AND e."sortKey" = ${parsed.sortKey} AND e."placementId" < ${parsed.placementId})
       )`
     : Prisma.empty;
 
@@ -526,7 +533,10 @@ export async function getRemixGallery({
         i.id AS "imageId",
         pl."placerId",
         CASE WHEN pl.data ->> 'pinnedAt' IS NOT NULL THEN 1 ELSE 0 END AS pinned,
-        (pl.data ->> 'position')::int AS position,
+        -- Coalesced rather than ordered NULLS LAST, because the keyset compares
+        -- it and every comparison against NULL is NULL, which drops the row
+        -- instead of paging past it.
+        COALESCE((pl.data ->> 'position')::int, 2147483647) AS position,
         -- The ::text is load-bearing. Prisma binds this as a parameter, and
         -- concat() is variadic "any", so without a cast Postgres cannot infer
         -- the type and rejects the statement at parse time — every call throws.
@@ -548,7 +558,7 @@ export async function getRemixGallery({
     )
     SELECT * FROM e
     WHERE TRUE ${keyset}
-    ORDER BY e.pinned DESC, e.position ASC NULLS LAST, e."sortKey" DESC, e."placementId" DESC
+    ORDER BY e.pinned DESC, e.position ASC, e."sortKey" DESC, e."placementId" DESC
     LIMIT ${limit + 1}
   `;
 
@@ -578,7 +588,9 @@ export async function getRemixGallery({
       .filter((entry): entry is RemixGalleryEntry => entry !== null),
     nextCursor:
       hasMore && last
-        ? `${seed}:${last.pinned === 1 ? 1 : 0}:${last.sortKey}:${last.placementId}`
+        ? `${seed}:${last.pinned === 1 ? 1 : 0}:${last.position}:${last.sortKey}:${
+            last.placementId
+          }`
         : null,
   };
 }
@@ -586,15 +598,15 @@ export async function getRemixGallery({
 export function parseGalleryCursor(cursor?: string | null) {
   if (!cursor) return null;
   const parts = cursor.split(':');
-  if (parts.length !== 4) return null;
+  if (parts.length !== 5) return null;
 
-  const [seed, pinned, sortKey, placementId] = parts.map(Number);
+  const [seed, pinned, position, sortKey, placementId] = parts.map(Number);
   // A malformed cursor becomes a fresh first page rather than a NaN
   // interpolated into the query, which would silently select a different but
   // stable permutation.
-  if (![seed, pinned, sortKey, placementId].every(Number.isFinite)) return null;
+  if (![seed, pinned, position, sortKey, placementId].every(Number.isFinite)) return null;
 
-  return { seed, pinned, sortKey, placementId };
+  return { seed, pinned, position, sortKey, placementId };
 }
 
 /**
