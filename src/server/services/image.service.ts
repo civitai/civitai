@@ -1956,9 +1956,15 @@ export const getAllImages = async (
     const prioritizseIsSystemUser = prioritizedUserIds.length === 1 && prioritizedUserIds[0] === -1;
 
     // Confirm system user has posts:
+    // Existence check only — `select: { id }` keeps this from decoding the
+    // whole Post row (three DateTimes plus the `metadata` Json) to answer a
+    // boolean.
     const hasSystemPosts =
       prioritizseIsSystemUser && modelVersionId
-        ? await dbRead.post.findFirst({ where: { userId: -1, modelVersionId } })
+        ? await dbRead.post.findFirst({
+            where: { userId: -1, modelVersionId },
+            select: { id: true },
+          })
         : false;
 
     if (prioritizseIsSystemUser && !hasSystemPosts)
