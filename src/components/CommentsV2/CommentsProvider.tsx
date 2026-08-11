@@ -1,6 +1,14 @@
 import type { MantineColor } from '@mantine/core';
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import { trpc } from '~/utils/trpc';
@@ -10,6 +18,7 @@ import { useRouter } from 'next/router';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import type { CommentV2Model } from '~/server/selectors/commentv2.selector';
 import { ThreadSort } from '../../server/common/enums';
+import { constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export type CommentV2BadgeProps = {
@@ -60,6 +69,11 @@ type RootThreadContext = {
   expanded: number[];
   toggleExpanded: (commentId: number) => void;
   activeComment?: CommentV2Model;
+  /**
+   * The surface the section belongs to. Every nested thread reports its own entity type as
+   * `comment`, so per-surface thread settings have to be resolved against this instead.
+   */
+  rootEntityType: CommentConnectorInput['entityType'];
 };
 
 export const RootThreadCtx = createContext<RootThreadContext>({} as any);
@@ -127,6 +141,7 @@ export function RootThreadProvider({
         isInitialThread,
         toggleExpanded,
         activeComment,
+        rootEntityType: initialEntityType,
       }}
     >
       <CommentsProvider
@@ -167,7 +182,10 @@ export function CommentsProvider({
   const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const { sort, setSort, activeComment } = useRootThreadContext();
+  const utils = trpc.useUtils();
+  const { sort, setSort, activeComment, rootEntityType } = useRootThreadContext();
+  const setExpanded = useNewCommentStore((state) => state.setExpanded);
+  const autoExpanded = useRef(new Set<number>());
   const storeKey = getKey(entityType, entityId);
   const created = useNewCommentStore(
     useCallback((state) => state.comments[storeKey] ?? [], [storeKey])
@@ -184,6 +202,17 @@ export function CommentsProvider({
   // cursor — otherwise the highlight scroll never fires.
   const highlighted = parseNumericString(router.query.highlight);
 
+  const maxDepth = constants.comments.getMaxDepth({ entityType: rootEntityType });
+  // Reply trees ride along with the page that owns them, so a surface that shows every thread
+  // open costs one request per page instead of one per comment per level.
+  const repliesDepth =
+    level === 1 &&
+    !hidden &&
+    constants.comments.expandsRepliesByDefault({ entityType: rootEntityType })
+      ? maxDepth - 1
+      : undefined;
+  const replyPageSize = constants.comments.replyPageSize;
+
   // Use infinite query with cursor-based pagination for comments
   const { data, isLoading, isRefetching, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.commentv2.getInfinite.useInfiniteQuery(
@@ -194,12 +223,82 @@ export function CommentsProvider({
         sort,
         hidden: hidden ?? false,
         targetCommentId: highlighted,
+        repliesDepth,
+        repliesLimit: replyPageSize,
       },
       {
         enabled: initialCount === undefined || initialCount > 0,
         getNextPageParam: (lastPage) => lastPage?.nextCursor,
       }
     );
+
+  const replyThreads = useMemo(
+    () => data?.pages.flatMap((page) => page?.replyThreads ?? []) ?? [],
+    [data]
+  );
+
+  // Seed each nested thread's caches from the batch above and open it, so the whole
+  // conversation renders at once rather than a thread at a time behind "show replies".
+  useEffect(() => {
+    if (!replyThreads.length) return;
+
+    const expandable: number[] = [];
+    const withReplies = new Set(replyThreads.map((thread) => thread.commentId));
+
+    for (const thread of replyThreads) {
+      utils.commentv2.getCount.setData(
+        { entityId: thread.commentId, entityType: 'comment' },
+        thread.commentCount
+      );
+      utils.commentv2.getThreadDetails.setData(
+        { entityId: thread.commentId, entityType: 'comment' },
+        { id: thread.id, locked: thread.locked, hiddenCount: thread.hiddenCount }
+      );
+      utils.commentv2.getInfinite.setInfiniteData(
+        {
+          entityId: thread.commentId,
+          entityType: 'comment',
+          limit: replyPageSize,
+          sort,
+          hidden: false,
+          repliesLimit: replyPageSize,
+        },
+        {
+          pages: [
+            {
+              comments: thread.comments,
+              nextCursor: thread.nextCursor,
+              targetComment: null,
+              replyThreads: [],
+            },
+          ],
+          pageParams: [null],
+        }
+      );
+      // A thread's depth is the level of the comment that owns it. Open each thread once, so
+      // loading another page doesn't re-open what the reader has since collapsed.
+      if (thread.depth < maxDepth && !autoExpanded.current.has(thread.commentId)) {
+        autoExpanded.current.add(thread.commentId);
+        expandable.push(thread.commentId);
+      }
+    }
+
+    // A comment the batch reached but returned no thread for has no replies. Say so, rather
+    // than leaving every childless comment to ask for its own count. The deepest level is
+    // past what the batch looked at, so its counts are still unknown and must be fetched.
+    const childless = [
+      ...(data?.pages ?? []).flatMap((page) => page?.comments ?? []).map((c) => c.id),
+      ...replyThreads
+        .filter((thread) => thread.depth + 1 < maxDepth)
+        .flatMap((thread) => thread.comments.map((c) => c.id)),
+    ].filter((id) => !withReplies.has(id));
+
+    for (const id of childless) {
+      utils.commentv2.getCount.setData({ entityId: id, entityType: 'comment' }, 0);
+    }
+
+    setExpanded(expandable);
+  }, [data, replyThreads, maxDepth, replyPageSize, sort, setExpanded, utils]);
 
   // Flatten pages, prepending the deep-link target (when present) and deduping by id so a
   // later cursor page that naturally contains the target doesn't render it twice.

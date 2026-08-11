@@ -75,6 +75,7 @@ export function ChapterComments({
         expanded,
         toggleExpanded,
         activeComment: undefined,
+        rootEntityType: 'comicChapter',
       }}
     >
       <CommentsCtx.Provider

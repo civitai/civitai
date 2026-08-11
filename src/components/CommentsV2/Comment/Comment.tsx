@@ -92,7 +92,7 @@ export function CommentContent({
   borderless,
   ...groupProps
 }: CommentProps) {
-  const { expanded, toggleExpanded, setRootThread } = useRootThreadContext();
+  const { expanded, toggleExpanded, setRootThread, rootEntityType } = useRootThreadContext();
   const { entityId, entityType, highlighted, level } = useCommentsContext();
   const { canDelete, canEdit, canReply, canHide, canPin, badge, canReport } = useCommentV2Context();
 
@@ -147,7 +147,7 @@ export function CommentContent({
 
   const isExpanded = !viewOnly && expanded.includes(comment.id);
   const onToggleReplies = () => {
-    const maxDepth = constants.comments.getMaxDepth({ entityType });
+    const maxDepth = constants.comments.getMaxDepth({ entityType: rootEntityType ?? entityType });
 
     if ((level ?? 0) >= maxDepth && !isExpanded) {
       setRootThread('comment', comment.id);
@@ -372,6 +372,7 @@ function CommentReplies({ commentId, userId }: { commentId: number; userId?: num
         entityType="comment"
         entityId={commentId}
         badges={badges}
+        limit={constants.comments.replyPageSize}
         level={(level ?? 0) + 1}
       >
         {({ data, created, isLoading, isFetching, showMore, toggleShowMore }) =>

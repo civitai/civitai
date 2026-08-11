@@ -78,4 +78,8 @@ export const getCommentsInfiniteSchema = commentConnectorSchema.extend({
   // If set on the first page, the server will include this comment in the response when
   // it belongs to the thread but isn't in the initial batch (e.g. notification deep-links).
   targetCommentId: z.number().optional(),
+  // How many reply levels below this page to return alongside it. Lets a surface render
+  // every thread open without one round-trip per comment per level.
+  repliesDepth: z.number().min(0).max(20).optional(),
+  repliesLimit: z.number().min(1).max(50).default(constants.comments.replyPageSize),
 });

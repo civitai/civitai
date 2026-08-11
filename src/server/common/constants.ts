@@ -344,15 +344,28 @@ export const constants = {
     },
   },
   comments: {
+    /**
+     * Deepest reply level a surface renders inline. Past it, "show replies" re-roots the
+     * section on that comment instead. Resolve it against the *surface* entity type, never
+     * the nested `comment` type every reply thread carries.
+     */
     getMaxDepth({ entityType }: { entityType: string }) {
       switch (entityType) {
         case 'image':
         case 'bountyEntry':
           return 3;
+        case 'article':
+          // Covers 99.5% of article threads end-to-end (prod, Aug 2026).
+          return 10;
         default:
           return 5;
       }
     },
+    /** Surfaces wide enough to render every reply tree open at once. */
+    expandsRepliesByDefault({ entityType }: { entityType: string }) {
+      return entityType === 'article';
+    },
+    replyPageSize: 5,
     maxLength: 50000, // 50k characters
   },
   altTruncateLength: 125,
