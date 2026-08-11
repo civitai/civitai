@@ -1,3 +1,4 @@
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { INVITE_EXPIRY_DAYS } from '~/server/services/collection-invite.utils';
 import { CollectionCollaboratorRole } from '~/shared/utils/prisma/enums';
 import type { CollectionMyInvite } from '~/types/router';
@@ -21,6 +22,18 @@ export function inviteExpiry(createdAt: Date | string) {
   return { expiresAt, expiringSoon: expiresAt.getTime() - Date.now() < DAY_MS };
 }
 
+/**
+ * The invite the current user is holding for this collection, if any. Reads the same
+ * `getMyInvites` the sidebar already loads, so the collection page pays nothing for it — and it
+ * resolves for a collection the caller cannot read yet, which is the case that needs it.
+ */
+export function usePendingInviteFor(collectionId: number) {
+  const currentUser = useCurrentUser();
+  const { data } = trpc.collection.getMyInvites.useQuery(undefined, { enabled: !!currentUser });
+
+  return data?.find((invite) => invite.collection.id === collectionId);
+}
+
 export function useRespondToInvite() {
   const utils = trpc.useUtils();
 
@@ -30,6 +43,9 @@ export function useRespondToInvite() {
       await Promise.all([
         utils.collection.getMyInvites.invalidate(),
         utils.collection.getAllUser.invalidate(),
+        // Accepting from the collection page has to re-resolve permissions — otherwise the page
+        // the invitee is standing on keeps rendering the access it had before they accepted.
+        utils.collection.getById.invalidate(),
       ]);
     },
     onError: (error) =>

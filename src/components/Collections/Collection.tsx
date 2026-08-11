@@ -49,6 +49,8 @@ import {
   useCollection,
   useCollectionEntryCount,
 } from '~/components/Collections/collection.utils';
+import { CollectionInvitePrompt } from '~/components/Collections/CollectionCollaborators/CollectionInvitePrompt';
+import { usePendingInviteFor } from '~/components/Collections/CollectionCollaborators/collectionInvite.util';
 import { CollectionCollaboratorsSummary } from '~/components/Collections/CollectionCollaboratorsSummary';
 import { CollectionCategorySelect } from '~/components/Collections/components/CollectionCategorySelect';
 import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
@@ -519,8 +521,28 @@ export function Collection({
 
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === collection?.user.id);
+  const pendingInvite = usePendingInviteFor(collectionId);
 
   if (!isLoading && (!collection || isBlocked)) {
+    // An invitee to a private collection has no permission on it until they accept, and the
+    // invite notification links here — so answering it is the only useful thing this page can
+    // offer them.
+    if (pendingInvite && !isBlocked) {
+      return (
+        <Stack w="100%" align="center">
+          <Stack gap="md" align="center" maw={800} w="100%">
+            <Title order={1} className="inline-block">
+              You&apos;ve been invited
+            </Title>
+            <Text className="text-center">
+              Accept this invitation to open the collection and start adding to it.
+            </Text>
+            <CollectionInvitePrompt collectionId={collectionId} />
+          </Stack>
+        </Stack>
+      );
+    }
+
     return (
       <Stack w="100%" align="center">
         <Stack gap="md" align="center" maw={800}>
@@ -634,6 +656,7 @@ export function Collection({
           >
             <MasonryContainer {...containerProps} p={0}>
               <Stack gap="xl" w="100%">
+                <CollectionInvitePrompt collectionId={collectionId} />
                 <Group gap="xl">
                   {collection?.image && (
                     <Box
