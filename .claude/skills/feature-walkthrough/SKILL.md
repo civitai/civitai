@@ -39,6 +39,11 @@ unremarkable, and read the captures before publishing rather than after.
 Copy `.env.example` to `.env` in this directory and adjust if your ports differ. It is gitignored;
 every developer supplies their own. Nothing in it is secret.
 
+Screenshots default to a temp directory, outside the repo. If you point `SHOTS_DIR` somewhere
+else, keep it outside the checkout — the captures show dev accounts and their content, and this
+repo is public. `/shots/` and `**/walkthrough-shots/` are gitignored as a backstop, not as
+permission to write there.
+
 You need three things running:
 
 - the app and, for anything behind sign-in, the auth hub — see the **`dev-server`** skill

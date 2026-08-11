@@ -11,6 +11,7 @@
 
 import { readFileSync, existsSync, unlinkSync, mkdirSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -35,7 +36,10 @@ if (!session || !file) {
 }
 
 const api = readEnv('BROWSER_API', 'http://localhost:9222');
-const shotsDir = resolve(readEnv('SHOTS_DIR', 'shots'));
+// Defaults outside the repo on purpose: these are screenshots of dev accounts and their content,
+// and a relative default lands in whatever directory the run started from — which is usually a
+// checkout of a public repo.
+const shotsDir = resolve(readEnv('SHOTS_DIR', join(tmpdir(), 'feature-walkthrough-shots')));
 mkdirSync(shotsDir, { recursive: true });
 
 const outPath = resolve(`${file}.out.json`);
