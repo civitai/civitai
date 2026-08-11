@@ -33,6 +33,9 @@ export enum FLIPT_FEATURE_FLAGS {
   WAN22_TRAINING = 'wan22-training',
   IMAGE_TRAINING_RESULTS = 'image-training-results',
   CHALLENGE_PLATFORM_ENABLED = 'challenge-platform-enabled',
+  // Gates every non-legacy judging engine. Default-off, so a challenge whose `judgingEngine`
+  // column points at the pairwise ladder still runs the legacy absolute path until this is on.
+  CHALLENGE_PAIRWISE_JUDGING = 'challenge-pairwise-judging',
   COMIC_CREATOR = 'comic-creator',
   GENERATION_PRESETS = 'generation-presets',
   GENERATION_TESTING = 'generation-testing',

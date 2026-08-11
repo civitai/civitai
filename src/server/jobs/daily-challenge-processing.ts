@@ -28,6 +28,10 @@ import {
 } from '~/server/games/daily-challenge/challenge-rewards';
 import { filterRecentWinners } from '~/server/games/daily-challenge/winner-cooldown';
 import {
+  buildJudgingEngineContext,
+  resolveJudgingEngine,
+} from '~/server/games/daily-challenge/challenge-engine-registry';
+import {
   dedupeWinnersForPayout,
   reconcileWinnerToPersisted,
 } from '~/server/games/daily-challenge/challenge-winner-reconcile';
@@ -658,13 +662,14 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           source: ChallengeSource;
           judgingCategories: unknown;
           entryFee: number;
+          judgingEngine: string | null;
         }
       | undefined
     ]
   >`
     SELECT "allowedNsfwLevel", "judgeId", "judgingPrompt",
            "prizeMode", "prizePool", "basePrizePool", "buzzPerAction", "poolTrigger", "maxPrizePool", "prizeDistribution",
-           "metadata", "source", "judgingCategories", "entryFee"
+           "metadata", "source", "judgingCategories", "entryFee", "judgingEngine"
     FROM "Challenge"
     WHERE id = ${currentChallenge.challengeId}
     LIMIT 1
@@ -678,6 +683,15 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     challengeRecord?.judgingCategories
   );
   const userCategories = userJudgingCategories.success ? userJudgingCategories.data : undefined;
+
+  const judgingEngine = await resolveJudgingEngine(challengeRecord?.judgingEngine);
+  const engineContext = buildJudgingEngineContext({
+    challengeId: currentChallenge.challengeId,
+    collectionId: currentChallenge.collectionId,
+    theme: currentChallenge.theme,
+    themeElements,
+    categories: userCategories,
+  });
 
   // Get judging config from ChallengeJudge (or cached default judge if not assigned)
   const judgeId = challengeRecord?.judgeId ?? config.defaultJudgeId;
@@ -888,7 +902,8 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       ci."imageId",
       i."userId",
       u."username",
-      i."url"
+      i."url",
+      i."nsfwLevel"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     JOIN "User" u ON u.id = i."userId"
@@ -935,7 +950,8 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       ci."imageId",
       i."userId",
       u."username",
-      i."url"
+      i."url",
+      i."nsfwLevel"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     JOIN "User" u ON u.id = i."userId"
@@ -991,12 +1007,14 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         await incrementOperationSpent(currentChallenge.challengeId, reviewBuzzCost);
       }
 
+      const normalizedScore = normalizeJudgeScore(review.score);
+
       // Add tag and score note to collection item (include judgeId for tracking)
       const note = JSON.stringify({
         // Never persist a non-object score. `review.score` is whatever the model returned (the
         // response is cast, not parsed), and a safety-rejected entry comes back as null; stored
         // raw it reaches every ranking path and takes the whole challenge's winner-pick down.
-        score: normalizeJudgeScore(review.score),
+        score: normalizedScore,
         summary: review.summary,
         judgeId: judgingConfig.judgeId,
         ...(review.aestheticFlaws?.length && { aestheticFlaws: review.aestheticFlaws }),
@@ -1030,6 +1048,38 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         log('Reaction sent', entry.imageId);
       } catch (error) {
         log('Failed to send reaction', entry.imageId, review.reaction);
+      }
+
+      // Hand the entry to the challenge's judging engine. Disqualified entries are never placed:
+      // the theme gate is an absolute judgement about one image and a comparison cannot express
+      // it, so an entry the gate drops must not become a rung others are measured against.
+      // A failure here costs this entry's placement and nothing else — the engine places
+      // whatever it is missing when it ranks the field at close.
+      const gatedScore = calculateWeightedCategoryScore(
+        normalizedScore,
+        userCategories?.length ? userCategories : FIXED_JUDGING_CATEGORIES
+      );
+      if (gatedScore !== null) {
+        try {
+          await judgingEngine.recordEntry(engineContext, {
+            imageId: entry.imageId,
+            userId: entry.userId,
+            username: entry.username,
+            url: entry.url,
+            nsfwLevel: entry.nsfwLevel,
+          });
+          log('Engine recorded entry', judgingEngine.key, entry.imageId);
+        } catch (error) {
+          const err = error as Error;
+          logToAxiom({
+            type: 'error',
+            name: 'challenge-engine-record-entry',
+            message: err.message,
+            challengeId: currentChallenge.challengeId,
+            imageId: entry.imageId,
+            engine: judgingEngine.key,
+          });
+        }
       }
     } catch (error) {
       const err = error as Error;
@@ -1297,6 +1347,7 @@ export async function pickWinnersForChallenge(
               eventId: number | null;
               source: ChallengeSource;
               judgingCategories: unknown;
+              judgingEngine: string | null;
               // Carried purely so the zero-entries emit below can re-check the claim stamp without
               // a second round-trip — an extra COLUMN on a query that already runs, not a new read.
               metadata: Record<string, unknown> | null;
@@ -1304,7 +1355,7 @@ export async function pickWinnersForChallenge(
           | undefined
         ]
       >`
-        SELECT "judgeId", "judgingPrompt", "eventId", "source", "judgingCategories", "metadata" FROM "Challenge"
+        SELECT "judgeId", "judgingPrompt", "eventId", "source", "judgingCategories", "judgingEngine", "metadata" FROM "Challenge"
         WHERE id = ${currentChallenge.challengeId}
         LIMIT 1
       `;
@@ -1409,10 +1460,22 @@ export async function pickWinnersForChallenge(
       // generateWinners and award place 1 deterministically instead. judgedEntries.length is
       // already guaranteed >= 1 here (see the empty-entries return above), so "< 2 distinct"
       // can only mean exactly one distinct entrant.
-      const distinctEntrantIds = new Set(judgedEntries.map((entry) => entry.userId));
+      // The engine orders the eligible field. Legacy returns it untouched, so a challenge on the
+      // legacy engine reaches the winner pick with exactly the list it always did.
+      const judgingEngine = await resolveJudgingEngine(challengeJudgeRow?.judgingEngine);
+      const engineContext = buildJudgingEngineContext({
+        challengeId: currentChallenge.challengeId,
+        collectionId: currentChallenge.collectionId,
+        theme: currentChallenge.theme,
+        themeElements: parseChallengeMetadata(challengeJudgeRow?.metadata).themeElements,
+        categories: userCategories,
+      });
+      const rankedEntries = await judgingEngine.rankField(engineContext, judgedEntries);
+
+      const distinctEntrantIds = new Set(rankedEntries.map((entry) => entry.userId));
 
       if (distinctEntrantIds.size < 2) {
-        const [soleEntry] = judgedEntries;
+        const [soleEntry] = rankedEntries;
         log('Fewer than 2 distinct entrants — awarding place 1 deterministically (no LLM):', {
           challengeId: currentChallenge.challengeId,
           userId: soleEntry.userId,
@@ -1448,10 +1511,18 @@ export async function pickWinnersForChallenge(
         );
         log('ChallengeWinner record created (deterministic sole-entrant award)');
       } else {
+        // An engine that ranks the field also picks the places from it; `generateWinners` is still
+        // called for the recap it writes, and its own picks are discarded in that case.
+        const engineWinners = await judgingEngine.selectWinners(
+          engineContext,
+          rankedEntries,
+          currentChallenge.prizes.length
+        );
+
         log('Sending entries for final judgment');
         const generated = await generateWinners({
           theme: currentChallenge.theme,
-          entries: judgedEntries.map((entry) => ({
+          entries: rankedEntries.map((entry) => ({
             creator: entry.username,
             creatorId: entry.userId,
             summary: entry.summary,
@@ -1472,19 +1543,27 @@ export async function pickWinnersForChallenge(
         // set their name equal to another entrant's name hijack `find`'s first-match semantics and
         // steal that entrant's payout. judgedEntries is already deduped to one entry per userId
         // (see getJudgedEntries), so creatorId alone fully disambiguates.
-        winningEntries = generated.winners
-          .map((winner, i) => {
-            const entry = judgedEntries.find((e) => e.userId === winner.creatorId);
-            if (!entry) return null;
-            return {
-              userId: entry.userId,
-              imageId: entry.imageId,
+        winningEntries = engineWinners
+          ? engineWinners.map((winner, i) => ({
+              userId: winner.userId,
+              imageId: winner.imageId,
               position: i + 1,
               prize: currentChallenge.prizes[i]?.buzz ?? 0,
               reason: winner.reason,
-            };
-          })
-          .filter(isDefined);
+            }))
+          : generated.winners
+              .map((winner, i) => {
+                const entry = rankedEntries.find((e) => e.userId === winner.creatorId);
+                if (!entry) return null;
+                return {
+                  userId: entry.userId,
+                  imageId: entry.imageId,
+                  position: i + 1,
+                  prize: currentChallenge.prizes[i]?.buzz ?? 0,
+                  reason: winner.reason,
+                };
+              })
+              .filter(isDefined);
 
         // Nothing above stops the LLM naming the same creator in two slots — "exactly 3 different
         // winners" is prompt text, and `find()` happily matches the same entry twice — which would

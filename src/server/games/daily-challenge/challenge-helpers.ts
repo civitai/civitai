@@ -296,7 +296,9 @@ export async function getEndedActiveChallengesFromDb(): Promise<ChallengeDetails
  * Returns challenges whose endsAt is within the last windowHours hours, ordered by endsAt ASC
  * (id tiebreak), bounded to CHALLENGE_JOB_BATCH_SIZE per run.
  */
-export async function getChallengesToReconcileFromDb(windowHours = 48): Promise<ChallengeDetails[]> {
+export async function getChallengesToReconcileFromDb(
+  windowHours = 48
+): Promise<ChallengeDetails[]> {
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT c.id
     FROM "Challenge" c
@@ -960,6 +962,7 @@ export type RecentEntry = {
   userId: number;
   username: string;
   url: string;
+  nsfwLevel: number;
 };
 
 /** Row shape for resource selection queries (used by processing and testing). */

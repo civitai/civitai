@@ -54,6 +54,11 @@ function pickClient(model: string) {
 export const MODEL_BUZZ_RATES: Record<string, { input: number; output: number }> = {
   [AI_MODELS.GPT_5_NANO]: { input: 0.05, output: 0.4 },
   [AI_MODELS.GPT_4O_MINI]: { input: 0.15, output: 0.6 },
+  // Pairwise judging routes. Cross-checked against the two full-field runs of challenge 424:
+  // these rates reproduce the billed $0.462 (qwen-flash, 3005 comparisons) to within 2% and the
+  // billed $2.773 (luna, 4228 comparisons) to within 4%.
+  [AI_MODELS.QWEN_FLASH]: { input: 0.03, output: 0.12 },
+  [AI_MODELS.GPT_5_6_LUNA]: { input: 0.125, output: 0.5 },
 };
 
 /** Pure: token usage -> Buzz (1 Buzz = $0.001), priced via MODEL_BUZZ_RATES. 0 for unrated models. */
@@ -72,7 +77,7 @@ export function estimateBuzzCost(model: string, usage: TokenUsage): number {
  * estimateBuzzCost returns 0 for those regardless (no MODEL_BUZZ_RATES entry), so the zeroed
  * usage never under/over-counts tracked spend.
  */
-async function getCompletionWithUsage<T>(
+export async function getCompletionWithUsage<T>(
   model: AIModel,
   messages: SimpleMessage[],
   retries: number
@@ -299,7 +304,10 @@ export function buildCategoryReviewSchema(
 ): string {
   const sanitizeCriteria = (s: string) => s.replace(/"/g, "'").replace(/\s+/g, ' ').trim();
   const scoreLines = categories
-    .map((c) => `    "${sanitizeCategoryLabel(c.name)}": number // 0-10, ${sanitizeCriteria(c.criteria)}`)
+    .map(
+      (c) =>
+        `    "${sanitizeCategoryLabel(c.name)}": number // 0-10, ${sanitizeCriteria(c.criteria)}`
+    )
     .join('\n');
   return `{
   "score": {
@@ -476,11 +484,9 @@ type GeneratedWinners = {
 export async function generateWinners(
   input: GenerateWinnersInput
 ): Promise<GeneratedWinners & { usage: TokenUsage; model: AIModel }> {
-  const userText = `${UNTRUSTED_FIELDS_PREAMBLE}\n\nTheme: ${input.theme}\nEntries:\n\`\`\`json \n${JSON.stringify(
-    input.entries,
-    null,
-    2
-  )}\n\`\`\``;
+  const userText = `${UNTRUSTED_FIELDS_PREAMBLE}\n\nTheme: ${
+    input.theme
+  }\nEntries:\n\`\`\`json \n${JSON.stringify(input.entries, null, 2)}\n\`\`\``;
 
   const model = input.model ?? DEFAULT_CONTENT_MODEL;
   const { content: result, usage } = await getCompletionWithUsage<GeneratedWinners>(

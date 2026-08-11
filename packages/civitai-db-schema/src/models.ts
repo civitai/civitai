@@ -3764,6 +3764,7 @@ export interface Challenge {
   judgingCategories: JsonValue | null;
   reviewPercentage: number;
   maxReviews: number | null;
+  judgingEngine: string;
   collectionId: number | null;
   collection?: Collection | null;
   maxEntriesPerUser: number;
@@ -3799,8 +3800,40 @@ export interface Challenge {
   threads?: Thread[];
   reports?: ChallengeReport[];
   engagements?: ChallengeEngagement[];
+  standings?: ChallengeEntryStanding[];
+  comparisons?: ChallengeEntryComparison[];
   eventId: number | null;
   event?: ChallengeEvent | null;
+}
+
+export interface ChallengeEntryStanding {
+  challengeId: number;
+  challenge?: Challenge;
+  imageId: number;
+  userId: number;
+  rank: number;
+  comparisons: number;
+  winRate: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ChallengeEntryComparison {
+  id: number;
+  challengeId: number;
+  challenge?: Challenge;
+  phase: string;
+  imageIdA: number;
+  imageIdB: number;
+  firstSeatImageId: number;
+  winnerImageId: number | null;
+  margin: string | null;
+  model: string;
+  rerouted: boolean;
+  perCategory: JsonValue | null;
+  reason: string | null;
+  buzzCost: number;
+  createdAt: Date;
 }
 
 export interface ChallengeReport {

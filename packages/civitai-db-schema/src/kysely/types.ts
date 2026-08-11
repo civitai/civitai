@@ -1367,6 +1367,7 @@ export type Challenge = {
   judgingCategories: unknown | null;
   reviewPercentage: Generated<number>;
   maxReviews: number | null;
+  judgingEngine: Generated<string>;
   collectionId: number | null;
   maxEntriesPerUser: Generated<number>;
   maxParticipants: number | null;
@@ -1414,6 +1415,32 @@ export type ChallengeEngagement = {
   challengeId: number;
   type: ChallengeEngagementType;
   createdAt: Generated<Timestamp>;
+};
+export type ChallengeEntryComparison = {
+  id: Generated<number>;
+  challengeId: number;
+  phase: string;
+  imageIdA: number;
+  imageIdB: number;
+  firstSeatImageId: number;
+  winnerImageId: number | null;
+  margin: string | null;
+  model: string;
+  rerouted: Generated<boolean>;
+  perCategory: unknown | null;
+  reason: string | null;
+  buzzCost: Generated<number>;
+  createdAt: Generated<Timestamp>;
+};
+export type ChallengeEntryStanding = {
+  challengeId: number;
+  imageId: number;
+  userId: number;
+  rank: number;
+  comparisons: Generated<number>;
+  winRate: number | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
 };
 export type ChallengeEvent = {
   id: Generated<number>;
@@ -4106,6 +4133,8 @@ export type DB = {
   Challenge: Challenge;
   ChallengeCategory: ChallengeCategory;
   ChallengeEngagement: ChallengeEngagement;
+  ChallengeEntryComparison: ChallengeEntryComparison;
+  ChallengeEntryStanding: ChallengeEntryStanding;
   ChallengeEvent: ChallengeEvent;
   ChallengeJudge: ChallengeJudge;
   ChallengeReport: ChallengeReport;
