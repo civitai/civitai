@@ -5,6 +5,7 @@ import {
   type SessionRegistryRedis,
 } from '@civitai/auth';
 import { REDIS_KEYS } from '@civitai/redis';
+import { env } from '$env/dynamic/private';
 import { getRedis, getSysRedis } from './redis';
 
 // Cross-app session revocation, mirroring apps/auth's registry: same redis, same key strings, so a mute
@@ -33,8 +34,33 @@ function get(): SessionRegistry {
   }));
 }
 
-/** Revoke every active session for a user AND drop their cached session — used by mute, ban and
- *  force-logout. Revocation alone leaves the mute invisible until the cache expires. */
+// Revoking a token makes the NEXT request fail; it does not reach a client that is already connected.
+// The main app pairs every invalidation with this signal (`invalidateSession`), and without it a muted
+// user keeps their open tab — able to read, and to see their own posts succeed — until something makes
+// them refresh. Always 'invalid' rather than 'refresh': the tokens are already revoked, so telling a
+// client to refresh would only send it at a dead token.
+//
+// Best-effort on purpose, matching the main app: a signals outage must not fail the mute that has
+// already been written. SIGNALS_ENDPOINT is unset in local dev, which no-ops this entirely.
+async function sendSessionSignal(userId: number): Promise<void> {
+  const endpoint = env.SIGNALS_ENDPOINT;
+  if (!endpoint) return;
+  try {
+    await fetch(`${endpoint}/users/${userId}/signals/session:refresh`, {
+      method: 'POST',
+      body: JSON.stringify({ type: 'invalid' }),
+      headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    // swallowed — see above
+  }
+}
+
+/** Revoke every active session for a user, drop their cached session, and push connected clients out —
+ *  used by mute, unmute, ban and force-logout. Revocation alone leaves the mute invisible until the
+ *  cache expires; without the signal it does not reach an already-open tab at all. */
 export async function invalidateUserSessions(userId: number): Promise<void> {
   await get().invalidateUserSessions(userId);
+  await sendSessionSignal(userId);
 }

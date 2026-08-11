@@ -113,9 +113,14 @@ Open, with the evidence each audit produced:
       notification and its email, the auto-strike rate limit, and any way to void. The panel is also
       blind to every strike the automated pipeline issued. **Still filed as backlog rather than parity
       — Retool never called that endpoint either** — but this is the largest behavioural gap in the app.
-- [ ] **Local mute / force-logout skip the session SIGNAL.** They revoke tokens and drop the session
-      cache but never `sendSessionSignal`, so a connected user is not pushed out until their client
-      next refreshes. Same in `unmuteAndClearTimed` and `revokeTimedMute`.
+- [x] **Local mute / force-logout skip the session SIGNAL** (2026-08-11). Fixed inside
+      `invalidateUserSessions` rather than at the four call sites, so mute, unmute, force-logout,
+      `unmuteAndClearTimed` and `revokeTimedMute` are all covered and a sixth caller cannot forget it.
+      Always sends `invalid`, never `refresh`: the tokens are revoked by the time it fires, so a
+      refresh signal would send the client at a dead token. Best-effort like the main app's — a signals
+      outage must not fail a mute that is already written — and reads a new `SIGNALS_ENDPOINT`, which is
+      **unset in local dev**, so this is a no-op there. Verified by pointing it at a stub, which logged
+      `POST /users/1290051/signals/session:refresh {"type":"invalid"}`.
 - [x] **Cosmetic grant and shop refund miss the owned-sticker cache bust** (2026-08-11). The audit
       understated it: `grantCosmetic` busted **nothing at all**, so a granted badge stayed invisible on
       the profile for a day as well as unsendable for five minutes. All three keys now go through one
