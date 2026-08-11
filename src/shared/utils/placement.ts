@@ -231,6 +231,24 @@ export const PLACEMENT_MIN_PRICE = 0;
 export const PLACEMENT_PRICE_STEP = 5;
 export const PLACEMENT_PRICE_TRACK_START = 50;
 
+/**
+ * The bounds of the price control.
+ *
+ * Takes the **stored** price and never the live one: derived from the value
+ * under the thumb, the floor follows it upward and a price below the track can
+ * only ever be raised. The parameter list is the guard — there is no live value
+ * to pass.
+ */
+export function placementPriceTrack(
+  storedPrice: number | null,
+  cap: number | null,
+  defaultPrice: number | null
+) {
+  const min = Math.min(PLACEMENT_PRICE_TRACK_START, storedPrice ?? PLACEMENT_PRICE_TRACK_START);
+  const max = Math.max(cap ?? defaultPrice ?? PLACEMENT_PRICE_TRACK_START, min, storedPrice ?? 0);
+  return { min, max };
+}
+
 export function placementPriceCap(
   score: number,
   tier: PriceCapTier,

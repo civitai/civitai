@@ -24,8 +24,11 @@ import {
   STICKER_PLACEMENT_MIN_SCALE,
   stickerMaxScale,
 } from '~/shared/utils/sticker-placement';
+import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+
+const { defaultMode: DEFAULT_MODE, defaultPrice: DEFAULT_PRICE } = PLACEMENT_SURFACES.sticker;
 
 /**
  * Account-level control over who may place stickers on this creator's images.
@@ -52,12 +55,20 @@ export function PlacementSpaceSection() {
   const { data: pending } = trpc.placement.getPending.useQuery(undefined, { enabled });
 
   const stored = spaces?.[0];
-  const [mode, setMode] = useState('off');
-  const [price, setPrice] = useState<number | ''>('');
+  // Seeded from the surface defaults, not from `off`. With no row the cascade
+  // resolves this space open, and a control that showed "No stickers" would be
+  // telling a creator their space is closed on the one screen where they say so
+  // — they would find out it was open from a review notification.
+  const [mode, setMode] = useState<string>(DEFAULT_MODE);
+  const [price, setPrice] = useState<number | ''>(DEFAULT_PRICE ?? '');
   const [maxScale, setMaxScale] = useState(STICKER_PLACEMENT_DEFAULT_MAX_SCALE);
 
   useEffect(() => {
-    if (!stored) return;
+    if (!stored) {
+      setMode(DEFAULT_MODE);
+      setPrice(DEFAULT_PRICE ?? '');
+      return;
+    }
     setMode(stored.mode);
     setPrice(stored.price ?? '');
     setMaxScale(stickerMaxScale(stored.settings as Record<string, unknown>));
@@ -196,9 +207,19 @@ export function PlacementSpaceSection() {
         </Alert>
       )}
 
-      {mode !== 'off' && price === '' && (
+      {mode !== 'off' && price === '' && DEFAULT_PRICE == null && (
         <Alert color="red" p="xs">
           <Text size="xs">Set a price before opening your space, or nobody can place.</Text>
+        </Alert>
+      )}
+
+      {!stored && (
+        <Alert color="blue" p="xs">
+          <Text size="xs">
+            This is the default and it is already in effect — people can place stickers on your
+            images for {DEFAULT_PRICE} Buzz, and you review each one. Change anything here to make
+            it yours.
+          </Text>
         </Alert>
       )}
     </>

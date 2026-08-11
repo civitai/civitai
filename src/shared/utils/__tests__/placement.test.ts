@@ -10,6 +10,7 @@ import {
   PLACEMENT_SURFACES,
   placementOutcomeFromStatus,
   placementPriceCap,
+  placementPriceTrack,
   placementSurfaces,
   placementTransactionId,
   resolvePlacementSpace,
@@ -290,6 +291,16 @@ describe('space resolution', () => {
 
       expect(defaultPrice, `${surface} opens by default with no default price`).not.toBeNull();
       expect(resolvePlacementSpace(surface, {}).price).toBe(defaultPrice);
+
+      // Zero is not null and survives the check above, but
+      // `effectivePlacementPrice(0, cap)` is 0 rather than null, so the space
+      // reads open, `canPlace` is true, and the escrow short-circuits: free
+      // placements on every creator's work, platform-wide, by default.
+      expect(defaultPrice, `${surface} defaults to free placements`).toBeGreaterThan(0);
+
+      // A default of `auto` removes the review step for every creator who never
+      // opted in — the placement lands on their work before they see it.
+      expect(defaultMode, `${surface} defaults to accepting without review`).not.toBe('auto');
     }
   });
 
@@ -299,6 +310,29 @@ describe('space resolution', () => {
       price: PLACEMENT_SURFACES.sticker.defaultPrice,
       settings: {},
     });
+  });
+
+  // Prod holds account prices of 10, 50, 67, 100 and 200, three of which sit
+  // outside the track for a free-tier creator. A control that cannot represent
+  // the stored value rewrites it the moment it is touched.
+  it('keeps a stored price reachable however far outside the track it sits', () => {
+    expect(placementPriceTrack(10, 100, 100)).toEqual({ min: 10, max: 100 });
+    expect(placementPriceTrack(200, 100, 100)).toEqual({ min: 50, max: 200 });
+    expect(placementPriceTrack(67, 500, 100)).toEqual({ min: 50, max: 500 });
+    expect(placementPriceTrack(null, 500, 100)).toEqual({ min: 50, max: 500 });
+  });
+
+  it('never produces an inverted or empty track', () => {
+    for (const stored of [null, 0, 10, 50, 100, 5_000]) {
+      for (const cap of [null, 0, 1, 100, 5_000]) {
+        const { min, max } = placementPriceTrack(stored, cap, 100);
+        expect(max, `stored=${stored} cap=${cap}`).toBeGreaterThanOrEqual(min);
+        if (stored != null) {
+          expect(stored, `stored=${stored} cap=${cap} unreachable`).toBeGreaterThanOrEqual(min);
+          expect(stored, `stored=${stored} cap=${cap} unreachable`).toBeLessThanOrEqual(max);
+        }
+      }
+    }
   });
 
   it('keeps an account-level price when only the image mode was changed', () => {

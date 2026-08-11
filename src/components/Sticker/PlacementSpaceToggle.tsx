@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   PLACEMENT_PRICE_STEP,
-  PLACEMENT_PRICE_TRACK_START,
+  placementPriceTrack,
   PLACEMENT_SURFACES,
 } from '~/shared/utils/placement';
 import { showErrorNotification } from '~/utils/notifications';
@@ -93,12 +93,19 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
   };
 
   const defaultPrice = PLACEMENT_SURFACES.sticker.defaultPrice;
-  // A price set before the track existed, or under an operator cap that has
-  // since dropped, must stay reachable — a control that cannot represent the
-  // stored value silently rewrites it the first time it is touched.
-  const sliderMin = Math.min(PLACEMENT_PRICE_TRACK_START, price === '' ? Infinity : price);
-  const sliderMax = Math.max(range?.max ?? defaultPrice, sliderMin, price === '' ? 0 : price);
+  const cap = range?.max ?? null;
+  // Bounds come from the price AS LOADED, never from the live value. Derived
+  // from live state the floor follows the thumb upward and the price can only
+  // ever be raised: stored 10 goes to 15 and will not come back.
+  const { min: sliderMin, max: sliderMax } = placementPriceTrack(
+    row?.price ?? null,
+    cap,
+    defaultPrice
+  );
   const sliderValue = price === '' ? Math.min(Math.max(defaultPrice, sliderMin), sliderMax) : price;
+  // The track is widened to keep an out-of-cap stored price reachable, so it is
+  // not the cap and must not be described as one.
+  const overCap = cap != null && typeof price === 'number' && price > cap;
 
   return (
     <Stack gap={4}>
@@ -160,10 +167,18 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
               min={sliderMin}
               max={sliderMax}
               step={PLACEMENT_PRICE_STEP}
-              marks={[
-                { value: sliderMin, label: `${sliderMin}` },
-                { value: sliderMax, label: `${sliderMax}` },
-              ]}
+              marks={
+                cap != null && cap > sliderMin && cap < sliderMax
+                  ? [
+                      { value: sliderMin, label: `${sliderMin}` },
+                      { value: cap, label: `cap ${cap}` },
+                      { value: sliderMax, label: `${sliderMax}` },
+                    ]
+                  : [
+                      { value: sliderMin, label: `${sliderMin}` },
+                      { value: sliderMax, label: `${sliderMax}` },
+                    ]
+              }
               label={(value) => `${value} Buzz`}
               onChange={setPrice}
               onChangeEnd={(value) => {
@@ -171,10 +186,12 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
                 commit(mode, value);
               }}
             />
-            <Text size="xs" c="dimmed">
+            <Text size="xs" c={overCap ? 'yellow' : 'dimmed'}>
               {price === ''
                 ? `Following the price from the level above, or ${defaultPrice} Buzz if none is set.`
-                : `Placers pay ${price} Buzz. Your tier caps this at ${sliderMax}.`}
+                : overCap
+                ? `Placers pay ${cap} Buzz — your current cap — until your score or membership raises it.`
+                : `Placers pay ${price} Buzz.`}
             </Text>
           </Stack>
         )
