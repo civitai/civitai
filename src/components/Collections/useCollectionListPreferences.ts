@@ -1,5 +1,10 @@
 import { useLocalStorage } from '@mantine/hooks';
-import type { CollectionListView, CollectionSort } from './collection-list.utils';
+import { useCallback } from 'react';
+import type {
+  CollectionListView,
+  CollectionMembership,
+  CollectionSort,
+} from './collection-list.utils';
 
 export function useCollectionListPreferences() {
   const [view, setView] = useLocalStorage<CollectionListView>({
@@ -13,5 +18,19 @@ export function useCollectionListPreferences() {
     getInitialValueInEffect: true,
   });
 
-  return { view, setView, sort, setSort };
+  const [collapsed, setCollapsed] = useLocalStorage<CollectionMembership[]>({
+    key: 'collections-list-collapsed',
+    defaultValue: [],
+    getInitialValueInEffect: true,
+  });
+
+  const toggleSection = useCallback(
+    (key: CollectionMembership) =>
+      setCollapsed((current) =>
+        current.includes(key) ? current.filter((k) => k !== key) : [...current, key]
+      ),
+    [setCollapsed]
+  );
+
+  return { view, setView, sort, setSort, collapsed, toggleSection };
 }

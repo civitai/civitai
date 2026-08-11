@@ -117,3 +117,32 @@ describe('sortCollections', () => {
     expect(input.map((r) => r.id)).toEqual([1, 2, 3]);
   });
 });
+
+describe('sortCollections date modes', () => {
+  const rows = [
+    { name: 'beta', createdAt: '2026-01-02', updatedAt: '2026-03-01' },
+    { name: 'alpha', createdAt: '2026-01-03', updatedAt: '2026-02-01' },
+    { name: 'gamma', createdAt: null, updatedAt: null },
+  ];
+
+  it('orders recently-added newest first and sinks undated rows', () => {
+    expect(sortCollections(rows, 'recently-added').map((r) => r.name)).toEqual([
+      'alpha',
+      'beta',
+      'gamma',
+    ]);
+  });
+
+  it('orders recently-updated independently of createdAt', () => {
+    expect(sortCollections(rows, 'recently-updated').map((r) => r.name)).toEqual([
+      'beta',
+      'alpha',
+      'gamma',
+    ]);
+  });
+
+  it('still sorts by name when dates are absent entirely', () => {
+    const undated = [{ name: 'b' }, { name: 'a' }];
+    expect(sortCollections(undated, 'recently-added').map((r) => r.name)).toEqual(['a', 'b']);
+  });
+});

@@ -1,16 +1,15 @@
-.navLinkWrapper {
-  transition: all 150ms ease;
+// Doubled class beats Mantine's own NavLink :hover rule, which is otherwise more specific and
+// leaves the row visually inert on hover.
+.navLinkWrapper.navLinkWrapper {
+  transition: background-color 150ms ease;
 
   &:hover {
-    background-color: light-dark(
-      var(--mantine-color-gray-0),
-      var(--mantine-color-dark-6)
-    );
+    background-color: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5));
   }
 }
 
 .rowDefault {
-  align-items: flex-start;
+  align-items: center;
 }
 
 .rowIcon {
@@ -23,6 +22,23 @@
 }
 
 .rowMeta {
-  letter-spacing: 0.04em;
   line-height: 1.2;
+}
+
+.sectionHeader {
+  transition: background-color 150ms ease;
+
+  &:hover {
+    background-color: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5));
+  }
+}
+
+.sectionChevron {
+  flex-shrink: 0;
+  color: var(--mantine-color-dimmed);
+  transition: transform 150ms ease;
+}
+
+.sectionChevronCollapsed {
+  transform: rotate(-90deg);
 }

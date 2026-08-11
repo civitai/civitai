@@ -59,7 +59,7 @@ const MyCollectionsDrawer = () => {
         classNames={{ header: classes.drawerHeader, body: 'px-0' }}
       >
         <MyCollections onSelect={() => close()}>
-          {({ FilterBox, TypeFilter, RoleFilter, ListMenu, Collections, InviteList }) => (
+          {({ FilterBox, Filters, ListMenu, Collections, InviteList }) => (
             <Stack gap={4}>
               <Stack gap="xs" px="sm">
                 {InviteList}
@@ -67,8 +67,7 @@ const MyCollectionsDrawer = () => {
                   <div style={{ flex: 1 }}>{FilterBox}</div>
                   {ListMenu}
                 </Group>
-                {TypeFilter}
-                {RoleFilter}
+                {Filters}
               </Stack>
               <Divider />
               <ScrollArea.Autosize mah="calc(100vh - 105px)">{Collections}</ScrollArea.Autosize>
@@ -88,7 +87,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
   return (
     <Container fluid className={classes.container}>
       <MyCollections>
-        {({ FilterBox, TypeFilter, RoleFilter, ListMenu, Collections, InviteList, isLoading }) => (
+        {({ FilterBox, Filters, ListMenu, Collections, InviteList, isLoading }) => (
           <Card
             className={classes.sidebar}
             w={300}
@@ -135,8 +134,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
                   <div style={{ flex: 1 }}>{FilterBox}</div>
                   {ListMenu}
                 </Group>
-                {TypeFilter}
-                {RoleFilter}
+                {Filters}
               </Stack>
             </Card.Section>
             {isLoading && (

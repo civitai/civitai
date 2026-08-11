@@ -1,5 +1,5 @@
-import { Alert, Button, Group, Paper, Stack, Text } from '@mantine/core';
-import { IconCheck, IconHourglass, IconPhoto } from '@tabler/icons-react';
+import { Alert, Badge, Button, Group, Paper, Stack, Text } from '@mantine/core';
+import { IconCheck, IconHourglass, IconMail, IconPhoto } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -59,9 +59,15 @@ export function CollectionInviteList() {
 
   return (
     <Stack gap="xs" px="xs" mb="md">
-      <Text size="sm" fw="bold">
-        Invitations
-      </Text>
+      <Group gap={6}>
+        <IconMail size={16} className="text-blue-6 dark:text-blue-4" />
+        <Text size="sm" fw="bold" tt="uppercase" c="blue">
+          Invitations
+        </Text>
+        <Badge size="sm" variant="filled" color="blue" circle>
+          {invites.length}
+        </Badge>
+      </Group>
       {invites.map((invite) => {
         const isResponding = respondMutation.variables?.inviteId === invite.id;
         const expiresAt = new Date(
@@ -84,7 +90,9 @@ export function CollectionInviteList() {
                   <Text size="sm" fw={600} lineClamp={1}>
                     {invite.collection.name}
                   </Text>
-                  <Text size="xs" c="dimmed" lineClamp={1}>
+                  {/* Two lines: the sidebar is narrow enough that a one-line clamp drops the
+                      role, which is the half of this sentence that carries the grant. */}
+                  <Text size="xs" c="dimmed" lineClamp={2}>
                     {inviterLabel(invite.invitedBy)} invited you · {roleLabels[invite.role]}
                   </Text>
                 </Stack>

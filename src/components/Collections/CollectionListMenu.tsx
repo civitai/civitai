@@ -1,4 +1,4 @@
-import { Menu, SegmentedControl, Stack, Text } from '@mantine/core';
+import { Group, Menu, SegmentedControl, Text } from '@mantine/core';
 import { IconCheck, IconLayoutList, IconList, IconArrowsSort } from '@tabler/icons-react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { SORT_OPTIONS } from './collection-list.utils';
@@ -26,7 +26,9 @@ export function CollectionListMenu({
         </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
-        <Menu.Label>Sort by</Menu.Label>
+        <Menu.Label tt="uppercase" fw={700} className="tracking-wide">
+          Sort by
+        </Menu.Label>
         {SORT_OPTIONS.map((option) => (
           <Menu.Item
             key={option.value}
@@ -43,11 +45,12 @@ export function CollectionListMenu({
           </Menu.Item>
         ))}
         <Menu.Divider />
-        <Menu.Label>View as</Menu.Label>
-        <Stack gap={4} px="xs" pb="xs">
+        <Menu.Label tt="uppercase" fw={700} className="tracking-wide">
+          View as
+        </Menu.Label>
+        <Group gap="sm" px="xs" pb="xs" wrap="nowrap">
           <SegmentedControl
             size="xs"
-            fullWidth
             value={view}
             onChange={(value) => setView(value as CollectionListView)}
             data={[
@@ -61,7 +64,10 @@ export function CollectionListMenu({
               },
             ]}
           />
-        </Stack>
+          <Text size="sm" c="dimmed">
+            {view === 'default' ? 'Default' : 'Compact'}
+          </Text>
+        </Group>
       </Menu.Dropdown>
     </Menu>
   );

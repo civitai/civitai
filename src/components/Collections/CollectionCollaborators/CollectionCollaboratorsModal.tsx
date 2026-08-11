@@ -11,8 +11,10 @@ import {
   Text,
   Tooltip,
 } from '@mantine/core';
-import { IconTrash, IconX } from '@tabler/icons-react';
+import { IconSend, IconTrash, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { INVITE_EXPIRY_DAYS } from '~/server/services/collection-invite.utils';
 import { useCollection } from '~/components/Collections/collection.utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -29,6 +31,7 @@ import { trpc } from '~/utils/trpc';
 // duplicated rather than imported so this client component doesn't pull in a server module.
 const COLLABORATOR_CAP = 25;
 const MANAGER_CAP = 5;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const roleLabels: Record<CollectionCollaboratorRole, string> = {
   [CollectionCollaboratorRole.Contributor]: 'Contributor',
@@ -37,15 +40,26 @@ const roleLabels: Record<CollectionCollaboratorRole, string> = {
 
 export default function CollectionCollaboratorsModal({ collectionId }: { collectionId: number }) {
   const dialog = useDialogContext();
+  const { collection } = useCollection(collectionId);
 
   return (
-    <Modal {...dialog} title="Collaborators" size="lg">
-      <CollectionCollaboratorsPanel collectionId={collectionId} />
+    <Modal
+      {...dialog}
+      title={collection?.name ? `Collaborators · ${collection.name}` : 'Collaborators'}
+      size="lg"
+    >
+      <CollectionCollaboratorsPanel collectionId={collectionId} onDone={dialog.onClose} />
     </Modal>
   );
 }
 
-function CollectionCollaboratorsPanel({ collectionId }: { collectionId: number }) {
+function CollectionCollaboratorsPanel({
+  collectionId,
+  onDone,
+}: {
+  collectionId: number;
+  onDone: () => void;
+}) {
   const currentUser = useCurrentUser();
   const { collection, permissions } = useCollection(collectionId);
   const { data, isLoading, isError } = trpc.collection.getCollaborators.useQuery({
@@ -130,6 +144,72 @@ function CollectionCollaboratorsPanel({ collectionId }: { collectionId: number }
 
   return (
     <Stack gap="md">
+      {canManage && (
+        <Stack gap={6}>
+          <Group gap="xs" align="flex-start" wrap="nowrap">
+            <div className="min-w-0 grow">
+              {selectedUser ? (
+                <Group gap="xs" wrap="nowrap" h={36}>
+                  <UserAvatar userId={selectedUser.id} withUsername size="sm" />
+                  <LegacyActionIcon size="sm" onClick={() => setSelectedUser(null)}>
+                    <IconX size={14} />
+                  </LegacyActionIcon>
+                </Group>
+              ) : (
+                <QuickSearchDropdown
+                  disableInitialSearch
+                  supportedIndexes={['users']}
+                  showIndexSelect={false}
+                  startingIndex="users"
+                  dropdownItemLimit={10}
+                  placeholder="Invite by username"
+                  onItemSelected={(_entity, item) => {
+                    const user = item as SearchIndexDataMap['users'][number];
+                    setSelectedUser({ id: user.id, username: user.username ?? `User ${user.id}` });
+                  }}
+                  filters={excludedUserIds.map((id) => `AND NOT id=${id}`).join(' ').slice(4)}
+                />
+              )}
+            </div>
+            <Select
+              aria-label="Role"
+              value={role}
+              onChange={(value) => value && setRole(value as CollectionCollaboratorRole)}
+              data={
+                canGrantManager
+                  ? [
+                      { value: CollectionCollaboratorRole.Contributor, label: 'Contributor' },
+                      { value: CollectionCollaboratorRole.Manager, label: 'Manager' },
+                    ]
+                  : [{ value: CollectionCollaboratorRole.Contributor, label: 'Contributor' }]
+              }
+              allowDeselect={false}
+              w={150}
+            />
+            <Tooltip label={capReason} disabled={!capReason}>
+              <span>
+                <Button
+                  leftSection={<IconSend size={16} />}
+                  disabled={!selectedUser || !!capReason}
+                  loading={inviteMutation.isPending}
+                  onClick={() =>
+                    selectedUser &&
+                    inviteMutation.mutate({ collectionId, targetUserId: selectedUser.id, role })
+                  }
+                >
+                  Invite
+                </Button>
+              </span>
+            </Tooltip>
+          </Group>
+          <Text size="xs" c="dimmed">
+            Managers can invite Contributors. Only the owner can grant Manager or remove one.
+          </Text>
+        </Stack>
+      )}
+
+      <Divider />
+
       {isLoading ? (
         <Group justify="center" p="xl">
           <Loader />
@@ -139,14 +219,21 @@ function CollectionCollaboratorsPanel({ collectionId }: { collectionId: number }
           The collaborator roster could not be loaded.
         </Alert>
       ) : (
-        <Stack gap={4}>
+        <Stack gap={2}>
+          <SectionLabel label="Members" count={collaborators.length + (collection?.user ? 1 : 0)} />
           {collection?.user && (
-            <CollaboratorRow user={collection.user} userId={collection.user.id} role="Owner" />
+            <CollaboratorRow
+              user={collection.user}
+              userId={collection.user.id}
+              subText="Collection owner"
+              role="Owner"
+            />
           )}
           {collaborators.map((collaborator) => (
             <CollaboratorRow
               key={collaborator.userId}
               userId={collaborator.userId}
+              subText={roleLabels[collaborator.role]}
               role={roleLabels[collaborator.role]}
               removable={canRemove(collaborator.userId, collaborator.role)}
               removing={
@@ -159,101 +246,86 @@ function CollectionCollaboratorsPanel({ collectionId }: { collectionId: number }
             />
           ))}
           {!collaborators.length && (
-            <Text size="sm" c="dimmed">
+            <Text size="sm" c="dimmed" px={4} py={6}>
               No collaborators yet.
             </Text>
           )}
         </Stack>
       )}
 
-      {canManage && !isError && (
+      {canManage && !isError && invites.length > 0 && (
         <>
-          <Divider label="Pending invites" labelPosition="left" />
-          {invites.length ? (
-            <Stack gap={4}>
-              {invites.map((invite) => (
-                <CollaboratorRow
-                  key={invite.id}
-                  userId={invite.userId}
-                  role={`${roleLabels[invite.role]} (pending)`}
-                  removable={canRemove(invite.userId, invite.role)}
-                  removing={
-                    removeMutation.isPending &&
-                    removeMutation.variables?.targetUserId === invite.userId
-                  }
-                  onRemove={() =>
-                    removeMutation.mutate({ collectionId, targetUserId: invite.userId })
-                  }
-                />
-              ))}
-            </Stack>
-          ) : (
-            <Text size="sm" c="dimmed">
-              No pending invites.
-            </Text>
-          )}
+          <Divider />
+          <Stack gap={2}>
+            <SectionLabel label="Pending invites" count={invites.length} />
+            {invites.map((invite) => {
+              const expiresAt = new Date(
+                new Date(invite.createdAt).getTime() + INVITE_EXPIRY_DAYS * DAY_MS
+              );
+              const expiringSoon = expiresAt.getTime() - Date.now() < DAY_MS;
 
-          <Divider label="Invite a collaborator" labelPosition="left" />
-          <Stack gap="xs">
-            <QuickSearchDropdown
-              disableInitialSearch
-              supportedIndexes={['users']}
-              showIndexSelect={false}
-              startingIndex="users"
-              dropdownItemLimit={10}
-              placeholder="Search for a member to invite"
-              onItemSelected={(_entity, item) => {
-                const user = item as SearchIndexDataMap['users'][number];
-                setSelectedUser({ id: user.id, username: user.username ?? `User ${user.id}` });
-              }}
-              filters={excludedUserIds.map((id) => `AND NOT id=${id}`).join(' ').slice(4)}
-            />
-            {selectedUser && (
-              <Group gap="xs">
-                <Text size="sm" c="dimmed">
-                  Inviting:
-                </Text>
-                <UserAvatar userId={selectedUser.id} withUsername size="sm" />
-                <LegacyActionIcon size="sm" onClick={() => setSelectedUser(null)}>
-                  <IconX size={14} />
-                </LegacyActionIcon>
-              </Group>
-            )}
-            <Group gap="xs" align="flex-end">
-              <Select
-                label="Role"
-                value={role}
-                onChange={(value) => value && setRole(value as CollectionCollaboratorRole)}
-                data={
-                  canGrantManager
-                    ? [
-                        { value: CollectionCollaboratorRole.Contributor, label: 'Contributor' },
-                        { value: CollectionCollaboratorRole.Manager, label: 'Manager' },
-                      ]
-                    : [{ value: CollectionCollaboratorRole.Contributor, label: 'Contributor' }]
-                }
-                allowDeselect={false}
-                w={160}
-              />
-              <Tooltip label={capReason} disabled={!capReason}>
-                <span>
-                  <Button
-                    disabled={!selectedUser || !!capReason}
-                    loading={inviteMutation.isPending}
-                    onClick={() =>
-                      selectedUser &&
-                      inviteMutation.mutate({ collectionId, targetUserId: selectedUser.id, role })
+              return (
+                <Group key={invite.id} justify="space-between" wrap="nowrap" px={4} py={6}>
+                  <UserAvatar
+                    userId={invite.userId}
+                    withUsername
+                    size="sm"
+                    subText={
+                      <Text size="xs" c="dimmed" span>
+                        {roleLabels[invite.role]} · sent <DaysFromNow date={invite.createdAt} />
+                      </Text>
                     }
-                  >
-                    Invite
-                  </Button>
-                </span>
-              </Tooltip>
-            </Group>
+                    subTextForce
+                  />
+                  <Group gap="md" wrap="nowrap">
+                    <Text size="xs" c={expiringSoon ? 'red.6' : 'yellow.6'}>
+                      Expires <DaysFromNow date={expiresAt} />
+                    </Text>
+                    <Button
+                      variant="subtle"
+                      color="red"
+                      size="compact-xs"
+                      loading={
+                        removeMutation.isPending &&
+                        removeMutation.variables?.targetUserId === invite.userId
+                      }
+                      onClick={() =>
+                        removeMutation.mutate({ collectionId, targetUserId: invite.userId })
+                      }
+                    >
+                      Cancel
+                    </Button>
+                  </Group>
+                </Group>
+              );
+            })}
           </Stack>
         </>
       )}
+
+      <Divider />
+      <Group justify="space-between" wrap="nowrap">
+        <Text size="xs" c="dimmed">
+          Followers are not collaborators and are never listed here.
+        </Text>
+        <Button variant="default" onClick={onDone}>
+          Done
+        </Button>
+      </Group>
     </Stack>
+  );
+}
+
+function SectionLabel({ label, count }: { label: string; count: number }) {
+  return (
+    <Group gap={8} px={4} pb={4}>
+      <Text size="xs" fw={700} c="dimmed" tt="uppercase" className="tracking-wide">
+        {label}
+      </Text>
+      <Text size="xs" c="dimmed">
+        {count}
+      </Text>
+    </Group>
   );
 }
 
@@ -261,6 +333,7 @@ function CollaboratorRow({
   user,
   userId,
   role,
+  subText,
   removable,
   removing,
   onRemove,
@@ -268,13 +341,27 @@ function CollaboratorRow({
   user?: Partial<UserWithCosmetics> | null;
   userId: number;
   role: string;
+  subText?: string;
   removable?: boolean;
   removing?: boolean;
   onRemove?: () => void;
 }) {
   return (
-    <Group justify="space-between" wrap="nowrap">
-      <UserAvatar user={user} userId={userId} withUsername size="sm" />
+    <Group justify="space-between" wrap="nowrap" px={4} py={6}>
+      <UserAvatar
+        user={user}
+        userId={userId}
+        withUsername
+        size="sm"
+        subText={
+          subText ? (
+            <Text size="xs" c="dimmed" span>
+              {subText}
+            </Text>
+          ) : undefined
+        }
+        subTextForce
+      />
       <Group gap={6} wrap="nowrap">
         <Badge size="sm" variant="light">
           {role}

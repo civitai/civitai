@@ -9,10 +9,18 @@ import {
   Text,
   TextInput,
   ThemeIcon,
+  UnstyledButton,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
+import clsx from 'clsx';
 import { CollectionContributorPermission, CollectionType } from '~/shared/utils/prisma/enums';
-import { IconFilter, IconPlaylistX, IconSearch, IconUsers } from '@tabler/icons-react';
+import {
+  IconChevronDown,
+  IconFilter,
+  IconPlaylistX,
+  IconSearch,
+  IconUsers,
+} from '@tabler/icons-react';
 import { createElement, useMemo, useState } from 'react';
 import { CollectionInviteList } from '~/components/Collections/CollectionCollaborators/CollectionInviteList';
 import { CollectionListMenu } from '~/components/Collections/CollectionListMenu';
@@ -28,17 +36,38 @@ import type { CollectionGetAllUserModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 import { collectionTypeData, useCollectionsPermissionsMap } from './collection.utils';
+import classes from './MyCollections.module.scss';
 
-function SectionHeader({ label, count }: { label: string; count: number }) {
+function SectionHeader({
+  label,
+  count,
+  collapsed,
+  onToggle,
+}: {
+  label: string;
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
   return (
-    <Group gap={6} px="xs" py={6} wrap="nowrap">
-      <Text size="xs" fw={700} c="dimmed" tt="uppercase" className="tracking-wide">
-        {label}
-      </Text>
-      <Badge size="xs" variant="light" color="gray">
-        {count}
-      </Badge>
-    </Group>
+    <UnstyledButton
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+      className={clsx(classes.sectionHeader, 'w-full')}
+    >
+      <Group gap={6} px="xs" py={6} wrap="nowrap">
+        <IconChevronDown
+          size={14}
+          className={clsx(classes.sectionChevron, collapsed && classes.sectionChevronCollapsed)}
+        />
+        <Text size="xs" fw={700} c="dimmed" tt="uppercase" className="tracking-wide">
+          {label}
+        </Text>
+        <Badge size="xs" variant="light" color="gray">
+          {count}
+        </Badge>
+      </Group>
+    </UnstyledButton>
   );
 }
 
@@ -66,7 +95,8 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
   const { map: permissionsMap, isLoading: permissionsLoading } =
     useCollectionsPermissionsMap(nonOwnedIds);
 
-  const { view, setView, sort, setSort } = useCollectionListPreferences();
+  const { view, setView, sort, setSort, collapsed, toggleSection } =
+    useCollectionListPreferences();
 
   const sections = useMemo(() => {
     const filtered = collections.filter((c) => {
@@ -93,13 +123,13 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
       leftSection={<IconSearch size={20} />}
       onChange={(e) => setQuery(e.target.value)}
       value={query}
-      placeholder="Search"
+      placeholder="Search collections"
     />
   );
 
   const TypeFilter = (
     <Select
-      placeholder="Filter by type"
+      placeholder="All types"
       value={typeFilter}
       onChange={setTypeFilter}
       data={Object.values(CollectionType).map((type) => ({
@@ -139,23 +169,36 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
     />
   );
 
+  const Filters = (
+    <Group gap="xs" grow wrap="nowrap">
+      {TypeFilter}
+      {RoleFilter}
+    </Group>
+  );
+
   const Collections = (
     <Skeleton visible={isLoading || permissionsLoading} animate>
       {sections.map(
         ({ key, label, rows }) =>
           rows.length > 0 && (
             <div key={key}>
-              <SectionHeader label={label} count={rows.length} />
-              {rows.map((c) => (
-                <CollectionListRow
-                  key={c.id}
-                  collection={c}
-                  view={view}
-                  isActive={router.query?.collectionId === c.id.toString()}
-                  roleLabel={roleLabelFor(permissionsMap.get(c.id))}
-                  onClick={() => selectCollection(c.id)}
-                />
-              ))}
+              <SectionHeader
+                label={label}
+                count={rows.length}
+                collapsed={collapsed.includes(key)}
+                onToggle={() => toggleSection(key)}
+              />
+              {!collapsed.includes(key) &&
+                rows.map((c) => (
+                  <CollectionListRow
+                    key={c.id}
+                    collection={c}
+                    view={view}
+                    isActive={router.query?.collectionId === c.id.toString()}
+                    roleLabel={roleLabelFor(permissionsMap.get(c.id))}
+                    onClick={() => selectCollection(c.id)}
+                  />
+                ))}
             </div>
           )
       )}
@@ -184,8 +227,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
   if (children) {
     return children({
       FilterBox,
-      TypeFilter,
-      RoleFilter,
+      Filters,
       ListMenu,
       Collections,
       InviteList,
@@ -202,8 +244,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
         <div style={{ flex: 1 }}>{FilterBox}</div>
         {ListMenu}
       </Group>
-      {TypeFilter}
-      {RoleFilter}
+      {Filters}
       <ScrollArea>{Collections}</ScrollArea>
     </Stack>
   );
@@ -212,8 +253,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
 type MyCollectionsProps = {
   children?: (elements: {
     FilterBox: React.ReactNode;
-    TypeFilter: React.ReactNode;
-    RoleFilter: React.ReactNode;
+    Filters: React.ReactNode;
     ListMenu: React.ReactNode;
     Collections: React.ReactNode;
     InviteList: React.ReactNode;

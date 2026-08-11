@@ -1,4 +1,4 @@
-import { NavLink, Text } from '@mantine/core';
+import { NavLink, Text, ThemeIcon } from '@mantine/core';
 import clsx from 'clsx';
 import { createElement } from 'react';
 import type { CollectionListView } from './collection-list.utils';
@@ -29,9 +29,11 @@ export function CollectionListRow({
       onClick={onClick}
       className={clsx(classes.navLinkWrapper, view === 'default' && classes.rowDefault)}
       leftSection={
-        view === 'default' && typeData
-          ? createElement(typeData.icon, { size: 15, className: classes.rowIcon })
-          : undefined
+        view === 'default' && typeData ? (
+          <ThemeIcon size={18} variant="subtle" color={typeData.color} className={classes.rowIcon}>
+            {createElement(typeData.icon, { size: 15 })}
+          </ThemeIcon>
+        ) : undefined
       }
       label={
         view === 'compact' ? (
@@ -51,7 +53,7 @@ export function CollectionListRow({
               {collection.name}
             </Text>
             {meta && (
-              <Text size="xs" c="dimmed" tt="uppercase" fw={700} className={classes.rowMeta}>
+              <Text fz={11} c="dimmed" className={classes.rowMeta}>
                 {meta}
               </Text>
             )}

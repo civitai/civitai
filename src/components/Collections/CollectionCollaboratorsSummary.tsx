@@ -13,18 +13,20 @@ const roleLabels: Record<CollectionCollaboratorRole, string> = {
 };
 
 // UserAvatar swaps between a Mantine Avatar and a Paper depending on whether the user has a
-// profilePicture, so Avatar.Group's context-driven offset only reaches some entries. Own the
-// overlap here instead, on a wrapper that every entry renders.
-const stackEntry = '-ml-2 rounded-full ring-2 first:ml-0';
+// profilePicture, and Avatar.Group's offset is context-driven so it reaches only the Avatar
+// variant. This wrapper gives every entry the same overlap regardless of which branch renders.
+const stackEntry = '-ml-2.5 rounded-full ring-2 first:ml-0';
 
 function CollaboratorAvatar({
   userId,
   withUsername,
   linkToProfile,
+  withDecorations,
 }: {
   userId: number;
   withUsername?: boolean;
   linkToProfile?: boolean;
+  withDecorations?: boolean;
 }) {
   const { data } = trpc.user.getById.useQuery(
     { id: userId },
@@ -36,7 +38,13 @@ function CollaboratorAvatar({
   if (!data) return <Avatar size="sm" radius="xl" />;
 
   return (
-    <UserAvatar user={data} size="sm" withUsername={withUsername} linkToProfile={linkToProfile} />
+    <UserAvatar
+      user={data}
+      size="sm"
+      withUsername={withUsername}
+      linkToProfile={linkToProfile}
+      withDecorations={withDecorations}
+    />
   );
 }
 
@@ -64,16 +72,18 @@ export function CollectionCollaboratorsSummary({
       <Popover.Target>
         <UnstyledButton>
           <Group gap={8} wrap="nowrap">
-            <Group gap={0} wrap="nowrap">
+            {/* Decorations are dropped here so a cosmetic frame can't break the stack's
+                alignment; the popover below still shows them. */}
+            <Avatar.Group spacing="sm">
               <div className={clsx(stackEntry, 'ring-[var(--mantine-color-blue-filled)]')}>
-                <UserAvatar user={owner} size="sm" />
+                <UserAvatar user={owner} size="sm" withDecorations={false} />
               </div>
               {shown.map((c) => (
                 <div
                   key={c.userId}
                   className={clsx(stackEntry, 'ring-[var(--mantine-color-body)]')}
                 >
-                  <CollaboratorAvatar userId={c.userId} />
+                  <CollaboratorAvatar userId={c.userId} withDecorations={false} />
                 </div>
               ))}
               {hidden > 0 && (
@@ -81,7 +91,7 @@ export function CollectionCollaboratorsSummary({
                   <Avatar size="sm" radius="xl">{`+${hidden}`}</Avatar>
                 </div>
               )}
-            </Group>
+            </Avatar.Group>
             {/* The count excludes the owner by design while the stack above includes them. */}
             <Text size="sm" fw={500}>
               {owner.username}{' '}

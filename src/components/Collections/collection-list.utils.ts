@@ -1,15 +1,14 @@
 export type CollectionListView = 'default' | 'compact';
-export type CollectionSort = 'name-asc' | 'name-desc';
+export type CollectionSort = 'name-asc' | 'name-desc' | 'recently-added' | 'recently-updated';
 export type CollectionMembership = 'owned' | 'shared' | 'following';
 
 type PermissionFlags = { isCollaborator?: boolean; manage?: boolean } | undefined;
 
-// Name-only for now. `getAllUser` builds its rows from a raw SELECT that does not include
-// `createdAt` (collection.service.ts:440), so date sorts have no backing column — adding one
-// is a server change, not a UI change.
 export const SORT_OPTIONS: { value: CollectionSort; label: string }[] = [
   { value: 'name-asc', label: 'Name A–Z' },
   { value: 'name-desc', label: 'Name Z–A' },
+  { value: 'recently-added', label: 'Recently added' },
+  { value: 'recently-updated', label: 'Recently updated' },
 ];
 
 // `isCollaborator` is the server's "elevated beyond the collection's free grant" test
@@ -53,10 +52,29 @@ export function roleLabelFor(permissions: PermissionFlags): string | null {
   return permissions.manage ? 'Manager' : 'Contributor';
 }
 
-export function sortCollections<T extends { name: string }>(
-  collections: T[],
-  sort: CollectionSort
-): T[] {
+export function sortCollections<
+  T extends { name: string; createdAt?: Date | string | null; updatedAt?: Date | string | null }
+>(collections: T[], sort: CollectionSort): T[] {
   const byName = (a: T, b: T) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
-  return [...collections].sort((a, b) => (sort === 'name-asc' ? byName(a, b) : byName(b, a)));
+  // `createdAt`/`updatedAt` are nullable on Collection, and rows predating the columns have
+  // neither. Sort those last rather than letting NaN scramble the comparator.
+  const time = (value: Date | string | null | undefined) =>
+    value ? new Date(value).getTime() : Number.NEGATIVE_INFINITY;
+  const byNewest = (a: T, b: T, key: 'createdAt' | 'updatedAt') => {
+    const diff = time(b[key]) - time(a[key]);
+    return Number.isNaN(diff) || diff === 0 ? byName(a, b) : diff;
+  };
+
+  return [...collections].sort((a, b) => {
+    switch (sort) {
+      case 'name-desc':
+        return byName(b, a);
+      case 'recently-added':
+        return byNewest(a, b, 'createdAt');
+      case 'recently-updated':
+        return byNewest(a, b, 'updatedAt');
+      default:
+        return byName(a, b);
+    }
+  });
 }
