@@ -123,12 +123,13 @@ export const placementNotifications = createNotificationProcessor({
       const url = `/images/${details.imageId}`;
       if (details.status === 'approved')
         return { message: `${details.ownerUsername} added your remix to their gallery`, url };
-      // Removal is not a decline: it happened after the entry was live, and it
-      // refunds in full rather than keeping the fee. Saying "declined" here
-      // would tell someone they lost a fee they got back.
+      // Removal is not a decline — it happened after the entry was live, and
+      // approval had already paid the owner, so nothing is refunded. Saying
+      // "declined" would imply a fee they never paid; promising a refund would
+      // be worse.
       if (details.status === 'removed')
         return {
-          message: `${details.ownerUsername} removed your remix from their gallery, and your Buzz was returned`,
+          message: `${details.ownerUsername} removed your remix from their gallery`,
           url,
         };
       return { message: `${details.ownerUsername} declined your remix submission`, url };
@@ -138,6 +139,7 @@ export const placementNotifications = createNotificationProcessor({
         SELECT
           p."placerId" "userId",
           p.id "placementId",
+          p.status "status",
           jsonb_build_object(
             'placementId', p.id,
             'imageId', p."targetId",
@@ -151,22 +153,34 @@ export const placementNotifications = createNotificationProcessor({
         JOIN "User" u ON u.id = p."ownerId"
         WHERE p.surface = 'remixGallery'
           AND p."targetType" = 'image'
-          -- An owner removing a live entry refunds the submitter in full and
-          -- takes the entry down. Without this the submitter's paid entry
-          -- disappears from their list with no signal at all, since the list
-          -- shows only pending and approved.
+          -- Each branch keys off the moment its own actor acted, never off
+          -- createdAt: a submission made before the last run and answered after
+          -- it would be missed entirely by a createdAt window.
+          --
+          -- Removal is deliberately a separate branch on takenDownAt, because
+          -- taking a live entry down does not touch resolvedAt -- that column
+          -- records who approved it, and this path must not destroy the
+          -- approval trail.
           AND (
-            p.status IN ('approved', 'declined')
-            OR (p.status = 'removed' AND p."removedBy" = 'owner')
+            (
+              p.status IN ('approved', 'declined')
+              AND p."resolvedAt" IS NOT NULL
+              AND p."resolvedAt" > '${lastSent}'
+            )
+            OR (
+              p.status = 'removed'
+              AND p."removedBy" = 'owner'
+              AND p."takenDownAt" IS NOT NULL
+              AND p."takenDownAt" > '${lastSent}'
+            )
           )
-          -- The moment the owner acted, not the moment the row was made. A
-          -- submission created before the last run and answered after it would
-          -- be missed entirely by a createdAt window.
-          AND p."resolvedAt" IS NOT NULL
-          AND p."resolvedAt" > '${lastSent}'
       )
       SELECT
-        CONCAT('remix-gallery-resolved:',"placementId") "key",
+        -- The status is part of the key because one placement legitimately
+        -- produces two of these: approved, then removed later. Keying on the id
+        -- alone means the approval burns the key and the removal is deduped
+        -- away silently.
+        CONCAT('remix-gallery-resolved:',"status",':',"placementId") "key",
         "userId",
         'remix-gallery-resolved' "type",
         details

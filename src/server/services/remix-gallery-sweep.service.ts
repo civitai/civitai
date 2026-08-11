@@ -31,10 +31,17 @@ export async function sweepDeletedRemixGallerySubmissions({
       AND pl."targetType" = 'image'
       AND pl.status = 'pending'
       -- The row is created before the escrow is taken, so a submission whose
-      -- image is deleted inside that window has no holds yet. Settling it there
-      -- would leave the hold landing on an already-expired placement, with
-      -- nothing left to release it, because expiry only looks at pending rows.
-      AND pl."expiresAt" IS NOT NULL
+      -- image is deleted inside that window has no holds yet, and settling it
+      -- there would leave the hold landing on an already-expired placement.
+      --
+      -- Guarded on age rather than on expiresAt IS NOT NULL. That test also
+      -- excluded rows where the process died between create and hold, and the
+      -- ordinary expiry sweep cannot reach those either (NULL <= now() is
+      -- NULL, not true) -- so this was the only thing that could ever clear
+      -- them, and excluding them here stranded a pending slot against that
+      -- creator permanently. Age closes the same race and leaves the crash case
+      -- reachable.
+      AND pl."createdAt" < now() - interval '5 minutes'
       AND NOT EXISTS (
         SELECT 1 FROM "Image" i WHERE i.id = (pl.data ->> 'imageId')::int
       )

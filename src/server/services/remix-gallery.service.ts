@@ -265,16 +265,56 @@ export async function actOnRemixGallerySubmission({
 
   // The rating can move between submission and approval, and approval is the
   // moment it becomes public. Re-checked rather than trusted.
-  if (action === 'approve' && isRemixGalleryPlacementData(placement.data))
+  if (action === 'approve') {
+    // Refused rather than skipped. A row whose payload cannot be read is the
+    // one case where waving the safety re-check through is least defensible.
+    if (!isRemixGalleryPlacementData(placement.data))
+      throw throwBadRequestError(
+        'remix gallery: that submission is unreadable and cannot be approved'
+      );
+
     await assertStillAcceptable({
       placementId: placement.id,
       imageId: placement.data.imageId,
     });
+  }
 
-  const settleAction =
-    action === 'approve' ? 'approve' : action === 'decline' ? 'decline' : 'removeByOwner';
+  // A live entry cannot go through `settlePlacement`: that claims its
+  // transition with `WHERE status = 'pending'`, so an approved row matches
+  // nothing and the owner watches the entry stay exactly where it is. Taken
+  // down by the same direct write the moderator path uses, and for the same
+  // reason — see `removePlacementByModerator`.
+  //
+  // No money moves. Approval already paid the owner out of escrow, so there is
+  // nothing left to refund; clawing it back after the fact would punish an
+  // owner for taking down content they were entitled to remove.
+  if (action === 'remove') {
+    const { count } = await dbWrite.placement.updateMany({
+      where: { id: placementId, status: 'approved' },
+      data: {
+        status: 'removed',
+        // A moderator acting on someone else's gallery is a moderation record,
+        // not an owner decision, and the two refund differently everywhere else
+        // in this system. Recording it as `owner` would misattribute it.
+        removedBy: isModerator && placement.ownerId !== userId ? 'moderator' : 'owner',
+        // Not `resolvedAt`/`resolvedById`: those record who approved it, and
+        // overwriting them here would destroy the approval trail.
+        takenDownAt: new Date(),
+        takenDownById: userId,
+      },
+    });
 
-  const result = await settlePlacement({ placementId, action: settleAction, actorId: userId });
+    if (!count)
+      throw throwBadRequestError('remix gallery: that entry was already removed elsewhere');
+
+    return { settled: true, removed: true };
+  }
+
+  const result = await settlePlacement({
+    placementId,
+    action: action === 'approve' ? 'approve' : 'decline',
+    actorId: userId,
+  });
 
   // `settlePlacement` claims its transition with `WHERE status = 'pending'`, so
   // a race against the expiry sweep or a block moves no money and returns
@@ -331,8 +371,12 @@ async function assertStillAcceptable({
       hostLevel: host.nsfwLevel,
     })
   )
+    // Names both possibilities, because the rule is as likely to have moved as
+    // the rating: an owner who tightens their content rule after submissions
+    // arrive gets this on approval, and blaming the image would send them
+    // looking at the wrong thing.
     throw throwBadRequestError(
-      "remix gallery: that image's rating has changed and no longer fits this gallery"
+      "remix gallery: that image's rating no longer fits this gallery's content rule"
     );
 }
 

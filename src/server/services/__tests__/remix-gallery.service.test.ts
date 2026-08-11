@@ -44,6 +44,7 @@ const placementFindFirst = vi.fn(async () => null as unknown);
 const placementFindUnique = vi.fn(async () => null as unknown);
 const placementFindMany = vi.fn(async () => [] as unknown[]);
 const placementUpdate = vi.fn(async () => ({}));
+const placementUpdateMany = vi.fn(async () => ({ count: 1 }));
 const dbTransaction = vi.fn(async (ops: unknown) => (Array.isArray(ops) ? ops : []));
 
 vi.mock('~/server/db/client', () => ({
@@ -57,6 +58,7 @@ vi.mock('~/server/db/client', () => ({
       findUnique: placementFindUnique,
       findMany: placementFindMany,
       update: placementUpdate,
+      updateMany: placementUpdateMany,
     },
   },
   dbRead: {
@@ -308,6 +310,18 @@ describe('submission refusals', () => {
     });
   });
 
+  it('refuses when the price moved since the submitter was shown it', async () => {
+    // The client can only check affordability against the number it rendered,
+    // so charging a price nobody agreed to is a spend without consent. This is
+    // the half of that race only the server can close.
+    await expect(submit({ expectedPrice: PRICE - 1 })).rejects.toThrow(/price changed/i);
+    expect(placementCreate).not.toHaveBeenCalled();
+  });
+
+  it('accepts a submission whose expected price still matches', async () => {
+    await expect(submit({ expectedPrice: PRICE })).resolves.toEqual({ id: PLACEMENT });
+  });
+
   it('refuses a blocked placer before creating anything', async () => {
     assertCanPlace.mockRejectedValueOnce(new Error('blocked'));
     await expect(submit()).rejects.toThrow('blocked');
@@ -382,7 +396,7 @@ describe('owner actions', () => {
     });
     await expect(
       actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
-    ).rejects.toThrow(/rating has changed/i);
+    ).rejects.toThrow(/no longer fits/i);
     expect(settlePlacement).not.toHaveBeenCalled();
   });
 
@@ -391,7 +405,7 @@ describe('owner actions', () => {
     primeQueries({ submission: { ...goodSubmission, nsfwLevel: 0 }, hostLevel: NsfwLevel.XXX });
     await expect(
       actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
-    ).rejects.toThrow(/rating has changed/i);
+    ).rejects.toThrow(/no longer fits/i);
     expect(settlePlacement).not.toHaveBeenCalled();
   });
 
@@ -403,6 +417,61 @@ describe('owner actions', () => {
     await expect(
       actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'decline', userId: OWNER })
     ).rejects.toThrow(/already resolved/i);
+  });
+
+  it('takes a live entry down with a direct write, not through settlePlacement', async () => {
+    // `settlePlacement` claims with `WHERE status = 'pending'`, so routing an
+    // approved row through it matched nothing and threw — owner remove was
+    // broken for the whole surface, and a green suite said otherwise.
+    placementFindUnique.mockResolvedValue({ ...pending, status: 'approved' });
+    placementUpdateMany.mockResolvedValue({ count: 1 });
+
+    await actOnRemixGallerySubmission({
+      placementId: PLACEMENT,
+      action: 'remove',
+      userId: OWNER,
+    });
+
+    expect(settlePlacement).not.toHaveBeenCalled();
+    const [arg] = placementUpdateMany.mock.calls[0];
+    expect(arg.where).toEqual({ id: PLACEMENT, status: 'approved' });
+    expect(arg.data).toMatchObject({ status: 'removed', removedBy: 'owner' });
+    // Never resolvedAt: that records who approved it, and this path must not
+    // destroy the approval trail.
+    expect(arg.data.resolvedAt).toBeUndefined();
+  });
+
+  it('records a moderator takedown as a moderator, not as the owner', async () => {
+    // The two refund differently everywhere else in this system, so recording
+    // a moderator action as an owner decision misattributes it.
+    placementFindUnique.mockResolvedValue({ ...pending, status: 'approved' });
+    placementUpdateMany.mockResolvedValue({ count: 1 });
+
+    await actOnRemixGallerySubmission({
+      placementId: PLACEMENT,
+      action: 'remove',
+      userId: STRANGER,
+      isModerator: true,
+    });
+
+    expect(placementUpdateMany.mock.calls[0][0].data).toMatchObject({ removedBy: 'moderator' });
+  });
+
+  it('reports a removal that claimed nothing instead of appearing to work', async () => {
+    placementFindUnique.mockResolvedValue({ ...pending, status: 'approved' });
+    placementUpdateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'remove', userId: OWNER })
+    ).rejects.toThrow(/already removed/i);
+  });
+
+  it('refuses to approve a submission whose payload cannot be read', async () => {
+    placementFindUnique.mockResolvedValue({ ...pending, data: { nothing: true } });
+    await expect(
+      actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
+    ).rejects.toThrow(/unreadable/i);
+    expect(settlePlacement).not.toHaveBeenCalled();
   });
 
   it('only removes a live entry', async () => {
@@ -492,6 +561,33 @@ describe('pinning', () => {
       targetId: HOST_IMAGE,
       ownerId: OWNER,
       status: 'approved',
+    });
+  });
+
+  it('reads the incoming ids AND everything already pinned', async () => {
+    // `toMatchObject` ignores keys it is not given, so the assertion above
+    // passes with the whole OR deleted. Without that clause the query returns
+    // only the entries being pinned, so nothing already pinned is ever read —
+    // and unpinning stops working silently, because a row that is not read is
+    // never cleared.
+    placementFindMany.mockResolvedValue([{ id: 7, data: { imageId: 70 } }]);
+    await setRemixGalleryPins({ hostImageId: HOST_IMAGE, ownerId: OWNER, placementIds: [7] });
+
+    const { OR } = placementFindMany.mock.calls[0][0].where;
+    expect(OR).toEqual([
+      { id: { in: [7] } },
+      { data: { path: ['pinnedAt'], not: expect.anything() } },
+    ]);
+  });
+
+  it('still reads the pinned set when unpinning everything', async () => {
+    // `placementIds: []` is "unpin them all". If the OR collapsed to the id
+    // list alone, this would read nothing and quietly unpin nothing.
+    placementFindMany.mockResolvedValue([]);
+    await setRemixGalleryPins({ hostImageId: HOST_IMAGE, ownerId: OWNER, placementIds: [] });
+
+    expect(placementFindMany.mock.calls[0][0].where.OR).toContainEqual({
+      data: { path: ['pinnedAt'], not: expect.anything() },
     });
   });
 

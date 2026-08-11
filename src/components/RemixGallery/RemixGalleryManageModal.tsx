@@ -41,16 +41,22 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
   const dialog = useDialogContext();
   const utils = trpc.useUtils();
 
-  const browsingLevel = useBrowsingLevelDebounced();
-
   // Scoped server-side. Filtering the account-wide list here meant its limit
   // truncated before the filter ran, so a busy owner saw "nothing waiting" on
   // an image that had submissions.
   const { data: pending, isLoading: pendingLoading } =
     trpc.placement.getPendingRemixGallerySubmissions.useQuery({ hostImageId: imageId });
+
+  // **Deliberately does not send the viewer's browsing level**, unlike the
+  // gallery card. This is the owner managing what sits on their own image, so a
+  // browsing preference must not decide which entries they are allowed to take
+  // down. Sending it hid mature entries from the owner entirely — and because
+  // the pinned set below is re-seeded from these rows and committed as a whole
+  // set on the next drag, a hidden pin was silently unpinned. A display filter
+  // turning into a write is the shape to watch for here.
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.placement.getRemixGallery.useInfiniteQuery(
-      { imageId, browsingLevel },
+      { imageId },
       { getNextPageParam: (lastPage) => lastPage.nextCursor }
     );
 
