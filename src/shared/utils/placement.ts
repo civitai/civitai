@@ -237,7 +237,7 @@ export const PLACEMENT_MIN_PRICE = 0;
  * ⚠️ A surface whose `minPrice` is not a multiple of this puts the bottom of
  * its own track off-grid, the same way an operator cap does at the top.
  */
-export const PLACEMENT_PRICE_STEP = 5;
+export const PLACEMENT_PRICE_STEP = 10;
 
 /**
  * The bounds of the price control: a fixed grid of `[minPrice, cap]` in `step`

@@ -385,10 +385,17 @@ describe('space resolution', () => {
   it('reports a stored price the slider cannot land on', () => {
     const track = placementPriceTrack('sticker', 500);
 
+    // Real prices from production: 67 is off any grid wider than 1, and 10 sits
+    // below the floor entirely.
     expect(onPlacementPriceGrid(67, track)).toBe(false);
     expect(onPlacementPriceGrid(10, track)).toBe(false);
-    expect(onPlacementPriceGrid(65, track)).toBe(true);
-    expect(onPlacementPriceGrid(100, track)).toBe(true);
+
+    // Derived rather than written down, so changing the step cannot leave this
+    // asserting something that is no longer the boundary. `min + 1` is off the
+    // grid for every step above 1.
+    expect(onPlacementPriceGrid(track.min + PLACEMENT_PRICE_STEP, track)).toBe(true);
+    expect(onPlacementPriceGrid(track.min + 1, track)).toBe(false);
+    expect(onPlacementPriceGrid(track.min, track)).toBe(true);
   });
 
   it('keeps an account-level price when only the image mode was changed', () => {
