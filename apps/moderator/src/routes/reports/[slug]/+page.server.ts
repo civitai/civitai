@@ -2,6 +2,8 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { getReports, setReportStatus, updateReportNotes } from '$lib/server/reports.service';
 import { getResolvedPostReportIds } from '$lib/server/moderation-board.service';
+import { removePlacement } from '$lib/server/user-actions.service';
+import { canAccess } from '$lib/server/access';
 import {
   DEFAULT_REPORT_STATUSES,
   reportEntityForSlug,
@@ -101,6 +103,24 @@ export const actions: Actions = {
 
     // The SELECT is capped, so a full batch means there are probably more behind it.
     return { success: true, actioned, skipped, found: ids.length, more: ids.length === 500 };
+  },
+
+  /**
+   * The removal path main added with the `StickerPlacement` reason (#3766). Delegated, not
+   * reimplemented: the service settles escrow, and that must have one implementation.
+   */
+  removePlacement: async ({ request, locals }) => {
+    // Acting on reported content, not merely reading the queue — gated on its own path.
+    if (!canAccess(locals.user, '/reports')) return fail(403, { message: 'Not permitted.' });
+
+    const data = await request.formData();
+    const placementId = Number(data.get('placementId'));
+    if (!Number.isInteger(placementId) || placementId <= 0)
+      return fail(400, { message: 'Invalid placement.' });
+
+    const result = await removePlacement({ placementId, moderatorId: locals.user.id });
+    if (!result.ok) return fail(400, { message: result.error });
+    return { success: true, placementRemoved: placementId };
   },
 
   saveNotes: async ({ request }) => {

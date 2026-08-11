@@ -38,12 +38,16 @@
     reportReasonLabels,
     reportStatusBadgeClass,
     getReportItemUrl,
+    reportedPlacementId,
   } from '$lib/reports';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   let selectedId = $state<number | null>(null);
+  // Armed per placement id, so closing the sheet and opening another report cannot leave a live
+  // destructive button pointed at the previous one.
+  let confirmingPlacement = $state<number | null>(null);
   let detailsOpen = $state(false);
   const selected = $derived(
     selectedId != null ? (data.items.find((r) => r.id === selectedId) ?? null) : null
@@ -239,6 +243,7 @@
   <SheetContent side="right" class="w-full overflow-y-auto sm:max-w-lg">
     {#if selected}
       {@const itemUrl = getReportItemUrl(data.civitaiUrl, data.type, selected.entityId)}
+      {@const placementId = reportedPlacementId(selected.details, selected.reason)}
       <SheetHeader>
         <SheetTitle>{reportEntityLabels[data.type]} report #{selected.id}</SheetTitle>
       </SheetHeader>
@@ -266,6 +271,36 @@
               null,
               2
             )}</pre>
+        {/if}
+
+        <!-- A sticker report has always carried which placement it is about; until main added this
+             (#3766) nothing consumed it, so a moderator read the id out of the details dump above and
+             had no way to act on it. Removal is not reversible and settles escrow, so it confirms. -->
+        {#if placementId !== null}
+          <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+            <p class="mb-2 text-sm">
+              This report is about sticker placement <code>#{placementId}</code>. Removing it takes the
+              sticker off the image for everyone.
+            </p>
+            {#if confirmingPlacement === placementId}
+              <form method="POST" action="?/removePlacement" use:enhance class="flex flex-wrap gap-2">
+                <input type="hidden" name="placementId" value={placementId} />
+                <Button type="submit" size="sm" variant="destructive">Yes, remove it</Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onclick={() => (confirmingPlacement = null)}
+                >
+                  Cancel
+                </Button>
+              </form>
+            {:else}
+              <Button size="sm" variant="destructive" onclick={() => (confirmingPlacement = placementId)}>
+                Remove placement
+              </Button>
+            {/if}
+          </div>
         {/if}
 
         <form method="POST" action="?/setStatus" use:enhance class="flex flex-col gap-2">

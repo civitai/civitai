@@ -105,6 +105,24 @@ export const reportDetail = (details: unknown, key: string): string | undefined 
     ? ((details as Record<string, unknown>)[key] as string | undefined)
     : undefined;
 
+/**
+ * The placement a `StickerPlacement` report is about, or null.
+ *
+ * `details` is untyped jsonb and the reporting form coerces `placementId` from a radio value, so it
+ * arrives as either a number or its string — main's `getReportedPlacementId` handles both and this
+ * matches it. Guarded on the reason as well: a `placementId` in some other report's details is not a
+ * licence to offer a takedown button.
+ */
+export const reportedPlacementId = (details: unknown, reason: string): number | null => {
+  if (reason !== ReportReason.StickerPlacement) return null;
+  // Read directly rather than through `reportDetail`, which casts to `string` — that cast is fine for
+  // the prose fields it was written for and wrong for a value that is genuinely sometimes a number.
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return null;
+  const raw = (details as Record<string, unknown>).placementId;
+  const id = typeof raw === 'string' ? Number(raw) : raw;
+  return typeof id === 'number' && Number.isInteger(id) && id > 0 ? id : null;
+};
+
 /** The label Retool showed for a report: the violation, else the stated reason, else the enum. */
 export const reportReasonLabel = (details: unknown, reason: string): string =>
   reportDetail(details, 'violation') ?? reportDetail(details, 'reason') ?? reason;

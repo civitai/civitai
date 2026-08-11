@@ -1026,3 +1026,35 @@ export async function revokeTimedMute(input: {
     activity: 'revokeTimedMute',
   });
 }
+
+/**
+ * Takes a reported sticker placement down (main app's `/api/mod/remove-placement`).
+ *
+ * NOT reimplemented locally, and the reason is escrow: `removePlacementByModerator` forfeits a
+ * pending placement's escrow and takes an approved one down after the owner has already been paid.
+ * A second service writing those tables would be a money path with two implementations.
+ *
+ * `postJson` rather than `callMainApp`: the endpoint reads `req.body`, and `callMainApp` sends a
+ * query string — the mismatch that left `setRewardsEligibility` unable to succeed.
+ */
+export async function removePlacement(input: {
+  placementId: number;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  const result = await postJson({
+    path: '/api/mod/remove-placement',
+    body: { placementId: input.placementId, moderatorId: input.moderatorId },
+    label: 'Remove placement',
+    auth: 'webhook',
+    timeoutMs: 15_000,
+  });
+  if (!result.ok) return result;
+
+  // The endpoint answers `removed: false` when someone else already settled it. Reporting that as
+  // success would put a takedown in the moderator's record for something they did not do.
+  if (result.body.removed !== true)
+    return { ok: false, error: 'That placement was already settled — reload.' };
+
+  // The endpoint writes its own ModActivity row against the real moderator id, so none here.
+  return { ok: true };
+}
