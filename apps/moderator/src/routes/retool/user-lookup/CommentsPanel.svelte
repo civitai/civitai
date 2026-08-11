@@ -2,12 +2,17 @@
   import { enhance } from '$app/forms';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { LINK_CLASS, dateTime } from '$lib/format';
+  import { LINK_CLASS, dateTime, plainText } from '$lib/format';
   import { entityUrl } from '$lib/entity-url';
   import type { Account } from './user-account';
   import type { SubmitFunction } from '@sveltejs/kit';
   import type { FormResult } from './form-result';
   import ListCard from './ListCard.svelte';
+  import ConfirmSubmit from '$lib/components/ConfirmSubmit.svelte';
+
+  // Bound so each confirmation can name a count. The inputs stay in the form, so they still post.
+  let selectedComments = $state<number[]>([]);
+  let selectedCommentsV2 = $state<number[]>([]);
 
   let {
     account,
@@ -58,7 +63,13 @@
                 <li>
                   <div class="flex flex-wrap items-baseline gap-x-2">
                     {#if canAct}
-                      <input type="checkbox" name="commentIds" value={c.id} class={CHECKBOX} />
+                      <input
+                        type="checkbox"
+                        name="commentIds"
+                        value={c.id}
+                        bind:group={selectedComments}
+                        class={CHECKBOX}
+                      />
                     {/if}
                     {#if modelUrl(c.modelId)}
                       <a href={modelUrl(c.modelId)} target="_blank" rel="noreferrer" class={LINK_CLASS}>
@@ -69,18 +80,28 @@
                     {#if c.nsfw}<Badge variant="secondary">nsfw</Badge>{/if}
                     <span class="text-xs text-dark-2">{dateTime(c.createdAt)}</span>
                   </div>
-                  <p class="line-clamp-2 text-dark-1">{c.content}</p>
+                  <p class="line-clamp-2 text-dark-1">{plainText(c.content)}</p>
                 </li>
               {/each}
             </ul>
             {#if canAct}
               <div class="mt-3 flex flex-wrap gap-2 border-t border-dark-4 pt-3">
-                <Button type="submit" name="op" value="delete" size="sm" variant="destructive" disabled={submitting}>
-                  Delete selected
-                </Button>
-                <Button type="submit" name="op" value="tos" size="sm" variant="destructive" disabled={submitting}>
-                  Remove as ToS
-                </Button>
+                <ConfirmSubmit
+                  label="Delete"
+                  name="op"
+                  value="delete"
+                  count={selectedComments.length}
+                  noun="comment"
+                  {submitting}
+                />
+                <ConfirmSubmit
+                  label="Remove as ToS"
+                  name="op"
+                  value="tos"
+                  count={selectedComments.length}
+                  noun="comment"
+                  {submitting}
+                />
               </div>
             {/if}
           </form>
@@ -98,7 +119,13 @@
                 <li>
                   <div class="flex flex-wrap items-baseline gap-x-2">
                     {#if canAct}
-                      <input type="checkbox" name="commentV2Ids" value={c.id} class={CHECKBOX} />
+                      <input
+                        type="checkbox"
+                        name="commentV2Ids"
+                        value={c.id}
+                        bind:group={selectedCommentsV2}
+                        class={CHECKBOX}
+                      />
                     {/if}
                     {#if entityUrl(civitaiUrl, c.entityType, c.entityId)}
                       <a
@@ -115,18 +142,28 @@
                     {#if c.tosViolation}<Badge variant="destructive">ToS</Badge>{/if}
                     <span class="text-xs text-dark-2">{dateTime(c.createdAt)}</span>
                   </div>
-                  <p class="line-clamp-2 text-dark-1">{c.content}</p>
+                  <p class="line-clamp-2 text-dark-1">{plainText(c.content)}</p>
                 </li>
               {/each}
             </ul>
             {#if canAct}
               <div class="mt-3 flex flex-wrap gap-2 border-t border-dark-4 pt-3">
-                <Button type="submit" name="op" value="delete" size="sm" variant="destructive" disabled={submitting}>
-                  Delete selected
-                </Button>
-                <Button type="submit" name="op" value="tos" size="sm" variant="destructive" disabled={submitting}>
-                  Remove as ToS
-                </Button>
+                <ConfirmSubmit
+                  label="Delete"
+                  name="op"
+                  value="delete"
+                  count={selectedCommentsV2.length}
+                  noun="comment"
+                  {submitting}
+                />
+                <ConfirmSubmit
+                  label="Remove as ToS"
+                  name="op"
+                  value="tos"
+                  count={selectedCommentsV2.length}
+                  noun="comment"
+                  {submitting}
+                />
               </div>
             {/if}
           </form>

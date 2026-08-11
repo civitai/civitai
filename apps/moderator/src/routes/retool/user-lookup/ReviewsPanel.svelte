@@ -8,6 +8,7 @@
   import type { FormResult } from './form-result';
   import ListCard from './ListCard.svelte';
   import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
+  import ConfirmSubmit from '$lib/components/ConfirmSubmit.svelte';
 
   const YES_NO: [string, string][] = [
     ['yes', 'Yes'],
@@ -28,6 +29,8 @@
     { kind: 'search', key: 'q', label: 'Search content' },
   ];
 
+  // Bound so the confirmation can name a count. The inputs stay in the form, so they still post.
+  let selectedReviews = $state<number[]>([]);
   let writtenFilters = $state<Record<string, string>>({});
   let receivedFilters = $state<Record<string, string>>({});
 
@@ -107,7 +110,13 @@
               {#each written.slice(0, limit) as r (r.id)}
                 <li class="flex flex-wrap items-baseline gap-x-2">
                   {#if canAct}
-                    <input type="checkbox" name="reviewIds" value={r.id} class={CHECKBOX} />
+                    <input
+                      type="checkbox"
+                      name="reviewIds"
+                      value={r.id}
+                      bind:group={selectedReviews}
+                      class={CHECKBOX}
+                    />
                   {/if}
                   {#if modelUrl(r.modelId)}
                     <a href={modelUrl(r.modelId)} target="_blank" rel="noreferrer" class={LINK_CLASS}>
@@ -130,9 +139,14 @@
             </ul>
             {#if canAct}
               <div class="mt-3 flex flex-wrap gap-2 border-t border-dark-4 pt-3">
-                <Button type="submit" name="op" value="delete" size="sm" variant="destructive" disabled={submitting}>
-                  Delete selected
-                </Button>
+                <ConfirmSubmit
+                  label="Delete"
+                  name="op"
+                  value="delete"
+                  count={selectedReviews.length}
+                  noun="review"
+                  {submitting}
+                />
                 <Button type="submit" name="op" value="exclude" size="sm" variant="outline" disabled={submitting}>
                   Exclude
                 </Button>

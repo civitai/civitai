@@ -146,8 +146,12 @@ Open, with the evidence each audit produced:
       Search Review Content — and the review **text** is never rendered, so reviews are deleted on
       rating and date alone), Comments (search), Bounties (Type / Complete / Name / Description),
       Reports (reason filter — status is done), Prompt Audit (Filter Prompt / # of Prompts).
-- [ ] **Bulk review/comment deletion has no confirmation step.** Retool gated it behind a modal; ban
-      and purge here got confirmations, these did not.
+- [x] **Bulk review/comment deletion has no confirmation step** (2026-08-11 — shared `ConfirmSubmit`,
+      used at all four destructive bulk sites: reviews delete, and delete + Remove-as-ToS on both comment
+      lists). The confirm button is the **only** real submit — the first click is `type="button"` and
+      posts nothing — so the form cannot fire before the count has been read back. Zero selected disables
+      it outright, which also kills the silent no-op of acting with nothing ticked. Verified in a browser:
+      disabled at 0, enabled at 1, "Delete 1 comment?" with Yes/Cancel, and no navigation on first click.
 - [ ] **Notifications: three dropped pieces** — the "Number of Notifs" control (hardcoded 25), Delete
       Notification, and `notificationLink`. The last is live on the receiving end:
       `system-announcement`'s `prepareMessage` reads `details.url`, and the send form posts `message`
