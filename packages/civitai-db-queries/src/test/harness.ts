@@ -1,51 +1,14 @@
-import {
-  type CompiledQuery,
-  DummyDriver,
-  Kysely,
-  PostgresAdapter,
-  PostgresIntrospector,
-  PostgresQueryCompiler,
-  CompiledQuery as CompiledQueryClass,
-} from 'kysely';
+import { type CompiledQuery, CompiledQuery as CompiledQueryClass } from 'kysely';
 import { createKyselyClients } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { UPDATED_AT_TABLES } from '@civitai/db-schema/kysely/updated-at-tables';
-import { updatedAtPlugin } from '../infra/updated-at-plugin';
+import { compileHarness } from './compile-harness';
 
-// Query functions take a Kysely client as their first argument (executor injection). These harnesses build
-// the client a test passes in — no global wiring.
-
-// An offline Kysely wired to DummyDriver: pass its `db` to a query function and the function's SQL COMPILES to
-// real Postgres SQL and `.execute()` resolves to an empty result WITHOUT a database (safe for writes). A `log`
-// hook captures each compiled query so a test can assert the exact SQL + parameters.
-//
-// The `@updatedAt` plugin is installed here exactly as the app installs it (kyselyDb.ts), so the compiled SQL a
-// test sees matches production: an UPDATE to an `@updatedAt` table auto-stamps `updatedAt` unless the write
-// opts out (self-reference `keepUpdatedAt`) or is raw `sql`. Ported writes therefore don't set `updatedAt` by
-// hand, and the tests assert the plugin-stamped result.
-export function compileHarness() {
-  const queries: CompiledQuery[] = [];
-
-  const db = new Kysely<DB>({
-    dialect: {
-      createAdapter: () => new PostgresAdapter(),
-      createDriver: () => new DummyDriver(),
-      createIntrospector: (kysely) => new PostgresIntrospector(kysely),
-      createQueryCompiler: () => new PostgresQueryCompiler(),
-    },
-    plugins: [updatedAtPlugin(UPDATED_AT_TABLES)],
-    log: (event) => {
-      if (event.level === 'query') queries.push(event.query);
-    },
-  });
-
-  return {
-    db,
-    // The most recently compiled query — `{ sql, parameters }`.
-    lastQuery: () => queries[queries.length - 1],
-    queries,
-  };
-}
+// `compileHarness` lives in its own module and is re-exported here for the package's own tests,
+// which import it from `./test/harness` alongside the DB-backed helpers. Only that module — NOT
+// this one — is on the package's public `./test-harness` subpath: everything below resolves a
+// connection string and can fall back to `process.env.DATABASE_URL`, so it must stay
+// package-internal. See the note at the top of `compile-harness.ts`.
+export { compileHarness };
 
 // The DB URL for the DB-backed tier. Prefer a dedicated TEST_DATABASE_URL; fall back to DATABASE_URL for local
 // runs. Absent (e.g. plain CI with no Postgres) → the DB-backed suites skip via `describe.skipIf`.

@@ -60,9 +60,9 @@ const expectParity = <T extends Record<string, unknown>>(kysely: T[], prisma: T[
 };
 
 // Every query this PR ported, with arguments that reach the statement (a bulk query's empty-array
-// guard short-circuits before compiling anything). The array-column seam guard below compiles each
-// one and reads the select list back off the SQL, so adding a port here is what extends the check —
-// there is no second list to keep in sync.
+// guard short-circuits before compiling anything). The array-column seam guard below runs each one
+// and reads the select list back off EVERY statement it compiles, so adding a port here is what
+// extends the check — there is no second list to keep in sync.
 const PORTED_QUERIES: Array<[name: string, run: (db: Kysely<DB>) => Promise<unknown>]> = [
   ['listImageTagVotes', (db) => listImageTagVotes(db, { imageId: 1, userId: 1 })],
   ['listImageTagVotesMany', (db) => listImageTagVotesMany(db, { imageIds: [1], userId: 1 })],
@@ -331,29 +331,42 @@ describe.skipIf(!parityUrl)('Kysely ports return exactly what Prisma returned', 
     for (const [name, run] of PORTED_QUERIES) {
       harness.queries.length = 0;
       await run(harness.db);
-      const compiled = harness.lastQuery();
-      if (!compiled) throw new Error(`${name} compiled no query — the derivation saw nothing`);
-      selected.push(...selectedColumns(name, compiled.sql));
+      if (!harness.queries.length)
+        throw new Error(`${name} compiled no query — the derivation saw nothing`);
+      // EVERY statement the call compiled, not just the last one. Reading only `lastQuery()` meant
+      // a port that issues two statements was checked on its final statement alone, so an
+      // array-typed select in any earlier one passed unseen — the same silent green this guard
+      // exists to remove. Verified by mutation: an enum-array select in the FIRST of two.
+      for (const compiled of harness.queries) selected.push(...selectedColumns(name, compiled.sql));
     }
 
-    // Positive control on the DERIVATION. A parse that silently yielded nothing would make every
-    // assertion below pass vacuously, which is the failure this guard replaced. 4 queries × 2
-    // columns today; widening a select only ever raises this.
+    // Positive control on the derivation's YIELD. A parse that silently produced nothing would make
+    // every assertion below pass vacuously, which is the failure this guard replaced. 4 queries × 2
+    // columns today; widening a select, or a port growing a second statement, only ever raises it.
     expect(selected.length).toBeGreaterThanOrEqual(8);
 
     const tables = [...new Set(selected.map(([table]) => table))];
-    const arrayColumnsIn = async (relnames: string[]) => {
-      const rows = await prisma.$queryRawUnsafe<Array<{ table: string; column: string }>>(
-        `SELECT c.relname AS "table", a.attname AS "column"
+    // Every attribute of the named relations, with whether its type is an array (typcategory 'A').
+    // ONE query feeds both checks below, so the control cannot certify a path the assertion does
+    // not use.
+    const attributesIn = async (relnames: string[]) => {
+      const rows = await prisma.$queryRawUnsafe<
+        Array<{ table: string; column: string; isArray: boolean }>
+      >(
+        `SELECT c.relname AS "table", a.attname AS "column", (t.typcategory = 'A') AS "isArray"
            FROM pg_attribute a
            JOIN pg_class c ON c.oid = a.attrelid
            JOIN pg_type t ON t.oid = a.atttypid
-          WHERE t.typcategory = 'A'
-            AND a.attnum > 0
+          WHERE a.attnum > 0
+            AND NOT a.attisdropped
             AND c.relname = ANY($1::text[])`,
         relnames
       );
-      return new Set(rows.map((r) => `${r.table}.${r.column}`));
+      const qualify = (r: { table: string; column: string }) => `${r.table}.${r.column}`;
+      return {
+        all: new Set(rows.map(qualify)),
+        arrays: new Set(rows.filter((r) => r.isArray).map(qualify)),
+      };
     };
 
     // Positive control on the CATALOG QUERY, run through the same helper the assertion uses: it
@@ -361,13 +374,27 @@ describe.skipIf(!parityUrl)('Kysely ports return exactly what Prisma returned', 
     await prisma.$executeRawUnsafe(
       `CREATE TABLE IF NOT EXISTS "_ParityArrayProbe" (x "ModelEngagementType"[])`
     );
-    expect([...(await arrayColumnsIn(['_ParityArrayProbe']))]).toEqual(['_ParityArrayProbe.x']);
+    expect([...(await attributesIn(['_ParityArrayProbe'])).arrays]).toEqual([
+      '_ParityArrayProbe.x',
+    ]);
 
-    const arrayColumns = await arrayColumnsIn(tables);
-    const offenders = selected
-      .map(([table, column]) => `${table}.${column}`)
-      .filter((qualified) => arrayColumns.has(qualified));
+    const { all, arrays } = await attributesIn(tables);
+    const qualified = selected.map(([table, column]) => `${table}.${column}`);
 
+    // Positive control on the derivation's CONTENT — the seam between "a name was derived" and "the
+    // catalog can match it", which neither control above covers. Counting items cannot tell a real
+    // column name from a mangled one, and a mangled name matches NOTHING, so `offenders` would be
+    // permanently empty and the assertion below permanently green while the hazard existed.
+    // Verified by mutation: dropping one character from the unquoting in `selectedColumns`
+    // (`slice(1, -1)` → `slice(1)`) fires exactly this, and nothing else.
+    const unknown = qualified.filter((name) => !all.has(name));
+    expect(
+      unknown,
+      `derived column name(s) match no catalog column [${unknown.join(', ')}] — the select-list ` +
+        `derivation is broken, so the array check below cannot fail and would prove nothing`
+    ).toEqual([]);
+
+    const offenders = qualified.filter((name) => arrays.has(name));
     expect(
       offenders,
       `ported query selects ARRAY-typed column(s) [${offenders.join(
