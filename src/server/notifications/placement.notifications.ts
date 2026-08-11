@@ -119,16 +119,20 @@ export const placementNotifications = createNotificationProcessor({
   'remix-gallery-resolved': {
     displayName: 'Your remix submission was answered',
     category: NotificationCategory.Creator,
-    prepareMessage: ({ details }) =>
-      details.status === 'approved'
-        ? {
-            message: `${details.ownerUsername} added your remix to their gallery`,
-            url: `/images/${details.imageId}`,
-          }
-        : {
-            message: `${details.ownerUsername} declined your remix submission`,
-            url: `/images/${details.imageId}`,
-          },
+    prepareMessage: ({ details }) => {
+      const url = `/images/${details.imageId}`;
+      if (details.status === 'approved')
+        return { message: `${details.ownerUsername} added your remix to their gallery`, url };
+      // Removal is not a decline: it happened after the entry was live, and it
+      // refunds in full rather than keeping the fee. Saying "declined" here
+      // would tell someone they lost a fee they got back.
+      if (details.status === 'removed')
+        return {
+          message: `${details.ownerUsername} removed your remix from their gallery, and your Buzz was returned`,
+          url,
+        };
+      return { message: `${details.ownerUsername} declined your remix submission`, url };
+    },
     prepareQuery: async ({ lastSent }) => `
       WITH data AS (
         SELECT
@@ -140,13 +144,21 @@ export const placementNotifications = createNotificationProcessor({
             'ownerId', p."ownerId",
             'ownerUsername', u.username,
             'status', p.status,
+            'removedBy', p."removedBy",
             'amount', p.amount
           ) as "details"
         FROM "Placement" p
         JOIN "User" u ON u.id = p."ownerId"
         WHERE p.surface = 'remixGallery'
           AND p."targetType" = 'image'
-          AND p.status IN ('approved', 'declined')
+          -- An owner removing a live entry refunds the submitter in full and
+          -- takes the entry down. Without this the submitter's paid entry
+          -- disappears from their list with no signal at all, since the list
+          -- shows only pending and approved.
+          AND (
+            p.status IN ('approved', 'declined')
+            OR (p.status = 'removed' AND p."removedBy" = 'owner')
+          )
           -- The moment the owner acted, not the moment the row was made. A
           -- submission created before the last run and answered after it would
           -- be missed entirely by a createdAt window.

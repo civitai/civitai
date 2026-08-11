@@ -275,6 +275,16 @@ export async function actOnRemixGallerySubmission({
   return result;
 }
 
+/**
+ * Everything the submission had to satisfy to be sent, checked again at the
+ * moment it becomes public.
+ *
+ * The rating is the reason this exists — a scanner can re-rate an image between
+ * submission and approval, including down to 0 — so it is checked against the
+ * host's ceiling under the owner's current rule, not just against the flags.
+ * Checking the flags alone let an XXX entry onto a PG host under the very rule
+ * that exists to prevent it.
+ */
 async function assertStillAcceptable({
   placementId,
   imageId,
@@ -291,6 +301,28 @@ async function assertStillAcceptable({
   const submission = await loadSubmissionImage(imageId);
   if (submission.tosViolation || submission.minor || submission.poi || submission.needsReview)
     throw throwBadRequestError('remix gallery: that image can no longer be shown');
+
+  const space = await resolvePlacementSpaceFor({
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetId: placement.targetId,
+  });
+
+  const [host] = await dbWrite.$queryRaw<{ nsfwLevel: number }[]>`
+    SELECT "nsfwLevel" FROM "Image" WHERE id = ${placement.targetId}
+  `;
+  if (!host) throw throwBadRequestError('remix gallery: that image no longer exists');
+
+  if (
+    !remixGalleryLevelAllowed({
+      rule: remixGalleryContentRule(space.settings),
+      submissionLevel: submission.nsfwLevel,
+      hostLevel: host.nsfwLevel,
+    })
+  )
+    throw throwBadRequestError(
+      "remix gallery: that image's rating has changed and no longer fits this gallery"
+    );
 }
 
 /**
@@ -351,13 +383,20 @@ export async function setRemixGalleryPins({
   if (new Set(placementIds).size !== placementIds.length)
     throw throwBadRequestError('remix gallery: an entry cannot be pinned twice');
 
+  // Scoped to entries already pinned plus the ones being pinned now, rather
+  // than every approved entry: a gallery can hold thousands, the cap is four,
+  // and the modal commits on every drag. Reading the whole gallery to rewrite
+  // four rows made a drag cost one UPDATE per entry.
   const entries = await dbWrite.placement.findMany({
     where: {
       surface: SURFACE,
       targetType: TARGET_TYPE,
       targetId: hostImageId,
+      // The authorization guard. `hostImageId` is caller-supplied, so without
+      // this any signed-in user could pin and unpin entries in anyone's gallery.
       ownerId,
       status: 'approved',
+      OR: [{ id: { in: placementIds } }, { data: { path: ['pinnedAt'], not: Prisma.DbNull } }],
     },
     select: { id: true, data: true },
   });
@@ -369,25 +408,27 @@ export async function setRemixGalleryPins({
 
   const pinnedAt = new Date().toISOString();
 
-  await dbWrite.$transaction(
-    entries.map((entry) => {
-      const index = placementIds.indexOf(entry.id);
-      const data = (
-        isRemixGalleryPlacementData(entry.data) ? entry.data : {}
-      ) as RemixGalleryPlacementData;
+  const writes = entries.flatMap((entry) => {
+    const index = placementIds.indexOf(entry.id);
+    const data = (
+      isRemixGalleryPlacementData(entry.data) ? entry.data : {}
+    ) as RemixGalleryPlacementData;
 
-      return dbWrite.placement.update({
-        where: { id: entry.id },
-        data: {
-          data: {
-            ...data,
-            pinnedAt: index === -1 ? null : data.pinnedAt ?? pinnedAt,
-            position: index === -1 ? null : index,
-          } satisfies RemixGalleryPlacementData,
-        },
-      });
-    })
-  );
+    const next = {
+      ...data,
+      pinnedAt: index === -1 ? null : data.pinnedAt ?? pinnedAt,
+      position: index === -1 ? null : index,
+    } satisfies RemixGalleryPlacementData;
+
+    // A drag that reorders two pins should not rewrite the two it did not move.
+    const unchanged =
+      (data.pinnedAt ?? null) === next.pinnedAt && (data.position ?? null) === next.position;
+    if (unchanged) return [];
+
+    return [dbWrite.placement.update({ where: { id: entry.id }, data: { data: next } })];
+  });
+
+  if (writes.length) await dbWrite.$transaction(writes);
 
   return { pinned: placementIds.length };
 }
@@ -553,6 +594,8 @@ export async function getRemixGallery({
         AND i.ingestion = 'Scanned'
         AND i."needsReview" IS NULL
         AND NOT i."tosViolation"
+        AND NOT i.minor
+        AND NOT i.poi
         AND (i."nsfwLevel" & ${levels}) != 0
         AND i."nsfwLevel" != 0
     )
@@ -652,6 +695,8 @@ async function galleryHasEntries({
         AND i.ingestion = 'Scanned'
         AND i."needsReview" IS NULL
         AND NOT i."tosViolation"
+        AND NOT i.minor
+        AND NOT i.poi
         AND (i."nsfwLevel" & ${levels}) != 0
         AND i."nsfwLevel" != 0
     ) AS "exists"
@@ -735,6 +780,8 @@ export async function getPendingRemixGallerySubmissions({
       AND p."publishedAt" IS NOT NULL
       AND i.ingestion = 'Scanned'
       AND NOT i."tosViolation"
+        AND NOT i.minor
+        AND NOT i.poi
   `;
   const byId = new Map(images.map((image) => [image.id, image]));
 

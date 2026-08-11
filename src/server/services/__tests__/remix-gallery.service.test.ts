@@ -294,6 +294,20 @@ describe('submission refusals', () => {
     await expect(submit()).rejects.toThrow(/maximum submissions/i);
   });
 
+  it('counts the pending cap per placer, not across everyone', async () => {
+    // The fake answers regardless of the `where`, so the count alone cannot
+    // tell a per-placer cap from a per-owner one. Dropping `placerId` turns
+    // this into "ten pendings from anybody", which locks every submitter out of
+    // a busy creator — and nothing else in the suite would notice.
+    await submit();
+    expect(placementCount.mock.calls[0][0].where).toMatchObject({
+      surface: 'remixGallery',
+      ownerId: OWNER,
+      placerId: PLACER,
+      status: 'pending',
+    });
+  });
+
   it('refuses a blocked placer before creating anything', async () => {
     assertCanPlace.mockRejectedValueOnce(new Error('blocked'));
     await expect(submit()).rejects.toThrow('blocked');
@@ -353,6 +367,31 @@ describe('owner actions', () => {
     await expect(
       actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
     ).rejects.toThrow(/can no longer be shown/i);
+    expect(settlePlacement).not.toHaveBeenCalled();
+  });
+
+  it('re-checks the RATING at approval, not just the flags', async () => {
+    // The flags were re-checked and the rating was not, which is the one thing
+    // the surrounding comment claimed. A PG submission re-rated XXX by the
+    // scanner sailed through approval onto a PG host, under the very rule that
+    // exists to stop it.
+    placementFindUnique.mockResolvedValue(pending);
+    primeQueries({
+      submission: { ...goodSubmission, nsfwLevel: NsfwLevel.XXX },
+      hostLevel: NsfwLevel.PG,
+    });
+    await expect(
+      actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
+    ).rejects.toThrow(/rating has changed/i);
+    expect(settlePlacement).not.toHaveBeenCalled();
+  });
+
+  it('re-checks an unrated image at approval too', async () => {
+    placementFindUnique.mockResolvedValue(pending);
+    primeQueries({ submission: { ...goodSubmission, nsfwLevel: 0 }, hostLevel: NsfwLevel.XXX });
+    await expect(
+      actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
+    ).rejects.toThrow(/rating has changed/i);
     expect(settlePlacement).not.toHaveBeenCalled();
   });
 
@@ -439,18 +478,51 @@ describe('pinning', () => {
     ).rejects.toThrow(/not in this gallery/i);
   });
 
-  it('clears pins that are absent from the new set', async () => {
+  it('scopes the lookup to the owner, so a gallery is not pinnable by strangers', async () => {
+    // `hostImageId` is caller-supplied and the fake answers regardless of the
+    // `where`, so nothing else here would notice `ownerId` going missing — and
+    // without it any signed-in user can pin and unpin entries in anyone's
+    // gallery. The guard had no test at all.
     placementFindMany.mockResolvedValue(entries);
+    await setRemixGalleryPins({ hostImageId: HOST_IMAGE, ownerId: OWNER, placementIds: [1] });
+
+    expect(placementFindMany.mock.calls[0][0].where).toMatchObject({
+      surface: 'remixGallery',
+      targetType: 'image',
+      targetId: HOST_IMAGE,
+      ownerId: OWNER,
+      status: 'approved',
+    });
+  });
+
+  it('clears pins that are absent from the new set', async () => {
+    const pinned = [
+      { id: 1, data: { imageId: 10, pinnedAt: 'then', position: 0 } },
+      { id: 2, data: { imageId: 20, pinnedAt: 'then', position: 1 } },
+      { id: 3, data: { imageId: 30 } },
+    ];
+    placementFindMany.mockResolvedValue(pinned);
     await setRemixGalleryPins({ hostImageId: HOST_IMAGE, ownerId: OWNER, placementIds: [3, 1] });
 
-    const written = placementUpdate.mock.calls.map(([arg]) => [arg.where.id, arg.data.data]);
-    expect(written).toHaveLength(entries.length);
-
-    const byId = new Map(written);
+    const byId = new Map(
+      placementUpdate.mock.calls.map(([arg]) => [arg.where.id, arg.data.data] as const)
+    );
     expect(byId.get(3)).toMatchObject({ position: 0 });
     expect(byId.get(1)).toMatchObject({ position: 1 });
-    for (const id of [2, 4, 5])
-      expect(byId.get(id)).toMatchObject({ pinnedAt: null, position: null });
+    expect(byId.get(2)).toMatchObject({ pinnedAt: null, position: null });
+  });
+
+  it('does not rewrite entries whose pin state is unchanged', async () => {
+    // The modal commits on every drag, and a gallery can hold thousands of
+    // approved entries against a cap of four. Rewriting all of them per drag is
+    // how that became one UPDATE per entry.
+    placementFindMany.mockResolvedValue([
+      { id: 1, data: { imageId: 10, pinnedAt: 'then', position: 0 } },
+      { id: 2, data: { imageId: 20 } },
+    ]);
+    await setRemixGalleryPins({ hostImageId: HOST_IMAGE, ownerId: OWNER, placementIds: [1] });
+
+    expect(placementUpdate).not.toHaveBeenCalled();
   });
 });
 

@@ -125,6 +125,12 @@ export const sweepUnplannedPlacementSettlementsJob = createJob(
  * Drains, because a creator deleting a post takes every submission of every
  * image in it with them, so the population arrives in bursts rather than
  * steadily.
+ *
+ * **Drains on `released`, not on `considered`.** Rows leave this set only by
+ * settling, and a failed settle is caught and stepped over — so draining on
+ * what was *selected* re-selects the same rows every pass when settlement is
+ * down, burning the whole cap without ever reaching row 101. Same trap the
+ * unplanned-settlements sweep above refuses to drain at all for.
  */
 export const sweepDeletedRemixGallerySubmissionsJob = createJob(
   'remix-gallery-sweep-deleted',
@@ -134,7 +140,7 @@ export const sweepDeletedRemixGallerySubmissionsJob = createJob(
       'remix-gallery-sweep-deleted',
       jobContext,
       () => sweepDeletedRemixGallerySubmissions({ limit: BATCH }),
-      (result) => result.considered
+      (result) => result.released
     );
 
     return {
