@@ -19,6 +19,7 @@ import {
   bulkCommentAction,
   bulkReviewAction,
   grantCosmetic,
+  removeCosmetic,
   refundShopPurchase,
   sendBuzz,
   setRewardsEligibility,
@@ -62,6 +63,8 @@ const profileFail = (message: string) => fail(400, { scope: 'profile' as const, 
 const contentFail = (message: string) => fail(400, { scope: 'content' as const, error: message });
 const buzzFail = (message: string) => fail(400, { scope: 'buzz' as const, error: message });
 const shopFail = (message: string) => fail(400, { scope: 'shop' as const, error: message });
+const cosmeticsFail = (message: string) =>
+  fail(400, { scope: 'cosmetics' as const, error: message });
 const notifyFail = (message: string) => fail(400, { scope: 'notify' as const, error: message });
 
 const noteSchema = z.object({ notes: z.string().trim().min(1).max(NOTE_MAX) });
@@ -370,6 +373,27 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
     if (!result.ok) return shopFail(result.error);
+    return { success: true };
+  },
+
+  removeCosmetic: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return cosmeticsFail('Not permitted.');
+    const input = parseForm(
+      userIdSchema.extend({
+        cosmeticId: z.coerce.number().int().positive(),
+        claimKey: z.string().trim().min(1).max(200),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return cosmeticsFail(input);
+
+    const result = await removeCosmetic({
+      userId: input.userId,
+      cosmeticId: input.cosmeticId,
+      claimKey: input.claimKey,
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return cosmeticsFail(result.error);
     return { success: true };
   },
 

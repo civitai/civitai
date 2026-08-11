@@ -12,6 +12,8 @@ export type FormResult = {
     | 'content'
     | 'buzz'
     | 'shop'
+    /** Cosmetic removal renders on the Cosmetics section, which is not where `shop` is shown. */
+    | 'cosmetics'
     | 'notify';
   error?: string;
 } | null;

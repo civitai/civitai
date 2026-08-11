@@ -44,6 +44,10 @@ export type CommentV2 = {
 export type Cosmetic = {
   /** `${cosmeticId}:${claimKey}` — the cosmetic id alone repeats across claims. */
   key: string;
+  /** Carried separately rather than re-split from `key`: a shop grant's claimKey is the
+   *  buzzTransactionId, which can itself contain a colon. */
+  cosmeticId: number;
+  claimKey: string;
   name: string;
   type: string;
   equipped: boolean;

@@ -9,6 +9,15 @@ export async function bustCachedObject(cacheKey: string, ids: number | number[])
   await getRedis().del(list.map((id) => `${cacheKey}:${id}` as RedisKeyTemplateCache));
 }
 
+// Every UserCosmetic write needs all three. USER_COSMETICS and the COSMETICS tag back what renders on
+// the profile (day TTL, no stale-while-revalidate); USER_OWNED_STICKER is checked on each message send,
+// so missing it leaves a granted sticker unsendable — or a removed one still sendable — for 5 minutes.
+export async function bustUserCosmeticCaches(userId: number): Promise<void> {
+  await bustCachedObject(REDIS_KEYS.CACHES.USER_COSMETICS, userId);
+  await bustCachedObject(REDIS_KEYS.CACHES.USER_OWNED_STICKER, userId);
+  await bustCacheTag(`${REDIS_KEYS.CACHES.COSMETICS}:${userId}`);
+}
+
 export async function bustImageTagCaches(ids: number | number[]): Promise<void> {
   await Promise.all([
     bustCachedObject(REDIS_KEYS.CACHES.IMAGE_TAGS, ids),

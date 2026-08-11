@@ -83,7 +83,14 @@
         civitaiUrl={data.civitaiUrl}
         username={result.identity.username}
       />
-      <CosmeticsPanel {account} />
+      <CosmeticsPanel
+        {account}
+        userId={result.identity.id}
+        canAct={data.canAct}
+        {form}
+        {onSubmit}
+        {submitting}
+      />
     {:else if section === 'buzz'}
       <!-- Retool split these across two tabs. Granting or deducting Buzz is a judgement made AGAINST
            the balances and the history, so hiding one behind the other made the moderator carry the

@@ -1,8 +1,7 @@
 import { env } from '$env/dynamic/private';
-import { REDIS_KEYS } from '@civitai/redis';
 import { dbWrite } from './db';
 import { getBuzz } from './buzz';
-import { bustCacheTag, bustCachedObject } from './cache';
+import { bustUserCosmeticCaches } from './cache';
 import { getModeratorDb } from './moderator-db';
 import { recordModActivity } from './mod-activity';
 import { recordUserActivity } from './user-activity';
@@ -569,8 +568,7 @@ export async function refundShopPurchase(input: {
   // The main app serves equipped cosmetics from a day-TTL cache with no stale-while-revalidate, so
   // without this the refunded badge or frame keeps rendering on their profile, comments and images for
   // up to 24 hours after the panel says it is gone.
-  await bustCachedObject(REDIS_KEYS.CACHES.USER_COSMETICS, input.userId);
-  await bustCacheTag(`${REDIS_KEYS.CACHES.COSMETICS}:${input.userId}`);
+  await bustUserCosmeticCaches(input.userId);
 
   await logAction('shopRefund', input.userId, input.moderatorId);
   return { ok: true };
@@ -599,7 +597,38 @@ export async function grantCosmetic(input: {
   if (Number(result.numInsertedOrUpdatedRows ?? 0) === 0)
     return { ok: false, error: 'This account already holds that cosmetic.' };
 
+  await bustUserCosmeticCaches(input.userId);
+
   await logAction(`grantCosmetic:${input.cosmeticId}`, input.userId, input.moderatorId);
+  return { ok: true };
+}
+
+// REMOVE A COSMETIC (Retool's RemoveCosmetics).
+//
+// Scoped to the exact (cosmeticId, claimKey) row the moderator clicked rather than every claim of that
+// cosmetic, which is what the main app's `retool/cosmetic → unassign` does — a user who holds the same
+// badge twice loses only the claim on screen. That endpoint is also the weaker path here: it refreshes
+// the sticker cache alone, leaving the profile-level caches this busts stale for a day, and attributes
+// to the shared API key's owner instead of the acting moderator.
+export async function removeCosmetic(input: {
+  userId: number;
+  cosmeticId: number;
+  claimKey: string;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  const result = await dbWrite
+    .deleteFrom('UserCosmetic')
+    .where('userId', '=', input.userId)
+    .where('cosmeticId', '=', input.cosmeticId)
+    .where('claimKey', '=', input.claimKey)
+    .executeTakeFirst();
+
+  if (Number(result.numDeletedRows ?? 0) === 0)
+    return { ok: false, error: 'This account does not hold that cosmetic.' };
+
+  await bustUserCosmeticCaches(input.userId);
+
+  await logAction(`removeCosmetic:${input.cosmeticId}`, input.userId, input.moderatorId);
   return { ok: true };
 }
 

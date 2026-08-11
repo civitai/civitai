@@ -331,12 +331,14 @@ export async function getReactionTargets(userId: number, limit = 10): Promise<Re
   };
 }
 
-// COSMETICS — read-only. Retool's RemoveCosmetics is deliberately not ported (destructive, and the
-// main app's equivalent also refreshes entity caches and search indexes).
 export type UserCosmeticRow = {
   /** `${cosmeticId}:${claimKey}` — UserCosmetic's key is (userId, cosmeticId, claimKey), so the
    *  cosmetic id alone is not unique per user and collides for repeat claims. */
   key: string;
+  /** Both halves of the key are carried separately: claimKey can itself contain a colon (it holds the
+   *  buzzTransactionId on a shop grant), so removal must not re-split `key`. */
+  cosmeticId: number;
+  claimKey: string;
   name: string;
   type: string;
   equipped: boolean;
@@ -357,6 +359,8 @@ export async function getCosmetics(userId: number, limit = 50): Promise<Capped<U
   return capped(
     rows.map((r) => ({
       key: `${r.cosmeticId}:${r.claimKey}`,
+      cosmeticId: r.cosmeticId,
+      claimKey: r.claimKey,
       name: r.name,
       type: String(r.type),
       equipped: r.equippedAt !== null,
