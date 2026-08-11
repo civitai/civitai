@@ -1,4 +1,6 @@
 import * as z from 'zod';
+import { CosmeticShopSort } from '~/server/common/enums';
+import { COSMETIC_SHOP_DEFAULT_PAGE_SIZE } from '~/shared/constants/cosmetic-shop.constants';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { STICKER_MAX_ASPECT_RATIO, STICKER_SIZE } from '~/shared/utils/sticker-token';
 
@@ -370,13 +372,21 @@ export const getPublicShopItemsSchema = z.object({
   query: z.string().optional(),
 });
 
-// Site-wide community cosmetics hub on /shop — one feed of every published
-// creator cosmetic from public shops, filterable by type.
+// Site-wide community cosmetics hub on /shop — every published creator cosmetic
+// from public shops. The only shop grid paged server-side; the others hold their
+// whole (bounded) list already.
 export type GetCommunityCosmeticsInput = z.infer<typeof getCommunityCosmeticsSchema>;
 export const getCommunityCosmeticsSchema = z.object({
-  limit: z.number().min(1).max(100).default(40),
-  cursor: z.number().optional(),
+  limit: z.number().min(1).max(100).default(COSMETIC_SHOP_DEFAULT_PAGE_SIZE),
+  page: z.number().min(1).default(1),
   cosmeticTypes: z.array(z.enum(CosmeticType)).optional(),
+  sort: z.enum(CosmeticShopSort).default(CosmeticShopSort.Newest),
+  // Viewer-scoped, so both are ignored for anonymous callers.
+  wishlisted: z.boolean().optional(),
+  owned: z.enum(['owned', 'notOwned']).optional(),
+  // Capped quantity and/or a hard end date.
+  limited: z.boolean().optional(),
+  acceptsBlueBuzz: z.boolean().optional(),
 });
 
 export type ReviewCreatorShopItemInput = z.infer<typeof reviewCreatorShopItemSchema>;

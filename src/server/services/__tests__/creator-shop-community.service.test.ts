@@ -3,12 +3,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { mocks } = vi.hoisted(() => ({
   mocks: {
     shopItemFindMany: vi.fn(),
+    shopItemCount: vi.fn(),
     getBlockedPairIds: vi.fn(),
   },
 }));
 
 vi.mock('~/server/db/client', () => ({
-  dbRead: { cosmeticShopItem: { findMany: mocks.shopItemFindMany } },
+  dbRead: {
+    cosmeticShopItem: { findMany: mocks.shopItemFindMany, count: mocks.shopItemCount },
+  },
   dbWrite: {},
 }));
 vi.mock('sharp', () => ({ default: vi.fn() }));
@@ -24,6 +27,7 @@ vi.mock('~/server/services/user-preferences.service', () => ({
   getBlockedPairIds: mocks.getBlockedPairIds,
 }));
 
+import { CosmeticShopSort } from '~/server/common/enums';
 import { getCommunityCosmetics } from '../creator-shop.service';
 
 const itemRow = (id: number, meta: Record<string, unknown> = {}) => ({
@@ -36,34 +40,60 @@ const itemRow = (id: number, meta: Record<string, unknown> = {}) => ({
   cosmetic: { id: id * 10, name: `Cosmetic ${id}`, type: 'Badge', createdById: 11 },
 });
 
+const baseInput = { limit: 40, page: 1, sort: CosmeticShopSort.Newest };
+
+// Every `where` clause that isn't a plain top-level key lands in this array, so
+// the assertions dig for theirs rather than pinning the whole list.
+const andClauses = (where: { AND?: unknown[] }) => where.AND ?? [];
+
 describe('getCommunityCosmetics', () => {
   beforeEach(() => {
     Object.values(mocks).forEach((m) => m.mockReset());
     mocks.shopItemFindMany.mockResolvedValue([]);
+    mocks.shopItemCount.mockResolvedValue(0);
     mocks.getBlockedPairIds.mockResolvedValue([]);
   });
 
   it('strips payout/fee internals from item meta', async () => {
     mocks.shopItemFindMany.mockResolvedValue([itemRow(2), itemRow(1)]);
-    const { items, nextCursor } = await getCommunityCosmetics({ limit: 40 });
+    mocks.shopItemCount.mockResolvedValue(2);
+    const { items, totalPages } = await getCommunityCosmetics(baseInput);
     expect(items.map((i) => i.id)).toEqual([2, 1]);
     expect(items[0].meta).toEqual({ purchases: 3, acceptsBlueBuzz: false });
-    expect(nextCursor).toBeUndefined();
+    expect(totalPages).toBe(1);
   });
 
-  it('pages with limit+1: pops the extra row into nextCursor', async () => {
-    mocks.shopItemFindMany.mockResolvedValue([itemRow(3), itemRow(2), itemRow(1)]);
-    const { items, nextCursor } = await getCommunityCosmetics({ limit: 2 });
-    expect(mocks.shopItemFindMany).toHaveBeenCalledWith(expect.objectContaining({ take: 3 }));
+  it('pages by skip/take and reports the page count from the total', async () => {
+    mocks.shopItemFindMany.mockResolvedValue([itemRow(3), itemRow(2)]);
+    mocks.shopItemCount.mockResolvedValue(7);
+    const { items, totalItems, totalPages, currentPage } = await getCommunityCosmetics({
+      ...baseInput,
+      limit: 2,
+      page: 3,
+    });
+    expect(mocks.shopItemFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 2, skip: 4 })
+    );
     expect(items.map((i) => i.id)).toEqual([3, 2]);
-    expect(nextCursor).toBe(1);
+    expect({ totalItems, totalPages, currentPage }).toEqual({
+      totalItems: 7,
+      totalPages: 4,
+      currentPage: 3,
+    });
+  });
+
+  it('counts with the same where clause it selects with', async () => {
+    await getCommunityCosmetics({ ...baseInput, limited: true });
+    expect(mocks.shopItemCount).toHaveBeenCalledWith({
+      where: mocks.shopItemFindMany.mock.calls[0][0].where,
+    });
   });
 
   it('only queries published creator items from public shops', async () => {
     // stickersEnabled so the flag's type exclusion doesn't muddy the assertion
     // that the caller's requested types pass through.
     await getCommunityCosmetics({
-      limit: 40,
+      ...baseInput,
       cosmeticTypes: ['Badge' as never],
       stickersEnabled: true,
     });
@@ -77,17 +107,84 @@ describe('getCommunityCosmetics', () => {
   });
 
   it('skips the block lookup for anonymous viewers', async () => {
-    await getCommunityCosmetics({ limit: 40 });
+    await getCommunityCosmetics(baseInput);
     expect(mocks.getBlockedPairIds).not.toHaveBeenCalled();
     expect(mocks.shopItemFindMany.mock.calls[0][0].where.addedById).toBeUndefined();
   });
 
   it('excludes creators with a block in either direction from the viewer', async () => {
     mocks.getBlockedPairIds.mockResolvedValue([5, 6]);
-    await getCommunityCosmetics({ limit: 40, viewerId: 99 });
+    await getCommunityCosmetics({ ...baseInput, viewerId: 99 });
     const { where } = mocks.shopItemFindMany.mock.calls[0][0];
     // Both the lister and the original creator — they differ on cross-listings.
     expect(where.addedById.notIn).toEqual(expect.arrayContaining([5, 6]));
     expect(where.cosmetic.createdById).toEqual({ not: null, notIn: [5, 6] });
+  });
+
+  it('orders newest by approval time, not submission order', async () => {
+    await getCommunityCosmetics(baseInput);
+    expect(mocks.shopItemFindMany.mock.calls[0][0].orderBy).toEqual([
+      { reviewedAt: { sort: 'desc', nulls: 'last' } },
+      { id: 'desc' },
+    ]);
+  });
+
+  it.each([
+    [CosmeticShopSort.Oldest, { reviewedAt: { sort: 'asc', nulls: 'first' } }],
+    [CosmeticShopSort.PriceLowToHigh, { unitAmount: 'asc' }],
+    [CosmeticShopSort.PriceHighToLow, { unitAmount: 'desc' }],
+    [CosmeticShopSort.MostPopular, { purchases: { _count: 'desc' } }],
+    [CosmeticShopSort.Name, { title: 'asc' }],
+  ])('orders %s by its own key, tie-broken by id', async (sort, primary) => {
+    await getCommunityCosmetics({ ...baseInput, sort });
+    const orderBy = mocks.shopItemFindMany.mock.calls[0][0].orderBy;
+    expect(orderBy[0]).toEqual(primary);
+    expect(orderBy).toHaveLength(2);
+    expect(Object.keys(orderBy[1])).toEqual(['id']);
+  });
+
+  it('limits to items with a capped quantity or an end date', async () => {
+    await getCommunityCosmetics({ ...baseInput, limited: true });
+    expect(andClauses(mocks.shopItemFindMany.mock.calls[0][0].where)).toContainEqual({
+      OR: [{ availableQuantity: { not: null } }, { availableTo: { not: null } }],
+    });
+  });
+
+  it('filters to wishlisted and blue-accepting items', async () => {
+    await getCommunityCosmetics({
+      ...baseInput,
+      viewerId: 99,
+      wishlisted: true,
+      acceptsBlueBuzz: true,
+    });
+    const { where } = mocks.shopItemFindMany.mock.calls[0][0];
+    expect(where.wishlists).toEqual({ some: { userId: 99 } });
+    expect(where.meta).toEqual({ path: ['acceptsBlueBuzz'], equals: true });
+  });
+
+  it('hides owned items but keeps re-buyable content decorations', async () => {
+    await getCommunityCosmetics({ ...baseInput, viewerId: 99, owned: 'notOwned' });
+    expect(andClauses(mocks.shopItemFindMany.mock.calls[0][0].where)).toContainEqual({
+      OR: [
+        { cosmetic: { type: 'ContentDecoration' } },
+        { cosmetic: { UserCosmetic: { none: { userId: 99 } } } },
+      ],
+    });
+  });
+
+  it('keeps only owned items for the owned modifier', async () => {
+    await getCommunityCosmetics({ ...baseInput, viewerId: 99, owned: 'owned' });
+    expect(andClauses(mocks.shopItemFindMany.mock.calls[0][0].where)).toContainEqual({
+      cosmetic: { UserCosmetic: { some: { userId: 99 } } },
+    });
+  });
+
+  it('ignores viewer-scoped filters for anonymous callers', async () => {
+    await getCommunityCosmetics({ ...baseInput, wishlisted: true, owned: 'notOwned' });
+    const { where } = mocks.shopItemFindMany.mock.calls[0][0];
+    expect(where.wishlists).toBeUndefined();
+    expect(
+      andClauses(where).some((clause) => JSON.stringify(clause).includes('UserCosmetic'))
+    ).toBe(false);
   });
 });

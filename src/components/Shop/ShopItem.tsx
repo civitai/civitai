@@ -27,6 +27,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
+import { stickerPurchaseTerms } from '~/components/Sticker/sticker.util';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDomainColor } from '~/hooks/useDomainColor';
@@ -84,6 +85,9 @@ export const ShopItem = ({
     lastViewed &&
     sectionItemCreatedAt &&
     dayjs(sectionItemCreatedAt).isAfter(dayjs(lastViewed));
+
+  const stickerTerms =
+    cosmetic.type === CosmeticType.Sticker ? stickerPurchaseTerms(cosmetic.data) : null;
 
   return (
     <Paper className={clsx(classes.card, isNew && classes.newItem)}>
@@ -206,6 +210,12 @@ export const ShopItem = ({
                 className={clsx('!px-0', classes.price)}
               />
             </div>
+            {stickerTerms && (
+              <Text size="xs" c="dimmed">
+                {stickerTerms.usesLabel}
+                {stickerTerms.extraUseLabel ? ` · ${stickerTerms.extraUseLabel}` : ''}
+              </Text>
+            )}
             {creator?.username && (
               <Text size="xs" c="dimmed">
                 by{' '}

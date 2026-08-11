@@ -1,6 +1,31 @@
 import { useMemo } from 'react';
 import { useQueryUserCosmetics } from '~/components/Cosmetics/cosmetics.util';
+import {
+  stickerPricePerUseFromCosmeticData,
+  stickerUsesFromCosmeticData,
+} from '~/shared/utils/sticker-token';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+
+/**
+ * What buying a sticker gets you, as shop copy: the balance included and what a
+ * further use costs after that.
+ *
+ * A sticker with no `uses` really is unlimited — the purchase grant sets
+ * `remaining` from that same field — so it gets a statement rather than a blank.
+ * A missing `pricePerUse` is different: the sticker sells no top-ups at all, and
+ * there is no honest number to show.
+ */
+export function stickerPurchaseTerms(data: unknown) {
+  const uses = stickerUsesFromCosmeticData(data);
+  const pricePerUse = stickerPricePerUseFromCosmeticData(data);
+
+  return {
+    usesLabel: uses === null ? 'Unlimited uses' : `${numberWithCommas(uses)} uses included`,
+    extraUseLabel:
+      pricePerUse === null ? null : `${numberWithCommas(pricePerUse)} Buzz per extra use`,
+  };
+}
 
 /**
  * A sticker the author may insert, with the balance to show beside it.

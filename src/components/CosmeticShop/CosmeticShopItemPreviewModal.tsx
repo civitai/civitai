@@ -43,6 +43,7 @@ import { IconAlertTriangleFilled } from '@tabler/icons-react';
 import dayjs from '~/shared/utils/dayjs';
 import { NotificationToggle } from '~/components/Notifications/NotificationToggle';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
+import { stickerPurchaseTerms } from '~/components/Sticker/sticker.util';
 import { stickerSurfaceLabels } from '~/shared/utils/sticker-token';
 
 const { charged, free } = stickerSurfaceLabels();
@@ -172,6 +173,8 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
     shopItem.unitAmount,
     resaleShare ?? 0
   );
+  const stickerTerms =
+    cosmetic.type === CosmeticType.Sticker ? stickerPurchaseTerms(cosmetic.data) : null;
 
   const handlePurchaseShopItem = async () => {
     try {
@@ -229,6 +232,12 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
             <Text className="text-black dark:text-white" mt="auto" fw="bold" size="lg">
               {shopItem.title}
             </Text>
+            {stickerTerms && (
+              <Text size="sm" c="dimmed">
+                {stickerTerms.usesLabel}
+                {stickerTerms.extraUseLabel ? ` · ${stickerTerms.extraUseLabel}` : ''}
+              </Text>
+            )}
             {isLoading && (
               <Center>
                 <Loader type="bars" />

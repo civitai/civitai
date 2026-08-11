@@ -25,7 +25,8 @@ import {
 } from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
 import { getBlockedPairIds } from '~/server/services/user-preferences.service';
-import { NotificationCategory } from '~/server/common/enums';
+import { CosmeticShopSort, NotificationCategory } from '~/server/common/enums';
+import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -55,6 +56,9 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 // and badge. Only used by the creator storefront.
 const creatorStorefrontItemSelect = Prisma.validator<Prisma.CosmeticShopItemSelect>()({
   ...cosmeticShopItemSelect,
+  // Approval time, so a storefront's "Newest" means the same thing the
+  // community hub's does rather than falling back to submission order.
+  reviewedAt: true,
   cosmetic: {
     select: {
       ...simpleCosmeticSelect,
@@ -982,60 +986,122 @@ export const getCreatorShop = async ({
   };
 };
 
-// Site-wide hub feed of every published community cosmetic (creator-submitted
-// items from public shops), newest first. Powers the /shop marketplace section.
+/**
+ * Order for the community hub.
+ *
+ * "Newest" reads `reviewedAt` (when a moderator approved the item), not
+ * `createdAt`/`id` (when the creator submitted it) — otherwise an item that sat
+ * a week in the review queue would publish already buried under everything
+ * submitted while it waited. `id` breaks every tie so a page boundary can't
+ * drop or repeat a row. Rows with no `reviewedAt` (published without ever
+ * passing through review) sort as the oldest in both directions.
+ */
+const communityCosmeticsOrderBy = (
+  sort: CosmeticShopSort
+): Prisma.CosmeticShopItemOrderByWithRelationInput[] => {
+  switch (sort) {
+    case CosmeticShopSort.Oldest:
+      return [{ reviewedAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }];
+    case CosmeticShopSort.PriceLowToHigh:
+      return [{ unitAmount: 'asc' }, { id: 'desc' }];
+    case CosmeticShopSort.PriceHighToLow:
+      return [{ unitAmount: 'desc' }, { id: 'desc' }];
+    case CosmeticShopSort.MostPopular:
+      // The purchase rows, not `meta.purchases` — a JSON counter can't be
+      // ordered on, and the rows are what a refund/takedown actually removes.
+      return [{ purchases: { _count: 'desc' } }, { id: 'desc' }];
+    case CosmeticShopSort.Name:
+      return [{ title: 'asc' }, { id: 'desc' }];
+    case CosmeticShopSort.Newest:
+    default:
+      return [{ reviewedAt: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }];
+  }
+};
+
+// Site-wide hub of every published community cosmetic (creator-submitted items
+// from public shops). Powers the /shop marketplace section.
 export const getCommunityCosmetics = async ({
   viewerId,
   limit,
-  cursor,
+  page,
   cosmeticTypes,
+  sort,
+  wishlisted,
+  owned,
+  limited,
+  acceptsBlueBuzz,
   stickersEnabled,
 }: GetCommunityCosmeticsInput & { viewerId?: number; stickersEnabled?: boolean }) => {
   const now = new Date();
   // A block between viewer and a cosmetic's creator (either direction) hides
   // that creator's items from the feed.
   const blockedPairIds = viewerId ? await getBlockedPairIds(viewerId) : [];
-  const raw = await dbRead.cosmeticShopItem.findMany({
-    where: {
-      status: CosmeticShopItemStatus.Published,
-      // Discovery surface that leads straight to checkout — a delisted item
-      // here would be a dead end.
-      listed: true,
-      // Creator-submitted only (official cosmetics have no creator). Blocks
-      // filter both the original creator and the lister — they can differ on
-      // cross-listed items.
-      cosmetic: {
-        createdById: {
-          not: null,
-          ...(blockedPairIds.length ? { notIn: blockedPairIds } : {}),
-        },
-        // Merged into one `type` filter: a second `type` key would silently
-        // overwrite the caller's requested types.
-        ...(cosmeticTypes?.length || !stickersEnabled
-          ? {
-              type: {
-                ...(cosmeticTypes?.length ? { in: cosmeticTypes } : {}),
-                ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
-              },
-            }
-          : {}),
+  const { take, skip } = getPagination(limit, page);
+  const where: Prisma.CosmeticShopItemWhereInput = {
+    status: CosmeticShopItemStatus.Published,
+    // Discovery surface that leads straight to checkout — a delisted item
+    // here would be a dead end.
+    listed: true,
+    // Creator-submitted only (official cosmetics have no creator). Blocks
+    // filter both the original creator and the lister — they can differ on
+    // cross-listed items.
+    cosmetic: {
+      createdById: {
+        not: null,
+        ...(blockedPairIds.length ? { notIn: blockedPairIds } : {}),
       },
-      // Only items whose owner's shop is public.
-      addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
-      ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
-      AND: [
-        { OR: [{ availableFrom: null }, { availableFrom: { lte: now } }] },
-        { OR: [{ availableTo: null }, { availableTo: { gte: now } }] },
-      ],
+      // Merged into one `type` filter: a second `type` key would silently
+      // overwrite the caller's requested types.
+      ...(cosmeticTypes?.length || !stickersEnabled
+        ? {
+            type: {
+              ...(cosmeticTypes?.length ? { in: cosmeticTypes } : {}),
+              ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
+            },
+          }
+        : {}),
     },
-    take: limit + 1,
-    ...(cursor ? { cursor: { id: cursor } } : {}),
-    orderBy: { id: 'desc' },
-    // addedById lets the client attribute the purchase to the owner's shop.
-    select: { ...creatorStorefrontItemSelect, addedById: true },
-  });
-  let nextCursor: number | undefined;
-  if (raw.length > limit) nextCursor = raw.pop()?.id;
+    // Only items whose owner's shop is public.
+    addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
+    ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
+    ...(viewerId && wishlisted ? { wishlists: { some: { userId: viewerId } } } : {}),
+    ...(acceptsBlueBuzz ? { meta: { path: ['acceptsBlueBuzz'], equals: true } } : {}),
+    AND: [
+      { OR: [{ availableFrom: null }, { availableFrom: { lte: now } }] },
+      { OR: [{ availableTo: null }, { availableTo: { gte: now } }] },
+      ...(limited
+        ? [{ OR: [{ availableQuantity: { not: null } }, { availableTo: { not: null } }] }]
+        : []),
+      // Content decorations stay in a "not owned" view: owning one doesn't stop
+      // you buying another, which is also why the card never marks them owned.
+      // `browseShopItems` applies the same rule to the client-paged surfaces.
+      ...(viewerId && owned === 'notOwned'
+        ? [
+            {
+              OR: [
+                { cosmetic: { type: CosmeticType.ContentDecoration } },
+                { cosmetic: { UserCosmetic: { none: { userId: viewerId } } } },
+              ],
+            },
+          ]
+        : []),
+      ...(viewerId && owned === 'owned'
+        ? [{ cosmetic: { UserCosmetic: { some: { userId: viewerId } } } }]
+        : []),
+    ],
+  };
+
+  const [raw, count] = await Promise.all([
+    dbRead.cosmeticShopItem.findMany({
+      where,
+      take,
+      skip,
+      orderBy: communityCosmeticsOrderBy(sort),
+      // addedById lets the client attribute the purchase to the owner's shop.
+      select: { ...creatorStorefrontItemSelect, addedById: true },
+    }),
+    dbRead.cosmeticShopItem.count({ where }),
+  ]);
   // Same meta sanitation as the storefront.
   const items = raw.map((item) => ({
     ...item,
@@ -1044,7 +1110,7 @@ export const getCommunityCosmetics = async ({
       acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
     },
   }));
-  return { items, nextCursor };
+  return getPagingData({ items, count }, limit, page);
 };
 
 // Early Access download prices for the shop's Models section, keyed by model

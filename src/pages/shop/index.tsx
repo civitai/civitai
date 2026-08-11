@@ -11,7 +11,7 @@ import {
   SimpleGrid,
 } from '@mantine/core';
 import { IconBell, IconBellOff, IconPencilMinus } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -22,15 +22,14 @@ import {
   useShopLastViewed,
 } from '~/components/CosmeticShop/cosmetic-shop.util';
 import type { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';
-import { CIVITAI_SHOP_ATTRIBUTION } from '~/server/schema/cosmetic-shop.schema';
+import { COSMETIC_SHOP_DEFAULT_PAGE_SIZE } from '~/shared/constants/cosmetic-shop.constants';
 import type { ShopFilters } from '~/components/CosmeticShop/ShopFiltersDropdown';
-import { ShopFiltersDropdown } from '~/components/CosmeticShop/ShopFiltersDropdown';
 import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import { useEffect } from 'react';
 import { NotificationToggle } from '~/components/Notifications/NotificationToggle';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { ShopItem } from '~/components/Shop/ShopItem';
-import { ShopSection } from '~/components/Shop/ShopSection';
+import { OfficialShopSection } from '~/components/Shop/OfficialShopSection';
+import { ShopBrowseControls } from '~/components/Shop/ShopBrowseControls';
 import Image from 'next/image';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
 
@@ -40,6 +39,8 @@ import clsx from 'clsx';
 import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-profile-edit';
 import { useQueryUserCosmetics } from '~/components/Cosmetics/cosmetics.util';
 import { CommunityCosmeticsSection } from '~/components/CosmeticShop/CommunityCosmeticsSection';
+import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
+import { CosmeticShopSort } from '~/server/common/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const merchSections = {
@@ -78,9 +79,12 @@ export default function CosmeticShopMain() {
   const [filters, setFilters] = useState<ShopFilters>({
     ...(query ?? {}),
   });
+  const [sort, setSort] = useState(CosmeticShopSort.Newest);
+  const [pageSize, setPageSize] = useState<number>(COSMETIC_SHOP_DEFAULT_PAGE_SIZE);
   const [debouncedFilters] = useDebouncedValue({ cosmeticTypes: filters.cosmeticTypes }, 500);
   const { cosmeticShopSections, isLoading } = useQueryShop(debouncedFilters);
-  const { data: userCosmetics, isFetching: loadingOwnedCosmetics } = useQueryUserCosmetics();
+  const { isFetching: loadingOwnedCosmetics } = useQueryUserCosmetics();
+  const ownedCosmeticIds = useOwnedCosmeticIds();
   const { wishlistedIds } = useQueryWishlistedShopItems();
   const features = useFeatureFlags();
 
@@ -96,10 +100,6 @@ export default function CosmeticShopMain() {
       updateLastViewed();
     }
   }, [isFetched]);
-
-  const allUserCosmetics = useMemo(() => {
-    return Object.values(userCosmetics ?? {}).flat();
-  }, [userCosmetics]);
 
   return (
     <>
@@ -149,7 +149,14 @@ export default function CosmeticShopMain() {
             </Text>
           </Stack>
           <div className="ml-auto">
-            <ShopFiltersDropdown filters={filters} setFilters={setFilters} showWishlist />
+            <ShopBrowseControls
+              sort={sort}
+              onSortChange={setSort}
+              pageSize={pageSize}
+              onPageSizeChange={setPageSize}
+              filters={filters}
+              setFilters={setFilters}
+            />
           </div>
           <div className="flex flex-col gap-6">
             {isLoading || loadingOwnedCosmetics ? (
@@ -158,8 +165,8 @@ export default function CosmeticShopMain() {
               </Center>
             ) : cosmeticShopSections?.length > 0 ? (
               cosmeticShopSections.map((section, index) => {
-                const { image, items } = section;
                 const meta = section.meta as CosmeticShopSectionMeta;
+                const className = clsx(index === 0 ? 'order-1' : 'order-3');
 
                 if (meta.communityHub) {
                   return features.creatorShop ? (
@@ -167,65 +174,27 @@ export default function CosmeticShopMain() {
                       key={section.id}
                       title={section.title}
                       description={section.description}
-                      imageUrl={image?.url}
+                      imageUrl={section.image?.url}
                       hideTitle={meta.hideTitle}
-                      className={clsx(index === 0 ? 'order-1' : 'order-3')}
+                      className={className}
+                      filters={filters}
+                      sort={sort}
+                      pageSize={pageSize}
                     />
                   ) : null;
                 }
 
-                let filteredItems = items;
-                if (filters.modifier) {
-                  if (filters.modifier === 'owned') {
-                    filteredItems = items.filter((item) =>
-                      allUserCosmetics.some((cosmetic) => cosmetic.id === item.shopItem.cosmeticId)
-                    );
-                  } else if (filters.modifier === 'notOwned') {
-                    filteredItems = items.filter(
-                      (item) =>
-                        !allUserCosmetics.some(
-                          (cosmetic) => cosmetic.id === item.shopItem.cosmeticId
-                        )
-                    );
-                  }
-                }
-                if (filters.wishlisted)
-                  filteredItems = filteredItems.filter((item) =>
-                    wishlistedIds.has(item.shopItem.id)
-                  );
-
-                if (!filteredItems.length) return null;
-
                 return (
-                  <ShopSection
+                  <OfficialShopSection
                     key={section.id}
-                    title={section.title}
-                    description={section.description}
-                    imageUrl={image?.url}
-                    hideTitle={meta.hideTitle}
-                    className={clsx(index === 0 ? 'order-1' : `order-3`)}
-                  >
-                    <ShopSection.Items>
-                      {filteredItems.map((item) => {
-                        const { shopItem } = item;
-                        const alreadyOwned = allUserCosmetics.some(
-                          (cosmetic) => cosmetic.id === shopItem.cosmeticId
-                        );
-
-                        return (
-                          <ShopItem
-                            key={shopItem.id}
-                            item={shopItem}
-                            sectionItemCreatedAt={item.createdAt}
-                            alreadyOwned={alreadyOwned}
-                            wishlisted={wishlistedIds.has(shopItem.id)}
-                            creator={shopItem.cosmetic.creator}
-                            viaShopUserId={CIVITAI_SHOP_ATTRIBUTION}
-                          />
-                        );
-                      })}
-                    </ShopSection.Items>
-                  </ShopSection>
+                    section={section}
+                    filters={filters}
+                    sort={sort}
+                    pageSize={pageSize}
+                    ownedCosmeticIds={ownedCosmeticIds}
+                    wishlistedIds={wishlistedIds}
+                    className={className}
+                  />
                 );
               })
             ) : (
