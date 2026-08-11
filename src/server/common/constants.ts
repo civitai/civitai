@@ -444,6 +444,32 @@ export const constants = {
     maxCollaborators: 15,
   },
 
+  /**
+   * App Listing COLLABORATORS (editor seats on an App Block).
+   *
+   * Mirrors `entityCollaborators` deliberately, so the two collaborator surfaces
+   * stay comparable. The cap counts PENDING + ACCEPTED seats (a rejected seat is
+   * inert and does not occupy one) — see `app-collaborator.service.ts`.
+   */
+  appCollaborators: {
+    /** Max pending+accepted editor seats per app. */
+    maxCollaborators: 15,
+    /**
+     * Minimum gap between re-invite NOTIFICATIONS to the same (app, user).
+     *
+     * 🔴 The `EntityCollaborator` sibling's equivalent throttle is INVERTED —
+     * `entity-collaborator.service.ts` compares `lastMessageSentAt >= (now - 1d)`
+     * where the semantically identical `sendMessagesToCollaborators` correctly uses
+     * `lte`. As written it re-notifies precisely when it should stay silent. This
+     * one is written the correct way round (`lastNotifiedAt <= now - window`), and
+     * `app-collaborator.service.test.ts` pins BOTH sides of the boundary so the bug
+     * cannot be re-imported by copy-paste.
+     */
+    inviteNotifyThrottleHours: 24,
+    /** An unaccepted ownership transfer stops being acceptable after this. */
+    transferExpiryDays: 7,
+  },
+
   autoLabel: {
     labelTypes: ['tag', 'caption'] as const,
   },

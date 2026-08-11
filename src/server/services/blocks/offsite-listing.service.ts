@@ -840,7 +840,31 @@ const editableListingSelect = {
   coverId: true,
 } as const;
 
-/** Load a listing and assert the caller is its OWNER (strict — no mod override on the author edit path). */
+/**
+ * True when `userId` holds an ACCEPTED collaborator seat reachable from this listing.
+ *
+ * Dynamic import: `app-access.service` is small and IO-only, but keeping the import
+ * inside the body matches this file's existing discipline for cross-service reach
+ * (`beginListingRevision`'s import of the asset service) and keeps the module graph of
+ * a plain listing read unchanged.
+ */
+async function isAcceptedListingEditor(listingId: string, userId: number): Promise<boolean> {
+  const { resolveListingAccess } = await import('~/server/services/blocks/app-access.service');
+  const access = await resolveListingAccess(listingId, userId);
+  return access?.role === 'editor';
+}
+
+/**
+ * Load a listing and assert the caller may edit it: its OWNER or an ACCEPTED
+ * collaborator on the backing AppBlock.
+ *
+ * 🔴 STILL NO MODERATOR OVERRIDE — unchanged, and deliberately different from
+ * `app-listing-assets.service::loadOwnedListing`, which does bypass for mods. That
+ * divergence between two sibling gates PREDATES collaborators; it was surfaced by
+ * consolidating the predicate and is recorded in `app-access.call-site-ledger.test.ts`
+ * rather than quietly normalised, because "make the mod bypass consistent" is a
+ * behaviour change to the author edit path that deserves its own decision.
+ */
 async function loadOwnedEditableListing(
   listingId: string,
   userId: number
@@ -852,7 +876,7 @@ async function loadOwnedEditableListing(
   if (!listing) {
     throw new OffsiteRequestError('NOT_FOUND', `listing ${listingId} not found`);
   }
-  if (listing.userId !== userId) {
+  if (listing.userId !== userId && !(await isAcceptedListingEditor(listingId, userId))) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only edit your own listings');
   }
   return listing;
@@ -1128,7 +1152,12 @@ export async function submitListingRevision(opts: {
   if (!shadow) {
     throw new OffsiteRequestError('NOT_FOUND', `revision draft ${shadowId} not found`);
   }
-  if (shadow.userId !== userId) {
+  // Owner OR an ACCEPTED collaborator. 🔴 Note the shadow's `userId` is the PARENT
+  // OWNER's, not the editor's — `beginListingRevision` clones with
+  // `userId: parent.userId` — so an editor's own shadow reads as owned by someone
+  // else and the bare equality refused it. Submitting a new version is an explicit
+  // editor capability, so the seat check is what admits them.
+  if (shadow.userId !== userId && !(await isAcceptedListingEditor(shadowId, userId))) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only submit your own revision');
   }
   if (shadow.revisionOfId == null || !shadow.revisionOf) {
@@ -1622,7 +1651,9 @@ export async function getMyListingForApp(opts: {
       `no listing found for app ${appBlockId ?? slug ?? '(unspecified)'}`
     );
   }
-  if (listing.userId !== userId) {
+  // Owner OR an ACCEPTED collaborator on the backing AppBlock. This is the media
+  // editor's entry read; an editor who cannot reach it cannot edit anything.
+  if (listing.userId !== userId && !(await isAcceptedListingEditor(listing.id, userId))) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only manage your own listings');
   }
   // A pending revision REQUEST (not mere shadow existence) drives the "already

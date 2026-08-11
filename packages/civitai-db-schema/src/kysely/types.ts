@@ -321,6 +321,39 @@ export type AppBlockReview = {
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
 };
+export type AppCollaborator = {
+  app_block_id: string;
+  user_id: number;
+  /**
+   * Capability role. 'editor' today (content + media + submit + app-scoped
+   * analytics/earnings). Owner-only actions (managing collaborators, initiating a
+   * transfer) are NOT a role — they are reserved to the OauthClient owner.
+   */
+  role: Generated<string>;
+  /**
+   * 'pending' | 'accepted' | 'rejected'. Only 'accepted' confers capability, and
+   * only 'accepted' is ever visible publicly.
+   */
+  status: Generated<string>;
+  /**
+   * Public-byline opt-in. Immediate-apply (no mod review) — safe because this row is
+   * outside the revision copy sets (see the header). A collaborator is listed on the
+   * public listing only when status='accepted' AND displayed=true.
+   */
+  displayed: Generated<boolean>;
+  /**
+   * The OWNER who issued the invite (audit + the "invited by" chip).
+   */
+  invited_by: number;
+  /**
+   * Last time an invite NOTIFICATION was emitted for this row — the re-invite
+   * throttle key. NB: the `EntityCollaborator` sibling has an inverted throttle
+   * (`>=` where it means `<=`); this one is written correctly (see the service).
+   */
+  last_notified_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  responded_at: Timestamp | null;
+};
 export type AppDevForgejoIdentity = {
   user_id: number;
   forgejo_username: string;
@@ -440,6 +473,54 @@ export type AppListingScreenshot = {
   caption: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+};
+export type AppOwnershipEvent = {
+  id: string;
+  app_block_id: string | null;
+  /**
+   * Denormalized so the event stays self-describing after the app is gone.
+   */
+  slug: string;
+  /**
+   * invite | accept | reject | remove | leave | display | transfer_initiated |
+   * transfer_accepted | transfer_cancelled. Bounded by a CHECK in the migration.
+   */
+  action: string;
+  /**
+   * Who performed the action.
+   */
+  actor_user_id: number | null;
+  /**
+   * Who it was performed ON (the invitee / removed editor / transfer recipient).
+   */
+  target_user_id: number | null;
+  /**
+   * Structured extras (role, before/after owner, expiry, …).
+   */
+  metadata: unknown | null;
+  created_at: Generated<Timestamp>;
+};
+export type AppOwnershipTransfer = {
+  id: string;
+  app_block_id: string;
+  /**
+   * Snapshot of the owner at initiate time — re-asserted in-tx at accept, so a
+   * transfer initiated by an owner who has since lost the app cannot complete.
+   */
+  from_user_id: number;
+  to_user_id: number;
+  /**
+   * 'pending' | 'accepted' | 'cancelled' | 'rejected' | 'expired'. CHECK in the migration.
+   */
+  status: Generated<string>;
+  /**
+   * Hard expiry — an unaccepted transfer stops being acceptable after this instant.
+   * Enforced in the ACCEPT path (a read-time predicate), so no sweeper job is
+   * required for correctness; a sweeper would only tidy the rows.
+   */
+  expires_at: Timestamp;
+  created_at: Generated<Timestamp>;
+  responded_at: Timestamp | null;
 };
 export type AppReviewAgentReport = {
   id: string;
@@ -4051,6 +4132,7 @@ export type DB = {
   app_block_publish_requests: AppBlockPublishRequest;
   app_block_reviews: AppBlockReview;
   app_blocks: AppBlock;
+  app_collaborators: AppCollaborator;
   app_dev_forgejo_identity: AppDevForgejoIdentity;
   app_listing_metrics: AppListingMetric;
   app_listing_moderation_events: AppListingModerationEvent;
@@ -4059,6 +4141,8 @@ export type DB = {
   app_listing_reviews: AppListingReview;
   app_listing_screenshots: AppListingScreenshot;
   app_listings: AppListing;
+  app_ownership_events: AppOwnershipEvent;
+  app_ownership_transfers: AppOwnershipTransfer;
   app_review_agent_reports: AppReviewAgentReport;
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;

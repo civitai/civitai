@@ -65,7 +65,14 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({ auditPromptServer: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({ getUserById: vi.fn() }));
 vi.mock('~/server/db/client', () => ({
-  dbRead: { appBlock: { findUnique: vi.fn(), findFirst: vi.fn() } },
+  dbRead: {
+    appBlock: { findUnique: vi.fn(), findFirst: vi.fn() },
+    // App Listing COLLABORATORS: the widened gates consult the seat table on the
+    // NON-owner path. `safeCollaboratorQuery` deliberately swallows ONLY the
+    // missing-TABLE error, so an absent mock surfaces as a TypeError rather than
+    // being silently absorbed — which is why this fixture must declare it.
+    appCollaborator: { findFirst: vi.fn(async () => null), findMany: vi.fn(async () => []) },
+  },
   dbWrite: {},
 }));
 vi.mock('~/server/redis/client', async () => {

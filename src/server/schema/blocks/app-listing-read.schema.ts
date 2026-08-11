@@ -236,6 +236,17 @@ export type ListingDetail = {
   iconUrl: string | null;
   coverUrl: string | null;
   creator: ListingCreatorChip | null;
+  /**
+   * PUBLIC BYLINE — the app's ACCEPTED collaborators who have opted IN to display
+   * (`AppCollaborator.status = 'accepted' AND displayed = true`). Same
+   * `{id, username, image}` allowlist as `creator`.
+   *
+   * 🔴 A PENDING OR REJECTED INVITE MUST NEVER APPEAR HERE. Otherwise an owner could
+   * attach any stranger's name and avatar to their listing just by inviting them.
+   * Empty for a listing with no backing AppBlock, and empty until the manual-apply
+   * collaborator migration lands.
+   */
+  collaborators: ListingCreatorChip[];
   recommend: ListingRecommendRollup;
   reviewCount: number;
   /** Ordered gallery — screenshots whose backing Image still exists (null-image rows dropped). */

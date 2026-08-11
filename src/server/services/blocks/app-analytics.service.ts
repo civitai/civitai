@@ -232,9 +232,19 @@ export function resolveRange(input: { from?: Date; to?: Date; now?: Date }): App
 export type OwnedAppBlock = { id: string; manifest: unknown };
 
 /**
- * The app_blocks the caller owns, optionally narrowed to a single requested id.
- * Returns [] when the requested id isn't theirs (or they own nothing) — the
- * callers then fail closed to an empty result.
+ * The app_blocks the caller may see analytics for, optionally narrowed to a single
+ * requested id. Returns [] when the requested id isn't reachable by them (or they can
+ * see nothing) — the callers then fail closed to an empty result.
+ *
+ * 🔴 WIDENED FOR COLLABORATORS, and the widening is SAFE HERE for a reason that does
+ * NOT generalise to the earnings path. This function is app-scoped by construction:
+ * it resolves a permitted-id SET and `getMyAppAnalytics` filters every downstream
+ * aggregate by `appBlockId IN thatSet`. The earnings reads (`getRevenueForOwner`,
+ * `getRecentAttributionsForOwner`, `getMyApps`' groupBy) instead key on
+ * `BlockBuzzAttribution.appOwnerUserId`, which does not mention the app at all — the
+ * equivalent "widening" there would hand an editor the OWNER'S ENTIRE PORTFOLIO. Those
+ * are served by `app-collaborator-earnings.service` instead. Do not copy this pattern
+ * onto an `appOwnerUserId`-keyed query.
  *
  * The manifest rides along on this ONE query rather than a second round trip:
  * `getMyAppAnalytics` fans out per approved app row (see the note on
@@ -248,8 +258,15 @@ export async function getOwnedAppBlocks({
   ownerUserId: number;
   appBlockId?: string;
 }): Promise<OwnedAppBlock[]> {
+  const { resolveAccessibleAppBlockIds } = await import(
+    '~/server/services/blocks/app-access.service'
+  );
+  const { allIds } = await resolveAccessibleAppBlockIds(ownerUserId);
+  if (allIds.length === 0) return [];
   const owned = await dbRead.appBlock.findMany({
-    where: { app: { userId: ownerUserId } },
+    // Owner-held ids AND accepted-seat ids, resolved above. Never a bare
+    // `app: { userId }` — that would drop every collaborator's app.
+    where: { id: { in: allIds } },
     select: { id: true, manifest: true },
   });
   if (!appBlockId) return owned;
