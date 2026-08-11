@@ -222,8 +222,17 @@ export function DraftStickerLayer() {
     // The tray grows when its price line wraps, when the balances land, and when
     // the top-up panel opens — each of those moves the band under an existing
     // draft, with no pointer event to notice it by.
+    //
+    // The sticker is watched for a different reason: its image has no intrinsic
+    // size until it loads, so the first measure on a cold start runs against a
+    // near-zero height. Swapping to a taller sticker is the same problem, and
+    // the effect's deps cannot see it — `begin()` resets x, y, scale and
+    // rotation to the same defaults, so choosing a different sticker produces an
+    // identical dep tuple. Both leave a clearance sized for the wrong sticker,
+    // which is the covered rotate knob all over again.
     const tray = useStickerPlacementDraftStore.getState().tray;
     const observer = new ResizeObserver(measure);
+    observer.observe(element);
     if (tray) observer.observe(tray);
     window.addEventListener('resize', measure);
     return () => {
