@@ -394,6 +394,25 @@ function resolveGraphParamsFromImageMeta({
   return { resources, params };
 }
 
+/**
+ * Removes prompt text from image meta for `hideMeta` images. `hasMeta` only decides
+ * whether a remix button renders; it does not gate this read, which is reachable by
+ * image id from a public procedure — so the refusal has to happen here.
+ *
+ * Beyond the named fields: `comfy` carries the prompt verbatim in its text-encoder
+ * nodes, and meta is a passthrough object, so foreign tools can land prompt text
+ * under keys this file doesn't know. Non-string values under prompt-ish keys
+ * (`enablePromptEnhancer`, `promptStrength`) are settings, not prompt text.
+ */
+function stripHiddenPrompt(meta: ImageMetaProps): ImageMetaProps {
+  const { prompt: _prompt, negativePrompt: _negativePrompt, comfy: _comfy, ...rest } = meta;
+  for (const [key, value] of Object.entries(rest)) {
+    if (typeof value === 'string' && key.toLowerCase().includes('prompt'))
+      delete (rest as Record<string, unknown>)[key];
+  }
+  return rest as ImageMetaProps;
+}
+
 async function getMediaGenerationData({
   id,
   user,
@@ -414,6 +433,8 @@ async function getMediaGenerationData({
       type: true,
       url: true,
       meta: true,
+      hideMeta: true,
+      userId: true,
       height: true,
       width: true,
       createdAt: true,
@@ -431,7 +452,10 @@ async function getMediaGenerationData({
     createdAt: media.createdAt,
   };
 
-  const initialMeta = (media.meta ?? {}) as ImageMetaProps;
+  const storedMeta = (media.meta ?? {}) as ImageMetaProps;
+  const canSeeHiddenPrompt = !!user && (user.isModerator || user.id === media.userId);
+  const initialMeta =
+    media.hideMeta && !canSeeHiddenPrompt ? stripHiddenPrompt(storedMeta) : storedMeta;
   const imageResources = getMetaResources(initialMeta);
 
   await dbRead.imageResourceNew
