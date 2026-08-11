@@ -112,8 +112,13 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
             label="Submit"
             disabled={!selected || !visibility?.open || price == null}
             loading={submit.isPending}
+            // The price this render displayed travels with the submission, so
+            // the server refuses rather than charging a number the submitter
+            // never agreed to. Affordability was checked against this one too.
             onPerformTransaction={() =>
-              selected && submit.mutate({ hostImageId, imageId: selected })
+              selected != null &&
+              price != null &&
+              submit.mutate({ hostImageId, imageId: selected, expectedPrice: price })
             }
           />
         </Group>

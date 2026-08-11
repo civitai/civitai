@@ -43,8 +43,11 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
 
   const browsingLevel = useBrowsingLevelDebounced();
 
+  // Scoped server-side. Filtering the account-wide list here meant its limit
+  // truncated before the filter ran, so a busy owner saw "nothing waiting" on
+  // an image that had submissions.
   const { data: pending, isLoading: pendingLoading } =
-    trpc.placement.getPendingRemixGallerySubmissions.useQuery();
+    trpc.placement.getPendingRemixGallerySubmissions.useQuery({ hostImageId: imageId });
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.placement.getRemixGallery.useInfiniteQuery(
       { imageId, browsingLevel },
