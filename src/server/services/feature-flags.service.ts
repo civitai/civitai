@@ -301,6 +301,13 @@ const featureFlags = createFeatureFlags({
   // testers while stickers themselves open up. Required *in addition to*
   // `stickers`, so placement cannot outlive the feature it belongs to.
   stickerPlacement: { availability: ['mod'], fliptKey: 'sticker-placement' },
+  // Paying to put your own image in someone else's gallery. Its own flag rather
+  // than riding `stickerPlacement`: the two surfaces open to testers on
+  // different schedules, and unlike stickers this one places arbitrary
+  // user-uploaded content on a creator's page. Gates the mutations; it does not
+  // gate rendering a gallery that already has entries, or an owner declining
+  // what is already waiting on their work.
+  remixGallery: { availability: ['mod'], fliptKey: 'remix-gallery' },
   // Gates BUILDING a pack, seeing packs in shops, and buying one. Like
   // `stickers` it does not gate what a buyer already owns: turning it off must
   // not strip cosmetics people paid for, only stop new packs being listed,

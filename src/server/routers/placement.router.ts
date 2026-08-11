@@ -1,16 +1,22 @@
 import {
+  actOnRemixGallerySubmissionSchema,
   actOnStickerPlacementsSchema,
   createStickerPlacementSchema,
   getPlacementSpaceRowSchema,
   getPlacementSpaceSchema,
   countPendingPlacementsFromSchema,
   getPlacementSettlementStatesSchema,
+  getRemixGallerySchema,
+  getRemixGalleryVisibilitySchema,
   getStickerPlacementDetailSchema,
   getStickerPlacementsSchema,
   placementPriceRangeSchema,
   placementSpaceSchema,
   placerSchema,
   removePlacementSchema,
+  retractRemixGallerySubmissionSchema,
+  setRemixGalleryPinsSchema,
+  submitToRemixGallerySchema,
   suspendPlacerSchema,
 } from '~/server/schema/placement.schema';
 import { placementPriceRange } from '~/server/services/placement.service';
@@ -38,8 +44,19 @@ import {
   getStickerPlacementCounts,
   getStickerPlacements,
 } from '~/server/services/sticker-placement.service';
+import {
+  actOnRemixGallerySubmission,
+  createRemixGallerySubmission,
+  getMyRemixGallerySubmissions,
+  getPendingRemixGallerySubmissions,
+  getRemixGallery,
+  getRemixGalleryVisibility,
+  retractRemixGallerySubmission,
+  setRemixGalleryPins,
+} from '~/server/services/remix-gallery.service';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { Context } from '~/server/createContext';
 
 /**
@@ -59,6 +76,31 @@ function assertPlacementEnabled(ctx: Context) {
   if (!ctx.features.stickers || !ctx.features.stickerPlacement)
     throw throwAuthorizationError('placement: sticker placement is not available yet');
 }
+
+/**
+ * The gallery's own gate. Not `assertPlacementEnabled`: that one requires the
+ * sticker flags, and the two surfaces open on different schedules.
+ *
+ * Applied to submission and pinning only. An owner acting on what is already
+ * waiting on their content is deliberately outside it, for the same reason
+ * `actOnStickers` is — turning the flag off must not trap a creator with pending
+ * submissions and no way to answer them.
+ */
+function assertRemixGalleryEnabled(ctx: Context) {
+  if (!ctx.features.remixGallery)
+    throw throwAuthorizationError('remix gallery: this is not available yet');
+}
+
+/**
+ * What the viewer may see, with the SFW domain applied.
+ *
+ * The level itself is client-supplied, as it is for every image listing. The
+ * clamp is not a second opinion about the viewer's preference — it is the
+ * domain's rule, and a gallery shows content the host creator did not choose,
+ * so it cannot inherit the host image's own admissibility.
+ */
+const viewerBrowsingLevel = (ctx: Context, requested: number) =>
+  ctx.features.isGreen ? requested & sfwBrowsingLevelsFlag : requested;
 
 export const placementRouter = router({
   getSpace: publicProcedure
@@ -220,4 +262,81 @@ export const placementRouter = router({
     .query(({ input, ctx }) =>
       countPendingPlacementsFrom({ ownerId: ctx.user.id, placerId: input.userId })
     ),
+
+  // --- Remix gallery -------------------------------------------------------
+  //
+  // Space settings (on/off, price, content rule) deliberately have no endpoints
+  // of their own: they go through `setSpace` / `getMySpaces` / `getPriceRange`
+  // with `surface: 'remixGallery'`. A second way to write a space is a second
+  // set of rules to keep correct.
+
+  getRemixGallery: publicProcedure.input(getRemixGallerySchema).query(({ input, ctx }) =>
+    getRemixGallery({
+      hostImageId: input.imageId,
+      browsingLevel: viewerBrowsingLevel(ctx, input.browsingLevel),
+      cursor: input.cursor,
+      limit: input.limit,
+      // Carried through so hydration applies the viewer's blocks and hidden
+      // preferences — a gallery is other people's content on someone else's
+      // page, so it is exactly where a block should still bite.
+      user: ctx.user ?? undefined,
+    })
+  ),
+
+  // Whether to draw the card at all, and at what price. Its own query because
+  // the answer is needed on every image detail view while the gallery contents
+  // are needed only where one exists.
+  getRemixGalleryVisibility: publicProcedure
+    .input(getRemixGalleryVisibilitySchema)
+    .query(({ input, ctx }) =>
+      getRemixGalleryVisibility({
+        hostImageId: input.imageId,
+        browsingLevel: viewerBrowsingLevel(ctx, input.browsingLevel),
+      })
+    ),
+
+  submitToRemixGallery: protectedProcedure
+    .input(submitToRemixGallerySchema)
+    .mutation(({ input, ctx }) => {
+      assertRemixGalleryEnabled(ctx);
+      return createRemixGallerySubmission({ ...input, placerId: ctx.user.id });
+    }),
+
+  /**
+   * Not flag-gated, for the same reason `actOnStickers` isn't: turning the flag
+   * off must not leave a creator holding submissions on their own work with no
+   * way to decline them. Ownership is still enforced in the service.
+   */
+  actOnRemixGallerySubmission: protectedProcedure
+    .input(actOnRemixGallerySubmissionSchema)
+    .mutation(({ input, ctx }) =>
+      actOnRemixGallerySubmission({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
+
+  // Also ungated: a submitter must be able to get their Buzz back out of escrow
+  // whatever the flag says.
+  retractRemixGallerySubmission: protectedProcedure
+    .input(retractRemixGallerySubmissionSchema)
+    .mutation(({ input, ctx }) =>
+      retractRemixGallerySubmission({ placementId: input.placementId, placerId: ctx.user.id })
+    ),
+
+  setRemixGalleryPins: protectedProcedure
+    .input(setRemixGalleryPinsSchema)
+    .mutation(({ input, ctx }) => {
+      assertRemixGalleryEnabled(ctx);
+      return setRemixGalleryPins({ ...input, ownerId: ctx.user.id });
+    }),
+
+  getPendingRemixGallerySubmissions: protectedProcedure.query(({ ctx }) =>
+    getPendingRemixGallerySubmissions({ ownerId: ctx.user.id })
+  ),
+
+  getMyRemixGallerySubmissions: protectedProcedure.query(({ ctx }) =>
+    getMyRemixGallerySubmissions({ placerId: ctx.user.id })
+  ),
 });
