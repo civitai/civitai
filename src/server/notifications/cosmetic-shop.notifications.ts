@@ -48,6 +48,18 @@ export const cosmeticShopNotifications = createNotificationProcessor({
       url: details.username ? `/user/${details.username as string}/shop/manage` : '/',
     }),
   },
+  // Event-driven (created in endResaleListings) — the original creator withdrew
+  // an item you were reselling, so your listing of it is gone.
+  'creator-shop-resale-ended': {
+    displayName: 'Creator Shop: An item you resell was withdrawn',
+    category: NotificationCategory.System,
+    prepareMessage: ({ details }) => ({
+      message: `"${
+        details.title as string
+      }" is no longer for sale, so it's been removed from your shop. You can list it again if its creator brings it back.`,
+      url: details.username ? `/user/${details.username as string}/shop/manage` : '/shop',
+    }),
+  },
   // Event-driven (created in takedownCosmeticShopItem).
   'creator-shop-item-taken-down': {
     displayName: 'Creator Shop: Cosmetic removed',

@@ -167,6 +167,7 @@ describe('submitCreatorShopPackSchema', () => {
     price: 6200,
     imageUrl: 'abc-123',
     rightsAffirmed: true,
+    quotedFee: 1000,
   };
 
   it('accepts a well-formed pack', () => {

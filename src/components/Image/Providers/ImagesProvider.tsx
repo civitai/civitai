@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo, useRef } from 'react';
+import { StickerPlacementBatchProvider } from '~/components/Sticker/StickerPlacementBatchProvider';
 import type { ImageGetInfinite } from '~/types/router';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { JudgingCategory } from '~/server/games/daily-challenge/daily-challenge-scoring';
@@ -59,5 +60,14 @@ export function ImagesProvider({
     [hideReactionCount, hideReactions, collectionId, judgeInfo, judgingCategories]
   );
 
-  return <ImagesContext.Provider value={state}>{children}</ImagesContext.Provider>;
+  // Not from `imagesRef`: the ref exists to keep `getImages` stable across
+  // renders, and reading it here would leave the batch fetching whatever the
+  // first render happened to see.
+  const imageIds = useMemo(() => (images ?? []).map((image) => image.id), [images]);
+
+  return (
+    <ImagesContext.Provider value={state}>
+      <StickerPlacementBatchProvider imageIds={imageIds}>{children}</StickerPlacementBatchProvider>
+    </ImagesContext.Provider>
+  );
 }

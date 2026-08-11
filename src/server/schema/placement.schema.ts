@@ -97,3 +97,5 @@ export const suspendPlacerSchema = z.object({
 });
 
 export const placerSchema = z.object({ userId: z.number().int().positive() });
+
+export const removePlacementSchema = z.object({ placementId: z.number().int().positive() });

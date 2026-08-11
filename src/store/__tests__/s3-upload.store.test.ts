@@ -17,7 +17,29 @@ import { UploadType } from '~/server/common/enums';
 
 const CHUNK = 1024;
 
+/**
+ * The identity `/api/upload` hands back and that every later call to
+ * `/api/upload/{sign-part,complete,abort}` has to echo. Kept in one place so an
+ * abort assertion checks the identity the server actually issued rather than a
+ * literal retyped in the test.
+ */
+const UPLOAD_IDENTITY = {
+  bucket: 'civitai-modelfiles',
+  key: 'model/42/x.safetensors',
+  uploadId: 'upload-1',
+  backend: 'b2',
+};
+
 type PartResponse = { status: number; etag?: string; retryAfter?: string };
+
+/** Body shape `POST /api/upload/abort` is called with. */
+type AbortBody = {
+  bucket: string;
+  key: string;
+  type: string;
+  uploadId: string;
+  backend: string;
+};
 
 let partHandler: (url: string, partNumber: number) => PartResponse;
 let completeStatus: number;
@@ -26,6 +48,13 @@ let completeStatusQueue: number[];
 let signPartStatus: number;
 let signedUrls: string[];
 let completeCalls: number;
+let abortCalls: AbortBody[];
+/** Simulates the abort request itself failing at the network layer. */
+let abortShouldReject: boolean;
+/** Fires when `/api/upload/complete` is requested, to mutate state mid-flight. */
+let onCompleteRequest: (() => void) | null;
+/** Fires when `/api/upload/abort` is requested, so a test can order it against other effects. */
+let onAbortRequest: (() => void) | null;
 
 class FakeXHR {
   readyState = 0;
@@ -93,10 +122,7 @@ function makeFetch(partCount: number) {
         ok: true,
         status: 200,
         json: async () => ({
-          bucket: 'civitai-modelfiles',
-          key: 'model/42/x.safetensors',
-          uploadId: 'upload-1',
-          backend: 'b2',
+          ...UPLOAD_IDENTITY,
           chunkSize: CHUNK,
           urls: Array.from({ length: partCount }, (_, i) => ({
             url: partUrl(i + 1),
@@ -117,8 +143,17 @@ function makeFetch(partCount: number) {
     }
     if (url === '/api/upload/complete') {
       completeCalls++;
+      onCompleteRequest?.();
       const status = completeStatusQueue.shift() ?? completeStatus;
       return { ok: status === 200, status, json: async () => null };
+    }
+    if (url === '/api/upload/abort') {
+      abortCalls.push(JSON.parse(init?.body ?? '{}') as AbortBody);
+      onAbortRequest?.();
+      // The store fire-and-forgets this response, so only a rejected request can
+      // surface as a throw — which is what `abortShouldReject` reproduces.
+      if (abortShouldReject) throw new TypeError('Failed to fetch');
+      return { ok: true, status: 200, json: async () => ({}) };
     }
     return { ok: true, status: 200, json: async () => null };
   });
@@ -135,6 +170,10 @@ beforeEach(() => {
   signPartStatus = 200;
   signedUrls = [];
   completeCalls = 0;
+  abortCalls = [];
+  abortShouldReject = false;
+  onCompleteRequest = null;
+  onAbortRequest = null;
   partHandler = () => ({ status: 200, etag: 'etag' });
   vi.stubGlobal('XMLHttpRequest', FakeXHR);
   vi.stubGlobal('requestAnimationFrame', (cb: () => void) => setTimeout(cb, 0));
@@ -250,5 +289,190 @@ describe('useS3UploadStore.upload', () => {
     expect(completeCalls).toBe(1);
     expect(result).toBeUndefined();
     expect(useS3UploadStore.getState().items[0].status).toBe('error');
+  });
+});
+
+/**
+ * Every give-up path that runs after the server has issued an upload id owes it a
+ * teardown. Without one the multipart session stays open forever — nothing else
+ * ever closes it — and the parts already transferred keep occupying storage with
+ * no way left to finalize them.
+ *
+ * The part-failure path always did this. Its sibling, the failed-completion path,
+ * returned without aborting, so every failed completion leaked one session. These
+ * assert the abort is actually issued, and issued for the right upload: a check
+ * that only looked at the returned value or the row status passes with the leak
+ * fully intact.
+ */
+describe('useS3UploadStore.upload multipart teardown', () => {
+  const expectedAbort = { ...UPLOAD_IDENTITY, type: UploadType.Model };
+
+  it('aborts the upload when completion fails terminally', async () => {
+    vi.stubGlobal('fetch', makeFetch(1));
+    completeStatus = 503;
+
+    const result = await useS3UploadStore
+      .getState()
+      .upload({ file: makeFile(CHUNK), type: UploadType.Model });
+
+    expect(result).toBeUndefined();
+    expect(useS3UploadStore.getState().items[0].status).toBe('error');
+    expect(abortCalls).toEqual([expectedAbort]);
+  });
+
+  it('aborts the upload when completion returns a terminal 422', async () => {
+    // 422 = parts invalid/incomplete. The session is still live and holding every
+    // part that was transferred, so this is the case that leaks the most.
+    vi.stubGlobal('fetch', makeFetch(2));
+    completeStatus = 422;
+
+    await useS3UploadStore.getState().upload({ file: makeFile(CHUNK * 2), type: UploadType.Model });
+
+    expect(completeCalls).toBe(1);
+    expect(abortCalls).toEqual([expectedAbort]);
+  });
+
+  it('aborts the upload when completion returns a terminal 409', async () => {
+    // 409 = already finalized or aborted. Aborting is idempotent server-side, so
+    // this path abandons nothing by trying.
+    vi.stubGlobal('fetch', makeFetch(1));
+    completeStatus = 409;
+
+    await useS3UploadStore.getState().upload({ file: makeFile(CHUNK), type: UploadType.Model });
+
+    expect(abortCalls).toEqual([expectedAbort]);
+  });
+
+  // Invariant guard, not regression cover: this path already aborted. It pins the
+  // behaviour the completion path above was made to match.
+  it('aborts the upload when a part fails terminally', async () => {
+    vi.stubGlobal('fetch', makeFetch(2));
+    partHandler = (_url, partNumber) =>
+      partNumber === 2 ? { status: 400 } : { status: 200, etag: 'etag' };
+
+    await useS3UploadStore.getState().upload({ file: makeFile(CHUNK * 2), type: UploadType.Model });
+
+    expect(useS3UploadStore.getState().items[0].status).toBe('error');
+    expect(abortCalls).toEqual([expectedAbort]);
+  });
+
+  // Negative control: proves these assertions can distinguish abort from no-abort,
+  // rather than passing because something always records a call.
+  it('does not abort an upload that completed successfully', async () => {
+    vi.stubGlobal('fetch', makeFetch(2));
+
+    const result = await useS3UploadStore
+      .getState()
+      .upload({ file: makeFile(CHUNK * 2), type: UploadType.Model });
+
+    expect(result).toBeTruthy();
+    expect(abortCalls).toEqual([]);
+  });
+
+  it('still aborts when the row was cleared from the store before completion failed', async () => {
+    // A consumer calling clear() (or a navigation that resets the list) mid-upload
+    // makes the terminal status write throw. The teardown must not be collateral:
+    // the session is open regardless of whether a row is left to update.
+    vi.stubGlobal('fetch', makeFetch(1));
+    completeStatus = 503;
+    onCompleteRequest = () => useS3UploadStore.setState({ items: [] });
+
+    const result = await useS3UploadStore
+      .getState()
+      .upload({ file: makeFile(CHUNK), type: UploadType.Model });
+
+    expect(result).toBeUndefined();
+    expect(abortCalls).toEqual([expectedAbort]);
+  });
+
+  it('still aborts when the row was cleared from the store before a part failed', async () => {
+    vi.stubGlobal('fetch', makeFetch(1));
+    partHandler = () => {
+      useS3UploadStore.setState({ items: [] });
+      return { status: 400 };
+    };
+
+    const result = await useS3UploadStore
+      .getState()
+      .upload({ file: makeFile(CHUNK), type: UploadType.Model });
+
+    expect(result).toBeUndefined();
+    expect(abortCalls).toEqual([expectedAbort]);
+  });
+
+  it('does not let a failed abort mask the original failure', async () => {
+    // The teardown is best-effort cleanup, not part of the caller's outcome:
+    // raising here would replace the real cause with an incidental network error.
+    vi.stubGlobal('fetch', makeFetch(1));
+    completeStatus = 503;
+    abortShouldReject = true;
+
+    const result = await useS3UploadStore
+      .getState()
+      .upload({ file: makeFile(CHUNK), type: UploadType.Model });
+
+    expect(result).toBeUndefined();
+    expect(useS3UploadStore.getState().items[0].status).toBe('error');
+    expect(abortCalls).toHaveLength(1);
+  });
+});
+
+/**
+ * ORDERING: the terminal row is written BEFORE the session teardown, on both give-up
+ * paths.
+ *
+ * 🔴 This was undefended. The teardown awaits a network round-trip, so aborting first
+ * leaves the row sitting at its last-rendered percentage for that whole window — which
+ * is exactly the "reads to the user as a finished upload that silently never got
+ * added" failure the terminal write exists to prevent. Nothing in the suite pinned the
+ * order, so swapping the two statements on either branch left every test green, and a
+ * merge that reversed them would have been invisible.
+ *
+ * The timeline is recorded from two independent observers: a zustand subscription for
+ * the status write (synchronous inside `setTerminalStatus`) and the abort request
+ * arriving at the fake. Asserting the exact array also pins that exactly ONE abort is
+ * issued, so a duplicated teardown cannot pass either.
+ */
+describe('useS3UploadStore.upload teardown ordering', () => {
+  /** Records 'status' on the first terminal row write and 'abort' when the abort lands. */
+  function recordTimeline(terminal: 'error' | 'aborted') {
+    const timeline: string[] = [];
+    const unsubscribe = useS3UploadStore.subscribe((state) => {
+      if (state.items[0]?.status === terminal && !timeline.includes('status'))
+        timeline.push('status');
+    });
+    onAbortRequest = () => timeline.push('abort');
+    return { timeline, unsubscribe };
+  }
+
+  it('writes the terminal row before aborting when completion fails', async () => {
+    vi.stubGlobal('fetch', makeFetch(1));
+    completeStatus = 503;
+    const { timeline, unsubscribe } = recordTimeline('error');
+
+    try {
+      await useS3UploadStore.getState().upload({ file: makeFile(CHUNK), type: UploadType.Model });
+    } finally {
+      unsubscribe();
+    }
+
+    expect(timeline).toEqual(['status', 'abort']);
+  });
+
+  it('writes the terminal row before aborting when a part fails', async () => {
+    vi.stubGlobal('fetch', makeFetch(2));
+    partHandler = (_url, partNumber) =>
+      partNumber === 2 ? { status: 400 } : { status: 200, etag: 'etag' };
+    const { timeline, unsubscribe } = recordTimeline('error');
+
+    try {
+      await useS3UploadStore
+        .getState()
+        .upload({ file: makeFile(CHUNK * 2), type: UploadType.Model });
+    } finally {
+      unsubscribe();
+    }
+
+    expect(timeline).toEqual(['status', 'abort']);
   });
 });

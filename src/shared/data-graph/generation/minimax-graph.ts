@@ -1,8 +1,11 @@
 /**
  * MiniMax (Hailuo) Graph
  *
- * Controls for the MiniMax H3 video ecosystem (engine: `minimax-h3`).
- * Output is always native 2K, so there is no resolution control.
+ * Controls for the MiniMax H3 video ecosystem. Two variants, discriminated by
+ * the selected model version:
+ * - api (`minimax-h3`): MiniMax-hosted, native 2K, no resolution control
+ * - comfy (`minimax-h3-comfy`): local FL2VA/REF2VA weights at 720p, with LoRAs,
+ *   seed, a step count, and the turbo LoRA toggle
  *
  * Workflows:
  * - txt2vid: Text to video
@@ -10,13 +13,17 @@
  * - img2vid:ref2vid: Reference images
  */
 
+import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
+import type { ResourceData } from './common';
 import {
   aspectRatioNode,
   createCheckpointGraph,
+  createResourcesGraph,
   imagesNode,
   promptGraph,
+  seedNode,
   sliderNode,
   snippetsGraph,
   triggerWordsGraph,
@@ -29,7 +36,12 @@ import {
 
 export const minimaxVersionIds = {
   'v1.0': 3183239,
+  comfy: 3216500,
 } as const;
+
+export type MinimaxVariant = 'api' | 'comfy';
+
+const versionIdToVariant = new Map<number, MinimaxVariant>([[minimaxVersionIds.comfy, 'comfy']]);
 
 const minimaxAspectRatioList: GenerationAspectRatio[] = [
   '21:9',
@@ -42,10 +54,54 @@ const minimaxAspectRatioList: GenerationAspectRatio[] = [
 
 const minimaxAspectRatios = getAspectRatioOptions('2K', minimaxAspectRatioList);
 
+/**
+ * The comfy backend rejects dimensions that aren't multiples of 32, and the
+ * shared 720p table isn't (720 itself is 22.5 × 32). Snapping here rather than
+ * in the handler keeps the value the picker shows equal to the value sent.
+ */
+const COMFY_DIMENSION_MULTIPLE = 32;
+const snapDown = (n: number) =>
+  Math.max(
+    COMFY_DIMENSION_MULTIPLE,
+    Math.floor(n / COMFY_DIMENSION_MULTIPLE) * COMFY_DIMENSION_MULTIPLE
+  );
+
+const minimaxComfyAspectRatios = getAspectRatioOptions('720p', minimaxAspectRatioList).map(
+  (option) => ({ ...option, width: snapDown(option.width), height: snapDown(option.height) })
+);
+
 /** Reference images map to `referenceImages` on the H3 input. */
 const MAX_REFERENCE_IMAGES = 9;
 
-export const minimaxGraph = new DataGraph<{ ecosystem: string; workflow: string }, GenerationCtx>()
+/** MiniMax hosts the API variant; nothing beyond the shared controls to add. */
+const apiGraph = new DataGraph<{ ecosystem: string; workflow: string }, GenerationCtx>();
+
+const comfyGraph = new DataGraph<{ ecosystem: string; workflow: string }, GenerationCtx>()
+  .merge(createResourcesGraph())
+  .node('seed', seedNode())
+  .node(
+    'turbo',
+    () => ({
+      input: z.boolean().optional(),
+      output: z.boolean(),
+      defaultValue: false,
+    }),
+    []
+  )
+  // The turbo LoRA converges in far fewer steps, so the range follows the toggle.
+  .node(
+    'steps',
+    (ctx) =>
+      'turbo' in ctx && ctx.turbo === true
+        ? sliderNode({ min: 1, max: 20, defaultValue: 8 })
+        : sliderNode({ min: 10, max: 60, defaultValue: 30 }),
+    ['turbo']
+  );
+
+export const minimaxGraph = new DataGraph<
+  { ecosystem: string; workflow: string; model: ResourceData },
+  GenerationCtx
+>()
   .node(
     'images',
     (ctx) => {
@@ -72,22 +128,43 @@ export const minimaxGraph = new DataGraph<{ ecosystem: string; workflow: string 
   .merge(
     () =>
       createCheckpointGraph({
-        versions: { options: [{ label: 'v1.0', value: minimaxVersionIds['v1.0'] }] },
+        versions: {
+          options: [
+            { label: 'H3 (API)', value: minimaxVersionIds['v1.0'] },
+            { label: 'H3 (Comfy)', value: minimaxVersionIds.comfy },
+          ],
+        },
         defaultModelId: minimaxVersionIds['v1.0'],
       }),
     []
   )
   // Aspect ratio - for text-to-video and reference-to-video; frame workflows
-  // derive it from the source image via H3's 'adaptive' value
+  // derive it from the source image (H3's 'adaptive' value, or the comfy
+  // variant taking its dimensions from the frame).
   .node(
     'aspectRatio',
     (ctx) => ({
-      ...aspectRatioNode({ options: minimaxAspectRatios, defaultValue: '16:9' }),
+      ...aspectRatioNode({
+        options:
+          ctx.model?.id === minimaxVersionIds.comfy
+            ? minimaxComfyAspectRatios
+            : minimaxAspectRatios,
+        defaultValue: '16:9',
+      }),
       when: ctx.workflow === 'txt2vid' || ctx.workflow === 'img2vid:ref2vid',
     }),
-    ['workflow']
+    ['workflow', 'model']
   )
   .node('duration', sliderNode({ min: 4, max: 15, defaultValue: 6 }))
+  .computed(
+    'minimaxVariant',
+    (ctx) => (ctx.model?.id ? versionIdToVariant.get(ctx.model.id) : undefined) ?? 'api',
+    ['model']
+  )
+  .discriminator('minimaxVariant', {
+    api: apiGraph,
+    comfy: comfyGraph,
+  })
 
   .merge(triggerWordsGraph)
   .merge(snippetsGraph)

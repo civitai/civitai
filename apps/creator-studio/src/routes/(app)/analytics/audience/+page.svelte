@@ -180,9 +180,9 @@
         ></div>
         <div
           class="h-full"
-          style="width: {pct(
-            data.reactionSplit.nonFollowers.reactions
-          )}%; background: {chartColor(0)}"
+          style="width: {pct(data.reactionSplit.nonFollowers.reactions)}%; background: {chartColor(
+            0
+          )}"
         ></div>
       </div>
       <dl class="grid grid-cols-1 gap-2 sm:grid-cols-2">

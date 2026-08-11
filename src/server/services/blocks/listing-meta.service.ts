@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 
-import { LISTING_ASSET_MAX_DIMENSION_PX } from '~/server/schema/blocks/app-listing.schema';
+import { listingAssetTooLargeReason } from '~/server/schema/blocks/app-listing.schema';
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
 import type {
   FetchListingMetaInput,
@@ -184,11 +184,13 @@ export async function ingestListingAssetFromUrl(opts: {
 
   // Ceiling on either side — the byte cap alone doesn't bound decoded dimensions
   // (a tiny highly-compressed file can decode to an enormous canvas / bomb). Reject
-  // before the CF upload + createImage scan pipeline.
-  if (width > LISTING_ASSET_MAX_DIMENSION_PX || height > LISTING_ASSET_MAX_DIMENSION_PX) {
+  // before the CF upload + createImage scan pipeline. Shared predicate + text, so
+  // this path and the upload paths name the same bound.
+  const tooLarge = listingAssetTooLargeReason('That image', width, height);
+  if (tooLarge) {
     throw new TRPCError({
       code: 'BAD_REQUEST',
-      message: `That image is too large (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side). Try uploading a smaller one manually.`,
+      message: `${tooLarge}. Try uploading a smaller one manually.`,
     });
   }
 

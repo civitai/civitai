@@ -16,7 +16,7 @@ import {
   emitOtelLog,
   registerOtelShutdown,
 } from '@civitai/telemetry/otel-logs';
-import { setStructuredLogSink } from '~/server/logging/client';
+import { setStructuredLogSink } from '~/server/logging/structured-log-sink';
 import { trace } from '@opentelemetry/api';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { registerCpuProfiler, registerEventLoopStallProfiler } from '~/server/cpu-profiler';
@@ -58,8 +58,8 @@ registerCpuProfiler();
 // watches the pod's OWN event-loop lag and auto-arms V8's (separate-thread)
 // sampler when lag crosses a threshold — the one mechanism that captures a 504
 // wave's pin. DISARMED by default (no timer, no histogram, zero overhead) unless
-// CPU_PROFILE_LAG_TRIGGER_MS is set (suggested: 1000) on the dp-prod-api
-// deployment. See src/server/cpu-profiler.ts.
+// CPU_PROFILE_LAG_TRIGGER_MS is set (suggested: 1000) in the deployment
+// environment. See src/server/cpu-profiler.ts.
 registerEventLoopStallProfiler();
 
 // Arm Grafana Pyroscope CONTINUOUS wall+cpu profiling. DARK by default: a
@@ -90,7 +90,7 @@ registerEventLoopLongTaskDetector();
 // pinned pod (loop still flushing timers) from a truly-wedged one — retiring the
 // ~15min probe-tolerance band-aid that the httpGet `/api/live` liveness needed
 // because it's served by the same saturated loop. See liveness-heartbeat.ts and
-// the liveness history in datapacket-talos deployment-api.yaml.
+// the liveness-probe history in the deployment manifests.
 registerLivenessHeartbeat();
 
 // Spawn the off-loop event-loop wedge detector. Everything else that watches the
@@ -111,9 +111,9 @@ registerEventLoopWatchdog();
 // loop thread → pin → 504/502/499 on every rollout. The warmer self-requests
 // the hot routes over localhost during startup and flips /api/ready's warm gate
 // only once warm (fail-open). It is OPT-IN via WARMUP_ENABLED (default FALSE —
-// runs ONLY when WARMUP_ENABLED='true', set on the dp-prod SSR/API/heavy pools;
-// elsewhere it no-ops + flips warm immediately). It self-imports lazily so the
-// fetch/route code isn't pulled into the boot path needlessly.
+// runs ONLY when WARMUP_ENABLED='true', set on the production request-serving
+// workloads; elsewhere it no-ops + flips warm immediately). It self-imports
+// lazily so the fetch/route code isn't pulled into the boot path needlessly.
 //
 // CRITICAL: do NOT await this. register() must return so Next can start the
 // HTTP listener — the warmer needs that listener up to self-request, so
@@ -131,6 +131,15 @@ void import('~/server/warmup')
 // module is reachable from the client entry point — importing the bridge there bundles
 // prom-client for the browser and fails the build. This file only ever runs on the
 // server, so it is the correct place for the edge. See the note in that module.
+//
+// 🔴 This call reaches every log call site ONLY because the sink object it mutates lives
+// on `globalThis`. This file is compiled into ONE merged runtime module; the logger shim
+// is compiled into 14 of them. When the sink was a module-scope object in the shim, this
+// single call armed the one copy that happened to be merged alongside this file (which is
+// why `eventloop-longtask`, merged into this same runtime module, was the ONLY call site
+// that ever emitted) and left the other 13 permanently dark. See the header of
+// `~/server/logging/structured-log-sink`, and `scripts/check-server-graph-singletons.mjs`,
+// which fails the build if a copy of that module ever loses the globalThis pin.
 //
 // Unconditional on purpose: `emitOtelLog` is itself gated on OTEL_LOGS_ENABLED (default
 // off), so wiring it here keeps ONE gate rather than two, and its skip counter is then a

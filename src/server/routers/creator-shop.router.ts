@@ -11,6 +11,8 @@ import {
   getManageItemsSchema,
   getPublicShopItemsSchema,
   getReviewQueueSchema,
+  getShopItemResellersSchema,
+  reorderResoldItemsSchema,
   resoldItemSchema,
   reviewCreatorShopItemSchema,
   setCreatorShopItemListedSchema,
@@ -28,11 +30,14 @@ import {
   getCommunityCosmetics,
   getCreatorShop,
   getCreatorShopManageItems,
+  getCreatorShopResaleStats,
   getEarlyAccessModelPrices,
   addResoldItem,
   getPublicShopItemsForResale,
   getResoldItemsForManage,
+  getShopItemResellers,
   removeResoldItem,
+  reorderResoldItems,
   getCreatorShopReviewQueue,
   getCreatorShopReviewQueueCreators,
   getCreatorShopSettings,
@@ -49,6 +54,7 @@ import {
   submitCreatorShopPack,
   updateCreatorShopPack,
 } from '~/server/services/creator-shop-pack.service';
+import { getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
 import { isStickerSlugAvailable } from '~/server/services/cosmetic.service';
 import * as z from 'zod';
 import {
@@ -171,6 +177,11 @@ export const creatorShopRouter = router({
       userId: ctx.user.isModerator && input.userId ? input.userId : ctx.user.id,
     })
   ),
+  getResaleStats: creatorShopProcedure.input(getManageItemsSchema).query(({ input, ctx }) =>
+    getCreatorShopResaleStats({
+      userId: ctx.user.isModerator && input.userId ? input.userId : ctx.user.id,
+    })
+  ),
   // Cross-creator selling: browse public cosmetics + list one in your own shop.
   getPublicShopItems: creatorShopProcedure.input(getPublicShopItemsSchema).query(({ input, ctx }) =>
     getPublicShopItemsForResale({
@@ -191,6 +202,17 @@ export const creatorShopRouter = router({
   removeResoldItem: creatorShopProcedure
     .input(resoldItemSchema)
     .mutation(({ input, ctx }) => removeResoldItem({ ...input, userId: ctx.user.id })),
+  reorderResoldItems: creatorShopProcedure
+    .input(reorderResoldItemsSchema)
+    .mutation(({ input, ctx }) => reorderResoldItems({ ...input, userId: ctx.user.id })),
+  // Who resells one of YOUR items — the service refuses anyone else's.
+  getItemResellers: creatorShopProcedure.input(getShopItemResellersSchema).query(({ input, ctx }) =>
+    getShopItemResellers({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    })
+  ),
   // #endregion
 
   // #region [Public: storefront]
@@ -207,6 +229,9 @@ export const creatorShopRouter = router({
         preview: input.preview && !!ctx.user?.isModerator,
       })
     ),
+  // Deliberately uncached: the form quotes these numbers and the submission is
+  // rejected if they no longer match what the server charges.
+  getFees: publicProcedure.query(() => getCreatorShopFees()),
   getEarlyAccessPrices: publicProcedure
     .use(isFlagProtected('creatorShop'))
     .input(getEarlyAccessPricesSchema)

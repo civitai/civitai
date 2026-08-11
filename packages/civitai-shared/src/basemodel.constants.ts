@@ -1083,8 +1083,10 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Vidu - checkpoint only
   { ecosystemId: ECO.Vidu, supportType: 'generation', modelTypes: checkpointOnly },
 
-  // MiniMax H3 (Hailuo) - checkpoint only
-  { ecosystemId: ECO.MiniMaxH3, supportType: 'generation', modelTypes: checkpointOnly },
+  // MiniMax H3 (Hailuo) - LoRAs apply to the comfy variant only (the hosted API
+  // build takes no resources); LORA training is AI Toolkit only
+  { ecosystemId: ECO.MiniMaxH3, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.MiniMaxH3, supportType: 'training', modelTypes: loraOnly },
 
   // Kling - checkpoint only
   { ecosystemId: ECO.Kling, supportType: 'generation', modelTypes: checkpointOnly },

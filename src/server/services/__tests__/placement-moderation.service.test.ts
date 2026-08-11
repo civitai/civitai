@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const queryRaw = vi.fn();
 const settlePlacement = vi.fn();
 const placementFindMany = vi.fn();
+const placementFindUnique = vi.fn();
 const placementUpdateMany = vi.fn();
 const placementCount = vi.fn();
 const suspensionFindUnique = vi.fn();
@@ -13,6 +14,7 @@ vi.mock('~/server/db/client', () => ({
     $queryRaw: queryRaw,
     placement: {
       findMany: placementFindMany,
+      findUnique: placementFindUnique,
       updateMany: placementUpdateMany,
       count: placementCount,
     },
@@ -31,6 +33,8 @@ const {
   countPendingPlacementsFrom,
   declinePlacementsOnBlock,
   isPlacementBlocked,
+  removePlacementByModerator,
+  removePlacementsByCosmetic,
   removePlacementsByUser,
   suspendPlacementPrivileges,
 } = await import('~/server/services/placement-moderation.service');
@@ -43,6 +47,7 @@ beforeEach(() => {
   queryRaw.mockResolvedValue([{ exists: false }]);
   suspensionFindUnique.mockResolvedValue(null);
   placementFindMany.mockResolvedValue([]);
+  placementFindUnique.mockResolvedValue(null);
   placementUpdateMany.mockResolvedValue({ count: 0 });
   settlePlacement.mockResolvedValue({ settled: true });
 });
@@ -293,5 +298,187 @@ describe('the takedown record', () => {
 
     expect(placementUpdateMany.mock.calls[0][0].where).toMatchObject({ id: { in: [1, 2] } });
     expect(result.hasMore).toBe(true);
+  });
+});
+
+describe('removing one reported placement', () => {
+  const APPROVED_PLACEMENT = 3101;
+  const PENDING_PLACEMENT = 3102;
+  const MODERATOR = 47;
+
+  // settlePlacement claims its transition with WHERE status = 'pending', so an
+  // approved row matches nothing and it returns settled: false having moved no
+  // money. Routing a live placement through it is a remove button that does
+  // nothing — and a green settlePlacement mock is exactly what would hide that,
+  // so this asserts the takedown write instead.
+  it('takes a live placement down directly rather than through settlement', async () => {
+    placementFindUnique.mockResolvedValue({ id: APPROVED_PLACEMENT, status: 'approved' });
+    placementUpdateMany.mockResolvedValue({ count: 1 });
+
+    const result = await removePlacementByModerator({
+      placementId: APPROVED_PLACEMENT,
+      actorId: MODERATOR,
+    });
+
+    expect(settlePlacement).not.toHaveBeenCalled();
+    expect(placementUpdateMany.mock.calls[0][0]).toMatchObject({
+      where: { id: APPROVED_PLACEMENT, status: 'approved' },
+      data: { status: 'removed', removedBy: 'moderator', takenDownById: MODERATOR },
+    });
+    expect(result).toMatchObject({ removed: true, wasLive: true });
+  });
+
+  it('settles a pending placement so its escrow is forfeited', async () => {
+    placementFindUnique.mockResolvedValue({ id: PENDING_PLACEMENT, status: 'pending' });
+
+    const result = await removePlacementByModerator({
+      placementId: PENDING_PLACEMENT,
+      actorId: MODERATOR,
+    });
+
+    expect(placementUpdateMany).not.toHaveBeenCalled();
+    expect(settlePlacement.mock.calls[0][0]).toMatchObject({
+      placementId: PENDING_PLACEMENT,
+      action: 'removeByModerator',
+      actorId: MODERATOR,
+    });
+    expect(result).toMatchObject({ removed: true, wasLive: false });
+  });
+
+  it('refuses one that is already settled instead of writing over the record', async () => {
+    placementFindUnique.mockResolvedValue({ id: APPROVED_PLACEMENT, status: 'declined' });
+
+    await expect(
+      removePlacementByModerator({ placementId: APPROVED_PLACEMENT, actorId: MODERATOR })
+    ).rejects.toThrow(/already declined/);
+
+    expect(placementUpdateMany).not.toHaveBeenCalled();
+    expect(settlePlacement).not.toHaveBeenCalled();
+  });
+});
+
+describe('removing every placement made with a revoked cosmetic', () => {
+  const COSMETIC = 8801;
+  const PACK_MEMBER = 8802;
+  const MODERATOR = 53;
+
+  // Index-independent: the query composes optional fragments, so asserting a
+  // positional argument would quietly point at the wrong value the moment the
+  // SQL gains one. A `Prisma.Sql` fragment carries its own `strings`/`values`.
+  const hasFragment = (arg: unknown): arg is { strings: string[]; values: unknown[] } =>
+    !!arg && typeof arg === 'object' && 'strings' in (arg as object);
+
+  const rawValues = (call: unknown[]) =>
+    call.flatMap((arg) => (hasFragment(arg) ? arg.values : [arg]));
+
+  // The bound values alone say nothing about the predicate they are bound to:
+  // swapping `"placerId"` for `"ownerId"` would keep every value assertion
+  // green while removing placements ON the wrong people's content.
+  const rawSql = (call: unknown[]) => {
+    const parts = [...(call[0] as string[])];
+    for (const arg of call.slice(1)) if (hasFragment(arg)) parts.push(...arg.strings);
+    return parts.join(' ');
+  };
+
+  const rows = (pending: number[], approved: number[]) =>
+    queryRaw
+      .mockResolvedValueOnce(pending.map((id) => ({ id })))
+      .mockResolvedValueOnce(approved.map((id) => ({ id })));
+
+  // The content owner did not choose this sticker and was already paid for it,
+  // so a live placement is taken down without settlement. Settling it would
+  // compute a payout plan and claw that money back off the wrong person.
+  it('takes live placements down without moving money', async () => {
+    rows([], [4401, 4402]);
+    placementUpdateMany.mockResolvedValue({ count: 2 });
+
+    const result = await removePlacementsByCosmetic({
+      cosmeticIds: [COSMETIC],
+      actorId: MODERATOR,
+    });
+
+    expect(settlePlacement).not.toHaveBeenCalled();
+    expect(placementUpdateMany.mock.calls[0][0]).toMatchObject({
+      where: { id: { in: [4401, 4402] } },
+      // Not 'moderator'. A reconcile has to be able to tell this from a
+      // moderator removing an abusive placer's sticker, which forfeits instead
+      // of refunding — and the live rows are most of a takedown, so recording
+      // them as 'moderator' would leave the new reason written nowhere.
+      data: { status: 'removed', removedBy: 'cosmeticTakedown', takenDownById: MODERATOR },
+    });
+    expect(result.takenDown).toBe(2);
+  });
+
+  // The placer is a holder of the revoked cosmetic and is refunded for it
+  // everywhere else, so forfeiting their escrow here would punish them for the
+  // maker's abuse. Its own action rather than removeByOwner, which pays the same
+  // and would record a moderator's takedown as the owner's doing.
+  it('refunds a pending placement in full rather than forfeiting it', async () => {
+    rows([4403], []);
+    placementUpdateMany.mockResolvedValue({ count: 0 });
+
+    await removePlacementsByCosmetic({ cosmeticIds: [COSMETIC], actorId: MODERATOR });
+
+    expect(settlePlacement.mock.calls[0][0]).toMatchObject({
+      placementId: 4403,
+      action: 'removeByCosmeticTakedown',
+      actorId: MODERATOR,
+    });
+  });
+
+  // A takedown that stopped after one bounded batch would report success with
+  // the artwork still on other people's work.
+  it('says when a batch filled so the caller runs again', async () => {
+    rows([4404, 4405], []);
+    placementUpdateMany.mockResolvedValue({ count: 0 });
+
+    const result = await removePlacementsByCosmetic({
+      cosmeticIds: [COSMETIC, PACK_MEMBER],
+      actorId: MODERATOR,
+      limit: 2,
+    });
+
+    expect(result.hasMore).toBe(true);
+  });
+
+  // Scoping this to the placers whose holding was revoked was tried and undone.
+  // `UserCosmetic`'s key is [userId, cosmeticId, claimKey], so a pack's claim
+  // keys miss every holding obtained another way — above all the maker's own
+  // creator grant, which would leave the abusive artwork up on everything its
+  // author placed it on. The sweep follows the artwork, not the placer.
+  it('does not narrow the sweep by who placed it', async () => {
+    rows([], [4406]);
+    placementUpdateMany.mockResolvedValue({ count: 1 });
+
+    await removePlacementsByCosmetic({
+      cosmeticIds: [COSMETIC, PACK_MEMBER],
+      actorId: MODERATOR,
+    });
+
+    expect(rawSql(queryRaw.mock.calls[0])).not.toContain('placerId');
+  });
+
+  // ORDER BY id is stable, so a row that cannot settle is picked first by every
+  // later batch and the drain burns its whole budget re-trying it.
+  it('excludes rows an earlier batch could not settle', async () => {
+    rows([], []);
+    placementUpdateMany.mockResolvedValue({ count: 0 });
+
+    await removePlacementsByCosmetic({
+      cosmeticIds: [COSMETIC],
+      skipIds: [4407, 4408],
+      actorId: MODERATOR,
+    });
+
+    expect(rawValues(queryRaw.mock.calls[0])).toContainEqual([4407, 4408]);
+    expect(rawSql(queryRaw.mock.calls[0])).toContain('NOT (id = ANY');
+  });
+
+  it('does nothing at all with no cosmetics to act on', async () => {
+    const result = await removePlacementsByCosmetic({ cosmeticIds: [], actorId: MODERATOR });
+
+    expect(queryRaw).not.toHaveBeenCalled();
+    expect(placementUpdateMany).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ considered: 0, takenDown: 0, hasMore: false });
   });
 });

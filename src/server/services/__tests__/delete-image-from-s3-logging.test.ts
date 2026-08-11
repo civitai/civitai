@@ -9,9 +9,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // (unblock-image-nsfwlevel-reset.test.ts): stub env + infra clients + the event-engine-common
 // submodule so importing it boots no real infra.
 
-const { mockLogToAxiom, mockFindFirst } = vi.hoisted(() => ({
+const { mockLogToAxiom, mockFindFirst, mockFetch } = vi.hoisted(() => ({
   mockLogToAxiom: vi.fn(async () => undefined),
   mockFindFirst: vi.fn(),
+  mockFetch: vi.fn(async () => ({ ok: true })),
 }));
 
 function makePermissive(overrides: Record<string, unknown> = {}): any {
@@ -50,19 +51,26 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 // Real env validation throws in test; a Proxy hands back safe defaults for whatever
 // image.service reads at import time. DATABASE_IS_PROD gates deleteImageFromS3 entirely.
 vi.mock('~/env/server', () => ({
-  env: new Proxy({ LOGGING: [] as string[], DATABASE_IS_PROD: true } as Record<string, unknown>, {
-    get: (target, prop) => {
-      if (prop in target) return target[prop as string];
-      if (typeof prop === 'string' && (prop.endsWith('_URL') || prop.endsWith('_ENDPOINT')))
-        return 'https://test:test@localhost:5432/test';
-      if (
-        typeof prop === 'string' &&
-        /(_CONCURRENCY|_LIMIT|_MS|_PORT|_TIMEOUT|_MAX|_SIZE|_COUNT)$/.test(prop)
-      )
-        return 1;
-      return undefined;
-    },
-  }),
+  env: new Proxy(
+    {
+      LOGGING: [] as string[],
+      DATABASE_IS_PROD: true,
+      IMAGE_CACHER_URL: 'https://image-cacher.test',
+    } as Record<string, unknown>,
+    {
+      get: (target, prop) => {
+        if (prop in target) return target[prop as string];
+        if (typeof prop === 'string' && (prop.endsWith('_URL') || prop.endsWith('_ENDPOINT')))
+          return 'https://test:test@localhost:5432/test';
+        if (
+          typeof prop === 'string' &&
+          /(_CONCURRENCY|_LIMIT|_MS|_PORT|_TIMEOUT|_MAX|_SIZE|_COUNT)$/.test(prop)
+        )
+          return 1;
+        return undefined;
+      },
+    }
+  ),
 }));
 
 vi.mock('~/server/clickhouse/client', () => ({
@@ -94,9 +102,13 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
 
 const { deleteImageFromS3 } = await import('../image.service');
 
+const invalidateCalls = () =>
+  mockFetch.mock.calls.filter((call) => String(call[0]).includes('/admin/invalidate'));
+
 describe('deleteImageFromS3', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal('fetch', mockFetch);
   });
 
   it('logs the image id and url when the delete throws', async () => {
@@ -121,5 +133,52 @@ describe('deleteImageFromS3', () => {
     await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg' });
 
     expect(mockLogToAxiom).not.toHaveBeenCalled();
+  });
+
+  // Invalidation used to sit on the next line inside the same try, so a delete that threw
+  // skipped it and the cache entry outlived the row it was derived from. Failure is exactly
+  // when invalidation matters, so it has to survive the throw.
+  it('still invalidates the CDN cache when the delete throws', async () => {
+    mockFindFirst.mockRejectedValue(new Error('delete rejected'));
+
+    await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg' });
+
+    expect(invalidateCalls()).toHaveLength(1);
+    expect(String(invalidateCalls()[0][0])).toContain(encodeURIComponent('abc-def/original.jpeg'));
+  });
+
+  it('leaves the cache alone when another row still points at the url', async () => {
+    mockFindFirst.mockResolvedValue({ id: 1 });
+
+    await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg' });
+
+    expect(invalidateCalls()).toHaveLength(0);
+  });
+
+  // Legacy avatar rows store a full external URL rather than a bucket key. Passing one to
+  // deleteObject as a Key can only fail, and it is not ours to delete either way.
+  it('ignores rows whose url is an external link, before touching the db', async () => {
+    await deleteImageFromS3({
+      id: 4242,
+      url: 'https://lh3.googleusercontent.com/a/AAcHTtf=s96-c',
+    });
+
+    expect(mockFindFirst).not.toHaveBeenCalled();
+    expect(mockLogToAxiom).not.toHaveBeenCalled();
+    expect(invalidateCalls()).toHaveLength(0);
+  });
+
+  // The guard above is safe only while no row holds a url for a bucket we own. Nothing enforces
+  // that, so a first-party url reaching it has to be audible rather than a silent skip.
+  it('flags a first-party url instead of skipping it silently', async () => {
+    await deleteImageFromS3({ id: 4242, url: 'https://image.civitai.com/abc/original.jpeg' });
+
+    expect(mockFindFirst).not.toHaveBeenCalled();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'delete-image-from-s3-skipped-first-party-url',
+        imageId: 4242,
+      })
+    );
   });
 });

@@ -17,6 +17,21 @@ export const BUZZ_MEMBERSHIP_PREMIUM_MULTIPLIER = 1.25;
  */
 export const BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE = 'buzzPurchase';
 
+type MembershipStanding = {
+  isBadState?: boolean;
+  currentPeriodEnd: Date;
+};
+
+/**
+ * Whether a subscription row still grants perks, and so blocks buying a perks-only
+ * membership with Buzz. Shared with the client because the purchase page has to answer the
+ * same question the purchase guard does, and a row's status alone doesn't answer it — a
+ * lapsed row keeps `status = 'active'` until something reconciles it.
+ */
+export function isMembershipActive(subscription: MembershipStanding, now = new Date()) {
+  return !subscription.isBadState && subscription.currentPeriodEnd > now;
+}
+
 type BuzzMembershipPriceInput = {
   /** Price amount in the smallest currency unit (cents), as stored on `Price.unitAmount`. */
   unitAmount: number;

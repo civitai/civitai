@@ -585,6 +585,43 @@ describe('the hover-card detail', () => {
     ).rejects.toThrow(/not available/);
   });
 
+  // A moderator is party to neither side of a pending placement, so the scoping
+  // hides the one row they are most often asked to act on.
+  it('lets a moderator see a pending placement they are not party to', async () => {
+    givenPlacement();
+    cosmeticFindUnique.mockResolvedValue(null);
+
+    await getStickerPlacementDetail({
+      placementId: DETAIL_PLACEMENT,
+      viewerId: STRANGER,
+      isModerator: true,
+    });
+
+    const [query] = placementFindFirst.mock.calls[0] as [{ where: { OR: MixedObject[] } }];
+    expect(query.where.OR.map((clause) => clause.status).sort()).toEqual(['approved', 'pending']);
+  });
+
+  // Widened to the other LIVE status, not to every status. Every consumer reads
+  // a miss as "already gone", so returning a removed row hands the second
+  // moderator on a report a remove button, a dialog claiming no Buzz moves, and
+  // an error when they press it.
+  it('does not hand a moderator placements that are already settled', async () => {
+    givenPlacement();
+    cosmeticFindUnique.mockResolvedValue(null);
+
+    await getStickerPlacementDetail({
+      placementId: DETAIL_PLACEMENT,
+      viewerId: STRANGER,
+      isModerator: true,
+    });
+
+    const [query] = placementFindFirst.mock.calls[0] as [{ where: { OR?: MixedObject[] } }];
+    expect(query.where.OR).toBeDefined();
+    const statuses = query.where.OR?.map((clause) => clause.status) ?? [];
+    for (const settled of ['removed', 'declined', 'expired'])
+      expect(statuses).not.toContain(settled);
+  });
+
   it('asks for approved only when nobody is signed in', async () => {
     givenPlacement();
     cosmeticFindUnique.mockResolvedValue(null);

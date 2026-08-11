@@ -26,10 +26,13 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { PackCoverField } from '~/components/CreatorShop/Pack/PackCoverField';
 import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
 import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
+import {
+  FEE_UNAVAILABLE_MESSAGE,
+  useCreatorShopFees,
+} from '~/components/CreatorShop/useCreatorShopFees';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import {
-  CREATOR_SHOP_PACK_SUBMISSION_FEE,
   PACK_MAX_MEMBERS,
   PACK_MIN_MEMBERS,
   RIGHTS_AFFIRMATION_STATEMENT,
@@ -142,8 +145,10 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
   const tooFew = selected.length < PACK_MIN_MEMBERS;
   const tooMany = selected.length > PACK_MAX_MEMBERS;
   const priceTooLow = (price ?? 0) < floor;
+  const packFee = useCreatorShopFees()?.pack;
   const canSubmit =
     !!name.trim() &&
+    (isEdit || packFee !== undefined) &&
     !tooFew &&
     !tooMany &&
     !priceTooLow &&
@@ -184,7 +189,11 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
         imageUrl: imageId ?? null,
         memberCosmeticIds,
       });
-    else
+    else {
+      if (packFee === undefined) {
+        showErrorNotification({ title: 'Not ready', error: new Error(FEE_UNAVAILABLE_MESSAGE) });
+        return;
+      }
       await submitPack.mutateAsync({
         name,
         description: description || null,
@@ -196,7 +205,9 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
         ...(imageId ? { imageUrl: imageId } : {}),
         // Only claimed when artwork was actually supplied.
         rightsAffirmed: !imageId ? undefined : true,
+        quotedFee: packFee,
       });
+    }
     dialog.onClose();
   };
 
@@ -392,7 +403,8 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
             <BuzzTransactionButton
               disabled={!canSubmit}
               loading={submitPack.isPending}
-              buzzAmount={CREATOR_SHOP_PACK_SUBMISSION_FEE}
+              buzzAmount={packFee ?? 0}
+              priceReplacement={packFee === undefined ? '…' : undefined}
               label="Submit pack"
               onPerformTransaction={handleSubmit}
             />

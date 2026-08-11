@@ -7,6 +7,8 @@ const { mocks } = vi.hoisted(() => ({
     shopItemFindUnique: vi.fn(),
     shopItemUpdate: vi.fn(),
     sectionItemDeleteMany: vi.fn(),
+    resaleFindMany: vi.fn(),
+    resaleDeleteMany: vi.fn(),
     purchaseFindMany: vi.fn(),
     purchaseUpdate: vi.fn(),
     userCosmeticFindMany: vi.fn(),
@@ -15,6 +17,7 @@ const { mocks } = vi.hoisted(() => ({
     refundMultiAccountTransaction: vi.fn(),
     refundTransaction: vi.fn(),
     revokeCosmeticsFromUsers: vi.fn(),
+    removePlacementsByCosmetic: vi.fn(),
     shopItemFindFirst: vi.fn(),
     shopItemUpdateMany: vi.fn(),
     packMemberFindMany: vi.fn(),
@@ -30,6 +33,7 @@ vi.mock('~/server/db/client', () => ({
     cosmeticShopItemCosmetic: { findMany: mocks.packMemberFindMany },
     userCosmeticShopPurchases: { findMany: mocks.purchaseFindMany },
     userCosmetic: { findMany: mocks.userCosmeticFindMany },
+    userCosmeticShopItemResale: { findMany: mocks.resaleFindMany },
     user: { findUnique: mocks.userFindUnique },
   },
   dbWrite: {
@@ -39,6 +43,7 @@ vi.mock('~/server/db/client', () => ({
       updateMany: mocks.shopItemUpdateMany,
     },
     cosmeticShopSectionItem: { deleteMany: mocks.sectionItemDeleteMany },
+    userCosmeticShopItemResale: { deleteMany: mocks.resaleDeleteMany },
     // Sales and ownership are read off the primary during a takedown — replica
     // lag would mean refunding fewer buyers than we strip the cosmetic from.
     userCosmeticShopPurchases: { findMany: mocks.purchaseFindMany, update: mocks.purchaseUpdate },
@@ -54,6 +59,9 @@ vi.mock('~/server/services/buzz.service', () => ({
 vi.mock('~/server/services/cosmetic.service', () => ({
   revokeCosmeticsFromUsers: mocks.revokeCosmeticsFromUsers,
   validateStickerCosmetic: vi.fn(),
+}));
+vi.mock('~/server/services/placement-moderation.service', () => ({
+  removePlacementsByCosmetic: mocks.removePlacementsByCosmetic,
 }));
 vi.mock('~/server/services/creator-program.service', () => ({
   hasValidCreatorMembership: vi.fn(),
@@ -119,6 +127,7 @@ describe('takedownCosmeticShopItem', () => {
       { userId: 11 }, // the creator's own grant
     ]);
     mocks.userFindUnique.mockResolvedValue({ settings: {} });
+    mocks.resaleFindMany.mockResolvedValue([]);
     // The delist cascade: no surviving listing, no packs bundling this cosmetic.
     mocks.shopItemFindFirst.mockResolvedValue(null);
     mocks.packMemberFindMany.mockResolvedValue([]);
@@ -128,6 +137,76 @@ describe('takedownCosmeticShopItem', () => {
     mocks.createBuzzTransaction.mockResolvedValue({ transactionId: 'tx' });
     mocks.refundTransaction.mockResolvedValue({ transactionId: 'refund-tx' });
     mocks.revokeCosmeticsFromUsers.mockResolvedValue({ revoked: 3 });
+    mocks.removePlacementsByCosmetic.mockResolvedValue({
+      considered: 0,
+      settled: 0,
+      failed: [],
+      takenDown: 0,
+      hasMore: false,
+    });
+  });
+
+  // Revoking the holding leaves stickers already placed on other people's
+  // images untouched — they live in their own table, keyed by a cosmetic id
+  // inside a JSON payload, and nothing else in this takedown looks there.
+  it('takes down every placement made with the cosmetic', async () => {
+    mocks.removePlacementsByCosmetic.mockResolvedValue({
+      considered: 4,
+      settled: 1,
+      failed: [],
+      takenDown: 3,
+      hasMore: false,
+    });
+
+    const result = await takedownCosmeticShopItem({
+      id: 42,
+      reason: 'Abusive artwork',
+      moderatorId: 999,
+    });
+
+    expect(mocks.removePlacementsByCosmetic.mock.calls[0][0]).toMatchObject({
+      cosmeticIds: [7],
+      actorId: 999,
+    });
+    expect(result.placementsRemoved).toMatchObject({ settled: 1, takenDown: 3 });
+  });
+
+  // Bounded per batch, so one pass would report a clean takedown with the
+  // artwork still on other people's work.
+  it('drains the placement takedown rather than running one batch', async () => {
+    mocks.removePlacementsByCosmetic
+      .mockResolvedValueOnce({ considered: 2, settled: 0, failed: [], takenDown: 2, hasMore: true })
+      .mockResolvedValueOnce({
+        considered: 1,
+        settled: 0,
+        failed: [],
+        takenDown: 1,
+        hasMore: false,
+      });
+
+    const result = await takedownCosmeticShopItem({
+      id: 42,
+      reason: 'Abusive artwork',
+      moderatorId: 999,
+    });
+
+    expect(mocks.removePlacementsByCosmetic).toHaveBeenCalledTimes(2);
+    expect(result.placementsRemoved.takenDown).toBe(3);
+  });
+
+  // A takedown that aborts because placements could not be removed would leave
+  // the buyers unrefunded and the cosmetic on sale.
+  it('finishes the takedown even if the placement sweep throws', async () => {
+    mocks.removePlacementsByCosmetic.mockRejectedValue(new Error('db is having a moment'));
+
+    const result = await takedownCosmeticShopItem({
+      id: 42,
+      reason: 'Abusive artwork',
+      moderatorId: 999,
+    });
+
+    expect(result.revokedFrom).toBe(3);
+    expect(result.placementsRemoved).toMatchObject({ takenDown: 0 });
   });
 
   it('stops sales, refunds every buyer, claws back the creator earnings and strips the cosmetic', async () => {
@@ -146,6 +225,9 @@ describe('takedownCosmeticShopItem', () => {
       moderatorId: 999,
     });
     expect(mocks.sectionItemDeleteMany).toHaveBeenCalledWith({ where: { shopItemId: 42 } });
+    // Resale listings survive their creator archiving an item; a takedown is the
+    // case where they must not, so the rows go with it.
+    expect(mocks.resaleDeleteMany).toHaveBeenCalledWith({ where: { shopItemId: 42 } });
 
     expect(mocks.refundMultiAccountTransaction).toHaveBeenCalledTimes(2);
     expect(mocks.refundMultiAccountTransaction).toHaveBeenCalledWith(

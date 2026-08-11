@@ -51,13 +51,6 @@ export const packItemFloor = (type: CosmeticType): number => {
 export const COSMETIC_PRICE_FLOOR_MIN = Math.min(
   ...Object.values(CosmeticType).map((type) => cosmeticPriceFloor(type))
 );
-export const CREATOR_SHOP_SUBMISSION_FEE = 10000;
-/**
- * Packs list for less. The fee prices the review a submission costs, and a pack
- * has no artwork to validate — every member was reviewed and paid for when it
- * was submitted.
- */
-export const CREATOR_SHOP_PACK_SUBMISSION_FEE = 1000;
 export const CREATOR_SHOP_MAX_FEATURED = 6;
 // Creator keeps this share of each sale; platform keeps the remainder.
 export const CREATOR_SHOP_CREATOR_SHARE = 0.7;
@@ -109,9 +102,80 @@ export const creatorCosmeticTypes = [
   CosmeticType.Sticker,
 ] as const;
 
+const SUBMISSION_FEE_DEFAULT = 10000;
+/**
+ * Packs list for less. The fee prices the review a submission costs, and a pack
+ * has no artwork to validate — every member was reviewed and paid for when it
+ * was submitted.
+ */
+const PACK_SUBMISSION_FEE_DEFAULT = 1000;
+
+/** What a creator pays to submit this cosmetic type for review. */
+export const submissionFeeDefault = (type: CosmeticType): number => {
+  switch (type) {
+    case CosmeticType.Sticker:
+    case CosmeticType.Badge:
+    case CosmeticType.ProfileDecoration:
+    case CosmeticType.ProfileBackground:
+    case CosmeticType.ContentDecoration:
+    default:
+      return SUBMISSION_FEE_DEFAULT;
+  }
+};
+
+/**
+ * Operator-tunable submission fees. A pack carries one figure rather than a
+ * per-type map because it has no CosmeticType of its own.
+ */
+export type CreatorShopFees = {
+  submission: Record<CreatorCosmeticType, number>;
+  pack: number;
+};
+
+export const DEFAULT_CREATOR_SHOP_FEES: CreatorShopFees = {
+  submission: Object.fromEntries(
+    creatorCosmeticTypes.map((type) => [type, submissionFeeDefault(type)])
+  ) as Record<CreatorCosmeticType, number>,
+  pack: PACK_SUBMISSION_FEE_DEFAULT,
+};
+
+// A fee is charged before anything is reviewed, so a mistyped row must not reach
+// the money path: anything outside this ceiling falls back to the default.
+export const CREATOR_SHOP_FEE_MAX = 1_000_000;
+
+// Buzz is integral, and each value falls back on its own rather than the row as
+// a whole, so one bad number can't move the others.
+const usableFee = (value: unknown, fallback: number): number =>
+  typeof value === 'number' &&
+  Number.isSafeInteger(value) &&
+  value >= 0 &&
+  value <= CREATOR_SHOP_FEE_MAX
+    ? value
+    : fallback;
+
+export const normalizeCreatorShopFees = (value: unknown): CreatorShopFees => {
+  const row = (value ?? {}) as { submission?: unknown; pack?: unknown };
+  const submission = (row.submission ?? {}) as Record<string, unknown>;
+  return {
+    submission: Object.fromEntries(
+      creatorCosmeticTypes.map((type) => [
+        type,
+        usableFee(
+          typeof submission === 'object' && submission !== null ? submission[type] : undefined,
+          DEFAULT_CREATOR_SHOP_FEES.submission[type]
+        ),
+      ])
+    ) as Record<CreatorCosmeticType, number>,
+    pack: usableFee(row.pack, DEFAULT_CREATOR_SHOP_FEES.pack),
+  };
+};
+
 // Consumables are priced per use, so a listing has to clear both floors.
 export const STICKER_MIN_BUZZ_PER_USE = 5;
 export const STICKER_DEFAULT_USES = 100;
+// Bounds the creator's own 10x approval grant, which the flat submission fee
+// does not scale with — the per-use price floor only governs what a BUYER pays.
+export const STICKER_MAX_USES = 100;
 
 /**
  * Minimum Buzz a creator may charge for a single top-up use.
@@ -382,6 +446,11 @@ const rightsAffirmedSchema = z
   .boolean()
   .refine((value) => value === true, 'You must confirm you have the rights to sell this artwork');
 
+// The fee the form quoted. The server charges its own value and rejects the
+// submission when the two disagree, so a form left open across a fee change
+// can't be charged a number the creator never saw.
+const quotedFeeSchema = z.number().int().min(0).max(CREATOR_SHOP_FEE_MAX);
+
 export type SubmitCreatorShopItemInput = z.infer<typeof submitCreatorShopItemSchema>;
 export const submitCreatorShopItemSchema = z
   .object({
@@ -395,7 +464,7 @@ export const submitCreatorShopItemSchema = z
     // Sticker only — the `:slug:` users type. Required for Sticker, ignored otherwise.
     slug: z.string().optional(),
     // Sticker only — uses granted per purchase.
-    uses: z.number().int().positive().optional(),
+    uses: z.number().int().positive().max(STICKER_MAX_USES).optional(),
     // Sticker only — what one additional use costs when a buyer runs out.
     // Intrinsic to the sticker, not to the offer: resale by reference means one
     // cosmetic can be listed at several prices, and a top-up must cost the same
@@ -416,6 +485,7 @@ export const submitCreatorShopItemSchema = z
     // The creator's affirmation that they hold the rights to sell this artwork.
     // Recorded on the item (see cosmeticShopItemMeta.rightsAffirmation).
     rightsAffirmed: rightsAffirmedSchema,
+    quotedFee: quotedFeeSchema,
   })
   .superRefine((input, ctx) => {
     // `uses` drives the buyer's balance AND the creator's 10x grant. Absent, both
@@ -477,6 +547,7 @@ export const submitCreatorShopPackSchema = z.object({
   // Required only with a cover: it is a statement about artwork, and a pack
   // without one supplies none. Its members were each affirmed at submission.
   rightsAffirmed: rightsAffirmedSchema.optional(),
+  quotedFee: quotedFeeSchema,
 });
 
 export type UpdateCreatorShopPackInput = z.infer<typeof updateCreatorShopPackSchema>;
@@ -514,13 +585,18 @@ export const updateCreatorShopItemSchema = z.object({
   availableQuantity: z.number().int().positive().nullish(),
   // Payment term like price/quantity — editable on published items, no re-review.
   acceptsBlueBuzz: z.boolean().optional(),
+  // Resale terms, same deal: editable after publish, no re-review. Changing them
+  // only ever affects listings made from here on — creators already reselling
+  // keep the share recorded on their UserCosmeticShopItemResale row.
+  sellableByOthers: z.boolean().optional(),
+  sellerShare: z.number().int().min(0).max(70).optional(),
   // ProfileDecoration only — null clears the adjustment; treated as a content
   // change (same rules as name/description/artwork).
   offsets: cosmeticOffsetsSchema.nullish(),
   // Sticker only. Omitted leaves the existing slug alone — replacing artwork must
   // not silently drop it, since owners' `:slug:` text depends on it.
   slug: z.string().optional(),
-  uses: z.number().int().positive().optional(),
+  uses: z.number().int().positive().max(STICKER_MAX_USES).optional(),
   pricePerUse: z.number().int().positive().optional(),
   // Required by the service when `imageUrl` replaces the artwork: the stored
   // affirmation covers the art that was submitted, so new art needs a new one.
@@ -557,6 +633,19 @@ export const getEarlyAccessPricesSchema = z.object({
 // your own shop — a reference, not a copy, so the original owns price/inventory.
 export type ResoldItemInput = z.infer<typeof resoldItemSchema>;
 export const resoldItemSchema = z.object({
+  shopItemId: z.number(),
+});
+
+// Storefront order of the caller's own resale listings.
+export type ReorderResoldItemsInput = z.infer<typeof reorderResoldItemsSchema>;
+export const reorderResoldItemsSchema = z.object({
+  shopItemIds: z.array(z.number()).max(500),
+});
+
+// Who resells one of your items (and on what terms) — the creator-facing view of
+// who a resale-terms change would affect.
+export type GetShopItemResellersInput = z.infer<typeof getShopItemResellersSchema>;
+export const getShopItemResellersSchema = z.object({
   shopItemId: z.number(),
 });
 
@@ -651,8 +740,6 @@ export const updateCreatorShopSettingsSchema = z.object({
   enabled: z.boolean().optional(),
   showModels: z.boolean().optional(),
   featuredItemIds: z.array(z.number()).max(CREATOR_SHOP_MAX_FEATURED).optional(),
-  // Other creators' shop items this creator resells (referenced by id).
-  resoldItemIds: z.array(z.number()).optional(),
   description: z.string().max(1000).nullish(),
   coverImageId: z.number().nullish(),
   sections: z.array(creatorShopSectionSchema).optional(),

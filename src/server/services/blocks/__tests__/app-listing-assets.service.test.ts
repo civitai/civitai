@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  LISTING_ASSET_MAX_DIMENSION_PX,
+  LISTING_ICON_MAX_PX,
   validateListingImage,
   type ListingImageMeta,
 } from '~/server/schema/blocks/app-listing.schema';
@@ -151,6 +153,97 @@ describe('validateListingImage', () => {
   it('skips size/mime checks when those fields are absent (older Image rows)', () => {
     const r = validateListingImage({ type: 'image', width: 512, height: 512 }, 'icon');
     expect(r.ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateListingImage — the per-side CEILING
+// ---------------------------------------------------------------------------
+
+/**
+ * The cover / screenshot rules are MINIMUMS + aspect; before this there was no
+ * maximum on either kind at all, and the attach gate is the one place every asset
+ * passes whatever created its `Image` row (`loadValidatedImage` gates on
+ * ownership, not provenance). So a full-resolution upload far above the ceiling —
+ * a 9000×4000 cover was accepted in production and stored at full size — cleared
+ * every rule that existed.
+ *
+ * The fixtures vary DIMENSIONS ONLY: `sizeBytes` is held at the same small value
+ * on both sides of the boundary, so a byte cap cannot account for either verdict.
+ */
+describe('validateListingImage (LISTING_ASSET_MAX_DIMENSION_PX ceiling)', () => {
+  const base: ListingImageMeta = {
+    type: 'image',
+    width: 512,
+    height: 512,
+    mimeType: 'image/png',
+    // Well under every per-kind byte cap (the tightest is the 1 MiB icon cap), so
+    // no size rule can fire on any fixture below.
+    sizeBytes: 100_000,
+  };
+
+  it('accepts a cover AT the ceiling and rejects one a single pixel over', () => {
+    // Aspect 2.0 and far above the 640px floor either side of the boundary — the
+    // only thing that changes across these two cases is one pixel of width.
+    expect(
+      validateListingImage(
+        { ...base, width: LISTING_ASSET_MAX_DIMENSION_PX, height: 4096 },
+        'cover'
+      )
+    ).toEqual({ ok: true });
+
+    const over = validateListingImage(
+      { ...base, width: LISTING_ASSET_MAX_DIMENSION_PX + 1, height: 4096 },
+      'cover'
+    );
+    expect(over).toEqual({
+      ok: false,
+      reason: `cover is too large (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side, got ${
+        LISTING_ASSET_MAX_DIMENSION_PX + 1
+      }px)`,
+    });
+  });
+
+  it('rejects the 9000×4000 cover shape that was accepted in production', () => {
+    // Aspect 2.25 (inside 1.3–2.4) and 9000px wide (above the 640px floor): every
+    // pre-existing cover rule passes, so ONLY the ceiling can reject it.
+    const r = validateListingImage({ ...base, width: 9000, height: 4000 }, 'cover');
+    expect(r).toEqual({
+      ok: false,
+      reason: `cover is too large (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side, got 9000px)`,
+    });
+  });
+
+  it('applies the ceiling to the TALLER side too, not just width', () => {
+    // Aspect 0.55 — a valid screenshot aspect, above the 320px floor, over the
+    // ceiling on height only.
+    const r = validateListingImage(
+      { ...base, width: 4500, height: LISTING_ASSET_MAX_DIMENSION_PX + 1 },
+      'screenshot'
+    );
+    expect(r).toEqual({
+      ok: false,
+      reason: `screenshot is too large (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side, got ${
+        LISTING_ASSET_MAX_DIMENSION_PX + 1
+      }px)`,
+    });
+    // Same aspect, same bytes, under the ceiling → accepted.
+    expect(
+      validateListingImage(
+        { ...base, width: 4500, height: LISTING_ASSET_MAX_DIMENSION_PX },
+        'screenshot'
+      )
+    ).toEqual({ ok: true });
+  });
+
+  it('keeps the icon on its own TIGHTER maximum', () => {
+    // The shared ceiling must not loosen the icon: 5000px square is inside 8192
+    // but outside LISTING_ICON_MAX_PX, and must still be rejected for that reason.
+    const r = validateListingImage({ ...base, width: 5000, height: 5000 }, 'icon');
+    expect(r).toEqual({
+      ok: false,
+      reason: expect.stringContaining(`${LISTING_ICON_MAX_PX}px on its longer side`),
+    });
   });
 });
 

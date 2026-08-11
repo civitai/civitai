@@ -53,6 +53,12 @@ export type AspectRatioImageCardProps<T extends DialogKey> = {
   image?: ImageProps;
   header?: React.ReactNode | ((props: { safe?: boolean }) => React.ReactNode);
   footer?: React.ReactNode | ((props: { safe?: boolean }) => React.ReactNode);
+  /**
+   * Drawn over the media, under the header and footer. Unlike those it gets the
+   * whole content box rather than a padded strip, because what goes here is
+   * positioned against the artwork.
+   */
+  overlay?: React.ReactNode | ((props: { safe?: boolean }) => React.ReactNode);
   footerGradient?: boolean;
   onSite?: boolean;
   routedDialog?: RoutedDialogProps<T>;
@@ -84,6 +90,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
   image,
   header,
   footer,
+  overlay,
   footerGradient,
   onSite,
   routedDialog,
@@ -210,6 +217,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                     />
                   )}
                 </LinkOrClick>
+                {overlay && (typeof overlay === 'function' ? overlay({ safe }) : overlay)}
                 <div className={cardStyles.header}>
                   <ImageGuard2.BlurToggle
                     className={cardStyles.chip}

@@ -39,6 +39,8 @@ import { create } from 'zustand';
 import { isAndroidDevice } from '~/utils/device-helpers';
 import { isMobileDevice } from '~/hooks/useIsMobile';
 import { sourceMetadataStore, useSourceMetadataStore } from '~/store/source-metadata.store';
+import { recentSourceImagesStore, sourceImageKey } from '~/store/recent-source-images.store';
+import { isConsumerBlobUrl } from '~/shared/orchestrator/blob-url';
 import { extractSourceMetadataFromUrl } from '~/utils/metadata/extract-source-metadata';
 import { isDefined } from '~/utils/type-guards';
 
@@ -204,6 +206,25 @@ export function SourceImageUploadMultiple({
       verifyingUrls.clear();
     };
   }, []);
+
+  // Remember images that reach value so they can be re-picked from another workflow.
+  // Consumer blobs only: blob:/data: previews die with the page, and any other url
+  // can neither be refreshed nor confirmed gone, so it would sit in storage forever.
+  // Recorded once per image per mount so a re-render doesn't churn the store.
+  const recordedKeysRef = useRef(new Set<string>());
+  useEffect(() => {
+    const fresh = (value ?? []).filter(
+      (img) =>
+        img?.url &&
+        img.width &&
+        img.height &&
+        isConsumerBlobUrl(img.url) &&
+        !recordedKeysRef.current.has(sourceImageKey(img.url))
+    );
+    if (!fresh.length) return;
+    for (const img of fresh) recordedKeysRef.current.add(sourceImageKey(img.url));
+    recentSourceImagesStore.record(fresh.map(({ url, width, height }) => ({ url, width, height })));
+  }, [value]);
 
   const previewImages = useMemo(() => {
     if (!value) return [];
@@ -858,8 +879,7 @@ export function SourceImageUploadMultiple({
           try {
             const response = await uploadOrchestratorImage(src, uploadId);
             if (response.blockedReason || !response.available || !response.url) {
-              const previewUrl =
-                items.find((x) => x.uploadId === uploadId)?.previewUrl ?? '';
+              const previewUrl = items.find((x) => x.uploadId === uploadId)?.previewUrl ?? '';
               setUploads((prev) =>
                 prev.map((item) =>
                   item.id === uploadId

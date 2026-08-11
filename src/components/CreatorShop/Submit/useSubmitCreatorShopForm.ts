@@ -5,6 +5,10 @@ import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-sho
 import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
 import { validateCosmeticImage } from '~/components/CreatorShop/creator-shop.validation';
 import {
+  FEE_UNAVAILABLE_MESSAGE,
+  useCreatorShopFees,
+} from '~/components/CreatorShop/useCreatorShopFees';
+import {
   buildData,
   editNotice,
   existingArtUrl,
@@ -22,8 +26,8 @@ import type {
 import {
   cosmeticPriceFloor,
   STICKER_MIN_BUZZ_PER_USE,
+  STICKER_MAX_USES,
   CREATOR_SHOP_CREATOR_SHARE,
-  CREATOR_SHOP_SUBMISSION_FEE,
   isCreatorCosmeticType,
   stickerPerUseFloor,
 } from '~/server/schema/creator-shop.schema';
@@ -83,8 +87,19 @@ export function useSubmitCreatorShopForm({
     !!(item?.cosmetic?.data as { animated?: boolean } | null)?.animated
   );
   const [rightsAffirmed, setRightsAffirmed] = useState(false);
-  const [sellableByOthers, setSellableByOthers] = useState(false);
-  const [sellerShare, setSellerShare] = useState(0);
+  const itemResale = (item?.meta ?? null) as {
+    sellableByOthers?: boolean;
+    sellerShare?: number;
+  } | null;
+  const itemSellableByOthers = !!itemResale?.sellableByOthers;
+  const itemSellerShare = itemResale?.sellerShare ?? 0;
+  const [sellableByOthers, setSellableByOthers] = useState(itemSellableByOthers);
+  const [sellerShare, setSellerShare] = useState(itemSellerShare);
+  const resaleChanged =
+    sellableByOthers !== itemSellableByOthers ||
+    // A share edit under a switched-off toggle is not a change: the server
+    // stores 0 either way, so treating it as one would offer a pointless save.
+    (sellableByOthers && sellerShare !== itemSellerShare);
   const itemAcceptsBlueBuzz = !!(item?.meta as { acceptsBlueBuzz?: boolean } | null)
     ?.acceptsBlueBuzz;
   const [acceptsBlueBuzz, setAcceptsBlueBuzz] = useState(itemAcceptsBlueBuzz);
@@ -131,9 +146,12 @@ export function useSubmitCreatorShopForm({
   // `null === userId` is false there, so a cosmetic without a creator — an
   // official one — is refused. Treating a missing creator as permission would
   // demand a price the save then rejects.
-  const canEditEconomics =
+  //
+  // It gates the resale terms as well, which the server refuses from a
+  // cross-lister on the same rule.
+  const canEditOwnerFields =
     !isEdit || !!currentUser?.isModerator || item?.cosmetic?.createdById === currentUser?.id;
-  const economicsEditable = isSticker && canEditEconomics;
+  const economicsEditable = isSticker && canEditOwnerFields;
   // Permission and obligation are different questions, and the server only ever
   // answered the first: a moderator MAY change another creator's economics, but
   // nothing says an unrelated edit should force them to invent values for a
@@ -153,6 +171,11 @@ export function useSubmitCreatorShopForm({
     ? economicsRequired
       ? 'Set how many uses a purchase grants'
       : null
+    : // Grandfathered: a listing stored above the cap predates it, and the edit
+    // path only sends `uses` when it changes — so refusing it here would block
+    // an unrelated price edit over a value the creator isn't touching.
+    uses > STICKER_MAX_USES && uses !== existingEconomics.uses
+    ? `A purchase can grant at most ${STICKER_MAX_USES} uses`
     : price < usesFloor
     ? `${uses} uses needs at least ${usesFloor} Buzz (${STICKER_MIN_BUZZ_PER_USE} per use)`
     : null;
@@ -195,14 +218,18 @@ export function useSubmitCreatorShopForm({
     ? 'taken'
     : 'available';
 
+  const fees = useCreatorShopFees();
   const { data: buzz } = useQueryBuzz(['yellow', 'green', 'blue']);
   const yellowBalance = buzz.accounts.find((a) => a.type === 'yellow')?.balance ?? 0;
   const greenBalance = buzz.accounts.find((a) => a.type === 'green')?.balance ?? 0;
   const blueBalance = buzz.accounts.find((a) => a.type === 'blue')?.balance ?? 0;
   const feeAccountBalance =
     buzzType === 'yellow' ? yellowBalance : buzzType === 'green' ? greenBalance : blueBalance;
-  // Only new submissions pay the fee; edits don't.
-  const canAffordFee = isEdit || feeAccountBalance >= CREATOR_SHOP_SUBMISSION_FEE;
+  const submissionFee = fees?.submission[type];
+  // Only new submissions pay the fee; edits don't. An unresolved fee blocks submit
+  // rather than falling back to a default the server may disagree with.
+  const canAffordFee =
+    isEdit || (submissionFee !== undefined && feeAccountBalance >= submissionFee);
 
   const maxSize = constants.mediaUpload.maxImageFileSize;
   const uploading = !!files[0] && files[0].progress < 100;
@@ -289,6 +316,8 @@ export function useSubmitCreatorShopForm({
         error: new Error(
           requiresAffirmation && !rightsAffirmed
             ? 'Confirm you have the rights to sell this artwork'
+            : !isEdit && submissionFee === undefined
+            ? FEE_UNAVAILABLE_MESSAGE
             : 'Add valid artwork, a title, and a price of at least 500 Buzz'
         ),
       });
@@ -330,8 +359,16 @@ export function useSubmitCreatorShopForm({
         if (isSticker && pricePerUse !== undefined && pricePerUse !== existingEconomics.pricePerUse)
           payload.pricePerUse = pricePerUse;
         if (acceptsBlueBuzzChanged) payload.acceptsBlueBuzz = acceptsBlueBuzz;
+        if (resaleChanged) {
+          payload.sellableByOthers = sellableByOthers;
+          payload.sellerShare = sellableByOthers ? sellerShare : 0;
+        }
         await updateItem.mutateAsync(payload);
       } else {
+        if (submissionFee === undefined) {
+          showErrorNotification({ title: 'Not ready', error: new Error(FEE_UNAVAILABLE_MESSAGE) });
+          return;
+        }
         await submitItem.mutateAsync({
           cosmeticType: type,
           name: name.trim(),
@@ -349,6 +386,7 @@ export function useSubmitCreatorShopForm({
           uses: isSticker ? uses : undefined,
           pricePerUse: isSticker ? pricePerUse : undefined,
           rightsAffirmed: true,
+          quotedFee: submissionFee,
         });
       }
       resetFiles();
@@ -411,6 +449,11 @@ export function useSubmitCreatorShopForm({
     setSellableByOthers,
     sellerShare,
     setSellerShare,
+    canEditOwnerFields,
+    resaleChanged,
+    // What existing resellers keep if the creator lowers the share — the whole
+    // point of showing them the field on a live item.
+    itemSellerShare,
     acceptsBlueBuzz,
     setAcceptsBlueBuzz,
     acceptsBlueBuzzChanged,
@@ -428,6 +471,7 @@ export function useSubmitCreatorShopForm({
     maxSize,
     uploading,
     artOk,
+    submissionFee,
     canAffordFee,
     canSubmit,
     yellowBalance,
