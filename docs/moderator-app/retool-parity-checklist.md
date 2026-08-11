@@ -249,8 +249,12 @@ Open, with the evidence each audit produced:
       filter and an *After date* picker. Ours is one merged list on a fixed 90-day window with no
       filters. 🎥 buzz is actively used to grant and deduct.
       (The per-transaction **Color** is already rendered — that sub-claim was stale.)
-- [ ] **A second row of aggregate tables** below those two (counterparty × total amount, for payments
-      and for receipts) — the other half of the 2×2 grid.
+- [x] **A second row of aggregate tables** (2026-08-11 — counterparty × total, per side, top 10 by
+      total). The transaction list answers "what happened"; this answers "who with, and how much in
+      total", which is the farming question a 200-row list of individual movements actively hides.
+      Aggregated over the **same filtered rows** the table above renders, so the totals always agree
+      with what is on screen rather than silently summing a different set. Verified in a browser:
+      `Paid to, by counterparty (1) | 2,268 | Civitai | across 13 transactions`.
 - [x] **The send form is missing `EntityType` / `EntityId`**, which Retool's `buzzSendEntityType` carries.
 - [x] **Deduct Types reference table** beside the send form (which types lower lifetime balance, which
       can go negative).

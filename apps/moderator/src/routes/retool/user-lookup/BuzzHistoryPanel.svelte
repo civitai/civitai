@@ -21,12 +21,64 @@
   let paymentSearch = $state('');
   let receiptSearch = $state('');
 
+  // Retool's second row: counterparty x total, per side. The transaction list answers "what happened";
+  // this answers "who with, and how much in total" — which is the farming question, and the one a
+  // 200-row list of individual movements actively hides.
+  //
+  // Aggregated over the SAME filtered rows the table above shows, so the totals always agree with what
+  // is on screen rather than silently summing a different set.
+  type Aggregate = { id: number; name: string | null; label: string | null; total: number; n: number };
+  const aggregate = (rows: BuzzTransaction[]): Aggregate[] => {
+    const by = new Map<number, Aggregate>();
+    for (const t of rows) {
+      const cur = by.get(t.counterpartyId) ?? {
+        id: t.counterpartyId,
+        name: t.counterpartyName,
+        label: t.counterpartyLabel,
+        total: 0,
+        n: 0,
+      };
+      cur.total += t.amount;
+      cur.n += 1;
+      by.set(t.counterpartyId, cur);
+    }
+    return [...by.values()].sort((a, b) => b.total - a.total);
+  };
+
   const COLOR_CLASS: Record<string, string> = {
     Yellow: 'text-yellow-400',
     Blue: 'text-blue-4',
     Green: 'text-green-400',
   };
 </script>
+
+{#snippet totals(title: string, rows: BuzzTransaction[])}
+  <div class="min-w-0 flex-1">
+    <h4 class="mb-2 text-sm font-semibold text-white">
+      {title}
+      <span class="font-normal text-dark-2">({num(aggregate(rows).length)})</span>
+    </h4>
+    {#if rows.length === 0}
+      <p class="text-sm text-dark-2">Nothing in this window.</p>
+    {:else}
+      <ul class="space-y-1 text-sm">
+        {#each aggregate(rows).slice(0, 10) as a (a.id)}
+          <li class="flex flex-wrap items-baseline gap-x-2">
+            <span class="tabular-nums text-dark-0">{num(a.total)}</span>
+            {#if a.name}
+              <a href="?q={a.id}" class={LINK_CLASS}>{a.name}</a>
+            {:else}
+              <span class="text-dark-2">{a.label ?? `account ${a.id}`}</span>
+            {/if}
+            <span class="text-xs text-dark-2">
+              across {a.n} transaction{a.n === 1 ? '' : 's'}
+            </span>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </div>
+{/snippet}
 
 {#snippet table(
   title: string,
@@ -152,6 +204,17 @@
           receiptSearch,
           (v) => (receiptType = v),
           (v) => (receiptSearch = v)
+        )}
+      </div>
+
+      <div class="mt-6 flex flex-col gap-6 border-t border-dark-4 pt-4 lg:flex-row">
+        {@render totals(
+          'Paid to, by counterparty',
+          filterTransactions(result.payments, paymentType, paymentSearch)
+        )}
+        {@render totals(
+          'Received from, by counterparty',
+          filterTransactions(result.receipts, receiptType, receiptSearch)
         )}
       </div>
     {/if}
