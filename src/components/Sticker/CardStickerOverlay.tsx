@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { StickerPlacementOverlay } from '~/components/Sticker/StickerPlacementOverlay';
 import { useStickerPlacementBatch } from '~/components/Sticker/StickerPlacementBatchProvider';
-import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStickerRevealStore } from '~/store/sticker-reveal.store';
 
@@ -76,7 +75,6 @@ const offsetWithin = (el: HTMLElement, stop: Element | null) => {
  */
 export function CardStickerOverlay({ imageId }: { imageId: number }) {
   const currentUser = useCurrentUser();
-  const treatment = useStickerTreatment();
   const revealed = useStickerRevealStore((state) => state.revealed);
   const batch = useStickerPlacementBatch(imageId);
   const ref = useRef<HTMLDivElement>(null);
@@ -127,7 +125,9 @@ export function CardStickerOverlay({ imageId }: { imageId: number }) {
     return () => observer.disconnect();
   }, [hasPlacements]);
 
-  if (!hasPlacements) return null;
+  // Narrows `batch` as well: `placements` is empty without one, so reaching
+  // here means the provider is present.
+  if (!batch || !hasPlacements) return null;
 
   return (
     <div ref={ref} className="pointer-events-none absolute inset-0 overflow-hidden">
@@ -139,7 +139,7 @@ export function CardStickerOverlay({ imageId }: { imageId: number }) {
             interactive={false}
             sticker={batch?.sticker}
             artworkWidth={CARD_ARTWORK_WIDTH}
-            treatment={treatment}
+            treatment={batch.treatment}
             surface="card"
           />
         </div>

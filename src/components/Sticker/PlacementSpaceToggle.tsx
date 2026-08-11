@@ -2,13 +2,7 @@ import { Anchor, Group, Loader, SegmentedControl, Stack, Text } from '@mantine/c
 import { useEffect, useState } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { PlacementPriceSlider } from '~/components/Placement/PlacementPriceSlider';
-import {
-  onPlacementPriceGrid,
-  PLACEMENT_PRICE_STEP,
-  placementPriceTrack,
-  PLACEMENT_SURFACES,
-} from '~/shared/utils/placement';
-import { numberWithCommas } from '~/utils/number-helpers';
+import { placementPriceCaption, PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -111,13 +105,7 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
 
   const defaultPrice = PLACEMENT_SURFACES.sticker.defaultPrice;
   const cap = range?.max ?? null;
-  const track = placementPriceTrack('sticker', cap);
-  const { min: sliderMin } = track;
-  const overCap = cap != null && typeof price === 'number' && price > cap;
-  // A legacy price the grid cannot land on. Saying so is the whole remedy: the
-  // slider will round it, and a creator who is not told discovers that from
-  // their earnings.
-  const offGrid = typeof price === 'number' && !onPlacementPriceGrid(price, track);
+  const caption = typeof price === 'number' ? placementPriceCaption('sticker', price, cap) : null;
 
   return (
     <Stack gap={4}>
@@ -170,17 +158,13 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
             />
             {/* Pulled up into the row the marks already reserve and centred
                 between them, so the caption costs no extra height. */}
-            <Text size="xs" ta="center" mt={-22} c={overCap || offGrid ? 'yellow' : 'dimmed'}>
-              {price === ''
-                ? `Following the price from the level above, or ${defaultPrice} Buzz if none is set.`
-                : overCap
-                ? `Placers pay ${numberWithCommas(
-                    cap
-                  )} Buzz — your current cap — until your score or membership raises it`
-                : offGrid
-                ? `Placers pay ${price} Buzz. The slider moves in ${PLACEMENT_PRICE_STEP}s from ${sliderMin}, so using it will change this price.`
-                : `Placers pay ${numberWithCommas(price)} Buzz`}
-            </Text>
+            {(price === '' || caption) && (
+              <Text size="xs" ta="center" mt={-22} c={caption?.warning ? 'yellow' : 'dimmed'}>
+                {price === ''
+                  ? `Following the price from the level above, or ${defaultPrice} Buzz if none is set.`
+                  : caption?.text}
+              </Text>
+            )}
           </Stack>
         )
       )}

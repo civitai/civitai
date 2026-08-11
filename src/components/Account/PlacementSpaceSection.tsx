@@ -24,13 +24,7 @@ import {
   stickerMaxScale,
 } from '~/shared/utils/sticker-placement';
 import { PlacementPriceSlider } from '~/components/Placement/PlacementPriceSlider';
-import {
-  onPlacementPriceGrid,
-  PLACEMENT_PRICE_STEP,
-  placementPriceTrack,
-  PLACEMENT_SURFACES,
-} from '~/shared/utils/placement';
-import { numberWithCommas } from '~/utils/number-helpers';
+import { placementPriceCaption, PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -114,12 +108,12 @@ export function PlacementSpaceSection() {
   if (spacesPending || spacesFailed) return null;
 
   const cap = range?.max ?? 0;
-  const overCap = typeof price === 'number' && cap > 0 && price > cap;
   const waiting = pending?.length ?? 0;
-  const track = placementPriceTrack('sticker', range?.max ?? null);
-  // A stored price the grid cannot land on. The slider rounds it the moment it
-  // moves, and a creator who is not told discovers that from their earnings.
-  const offGrid = typeof price === 'number' && !onPlacementPriceGrid(price, track);
+  const caption = placementPriceCaption(
+    'sticker',
+    price === '' ? DEFAULT_PRICE ?? 0 : price,
+    range?.max ?? null
+  );
 
   const commit = (nextMode: string, nextPrice: number | '', nextMaxScale = maxScale) =>
     save.mutate({
@@ -202,17 +196,11 @@ export function PlacementSpaceSection() {
             commit(mode, value);
           }}
         />
-        {/* Pulled up into the row the marks already reserve and centred between
-            them, so the caption costs no extra height. */}
-        <Text size="xs" ta="center" mt={-22} c={overCap || offGrid ? 'yellow' : 'dimmed'}>
-          {overCap
-            ? `Placers pay ${numberWithCommas(
-                cap
-              )} Buzz — your current cap — until your score or membership raises it`
-            : offGrid
-            ? `Placers pay ${price} Buzz. The slider moves in ${PLACEMENT_PRICE_STEP}s from ${track.min}, so using it will change this price.`
-            : `Placers pay ${numberWithCommas(price === '' ? DEFAULT_PRICE : price)} Buzz`}
-        </Text>
+        {caption && (
+          <Text size="xs" ta="center" mt={-22} c={caption.warning ? 'yellow' : 'dimmed'}>
+            {caption.text}
+          </Text>
+        )}
       </Stack>
 
       <Stack gap={4}>

@@ -253,6 +253,44 @@ export const PLACEMENT_PRICE_STEP = 10;
  * grid is preserved until the creator moves the control, and the UI says what
  * it is rather than pretending the slider can return to it.
  */
+/**
+ * What to say under the price slider about a price it cannot show.
+ *
+ * Shared because both controls said the over-cap and off-grid cases in
+ * byte-identical words and derived them from byte-identical arithmetic. Only
+ * the no-price case genuinely differs between them — "the platform default" at
+ * the account level, "the level above" below it — so that one stays with the
+ * caller.
+ *
+ * Returns `null` while the cap is unknown, which is the important part: the
+ * track falls back to the surface default without one, so any price above it
+ * reads as off-grid. Speaking then tells every creator who charges more than
+ * the default that their price is about to be rounded, on every page load,
+ * before correcting itself.
+ */
+export function placementPriceCaption(
+  surface: PlacementSurface,
+  price: number,
+  cap: number | null
+): { text: string; warning: boolean } | null {
+  if (cap == null) return null;
+
+  if (price > cap)
+    return {
+      text: `Placers pay ${cap} Buzz — your current cap — until your score or membership raises it`,
+      warning: true,
+    };
+
+  const track = placementPriceTrack(surface, cap);
+  if (!onPlacementPriceGrid(price, track))
+    return {
+      text: `Placers pay ${price} Buzz. The slider moves in ${PLACEMENT_PRICE_STEP}s from ${track.min}, so using it will change this price`,
+      warning: true,
+    };
+
+  return { text: `Placers pay ${price} Buzz`, warning: false };
+}
+
 export function placementPriceTrack(surface: PlacementSurface, cap: number | null) {
   const { minPrice: min, defaultPrice } = PLACEMENT_SURFACES[surface];
   const ceiling = cap ?? defaultPrice ?? min;

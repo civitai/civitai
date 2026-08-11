@@ -23,6 +23,20 @@ import {
 } from '~/store/sticker-placement-draft.store';
 import { STICKER_PLACEMENT_MIN_SCALE, stickerMaxScale } from '~/shared/utils/sticker-placement';
 
+/**
+ * Where the placer's Buzz goes, from the resolved share rather than a constant.
+ *
+ * The shares are operator-tunable at runtime, so a string compiled against
+ * today's split is a claim about money that can stop being true with no deploy
+ * and nothing failing. Undefined while the space loads: saying nothing is the
+ * only honest thing to say before the number arrives.
+ */
+const payoutCopy = (ownerShare: number | undefined) => {
+  if (ownerShare == null) return null;
+  if (ownerShare >= 1) return 'All of it goes to the creator';
+  return `${Math.round(ownerShare * 100)}% goes to the creator`;
+};
+
 /** Where the rotate knob sits above the sticker, as a fraction of its height. */
 const KNOB_OFFSET = 0.22;
 
@@ -381,8 +395,8 @@ export function DraftStickerLayer() {
             })
           }
         />
-        <Text size="xs" c="dimmed" ta="center" mt={4}>
-          All of it goes to the creator
+        <Text size="xs" fw={500} ta="center" mt={4} c="yellow.4">
+          {payoutCopy(space?.ownerShare)}
         </Text>
       </div>
     </div>

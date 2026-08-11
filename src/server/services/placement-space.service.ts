@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { placementPriceRange } from '~/server/services/placement.service';
+import { getPlacementConfig, placementPriceRange } from '~/server/services/placement.service';
 import { throwBadRequestError, throwAuthorizationError } from '~/server/utils/errorHandling';
 import type {
   PlacementSpaceEntity,
@@ -41,6 +41,15 @@ export type ResolvedPlacementSpace = {
   /** `min(setPrice, cap)`, computed here and never stored. `null` when unpriced. */
   price: number | null;
   cap: number;
+  /**
+   * The share of an approved payment the space owner keeps, 0-1.
+   *
+   * Carried so the placer can be told where their Buzz goes without the UI
+   * hardcoding it. The shares are operator-tunable at runtime, so a string
+   * compiled against today's split is a claim about money that can silently
+   * stop being true.
+   */
+  ownerShare: number;
   /** Surface-owned; this layer carries it without reading inside it. */
   settings: PlacementSpaceSettings;
 };
@@ -96,6 +105,7 @@ export async function resolvePlacementSpaceFor({
   });
 
   const { max: cap } = await placementPriceRange(ownerId, surface);
+  const shares = (await getPlacementConfig()).approvalShares(surface);
 
   return {
     ownerId,
@@ -103,6 +113,7 @@ export async function resolvePlacementSpaceFor({
     setPrice: resolved.price,
     price: effectivePlacementPrice(resolved.price, cap),
     cap,
+    ownerShare: 1 - shares.seller - shares.platform,
     settings: resolved.settings ?? {},
   };
 }
