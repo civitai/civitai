@@ -5,6 +5,10 @@ import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-sho
 import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
 import { validateCosmeticImage } from '~/components/CreatorShop/creator-shop.validation';
 import {
+  FEE_UNAVAILABLE_MESSAGE,
+  useCreatorShopFees,
+} from '~/components/CreatorShop/useCreatorShopFees';
+import {
   buildData,
   editNotice,
   existingArtUrl,
@@ -24,7 +28,6 @@ import {
   STICKER_MIN_BUZZ_PER_USE,
   STICKER_MAX_USES,
   CREATOR_SHOP_CREATOR_SHARE,
-  CREATOR_SHOP_SUBMISSION_FEE,
   isCreatorCosmeticType,
   stickerPerUseFloor,
 } from '~/server/schema/creator-shop.schema';
@@ -215,14 +218,18 @@ export function useSubmitCreatorShopForm({
     ? 'taken'
     : 'available';
 
+  const fees = useCreatorShopFees();
   const { data: buzz } = useQueryBuzz(['yellow', 'green', 'blue']);
   const yellowBalance = buzz.accounts.find((a) => a.type === 'yellow')?.balance ?? 0;
   const greenBalance = buzz.accounts.find((a) => a.type === 'green')?.balance ?? 0;
   const blueBalance = buzz.accounts.find((a) => a.type === 'blue')?.balance ?? 0;
   const feeAccountBalance =
     buzzType === 'yellow' ? yellowBalance : buzzType === 'green' ? greenBalance : blueBalance;
-  // Only new submissions pay the fee; edits don't.
-  const canAffordFee = isEdit || feeAccountBalance >= CREATOR_SHOP_SUBMISSION_FEE;
+  const submissionFee = fees?.submission[type];
+  // Only new submissions pay the fee; edits don't. An unresolved fee blocks submit
+  // rather than falling back to a default the server may disagree with.
+  const canAffordFee =
+    isEdit || (submissionFee !== undefined && feeAccountBalance >= submissionFee);
 
   const maxSize = constants.mediaUpload.maxImageFileSize;
   const uploading = !!files[0] && files[0].progress < 100;
@@ -309,6 +316,8 @@ export function useSubmitCreatorShopForm({
         error: new Error(
           requiresAffirmation && !rightsAffirmed
             ? 'Confirm you have the rights to sell this artwork'
+            : !isEdit && submissionFee === undefined
+            ? FEE_UNAVAILABLE_MESSAGE
             : 'Add valid artwork, a title, and a price of at least 500 Buzz'
         ),
       });
@@ -356,6 +365,10 @@ export function useSubmitCreatorShopForm({
         }
         await updateItem.mutateAsync(payload);
       } else {
+        if (submissionFee === undefined) {
+          showErrorNotification({ title: 'Not ready', error: new Error(FEE_UNAVAILABLE_MESSAGE) });
+          return;
+        }
         await submitItem.mutateAsync({
           cosmeticType: type,
           name: name.trim(),
@@ -373,6 +386,7 @@ export function useSubmitCreatorShopForm({
           uses: isSticker ? uses : undefined,
           pricePerUse: isSticker ? pricePerUse : undefined,
           rightsAffirmed: true,
+          quotedFee: submissionFee,
         });
       }
       resetFiles();
@@ -457,6 +471,7 @@ export function useSubmitCreatorShopForm({
     maxSize,
     uploading,
     artOk,
+    submissionFee,
     canAffordFee,
     canSubmit,
     yellowBalance,

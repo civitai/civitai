@@ -32,7 +32,6 @@ import { cosmeticTypeOptions } from '~/components/CreatorShop/Submit/submit.cons
 import { useSubmitCreatorShopForm } from '~/components/CreatorShop/Submit/useSubmitCreatorShopForm';
 import {
   CREATOR_SHOP_CREATOR_SHARE,
-  CREATOR_SHOP_SUBMISSION_FEE,
   DECORATION_OFFSET_LIMIT,
   RIGHTS_AFFIRMATION_STATEMENT,
   computeCreatorShopSplit,
@@ -94,6 +93,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     maxSize,
     uploading,
     artOk,
+    submissionFee,
     canAffordFee,
     canSubmit,
     yellowBalance,
@@ -492,6 +492,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
             blueBalance={blueBalance}
             feeAccountBalance={feeAccountBalance}
             canAffordFee={canAffordFee}
+            submissionFee={submissionFee}
           />
         )}
 
@@ -522,7 +523,8 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
             </Button>
           ) : (
             <BuzzTransactionButton
-              buzzAmount={CREATOR_SHOP_SUBMISSION_FEE}
+              buzzAmount={submissionFee ?? 0}
+              priceReplacement={submissionFee === undefined ? '…' : undefined}
               accountTypes={[buzzType]}
               colorType={buzzType}
               label="Submit for review"

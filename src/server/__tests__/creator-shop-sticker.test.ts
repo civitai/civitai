@@ -254,6 +254,7 @@ describe('uses is required for stickers', () => {
     slug: 'party_cat',
     price: 500,
     rightsAffirmed: true,
+    quotedFee: 10000,
   };
 
   it('rejects a sticker submitted without uses', () => {
@@ -295,6 +296,7 @@ describe('uses is bounded for stickers', () => {
     price: 5_000_000,
     pricePerUse: 5,
     rightsAffirmed: true,
+    quotedFee: 10000,
   };
   const overCap = STICKER_MAX_USES + 1;
 
@@ -508,6 +510,7 @@ describe('per-use price is required for stickers', () => {
     // Required for every submission since the rights-affirmation change; present
     // so these cases fail on the per-use price and nothing else.
     rightsAffirmed: true,
+    quotedFee: 10000,
   };
 
   it('rejects a sticker submitted without a per-use price', () => {

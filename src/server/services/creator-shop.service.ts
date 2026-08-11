@@ -24,6 +24,10 @@ import {
   refundMultiAccountTransaction,
   refundTransaction,
 } from '~/server/services/buzz.service';
+import {
+  assertQuotedFee,
+  getCreatorShopSubmissionFee,
+} from '~/server/services/creator-shop-fees.service';
 import { createNotification } from '~/server/services/notification.service';
 import { getBlockedPairIds } from '~/server/services/user-preferences.service';
 import { NotificationCategory } from '~/server/common/enums';
@@ -69,7 +73,6 @@ const creatorStorefrontItemSelect = Prisma.validator<Prisma.CosmeticShopItemSele
 });
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import {
-  CREATOR_SHOP_SUBMISSION_FEE,
   STICKER_DEFAULT_USES,
   STICKER_MIN_BUZZ_PER_USE,
   cosmeticPriceFloor,
@@ -281,6 +284,7 @@ export const submitCreatorShopItem = async ({
   uses,
   pricePerUse,
   rightsAffirmed,
+  quotedFee,
 }: SubmitCreatorShopItemInput & { userId: number }) => {
   // The zod schema already requires it; this keeps the item from ever being
   // created without the record if the service is called from anywhere else.
@@ -326,11 +330,13 @@ export const submitCreatorShopItem = async ({
   await validateStickerCosmetic({ type: cosmeticType, data: { slug: normalizedSlug } });
 
   // Charge the (non-refundable) submission fee; refunded only if the write fails.
+  const submissionFee = await getCreatorShopSubmissionFee(cosmeticType);
+  assertQuotedFee(quotedFee, submissionFee);
   const feeTx = await createBuzzTransaction({
     fromAccountId: userId,
     fromAccountType: buzzType as BuzzSpendType,
     toAccountId: 0,
-    amount: CREATOR_SHOP_SUBMISSION_FEE,
+    amount: submissionFee,
     type: TransactionType.Purchase,
     description: `Creator Shop submission fee - ${name}`,
     externalTransactionId: `creator-shop-submit-${userId}-${Date.now()}`,
@@ -367,6 +373,7 @@ export const submitCreatorShopItem = async ({
           meta: {
             purchases: 0,
             submissionTxId: feeTxId,
+            submissionFee,
             autoChecks: checks,
             imageMeta,
             imageHash,

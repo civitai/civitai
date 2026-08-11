@@ -1,0 +1,5 @@
+key	sat_live	sat_cand	moved	samples	verdict
+anima	1	1	lighting+16	false	no change
+lens	1	1		false	no change
+krea2	2	2	subject+16	false	no change
+sd1	0	0		false	no change

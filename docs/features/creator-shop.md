@@ -97,7 +97,21 @@ Bounds of the guarantee:
 3. **Per-creator shop settings** → appended to `User.settings` (Json) as `settings.creatorShop` — **no new table** (`{ showModels, featuredItemIds[], description?, coverImageId? }`).
    - **Featured** = `featuredItemIds` (ordered array, app-enforced cap 6) — matches the picker (pick a set; order matters; keep it out of the hot item table).
    - **Models toggle** = `showModels`; when on, the storefront *unions in* the creator's existing early-access / paid-access models — **no item rows created**.
-4. **Submission fee, price-change re-review** → live in `CosmeticShopItem.meta` for MVP (`submissionTxId`, `lastApprovedAmount`); no columns needed. Editing `unitAmount` beyond ±25% of `lastApprovedAmount` flips `status → PendingReview` (application logic).
+4. **Submission fee, price-change re-review** → live in `CosmeticShopItem.meta` for MVP (`submissionTxId`, `submissionFee`, `lastApprovedAmount`); no columns needed. Editing `unitAmount` beyond ±25% of `lastApprovedAmount` flips `status → PendingReview` (application logic).
+
+### Submission fees are per type and set in the database
+
+The fee is **per `CosmeticType`**, plus one figure for packs, stored in `KeyValue` under `creatorShopFees`
+(`{ submission: { Badge: 10000, … }, pack: 1000 }`). A missing or malformed value falls back **per value** to
+the compiled default in `creator-shop.schema.ts` (10,000 per type, 1,000 for a pack), so an absent row keeps
+today's pricing. Read and set it through `/api/admin/creator-shop-fees`.
+
+One read serves both the charge (`creator-shop.service.ts`) and the quote the submit form shows
+(`creatorShop.getFees` → `useCreatorShopFees`); the client never mirrors a constant, because the number a
+creator agrees to and the number charged are the same non-refundable Buzz. The submit mutation carries the
+quoted fee and the server refuses the submission if it no longer matches, so a form left open across a fee
+change is never charged silently. The amount actually charged is recorded on the item as `meta.submissionFee`;
+items submitted before that existed show no amount rather than today's configured one.
 
 ### Why NOT reuse `CosmeticShopSection` for the storefront
 

@@ -149,7 +149,7 @@ describe('auditPromptServer → addBlockedPrompt — sysRedis reads (fail-CLOSED
 describe('auditPromptServer → reportProhibitedRequest → getBlockedPrompts (mute path, fail-CAUGHT)', () => {
   // Drive count > muted (constants.imageGeneration.requestBlocking.muted = 8) so
   // reportProhibitedRequest enters the auto-mute branch and calls getBlockedPrompts.
-  // The downstream dbWrite.userRestriction.create throws (dbWrite is mocked {}),
+  // The downstream applyPendingReviewMute throws (dbWrite is mocked {}),
   // absorbed by the existing `catch (banError)` — so no heavy mute-path scaffolding
   // is needed. Unlike addBlockedPrompt (fail-PROPAGATED), a sysRedis error in
   // getBlockedPrompts is fail-CAUGHT: the auto-mute is skipped, and the current

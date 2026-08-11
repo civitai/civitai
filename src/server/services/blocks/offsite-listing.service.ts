@@ -35,6 +35,7 @@ import {
 import { assertOffsiteListingActionable } from '~/server/services/blocks/app-listing-actionable.service';
 import { computeListingProblems } from '~/server/services/blocks/listing-problems';
 import { measureUploadedImage } from '~/server/services/blocks/measure-uploaded-image';
+import { storedObjectEtagMetadata } from '~/server/services/blocks/stored-object-integrity';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import {
   deriveContentRatingFromAssets,
@@ -973,10 +974,7 @@ export async function beginListingRevision(opts: {
   const parent = await loadOwnedEditableListing(listingId, userId);
 
   if (parent.revisionOfId != null) {
-    throw new OffsiteRequestError(
-      'INVALID_REVISION',
-      'cannot open a revision of a revision draft'
-    );
+    throw new OffsiteRequestError('INVALID_REVISION', 'cannot open a revision of a revision draft');
   }
   if (parent.status !== 'approved') {
     throw new OffsiteRequestError(
@@ -1042,13 +1040,15 @@ export async function beginListingRevision(opts: {
       });
       if (shots.length > 0) {
         await tx.appListingScreenshot.createMany({
-          data: shots.map((s: { imageId: number | null; order: number; caption: string | null }) => ({
-            id: newAppListingScreenshotId(),
-            appListingId: shadowId,
-            imageId: s.imageId,
-            order: s.order,
-            caption: s.caption,
-          })),
+          data: shots.map(
+            (s: { imageId: number | null; order: number; caption: string | null }) => ({
+              id: newAppListingScreenshotId(),
+              appListingId: shadowId,
+              imageId: s.imageId,
+              order: s.order,
+              caption: s.caption,
+            })
+          ),
         });
       }
     });
@@ -1113,19 +1113,17 @@ export async function submitListingRevision(opts: {
       coverId: true,
       revisionOf: { select: { slug: true, status: true } },
     },
-  })) as
-    | {
-        id: string;
-        kind: string;
-        status: string;
-        userId: number;
-        revisionOfId: string | null;
-        externalUrl: string | null;
-        iconId: number | null;
-        coverId: number | null;
-        revisionOf: { slug: string; status: string } | null;
-      }
-    | null;
+  })) as {
+    id: string;
+    kind: string;
+    status: string;
+    userId: number;
+    revisionOfId: string | null;
+    externalUrl: string | null;
+    iconId: number | null;
+    coverId: number | null;
+    revisionOf: { slug: string; status: string } | null;
+  } | null;
 
   if (!shadow) {
     throw new OffsiteRequestError('NOT_FOUND', `revision draft ${shadowId} not found`);
@@ -2163,7 +2161,9 @@ export async function approveExternalRequest(opts: {
       // submit/edit time). A connect listing always has a `connectClient` row here
       // (FK-backed by the non-null `connectClientId`); treat a null ceiling as 0.
       const allowedScopes = primaryListing.connectClient?.allowedScopes ?? 0;
-      if (!connectScopesSubsetOfCeiling(primaryListing.connectRequestedScopes ?? 0, allowedScopes)) {
+      if (
+        !connectScopesSubsetOfCeiling(primaryListing.connectRequestedScopes ?? 0, allowedScopes)
+      ) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: 'requested scopes exceed the OAuth client’s allowed scopes',
@@ -2695,8 +2695,11 @@ export async function persistListingAssetImage(opts: {
     width: measured.width,
     height: measured.height,
     mimeType: measured.mimeType,
-    // The P1 image validator reads the byte size from `Image.metadata.size`.
-    metadata: { size: measured.sizeBytes },
+    // The P1 image validator reads the byte size from `Image.metadata.size`. The
+    // entity tag alongside it records WHICH stored object those measurements came
+    // from, so the attach gate can re-check that the object still is that one
+    // instead of trusting a reading taken before the upload grant expired.
+    metadata: { size: measured.sizeBytes, ...storedObjectEtagMetadata(measured.etag) },
     userId,
   });
   return { imageId: image.id };
@@ -2802,9 +2805,7 @@ export type ListOffsiteRequestsOptions = { limit?: number; cursor?: string };
  * a rejected/withdrawn submission — is still shown.) The shape is otherwise
  * backward-compatible: `hasPendingRevision` is purely additive.
  */
-export async function listMySubmissions(
-  opts: { userId: number } & ListOffsiteRequestsOptions
-) {
+export async function listMySubmissions(opts: { userId: number } & ListOffsiteRequestsOptions) {
   const limit = Math.min(opts.limit ?? 25, 100);
   const rows = await dbRead.appListingPublishRequest.findMany({
     where: {
@@ -2819,11 +2820,7 @@ export async function listMySubmissions(
       // request (all onsite requests are shadow revisions, per the invariant). Include
       // them directly via the `{ kind: 'onsite' }` OR branch so onsite media revisions
       // appear on my-submissions (decision: yes).
-      OR: [
-        { appListingId: null },
-        { appListing: { revisionOfId: null } },
-        { kind: 'onsite' },
-      ],
+      OR: [{ appListingId: null }, { appListing: { revisionOfId: null } }, { kind: 'onsite' }],
     },
     orderBy: { submittedAt: 'desc' },
     take: limit + 1,
@@ -2839,9 +2836,7 @@ export async function listMySubmissions(
   // existence. An abandoned shadow (opened via beginListingRevision but never
   // submitListingRevision-ed → no pending request) must NOT falsely badge the
   // parent "revision in review".
-  const parentIds = page
-    .map((r) => r.appListingId)
-    .filter((id): id is string => id != null);
+  const parentIds = page.map((r) => r.appListingId).filter((id): id is string => id != null);
   const pendingRevisionReqs =
     parentIds.length > 0
       ? await dbRead.appListingPublishRequest.findMany({
@@ -2913,9 +2908,7 @@ export async function listMySubmissions(
       })
     : [];
   const ingestionByImageId = new Map(ingestionRows.map((i) => [i.id, i.ingestion ?? null]));
-  const scanStatusOf = (
-    ingestion: string | null | undefined
-  ): 'scanned' | 'pending' | 'blocked' =>
+  const scanStatusOf = (ingestion: string | null | undefined): 'scanned' | 'pending' | 'blocked' =>
     ingestion === 'Scanned' ? 'scanned' : ingestion === 'Blocked' ? 'blocked' : 'pending';
   const assetScansFor = (listing: {
     iconId: number | null;

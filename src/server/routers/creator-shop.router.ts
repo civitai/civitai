@@ -54,6 +54,7 @@ import {
   submitCreatorShopPack,
   updateCreatorShopPack,
 } from '~/server/services/creator-shop-pack.service';
+import { getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
 import { isStickerSlugAvailable } from '~/server/services/cosmetic.service';
 import * as z from 'zod';
 import {
@@ -228,6 +229,9 @@ export const creatorShopRouter = router({
         preview: input.preview && !!ctx.user?.isModerator,
       })
     ),
+  // Deliberately uncached: the form quotes these numbers and the submission is
+  // rejected if they no longer match what the server charges.
+  getFees: publicProcedure.query(() => getCreatorShopFees()),
   getEarlyAccessPrices: publicProcedure
     .use(isFlagProtected('creatorShop'))
     .input(getEarlyAccessPricesSchema)
