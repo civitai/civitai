@@ -66,8 +66,14 @@ baseline from those columns, never from a runtime-filtered permission array.
 
 No new permission bits. A Manager may invite and remove **Contributors** only; granting Manager and
 removing a Manager are owner-only; the owner is never removable. Changing privacy (`read`/`write`)
-and `mode` stays with the owner and moderators — `upsertCollection` strips those fields from anyone
-else rather than throwing, so the pre-existing moderator-invited contest-manager path keeps working.
+and `mode` stays with the owner and moderators.
+
+That last split is why `collection.upsert` carries **no ownership middleware**. Authorization lives in
+`upsertCollection`, which requires `manage` and then strips `read`/`write`/`mode` for anyone who is
+not the owner, rather than throwing — so a Manager saving the edit form changes the name and keeps
+the privacy it already had. An `isOwnerOrModerator` middleware in front of it refuses the whole edit
+instead, which is what it used to do; the stripping was unreachable and the roles table above was
+wrong for as long as that was true. `collection.delete` keeps the middleware, deliberately.
 
 ## Invites
 
@@ -97,6 +103,11 @@ only place that knows about them.
   there is nothing pending, leaving no way in.
 - **A band above the filters** peeking at the two most recent invites, with **View all**.
 - **The invitations modal**, the full inbox, opened from either.
+- **A prompt on the collection page itself**, for whoever is holding a live invite to it. This is
+  what makes `collection-invite-received`'s link work: it points at `/collections/{id}`, which an
+  invitee to a `read: Private` collection has no permission to open, so the page renders the prompt
+  in place of the "you do not have sufficient permissions" copy. It reads the invite off the same
+  `getMyInvites` the sidebar already loaded, so the page pays nothing for it.
 
 The count lives on the mail button and **nowhere else**. The band deliberately has no badge: it
 would print the same number twice, and it is the button's copy that has to survive the band being
@@ -132,6 +143,17 @@ The reconciler is bidirectional in one pass, so a missed billing webhook self-he
 Its scope is deliberately narrow — `mode IS NULL`, owner is a real user, and either `write` is not
 `Private` or a non-owner holds elevated permissions. The owner-exclusion matters: owners hold their
 own elevated contributor row, so without it the predicate matches essentially every collection.
+
+**Both gates have to agree on what a member is.** `isMemberUser` reads the owner's tier off the hub
+session, which ranks comped tiers from `UserMembershipOverride` alongside real subscriptions, so the
+reconciler's `active_member` CTE unions that table in too. Reading `CustomerSubscription` alone there
+let a comped owner invite successfully and then get switched off the same night, with no billing
+state they could act on.
+
+The gate is surfaced where each half of the feature lives, not only where it is enforced: an owner
+without a membership gets the write control **disabled with an upgrade CTA** rather than no control
+at all. Omitting it reads as "this collection cannot take submissions" instead of "this is a member
+feature", which is the one reading that loses the upgrade.
 
 While disabled, the review queue stays open, existing collaborators keep their permissions, and
 already-issued invites can still be accepted. Only new entries and new collaborators stop.
@@ -218,23 +240,23 @@ Known gaps, roughly in the order they'd block a release.
   `20260806120000_collaborative_collections` is committed for review only — we do not run
   `prisma migrate deploy`. Someone has to run the SQL by hand in each environment before any of this
   works there.
-- **The membership CTA has never run in a browser.** Both dev accounts are moderators, and
-  moderators bypass the membership gate by design, so the blocked states are covered by unit tests
-  and nothing else. Verifying it needs a non-moderator owner with no membership, plus a Manager on
-  that owner's collection to see the other half of the split copy.
 - **The Manager-facing `owner-membership` copy is an open question.** Telling a Manager that the
   owner needs a membership discloses the owner's billing state to someone who is not the owner. It
   is scoped to `manage` holders on purpose — the alternative, reusing the generic lapse string,
   leaves the Manager with nothing to act on — but that trade has not been signed off. Tightening it
   is one branch in `InviteBlockedNotice`.
-- **`collection-invite-received` points at the wrong place.** It links to `/collections/{id}`, which
-  an invitee to a `read: Private` collection cannot open — they have no permission until they
-  accept. It should route to the invitations inbox instead.
 - **`getMyInvites` truncates at 50 silently.** The cap bounds the per-invite roster reads, but
   nothing tells a user with more than 50 pending invites that they are seeing a subset.
 - **Deferred from the designs**: the standalone "Manage collaborators" header button, and the
   status chips ("Open to submissions" / "N awaiting review" / "N items"). The actions behind both
   are reachable today, through the context menu and the roster popover.
+- **A collaborator's role cannot be changed in place.** The design gives each roster row a role
+  dropdown; promoting a Contributor today means removing them and inviting again, which they have
+  to accept. Needs its own mutation, with the same precedence `inviteCollaborator` uses.
+- **"Manager since \<date\>" is deliberately absent from the roster.** `getCollaborators` is a
+  `publicProcedure` gated only on `read`, and the same payload feeds the public header stack, so a
+  join date would be published to every reader. It needs a `manage`-gated payload first — this was
+  built and reverted once already, and `collection.controller.roster.test.ts` pins it.
 - **The new UI has no component tests.** `CollectionInvitesModal`, `CollectionInvitesButton` and the
   roster popover are covered only by the service-level tests underneath them.
 
@@ -250,5 +272,6 @@ Known gaps, roughly in the order they'd block a release.
 | Pending-review count | `src/server/services/collection.service.ts` (`getPendingReviewCount`) |
 | tRPC surface | `src/server/routers/collection.router.ts` |
 | Roster + invite UI | `src/components/Collections/CollectionCollaborators/` |
+| Invite prompt on the collection page | `src/components/Collections/CollectionCollaborators/CollectionInvitePrompt.tsx` |
 | Header roster summary | `src/components/Collections/CollectionCollaboratorsSummary.tsx` |
 | Sidebar (mail button, invite band) | `src/components/Collections/CollectionsLayout.tsx` |
