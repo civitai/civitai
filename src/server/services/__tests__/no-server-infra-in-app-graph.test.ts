@@ -72,6 +72,11 @@ const KNOWN_REACHABLE: { file: string; reason: string }[] = [
       'TWO live paths — flipt/client.ts:3 AND audit-slow-log.ts:176 (guarded, deliberate, out of scope). Evicting flipt alone does NOT clear this one.',
   },
   {
+    file: 'src/server/logging/structured-log-sink.ts',
+    reason:
+      'via logging/client.ts; a leaf (its only import is `import type`), so it adds itself and no further edges. Drops with logging/client.',
+  },
+  {
     file: 'packages/civitai-axiom/src/client.ts',
     reason: 'via logging/client.ts:7; drops only when logging/client does.',
   },

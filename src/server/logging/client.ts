@@ -24,8 +24,9 @@ const noopLog = async (_data: MixedObject, _datastream?: string) => {};
 //
 // So the OTel sink is REGISTERED, not imported: `src/instrumentation.node.ts` (server-only
 // by construction) calls `setStructuredLogSink(emitOtelLog)` at boot. (That import is
-// `~/server/logging/structured-log-sink`, which has no runtime imports of its own, so it
-// adds no edge to the client graph either.)
+// `~/server/logging/structured-log-sink`, whose only import is an `import type`, so it adds
+// no FURTHER edges — though the module itself is still compiled into the client graph, and
+// `no-server-infra-in-app-graph.test.ts` records it as such.)
 //
 // 🔴 The sink object is NOT declared here, and must not be. The bundler emits THIS module
 // 14 times into one server build (measured; see the header of ./structured-log-sink), so a
@@ -36,9 +37,7 @@ const noopLog = async (_data: MixedObject, _datastream?: string) => {};
 //
 // The sink is read per call from that stable object, so registering it after the logger
 // is built still takes effect. Pinned by a test in @civitai/axiom.
-export const logToAxiom = IS_BUILD
-  ? noopLog
-  : createAxiomLogger({}, structuredLogSink).logToAxiom;
+export const logToAxiom = IS_BUILD ? noopLog : createAxiomLogger({}, structuredLogSink).logToAxiom;
 export { safeError };
 
 /**
