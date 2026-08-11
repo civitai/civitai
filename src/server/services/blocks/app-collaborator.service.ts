@@ -486,15 +486,25 @@ export type CollaboratorView = {
 };
 
 /**
- * List an app's collaborators, filtered by the SAME status-visibility rules
- * `EntityCollaborator` established (the part of that prior art worth reusing):
+ * Filter roster ROWS by the status-visibility rules `EntityCollaborator` established
+ * (the part of that prior art worth reusing):
  *
- *   accepted → visible to everyone
+ *   accepted → visible to any caller that reaches this function
  *   pending  → visible to the app owner, the invitee themselves, and moderators
  *   rejected → visible to the app owner and moderators only
  *
- * Anything else is filtered out. An anonymous caller (`viewerUserId == null`) sees
- * ACCEPTED only.
+ * 🔴 "Any caller that reaches this function" is NOT "everyone". This is a row filter,
+ * never an access check: its only production caller is `listCollaborators`, which
+ * ALREADY refused anyone who is not the owner, an ACCEPTED editor, or a moderator.
+ * Do not read the `accepted → everyone` line as a statement about who may call the
+ * proc — that gate lives in `listCollaborators` and is the load-bearing one.
+ *
+ * Consequently two branches below are unreachable from that caller and are retained
+ * only as defence-in-depth for a future second caller: the `viewerUserId == null`
+ * early return (a non-moderator caller must hold a role, so it is never anonymous),
+ * and the `row.userId === viewerUserId` disjunct in the `pending` arm (a role-holder
+ * cannot simultaneously hold a `pending` row). Their unit tests pin an invariant, not
+ * behaviour any current caller can reach.
  */
 export function filterCollaboratorsForViewer(
   rows: CollaboratorView[],

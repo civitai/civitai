@@ -209,10 +209,23 @@ export const appCollaboratorsRouter = router({
   // -------------------------------------------------------------------------
 
   /**
-   * The app's roster, filtered by the status-visibility rules `EntityCollaborator`
-   * established: accepted → everyone; pending → owner/invitee/mod; rejected →
-   * owner/mod. Enforced in the SERVICE, so the filter cannot be bypassed by a
-   * different caller.
+   * The app's roster. 🔴 NOT a public read — two gates apply, in this order:
+   *
+   *   1. ACCESS. The caller must be the app OWNER, an ACCEPTED editor, or a
+   *      moderator (`listCollaborators` throws NOT_OWNER otherwise). A PENDING
+   *      invitee is refused here — they read their own standing invitation via
+   *      `listMyPendingInvites`, which is keyed to their own user id.
+   *   2. STATUS. Within an app the caller may already read, rows are filtered by
+   *      the `EntityCollaborator` status rules (pending → owner/invitee/mod;
+   *      rejected → owner/mod).
+   *
+   * Gate 1 is the load-bearing one and is NEW: the status filter alone never
+   * governed whether the caller may read the app at all, so without it any
+   * flagged account could enumerate every app's roster — including seats whose
+   * holder opted OUT of the public byline (`displayed: false`).
+   *
+   * Both are enforced in the SERVICE, so neither can be bypassed by a different
+   * caller. See `listCollaborators`.
    */
   list: protectedProcedure
     .use(enforceAppBlocksAuthorFlag)
