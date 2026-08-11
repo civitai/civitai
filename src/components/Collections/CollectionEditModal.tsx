@@ -1,4 +1,5 @@
 import {
+  Alert,
   Box,
   Button,
   Center,
@@ -9,11 +10,13 @@ import {
   Input,
   Loader,
   Modal,
+  Select,
   Stack,
   Text,
 } from '@mantine/core';
 
-import { IconCalendar, IconClipboard } from '@tabler/icons-react';
+import { IconBolt, IconCalendar, IconClipboard } from '@tabler/icons-react';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { env } from 'process';
 import { useEffect, useState } from 'react';
@@ -45,10 +48,44 @@ import {
 import type { UpsertCollectionInput } from '~/server/schema/collection.schema';
 import { upsertCollectionInput } from '~/server/schema/collection.schema';
 import { baseModels } from '~/shared/constants/basemodel.constants';
-import { CollectionMode, CollectionType, TagTarget } from '~/shared/utils/prisma/enums';
+import {
+  CollectionMode,
+  CollectionType,
+  CollectionWriteConfiguration,
+  TagTarget,
+} from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+
+// An owner without a membership used to get no control here at all, which reads as "this
+// collection can't take submissions" rather than "this is a member feature". The disabled
+// select keeps the setting where they'd look for it.
+function SubmissionsMemberNotice({ write }: { write?: CollectionWriteConfiguration | null }) {
+  return (
+    <Input.Wrapper label="Who can add to this collection">
+      <Stack gap={8}>
+        <Select
+          data={Object.values(collectionWritePrivacyData)}
+          value={write ?? CollectionWriteConfiguration.Private}
+          disabled
+          readOnly
+        />
+        <Alert color="yellow" variant="light" icon={<IconBolt size={18} />} p="xs">
+          <Group justify="space-between" gap="md" wrap="nowrap">
+            <Text size="sm">
+              Opening a collection to submissions is a member feature. Upgrade to let other people
+              add to this collection.
+            </Text>
+            <Button component={NextLink} href="/pricing" size="compact-sm" className="shrink-0">
+              Get a membership
+            </Button>
+          </Group>
+        </Alert>
+      </Stack>
+    </Input.Wrapper>
+  );
+}
 
 export default function CollectionEditModal({ collectionId }: { collectionId?: number }) {
   const router = useRouter();
@@ -139,6 +176,8 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
   const canEdit = !!collection && permissions.manage;
   const isCreate = !collectionId;
   const isOwner = isCreate || permissions.isOwner;
+  const canConfigurePrivacy = isOwner || !!currentUser?.isModerator;
+  const canOpenSubmissions = (isMember && isOwner) || !!currentUser?.isModerator;
   const isImageCollection = collection?.type === CollectionType.Image;
   const isContestMode = collection?.mode === CollectionMode.Contest;
   const joinUrl =
@@ -190,12 +229,14 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
               />
             )}
 
-            {((isMember && isOwner) || currentUser?.isModerator) && (
+            {canOpenSubmissions ? (
               <InputSelect
                 name="write"
                 label="Who can add to this collection"
                 data={Object.values(collectionWritePrivacyData)}
               />
+            ) : (
+              canConfigurePrivacy && <SubmissionsMemberNotice write={collection?.write} />
             )}
 
             {currentUser?.isModerator && (
