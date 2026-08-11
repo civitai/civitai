@@ -47,10 +47,24 @@ detail before doing anything destructive.
 
 Highest risk first. Full list and what to watch for: [detail](retool-migration-handover-detail.md#3-nothing-has-been-run).
 
+**Local dev fires at two different places — know which before reading a result.** `DATABASE_URL` is the
+dev clone, so mute, force-logout and the cosmetic paths write there; but `callMainApp` targets
+`CIVITAI_APP_URL`, so **ban, unban, purge and image removal hit production**. The consequence when
+exercising: the app *reads* identity from the clone, so a prod ban does not change the button, and a
+green form is not evidence. Verify against the real target, not the page.
+
 - [ ] **Bulk Image Manager** — the POI/minor **clear** path especially: Retool could only ever *set*, so that direction has no prior behaviour to compare against
-- [ ] **`sendBuzz`** send *and* deduct — a reversed direction or wrong ledger type is silent, and this shipped wrong once
+- [ ] **`sendBuzz`** send *and* deduct — a reversed direction or wrong ledger type is silent, and this shipped wrong once. ⚠️ **Still unexercised**: `BUZZ_ENDPOINT` is `localhost:8080` and nothing listens there in dev, so the call fails at connect and tests nothing. Needs an environment with the buzz service up.
 - [ ] **Issue strike** — strike counts drive bans; exercise from User Reports first
-- [ ] **Purge all content** — throwaway account only
+- [x] **Purge all content** (2026-08-11, owner-authorised on their own prod test account 1290051).
+      Verified by id against prod: `/api/v1/images?imageId=` returns `items:[]` for both of the
+      account's images. **Read that endpoint, not `?username=`** — the username listing is served from
+      Meilisearch and `removeAllContent` only *queues* the index delete, so purged content stays listed
+      for a while and reads as a failed purge. It caught up here within a few minutes.
+- [x] **Ban / unban round trip** (2026-08-11, same account). Prod SSR payload carried
+      `"bannedAt":"…"` after the ban and no `bannedAt` after the unban; both attributed to the real
+      moderator in `ModActivity`. Note the profile page returns **200 either way** — it renders
+      "Banned" rather than 404ing, so a status code proves nothing here.
 - [ ] **Front Page Audit** — confirm re-rating locks the level and the row dims
 - [ ] Videos render as video, not through the image pipeline
 
