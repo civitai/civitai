@@ -5,6 +5,12 @@ import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import type { PlacedSticker } from '~/components/Sticker/placement.util';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
 import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
+import {
+  CARD_TREATMENT_FALLBACK,
+  DEFAULT_STICKER_TREATMENT,
+  STICKER_TREATMENTS,
+  type StickerTreatmentKey,
+} from '~/components/Sticker/treatments/sticker-treatments';
 import { useMemo } from 'react';
 
 /**
@@ -26,6 +32,7 @@ export function StickerPlacementOverlay({
   interactive = true,
   sticker,
   artworkWidth = 512,
+  treatment = DEFAULT_STICKER_TREATMENT,
 }: {
   placements: PlacedSticker[];
   viewerId?: number;
@@ -65,6 +72,13 @@ export function StickerPlacementOverlay({
    * free.
    */
   artworkWidth?: number;
+  /**
+   * How an approved sticker is separated from the artwork under it. Never
+   * applied to a pending placement — pending owns 60% opacity plus a dashed
+   * yellow outline, and a second always-on treatment on top of it would make
+   * "waiting on you" and "settled" look the same to the owner.
+   */
+  treatment?: StickerTreatmentKey;
 }) {
   const cosmeticIds = useMemo(
     () =>
@@ -75,6 +89,16 @@ export function StickerPlacementOverlay({
   );
   const { sticker: resolved } = useStickerCosmetics(cosmeticIds);
   const artwork = sticker ?? resolved;
+
+  // `interactive` is the detail-view/card distinction the overlay already
+  // carries, so an animating treatment degrades where ~50 of these exist at
+  // once without a second prop meaning the same thing.
+  const active =
+    STICKER_TREATMENTS[
+      !interactive && STICKER_TREATMENTS[treatment].animationClassName
+        ? CARD_TREATMENT_FALLBACK
+        : treatment
+    ];
 
   if (!placements.length) return null;
 
@@ -90,6 +114,21 @@ export function StickerPlacementOverlay({
         // would be a filter where a refusal is needed.
         const isOwner = placement.ownerId === viewerId;
 
+        // Pending already has a treatment of its own and keeps it alone.
+        const dressed = placement.isPending ? STICKER_TREATMENTS.none : active;
+
+        const artworkImage = (
+          <EdgeImage
+            src={art.url}
+            alt={`:${art.slug}:`}
+            // A fixed request width rather than a measured one: a sticker has
+            // a natural size and the element scales it down in layout.
+            options={{ width: artworkWidth, anim: art.animated, optimized: true }}
+            className={clsx(placement.isPending && 'opacity-60')}
+            style={{ width: '100%', height: 'auto', display: 'block', ...dressed.imageStyle }}
+          />
+        );
+
         const body = (
           <div
             key={placement.id}
@@ -99,17 +138,25 @@ export function StickerPlacementOverlay({
               top: `${placement.data.y * 100}%`,
               width: `${placement.data.scale * 100}%`,
               transform: `translate(-50%, -50%) rotate(${placement.data.rotation}deg)`,
+              ...dressed.wrapperStyle,
             }}
           >
-            <EdgeImage
-              src={art.url}
-              alt={`:${art.slug}:`}
-              // A fixed request width rather than a measured one: a sticker has
-              // a natural size and the element scales it down in layout.
-              options={{ width: artworkWidth, anim: art.animated, optimized: true }}
-              className={clsx(placement.isPending && 'opacity-60')}
-              style={{ width: '100%', height: 'auto', display: 'block' }}
-            />
+            {/* The wrapper's own transform makes it a stacking context, so a
+                negative z-index here stays behind the sticker without reaching
+                behind the artwork the sticker sits on. */}
+            {dressed.behind && (
+              <span
+                aria-hidden
+                className={dressed.behind.className}
+                style={{ zIndex: -1, ...dressed.behind.style }}
+              />
+            )}
+
+            {dressed.animationClassName ? (
+              <div className={dressed.animationClassName}>{artworkImage}</div>
+            ) : (
+              artworkImage
+            )}
 
             {/* A dashed outline rather than opacity alone. Fading is invisible
                 over busy artwork and reads as a rendering fault over plain
