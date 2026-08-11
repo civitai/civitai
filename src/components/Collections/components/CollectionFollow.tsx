@@ -104,8 +104,8 @@ export const CollectionFollowAction = ({
             title: 'Leave this collection?',
             children: (
               <Text size="sm">
-                You will lose your collaborator role and can only rejoin if someone invites you
-                again.
+                You will lose your collaborator role and stop following this collection. You can
+                only rejoin if someone invites you again.
               </Text>
             ),
             labels: { confirm: 'Leave collection', cancel: 'Stay' },
