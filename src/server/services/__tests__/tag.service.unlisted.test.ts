@@ -7,6 +7,8 @@ const {
   imageVotes,
   modelTagFindMany,
   modelVotes,
+  prismaImageVotes,
+  prismaModelVotes,
   modelVotableTagsFetch,
   modelVotableTagsBust,
   executeRaw,
@@ -24,6 +26,12 @@ const {
   imageVotes: vi.fn().mockResolvedValue([]),
   modelTagFindMany: vi.fn(),
   modelVotes: vi.fn().mockResolvedValue([]),
+  prismaImageVotes: vi.fn(async () => {
+    throw new Error('tagsOnImageVote.findMany must not be called — ported to Kysely');
+  }),
+  prismaModelVotes: vi.fn(async () => {
+    throw new Error('tagsOnModelsVote.findMany must not be called — ported to Kysely');
+  }),
   modelVotableTagsFetch: vi.fn(),
   modelVotableTagsBust: vi.fn(),
   executeRaw: vi.fn().mockResolvedValue(undefined),
@@ -63,10 +71,18 @@ vi.mock('~/server/redis/client', async (importOriginal) => {
     },
   };
 });
+// The per-user vote reads run through @civitai/db-queries (Kysely over the app's own pg pool),
+// bypassing the Prisma query engine. Mocked at that seam; the Prisma spies below are kept only to
+// prove those reads no longer go through it.
+vi.mock('@civitai/db-queries/tag', () => ({
+  listImageTagVotes: imageVotes,
+  listImageTagVotesMany: imageVotes,
+  listModelTagVotes: modelVotes,
+}));
 vi.mock('~/server/db/client', () => ({
   dbRead: {
-    tagsOnImageVote: { findMany: imageVotes },
-    tagsOnModelsVote: { findMany: modelVotes },
+    tagsOnImageVote: { findMany: prismaImageVotes },
+    tagsOnModelsVote: { findMany: prismaModelVotes },
     // Kept only to prove the model path NO LONGER reads the ModelTag view directly.
     modelTag: { findMany: modelTagFindMany },
     model: { findFirst: modelFindFirst },
@@ -181,9 +197,9 @@ describe('getVotableTags — model tags', () => {
 
     it('merges each user OWN vote from their own tagsOnModelsVote read, uncached', async () => {
       // User A upvoted; user B downvoted the SAME tag on the SAME model.
-      modelVotes.mockImplementation(async ({ where }: { where: { userId: number } }) => {
-        if (where.userId === 111) return [{ tagId: NUDE, vote: 1 }];
-        if (where.userId === 222) return [{ tagId: NUDE, vote: -1 }];
+      modelVotes.mockImplementation(async (_db: unknown, { userId }: { userId: number }) => {
+        if (userId === 111) return [{ tagId: NUDE, vote: 1 }];
+        if (userId === 222) return [{ tagId: NUDE, vote: -1 }];
         return [];
       });
 
@@ -195,14 +211,16 @@ describe('getVotableTags — model tags', () => {
       expect(bTags.find((t) => t.id === NUDE)?.vote).toBe(-1);
 
       // The per-user vote read is scoped to that user + this model (uncached path).
-      expect(modelVotes).toHaveBeenNthCalledWith(1, {
-        where: { modelId: 1, userId: 111 },
-        select: { tagId: true, vote: true },
+      expect(modelVotes).toHaveBeenNthCalledWith(1, expect.anything(), {
+        modelId: 1,
+        userId: 111,
       });
-      expect(modelVotes).toHaveBeenNthCalledWith(2, {
-        where: { modelId: 1, userId: 222 },
-        select: { tagId: true, vote: true },
+      expect(modelVotes).toHaveBeenNthCalledWith(2, expect.anything(), {
+        modelId: 1,
+        userId: 222,
       });
+      // The vote read no longer touches the Prisma engine.
+      expect(prismaModelVotes).not.toHaveBeenCalled();
     });
 
     it('an anonymous request never reads per-user votes', async () => {

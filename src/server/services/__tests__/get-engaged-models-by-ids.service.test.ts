@@ -10,9 +10,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * These tests pin that the new path returns ONLY the intersection of (user's engagements ∩ input
  * modelIds), keyed by engagement type, so the response is bounded by |modelIds| × (#types).
  *
- * `~/server/db/client` is mocked with an in-memory fixture whose `findMany` applies the real
- * `where` clause — so the tests exercise the service's shaping AND that it passes the correct,
- * bounded filters down to Prisma (including through the reused `getResourceReviewsByUserId`).
+ * Both reads are mocked over one in-memory fixture that applies the real filters, so the tests
+ * exercise the service's shaping AND that it passes the correct, bounded filters down. They sit at
+ * two different seams because the two reads now take different paths: the engagement read goes
+ * through `@civitai/db-queries` (Kysely over the app's own pg pool, off the Prisma query engine),
+ * while `getResourceReviewsByUserId` is still Prisma via `~/server/db/client`.
  */
 
 // Model id fixtures (kept in sync with the hoisted mock below — plain numbers, safe to duplicate).
@@ -26,7 +28,7 @@ const E = 105; // Recommended only (outside input)
 const F = 106; // resource review but recommended:false (must never appear)
 const Z = 999; // in input but user has NO engagement
 
-const { mockDb } = vi.hoisted(() => {
+const { mockDb, listModelEngagementsMock } = vi.hoisted(() => {
   const U = 1;
   const OU = 2;
   type EngRow = { userId: number; modelId: number; type: string };
@@ -51,18 +53,21 @@ const { mockDb } = vi.hoisted(() => {
   const inArr = (where: any, field: string) => where?.[field]?.in as number[] | undefined;
 
   return {
+    // The engagement read is served by the Kysely query function, not Prisma. Same in-memory
+    // fixture and same filtering, applied to the ported signature `(db, { userId, modelIds })`.
+    listModelEngagementsMock: vi.fn(
+      async (_db: unknown, { userId, modelIds }: { userId: number; modelIds: number[] }) => {
+        if (!modelIds.length) return [];
+        return engagementRows
+          .filter((r) => r.userId === userId && modelIds.includes(r.modelId))
+          .map((r) => ({ modelId: r.modelId, type: r.type }));
+      }
+    ),
     mockDb: {
+      // Kept only to prove the engagement read NO LONGER goes through Prisma.
       modelEngagement: {
-        findMany: vi.fn(async ({ where }: any) => {
-          const ids = inArr(where, 'modelId');
-          return engagementRows
-            .filter(
-              (r) =>
-                r.userId === where.userId &&
-                (where.type === undefined || r.type === where.type) &&
-                (!ids || ids.includes(r.modelId))
-            )
-            .map((r) => ({ modelId: r.modelId, type: r.type }));
+        findMany: vi.fn(async () => {
+          throw new Error('modelEngagement.findMany must not be called — ported to Kysely');
         }),
       },
       resourceReview: {
@@ -83,6 +88,10 @@ const { mockDb } = vi.hoisted(() => {
 });
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
+// The engagement read runs through @civitai/db-queries over the app's own pg pool, bypassing the
+// Prisma query engine. Mocked at that seam so these tests keep exercising the service's shaping
+// and the bounded filters it passes down.
+vi.mock('@civitai/db-queries/model', () => ({ listModelEngagements: listModelEngagementsMock }));
 // user.service reaches into user-preferences.service at import time; stub the surface
 // (matches the proven recipe in engagement-toggle.idempotent.service.test.ts).
 vi.mock('~/server/services/user-preferences.service', () => ({
@@ -134,11 +143,14 @@ describe('getUserEngagedModelsByIds — membership is scoped to (engagements ∩
     expect(allIds).not.toContain(Z);
   });
 
-  it('passes the bounded modelId filter down to Prisma (both tables)', async () => {
+  it('passes the bounded modelId filter down to both reads (Kysely + Prisma)', async () => {
     await getUserEngagedModelsByIds({ id: USER, modelIds: [A, B, Z] });
-    expect(mockDb.modelEngagement.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { userId: USER, modelId: { in: [A, B, Z] } } })
-    );
+    expect(listModelEngagementsMock).toHaveBeenCalledWith(expect.anything(), {
+      userId: USER,
+      modelIds: [A, B, Z],
+    });
+    // The engagement read no longer touches the Prisma engine.
+    expect(mockDb.modelEngagement.findMany).not.toHaveBeenCalled();
     expect(mockDb.resourceReview.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { userId: USER, recommended: true, modelId: { in: [A, B, Z] } },
@@ -218,10 +230,10 @@ describe('getUserEngagedModelsByIds — freeze-safety bound', () => {
     const bigEng = modelIds.flatMap((modelId) => types.map((type) => ({ modelId, type })));
     const bigRev = modelIds.map((modelId, i) => ({ modelId, modelVersionId: 9000 + i }));
 
-    mockDb.modelEngagement.findMany.mockImplementationOnce(async ({ where }: any) => {
-      const ids = where.modelId.in as number[];
-      return bigEng.filter((r) => ids.includes(r.modelId));
-    });
+    listModelEngagementsMock.mockImplementationOnce(
+      async (_db: unknown, { modelIds: ids }: { userId: number; modelIds: number[] }) =>
+        bigEng.filter((r) => ids.includes(r.modelId))
+    );
     mockDb.resourceReview.findMany.mockImplementationOnce(async ({ where }: any) => {
       const ids = where.modelId.in as number[];
       return bigRev.filter((r) => ids.includes(r.modelId));
