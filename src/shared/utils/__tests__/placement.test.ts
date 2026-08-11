@@ -11,7 +11,8 @@ import {
   placementOutcomeFromStatus,
   placementPriceCap,
   onPlacementPriceGrid,
-  PLACEMENT_PRICE_TRACK_START,
+  PLACEMENT_PRICE_STEP,
+  placementPriceUsable,
   placementPriceTrack,
   placementSurfaces,
   placementTransactionId,
@@ -318,12 +319,12 @@ describe('space resolution', () => {
   // refetched the row and recomputed the floor, so a legacy price ratcheted
   // upward one drag at a time: 10 -> 55 leaves the floor at 50 and 10 is gone.
   it('does not depend on the stored price', () => {
-    const track = placementPriceTrack(500, 100);
-    expect(track).toEqual({ min: PLACEMENT_PRICE_TRACK_START, max: 500 });
+    const track = placementPriceTrack('sticker', 500);
+    expect(track).toEqual({ min: PLACEMENT_SURFACES.sticker.minPrice, max: 500 });
 
     // Same cap, same track, whatever the creator is currently charging.
     for (const cap of [100, 500, 2_500]) {
-      expect(placementPriceTrack(cap, 100).min).toBe(PLACEMENT_PRICE_TRACK_START);
+      expect(placementPriceTrack('sticker', cap).min).toBe(PLACEMENT_SURFACES.sticker.minPrice);
     }
   });
 
@@ -331,16 +332,41 @@ describe('space resolution', () => {
   // landable values are `min + 5k` — prod's stored 67 sits between two of them
   // and the first nudge rounds it away.
   it('produces a track whose bounds are on its own grid', () => {
-    for (const cap of [null, 0, 1, 50, 55, 100, 2_500]) {
-      const track = placementPriceTrack(cap, 100);
+    // Operator caps come from a `KeyValue` override and are not required to be
+    // multiples of the step, so 333 and 51 are as real as 100.
+    for (const cap of [null, 0, 1, 49, 50, 51, 55, 100, 333, 2_500]) {
+      const track = placementPriceTrack('sticker', cap);
       expect(track.max, `cap=${cap} zero-width track`).toBeGreaterThan(track.min);
       expect(onPlacementPriceGrid(track.min, track), `cap=${cap} min off-grid`).toBe(true);
       expect(onPlacementPriceGrid(track.max, track), `cap=${cap} max off-grid`).toBe(true);
+      // Never offer a price above the cap the server will clamp to anyway —
+      // except where the cap leaves no room for even one step, which is the
+      // degenerate track `placementPriceUsable` exists to keep off the screen.
+      if (cap != null && placementPriceUsable('sticker', cap))
+        expect(track.max, `cap=${cap} over cap`).toBeLessThanOrEqual(cap);
     }
   });
 
+  // The floor is per-surface so stickers and galleries can diverge later. They
+  // are both 50 today, so this drives the function with a table of its own
+  // rather than asserting a difference the shipped table does not have.
+  it('takes its floor from the surface, not from a constant', () => {
+    for (const surface of placementSurfaces)
+      expect(placementPriceTrack(surface, 500).min).toBe(PLACEMENT_SURFACES[surface].minPrice);
+  });
+
+  // A floor off its own grid puts the bottom of the track where the slider
+  // cannot land, exactly as an operator cap does at the top.
+  it('keeps every surface floor on the step grid', () => {
+    for (const surface of placementSurfaces)
+      expect(
+        PLACEMENT_SURFACES[surface].minPrice % PLACEMENT_PRICE_STEP,
+        `${surface} floor is off the step grid`
+      ).toBe(0);
+  });
+
   it('reports a stored price the slider cannot land on', () => {
-    const track = placementPriceTrack(500, 100);
+    const track = placementPriceTrack('sticker', 500);
 
     expect(onPlacementPriceGrid(67, track)).toBe(false);
     expect(onPlacementPriceGrid(10, track)).toBe(false);

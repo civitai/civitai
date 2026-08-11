@@ -54,10 +54,25 @@ beforeEach(() => {
 });
 
 describe('setPlacementSpace — the price guard', () => {
-  it('opens a space with no price of its own, on the surface default', async () => {
+  // The default rescues the guard; it must not be written to the row. Stamping
+  // it would freeze today's platform price into every space created before it
+  // next changes, and a later change would never reach them.
+  it('opens a space with no price of its own without storing the default', async () => {
     await setPlacementSpace({ ...base, mode: 'review' });
 
     expect(spaceUpsert).toHaveBeenCalledTimes(1);
+    expect(spaceUpsert.mock.calls[0][0].create).toMatchObject({ price: null });
+    expect(spaceUpsert.mock.calls[0][0].update).not.toHaveProperty('price');
+  });
+
+  // A row whose price is null is the ordinary result of the case above, so the
+  // clear-guard has to tell "no price to protect" from "no row".
+  it('allows clearing an account price that is already null', async () => {
+    storedRow(null);
+
+    await setPlacementSpace({ ...base, mode: 'review', price: null });
+
+    expect(priceWritten()).toMatchObject({ price: null });
   });
 
   // The whole point of the item: mode and price are one decision. A surface

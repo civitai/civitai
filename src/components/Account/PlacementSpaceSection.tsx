@@ -51,10 +51,11 @@ export function PlacementSpaceSection() {
     { surface: 'sticker' },
     { enabled }
   );
-  const { data: spaces, isPending: spacesPending } = trpc.placement.getMySpaces.useQuery(
-    { surface: 'sticker' },
-    { enabled }
-  );
+  const {
+    data: spaces,
+    isPending: spacesPending,
+    isError: spacesFailed,
+  } = trpc.placement.getMySpaces.useQuery({ surface: 'sticker' }, { enabled });
   const { data: pending } = trpc.placement.getPending.useQuery(undefined, { enabled });
 
   const stored = spaces?.[0];
@@ -91,10 +92,12 @@ export function PlacementSpaceSection() {
   });
 
   if (!enabled || !currentUser) return null;
-  // `spaces` is undefined while in flight and indistinguishable from "no row",
-  // so committing against it during the load window would write the seeded
-  // default over a space the creator had explicitly closed.
-  if (spacesPending) return null;
+  // `spaces` is undefined in every terminal state except success — in flight
+  // AND after the retries are exhausted — and undefined is indistinguishable
+  // from "no row". Rendering against either would seed the defaults and let one
+  // click write `review` over a space the creator had explicitly closed. A
+  // failed read is not permission to assume they have no preference.
+  if (spacesPending || spacesFailed) return null;
 
   const cap = range?.max ?? 0;
   const overCap = typeof price === 'number' && cap > 0 && price > cap;
@@ -223,18 +226,18 @@ export function PlacementSpaceSection() {
         </Alert>
       )}
 
-      {mode !== 'off' && price === '' && DEFAULT_PRICE == null && (
-        <Alert color="red" p="xs">
-          <Text size="xs">Set a price before opening your space, or nobody can place.</Text>
-        </Alert>
-      )}
-
-      {!stored && (
+      {/* Gated on there being no price rather than no row: a row with a null
+          price is now the ordinary result of setting a mode without touching
+          the price, and the page would otherwise say nothing at all about what
+          placers pay. */}
+      {mode !== 'off' && price === '' && (
         <Alert color="blue" p="xs">
           <Text size="xs">
-            This is the default and it is already in effect — people can place stickers on your
-            images for {DEFAULT_PRICE} Buzz, and you review each one. Change anything here to make
-            it yours.
+            {!stored && 'This is the default and it is already in effect. '}
+            You haven&apos;t set a price, so placers pay the platform default of {
+              DEFAULT_PRICE
+            }{' '}
+            Buzz. Set one to charge your own.
           </Text>
         </Alert>
       )}

@@ -38,7 +38,11 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
   const features = useFeatureFlags();
   const utils = trpc.useUtils();
 
-  const { data: row, isLoading } = trpc.placement.getSpaceRow.useQuery(
+  const {
+    data: row,
+    isPending: rowPending,
+    isError: rowFailed,
+  } = trpc.placement.getSpaceRow.useQuery(
     { surface: 'sticker', entityType: level, entityId },
     { enabled: !!features.stickerPlacement }
   );
@@ -74,7 +78,11 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
   });
 
   if (!features.stickerPlacement) return null;
-  if (isLoading) return <Loader size="xs" />;
+  if (rowPending) return <Loader size="xs" />;
+  // `row` is undefined after a failed read exactly as it is for a level with no
+  // row of its own, and the control cannot tell them apart. Showing `inherit`
+  // means one click clears or overwrites a setting the creator never saw.
+  if (rowFailed) return null;
 
   const commit = (nextMode: string, nextPrice: number | '') => {
     // Inheriting is the absence of a row, so it deletes rather than writing
@@ -101,7 +109,7 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
 
   const defaultPrice = PLACEMENT_SURFACES.sticker.defaultPrice;
   const cap = range?.max ?? null;
-  const track = placementPriceTrack(cap, defaultPrice);
+  const track = placementPriceTrack('sticker', cap);
   const { min: sliderMin, max: sliderMax } = track;
   const clamp = (value: number) => Math.min(Math.max(value, sliderMin), sliderMax);
   const sliderValue = price === '' ? clamp(defaultPrice) : clamp(price);

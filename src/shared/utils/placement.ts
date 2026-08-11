@@ -100,6 +100,7 @@ export const PLACEMENT_SURFACES = {
     // hand and invisible in the UI.
     defaultMode: 'review',
     defaultPrice: 100,
+    minPrice: 50,
     defaultDeclineFeeRate: 0.3,
     defaultSellerShare: 0,
     defaultPlatformShare: 0.3,
@@ -110,6 +111,7 @@ export const PLACEMENT_SURFACES = {
     targets: ['image'],
     defaultMode: 'off',
     defaultPrice: null,
+    minPrice: 50,
     defaultDeclineFeeRate: 0.3,
     defaultSellerShare: 0,
     defaultPlatformShare: 0.3,
@@ -122,6 +124,7 @@ export const PLACEMENT_SURFACES = {
     targets: readonly PlacementSpaceEntity[];
     defaultMode: PlacementSpaceMode;
     defaultPrice: number | null;
+    minPrice: number;
     defaultDeclineFeeRate: number;
     defaultSellerShare: number;
     defaultPlatformShare: number;
@@ -223,16 +226,19 @@ export const PLACEMENT_PRICE_CAP_TIERS: PlacementPriceTier[] = [
 export const PLACEMENT_MIN_PRICE = 0;
 
 /**
- * The price control's granularity and where its track starts. Not a server
- * floor: `PLACEMENT_MIN_PRICE` is, and prices set before this existed can sit
- * below the track, so the control widens to include the value it was given
- * rather than snapping it up on open.
+ * The price control's granularity. Global on purpose — the floor moved to the
+ * surface table because stickers and galleries may want different ones, and
+ * nobody has asked for two step sizes. `minPrice` is not a server floor either;
+ * `PLACEMENT_MIN_PRICE` is, so a price below the track stays valid and keeps
+ * being charged.
+ *
+ * ⚠️ A surface whose `minPrice` is not a multiple of this puts the bottom of
+ * its own track off-grid, the same way an operator cap does at the top.
  */
 export const PLACEMENT_PRICE_STEP = 5;
-export const PLACEMENT_PRICE_TRACK_START = 50;
 
 /**
- * The bounds of the price control: a fixed grid of `[start, cap]` in `step`
+ * The bounds of the price control: a fixed grid of `[minPrice, cap]` in `step`
  * increments, independent of what is stored.
  *
  * Widening the track to swallow the stored price was worse than the problem.
@@ -241,17 +247,30 @@ export const PLACEMENT_PRICE_TRACK_START = 50;
  * stored 67 sat *between* steps, so the track claimed a value the grid could
  * not land on and the first nudge silently rounded it away.
  *
- * So the slider owns `[start, cap]` and nothing else. A price outside that grid
- * is preserved until the creator moves the control, and the UI says what it is
- * rather than pretending the slider can return to it.
+ * So the slider owns `[minPrice, cap]` and nothing else. A price outside that
+ * grid is preserved until the creator moves the control, and the UI says what
+ * it is rather than pretending the slider can return to it.
  */
-export function placementPriceTrack(cap: number | null, defaultPrice: number | null) {
-  const min = PLACEMENT_PRICE_TRACK_START;
+export function placementPriceTrack(surface: PlacementSurface, cap: number | null) {
+  const { minPrice: min, defaultPrice } = PLACEMENT_SURFACES[surface];
   const ceiling = cap ?? defaultPrice ?? min;
-  // A cap at or below the track start would give a zero-width track, which is a
+  // Snapped down to the grid, so the top of the track is a value the slider can
+  // actually land on: an operator cap of 333 would otherwise sit between steps
+  // and the thumb could never reach the end of its own track. Down rather than
+  // up, because up would offer a price above the cap.
+  const steps = Math.floor((ceiling - min) / PLACEMENT_PRICE_STEP);
+  // A cap at or below the floor would give a zero-width track, which is a
   // division by zero inside the slider rather than a disabled control.
-  return { min, max: Math.max(ceiling, min + PLACEMENT_PRICE_STEP) };
+  return { min, max: min + Math.max(steps, 1) * PLACEMENT_PRICE_STEP };
 }
+
+/**
+ * Whether a cap leaves room for a choice. Below one step above the surface's
+ * floor every position on the slider resolves to the same charge once the
+ * server clamps, so the control would be asking a question with one answer.
+ */
+export const placementPriceUsable = (surface: PlacementSurface, cap: number | null) =>
+  cap == null || cap >= PLACEMENT_SURFACES[surface].minPrice + PLACEMENT_PRICE_STEP;
 
 /** Whether the slider can land on this price exactly, or would round it away. */
 export const onPlacementPriceGrid = (price: number, track: { min: number; max: number }) =>
