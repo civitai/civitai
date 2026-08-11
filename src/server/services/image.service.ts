@@ -2782,9 +2782,12 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
  * `emailVerified`, `username` and `createdAt` for every erroring search — 331k
  * records/day in production, each naming a real account.
  *
- * Nothing diagnostic is lost: `getAllImagesIndex` already forwards the only two
- * fields the search path reads off the session user as `currentUserId`
- * (`user?.id`) and `isModerator`, and both survive this untouched.
+ * Nothing diagnostic is lost: of the session user, `getAllImagesIndex` forwards
+ * exactly `currentUserId` (= `user?.id`) and `isModerator` into this function as
+ * separate top-level keys, and both survive redaction untouched. (It also reads
+ * `user?.username` for `enforceBlockedBrowsingTags`, but that is consumed in the
+ * caller and never reaches this input — so the redacted payload still carries
+ * every session-user field the search path actually had.)
  *
  * The user object is dropped WHOLE rather than having its known PII keys
  * deleted. A denylist fails open — the next field added to the session user
