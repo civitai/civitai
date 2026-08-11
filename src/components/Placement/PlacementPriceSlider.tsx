@@ -1,4 +1,7 @@
-import { Slider } from '@mantine/core';
+import { Group, Slider, Text } from '@mantine/core';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { Currency } from '~/shared/utils/prisma/enums';
+import { numberWithCommas } from '~/utils/number-helpers';
 import {
   PLACEMENT_PRICE_STEP,
   placementPriceTrack,
@@ -21,6 +24,23 @@ import {
  * price it cannot show — inheriting, above the cap, off the grid — and folding
  * those in here would make the caption a switch over the caller's situation.
  */
+/** A mark under the track: the bolt, then the number, grouped so it wraps as one. */
+function PriceMark({ value, prefix }: { value: number; prefix?: string }) {
+  return (
+    <Group gap={2} wrap="nowrap" style={{ whiteSpace: 'nowrap' }}>
+      {prefix && (
+        <Text size="xs" c="dimmed" span>
+          {prefix}
+        </Text>
+      )}
+      <CurrencyIcon currency={Currency.BUZZ} size={12} />
+      <Text size="xs" span>
+        {numberWithCommas(value)}
+      </Text>
+    </Group>
+  );
+}
+
 export function PlacementPriceSlider({
   surface,
   cap,
@@ -49,6 +69,9 @@ export function PlacementPriceSlider({
   return (
     <Slider
       size={size}
+      // The marks sit under the track and the caller's caption sits under those.
+      // Without this they land on top of each other.
+      mb="lg"
       value={value === '' ? clamp(fallback) : clamp(value)}
       // A cap too narrow to offer a choice asks a question with one answer, and
       // until the range loads the ceiling is a guess a creator should not be
@@ -60,16 +83,16 @@ export function PlacementPriceSlider({
       marks={
         cap != null && cap > track.min && cap < track.max
           ? [
-              { value: track.min, label: `${track.min}` },
-              { value: cap, label: `cap ${cap}` },
-              { value: track.max, label: `${track.max}` },
+              { value: track.min, label: <PriceMark value={track.min} /> },
+              { value: cap, label: <PriceMark value={cap} prefix="cap " /> },
+              { value: track.max, label: <PriceMark value={track.max} /> },
             ]
           : [
-              { value: track.min, label: `${track.min}` },
-              { value: track.max, label: `${track.max}` },
+              { value: track.min, label: <PriceMark value={track.min} /> },
+              { value: track.max, label: <PriceMark value={track.max} /> },
             ]
       }
-      label={(current) => `${current} Buzz`}
+      label={(current) => numberWithCommas(current)}
       onChange={onChange}
       // Commits on release rather than per pixel: a drag emits a value per pixel
       // and each one would be a write. Not a debounce — a trailing timer can

@@ -6,7 +6,7 @@ import type { PlacedSticker } from '~/components/Sticker/placement.util';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
 import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
 import {
-  DEFAULT_STICKER_TREATMENT,
+  STILL_STICKER_TREATMENT,
   resolveTreatment,
   type StickerSurface,
   type StickerTreatmentKey,
@@ -32,7 +32,7 @@ export function StickerPlacementOverlay({
   interactive = true,
   sticker,
   artworkWidth = 512,
-  treatment = DEFAULT_STICKER_TREATMENT,
+  treatment = STILL_STICKER_TREATMENT,
   surface = 'detail',
 }: {
   placements: PlacedSticker[];

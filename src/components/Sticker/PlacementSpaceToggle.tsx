@@ -8,6 +8,7 @@ import {
   placementPriceTrack,
   PLACEMENT_SURFACES,
 } from '~/shared/utils/placement';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -167,14 +168,18 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
                 commit(mode, value);
               }}
             />
-            <Text size="xs" c={overCap || offGrid ? 'yellow' : 'dimmed'}>
+            {/* Pulled up into the row the marks already reserve and centred
+                between them, so the caption costs no extra height. */}
+            <Text size="xs" ta="center" mt={-22} c={overCap || offGrid ? 'yellow' : 'dimmed'}>
               {price === ''
                 ? `Following the price from the level above, or ${defaultPrice} Buzz if none is set.`
                 : overCap
-                ? `Placers pay ${cap} Buzz — your current cap — until your score or membership raises it.`
+                ? `Placers pay ${numberWithCommas(
+                    cap
+                  )} Buzz — your current cap — until your score or membership raises it`
                 : offGrid
                 ? `Placers pay ${price} Buzz. The slider moves in ${PLACEMENT_PRICE_STEP}s from ${sliderMin}, so using it will change this price.`
-                : `Placers pay ${price} Buzz.`}
+                : `Placers pay ${numberWithCommas(price)} Buzz`}
             </Text>
           </Stack>
         )

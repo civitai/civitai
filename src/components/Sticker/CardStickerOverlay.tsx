@@ -83,8 +83,8 @@ export function CardStickerOverlay({ imageId }: { imageId: number }) {
   const [box, setBox] = useState<Box | null>(null);
 
   // Off means off, pending included. The badge still counts the viewer's own
-  // pending, so an owner who came from a notification sees a non-zero chip and
-  // one press away from the thing they came to decide on.
+  // pending, so an owner who came from a notification sees a non-zero chip, one
+  // press from the thing they came to decide on.
   const placements = batch && revealed ? batch.placements : [];
 
   const hasPlacements = placements.length > 0;

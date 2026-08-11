@@ -30,6 +30,7 @@ import {
   placementPriceTrack,
   PLACEMENT_SURFACES,
 } from '~/shared/utils/placement';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -167,17 +168,28 @@ export function PlacementSpaceSection() {
       />
 
       <Stack gap={4} maw={320}>
-        <Group gap={4} wrap="nowrap">
-          <Text size="sm" fw={500}>
-            Price per placement
-          </Text>
-          <CurrencyIcon currency={Currency.BUZZ} size={16} />
-          <InfoPopover size="xs" iconProps={{ size: 14 }} width={300}>
-            <Text size="sm" maw={280} style={{ whiteSpace: 'normal' }}>
-              Your cap is {cap} Buzz, set by your creator score and membership tier. We store the
-              price you choose, so if the cap rises later your price takes effect on its own.
+        <Group justify="space-between" gap="xs" wrap="nowrap">
+          <Group gap={4} wrap="nowrap">
+            <Text size="sm" fw={500}>
+              Price per placement
             </Text>
-          </InfoPopover>
+            <CurrencyIcon currency={Currency.BUZZ} size={16} />
+            <InfoPopover size="xs" iconProps={{ size: 14 }} width={300}>
+              <Text size="sm" maw={280} style={{ whiteSpace: 'normal' }}>
+                Your cap is {cap} Buzz, set by your creator score and membership tier. We store the
+                price you choose, so if the cap rises later your price takes effect on its own.
+              </Text>
+            </InfoPopover>
+          </Group>
+          {/* The slider only emits numbers, so without this a creator who touches
+              it once can never get back to having no price of their own — and an
+              unset price is not the same as a stored 100: it follows the platform
+              default when that changes, where a stored one freezes today's. */}
+          {price !== '' && (
+            <Anchor component="button" type="button" size="xs" onClick={() => commit(mode, '')}>
+              Use the platform default
+            </Anchor>
+          )}
         </Group>
         <PlacementPriceSlider
           surface="sticker"
@@ -190,12 +202,16 @@ export function PlacementSpaceSection() {
             commit(mode, value);
           }}
         />
-        <Text size="xs" c={overCap || offGrid ? 'yellow' : 'dimmed'}>
+        {/* Pulled up into the row the marks already reserve and centred between
+            them, so the caption costs no extra height. */}
+        <Text size="xs" ta="center" mt={-22} c={overCap || offGrid ? 'yellow' : 'dimmed'}>
           {overCap
-            ? `Placers pay ${cap} Buzz — your current cap — until your score or membership raises it.`
+            ? `Placers pay ${numberWithCommas(
+                cap
+              )} Buzz — your current cap — until your score or membership raises it`
             : offGrid
             ? `Placers pay ${price} Buzz. The slider moves in ${PLACEMENT_PRICE_STEP}s from ${track.min}, so using it will change this price.`
-            : `Placers pay ${price === '' ? DEFAULT_PRICE : price} Buzz.`}
+            : `Placers pay ${numberWithCommas(price === '' ? DEFAULT_PRICE : price)} Buzz`}
         </Text>
       </Stack>
 
@@ -246,15 +262,6 @@ export function PlacementSpaceSection() {
           </Badge>
         )}
       </Group>
-
-      {overCap && (
-        <Alert color="yellow" p="xs">
-          <Text size="xs">
-            You&apos;ll be charging {cap} Buzz — your current cap — until your score or membership
-            raises it.
-          </Text>
-        </Alert>
-      )}
 
       {/* Gated on there being no price rather than no row: a row with a null
           price is now the ordinary result of setting a mode without touching

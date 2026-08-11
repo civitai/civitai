@@ -85,17 +85,17 @@ describe('setPlacementSpace — the price guard', () => {
     expect(spaceUpsert).not.toHaveBeenCalled();
   });
 
-  // The defect this guard is really for. An account price is the top of the
-  // cascade, so an emptied field has nothing to fall back to except the surface
-  // default -- which would quietly reprice the creator's whole account.
-  it('refuses to clear a stored account price rather than repricing it to the default', async () => {
+  // Clearing an account price is a deliberate act now that no control can emit
+  // an empty value by accident, and the row must end up genuinely unset rather
+  // than stamped with today's default -- an unset price follows the platform
+  // default when it changes, a stored one freezes it.
+  it('clears a stored account price to null rather than to the surface default', async () => {
     storedRow(500);
 
-    await expect(setPlacementSpace({ ...base, mode: 'review', price: null })).rejects.toThrow(
-      /set a price rather than clearing it/
-    );
+    await setPlacementSpace({ ...base, mode: 'review', price: null });
 
-    expect(spaceUpsert).not.toHaveBeenCalled();
+    expect(spaceUpsert).toHaveBeenCalledTimes(1);
+    expect(priceWritten()).toBeNull();
   });
 
   // The refusal is account-level only. Below it "the level above" is a real

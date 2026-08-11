@@ -16,6 +16,13 @@ const IMAGE_ID = 1;
 const INVITATION = 'No stickers yet — place the first one';
 const PLUS = 'Place a sticker';
 
+// What the bar asked for, not just what it did with the answer. Reveal-off hides
+// pending placements, and the obvious tidy-up afterwards is to stop fetching them
+// — which also stops COUNTING them, so an owner following a notification lands on
+// a chip reading zero with nothing on the page that reveals what they came for.
+// Asserting only the total leaves that entirely unguarded.
+const placementsEnabled: (boolean | undefined)[] = [];
+
 const queryState = {
   counts: {} as Record<number, number>,
   countsLoading: false,
@@ -33,10 +40,13 @@ vi.mock('~/components/Sticker/placement.util', async (importOriginal) => ({
     isLoading: queryState.countsLoading,
     isError: queryState.countsError,
   }),
-  useStickerPlacements: () => ({
-    byImage: new Map(queryState.pending.length ? [[IMAGE_ID, queryState.pending]] : []),
-    isLoading: queryState.placementsLoading,
-  }),
+  useStickerPlacements: (_ids: number[], enabled?: boolean) => {
+    placementsEnabled.push(enabled);
+    return {
+      byImage: new Map(queryState.pending.length ? [[IMAGE_ID, queryState.pending]] : []),
+      isLoading: queryState.placementsLoading,
+    };
+  },
   useImagePlacementSpace: () => ({
     space: { mode: 'open', price: 100, ownerId: 999 },
     isLoading: false,
@@ -131,5 +141,17 @@ describe('StickerPlacementBar', () => {
 
     expect(invitations()).toBe(0);
     expect(page.getByRole('button', { name: /^1 sticker$/ }).elements()).toHaveLength(1);
+  });
+
+  test('fetches placements for a signed-in viewer even though reveal hides them', async () => {
+    Object.assign(queryState, { counts: {}, pending: [{ imageId: IMAGE_ID, isPending: true }] });
+    placementsEnabled.length = 0;
+    await renderBar();
+
+    // The count above is only right because this query ran. Passing `false` here
+    // renders identically until an owner arrives from a notification and finds
+    // nothing to act on, so the argument is the thing worth pinning.
+    expect(placementsEnabled.length).toBeGreaterThan(0);
+    expect(placementsEnabled.every((enabled) => enabled === true)).toBe(true);
   });
 });

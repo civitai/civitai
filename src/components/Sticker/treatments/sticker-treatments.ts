@@ -56,8 +56,8 @@ const dieCutEdge = (px: number): CSSProperties => ({
 export const STICKER_TREATMENTS: Record<StickerTreatmentKey, StickerTreatment> = {
   none: {
     key: 'none',
-    label: 'None (today)',
-    note: 'Ships as-is. The control for judging the other four.',
+    label: 'None',
+    note: 'No treatment. The control for judging the other four.',
   },
 
   lift: {

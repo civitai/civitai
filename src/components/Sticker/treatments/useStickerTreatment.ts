@@ -2,6 +2,7 @@ import { useRouter } from 'next/router';
 import {
   DEFAULT_STICKER_TREATMENT,
   isStickerTreatmentKey,
+  STICKER_TREATMENTS,
   STILL_STICKER_TREATMENT,
   type StickerTreatmentKey,
 } from '~/components/Sticker/treatments/sticker-treatments';
@@ -12,21 +13,27 @@ import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
  *
  * `?stickerTreatment=dieCut` overrides it **in development only**, so the four
  * candidates can be compared on real content in their real surfaces rather than
- * on a mock. In any other build this returns the compiled default and the query
- * parameter does nothing, which is what keeps a debug affordance out of
- * production without a second flag to remember to turn off.
+ * on a mock. In any other build the query parameter does nothing, which is what
+ * keeps a debug affordance out of production without a second flag to remember
+ * to turn off.
+ *
+ * What it otherwise returns is the compiled default, or the still treatment when
+ * the viewer has turned motion off.
  */
 export function useStickerTreatment(): StickerTreatmentKey {
   const router = useRouter();
   const { disableStickerMotion } = useCurrentUserSettings();
 
-  // The opt-out drops motion to the still treatment rather than to nothing: the
-  // point of a treatment is that a sticker reads as a sticker, and someone who
-  // turned off the movement did not ask to lose that.
+  // Keyed on whether the default actually animates rather than on its name, so
+  // changing the default to another animating treatment cannot quietly turn this
+  // setting into one that writes, reads back and does nothing.
+  //
+  // It drops to the still treatment rather than to nothing: the point of a
+  // treatment is that a sticker reads as a sticker, and someone who turned off
+  // the movement did not ask to lose that.
+  const animates = !!STICKER_TREATMENTS[DEFAULT_STICKER_TREATMENT].animationClassName;
   const preferred: StickerTreatmentKey =
-    DEFAULT_STICKER_TREATMENT === 'motion' && disableStickerMotion
-      ? STILL_STICKER_TREATMENT
-      : DEFAULT_STICKER_TREATMENT;
+    animates && disableStickerMotion ? STILL_STICKER_TREATMENT : DEFAULT_STICKER_TREATMENT;
 
   if (process.env.NODE_ENV !== 'development') return preferred;
 

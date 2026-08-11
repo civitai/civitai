@@ -6,6 +6,7 @@ import {
   resolveTreatment,
   STICKER_TREATMENT_KEYS,
   STICKER_TREATMENTS,
+  STILL_STICKER_TREATMENT,
   type StickerTreatmentKey,
 } from '~/components/Sticker/treatments/sticker-treatments';
 
@@ -81,6 +82,17 @@ describe('sticker treatments', () => {
     expect(resolveTreatment({ treatment: 'motion', surface: 'detail', isPending: false })).toBe(
       STICKER_TREATMENTS.motion
     );
+  });
+
+  // `CARD_TREATMENT_FALLBACK` and `STILL_STICKER_TREATMENT` are one constant, so
+  // the card fallback and the motion opt-out land in the same place. Asserting
+  // `resolveTreatment` against that constant is self-referential — it holds even
+  // if the constant is `motion`, which would make the opt-out a no-op AND animate
+  // every card in a feed. Pin the literal, and pin that it does not animate.
+  it('falls back to a treatment that is still, not to another animating one', () => {
+    expect(STILL_STICKER_TREATMENT).toBe('lift');
+    expect(CARD_TREATMENT_FALLBACK).toBe('lift');
+    expect(STICKER_TREATMENTS[STILL_STICKER_TREATMENT].animationClassName).toBeUndefined();
   });
 
   it('leaves a non-animating treatment alone on a card', () => {
