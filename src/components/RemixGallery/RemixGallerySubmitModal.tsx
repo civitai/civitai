@@ -2,14 +2,14 @@ import { Alert, Button, Group, Loader, Modal, Stack, Text } from '@mantine/core'
 import { IconAlertTriangle } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { Currency } from '~/shared/utils/prisma/enums';
+import { PLACEMENT_SPEND_TYPES } from '~/shared/constants/placement.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -98,21 +98,24 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
           <Button variant="default" onClick={dialog.onClose}>
             Cancel
           </Button>
-          <Button
-            disabled={!selected || !visibility?.open}
+          {/* The price shown here is the one the balance check runs against, and
+              the owner can move it between this render and the click. The
+              mutation reads the price fresh, so the button is honest about
+              affordability but cannot promise the amount — hence the note above
+              it rather than a silent charge. */}
+          <BuzzTransactionButton
+            buzzAmount={price ?? 0}
+            // Yellow and Green only, matching what the escrow will actually
+            // draw. The mutation refuses Blue regardless, so offering it here
+            // would promise a payment that is then refused.
+            accountTypes={PLACEMENT_SPEND_TYPES}
+            label="Submit"
+            disabled={!selected || !visibility?.open || price == null}
             loading={submit.isPending}
-            onClick={() => selected && submit.mutate({ hostImageId, imageId: selected })}
-          >
-            <Group gap={4} wrap="nowrap">
-              <span>Submit</span>
-              {price != null && (
-                <>
-                  <CurrencyIcon currency={Currency.BUZZ} size={14} />
-                  <span>{price}</span>
-                </>
-              )}
-            </Group>
-          </Button>
+            onPerformTransaction={() =>
+              selected && submit.mutate({ hostImageId, imageId: selected })
+            }
+          />
         </Group>
       </Stack>
     </Modal>

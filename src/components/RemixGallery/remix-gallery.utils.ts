@@ -16,6 +16,23 @@ export type RemixGalleryItem = {
 };
 
 /**
+ * Flattens the infinite-query pages into one list, keeping the first occurrence
+ * of each placement.
+ *
+ * The gallery cursor has already shipped one bug where pinned entries repeated
+ * across pages, and a repeat here is not cosmetic: two cards would share a React
+ * key, and the row-trimming below would count the duplicate toward a row it does
+ * not fill. Deduping is one line and makes a server-side paging regression a
+ * missing card rather than a crash.
+ */
+export function dedupeGalleryItems(items: RemixGalleryItem[]) {
+  const seen = new Set<number>();
+  return items.filter((item) =>
+    seen.has(item.placementId) ? false : (seen.add(item.placementId), true)
+  );
+}
+
+/**
  * Trims a rendered page to whole rows so the grid never ends with a dangling
  * card in a half-empty row.
  *
