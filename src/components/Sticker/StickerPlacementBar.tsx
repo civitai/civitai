@@ -2,7 +2,7 @@ import { Button, Tooltip } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettingsProvider';
-import { StickerCountChip } from '~/components/Sticker/StickerCountChip';
+import { StickerCountChip, useStickerInviteStyle } from '~/components/Sticker/StickerCountChip';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
 import {
   useImagePlacementSpace,
@@ -38,8 +38,9 @@ export function StickerPlacementBar({
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const { buttonStyling } = useReactionSettingsContext();
+  const inviteStyle = useStickerInviteStyle();
 
-  const counts = useStickerPlacementCounts([imageId]);
+  const { counts, isLoading: countsLoading } = useStickerPlacementCounts([imageId]);
   const count = counts[imageId] ?? 0;
   const { space } = useImagePlacementSpace(imageId);
 
@@ -67,6 +68,13 @@ export function StickerPlacementBar({
   // Approved plus the viewer's own pending, which is what the toggle reveals.
   const total = count + pending;
 
+  // The invitation is shown only once the count has actually arrived, not
+  // merely while it reads zero. The space and the count are separate queries,
+  // so an image with stickers spends the gap between them looking empty — and a
+  // press in that window would open a purchase tray instead of revealing what
+  // is already there.
+  const inviting = !total && canPlace && !countsLoading;
+
   if (!total && !canPlace) return null;
 
   return (
@@ -75,29 +83,33 @@ export function StickerPlacementBar({
           subject, and Button.Group squares the touching corners so the divider
           between them is the shared border rather than a drawn line. */}
       <Button.Group className={clsx(className)}>
-        {/* At zero the chip is the invitation rather than a reveal toggle:
-            there is nothing to reveal, and a control that visibly does nothing
-            is worse than the bare plus it replaced. It can only be zero here
-            when placing is available, since the early return above covers the
-            other case. */}
-        <StickerCountChip
-          count={total}
-          revealed={revealed}
-          tooltip={
-            total > 0
-              ? revealed
-                ? 'Hide stickers on all images'
-                : 'Show stickers on all images'
-              : `Place a sticker · ${space?.price} Buzz`
-          }
-          onClick={total > 0 ? toggle : () => openTray(imageId)}
-          // Revealed reads as `hasReacted`, so the toggle's on state borrows the
-          // same tint the row already uses for "you did this" instead of
-          // introducing a second visual language for on/off.
-          buttonProps={
-            total > 0 ? buttonStyling?.('AddReaction', revealed) : buttonStyling?.('BuzzTip')
-          }
-        />
+        {total > 0 && (
+          <StickerCountChip
+            count={total}
+            revealed={revealed}
+            showLabel
+            tooltip={revealed ? 'Hide stickers on all images' : 'Show stickers on all images'}
+            onClick={toggle}
+            // Revealed reads as `hasReacted`, so the toggle's on state borrows
+            // the same tint the row already uses for "you did this" instead of
+            // introducing a second visual language for on/off.
+            buttonProps={buttonStyling?.('AddReaction', revealed)}
+          />
+        )}
+
+        {/* At zero the chip is the invitation, not a reveal toggle: there is
+            nothing to reveal, and a control that visibly does nothing is worse
+            than the bare plus it replaced. */}
+        {inviting && (
+          <StickerCountChip
+            count={0}
+            revealed={revealed}
+            tooltip={`Place a sticker · ${space?.price} Buzz`}
+            ariaLabel="Place a sticker"
+            onClick={() => openTray(imageId)}
+            buttonProps={buttonStyling?.('BuzzTip')}
+          />
+        )}
 
         {canPlace && (
           <Tooltip label={`Place a sticker · ${space?.price} Buzz`} withArrow>
@@ -112,6 +124,10 @@ export function StickerPlacementBar({
               // stickers it reads as "add one" without a word, which is what
               // keeps the fused control narrow enough to belong in this row.
               {...buttonStyling?.('BuzzTip')}
+              // Last, and merged over whatever the row's styling set: at zero
+              // the plus is half the invitation, so it has to carry the same
+              // tint the chip does or the pair reads as two unrelated controls.
+              style={{ ...buttonStyling?.('BuzzTip')?.style, ...(inviting ? inviteStyle : null) }}
             >
               <IconPlus size={16} stroke={2.5} />
             </Button>

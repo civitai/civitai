@@ -63,12 +63,15 @@ export function useStickerPlacementCounts(imageIds: number[], enabled = true) {
     [imageIds.join(',')]
   );
 
-  const { data } = trpc.placement.getStickerPlacementCounts.useQuery(
+  const { data, isLoading } = trpc.placement.getStickerPlacementCounts.useQuery(
     { imageIds: ids },
     { enabled: enabled && ids.length > 0, staleTime: 60_000 }
   );
 
-  return (data ?? {}) as Record<number, number>;
+  // `isLoading` alongside the counts because zero and not-yet-known are
+  // different states with different affordances, and `data ?? {}` collapses
+  // them: an image with stickers reads as empty until this settles.
+  return { counts: (data ?? {}) as Record<number, number>, isLoading };
 }
 
 /**
