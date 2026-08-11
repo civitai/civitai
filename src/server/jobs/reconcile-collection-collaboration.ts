@@ -11,6 +11,13 @@ export const reconcileCollectionCollaboration = createJob(
         FROM "CustomerSubscription" cs
         WHERE cs.status IN ('active', 'trialing')
           AND cs."currentPeriodEnd" >= NOW()
+        UNION
+        -- The invite gate reads the owner's tier off the hub session, which ranks comped tiers
+        -- from UserMembershipOverride alongside real subscriptions. Reading subscriptions alone
+        -- here would let a comped owner invite successfully and then be switched off overnight.
+        SELECT o."userId"
+        FROM "UserMembershipOverride" o
+        WHERE o.tier <> 'free'
       ),
       collaborative AS (
         SELECT c.id, c."userId", c."collaborationDisabledAt"
