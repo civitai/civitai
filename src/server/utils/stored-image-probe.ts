@@ -79,18 +79,46 @@ export type StoredImageHead =
   | { status: 'unknown' };
 
 /**
+ * Timeout budget for the entity-tag re-read.
+ *
+ * 🔴 A BOUND IS NOT OPTIONAL HERE. `headStoredImage` sits inline on a user-facing
+ * mutation, and "the store errors" and "the store never answers" are different
+ * failures: the fail-open posture below only covers the first. An unbounded head
+ * against a degraded backend does not fail open, it HANGS the request holding it —
+ * strictly worse than the tampering this check exists to catch.
+ *
+ * Same budget, and the same reasoning, as the post-completion probe in
+ * `~/pages/api/upload/complete.ts`; taken from there rather than picked afresh so
+ * the two probes against this store cannot drift apart. Per the AWS SDK's contract
+ * this bounds each network ATTEMPT, not wall-clock — the retry sleep is not
+ * abort-aware, so the worst case is this budget plus one backoff. An abort lands on
+ * `unknown`, i.e. the check could not run.
+ */
+export const STORED_IMAGE_HEAD_TIMEOUT_MS = 5_000;
+
+/**
  * Cheap HeadObject re-read of the entity tag at `key`, for a consumer that holds a
  * tag recorded by {@link probeStoredImage} and needs to know whether the object is
  * STILL the one that was measured. No bytes are transferred and nothing is decoded.
  *
  * 🔴 Never throws, and never converts a failure into a verdict: an unreachable or
  * unconfigured store lands on `unknown`, which is the caller's cue that the check
- * could not run — not that it failed.
+ * could not run — not that it failed. A timeout is one of those failures, not a
+ * separate outcome: an aborted head is indistinguishable from an unreachable one
+ * as far as what we know about the object.
+ *
+ * `timeoutMs` exists so the abort path is testable in milliseconds rather than
+ * seconds. Production callers pass nothing.
  */
-export async function headStoredImage(key: string): Promise<StoredImageHead> {
+export async function headStoredImage(
+  key: string,
+  { timeoutMs = STORED_IMAGE_HEAD_TIMEOUT_MS }: { timeoutMs?: number } = {}
+): Promise<StoredImageHead> {
   try {
     const { s3, bucket } = await getImageUploadBackend();
-    const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+    const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }), {
+      abortSignal: AbortSignal.timeout(timeoutMs),
+    });
     return { status: 'present', etag: typeof head?.ETag === 'string' ? head.ETag : null };
   } catch (err) {
     return isNotFoundError(err) ? { status: 'absent' } : { status: 'unknown' };

@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   deriveContentRatingFromAssets,
@@ -538,13 +539,46 @@ async function remapScreenshotRowIds(args: {
  * The head request is issued ONLY when the row actually carries a tag, so rows that
  * cannot be checked cost no extra round trip — and `stored-image-probe` (and the
  * S3 client graph behind it) stays out of this module's static import graph.
+ *
+ * 🔴 EVERY OUTCOME THAT IS NOT `match` IS LOGGED, and the four `unverifiable`
+ * reasons are kept apart on the way out. Without that, a guard that is firing and a
+ * guard that is inert produce exactly the same observable — nothing — and the four
+ * reasons are operationally different signals rather than one blob: a rising
+ * `store-unreachable` is an infrastructure incident, a rising `no-current-etag` is a
+ * backend that stopped returning tags (which quietly disarms this check for every
+ * row), and `mismatch` is the case the guard exists for. A steady trickle of any of
+ * them is the only way to notice that the fail-open branch has become the ONLY
+ * branch.
+ *
+ * 🔴 The event carries NO storage key, bucket, URL or caller identity — the reason
+ * plus the asset kind plus the row id is everything an operator needs to tell these
+ * classes apart, and an object key in a log is an upload location in a log.
+ *
+ * `no-recorded-etag` is deliberately unreachable from here: the early return above
+ * skips the head entirely for a row that has nothing recorded, which is the expected
+ * steady state for every row written before this existed and is not worth an event
+ * each. It stays in the classifier's vocabulary for callers that do not short-circuit.
  */
-async function assertStoredObjectUnchanged(image: { url: string; metadata: unknown }) {
+async function assertStoredObjectUnchanged(
+  image: { id: number; url: string; metadata: unknown },
+  kind: ListingAssetKind
+) {
   const recordedEtag = readRecordedEtag(image.metadata);
   if (recordedEtag === null) return;
 
   const { headStoredImage } = await import('~/server/utils/stored-image-probe');
   const verdict = classifyStoredObjectIntegrity(recordedEtag, await headStoredImage(image.url));
+  if (verdict.status === 'match') return;
+
+  logToAxiom({
+    name: 'listing-asset-integrity',
+    type: verdict.status === 'mismatch' ? 'error' : 'warning',
+    status: verdict.status,
+    reason: verdict.status === 'unverifiable' ? verdict.reason : null,
+    kind,
+    imageId: image.id,
+  }).catch(() => null);
+
   if (verdict.status !== 'mismatch') return;
 
   throw new TRPCError({
@@ -630,7 +664,7 @@ async function loadValidatedImage(
   if (image.userId !== user.id && !user.isModerator) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this image' });
   }
-  await assertStoredObjectUnchanged(image);
+  await assertStoredObjectUnchanged(image, kind);
   const size = (image.metadata as { size?: unknown } | null)?.size;
   const result = validateListingImage(
     {
