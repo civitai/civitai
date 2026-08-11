@@ -12,6 +12,7 @@ import {
 import {
   assertLadderCoverage,
   findSlot,
+  LADDER_CONCURRENCY,
   reinsertAll,
   roundRobinPairs,
   runPool,
@@ -32,7 +33,7 @@ import { logToAxiom } from '~/server/logging/client';
 /** How many of the ladder's leaders play the round-robin that decides places. */
 export const PODIUM_SIZE = 15;
 
-const PODIUM_CONCURRENCY = 8;
+const PODIUM_CONCURRENCY = LADDER_CONCURRENCY;
 
 /**
  * Pairwise judging. An entry binary-searches the standings as it arrives and becomes a rung for

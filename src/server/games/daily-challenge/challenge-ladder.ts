@@ -17,6 +17,13 @@ export type Bout = (challengerId: number, opponentId: number, seat: Seat) => Pro
 export type SlotResult = { index: number; bouts: number };
 
 /**
+ * In-flight comparisons at close. Sized against MEASURED two-image bout latency — 9s median on the
+ * blend, 12.4s on the self-hosted route with a 56s worst case — not against a mock. The harness ran
+ * this stage at 12-16 against OpenRouter without rate-limiting.
+ */
+export const LADDER_CONCURRENCY = 16;
+
+/**
  * Binary-search `challengerId` into an ordered `list` (best first). A tie places the challenger
  * below the incumbent — an entry has to actually win to climb.
  */
@@ -103,7 +110,7 @@ export async function runPool<T, R>(
 export async function reinsertAll(
   order: readonly number[],
   bout: Bout,
-  concurrency = 8,
+  concurrency = LADDER_CONCURRENCY,
   maxPasses = 4
 ): Promise<{ order: number[]; bouts: number; passes: number }> {
   let current = [...order];
