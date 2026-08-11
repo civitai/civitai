@@ -36,7 +36,10 @@ const { mockDb, mockRepo, mockNotify } = vi.hoisted(() => {
   db.$transaction.mockImplementation(async (cb: (tx: typeof db) => Promise<unknown>) => cb(db));
   return {
     mockDb: db,
-    mockRepo: { grantAppRepoWrite: vi.fn(async () => undefined), revokeAppRepoWrite: vi.fn(async () => undefined) },
+    mockRepo: {
+      grantAppRepoWrite: vi.fn(async () => undefined),
+      revokeAppRepoWrite: vi.fn(async () => undefined),
+    },
     mockNotify: { notifyAppCollaborator: vi.fn(async () => undefined) },
   };
 });
@@ -211,7 +214,12 @@ describe('inviteCollaborator', () => {
   });
 
   it('the cap counts PENDING + ACCEPTED only — a rejected row occupies no seat', async () => {
-    await inviteCollaborator({ appBlockId: APP, targetUserId: TARGET, actorUserId: OWNER, now: NOW });
+    await inviteCollaborator({
+      appBlockId: APP,
+      targetUserId: TARGET,
+      actorUserId: OWNER,
+      now: NOW,
+    });
     const args = mockDb.appCollaborator.count.mock.calls[0][0] as {
       where: { status: { in: string[] } };
     };
@@ -219,7 +227,10 @@ describe('inviteCollaborator', () => {
   });
 
   it('the cap is NOT re-charged when re-touching an existing row', async () => {
-    mockDb.appCollaborator.findUnique.mockResolvedValue({ status: 'pending', lastNotifiedAt: null });
+    mockDb.appCollaborator.findUnique.mockResolvedValue({
+      status: 'pending',
+      lastNotifiedAt: null,
+    });
     mockDb.appCollaborator.count.mockResolvedValue(constants.appCollaborators.maxCollaborators);
     await expect(
       inviteCollaborator({ appBlockId: APP, targetUserId: TARGET, actorUserId: OWNER, now: NOW })
@@ -335,7 +346,11 @@ describe('removeCollaborator / leaveApp — the REVOKE half', () => {
 
 describe('setCollaboratorDisplayed', () => {
   it('an ACCEPTED collaborator can toggle their byline', async () => {
-    const res = await setCollaboratorDisplayed({ appBlockId: APP, userId: TARGET, displayed: false });
+    const res = await setCollaboratorDisplayed({
+      appBlockId: APP,
+      userId: TARGET,
+      displayed: false,
+    });
     expect(res.displayed).toBe(false);
     const upd = mockDb.appCollaborator.updateMany.mock.calls[0][0] as {
       where: { status: string };
@@ -361,49 +376,113 @@ describe('setCollaboratorDisplayed', () => {
 
 describe('filterCollaboratorsForViewer — status visibility', () => {
   const ROWS = [
-    { userId: 1, role: 'editor', status: 'accepted', displayed: true, invitedBy: OWNER, createdAt: NOW, respondedAt: NOW },
-    { userId: 2, role: 'editor', status: 'pending', displayed: true, invitedBy: OWNER, createdAt: NOW, respondedAt: null },
-    { userId: 3, role: 'editor', status: 'rejected', displayed: true, invitedBy: OWNER, createdAt: NOW, respondedAt: NOW },
+    {
+      userId: 1,
+      role: 'editor',
+      status: 'accepted',
+      displayed: true,
+      invitedBy: OWNER,
+      createdAt: NOW,
+      respondedAt: NOW,
+    },
+    {
+      userId: 2,
+      role: 'editor',
+      status: 'pending',
+      displayed: true,
+      invitedBy: OWNER,
+      createdAt: NOW,
+      respondedAt: null,
+    },
+    {
+      userId: 3,
+      role: 'editor',
+      status: 'rejected',
+      displayed: true,
+      invitedBy: OWNER,
+      createdAt: NOW,
+      respondedAt: NOW,
+    },
   ];
   const ids = (rows: typeof ROWS) => rows.map((r) => r.userId);
 
   it('anon sees ACCEPTED only', () => {
     expect(
-      ids(filterCollaboratorsForViewer(ROWS, { ownerUserId: OWNER, viewerUserId: null, isModerator: false }))
+      ids(
+        filterCollaboratorsForViewer(ROWS, {
+          ownerUserId: OWNER,
+          viewerUserId: null,
+          isModerator: false,
+        })
+      )
     ).toEqual([1]);
   });
 
   it('a stranger sees ACCEPTED only', () => {
     expect(
-      ids(filterCollaboratorsForViewer(ROWS, { ownerUserId: OWNER, viewerUserId: STRANGER, isModerator: false }))
+      ids(
+        filterCollaboratorsForViewer(ROWS, {
+          ownerUserId: OWNER,
+          viewerUserId: STRANGER,
+          isModerator: false,
+        })
+      )
     ).toEqual([1]);
   });
 
   it('the OWNER sees everything', () => {
     expect(
-      ids(filterCollaboratorsForViewer(ROWS, { ownerUserId: OWNER, viewerUserId: OWNER, isModerator: false }))
+      ids(
+        filterCollaboratorsForViewer(ROWS, {
+          ownerUserId: OWNER,
+          viewerUserId: OWNER,
+          isModerator: false,
+        })
+      )
     ).toEqual([1, 2, 3]);
   });
 
   it('a MODERATOR sees everything', () => {
     expect(
-      ids(filterCollaboratorsForViewer(ROWS, { ownerUserId: OWNER, viewerUserId: STRANGER, isModerator: true }))
+      ids(
+        filterCollaboratorsForViewer(ROWS, {
+          ownerUserId: OWNER,
+          viewerUserId: STRANGER,
+          isModerator: true,
+        })
+      )
     ).toEqual([1, 2, 3]);
   });
 
   it('the INVITEE sees their own pending row, but not someone else’s rejection', () => {
     expect(
-      ids(filterCollaboratorsForViewer(ROWS, { ownerUserId: OWNER, viewerUserId: 2, isModerator: false }))
+      ids(
+        filterCollaboratorsForViewer(ROWS, {
+          ownerUserId: OWNER,
+          viewerUserId: 2,
+          isModerator: false,
+        })
+      )
     ).toEqual([1, 2]);
     expect(
-      ids(filterCollaboratorsForViewer(ROWS, { ownerUserId: OWNER, viewerUserId: 3, isModerator: false }))
+      ids(
+        filterCollaboratorsForViewer(ROWS, {
+          ownerUserId: OWNER,
+          viewerUserId: 3,
+          isModerator: false,
+        })
+      )
     ).toEqual([1]);
   });
 
   it('an unknown status is filtered OUT — fail closed on a value the code does not know', () => {
     const weird = [{ ...ROWS[0], status: 'something-new' }];
     expect(
-      filterCollaboratorsForViewer(weird, { ownerUserId: OWNER, viewerUserId: null, isModerator: false })
+      filterCollaboratorsForViewer(weird, {
+        ownerUserId: OWNER,
+        viewerUserId: null,
+        isModerator: false,
+      })
     ).toEqual([]);
   });
 });

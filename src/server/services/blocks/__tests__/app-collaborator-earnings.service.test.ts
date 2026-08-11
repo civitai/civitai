@@ -53,7 +53,13 @@ const LEDGER = [
   { appBlockId: APP_A, appOwnerUserId: OWNER, status: 'paid_out', share: 250, gross: 500 },
   // APP_B is far more lucrative — so a leak is unmissable in the numbers, not just
   // in the id list.
-  { appBlockId: APP_B, appOwnerUserId: OWNER, status: 'confirmed', share: 999_999, gross: 1_999_999 },
+  {
+    appBlockId: APP_B,
+    appOwnerUserId: OWNER,
+    status: 'confirmed',
+    share: 999_999,
+    gross: 1_999_999,
+  },
 ];
 
 /**
@@ -72,9 +78,13 @@ function wireGroupBy() {
     const allowed = w.appBlockId?.in;
     const statuses = w.status?.in ?? ['confirmed', 'paid_out'];
     const rows = LEDGER.filter(
-      (r) => (allowed === undefined || allowed.includes(r.appBlockId)) && statuses.includes(r.status)
+      (r) =>
+        (allowed === undefined || allowed.includes(r.appBlockId)) && statuses.includes(r.status)
     );
-    const acc = new Map<string, { appBlockId: string; appOwnerUserId: number; share: number; n: number }>();
+    const acc = new Map<
+      string,
+      { appBlockId: string; appOwnerUserId: number; share: number; n: number }
+    >();
     for (const r of rows) {
       const k = `${r.appBlockId}:${r.appOwnerUserId}`;
       const prev = acc.get(k) ?? {
@@ -97,9 +107,11 @@ function wireGroupBy() {
 /** An `aggregate` fake that honours appBlockId + appOwnerUserId + status. */
 function wireAggregate() {
   mockDb.blockBuzzAttribution.aggregate.mockImplementation(async (args: unknown) => {
-    const w = (args as {
-      where: { appBlockId?: string; appOwnerUserId?: number; status?: string };
-    }).where;
+    const w = (
+      args as {
+        where: { appBlockId?: string; appOwnerUserId?: number; status?: string };
+      }
+    ).where;
     const rows = LEDGER.filter(
       (r) =>
         (w.appBlockId === undefined || r.appBlockId === w.appBlockId) &&
@@ -127,7 +139,10 @@ function wireAccess() {
     const w = (args as { where: Record<string, unknown> }).where;
     if ((w as { app?: { userId: number } }).app) {
       return (w as { app: { userId: number } }).app.userId === OWNER
-        ? [{ id: APP_A, app: { userId: OWNER } }, { id: APP_B, app: { userId: OWNER } }]
+        ? [
+            { id: APP_A, app: { userId: OWNER } },
+            { id: APP_B, app: { userId: OWNER } },
+          ]
         : [];
     }
     const ids = (w as { id?: { in: string[] } }).id?.in ?? [];
@@ -273,7 +288,9 @@ describe('getAppEarnings — per-app, fail-closed', () => {
     // A structural assertion on the WHERE clause, because dropping either axis is the
     // leak and a numeric assertion alone would not localise which axis went missing.
     await getAppEarnings({ appBlockId: APP_A, userId: EDITOR });
-    const calls = mockDb.blockBuzzAttribution.aggregate.mock.calls as Array<[{ where: Record<string, unknown> }]>;
+    const calls = mockDb.blockBuzzAttribution.aggregate.mock.calls as Array<
+      [{ where: Record<string, unknown> }]
+    >;
     expect(calls.length).toBeGreaterThan(0);
     for (const [args] of calls) {
       expect(args.where.appBlockId).toBe(APP_A);

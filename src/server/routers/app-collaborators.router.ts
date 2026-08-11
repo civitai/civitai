@@ -124,18 +124,20 @@ export const appCollaboratorsRouter = router({
     }),
 
   /** OWNER: remove a collaborator (any status). Revokes their repo write. */
-  remove: appDeveloperProcedure.input(removeAppCollaboratorSchema).mutation(async ({ ctx, input }) => {
-    const { removeCollaborator } = await import(
-      '~/server/services/blocks/app-collaborator.service'
-    );
-    return run(() =>
-      removeCollaborator({
-        appBlockId: input.appBlockId,
-        targetUserId: input.targetUserId,
-        actorUserId: ctx.user!.id,
-      })
-    );
-  }),
+  remove: appDeveloperProcedure
+    .input(removeAppCollaboratorSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { removeCollaborator } = await import(
+        '~/server/services/blocks/app-collaborator.service'
+      );
+      return run(() =>
+        removeCollaborator({
+          appBlockId: input.appBlockId,
+          targetUserId: input.targetUserId,
+          actorUserId: ctx.user!.id,
+        })
+      );
+    }),
 
   // -------------------------------------------------------------------------
   // INVITEE / COLLABORATOR.
@@ -152,9 +154,7 @@ export const appCollaboratorsRouter = router({
     .input(respondToAppInviteSchema)
     .mutation(async ({ ctx, input }) => {
       if (input.accept) assertNotBanned(ctx.user as SessionUser);
-      const { respondToInvite } = await import(
-        '~/server/services/blocks/app-collaborator.service'
-      );
+      const { respondToInvite } = await import('~/server/services/blocks/app-collaborator.service');
       return run(() =>
         respondToInvite({
           appBlockId: input.appBlockId,
@@ -240,19 +240,21 @@ export const appCollaboratorsRouter = router({
    * Returns an explicit `notPermitted` rather than a zero, so a caller can never read
    * "no access" as "earned nothing".
    */
-  getAppEarnings: appDeveloperProcedure.input(getAppEarningsSchema).query(async ({ ctx, input }) => {
-    const { getAppEarnings } = await import(
-      '~/server/services/blocks/app-collaborator-earnings.service'
-    );
-    return run(() =>
-      getAppEarnings({
-        appBlockId: input.appBlockId,
-        userId: ctx.user!.id,
-        from: input.from ? new Date(input.from) : undefined,
-        to: input.to ? new Date(input.to) : undefined,
-      })
-    );
-  }),
+  getAppEarnings: appDeveloperProcedure
+    .input(getAppEarningsSchema)
+    .query(async ({ ctx, input }) => {
+      const { getAppEarnings } = await import(
+        '~/server/services/blocks/app-collaborator-earnings.service'
+      );
+      return run(() =>
+        getAppEarnings({
+          appBlockId: input.appBlockId,
+          userId: ctx.user!.id,
+          from: input.from ? new Date(input.from) : undefined,
+          to: input.to ? new Date(input.to) : undefined,
+        })
+      );
+    }),
 
   // -------------------------------------------------------------------------
   // OWNERSHIP TRANSFER.
@@ -308,9 +310,7 @@ export const appCollaboratorsRouter = router({
       const { cancelTransfer } = await import(
         '~/server/services/blocks/app-ownership-transfer.service'
       );
-      return run(() =>
-        cancelTransfer({ transferId: input.transferId, actorUserId: ctx.user!.id })
-      );
+      return run(() => cancelTransfer({ transferId: input.transferId, actorUserId: ctx.user!.id }));
     }),
 
   /** The LIVE pending transfer for an app (expiry applied as a read-time predicate). */

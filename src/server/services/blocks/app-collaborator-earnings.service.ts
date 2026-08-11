@@ -1,5 +1,8 @@
 import { dbRead } from '~/server/db/client';
-import { resolveAppAccess, resolveAccessibleAppBlockIds } from '~/server/services/blocks/app-access.service';
+import {
+  resolveAppAccess,
+  resolveAccessibleAppBlockIds,
+} from '~/server/services/blocks/app-access.service';
 import type { RevenueSummary } from '~/server/services/blocks/buzz-attribution.service';
 
 /**
@@ -126,7 +129,10 @@ export async function getAppEarnings(opts: {
     }),
   ]);
 
-  type Agg = { _count?: number; _sum: { usdAmountCents?: number | null; appOwnerShareCents?: number | null } };
+  type Agg = {
+    _count?: number;
+    _sum: { usdAmountCents?: number | null; appOwnerShareCents?: number | null };
+  };
   const bucket = (a: Agg) => ({
     count: a._count ?? 0,
     grossCents: a._sum.usdAmountCents ?? 0,
@@ -214,7 +220,11 @@ export async function getMyAppsEarnings(opts: { userId: number }): Promise<MyApp
   const editorSet = new Set(editorIds);
   return allIds.map((id) => ({
     appBlockId: id,
-    role: ownedSet.has(id) ? ('owner' as const) : editorSet.has(id) ? ('editor' as const) : ('owner' as const),
+    role: ownedSet.has(id)
+      ? ('owner' as const)
+      : editorSet.has(id)
+      ? ('editor' as const)
+      : ('owner' as const),
     lifetimeShareCents: totals.get(id)?.shareCents ?? 0,
     lifetimeCount: totals.get(id)?.count ?? 0,
   }));

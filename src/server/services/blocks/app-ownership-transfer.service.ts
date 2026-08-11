@@ -79,10 +79,7 @@ async function loadOwnedApp(
   });
   if (!block?.app) throw new AppCollaboratorError('NOT_FOUND', 'App not found');
   if (block.app.userId !== actorUserId) {
-    throw new AppCollaboratorError(
-      'NOT_OWNER',
-      'Only the app owner can transfer ownership'
-    );
+    throw new AppCollaboratorError('NOT_OWNER', 'Only the app owner can transfer ownership');
   }
   return {
     appBlockId: block.id,
@@ -235,9 +232,7 @@ export async function acceptTransfer(opts: {
         expiresAt: true,
         appBlock: { select: { appId: true, blockId: true } },
       },
-    })) as
-      | (TransferView & { appBlock: { appId: string; blockId: string } | null })
-      | null;
+    })) as (TransferView & { appBlock: { appId: string; blockId: string } | null }) | null;
 
     if (!transfer || !transfer.appBlock) {
       throw new AppCollaboratorError('NOT_FOUND', 'That ownership transfer no longer exists');
@@ -246,10 +241,7 @@ export async function acceptTransfer(opts: {
       throw new AppCollaboratorError('NOT_OWNER', 'This transfer was not offered to you');
     }
     if (!isLive(transfer, now)) {
-      throw new AppCollaboratorError(
-        'NO_INVITE',
-        'This ownership transfer is no longer available'
-      );
+      throw new AppCollaboratorError('NO_INVITE', 'This ownership transfer is no longer available');
     }
 
     // (2) CANONICAL owner column, status-guarded on the snapshotted previous owner.
@@ -279,10 +271,7 @@ export async function acceptTransfer(opts: {
       data: { status: 'accepted', respondedAt: now },
     });
     if (closed.count === 0) {
-      throw new AppCollaboratorError(
-        'NO_INVITE',
-        'This ownership transfer is no longer available'
-      );
+      throw new AppCollaboratorError('NO_INVITE', 'This ownership transfer is no longer available');
     }
 
     // (5) Audit — in-tx, so a rollback leaves ZERO events.

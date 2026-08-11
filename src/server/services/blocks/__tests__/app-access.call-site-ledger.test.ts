@@ -225,9 +225,13 @@ describe('app-ownership gate ledger', () => {
   it('every ledger entry carries a non-trivial collaborator decision', () => {
     // Guards against an entry added purely to make the equality test pass.
     for (const [file, rationale] of Object.entries(GATE_LEDGER)) {
-      expect(rationale.length, `${file} rationale is too terse to be a decision`).toBeGreaterThan(80);
+      expect(rationale.length, `${file} rationale is too terse to be a decision`).toBeGreaterThan(
+        80
+      );
       expect(
-        /collaborat|owner|seat|insider|access|widen|NOT widened|stamp|denormalized/i.test(rationale),
+        /collaborat|owner|seat|insider|access|widen|NOT widened|stamp|denormalized/i.test(
+          rationale
+        ),
         `${file} rationale must state what it decided about collaborators`
       ).toBe(true);
     }
@@ -237,7 +241,9 @@ describe('app-ownership gate ledger', () => {
     // The consent gate is `status: 'accepted'`. If a second site writes its own seat
     // query, that site can drift — e.g. by forgetting the status filter, which would
     // make a PENDING invite confer capability. One home, one filter.
-    const seatQueryFiles = FILES.filter((f) => /appCollaborator\.(findFirst|findMany)/.test(CODE.get(f)!));
+    const seatQueryFiles = FILES.filter((f) =>
+      /appCollaborator\.(findFirst|findMany)/.test(CODE.get(f)!)
+    );
     expect(seatQueryFiles.sort()).toEqual([
       'src/server/services/blocks/app-access.service.ts',
       // The seat-lifecycle service reads its OWN rows (roster + inbox + cap), which is

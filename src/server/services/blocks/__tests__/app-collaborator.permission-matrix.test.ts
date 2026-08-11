@@ -43,7 +43,9 @@ const { mockDb } = vi.hoisted(() => {
     $transaction: vi.fn(),
   };
   db.$transaction.mockImplementation(async (cb: unknown) =>
-    typeof cb === 'function' ? (cb as (tx: typeof db) => Promise<unknown>)(db) : Promise.all(cb as unknown[])
+    typeof cb === 'function'
+      ? (cb as (tx: typeof db) => Promise<unknown>)(db)
+      : Promise.all(cb as unknown[])
   );
   return { mockDb: db };
 });
@@ -119,12 +121,18 @@ beforeEach(() => {
       ? (cb as (tx: typeof mockDb) => Promise<unknown>)(mockDb)
       : Promise.all(cb as unknown[])
   );
-  mockDb.appBlock.findUnique.mockResolvedValue({ id: APP, blockId: 'my-app', app: { userId: OWNER } });
+  mockDb.appBlock.findUnique.mockResolvedValue({
+    id: APP,
+    blockId: 'my-app',
+    app: { userId: OWNER },
+  });
   mockDb.appListing.findUnique.mockResolvedValue(draftListing());
   mockDb.appListing.findFirst.mockResolvedValue(null);
   mockDb.appCollaborator.findFirst.mockImplementation(async (args: unknown) => {
     const w = (args as { where: { userId: number; status?: string } }).where;
-    const hit = SEATS.find((r) => r.userId === w.userId && (w.status === undefined || r.status === w.status));
+    const hit = SEATS.find(
+      (r) => r.userId === w.userId && (w.status === undefined || r.status === w.status)
+    );
     return hit ? { userId: hit.userId } : null;
   });
 });
@@ -179,10 +187,7 @@ const { getMyListingForApp, getMyListingForEdit, beginListingRevision } = await 
 
 const RUNNERS: Record<string, (s: Subject) => Promise<unknown>> = {
   'assets.getListingAssets': (s) =>
-    getListingAssets(
-      { listingId: LIVE },
-      { id: s.id, isModerator: s.isModerator } as never
-    ),
+    getListingAssets({ listingId: LIVE }, { id: s.id, isModerator: s.isModerator } as never),
   'offsite.getMyListingForEdit': (s) => getMyListingForEdit({ listingId: LIVE, userId: s.id }),
   'offsite.getMyListingForApp': (s) => getMyListingForApp({ appBlockId: APP, userId: s.id }),
 };

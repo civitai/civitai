@@ -61,18 +61,16 @@ const SEATS = [
  * against the exact bug it exists to catch.
  */
 function wireSeats(rows = SEATS) {
-  mockDb.appCollaborator.findFirst.mockImplementation(
-    async (args: unknown): Promise<unknown> => {
-      const w = (args as { where: { appBlockId: string; userId: number; status?: string } }).where;
-      const hit = rows.find(
-        (r) =>
-          r.appBlockId === w.appBlockId &&
-          r.userId === w.userId &&
-          (w.status === undefined || r.status === w.status)
-      );
-      return hit ? { userId: hit.userId } : null;
-    }
-  );
+  mockDb.appCollaborator.findFirst.mockImplementation(async (args: unknown): Promise<unknown> => {
+    const w = (args as { where: { appBlockId: string; userId: number; status?: string } }).where;
+    const hit = rows.find(
+      (r) =>
+        r.appBlockId === w.appBlockId &&
+        r.userId === w.userId &&
+        (w.status === undefined || r.status === w.status)
+    );
+    return hit ? { userId: hit.userId } : null;
+  });
   mockDb.appCollaborator.findMany.mockImplementation(async (args: unknown): Promise<unknown[]> => {
     const w = (args as { where: Record<string, unknown> }).where;
     return rows.filter(
@@ -146,17 +144,35 @@ describe('resolveListingAccess', () => {
   }
 
   it('owner of the listing → owner', async () => {
-    wireListing({ id: LISTING, userId: OWNER, appBlockId: APP, revisionOfId: null, revisionOf: null });
+    wireListing({
+      id: LISTING,
+      userId: OWNER,
+      appBlockId: APP,
+      revisionOfId: null,
+      revisionOf: null,
+    });
     expect((await resolveListingAccess(LISTING, OWNER))!.role).toBe('owner');
   });
 
   it('accepted collaborator on the backing AppBlock → editor', async () => {
-    wireListing({ id: LISTING, userId: OWNER, appBlockId: APP, revisionOfId: null, revisionOf: null });
+    wireListing({
+      id: LISTING,
+      userId: OWNER,
+      appBlockId: APP,
+      revisionOfId: null,
+      revisionOf: null,
+    });
     expect((await resolveListingAccess(LISTING, EDITOR))!.role).toBe('editor');
   });
 
   it('pending collaborator → null', async () => {
-    wireListing({ id: LISTING, userId: OWNER, appBlockId: APP, revisionOfId: null, revisionOf: null });
+    wireListing({
+      id: LISTING,
+      userId: OWNER,
+      appBlockId: APP,
+      revisionOfId: null,
+      revisionOf: null,
+    });
     expect((await resolveListingAccess(LISTING, PENDING))!.role).toBeNull();
   });
 
@@ -179,7 +195,13 @@ describe('resolveListingAccess', () => {
 
   it('a listing with NO backing AppBlock anywhere resolves owner-or-nothing', async () => {
     // A natively-created offsite listing: there is no AppBlock to seat anyone on.
-    wireListing({ id: LISTING, userId: OWNER, appBlockId: null, revisionOfId: null, revisionOf: null });
+    wireListing({
+      id: LISTING,
+      userId: OWNER,
+      appBlockId: null,
+      revisionOfId: null,
+      revisionOf: null,
+    });
     expect((await resolveListingAccess(LISTING, EDITOR))!.role).toBeNull();
     expect((await resolveListingAccess(LISTING, OWNER))!.role).toBe('owner');
   });
@@ -316,7 +338,11 @@ describe('assertAppEditAccess — the blocks.router gate', () => {
 describe('safeCollaboratorQuery — INERT until the manual-apply migration lands', () => {
   it('degrades to the fallback on Prisma P2021 (table does not exist)', async () => {
     const err = Object.assign(new Error('The table does not exist'), { code: 'P2021' });
-    expect(await safeCollaboratorQuery(async () => { throw err; }, 'FALLBACK')).toBe('FALLBACK');
+    expect(
+      await safeCollaboratorQuery(async () => {
+        throw err;
+      }, 'FALLBACK')
+    ).toBe('FALLBACK');
   });
 
   it('degrades on the raw PG SQLSTATE 42P01 too', async () => {
@@ -324,15 +350,21 @@ describe('safeCollaboratorQuery — INERT until the manual-apply migration lands
     const err = Object.assign(new Error('relation "app_collaborators" does not exist'), {
       code: '42P01',
     });
-    expect(await safeCollaboratorQuery(async () => { throw err; }, 'FALLBACK')).toBe('FALLBACK');
+    expect(
+      await safeCollaboratorQuery(async () => {
+        throw err;
+      }, 'FALLBACK')
+    ).toBe('FALLBACK');
   });
 
   it('🔴 NEGATIVE CONTROL: it does NOT swallow an unrelated error', async () => {
     // A blanket catch here would be a permanent silent-zero generator. Prove it isn't.
     const err = Object.assign(new Error('connection refused'), { code: 'P1001' });
-    await expect(safeCollaboratorQuery(async () => { throw err; }, 'FALLBACK')).rejects.toThrow(
-      'connection refused'
-    );
+    await expect(
+      safeCollaboratorQuery(async () => {
+        throw err;
+      }, 'FALLBACK')
+    ).rejects.toThrow('connection refused');
   });
 
   it('resolveAppAccess degrades to owner-only when the seat table is absent', async () => {

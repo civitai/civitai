@@ -28,7 +28,9 @@ const { forgejo, gitAccess, logs } = vi.hoisted(() => ({
   },
   // Typed args so `logToAxiom.mock.calls[0][0]` is indexable under an explicit
   // test typecheck (tsconfig excludes __tests__, so only that run catches it).
-  logs: { logToAxiom: vi.fn(async (_payload: Record<string, unknown>, _tag?: string) => undefined) },
+  logs: {
+    logToAxiom: vi.fn(async (_payload: Record<string, unknown>, _tag?: string) => undefined),
+  },
 }));
 
 vi.mock('~/server/services/blocks/forgejo.service', () => forgejo);
@@ -106,10 +108,9 @@ describe('the full lifecycle, as a sequence of Forgejo calls', () => {
     await revokeAppRepoWrite({ slug: SLUG, userId: OLD });
     await grantAppRepoWrite({ slug: SLUG, userId: NEW });
 
-    expect(forgejo.addCollaborator.mock.calls.map((c) => (c[0] as { username: string }).username)).toEqual([
-      `dev-${EDITOR}`,
-      `dev-${NEW}`,
-    ]);
+    expect(
+      forgejo.addCollaborator.mock.calls.map((c) => (c[0] as { username: string }).username)
+    ).toEqual([`dev-${EDITOR}`, `dev-${NEW}`]);
     expect(
       forgejo.removeCollaborator.mock.calls.map((c) => (c[0] as { username: string }).username)
     ).toEqual([`dev-${EDITOR}`, `dev-${OLD}`]);

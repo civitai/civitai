@@ -152,7 +152,12 @@ describe('initiateTransfer', () => {
   });
 
   it('🔴 NOTHING moves at initiate — neither ownership column is written', async () => {
-    await initiateTransfer({ appBlockId: APP, toUserId: NEW_OWNER, actorUserId: OLD_OWNER, now: NOW });
+    await initiateTransfer({
+      appBlockId: APP,
+      toUserId: NEW_OWNER,
+      actorUserId: OLD_OWNER,
+      now: NOW,
+    });
     expect(mockDb.oauthClient.updateMany).not.toHaveBeenCalled();
     expect(mockDb.appListing.updateMany).not.toHaveBeenCalled();
   });
@@ -177,7 +182,12 @@ describe('initiateTransfer', () => {
   });
 
   it('EXPIRED pending rows are reclaimed first, so one lapsed offer cannot wedge the app forever', async () => {
-    await initiateTransfer({ appBlockId: APP, toUserId: NEW_OWNER, actorUserId: OLD_OWNER, now: NOW });
+    await initiateTransfer({
+      appBlockId: APP,
+      toUserId: NEW_OWNER,
+      actorUserId: OLD_OWNER,
+      now: NOW,
+    });
     const reclaim = mockDb.appOwnershipTransfer.updateMany.mock.calls[0][0] as {
       where: { status: string; expiresAt: { lte: Date } };
       data: { status: string };
@@ -282,11 +292,7 @@ describe('acceptTransfer — 🔴 ATOMICITY of the two ownership columns', () =>
     await acceptTransfer({ transferId: TRANSFER, userId: NEW_OWNER, now: NOW });
     expect(order[0]).toBe('tx:begin');
     expect(order[order.length - 1]).toBe('tx:end');
-    expect(order.slice(1, -1)).toEqual([
-      'write:oauthClient',
-      'write:appListing',
-      'write:event',
-    ]);
+    expect(order.slice(1, -1)).toEqual(['write:oauthClient', 'write:appListing', 'write:event']);
   });
 
   it('🔴 the client write is STATUS-GUARDED on the previous owner — a 0-count aborts', async () => {

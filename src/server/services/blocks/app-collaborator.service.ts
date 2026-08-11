@@ -63,8 +63,8 @@ export function mapCollaboratorError(err: unknown): unknown {
     err.code === 'NOT_FOUND'
       ? 'NOT_FOUND'
       : err.code === 'NOT_OWNER' || err.code === 'BANNED'
-        ? 'FORBIDDEN'
-        : 'BAD_REQUEST';
+      ? 'FORBIDDEN'
+      : 'BAD_REQUEST';
   return new TRPCError({ code, message: err.message, cause: err });
 }
 
@@ -151,10 +151,7 @@ async function assertOwner(
   });
   if (!block?.app) throw new AppCollaboratorError('NOT_FOUND', 'App not found');
   if (block.app.userId !== actorUserId) {
-    throw new AppCollaboratorError(
-      'NOT_OWNER',
-      'Only the app owner can manage collaborators'
-    );
+    throw new AppCollaboratorError('NOT_OWNER', 'Only the app owner can manage collaborators');
   }
   return { appBlockId: block.id, slug: block.blockId, ownerUserId: block.app.userId };
 }
@@ -209,7 +206,10 @@ export async function inviteCollaborator(opts: {
     throw new AppCollaboratorError('INVALID_TARGET', 'That user could not be found');
   }
   if (target.bannedAt) {
-    throw new AppCollaboratorError('BANNED', 'That account is not eligible for a collaborator seat');
+    throw new AppCollaboratorError(
+      'BANNED',
+      'That account is not eligible for a collaborator seat'
+    );
   }
 
   const existing = await dbRead.appCollaborator.findUnique({
@@ -460,10 +460,7 @@ export async function setCollaboratorDisplayed(opts: {
       data: { displayed: opts.displayed },
     });
     if (updated.count === 0) {
-      throw new AppCollaboratorError(
-        'NO_INVITE',
-        'You are not an active collaborator on this app'
-      );
+      throw new AppCollaboratorError('NO_INVITE', 'You are not an active collaborator on this app');
     }
     await recordOwnershipEvent(tx, {
       appBlockId: block.id,
@@ -543,9 +540,9 @@ export async function listCollaborators(opts: {
 }
 
 /** The caller's own PENDING invitations, for an inbox surface. */
-export async function listMyPendingInvites(userId: number): Promise<
-  Array<{ appBlockId: string; slug: string; invitedBy: number; createdAt: Date }>
-> {
+export async function listMyPendingInvites(
+  userId: number
+): Promise<Array<{ appBlockId: string; slug: string; invitedBy: number; createdAt: Date }>> {
   const rows = await dbRead.appCollaborator.findMany({
     where: { userId, status: 'pending' },
     select: {
