@@ -27,6 +27,7 @@ import {
   type ScreenshotSlot,
 } from '~/components/Apps/screenshotSlots';
 import type { EditAsset, EditScreenshot } from '~/components/Apps/offsiteEditConfig';
+import { listingAssetTooLargeReason } from '~/server/schema/blocks/app-listing.schema';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -292,6 +293,26 @@ export function ListingAssetStep({
 
   async function uploadAndPersist(file: File): Promise<number> {
     const { width, height } = await readImageDimensions(file);
+    // Fail fast, BEFORE a byte leaves the browser. The dimensions are already in
+    // hand here and the server applies this same predicate to `persistAssetImage`
+    // — but only after the upload to the object store has completed, so without
+    // this mirror the author waits out a full upload to be told something that was
+    // knowable from the file picker.
+    //
+    // 🔴 This is a UX mirror, NOT the enforcement point. The server re-derives the
+    // pair from the STORED BYTES (`measureListingAssetUpload`) and re-applies the
+    // bound there; anything decided here is a client claim. Deleting this check
+    // costs a wasted upload, never a bypass.
+    //
+    // The predicate is IMPORTED, never restated: a vendored copy of the bound is
+    // exactly what goes stale and starts refusing valid input (civitai/cli#270).
+    // It is also safe to evaluate on the browser's reading of the file even though
+    // the server reads EXIF orientation and the browser does not — the bound is
+    // over `Math.max(width, height)`, which a quarter-turn cannot change, so the
+    // two readings cannot disagree about this verdict. The subject string matches
+    // the server's so the author sees ONE message wherever the rejection lands.
+    const tooLarge = listingAssetTooLargeReason('That image', width, height);
+    if (tooLarge) throw new Error(`${tooLarge}.`);
     const result = await uploadToCF(file);
     const { imageId } = await persistMutation.mutateAsync({
       url: result.id,
