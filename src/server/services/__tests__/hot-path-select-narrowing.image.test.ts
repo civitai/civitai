@@ -23,10 +23,14 @@ import type * as PromClient from '~/server/prom/client';
  * `metadata` Json — to answer yes/no. `select: { id: true }` is what keeps it
  * from doing that, and nothing else in the suite would notice it regrowing.
  *
- * 🔴 The `toBeDefined` assertion below is load-bearing. Without it the check is
- * vacuous: an unnarrowed call has no `select` key at all, and every "does not
- * contain <column>" assertion over `Object.keys(undefined ?? {})` passes on
- * precisely the shape being rejected.
+ * 🔴 The shape is pinned by an exact-key-set `toEqual`, never by "does not
+ * contain <column>". An unnarrowed call has no `select` key at all, and every
+ * absence assertion over `Object.keys(undefined ?? {})` passes on precisely
+ * the shape being rejected; `toEqual` fails on `undefined` by itself. An
+ * earlier revision followed the `toEqual` with a loop asserting each tagged
+ * `Post` column was absent — unreachable, since any select containing one had
+ * already failed the line above — and it has been removed. The `toBeDefined`
+ * that remains is for its failure message, not for coverage.
  *
  * The mock block mirrors the established recipe from
  * `getAllImages-prioritized-guards.test.ts`, with one difference: `isFlipt`
@@ -155,18 +159,15 @@ describe('getAllImages hasSystemPosts — an existence check, projected to one c
   it('projects the existence check instead of decoding a whole Post row', async () => {
     const args = await captureHasSystemPostsCall();
 
-    // Assert the projection EXISTS before asserting its contents — see the
-    // header. A bare `findFirst({ where })` has no `select` key, and the
-    // absence-checks below would pass on it.
+    // Named first so a bare `findFirst({ where })` reports the real defect
+    // rather than an `undefined` mismatch. The `toEqual` below would catch it
+    // regardless — see the header.
     expect(args.select, 'a bare findFirst fetches every Post column').toBeDefined();
 
+    // The exact key set: re-adding any Post column — the tagged ones
+    // (`metadata`, `createdAt`, `updatedAt`, `publishedAt`) above all, since
+    // each is a client-side decode — fails here.
     expect(args.select).toEqual({ id: true });
-
-    const selected = Object.keys(args.select as Record<string, boolean>);
-    // Json + DateTime columns on Post — each one is a client-side decode.
-    for (const tagged of ['metadata', 'createdAt', 'updatedAt', 'publishedAt']) {
-      expect(selected, `re-added the tagged column \`${tagged}\``).not.toContain(tagged);
-    }
   });
 
   it('still asks the question it was asking — system user, this model version', async () => {

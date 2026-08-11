@@ -17,11 +17,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * guards — they pass on both sides of the narrowing by design, and are not
  * counted as regression coverage.
  *
- * 🔴 Every shape assertion asserts `select` is DEFINED before asserting
- * anything about its contents. Without that, a "does not contain <column>"
- * check is vacuous: an unnarrowed `findUnique` has no `select` at all, and
- * `Object.keys(undefined ?? {})` is empty, so every `not.toContain` passes on
- * exactly the shape this file exists to reject.
+ * 🔴 Every shape assertion pins the projection's EXACT key set with `toEqual`,
+ * never "does not contain <column>". That distinction is the whole reason this
+ * file looks the way it does: an unnarrowed `findUnique` has no `select` at
+ * all, and `Object.keys(undefined ?? {})` is empty, so an absence-check passes
+ * on precisely the shape being rejected. `toEqual` has no such hole — it fails
+ * on `undefined` by itself — so it is the only shape assertion here, and there
+ * are no absence-checks left to be vacuous. The `toBeDefined` line inside
+ * `expectProjection` survives for its FAILURE MESSAGE, not for coverage: it
+ * names the real defect ("a bare Prisma call fetches every column") instead of
+ * leaving a bare `undefined` mismatch for the reader to decode.
  *
  * The remaining narrowed path — `hasSystemPosts` in `getAllImages` — is pinned
  * in the sibling file `hot-path-select-narrowing.image.test.ts`. It lives apart
@@ -77,20 +82,20 @@ const POST_ID = 5150;
 const TARGET_USER_ID = 404;
 
 /**
- * The Post columns that cost a client-side decode per row. Each of the three
- * `Post` narrowings is checked against this same list, so adding a tagged
- * column to `Post` is a one-line change here rather than three.
- */
-const TAGGED_POST_COLUMNS = ['metadata', 'createdAt', 'updatedAt', 'publishedAt'];
-
-/**
  * Asserts a Prisma call argument carries a projection, and that the projection
  * is exactly `expected`.
  *
- * The `toBeDefined` line is load-bearing, not defensive noise — see the file
- * header. It also names the real defect ("a bare Prisma call fetches every
- * column") rather than leaving a bare `undefined` mismatch for the reader to
- * decode.
+ * `toEqual` on the exact key set is the entire shape guard. Re-adding any of
+ * the `Post` columns that cost a client-side decode per row — `metadata`,
+ * `createdAt`, `updatedAt`, `publishedAt` — fails it, as does dropping to a
+ * bare call with no `select`. An earlier revision also looped over those four
+ * column names asserting each was absent; that loop sat AFTER the `toEqual`
+ * and could therefore never report, since any select containing one of them
+ * already failed above it. It was removed rather than reordered: `toEqual` is
+ * strictly stronger, so the loop had nothing to add in either position.
+ *
+ * The two `toBeDefined` lines are for the failure message only — see the file
+ * header.
  */
 function expectProjection(
   args: { select?: Record<string, boolean> } | undefined,
@@ -103,11 +108,6 @@ function expectProjection(
     `${label}: no \`select\` — a bare Prisma call fetches every column`
   ).toBeDefined();
   expect(args?.select).toEqual(expected);
-
-  const selected = Object.keys(args?.select as Record<string, boolean>);
-  for (const tagged of TAGGED_POST_COLUMNS) {
-    expect(selected, `${label}: re-added the tagged column \`${tagged}\``).not.toContain(tagged);
-  }
 }
 
 describe('getEntityCollaborators — Post owner lookup is projected, not a full row', () => {
@@ -131,30 +131,13 @@ describe('getEntityCollaborators — Post owner lookup is projected, not a full 
     // guards against, and it is what shipped before. Asserting the exact key
     // set (rather than just "userId is present") means re-adding `metadata`,
     // `createdAt`, `publishedAt` or `detail` fails here too.
-    expect(args.select).toEqual({ userId: true });
-  });
-
-  it('does not select any of the Post columns that cost a decode per row', async () => {
-    await getEntityCollaborators({
-      entityId: POST_ID,
-      entityType: EntityType.Post,
-      userId: OWNER_ID,
-    });
-
-    const [args] = postFindUnique.mock.calls[0] as [{ select?: Record<string, boolean> }];
-
-    // Assert the projection EXISTS before asserting what is missing from it.
-    // Without this line the loop below is vacuous — an absent `select` means
-    // Prisma returns every column, yet `Object.keys(undefined ?? {})` is empty
-    // and every `not.toContain` passes. That is the shape this whole file is
-    // guarding against, so it has to be the first thing checked.
-    expect(args.select, 'a bare findUnique fetches every column').toBeDefined();
-
-    const selected = Object.keys(args.select as Record<string, boolean>);
-    // Json + DateTime columns on Post — each one is a decode per row.
-    for (const tagged of TAGGED_POST_COLUMNS) {
-      expect(selected).not.toContain(tagged);
-    }
+    //
+    // This went through the shared helper along with the other two `Post`
+    // narrowings when its former companion case — a separate `it` looping over
+    // the tagged column names — was deleted. That case asserted strictly less
+    // than this line does about every possible implementation, so it could not
+    // fail on any mutant this one survives.
+    expectProjection(args, { userId: true }, 'getEntityCollaborators');
   });
 
   it('still gates pending collaborators on the owner id it fetched', async () => {
