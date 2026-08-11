@@ -89,12 +89,51 @@ export type StoredImageHead =
  *
  * Same budget, and the same reasoning, as the post-completion probe in
  * `~/pages/api/upload/complete.ts`; taken from there rather than picked afresh so
- * the two probes against this store cannot drift apart. Per the AWS SDK's contract
- * this bounds each network ATTEMPT, not wall-clock — the retry sleep is not
- * abort-aware, so the worst case is this budget plus one backoff. An abort lands on
- * `unknown`, i.e. the check could not run.
+ * the two probes against this store cannot drift apart. `AbortSignal.timeout` is
+ * constructed ONCE per `send()` and shared across the SDK's retries, so this is a
+ * single WALL-CLOCK deadline for the whole operation, not a per-attempt budget —
+ * and an aborted attempt is not retried at all, because `AbortError` is absent from
+ * smithy's `TRANSIENT_ERROR_CODES`. The worst case is therefore this budget, not
+ * this budget plus a backoff. An abort lands on `unknown`, i.e. the check could not
+ * run.
  */
 export const STORED_IMAGE_HEAD_TIMEOUT_MS = 5_000;
+
+/**
+ * Timeout budget for the ranged read in {@link probeStoredImage}.
+ *
+ * 🔴 THE SAME BOUNDED-VS-UNBOUNDED ARGUMENT AS ABOVE, AND IT APPLIES HARDER HERE.
+ * (The wall-clock note above applies verbatim: one deadline for the whole
+ * operation, no retry multiplication.) This read is on the
+ * same user-facing mutation, and unlike the head it TRANSFERS BYTES, so it has two
+ * ways to stall rather than one: no response, or a response whose body stops
+ * arriving. Unbounded, either one holds a persist request open for as long as the
+ * backend feels like it.
+ *
+ * 🔴 DELIBERATELY NOT {@link STORED_IMAGE_HEAD_TIMEOUT_MS}, and the difference is
+ * the point rather than an oversight. 5s is a ROUND-TRIP budget for a request that
+ * moves no bytes; this one moves up to `maxBytes + 1` — 4 MiB for listing media,
+ * 40 MiB for block images. Note the transfer being bounded is SERVER→STORE, read
+ * back after the author's own upload has already completed; the author's link is
+ * not in this path, so what 5s would abort is a slow or distant STORE, not a slow
+ * uploader. `measureUploadedImage` surfaces an aborted read
+ * as "We couldn't read that upload back to check it". A hardening change that
+ * invents a new rejection for images that are fine is not a hardening change.
+ *
+ * Taken from the sibling bounded transfer in
+ * `~/server/services/blocks/block-image-upload.service` — the workflow-output blob
+ * fetch, which streams under the same 40 MiB cap for the same block-media surface —
+ * rather than picked afresh, so the two byte-moving bounds in this area cannot drift
+ * apart the way a locally-chosen number would.
+ *
+ * What this buys is NOT a tight latency target; at 60s a stalled read is still a bad
+ * request. It buys the difference between bounded and unbounded, which is the
+ * difference between an eventual error and a request that never ends. An abort lands
+ * in the generic catch below as `store-unavailable` — "we could not consult the
+ * store", the caller's retryable branch — which is the correct class for it and the
+ * exact counterpart of the head's `unknown`.
+ */
+export const STORED_IMAGE_READ_TIMEOUT_MS = 60_000;
 
 /**
  * Cheap HeadObject re-read of the entity tag at `key`, for a consumer that holds a
@@ -157,10 +196,18 @@ function parseTotalSize(contentRange: string | undefined, readBytes: number): nu
  * Throws {@link StoredImageProbeError} — callers map `reason` to their own
  * client-facing error (`store-unavailable` is the only one that is not the
  * caller's fault).
+ *
+ * BOUNDED by {@link STORED_IMAGE_READ_TIMEOUT_MS}; see that constant for why the
+ * budget is its own and not the head's. One signal covers the whole read — the
+ * response AND the body being streamed off it — because the SDK aborts the
+ * underlying request, so a body that stops arriving errors instead of idling.
+ *
+ * `timeoutMs` exists so the abort path is testable in milliseconds rather than
+ * minutes. Production callers pass nothing.
  */
 export async function probeStoredImage(
   key: string,
-  { maxBytes }: { maxBytes: number }
+  { maxBytes, timeoutMs = STORED_IMAGE_READ_TIMEOUT_MS }: { maxBytes: number; timeoutMs?: number }
 ): Promise<StoredImageProbe> {
   let bytes: Buffer;
   let sizeBytes: number;
@@ -168,7 +215,8 @@ export async function probeStoredImage(
   try {
     const { s3, bucket } = await getImageUploadBackend();
     const object = await s3.send(
-      new GetObjectCommand({ Bucket: bucket, Key: key, Range: `bytes=0-${maxBytes}` })
+      new GetObjectCommand({ Bucket: bucket, Key: key, Range: `bytes=0-${maxBytes}` }),
+      { abortSignal: AbortSignal.timeout(timeoutMs) }
     );
     if (!object.Body) throw new StoredImageProbeError('unreadable', 'stored image has no body');
     bytes = Buffer.from(await object.Body.transformToByteArray());

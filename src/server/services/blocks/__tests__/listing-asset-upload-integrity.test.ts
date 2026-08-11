@@ -477,6 +477,37 @@ describe('listing media — every non-match verdict is reported with its reason'
     ]);
   });
 
+  /**
+   * 🔴 SEVERITY, and it is not cosmetic. `type` is the field the Alloy→Loki pipeline
+   * reads as the log LEVEL (see the SEVERITY FIELD note in `~/server/logging/client`),
+   * and that same module states the rule: a BAD_REQUEST-class fault is normal user
+   * feedback and must never land at error severity or it drowns out the real
+   * server-side failures. A `mismatch` ends in exactly such a rejection AND any
+   * author can produce one at will, so at `error` this event is an author-controlled
+   * tap on the error board.
+   *
+   * The distinction operators need is carried by `status` / `reason`, which are
+   * asserted above — a query on `status="mismatch"` is narrower than one on a level
+   * shared with every other error in the app, so nothing is lost here except the
+   * flooding.
+   */
+  it('emits below error severity — mismatch included, since a user can trigger it', async () => {
+    await attachWithMetadata();
+    putObject(KEY, await flatPng(160, 120, 200));
+    await expect(attachAsIcon()).rejects.toThrow();
+    const [mismatch] = integrityEvents();
+
+    await attachWithMetadata();
+    storeOutage = Object.assign(new Error('boom'), { $metadata: { httpStatusCode: 503 } });
+    await expect(attachAsIcon()).resolves.toMatchObject({ status: 'attached' });
+    const [unverifiable] = integrityEvents();
+
+    // Named explicitly rather than `not.toBe('error')`: "some other level" would
+    // satisfy a negative assertion, including a level the pipeline does not know.
+    expect(mismatch).toMatchObject({ status: 'mismatch', type: 'warning' });
+    expect(unverifiable).toMatchObject({ status: 'unverifiable', type: 'warning' });
+  });
+
   it('carries the asset KIND, so the three procs are separable in the data', async () => {
     putObject(KEY, await flatPng(1280, 720, 8));
     const metadata = await persistAndCaptureMetadata();
