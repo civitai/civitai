@@ -127,6 +127,33 @@
 
   <!-- The ticket asked for open reports "very clearly at the top", and actionable from here. A report
        nobody has ruled on changes what every other panel on this page means. -->
+  <!-- Retool's Copy pair. "Copy Retool URL" has no meaning in the app that replaces Retool, so the
+       useful half is ported: the account's public profile, and a link to this lookup that a moderator
+       can paste into a ticket or a thread. `?q=` is the whole address of a lookup. -->
+  {#if identity}
+    <div class="mb-2 flex flex-wrap items-center justify-end gap-3 text-xs">
+      {#if profileUrl}
+        <button
+          type="button"
+          class={LINK_CLASS}
+          onclick={() => navigator.clipboard?.writeText(profileUrl)}
+        >
+          Copy profile URL
+        </button>
+      {/if}
+      <button
+        type="button"
+        class={LINK_CLASS}
+        onclick={() =>
+          navigator.clipboard?.writeText(
+            `${location.origin}/retool/user-lookup/${current}?q=${identity.id}`
+          )}
+      >
+        Copy lookup URL
+      </button>
+    </div>
+  {/if}
+
   <!-- Retool kept Force Logout in the persistent header, not one section away: it is the thing you
        reach for while reading something else. `?/forceLogout` resolves against the current section
        route, which defines the action, so this works from every section. Sessions only — it does not

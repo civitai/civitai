@@ -336,7 +336,12 @@ browser as user 1290051, not by reading the code.
       **CSAM ban** chip appears for the `SexualMinor*` codes — a Nudify ban and a SexualMinor ban are
       not the same next conversation, and the reason was a section away under Admin. Verified against
       both a `SexualMinor` account (both chips) and a `SexualPOI` one (reason only, no CSAM chip).
-- [ ] Header chips still missing: **UserReport by \<mod\>**, and a **Copy Retool URL / Profile** pair.
+- [x] **Copy Retool URL / Profile pair** (2026-08-11). "Copy Retool URL" has no meaning in the app that
+      replaces Retool, so the useful half is ported: Copy profile URL, and Copy lookup URL — `?q=` is the
+      whole address of a lookup, which is what gets pasted into a ticket or a thread. Verified: clicking
+      it puts `…/retool/user-lookup/basic?q=1290051` on the clipboard.
+- [ ] Header chip still missing: **UserReport by \<mod\>** — an open report becomes a different fact
+      when a *moderator* filed it, and the header currently shows only the count.
 
 ## 2. Bulk Image Manager
 
