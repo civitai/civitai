@@ -18,9 +18,7 @@ export type RemixGalleryPlacementData = {
   position?: number | null;
 };
 
-export const isRemixGalleryPlacementData = (
-  value: unknown
-): value is RemixGalleryPlacementData =>
+export const isRemixGalleryPlacementData = (value: unknown): value is RemixGalleryPlacementData =>
   !!value &&
   typeof value === 'object' &&
   Number.isInteger((value as RemixGalleryPlacementData).imageId);

@@ -1,10 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import {
-  holdPlacementEscrow,
-  settlePlacement,
-} from '~/server/services/placement-escrow.service';
+import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
@@ -219,8 +216,7 @@ async function assertNotAlreadySubmitted({
     select: { id: true },
   });
 
-  if (existing)
-    throw throwBadRequestError('remix gallery: that image is already in this gallery');
+  if (existing) throw throwBadRequestError('remix gallery: that image is already in this gallery');
 }
 
 type OwnerAction = 'approve' | 'decline' | 'remove';
@@ -371,15 +367,16 @@ export async function setRemixGalleryPins({
   await dbWrite.$transaction(
     entries.map((entry) => {
       const index = placementIds.indexOf(entry.id);
-      const data = (isRemixGalleryPlacementData(entry.data) ? entry.data : {}) as
-        RemixGalleryPlacementData;
+      const data = (
+        isRemixGalleryPlacementData(entry.data) ? entry.data : {}
+      ) as RemixGalleryPlacementData;
 
       return dbWrite.placement.update({
         where: { id: entry.id },
         data: {
           data: {
             ...data,
-            pinnedAt: index === -1 ? null : (data.pinnedAt ?? pinnedAt),
+            pinnedAt: index === -1 ? null : data.pinnedAt ?? pinnedAt,
             position: index === -1 ? null : index,
           } satisfies RemixGalleryPlacementData,
         },
@@ -486,7 +483,7 @@ export async function getRemixGallery({
   };
 }
 
-function parseGalleryCursor(cursor?: string | null) {
+export function parseGalleryCursor(cursor?: string | null) {
   if (!cursor) return null;
   const parts = cursor.split(':');
   if (parts.length !== 4) return null;
