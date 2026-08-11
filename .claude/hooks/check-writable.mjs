@@ -50,11 +50,12 @@ const GUARDED_PATTERNS = [
     reason:
       'A SvelteKit build writes ~1,800 files into the workspace and is NOT a verification step — use `pnpm --filter ./apps/<app> run typecheck`. Confirm only if you are diagnosing a build-only failure or producing a real artifact.',
   },
-  {
-    pattern: /prettier[^;&|]*--write/i,
-    reason:
-      'Formatting outside `pnpm run prettier:write` can reach files this change does not own. Confirm the target is scoped.',
-  },
+  // NOTE: `prettier --write` is deliberately NOT guarded here. Formatting files the session has
+  // already changed is routine and was being confirmed dozens of times a session for no decision.
+  // The three DANGEROUS_PATTERNS above already refuse everything this guard was protecting against —
+  // the plugin-svelte form, a `**` glob, and any target that is not an explicit file with an
+  // extension — and those are blocks, not prompts. Re-adding a blanket ask here just reintroduces
+  // the friction without adding a check.
 ];
 
 let input = '';
