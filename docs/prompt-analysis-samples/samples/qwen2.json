@@ -1,0 +1,10 @@
+[
+  {
+    "prompt": "A ramen shop counter at closing time, the cook wiping down the pass under a single warm bulb, steam still lifting from a pot behind him, a sign in the window reading \"営業中\" turned to face inward",
+    "assistantResponse": "{\"issues\":[],\"recommendations\":[\"Say what the cloth is doing across the counter — the wet arc it leaves and how the bulb catches it — so the wipe reads as motion rather than a held pose.\"],\"enhancedPrompt\":\"A ramen shop counter at closing time, the cook wiping down the pass under a single warm bulb, the cloth leaving a wet arc that catches the light, steam still lifting from a pot behind him, a sign in the window reading \\\"営業中\\\" turned to face inward\",\"enhancedNegativePrompt\":\"\"}"
+  },
+  {
+    "prompt": "a poster that says opening night",
+    "assistantResponse": "{\"issues\":[{\"description\":\"The text to render is not in quotation marks, which this model relies on for accurate rendering.\",\"severity\":\"error\"}],\"recommendations\":[\"Put the rendered text in quotation marks — \\\"OPENING NIGHT\\\" — since quoting is what drives text accuracy here.\",\"Say what the poster is for and where it hangs, so there is a subject behind the typography.\"],\"enhancedPrompt\":\"A letterpress theatre poster reading \\\"OPENING NIGHT\\\" in tall condensed type, pasted slightly crooked on a brick wall beside the stage door\",\"enhancedNegativePrompt\":\"\"}"
+  }
+]
