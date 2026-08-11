@@ -123,10 +123,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
           reaction,
           user: {
             id: currentUser.id,
-            deletedAt: null,
             username: currentUser.username ?? '',
-            image: currentUser.image ?? '',
-            profilePicture: null, // not really necessary for reactions
           },
         };
         const reacted = previousReactions.find(
