@@ -95,7 +95,10 @@ describe('setPlacementSpace — the price guard', () => {
     await setPlacementSpace({ ...base, mode: 'review', price: null });
 
     expect(spaceUpsert).toHaveBeenCalledTimes(1);
-    expect(priceWritten()).toBeNull();
+    // `toMatchObject`, not `toBe(null)`: the helper returns the whole `update`
+    // clause, and a bare null assertion passes for the wrong reason if the key
+    // is omitted entirely -- which is what `undefined` writes.
+    expect(priceWritten()).toMatchObject({ price: null });
   });
 
   // The refusal is account-level only. Below it "the level above" is a real
