@@ -42,7 +42,7 @@
   // detector's own mutes. A count alone cannot tell an untouched queue from one being drained.
   type Board = {
     activity: Record<string, { type: string; at: string; moderator: string | null }>;
-    lag: { task: string; lastUpdate: string; lastUpdateBy: string | null }[];
+    lag: { task: string; label: string; lastUpdate: string; lastUpdateBy: string | null }[];
     sweeps: { task: string; since: string | null; count: number }[];
     autoBlocked: {
       id: number;
@@ -285,7 +285,7 @@
         <ul class="space-y-1 text-sm">
           {#each board.lag as t (t.task)}
             <li class="flex items-baseline justify-between gap-3">
-              <span class="text-dark-0">{t.task}</span>
+              <span class="text-dark-0">{t.label}</span>
               <span class="text-xs text-dark-2">
                 {ago(t.lastUpdate)}{t.lastUpdateBy ? ` · ${t.lastUpdateBy}` : ''}
               </span>
@@ -301,7 +301,7 @@
               <span class="text-sm text-dark-0">
                 {s.task === 'blockedImages' ? 'Unusually blocked images' : 'Official-account models'}
               </span>
-              <span class="text-sm tabular-nums {s.count ? 'text-white' : 'text-dark-2'}">
+              <span class="text-sm tabular-nums {queueSeverityClass(s.task, s.since ? s.count : null) ?? (s.count ? 'text-white' : 'text-dark-2')}">
                 {s.since ? format(s.count) : 'never swept'}
               </span>
             </div>
@@ -319,7 +319,7 @@
     {#if board.autoBlocked.length}
       <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
         <h2 class="mb-1 text-sm font-semibold text-white">
-          Auto-muted for scam ({board.autoBlocked.length})
+          Auto-muted for scam ({board.autoBlocked.length}{board.autoBlocked.length === 50 ? '+' : ''})
         </h2>
         <p class="mb-3 text-xs text-dark-2">
           Muted by the detector, not by a moderator. Review the ones that look wrong.

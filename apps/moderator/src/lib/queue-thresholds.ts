@@ -31,6 +31,20 @@ const THRESHOLDS: Record<string, readonly number[]> = {
   chats: [2, 2, 1, 1, 0],
   comics: [2, 2, 1, 1, 0],
   modelsReview: [5, 4, 3, 2, 0],
+  // The task-side scales. Dropped on the first pass, which left `articles` — a REPORT scale — as the
+  // only key matching the articles backlog, so an informational queue rendered permanent red.
+  frontPageSfw: [7000, 5000, 3000, 1000, 0],
+  frontPagePG13: [5000, 3000, 1000, 300, 0],
+  bountyTask: [5, 4, 3, 2, 0],
+  articleTask: [5, 4, 3, 2, 0],
+  modelTask: [40, 30, 20, 10, 0],
+  unverifiedMutes: [20, 15, 10, 5, 0],
+  blockedImages: [50, 40, 25, 10, 0],
+  civitaiModels: [2, 2, 1, 1, 0],
+  trainingData: [2, 2, 1, 1, 0],
+  urgent: [5, 4, 1, 1, 0],
+  errors: [30, 20, 10, 5, 0],
+  articleReviews: [30, 20, 10, 5, 0],
 };
 
 /** Retool's five-step scale, worst first. Tailwind rather than its hex, so the palette stays ours. */
@@ -46,6 +60,11 @@ const SEVERITY = [
 // Anything absent here has no operating standard and renders without a colour — guessing an alias
 // would apply the wrong scale, and the scales differ by two orders of magnitude between queues.
 const COUNT_KEY_ALIASES: Record<string, string> = {
+  // `articles` is the article-REPORT scale ([2,2,1,1,0]). The nav's `articles` key is the unpublished
+  // backlog, which Retool scored with `articleTask`; without this alias the fallthrough put a
+  // two-is-critical scale on a queue whose own nav entry says nobody works through it.
+  articles: 'articleTask',
+  articleRatings: 'articleReviews',
   minor: 'minors',
   tag: 'blockedTags',
   imageTags: 'tags',

@@ -14,7 +14,14 @@ import { REPORT_SOURCES, CHAT_REPORT_SOURCE } from './report-sources';
 export type QueueActivity = { type: string; at: Date; moderator: string | null };
 
 export async function getRecentQueueActivity(): Promise<Map<string, QueueActivity>> {
-  const sources = [...REPORT_SOURCES, CHAT_REPORT_SOURCE];
+  // `REPORT_SOURCES` is a user's own CONTENT, so it has no `UserReport` arm — but Retool's version had
+  // a `users` one, and `/reports/user` is a live queue with its own badge. Without it the card silently
+  // omits the queue a moderator is most likely to be working.
+  const sources = [
+    ...REPORT_SOURCES,
+    CHAT_REPORT_SOURCE,
+    ['User', 'User', 'UserReport', 'userId'] as const,
+  ];
 
   // The join table is dynamic, so this is a raw `sql` tag rather than a builder join — the table name
   // comes from REPORT_SOURCES, never from a request. `!= 'Pending'` rather than `= 'Actioned'`:
@@ -49,7 +56,33 @@ export async function getRecentQueueActivity(): Promise<Map<string, QueueActivit
  * The row is an ACKNOWLEDGEMENT a moderator wrote, not a job run — see the table's type. So "3 days
  * ago" means nobody has claimed this queue in three days, which is the signal.
  */
-export type TaskLag = { task: string; lastUpdate: Date; lastUpdateBy: string | null };
+export type TaskLag = {
+  task: string;
+  label: string;
+  lastUpdate: Date;
+  lastUpdateBy: string | null;
+};
+
+/**
+ * `Mods_TaskTimers` also holds the front-page audit's per-level rows, whose `task` is a browsing-level
+ * digit (`1`, `2`, `4`, `8`, `16`, and `<n>_catchup`). Printed raw under "when each queue was last
+ * claimed" they read as nonsense; Retool never showed them raw either.
+ */
+const NSFW_LEVEL_NAMES: Record<string, string> = {
+  '1': 'PG',
+  '2': 'PG-13',
+  '4': 'R',
+  '8': 'X',
+  '16': 'XXX',
+};
+
+function taskLabel(task: string): string {
+  const [level, suffix] = task.split('_');
+  const name = NSFW_LEVEL_NAMES[level];
+  if (name) return suffix ? `Front page ${name} (catch-up)` : `Front page ${name}`;
+  // The rest are already words (`minor`, `poi`, `articles`, `blockedImages`, …).
+  return task.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase());
+}
 
 export async function getTaskLag(): Promise<TaskLag[]> {
   const rows = await getModeratorDb()
@@ -70,6 +103,7 @@ export async function getTaskLag(): Promise<TaskLag[]> {
     .filter((r) => r.task && r.lastUpdate)
     .map((r) => ({
       task: r.task as string,
+      label: taskLabel(r.task as string),
       lastUpdate: new Date(r.lastUpdate as unknown as string),
       lastUpdateBy: r.lastUpdateBy,
     }))

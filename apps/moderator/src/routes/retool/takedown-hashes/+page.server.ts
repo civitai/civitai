@@ -33,7 +33,7 @@ export const actions: Actions = {
     if (!canAccess(locals.user, '/retool/takedown-hashes'))
       return fail(403, { error: 'Not permitted.' });
 
-    const { found, added } = await recordTakedownHashes();
+    const { found, added, more } = await recordTakedownHashes();
     if (added === 0)
       return fail(400, {
         error: `Nothing new — all ${found} candidate hashes are already recorded.`,
@@ -47,6 +47,6 @@ export const actions: Actions = {
       activity: 'recordHashes',
     });
 
-    return { success: true, added, found };
+    return { success: true, added, found, more };
   },
 };

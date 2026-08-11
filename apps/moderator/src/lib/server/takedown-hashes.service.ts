@@ -5,14 +5,14 @@ import { getModeratorDb } from './moderator-db';
 // Retool's `FindSHA` + `LogSHA256`: a ledger of file hashes from models that were taken down, so the
 // same file can be recognised if it is uploaded again. 30k rows already.
 //
-// The export could not tell us the ledger's shape — `LogSHA256` is a GUI-mode BULK_INSERT whose
-// changeset is empty in the export, the same gap the Front Page Audit rating logs hit. The columns
-// come from the live table instead: `SHA256 text`, `ModelVersionId integer`.
+// Columns are `SHA256 text`, `ModelVersionId integer`, confirmed against the live table AND against
+// `LogSHA256`'s `records` field in the export, which maps
+// `{SHA256: i.sha256, ModelVersionId: i.modelVersionId}`.
 //
-// **Retool's finder selected `m.id` (the MODEL) while the ledger column is `ModelVersionId`.** One of
-// the two is wrong and the export cannot say which, so this follows the column: a hash belongs to a
-// FILE, and a file hangs off a version, not off a model. Worth checking against the existing rows
-// before anything depends on them.
+// **Retool's finder selected `m.id` (the MODEL) while feeding a column named for the version.** The
+// finder was the broken half — a hash belongs to a FILE, and a file hangs off a version — so this
+// selects `mv.id`. Historical rows may hold model ids, which is why the lookup renders the id as a
+// version without claiming the entity resolves.
 
 export type HashCandidate = { modelVersionId: number; modelId: number; sha256: string };
 
@@ -20,7 +20,11 @@ export type HashCandidate = { modelVersionId: number; modelId: number; sha256: s
  * Retool's `FindSHA`: hashes of files belonging to models that were unpublished for a violation or
  * deleted. `rawScanResult -> hashes ->> SHA256` is where the scanner leaves it.
  */
-export async function getTakedownHashCandidates(limit = 1000): Promise<HashCandidate[]> {
+/** One press worth. The candidate set is ~188k, so this records a batch and says whether more remain
+ *  — Retool was unbounded, and a silent cap here would read as "the ledger is up to date". */
+export const BATCH = 1000;
+
+export async function getTakedownHashCandidates(limit = BATCH): Promise<HashCandidate[]> {
   const { rows } = await sql<{ modelVersionId: number; modelId: number; sha256: string }>`
     SELECT mv.id AS "modelVersionId", m.id AS "modelId",
            mf."rawScanResult" -> 'hashes' ->> 'SHA256' AS sha256
@@ -40,9 +44,15 @@ export async function getTakedownHashCandidates(limit = 1000): Promise<HashCandi
  * how a 30k-row table accumulates duplicates of the same hash; this diffs against the ledger first and
  * reports how many were new.
  */
-export async function recordTakedownHashes(): Promise<{ found: number; added: number }> {
-  const candidates = await getTakedownHashCandidates();
-  if (!candidates.length) return { found: 0, added: 0 };
+export async function recordTakedownHashes(): Promise<{
+  found: number;
+  added: number;
+  more: boolean;
+}> {
+  const candidates = await getTakedownHashCandidates(BATCH + 1);
+  const more = candidates.length > BATCH;
+  const batch = candidates.slice(0, BATCH);
+  if (!batch.length) return { found: 0, added: 0, more: false };
 
   const existing = await getModeratorDb()
     .selectFrom('ModerationSHA')
@@ -50,20 +60,31 @@ export async function recordTakedownHashes(): Promise<{ found: number; added: nu
     .where(
       'SHA256',
       'in',
-      candidates.map((c) => c.sha256)
+      batch.map((c) => c.sha256)
     )
     .execute();
 
-  const known = new Set(existing.map((r) => r.SHA256));
-  const fresh = candidates.filter((c) => !known.has(c.sha256));
-  if (!fresh.length) return { found: candidates.length, added: 0 };
+  // Compared case-insensitively because the lookup is: stored hashes are not consistently cased, and an
+  // exact-match probe re-inserts a hash whose ledger row happens to be in the other case.
+  const known = new Set(existing.map((r) => (r.SHA256 ?? '').toUpperCase()));
+  const seen = new Set<string>();
+  const fresh = batch.filter((c) => {
+    const key = c.sha256.toUpperCase();
+    // Within the batch too: one model version carries several files, and 1000 candidate rows carry
+    // ~895 distinct hashes. Deduping only against the ledger is what accumulated the duplicates this
+    // function exists to stop.
+    if (known.has(key) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  if (!fresh.length) return { found: batch.length, added: 0, more };
 
   await getModeratorDb()
     .insertInto('ModerationSHA')
     .values(fresh.map((c) => ({ SHA256: c.sha256, ModelVersionId: c.modelVersionId })))
     .execute();
 
-  return { found: candidates.length, added: fresh.length };
+  return { found: batch.length, added: fresh.length, more };
 }
 
 export type HashMatch = { id: number; sha256: string; modelVersionId: number | null };

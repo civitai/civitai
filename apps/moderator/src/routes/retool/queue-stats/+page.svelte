@@ -120,9 +120,13 @@
       <p class="text-sm text-dark-2">No research ratings recorded.</p>
     {:else}
       <ul class="space-y-1 text-sm">
-        {#each stats.researchRaters as r (r.username)}
+        {#each stats.researchRaters as r (r.userId ?? r.username)}
           <li class="flex items-baseline justify-between gap-3">
-            <span class="text-dark-0">{r.username ?? 'unknown'}</span>
+            {#if r.userId}
+              <a href={userLookupUrl(r.userId)} class={LINK_CLASS}>{r.username ?? `#${r.userId}`}</a>
+            {:else}
+              <span class="text-dark-0">unknown</span>
+            {/if}
             <span class="tabular-nums text-dark-2">{num(r.count)}</span>
           </li>
         {/each}

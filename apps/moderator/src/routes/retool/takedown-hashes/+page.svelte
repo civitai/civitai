@@ -28,7 +28,7 @@
     class="mb-4 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200"
     role="status"
   >
-    Recorded {num(form.added)} new hashes of {num(form.found)} candidates.
+    Recorded {num(form.added)} new hashes of {num(form.found)} in this batch.{form.more ? ' More remain — run it again.' : ''}
   </div>
 {/if}
 
@@ -65,8 +65,8 @@
 <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
   <h2 class="mb-1 text-sm font-semibold text-white">Record new hashes</h2>
   <p class="mb-3 text-xs text-dark-2">
-    {num(data.candidateCount)} files currently belong to taken-down models. Only hashes not already in
-    the ledger are written — Retool re-inserted the whole set on every press.
+    Records up to {num(data.candidateCount)} at a time, newest first, skipping hashes already in the
+    ledger. The full candidate set is far larger, so run it until it reports nothing left.
   </p>
   {#if data.canAct}
     <form method="POST" action="?/record" use:enhance>

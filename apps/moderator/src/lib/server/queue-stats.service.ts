@@ -42,17 +42,23 @@ async function ratersByModActivity(days: number): Promise<RaterCount[]> {
   return rows.map((r) => ({ username: r.username, userId: r.userId, count: Number(r.count) }));
 }
 
-/** Retool's `ResearchRating`, over the unmodelled `research_ratings` table. */
+/**
+ * Retool's `ResearchRating`, over the unmodelled `research_ratings` table.
+ *
+ * Grouped by user id, NOT by username as Retool had it: deleted accounts carry a NULL username, so
+ * grouping on the name alone folds every one of them into a single row — which rendered as one person
+ * called "unknown" with 30× the top real rater's count.
+ */
 async function researchRaters(): Promise<RaterCount[]> {
-  const { rows } = await sql<{ username: string | null; count: string }>`
-    SELECT u."username", COUNT(*) AS count
+  const { rows } = await sql<{ userId: number; username: string | null; count: string }>`
+    SELECT rr."userId" AS "userId", u."username", COUNT(*) AS count
     FROM "research_ratings" rr
     JOIN "User" u ON u."id" = rr."userId"
-    GROUP BY u."username"
-    ORDER BY 2 DESC
+    GROUP BY rr."userId", u."username"
+    ORDER BY 3 DESC
     LIMIT 50
   `.execute(dbRead);
-  return rows.map((r) => ({ username: r.username, userId: null, count: Number(r.count) }));
+  return rows.map((r) => ({ username: r.username, userId: r.userId, count: Number(r.count) }));
 }
 
 export type QueueStats = {
