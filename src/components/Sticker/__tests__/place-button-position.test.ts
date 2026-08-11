@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Box } from '~/components/Sticker/place-button-position';
 import {
+  candidateDistance,
   flippedButtonOffset,
   placeButtonBoxes,
   shouldFlipPlaceButton,
@@ -39,6 +40,41 @@ describe('flippedButtonOffset', () => {
       const offset = flippedButtonOffset({ stickerHeight, knobOffset: 0.22, gap: 8 });
       expect(offset).toBeGreaterThan(0.22 * stickerHeight);
     }
+  });
+});
+
+describe('candidateDistance', () => {
+  // A second line of copy under the Buzz button makes the wrapper taller. The
+  // unflipped position moves down with it and the distance has to follow; the
+  // flipped position does not move, because it is anchored by its bottom edge.
+  it('grows with the button, one pixel for one pixel', () => {
+    const base = { stickerHeight: 200, flippedOffset: 52, gap: 8 };
+    expect(candidateDistance({ ...base, buttonHeight: 36 })).toBe(296);
+    expect(candidateDistance({ ...base, buttonHeight: 52 })).toBe(312);
+    expect(candidateDistance({ ...base, buttonHeight: 88 })).toBe(348);
+  });
+
+  it('tracks the sticker, the clearance and the gap independently', () => {
+    const base = { stickerHeight: 200, buttonHeight: 36, flippedOffset: 52, gap: 8 };
+    expect(candidateDistance({ ...base, stickerHeight: 300 })).toBe(396);
+    expect(candidateDistance({ ...base, flippedOffset: 74 })).toBe(318);
+    expect(candidateDistance({ ...base, gap: 20 })).toBe(308);
+  });
+
+  it('is the real gap between the two positions the CSS produces', () => {
+    // Unflipped spans [H + gap, H + gap + button]; flipped spans
+    // [-offset - button, -offset]. The distance is between matching edges.
+    const stickerHeight = 94;
+    const buttonHeight = 52;
+    const gap = 8;
+    const flippedOffset = flippedButtonOffset({ stickerHeight, knobOffset: 0.22, gap });
+
+    const unflippedTop = stickerHeight + gap;
+    const flippedTop = -flippedOffset - buttonHeight;
+
+    expect(candidateDistance({ stickerHeight, buttonHeight, flippedOffset, gap })).toBeCloseTo(
+      unflippedTop - flippedTop
+    );
   });
 });
 
@@ -117,6 +153,13 @@ describe('shouldFlipPlaceButton', () => {
 
   it('flips a button the tray would cover', () => {
     expect(decide(box(730), box(400))).toBe(true);
+  });
+
+  it('decides on the whole wrapper, not on a one-line button', () => {
+    // A single-line button clears the tray at this position; the two-line one
+    // that lands with the merged copy does not.
+    expect(decide(box(715, 36), box(400, 36))).toBe(false);
+    expect(decide(box(715, 52), box(400, 52))).toBe(true);
   });
 
   it('flips a button the carousel would clip', () => {

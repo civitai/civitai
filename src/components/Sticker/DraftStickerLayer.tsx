@@ -4,6 +4,7 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import type { Box } from '~/components/Sticker/place-button-position';
 import {
+  candidateDistance,
   flippedButtonOffset,
   placeButtonBoxes,
   shouldFlipPlaceButton,
@@ -190,10 +191,12 @@ export function DraftStickerLayer() {
         current: button.getBoundingClientRect(),
         flipped,
         rotationDeg: rotation,
-        // Local distance between the two positions: down past the sticker and
-        // its bottom gap, plus the flipped side's knob clearance and the
-        // button's own height.
-        distance: height + BUY_BUTTON_GAP + offset + button.offsetHeight,
+        distance: candidateDistance({
+          stickerHeight: height,
+          buttonHeight: button.offsetHeight,
+          flippedOffset: offset,
+          gap: BUY_BUTTON_GAP,
+        }),
       });
 
       const next = {

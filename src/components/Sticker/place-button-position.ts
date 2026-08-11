@@ -31,6 +31,27 @@ export const flippedButtonOffset = ({
 }) => knobOffset * stickerHeight + gap;
 
 /**
+ * How far apart the two positions are, along the sticker's own axis.
+ *
+ * Reads the button's height rather than assuming one: the wrapper holds
+ * whatever is under the Buzz button as well as the button itself, so a second
+ * line of copy makes it taller and moves the unflipped position further down.
+ * The flipped position is unaffected — it is anchored by its bottom edge, so a
+ * taller button grows upwards, away from the knob it has to clear.
+ */
+export const candidateDistance = ({
+  stickerHeight,
+  buttonHeight,
+  flippedOffset,
+  gap,
+}: {
+  stickerHeight: number;
+  buttonHeight: number;
+  flippedOffset: number;
+  gap: number;
+}) => stickerHeight + gap + flippedOffset + buttonHeight;
+
+/**
  * The two places the button can be, both as screen boxes.
  *
  * The button is a child of the sticker's rotated element, so "below" is only
