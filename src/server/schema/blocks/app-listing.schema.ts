@@ -65,6 +65,10 @@ export const LISTING_SCREENSHOT_MIN_PX = 320;
  * (`INLINE_ICON_MAX_INPUT_PIXELS`, 16.7 Mpx in `listing-meta.service.ts`), which is
  * the metric that threat actually calls for. Bounding area on the upload path is a
  * known gap, not something this constant covers.
+ *
+ * (8192 is retained because it is the value the OG-pull path already enforced, so
+ * this makes the paths agree. It is ~2× a 4K width, not 4× — 4× is the AREA ratio
+ * against 4096².)
  */
 export const LISTING_ASSET_MAX_DIMENSION_PX = 8192;
 
@@ -82,13 +86,19 @@ export const LISTING_ASSET_MAX_DIMENSION_PX = 8192;
  *
  * 🔴 SCOPE — the attach check is a BACKSTOP, not a chokepoint. Two things it does
  * not cover, so nobody builds on a guarantee that isn't here:
- *   1. `backfillListingAssets` / `migrateBlockScreenshots`
- *      (`app-listing-assets.service.ts`) write listing assets via direct `dbWrite`
- *      calls and never call {@link validateListingImage} at all.
+ *   1. The backfill route, in `app-listing-assets.service.ts`, never calls
+ *      {@link validateListingImage} at all: `backfillListingAssets` writes the
+ *      listing's own rows (`appListingScreenshot.createMany`, `appListing.update`
+ *      of `coverId` / `iconId`) with direct `dbWrite` calls, and the
+ *      `migrateBlockScreenshots` dep it uses creates the backing `Image` rows at
+ *      whatever dimensions the decoder reports.
  *   2. At attach the dimensions are read off the `Image` row, and some creation
- *      paths accept width/height from the client (see the note in
- *      `measure-uploaded-image.ts`) — so for a row this feature did not measure,
- *      the bound is only as honest as the path that made it.
+ *      paths accept width/height from the client — see
+ *      `src/server/utils/stored-image-probe.ts`, which states it outright ("a
+ *      CLIENT CLAIM about bytes the server never looked at"); the sibling note in
+ *      `services/blocks/measure-uploaded-image.ts` draws the consequence. So for a row
+ *      this feature did not measure, the bound is only as honest as the path that
+ *      made it.
  */
 export function listingAssetTooLargeReason(
   subject: string,
