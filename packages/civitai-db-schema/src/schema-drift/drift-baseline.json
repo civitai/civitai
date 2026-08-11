@@ -2,6 +2,17 @@
   "catalog": "src/schema-drift/__tests__/fixtures/catalog-production-2026-08-03.json",
   "entries": [
     {
+      "fingerprint": "missing-column|Challenge|judgingEngine|Challenge|judgingEngine",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "Challenge",
+      "columns": [
+        "judgingEngine"
+      ],
+      "model": "Challenge",
+      "field": "judgingEngine"
+    },
+    {
       "fingerprint": "missing-column|ModelFlag|sfwOnly|ModelFlag|sfwOnly",
       "kind": "missing-column",
       "tier": "pending",
