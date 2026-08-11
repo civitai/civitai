@@ -56,6 +56,9 @@ export const cosmeticShopItemMeta = z.object({
   // used to decide whether a price edit (>±25%) requires re-review.
   creatorId: z.number().optional(),
   submissionTxId: z.string().optional(),
+  // Buzz actually charged at submission. Recorded because the fee is operator-tunable,
+  // so today's configured value is not what an older item paid.
+  submissionFee: z.number().optional(),
   lastApprovedAmount: z.number().optional(),
   // Pre-submit artwork validation + image info, surfaced to moderators in the
   // Creator Shop review queue.

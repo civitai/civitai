@@ -51,13 +51,6 @@ export const packItemFloor = (type: CosmeticType): number => {
 export const COSMETIC_PRICE_FLOOR_MIN = Math.min(
   ...Object.values(CosmeticType).map((type) => cosmeticPriceFloor(type))
 );
-export const CREATOR_SHOP_SUBMISSION_FEE = 10000;
-/**
- * Packs list for less. The fee prices the review a submission costs, and a pack
- * has no artwork to validate — every member was reviewed and paid for when it
- * was submitted.
- */
-export const CREATOR_SHOP_PACK_SUBMISSION_FEE = 1000;
 export const CREATOR_SHOP_MAX_FEATURED = 6;
 // Creator keeps this share of each sale; platform keeps the remainder.
 export const CREATOR_SHOP_CREATOR_SHARE = 0.7;
@@ -108,6 +101,74 @@ export const creatorCosmeticTypes = [
   CosmeticType.ProfileBackground,
   CosmeticType.Sticker,
 ] as const;
+
+const SUBMISSION_FEE_DEFAULT = 10000;
+/**
+ * Packs list for less. The fee prices the review a submission costs, and a pack
+ * has no artwork to validate — every member was reviewed and paid for when it
+ * was submitted.
+ */
+const PACK_SUBMISSION_FEE_DEFAULT = 1000;
+
+/** What a creator pays to submit this cosmetic type for review. */
+export const submissionFeeDefault = (type: CosmeticType): number => {
+  switch (type) {
+    case CosmeticType.Sticker:
+    case CosmeticType.Badge:
+    case CosmeticType.ProfileDecoration:
+    case CosmeticType.ProfileBackground:
+    case CosmeticType.ContentDecoration:
+    default:
+      return SUBMISSION_FEE_DEFAULT;
+  }
+};
+
+/**
+ * Operator-tunable submission fees. A pack carries one figure rather than a
+ * per-type map because it has no CosmeticType of its own.
+ */
+export type CreatorShopFees = {
+  submission: Record<CreatorCosmeticType, number>;
+  pack: number;
+};
+
+export const DEFAULT_CREATOR_SHOP_FEES: CreatorShopFees = {
+  submission: Object.fromEntries(
+    creatorCosmeticTypes.map((type) => [type, submissionFeeDefault(type)])
+  ) as Record<CreatorCosmeticType, number>,
+  pack: PACK_SUBMISSION_FEE_DEFAULT,
+};
+
+// A fee is charged before anything is reviewed, so a mistyped row must not reach
+// the money path: anything outside this ceiling falls back to the default.
+export const CREATOR_SHOP_FEE_MAX = 1_000_000;
+
+// Buzz is integral, and each value falls back on its own rather than the row as
+// a whole, so one bad number can't move the others.
+const usableFee = (value: unknown, fallback: number): number =>
+  typeof value === 'number' &&
+  Number.isSafeInteger(value) &&
+  value >= 0 &&
+  value <= CREATOR_SHOP_FEE_MAX
+    ? value
+    : fallback;
+
+export const normalizeCreatorShopFees = (value: unknown): CreatorShopFees => {
+  const row = (value ?? {}) as { submission?: unknown; pack?: unknown };
+  const submission = (row.submission ?? {}) as Record<string, unknown>;
+  return {
+    submission: Object.fromEntries(
+      creatorCosmeticTypes.map((type) => [
+        type,
+        usableFee(
+          typeof submission === 'object' && submission !== null ? submission[type] : undefined,
+          DEFAULT_CREATOR_SHOP_FEES.submission[type]
+        ),
+      ])
+    ) as Record<CreatorCosmeticType, number>,
+    pack: usableFee(row.pack, DEFAULT_CREATOR_SHOP_FEES.pack),
+  };
+};
 
 // Consumables are priced per use, so a listing has to clear both floors.
 export const STICKER_MIN_BUZZ_PER_USE = 5;
@@ -385,6 +446,11 @@ const rightsAffirmedSchema = z
   .boolean()
   .refine((value) => value === true, 'You must confirm you have the rights to sell this artwork');
 
+// The fee the form quoted. The server charges its own value and rejects the
+// submission when the two disagree, so a form left open across a fee change
+// can't be charged a number the creator never saw.
+const quotedFeeSchema = z.number().int().min(0).max(CREATOR_SHOP_FEE_MAX);
+
 export type SubmitCreatorShopItemInput = z.infer<typeof submitCreatorShopItemSchema>;
 export const submitCreatorShopItemSchema = z
   .object({
@@ -419,6 +485,7 @@ export const submitCreatorShopItemSchema = z
     // The creator's affirmation that they hold the rights to sell this artwork.
     // Recorded on the item (see cosmeticShopItemMeta.rightsAffirmation).
     rightsAffirmed: rightsAffirmedSchema,
+    quotedFee: quotedFeeSchema,
   })
   .superRefine((input, ctx) => {
     // `uses` drives the buyer's balance AND the creator's 10x grant. Absent, both
@@ -480,6 +547,7 @@ export const submitCreatorShopPackSchema = z.object({
   // Required only with a cover: it is a statement about artwork, and a pack
   // without one supplies none. Its members were each affirmed at submission.
   rightsAffirmed: rightsAffirmedSchema.optional(),
+  quotedFee: quotedFeeSchema,
 });
 
 export type UpdateCreatorShopPackInput = z.infer<typeof updateCreatorShopPackSchema>;
