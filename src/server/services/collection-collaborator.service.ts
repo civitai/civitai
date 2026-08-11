@@ -5,6 +5,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { inviteExpiryCutoff, liveInviteWhere } from '~/server/services/collection-invite.utils';
 import {
+  collectionSupportsCollaborators,
   freeGrantBaseline,
   hasElevatedPermission,
   isCollaboratorRow,
@@ -347,16 +348,6 @@ export async function removeCollaborator({
       error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025';
     if (!isNotFound) throw error;
   }
-}
-
-// Curated collections (Contest/Bookmark) and the system-owned curation set carry staff
-// ADD/MANAGE rows that are an internal roster, not a collaboration — publishing them would
-// hand every reader of e.g. Featured Models the list of who curates it.
-function collectionSupportsCollaborators(collection: {
-  userId: number;
-  mode: CollectionMode | null;
-}): boolean {
-  return collection.mode === null && collection.userId > 0;
 }
 
 /**

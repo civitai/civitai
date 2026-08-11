@@ -21,12 +21,16 @@ function arrange({
   contributorPermissions = null,
   collaborationDisabledAt = null,
   hasAcceptedSeat = false,
+  ownerId = OWNER_ID,
+  mode = null,
 }: {
   read?: 'Public' | 'Unlisted' | 'Private';
   write?: 'Public' | 'Review' | 'Private';
   contributorPermissions?: string[] | null;
   collaborationDisabledAt?: Date | null;
   hasAcceptedSeat?: boolean;
+  ownerId?: number;
+  mode?: string | null;
 }) {
   mockDbRead.$queryRaw.mockReset();
   mockDbRead.$queryRaw.mockResolvedValueOnce([
@@ -34,9 +38,9 @@ function arrange({
       id: COLLECTION_ID,
       read,
       write,
-      userId: OWNER_ID,
+      userId: ownerId,
       type: 'Image',
-      mode: null,
+      mode,
       contributorPermissions,
       collaborationDisabledAt,
       hasAcceptedSeat,
@@ -80,6 +84,27 @@ describe('collection collaborator permissions', () => {
 
   it('does not treat an accepted seat with no contributor row as collaboration', async () => {
     arrange({ write: 'Public', contributorPermissions: null, hasAcceptedSeat: true });
+    const permissions = await getUserCollectionPermissionsById({
+      id: COLLECTION_ID,
+      userId: OTHER_ID,
+    });
+    expect(permissions.isCollaborator).toBe(false);
+  });
+
+  // `getCollectionRoster` refuses system-owned and curated collections outright, so their staff
+  // rows must not read as collaboration here either — otherwise the sidebar files a collection
+  // under "Shared with me" whose own header roster is empty.
+  it('does not treat a staff row on a system-owned collection as collaboration', async () => {
+    arrange({ ownerId: -1, contributorPermissions: ['VIEW', 'ADD', 'MANAGE'] });
+    const permissions = await getUserCollectionPermissionsById({
+      id: COLLECTION_ID,
+      userId: OTHER_ID,
+    });
+    expect(permissions.isCollaborator).toBe(false);
+  });
+
+  it('does not treat a judge row on a curated collection as collaboration', async () => {
+    arrange({ mode: 'Contest', contributorPermissions: ['VIEW', 'ADD'] });
     const permissions = await getUserCollectionPermissionsById({
       id: COLLECTION_ID,
       userId: OTHER_ID,

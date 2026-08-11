@@ -1,8 +1,19 @@
+import type { CollectionMode } from '~/shared/utils/prisma/enums';
 import {
   CollectionContributorPermission,
   CollectionReadConfiguration,
   CollectionWriteConfiguration,
 } from '~/shared/utils/prisma/enums';
+
+// Curated (any mode) and system-owned collections carry staff and judge rows that are an internal
+// roster, not a collaboration. Lives here rather than beside the roster so the sidebar's
+// `isCollaborator` flag and `getCollectionRoster` cannot apply different rules to the same row.
+export function collectionSupportsCollaborators(collection: {
+  userId: number;
+  mode: CollectionMode | null;
+}): boolean {
+  return collection.mode === null && collection.userId > 0;
+}
 
 // What the collection already grants everyone for free, independent of who's asking.
 // Sourced from the collection's own read/write columns — NOT from a permission result's

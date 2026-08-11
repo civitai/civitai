@@ -97,6 +97,7 @@ import { isDefined } from '~/utils/type-guards';
 import { assertUserChallengeAcceptingEntries } from '~/server/games/daily-challenge/challenge-entry-gate';
 import { liveInviteWhere } from '~/server/services/collection-invite.utils';
 import {
+  collectionSupportsCollaborators,
   freeGrantBaseline,
   isCollaboratorRow,
 } from '~/server/services/collection-permission.utils';
@@ -325,11 +326,13 @@ export async function getUserCollectionPermissionsByIds({
 
     permissions.isContributor = true;
 
-    permissions.isCollaborator = isCollaboratorRow({
-      permissions: contributorPermissions,
-      freeBaseline: freelyGranted,
-      hasAcceptedSeat: collection.hasAcceptedSeat,
-    });
+    permissions.isCollaborator =
+      collectionSupportsCollaborators(collection) &&
+      isCollaboratorRow({
+        permissions: contributorPermissions,
+        freeBaseline: freelyGranted,
+        hasAcceptedSeat: collection.hasAcceptedSeat,
+      });
 
     if (contributorPermissions.includes(CollectionContributorPermission.VIEW)) {
       permissions.read = true;
