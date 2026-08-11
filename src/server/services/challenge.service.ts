@@ -2479,12 +2479,16 @@ export async function endChallengeAndPickWinners(challengeId: number) {
 
   // Validate status
   if (challenge.status !== ChallengeStatus.Active) {
-    throw new TRPCError({
-      code: 'PRECONDITION_FAILED',
-      message: `Cannot end challenge with status "${String(
-        challenge.status
-      )}". Challenge must be Active.`,
-    });
+    // Completing is the ordinary second click, not a mistake: the moderator ended the challenge,
+    // the completion job took it, and they clicked again. Saying "must be Active" reads as a
+    // failure they need to do something about, when the truth is that it is already running.
+    const message =
+      challenge.status === ChallengeStatus.Completing
+        ? 'This challenge is already being completed — winners will be posted when it finishes.'
+        : `Cannot end challenge with status "${String(
+            challenge.status
+          )}". Challenge must be Active.`;
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message });
   }
 
   // A comparison engine's close-time stage is minutes of LLM round-trips. That does not belong in

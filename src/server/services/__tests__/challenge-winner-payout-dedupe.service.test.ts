@@ -624,10 +624,25 @@ describe('endChallengeAndPickWinners — hands a comparison engine to the comple
       status: ChallengeStatus.Completing,
     });
 
+    // Worded as "already being completed" rather than "must be Active": this is the ordinary
+    // second click, and a moderator should not be told to fix something that is working.
+    await expect(endChallengeAndPickWinners(CHALLENGE_ID)).rejects.toThrow(
+      /already being completed/
+    );
+    expect(mockDbWrite.challenge.update).not.toHaveBeenCalled();
+  });
+
+  it('still says "must be Active" for a status that really is a mistake', async () => {
+    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine);
+    mockGetChallengeById.mockResolvedValue({
+      ...challengeRow,
+      judgingEngine: 'pairwise-ladder',
+      status: ChallengeStatus.Completed,
+    });
+
     await expect(endChallengeAndPickWinners(CHALLENGE_ID)).rejects.toThrow(
       /Challenge must be Active/
     );
-    expect(mockDbWrite.challenge.update).not.toHaveBeenCalled();
   });
 
   it('still runs a legacy challenge inline, exactly as before', async () => {

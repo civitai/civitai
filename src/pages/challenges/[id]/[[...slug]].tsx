@@ -684,8 +684,12 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               </IconBadge>
             ) : null}
 
-            {/* Countdown (active only) */}
-            {isActive && (
+            {/* Countdown (active, and only while there is time left to count). A moderator can end
+                a challenge early, which puts endsAt in the past while the status is still Active
+                until the completion job takes it — and `fromNow(withoutSuffix)` renders a past
+                date as a bare magnitude, so the badge would read "2 minutes" as though that much
+                time remained. */}
+            {isActive && new Date(challenge.endsAt).getTime() > Date.now() && (
               <IconBadge size="lg" radius="sm" icon={<IconClockHour4 size={18} />} color="gray">
                 <DaysFromNow date={challenge.endsAt} withoutSuffix />
               </IconBadge>
