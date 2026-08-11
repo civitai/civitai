@@ -113,10 +113,12 @@ export const collectionRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('collections'))
     .query(getCollectionByIdHandler),
+  // Authorized in `upsertCollection` rather than here: a Manager may edit name, description and
+  // cover, but the service strips `read`/`write`/`mode` for anyone who isn't the owner. An
+  // ownership middleware in front of it would refuse the whole edit instead.
   upsert: guardedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(upsertCollectionInput)
-    .use(isOwnerOrModerator)
     .mutation(upsertCollectionHandler),
   updateCoverImage: guardedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })

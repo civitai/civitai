@@ -254,18 +254,22 @@ export function CollectionContextMenu({
         )}
 
         {!isBookmarkCollection && (isOwner || isMod) && (
+          <Menu.Item
+            color="red"
+            leftSection={<IconTrash size={14} stroke={1.5} />}
+            onClick={(e: React.MouseEvent) => {
+              e.preventDefault();
+              e.stopPropagation();
+              handleDeleteClick();
+            }}
+          >
+            Delete collection
+          </Menu.Item>
+        )}
+        {/* Managers get here too — the edit modal and `upsertCollection` both hold privacy and
+            mode to the owner, so what they reach is name, description and cover. */}
+        {!isBookmarkCollection && (isOwner || isMod || permissions?.manage) && (
           <>
-            <Menu.Item
-              color="red"
-              leftSection={<IconTrash size={14} stroke={1.5} />}
-              onClick={(e: React.MouseEvent) => {
-                e.preventDefault();
-                e.stopPropagation();
-                handleDeleteClick();
-              }}
-            >
-              Delete collection
-            </Menu.Item>
             <Menu.Item
               leftSection={<IconEdit size={14} stroke={1.5} />}
               onClick={(e: React.MouseEvent) => {
@@ -276,7 +280,7 @@ export function CollectionContextMenu({
             >
               Edit collection
             </Menu.Item>
-            {features.collectionAiReview && (
+            {(isOwner || isMod) && features.collectionAiReview && (
               <Menu.Item
                 leftSection={<IconRobot size={14} stroke={1.5} />}
                 onClick={(e: React.MouseEvent) => {
