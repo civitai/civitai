@@ -1,7 +1,8 @@
-import { Button, Text, Tooltip } from '@mantine/core';
-import { IconPlus, IconSticker } from '@tabler/icons-react';
+import { Button, Tooltip } from '@mantine/core';
+import { IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettingsProvider';
+import { StickerCountChip } from '~/components/Sticker/StickerCountChip';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
 import {
   useImagePlacementSpace,
@@ -74,29 +75,29 @@ export function StickerPlacementBar({
           subject, and Button.Group squares the touching corners so the divider
           between them is the shared border rather than a drawn line. */}
       <Button.Group className={clsx(className)}>
-        {total > 0 && (
-          <Tooltip
-            label={revealed ? 'Hide stickers on all images' : 'Show stickers on all images'}
-            withArrow
-          >
-            <Button
-              size="compact-sm"
-              radius="xl"
-              variant={revealed ? 'light' : 'subtle'}
-              color="gray"
-              onClick={toggle}
-              leftSection={<IconSticker size={16} />}
-              // Revealed reads as `hasReacted`, so the toggle's on state borrows
-              // the same tint the row already uses for "you did this" instead of
-              // introducing a second visual language for on/off.
-              {...buttonStyling?.('AddReaction', revealed)}
-            >
-              <Text size="xs" fw={600}>
-                {total} {total === 1 ? 'sticker' : 'stickers'}
-              </Text>
-            </Button>
-          </Tooltip>
-        )}
+        {/* At zero the chip is the invitation rather than a reveal toggle:
+            there is nothing to reveal, and a control that visibly does nothing
+            is worse than the bare plus it replaced. It can only be zero here
+            when placing is available, since the early return above covers the
+            other case. */}
+        <StickerCountChip
+          count={total}
+          revealed={revealed}
+          tooltip={
+            total > 0
+              ? revealed
+                ? 'Hide stickers on all images'
+                : 'Show stickers on all images'
+              : `Place a sticker · ${space?.price} Buzz`
+          }
+          onClick={total > 0 ? toggle : () => openTray(imageId)}
+          // Revealed reads as `hasReacted`, so the toggle's on state borrows the
+          // same tint the row already uses for "you did this" instead of
+          // introducing a second visual language for on/off.
+          buttonProps={
+            total > 0 ? buttonStyling?.('AddReaction', revealed) : buttonStyling?.('BuzzTip')
+          }
+        />
 
         {canPlace && (
           <Tooltip label={`Place a sticker · ${space?.price} Buzz`} withArrow>
