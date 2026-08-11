@@ -100,7 +100,7 @@ The Orchestrator's chat endpoint and the Qwen3 family have a few sharp edges. Th
 
 ### 1. Content-array flattening (`normalizeMessage`)
 
-OpenAI and OpenRouter accept `content` as either a `string` or an array of `{ type: 'text' | 'image_url', ... }` parts. The Orchestrator's validator rejects arrays for text-only messages (`The JSON value could not be converted to System.String`). The client flattens text-only arrays to a joined string before sending. Messages containing an `image_url` part pass through unchanged so vision support can be exercised when it lands end-to-end.
+OpenAI and OpenRouter accept `content` as either a `string` or an array of `{ type: 'text' | 'image_url', ... }` parts. The Orchestrator's validator rejects arrays for text-only messages (`The JSON value could not be converted to System.String`). The client flattens text-only arrays to a joined string before sending. Note the rejection is specific to text-only arrays — arrays containing an `image_url` part are accepted, so those pass through unchanged and vision works (see Known Limits).
 
 ### 2. Thinking-mode suppression (opt-in)
 
@@ -114,7 +114,7 @@ analysis, planning, thinking steps, markdown fences, or preamble before
 or after the JSON. Begin your response with `{` and end with `}`.
 ```
 
-Off by default — the client stays model-agnostic. The soft `/no_think` token and `chat_template_kwargs: { enable_thinking: false }` were also tried — `/no_think` was ignored by the current proxy build, and `chat_template_kwargs` triggered a 500. The instruction-based approach is what survived.
+Off by default — the client stays model-agnostic. Note that this directive only trims the preamble; it does not stop the model reasoning. The soft `/no_think` token is ignored by the current proxy build, but `chat_template_kwargs: { enable_thinking: false }` and `response_format: { type: 'json_object' }` both work and are stronger — see [Routing to a Civitai-hosted Model](#routing-to-a-civitai-hosted-model).
 
 ### 3. JSON extraction fallbacks (`extractJsonSlice`)
 
@@ -166,7 +166,7 @@ To make a call site use a Civitai-hosted model:
 
 No dispatcher change is needed — URN-prefix routing already directs all `urn:air:*` models to the Civitai LLM client.
 
-If the Orchestrator later accepts `chat_template_kwargs` or `response_format`, those flags can be added directly on the request body to avoid the prompt-based workaround:
+The Orchestrator accepts both `chat_template_kwargs` and `response_format`, so either can be set directly on the request body instead of the prompt-based workaround:
 
 ```ts
 const body = {
@@ -176,7 +176,7 @@ const body = {
 };
 ```
 
-Both fields previously triggered a 500 on the current proxy build. Re-test before re-introducing.
+Measured 2026-08-11 against the abliterated Qwen3 model: both return 200 on every attempt. `chat_template_kwargs` collapses reasoning from ~377 completion tokens to ~20 and emits a ` ```json ` fence that `extractJsonSlice`'s fenced candidate already unwraps; `response_format` returns bare JSON. Neither is wired into the client yet.
 
 ## Env Vars
 
@@ -208,7 +208,8 @@ For richer per-message dumps (full prompt content, image URLs, content tails), c
 
 - **Streaming**: not implemented. The endpoint supports SSE (`stream: true`); add a `streamChatCompletion` method when a consumer needs it.
 - **Tool calls**: not implemented. Add `runAgentLoop` parity with `openrouter.ts` if/when the Orchestrator supports OpenAI-format tool calls through Qwen.
-- **Vision**: image-bearing content arrays are forwarded unchanged, but end-to-end vision handling has not been validated against the current Orchestrator build. Validate by hand before routing image-bearing flows to `urn:air:*` models.
+- **Vision**: works. Image-bearing content arrays are forwarded unchanged and the model tokenises them — a 512px image took `prompt_tokens` from 34 to 292 on the abliterated Qwen3 model, which described detail present only in the pixels, at every nsfwLevel.
+- **Token usage**: discarded. The Orchestrator returns a `usage` object on every response, including for `urn:air:*`, but `ChatCompletionResponse` in `civitai-llm.ts` does not declare the field, so callers see nothing. `getCompletionWithUsage` in the daily-challenge pipeline therefore hardcodes zeros. Add the field before pricing any `urn:air:*` model.
 
 ## See Also
 
