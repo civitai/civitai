@@ -221,9 +221,9 @@ export default defineNextConfig(
       // in exchange for ~+8% CI build time and ~+33% peak builder RSS. Measurements live
       // in the PR rather than here, so they don't rot when Next's chunker changes.
       //
-      // Build only. It buys nothing in dev — chunk size is irrelevant to a dev server — and
-      // the walk over dynamic-import paths is paid on a graph that `_app` already makes large.
-      turbopackServerSideNestedAsyncChunking: isProd,
+      // Off because the builder's memory ceiling is now enforced and that ~+33% peak RSS is
+      // what puts the release build over it. Re-enable only with a measured peak-RSS margin.
+      turbopackServerSideNestedAsyncChunking: false,
       optimizePackageImports: [
         '@civitai/client',
         './src/libs/form',
