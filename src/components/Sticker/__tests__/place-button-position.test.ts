@@ -180,6 +180,31 @@ describe('shouldFlipPlaceButton', () => {
     expect(decide(box(800), box(70))).toBe(true);
   });
 
+  it('does not flip off the top of the viewport with no clip to catch it', () => {
+    // The case above is satisfied by the clip check alone, because the carousel
+    // starts at y=60. With no clipping ancestor — or one starting at the top of
+    // the viewport — the viewport guard is the only thing left.
+    expect(decide(box(800), box(-20), TRAY, null)).toBe(false);
+    expect(decide(box(800), box(10), TRAY, null)).toBe(true);
+
+    const fullHeightClip: Box = { top: 0, bottom: 900, left: 0, right: 1400 };
+    expect(decide(box(800), box(-20), TRAY, fullHeightClip)).toBe(false);
+  });
+
+  it('flips away from the top edge of the clip, not just the bottom', () => {
+    // Above the carousel viewport but still on screen: clipped at the top, which
+    // nothing else would catch.
+    expect(decide(box(800), box(20))).toBe(false);
+    expect(decide(box(800), box(65))).toBe(true);
+  });
+
+  it('treats a button resting exactly on the tray edge as visible', () => {
+    // Touching is not overlapping. Flipping here would move a button nobody is
+    // having trouble seeing.
+    expect(decide(box(724), box(400))).toBe(false);
+    expect(decide(box(725), box(400))).toBe(true);
+  });
+
   it('does not flip when the sticker is beside the tray rather than above it', () => {
     const narrowTray: Box = { top: 760, bottom: 900, left: 500, right: 900 };
     const wideClip: Box = { top: 0, bottom: 900, left: 0, right: 1400 };
