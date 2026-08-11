@@ -6018,10 +6018,11 @@ export const blocksRouter = router({
 
   /**
    * App management (Phase 2) — return the caller's per-user Forgejo clone info
-   * for one of THEIR apps, for the read-only `civitai app pull` CLI command.
-   * Owner-gated identically to getMyAppRepo; lazily provisions the scoped,
-   * restricted per-user Forgejo identity (ensureForgejoIdentity) and grants it
-   * read on the app's own civitai-apps/<slug> repo.
+   * for an app they may EDIT, for the read-only `civitai app pull` CLI command.
+   * Access-gated identically to getMyAppRepo — which, since App Listing Collaborators,
+   * means OWNER **or** ACCEPTED collaborator (`assertAppEditAccess`), not owner-only.
+   * Lazily provisions the scoped, restricted per-user Forgejo identity
+   * (ensureForgejoIdentity) and grants it read on the app's own civitai-apps/<slug> repo.
    *
    * Close to getMyAppRepo but no longer identical to it — three differences, and the
    * first is easy to miss now that only one of them carries a scope annotation:
@@ -6032,7 +6033,7 @@ export const blocksRouter = router({
    *   - INTENT: pull/sync here vs push instructions there.
    *   - COLLABORATOR PERMISSION: `read` here vs `write` there (see the note at the
    *     addCollaborator call below).
-   * Ownership gating IS identical (owner check + bannedAt + `approved`). It returns the
+   * Access gating IS identical (assertAppEditAccess + bannedAt + `approved`). It returns the
    * raw { forgejoUsername, token, cloneUrl } the CLI assembles its git command from; the
    * token is embedded in the returned cloneUrl exactly as getMyAppRepo does (the CLI
    * documents the token-in-URL leakage caveat).
@@ -6057,8 +6058,10 @@ export const blocksRouter = router({
     // include the civitai-cli OAuth login token.
     //
     // Accepted, deliberately: AppBlocksSubmit is opt-in, excluded from `Full`, and
-    // carried only by the first-party civitai-cli client; the caller must still own the
-    // app, not be banned, and the app must be `approved`; the collaborator grant is
+    // carried only by the first-party civitai-cli client; the caller must still hold EDIT
+    // ACCESS to the app — owner OR an ACCEPTED collaborator seat, per assertAppEditAccess
+    // (a pending or rejected invitee is refused, and there is no moderator bypass) — must
+    // not be banned, and the app must be `approved`; the collaborator grant is
     // `read` on that one repo; and this is already the established meaning of the bit
     // for CLI-facing procs, several of which are outright mutations (see
     // `listingMediaCliScope` in app-listings.router.ts). A dedicated bit would be

@@ -385,10 +385,10 @@ export async function getListingPreviewForReview(args: {
  *      unit-testable (which is how the public-projection allowlist is pinned).
  *
  * 🔴 The chips are built by the SAME `creatorChip` allowlist as `creator` — exactly
- * `{id, username, image}`, nothing else, ever. `app-listing.public-collaborators.test.ts`
- * asserts the projected key set is exactly those three even when the input user row
- * carries extra fields (email, bannedAt, …), so a wider `select` upstream cannot leak
- * through this seam.
+ * `{id, username, image}`, nothing else, ever.
+ * `app-collaborator.public-projection.test.ts` asserts the projected key set is exactly
+ * those three even when the input user row carries extra fields (email, bannedAt, …), so
+ * a wider `select` upstream cannot leak through this seam.
  */
 export function projectListingDetail(
   row: HydratedListing,

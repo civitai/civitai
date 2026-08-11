@@ -313,13 +313,22 @@ export const appCollaboratorsRouter = router({
       return run(() => cancelTransfer({ transferId: input.transferId, actorUserId: ctx.user!.id }));
     }),
 
-  /** The LIVE pending transfer for an app (expiry applied as a read-time predicate). */
+  /**
+   * The LIVE pending transfer for an app (expiry applied as a read-time predicate).
+   *
+   * 🔴 Takes `ctx`, and passes the caller down. The transfer row names both parties and
+   * the deadline; the service restricts it to the app OWNER and the ADDRESSEE — the same
+   * set the three sibling transfer procs gate on — and returns `null` (never FORBIDDEN)
+   * to anyone else, so this read cannot be used as an existence oracle.
+   */
   getPendingTransfer: appDeveloperProcedure
     .input(getPendingAppTransferSchema)
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
       const { getPendingTransfer } = await import(
         '~/server/services/blocks/app-ownership-transfer.service'
       );
-      return run(() => getPendingTransfer({ appBlockId: input.appBlockId }));
+      return run(() =>
+        getPendingTransfer({ appBlockId: input.appBlockId, viewerUserId: ctx.user!.id })
+      );
     }),
 });

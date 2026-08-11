@@ -40,7 +40,8 @@ import { newAppOwnershipTransferId } from '~/server/utils/app-block-ids';
  *     Rewriting the column mid-period would MERGE the two owners' pending rows into
  *     one payout group and could collide on that unique. Leaving them alone means the
  *     old owner is still paid for what they accrued and the new owner starts at zero.
- *     `app-ownership-transfer.money-invariance.test.ts` pins this.
+ *     `app-ownership-transfer.service.test.ts`'s "MONEY INVARIANCE" describe pins this
+ *     (including the positive control that proves those mocks CAN record a call).
  *
  * ## Forgejo
  *
@@ -199,6 +200,13 @@ export async function initiateTransfer(opts: {
  * 🔴 THE ATOMIC CORE. In ONE transaction:
  *   1. re-read the transfer on the PRIMARY and re-assert it is live + addressed to the
  *      caller (a replica read could accept an already-cancelled offer under lag);
+ *   1b. re-read the RECIPIENT's `bannedAt` on the PRIMARY. The ban was checked at
+ *      INITIATE and again from `ctx.user` at the proc, but a transfer stays open for
+ *      `transferExpiryDays` and a SESSION can be arbitrarily stale — so without this
+ *      read the stated policy ("a banned user may not receive an ownership transfer")
+ *      is simply false anywhere inside that window. `respondToInvite` re-reads the user
+ *      row for exactly this reason; this one goes further and reads in-transaction on
+ *      the primary, because unlike a seat an ownership move is not cheap to unwind;
  *   2. re-assert `OauthClient.userId` STILL equals the transfer's `fromUserId` — a
  *      status-guarded `updateMany` whose 0-count means the owner changed since the
  *      offer (a second transfer landed first), rolling everything back;
@@ -242,6 +250,18 @@ export async function acceptTransfer(opts: {
     }
     if (!isLive(transfer, now)) {
       throw new AppCollaboratorError('NO_INVITE', 'This ownership transfer is no longer available');
+    }
+
+    // (1b) 🔴 RE-READ THE BAN on the primary, in-transaction. `ctx.user.bannedAt` is a
+    // SESSION value and the offer may have been sitting open for days; the initiate-time
+    // check says nothing about now. Without this, "a banned user may not receive an
+    // ownership transfer" is false for the whole expiry window.
+    const recipient = (await tx.user.findUnique({
+      where: { id: opts.userId },
+      select: { bannedAt: true },
+    })) as { bannedAt: Date | null } | null;
+    if (recipient?.bannedAt) {
+      throw new AppCollaboratorError('BANNED', 'That account cannot receive app ownership');
     }
 
     // (2) CANONICAL owner column, status-guarded on the snapshotted previous owner.
@@ -376,12 +396,29 @@ export async function cancelTransfer(opts: {
  * The LIVE pending transfer for an app, or `null`. Expiry is applied as a read-time
  * predicate (see {@link isLive}) so an expired row never surfaces as pending, whether
  * or not anything has swept it.
+ *
+ * 🔴 AUTHORIZED, like its three siblings. The row names BOTH parties (`fromUserId`,
+ * `toUserId`) and the offer's deadline; every other transfer proc gates
+ * (`initiateTransfer` → owner, `acceptTransfer` → addressee, `cancelTransfer` → either
+ * party), and this one took no caller at all, so any flagged account could read who is
+ * handing which app to whom. Permitted: the app OWNER (who is the offer's `fromUserId`)
+ * and the ADDRESSEE, matching exactly the set that may act on the transfer.
+ *
+ * An unauthorized caller gets `null`, NOT a FORBIDDEN. Throwing would make this proc an
+ * existence ORACLE — "this app has a pending transfer" is itself the private fact — so
+ * the refusal is made indistinguishable from "there is no offer". (`NOT_FOUND` for a
+ * missing app is fine: app existence is already public.)
  */
 export async function getPendingTransfer(opts: {
   appBlockId: string;
+  /** The caller. Required — this is not a public read; see above. */
+  viewerUserId: number;
   now?: Date;
 }): Promise<TransferView | null> {
   const now = opts.now ?? new Date();
+  const { resolveAppAccess } = await import('~/server/services/blocks/app-access.service');
+  const access = await resolveAppAccess(opts.appBlockId, opts.viewerUserId);
+  if (!access) throw new AppCollaboratorError('NOT_FOUND', 'App not found');
   const row = (await dbRead.appOwnershipTransfer.findFirst({
     where: { appBlockId: opts.appBlockId, status: 'pending' },
     select: {
@@ -395,5 +432,9 @@ export async function getPendingTransfer(opts: {
     },
   })) as TransferView | null;
   if (!row || !isLive(row, now)) return null;
+  // Owner or addressee only. An EDITOR is deliberately excluded: a seat is a content
+  // capability, and disposing of the app is the one thing an editor may not do or
+  // initiate — so it is not theirs to watch either.
+  if (access.role !== 'owner' && row.toUserId !== opts.viewerUserId) return null;
   return row;
 }

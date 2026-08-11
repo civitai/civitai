@@ -85,13 +85,26 @@ export const ACCEPTED = 'accepted' as const;
  * `$queryRaw` and through some driver paths where Prisma has not classified the error.
  * Matching BOTH matters: a check on P2021 alone let a raw-path failure through in
  * local testing.
+ *
+ * 🔴 THE MESSAGE BRANCH IS DELIBERATELY NARROWER THAN "does not exist". That substring
+ * also appears in `column "displayed" does not exist` and in
+ * `column "x" of relation "y" does not exist` (SQLSTATE 42703) — which is EXACTLY what a
+ * HALF-APPLIED manual migration produces, and this repo applies migrations by hand
+ * (datapacket-talos DB rule #8). Swallowing a column error would degrade a genuinely
+ * broken schema to a permanent silent "no collaborators" instead of surfacing it. So the
+ * message branch requires the missing object to be named as a RELATION or TABLE, and
+ * refuses anything that mentions a column at all. `app-access.service.test.ts` pins both
+ * directions, including the "broadened back to `does not exist` / `not found`" mutants.
  */
 function isMissingTableError(err: unknown): boolean {
   const code = (err as { code?: unknown })?.code;
   if (code === 'P2021' || code === '42P01') return true;
   // Prisma wraps the driver error; the SQLSTATE is only in the message on some paths.
   const message = (err as { message?: unknown })?.message;
-  return typeof message === 'string' && /does not exist|42P01/i.test(message);
+  if (typeof message !== 'string') return false;
+  // A column/attribute error is a HALF-APPLIED migration, not an absent table.
+  if (/\bcolumns?\b/i.test(message)) return false;
+  return /\b42P01\b/.test(message) || /\b(?:relation|table)\s+\S+\s+does not exist/i.test(message);
 }
 
 /**
@@ -113,15 +126,27 @@ export async function safeCollaboratorQuery<T>(fn: () => Promise<T>, fallback: T
 }
 
 /**
+ * The Prisma pool a resolve should read through.
+ *
+ * Defaults to the replica. Callers pass `dbWrite` when the rows in question may have
+ * been INSERTed milliseconds ago — see {@link resolveListingAccess}.
+ */
+export type AccessDb = typeof dbRead;
+
+/**
  * Is `userId` an ACCEPTED collaborator on `appBlockId`?
  *
  * The `status: ACCEPTED` filter is the consent gate and is NOT optional — see the
  * module header. Callers must never widen this to "a row exists".
  */
-async function hasAcceptedSeat(appBlockId: string, userId: number): Promise<boolean> {
+async function hasAcceptedSeat(
+  appBlockId: string,
+  userId: number,
+  db: AccessDb = dbRead
+): Promise<boolean> {
   const row = await safeCollaboratorQuery(
     () =>
-      dbRead.appCollaborator.findFirst({
+      db.appCollaborator.findFirst({
         where: { appBlockId, userId, status: ACCEPTED },
         select: { userId: true },
       }),
@@ -168,12 +193,22 @@ export async function resolveAppAccess(
  *
  * A natively-created offsite listing (no backing AppBlock anywhere in the chain)
  * resolves `appBlockId: null` and therefore only ever `owner`/`null`.
+ *
+ * 🔴 `db` IS LOAD-BEARING, NOT AN ERGONOMIC. The asset gates in
+ * `app-listing-assets.service.ts` already carry a `dbWrite` pool override so the OWNER's
+ * FIRST edit does not 404 off a lagging replica (the shadow was INSERTed milliseconds
+ * ago). An EDITOR never takes the owner short-circuit at all — a shadow's `userId` is
+ * the PARENT OWNER's — so the collaborator fallback is the ONE path that always reaches
+ * this function, and reading the replica here would turn that same lag into a 403 on an
+ * editor's first media edit. The override must therefore be threaded all the way down to
+ * the seat lookup, not just to the listing lookup.
  */
 export async function resolveListingAccess(
   appListingId: string,
-  userId: number | null | undefined
+  userId: number | null | undefined,
+  db: AccessDb = dbRead
 ): Promise<ListingAccess | null> {
-  const listing = await dbRead.appListing.findUnique({
+  const listing = await db.appListing.findUnique({
     where: { id: appListingId },
     select: {
       id: true,
@@ -190,7 +225,7 @@ export async function resolveListingAccess(
   if (typeof userId !== 'number') return { ...base, role: null };
   if (listing.userId === userId) return { ...base, role: 'owner' };
   if (!appBlockId) return { ...base, role: null };
-  const editor = await hasAcceptedSeat(appBlockId, userId);
+  const editor = await hasAcceptedSeat(appBlockId, userId, db);
   return { ...base, role: editor ? 'editor' : null };
 }
 
@@ -292,8 +327,10 @@ export async function resolveAccessibleAppBlockIds(userId: number): Promise<Acce
  *     app cannot borrow a stranger's name), and
  *   - `displayed = true` is the byline OPT-OUT (an accepted editor who does not want
  *     public credit).
- * `app-listing.public-collaborators.test.ts` asserts a pending, a rejected and an
- * accepted-but-undisplayed row are all absent from the public projection.
+ * `app-access.service.test.ts` ("the PUBLIC byline is accepted AND displayed only")
+ * asserts a pending, a rejected and an accepted-but-undisplayed row are all absent from
+ * this set. The DTO half — that the projection adds nothing to what it is handed — is
+ * pinned separately in `app-collaborator.public-projection.test.ts`.
  */
 export async function listDisplayedCollaboratorUserIds(appBlockId: string): Promise<number[]> {
   const rows = await safeCollaboratorQuery(

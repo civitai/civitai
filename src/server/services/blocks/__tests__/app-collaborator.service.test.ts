@@ -53,11 +53,14 @@ const {
   filterCollaboratorsForViewer,
   inviteCollaborator,
   leaveApp,
+  listCollaborators,
+  mapCollaboratorError,
   removeCollaborator,
   respondToInvite,
   setCollaboratorDisplayed,
   shouldNotifyInvite,
 } = await import('~/server/services/blocks/app-collaborator.service');
+const { TRPCError } = await import('@trpc/server');
 
 const APP = 'ab_app1';
 const SLUG = 'my-app';
@@ -295,6 +298,40 @@ describe('respondToInvite', () => {
       respondToInvite({ appBlockId: APP, userId: TARGET, accept: false, now: NOW })
     ).resolves.toMatchObject({ status: 'rejected' });
   });
+
+  // 🔴 The APPEND-ONLY TRAIL's `action` field. Untested until a mutation sweep swapped
+  // the ternary and nothing went red: an accept was recorded as a `reject`. The trail is
+  // the ONLY record of who consented to what — the seat row itself is deleted on
+  // remove/leave — so a silently-inverted action makes the audit history actively
+  // misleading rather than merely incomplete, and nothing downstream would ever
+  // contradict it.
+  it('🔴 ACCEPT is recorded as `accept` in the audit trail', async () => {
+    await respondToInvite({ appBlockId: APP, userId: TARGET, accept: true, now: NOW });
+    const evt = mockDb.appOwnershipEvent.create.mock.calls[0][0] as {
+      data: { action: string; actorUserId: number; targetUserId: number };
+    };
+    expect(evt.data.action).toBe('accept');
+    expect(evt.data.actorUserId).toBe(TARGET);
+    expect(evt.data.targetUserId).toBe(TARGET);
+  });
+
+  it('🔴 REJECT is recorded as `reject` — the two are not interchangeable', async () => {
+    await respondToInvite({ appBlockId: APP, userId: TARGET, accept: false, now: NOW });
+    const evt = mockDb.appOwnershipEvent.create.mock.calls[0][0] as { data: { action: string } };
+    expect(evt.data.action).toBe('reject');
+  });
+
+  it('POSITIVE CONTROL: the two branches really do write DIFFERENT actions', async () => {
+    // Otherwise both assertions above could be satisfied by one constant string.
+    await respondToInvite({ appBlockId: APP, userId: TARGET, accept: true, now: NOW });
+    const a = (mockDb.appOwnershipEvent.create.mock.calls[0][0] as { data: { action: string } })
+      .data.action;
+    mockDb.appOwnershipEvent.create.mockClear();
+    await respondToInvite({ appBlockId: APP, userId: TARGET, accept: false, now: NOW });
+    const b = (mockDb.appOwnershipEvent.create.mock.calls[0][0] as { data: { action: string } })
+      .data.action;
+    expect(a).not.toBe(b);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -337,6 +374,175 @@ describe('removeCollaborator / leaveApp — the REVOKE half', () => {
     expect(mockRepo.revokeAppRepoWrite).toHaveBeenCalledWith({ slug: SLUG, userId: TARGET });
     const evt = mockDb.appOwnershipEvent.create.mock.calls[0][0] as { data: { action: string } };
     expect(evt.data.action).toBe('leave');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 🔴 THE BLAST RADIUS of the two `deleteMany` calls.
+// ---------------------------------------------------------------------------
+
+describe('🔴 leaveApp / removeCollaborator delete EXACTLY ONE seat', () => {
+  /**
+   * THE WORST SURVIVING MUTANT. Dropping `userId` from `leaveApp`'s `where` turns "I
+   * give up my seat" into "every collaborator on this app is removed" — a one-word
+   * deletion, performed by a NON-OWNER (leaving needs no owner check, correctly), that
+   * no test noticed. The old fixture asserted only `deleteMany` returned `count: 1`,
+   * which a table-wide delete satisfies just as well as a targeted one.
+   *
+   * So this suite stops asserting the RETURN and starts asserting the TABLE: a real
+   * two-seat fixture, a `deleteMany` that honours its `where`, and an assertion on who
+   * SURVIVES. A predicate that is too broad now leaves the wrong survivors.
+   */
+  const OTHER_SEAT = 21;
+
+  /** The seat table, mutated for real by the fake `deleteMany`. */
+  let seats: Array<{ appBlockId: string; userId: number }>;
+
+  beforeEach(() => {
+    seats = [
+      { appBlockId: APP, userId: TARGET },
+      { appBlockId: APP, userId: OTHER_SEAT },
+      // A seat on a DIFFERENT app, so an over-broad `where` that keeps `userId` but
+      // drops `appBlockId` is caught too.
+      { appBlockId: 'ab_other', userId: TARGET },
+    ];
+    mockDb.appCollaborator.deleteMany.mockImplementation(async (args: unknown) => {
+      const w = (args as { where: { appBlockId?: string; userId?: number } }).where;
+      const before = seats.length;
+      seats = seats.filter(
+        (s) =>
+          !(
+            (w.appBlockId === undefined || s.appBlockId === w.appBlockId) &&
+            (w.userId === undefined || s.userId === w.userId)
+          )
+      );
+      return { count: before - seats.length };
+    });
+  });
+
+  it('POSITIVE CONTROL: the fake deleteMany really does honour its `where`', async () => {
+    // Without this the survivor assertions below are facts about an inert mock.
+    const wide = await mockDb.appCollaborator.deleteMany({ where: {} });
+    expect(wide).toEqual({ count: 3 });
+    expect(seats).toEqual([]);
+  });
+
+  it('🔴 leaveApp removes ONLY the caller’s seat on THIS app', async () => {
+    const res = await leaveApp({ appBlockId: APP, userId: TARGET });
+    expect(res.removed).toBe(true);
+    // The co-editor keeps their seat. A `where` missing `userId` deletes them too.
+    expect(seats).toContainEqual({ appBlockId: APP, userId: OTHER_SEAT });
+    // …and the caller's seat on an unrelated app survives. A `where` missing
+    // `appBlockId` takes that one.
+    expect(seats).toContainEqual({ appBlockId: 'ab_other', userId: TARGET });
+    expect(seats).not.toContainEqual({ appBlockId: APP, userId: TARGET });
+    expect(seats).toHaveLength(2);
+  });
+
+  it('🔴 leaveApp revokes repo write for the LEAVER only', async () => {
+    await leaveApp({ appBlockId: APP, userId: TARGET });
+    expect(mockRepo.revokeAppRepoWrite).toHaveBeenCalledOnce();
+    expect(mockRepo.revokeAppRepoWrite).toHaveBeenCalledWith({ slug: SLUG, userId: TARGET });
+  });
+
+  it('🔴 removeCollaborator removes ONLY the named target', async () => {
+    await removeCollaborator({ appBlockId: APP, targetUserId: TARGET, actorUserId: OWNER });
+    expect(seats).toContainEqual({ appBlockId: APP, userId: OTHER_SEAT });
+    expect(seats).not.toContainEqual({ appBlockId: APP, userId: TARGET });
+  });
+
+  it('leaving an app you hold no seat on removes nothing and revokes nothing', async () => {
+    const res = await leaveApp({ appBlockId: APP, userId: STRANGER });
+    expect(res.removed).toBe(false);
+    expect(seats).toHaveLength(3);
+    expect(mockRepo.revokeAppRepoWrite).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 🔴 The audit event must be written through the TRANSACTION, not the client.
+// ---------------------------------------------------------------------------
+
+describe('🔴 recordOwnershipEvent writes through the `tx`, not `dbWrite`', () => {
+  /**
+   * FIXTURE COLLAPSE, and why this needed its own describe.
+   *
+   * Every suite's `$transaction` fake calls back with the SAME object it was called on
+   * (`cb(db)`), so `tx.appOwnershipEvent.create` and `dbWrite.appOwnershipEvent.create`
+   * are literally the same spy. A mutant that swapped the transactional client for the
+   * bare `dbWrite` was therefore byte-identical to correct code under test — and it is
+   * the one difference that matters: an event written outside the transaction SURVIVES
+   * a rollback, so a seat change that never happened leaves a permanent audit row
+   * claiming it did.
+   *
+   * The cure is a DISTINCT tx double. Two objects make the choice observable; one
+   * object makes the assertion unwritable.
+   */
+  function txDouble() {
+    return {
+      appCollaborator: {
+        upsert: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
+        updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
+        deleteMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
+      },
+      appOwnershipEvent: { create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})) },
+    };
+  }
+
+  let tx: ReturnType<typeof txDouble>;
+
+  beforeEach(() => {
+    tx = txDouble();
+    mockDb.$transaction.mockImplementation(async (cb: (t: unknown) => Promise<unknown>) => cb(tx));
+  });
+
+  it('POSITIVE CONTROL: the tx double is a DIFFERENT object from the client', () => {
+    // If these were the same object every assertion below would be vacuous — which is
+    // exactly the state that let the mutant survive.
+    expect(tx.appOwnershipEvent.create).not.toBe(mockDb.appOwnershipEvent.create);
+  });
+
+  const CASES: Array<[string, () => Promise<unknown>, string]> = [
+    [
+      'inviteCollaborator',
+      () =>
+        inviteCollaborator({ appBlockId: APP, targetUserId: TARGET, actorUserId: OWNER, now: NOW }),
+      'invite',
+    ],
+    [
+      'respondToInvite',
+      () => respondToInvite({ appBlockId: APP, userId: TARGET, accept: true, now: NOW }),
+      'accept',
+    ],
+    [
+      'removeCollaborator',
+      () => removeCollaborator({ appBlockId: APP, targetUserId: TARGET, actorUserId: OWNER }),
+      'remove',
+    ],
+    ['leaveApp', () => leaveApp({ appBlockId: APP, userId: TARGET }), 'leave'],
+    [
+      'setCollaboratorDisplayed',
+      () => setCollaboratorDisplayed({ appBlockId: APP, userId: TARGET, displayed: true }),
+      'display',
+    ],
+  ];
+
+  for (const [label, run, action] of CASES) {
+    it(`${label}: the \`${action}\` event lands on the tx and NOT on the client`, async () => {
+      await run();
+      expect(tx.appOwnershipEvent.create).toHaveBeenCalledOnce();
+      const evt = tx.appOwnershipEvent.create.mock.calls[0][0] as { data: { action: string } };
+      expect(evt.data.action).toBe(action);
+      // 🔴 The mutant's signature: the event written through the bare client, where a
+      // rollback cannot reach it.
+      expect(mockDb.appOwnershipEvent.create).not.toHaveBeenCalled();
+    });
+  }
+
+  it('the seat WRITE goes through the tx too, not just the event', async () => {
+    await respondToInvite({ appBlockId: APP, userId: TARGET, accept: true, now: NOW });
+    expect(tx.appCollaborator.updateMany).toHaveBeenCalledOnce();
+    expect(mockDb.appCollaborator.updateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -492,5 +698,175 @@ describe('AppCollaboratorError', () => {
     const e = new AppCollaboratorError('CAP_REACHED', 'too many');
     expect(e.code).toBe('CAP_REACHED');
     expect(e.name).toBe('AppCollaboratorError');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 🔴 The tRPC STATUS-CODE contract for the whole new router.
+// ---------------------------------------------------------------------------
+
+describe('mapCollaboratorError — the router’s status-code contract', () => {
+  /**
+   * Every proc in `app-collaborators.router.ts` funnels through `run()` → this
+   * function, so this table IS the router's error contract. It was entirely untested:
+   * a mutant returning BAD_REQUEST for NOT_OWNER/BANNED survived, which would turn
+   * "you are not allowed" into "your request was malformed" for every authorization
+   * failure the feature can produce — the client cannot tell a permission problem from
+   * a bad payload, and neither can a support agent reading a ticket.
+   *
+   * Asserted as an exhaustive table over `AppCollaboratorErrorCode` (the codes are
+   * listed, not derived from the implementation) so a NEW code added without a decision
+   * shows up as an unlisted case in the union rather than silently defaulting.
+   */
+  const CONTRACT: Array<[string, string]> = [
+    ['NOT_FOUND', 'NOT_FOUND'],
+    // 🔴 The two authorization codes. FORBIDDEN, never BAD_REQUEST.
+    ['NOT_OWNER', 'FORBIDDEN'],
+    ['BANNED', 'FORBIDDEN'],
+    // Everything else is the caller asking for something the state does not allow.
+    ['INVALID_TARGET', 'BAD_REQUEST'],
+    ['ALREADY_SEATED', 'BAD_REQUEST'],
+    ['CAP_REACHED', 'BAD_REQUEST'],
+    ['NO_INVITE', 'BAD_REQUEST'],
+  ];
+
+  for (const [serviceCode, trpcCode] of CONTRACT) {
+    it(`${serviceCode} → tRPC ${trpcCode}`, () => {
+      const mapped = mapCollaboratorError(
+        new AppCollaboratorError(serviceCode as never, `msg-${serviceCode}`)
+      );
+      expect(mapped).toBeInstanceOf(TRPCError);
+      expect((mapped as InstanceType<typeof TRPCError>).code).toBe(trpcCode);
+      // The service message reaches the client verbatim — these strings are the UX.
+      expect((mapped as InstanceType<typeof TRPCError>).message).toBe(`msg-${serviceCode}`);
+    });
+  }
+
+  it('the table covers EVERY code the service can throw (no silently-unmapped case)', () => {
+    // A structural guard against the table drifting behind the union: the codes below
+    // are the ones `AppCollaboratorErrorCode` declares.
+    const DECLARED = [
+      'NOT_FOUND',
+      'NOT_OWNER',
+      'INVALID_TARGET',
+      'ALREADY_SEATED',
+      'CAP_REACHED',
+      'NO_INVITE',
+      'BANNED',
+    ];
+    expect(CONTRACT.map(([c]) => c).sort()).toEqual(DECLARED.sort());
+  });
+
+  it('🔴 NEGATIVE CONTROL: a non-service error passes through UNCHANGED', () => {
+    // Wrapping everything would relabel genuine 500s as client errors.
+    const raw = new Error('connection reset');
+    expect(mapCollaboratorError(raw)).toBe(raw);
+    expect(mapCollaboratorError(raw)).not.toBeInstanceOf(TRPCError);
+  });
+
+  it('POSITIVE CONTROL: FORBIDDEN and BAD_REQUEST are distinguishable values', () => {
+    // Otherwise the whole table could be satisfied by one constant.
+    const a = mapCollaboratorError(new AppCollaboratorError('NOT_OWNER', 'x'));
+    const b = mapCollaboratorError(new AppCollaboratorError('CAP_REACHED', 'x'));
+    expect((a as InstanceType<typeof TRPCError>).code).not.toBe(
+      (b as InstanceType<typeof TRPCError>).code
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 🔴 The ROSTER read is not public.
+// ---------------------------------------------------------------------------
+
+describe('listCollaborators — 🔴 the caller must hold a REAL role', () => {
+  /**
+   * `resolveAppAccess` was consulted here only for `ownerUserId`; its `role` was never
+   * required non-null. The status filter governs which ROWS a viewer sees, not whether
+   * the viewer may read the app at all — so any account with the author flag could
+   * enumerate ANY app's accepted roster, INCLUDING seats whose holder set
+   * `displayed: false` precisely so as not to be listed publicly, plus `invitedBy` and
+   * the invite/response timestamps.
+   */
+  const ROSTER = [
+    {
+      userId: 1,
+      role: 'editor',
+      status: 'accepted',
+      displayed: false,
+      invitedBy: OWNER,
+      createdAt: NOW,
+      respondedAt: NOW,
+    },
+  ];
+
+  beforeEach(() => {
+    mockDb.appCollaborator.findMany.mockResolvedValue(ROSTER);
+    // No seat for anyone unless a test says otherwise.
+    mockDb.appCollaborator.findFirst.mockResolvedValue(null);
+  });
+
+  it('the OWNER may read the roster', async () => {
+    await expect(
+      listCollaborators({ appBlockId: APP, viewerUserId: OWNER, isModerator: false })
+    ).resolves.toHaveLength(1);
+  });
+
+  it('an ACCEPTED editor may read the roster', async () => {
+    mockDb.appCollaborator.findFirst.mockResolvedValue({ userId: TARGET });
+    await expect(
+      listCollaborators({ appBlockId: APP, viewerUserId: TARGET, isModerator: false })
+    ).resolves.toHaveLength(1);
+  });
+
+  it('a MODERATOR may read the roster', async () => {
+    await expect(
+      listCollaborators({ appBlockId: APP, viewerUserId: STRANGER, isModerator: true })
+    ).resolves.toHaveLength(1);
+  });
+
+  it('🔴 a STRANGER is refused — and the query never runs', async () => {
+    await expect(
+      listCollaborators({ appBlockId: APP, viewerUserId: STRANGER, isModerator: false })
+    ).rejects.toMatchObject({ code: 'NOT_OWNER' });
+    // Fail BEFORE the read, not after it: the rows must never be loaded, let alone
+    // filtered.
+    expect(mockDb.appCollaborator.findMany).not.toHaveBeenCalled();
+  });
+
+  it('🔴 an ANONYMOUS caller is refused', async () => {
+    await expect(
+      listCollaborators({ appBlockId: APP, viewerUserId: null, isModerator: false })
+    ).rejects.toMatchObject({ code: 'NOT_OWNER' });
+  });
+
+  it('🔴 a PENDING invitee is refused (they read their own invite via listMyPendingInvites)', async () => {
+    // `resolveAppAccess` returns role null for a pending seat — the consent rule. So a
+    // pending invitee does not get the app's roster as a side effect of being invited.
+    mockDb.appCollaborator.findFirst.mockImplementation(async (args: unknown) => {
+      const w = (args as { where: { status?: string } }).where;
+      return w.status === 'accepted' ? null : { userId: TARGET };
+    });
+    await expect(
+      listCollaborators({ appBlockId: APP, viewerUserId: TARGET, isModerator: false })
+    ).rejects.toMatchObject({ code: 'NOT_OWNER' });
+  });
+
+  it('a missing app is NOT_FOUND, distinct from a refusal', async () => {
+    mockDb.appBlock.findUnique.mockResolvedValue(null);
+    await expect(
+      listCollaborators({ appBlockId: APP, viewerUserId: OWNER, isModerator: false })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('POSITIVE CONTROL: the roster fixture really carries an opted-OUT seat', async () => {
+    // The stake of the leak, stated as data: `displayed: false` is exactly the row a
+    // stranger must not be able to read back.
+    const rows = await listCollaborators({
+      appBlockId: APP,
+      viewerUserId: OWNER,
+      isModerator: false,
+    });
+    expect(rows[0].displayed).toBe(false);
+    expect(rows[0].invitedBy).toBe(OWNER);
   });
 });

@@ -512,6 +512,21 @@ export function filterCollaboratorsForViewer(
   });
 }
 
+/**
+ * 🔴 THE ROSTER IS NOT A PUBLIC READ, and `resolveAppAccess` is consulted for its ROLE,
+ * not merely for `ownerUserId`.
+ *
+ * Reading it back leaks, for any app on the platform: the full ACCEPTED roster
+ * INCLUDING seats whose holder opted OUT of the public byline (`displayed: false` — the
+ * whole point of that flag is that those people are not listed publicly), plus
+ * `invitedBy` and the invite/response timestamps. The status filter below governs
+ * pending/rejected ROWS; it never governed whether the CALLER may read the app at all,
+ * so without this gate every flagged account could enumerate every app's collaborators.
+ *
+ * Permitted: the app OWNER, an ACCEPTED editor, or a moderator. A PENDING invitee is
+ * NOT — they read their own standing invitation through `listMyPendingInvites`, which
+ * is keyed to their own user id and needs no app-scoped access.
+ */
 export async function listCollaborators(opts: {
   appBlockId: string;
   viewerUserId: number | null;
@@ -519,6 +534,12 @@ export async function listCollaborators(opts: {
 }): Promise<CollaboratorView[]> {
   const access = await resolveAppAccess(opts.appBlockId, opts.viewerUserId);
   if (!access) throw new AppCollaboratorError('NOT_FOUND', 'App not found');
+  if (!access.role && !opts.isModerator) {
+    throw new AppCollaboratorError(
+      'NOT_OWNER',
+      'You do not have access to this app’s collaborators'
+    );
+  }
   const rows = (await dbRead.appCollaborator.findMany({
     where: { appBlockId: opts.appBlockId },
     select: {

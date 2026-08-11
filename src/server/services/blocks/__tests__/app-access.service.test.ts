@@ -10,8 +10,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * convention: a `vi.hoisted` fake client handed to BOTH `dbRead` and `dbWrite`.
  */
 
-const { mockDb } = vi.hoisted(() => ({
-  mockDb: {
+const { mockDb, mockWriteDb } = vi.hoisted(() => {
+  const make = () => ({
     appBlock: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       // Declared here (not assigned ad-hoc in a test) so the mock's TYPE carries it —
@@ -24,10 +24,16 @@ const { mockDb } = vi.hoisted(() => ({
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
     },
-  },
-}));
+  });
+  // 🔴 dbRead and dbWrite are DISTINCT objects here, deliberately. A shared fake would
+  // make "did this resolve read the primary?" unanswerable — the two spies would be one
+  // spy, and a pool override that silently got dropped would look identical to one that
+  // was honoured. Every replica-vs-primary assertion in this file depends on them being
+  // two objects.
+  return { mockDb: make(), mockWriteDb: make() };
+});
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
+vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockWriteDb }));
 
 const {
   resolveAppAccess,
@@ -210,6 +216,72 @@ describe('resolveListingAccess', () => {
     wireListing(null);
     expect(await resolveListingAccess(LISTING, OWNER)).toBeNull();
   });
+
+  // -------------------------------------------------------------------------
+  // 🔴 THE POOL OVERRIDE — the editor's first media edit under replica lag.
+  // -------------------------------------------------------------------------
+
+  describe('🔴 the `db` pool override reaches the SEAT lookup, not just the listing lookup', () => {
+    /**
+     * THE SCENARIO, stated so the assertions are readable as behaviour:
+     *
+     * `app-listing-assets::loadOwnedListing` takes a `dbWrite` override so the OWNER's
+     * FIRST edit does not 404 off a lagging replica — the shadow revision was INSERTed
+     * milliseconds earlier. An EDITOR cannot benefit from that on the owner branch,
+     * because a shadow's `userId` is the PARENT OWNER's: the editor ALWAYS falls through
+     * to the collaborator check. If that check reads the replica, the identical lag that
+     * used to 404 the owner now 403s the editor instead of resolving their seat.
+     *
+     * So the primary must answer BOTH reads. `dbRead` here is wired to know NOTHING —
+     * it is the lagging replica — which is what makes a dropped override observable as a
+     * denial rather than as an equivalent answer from a second identical fixture.
+     */
+    const LAGGING = () => {
+      mockDb.appListing.findUnique.mockResolvedValue(null);
+      mockDb.appCollaborator.findFirst.mockResolvedValue(null);
+    };
+
+    beforeEach(() => {
+      LAGGING();
+      mockWriteDb.appListing.findUnique.mockResolvedValue({
+        id: SHADOW,
+        userId: OWNER,
+        appBlockId: null,
+        revisionOfId: LISTING,
+        revisionOf: { appBlockId: APP },
+      });
+      mockWriteDb.appCollaborator.findFirst.mockImplementation(async (args: unknown) => {
+        const w = (args as { where: { userId: number; status?: string } }).where;
+        return w.userId === EDITOR && w.status === 'accepted' ? { userId: EDITOR } : null;
+      });
+    });
+
+    it('the editor resolves to `editor` when the PRIMARY is passed', async () => {
+      const access = await resolveListingAccess(SHADOW, EDITOR, mockWriteDb as never);
+      expect(access!.role).toBe('editor');
+      // Both reads went to the primary…
+      expect(mockWriteDb.appListing.findUnique).toHaveBeenCalledOnce();
+      expect(mockWriteDb.appCollaborator.findFirst).toHaveBeenCalledOnce();
+      // …and NEITHER touched the replica. This is the assertion that dies when the
+      // override is threaded to the listing load but dropped before the seat lookup —
+      // the exact shape of the bug.
+      expect(mockDb.appListing.findUnique).not.toHaveBeenCalled();
+      expect(mockDb.appCollaborator.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('🔴 NEGATIVE CONTROL: the SAME call off the lagging replica denies', async () => {
+      // Without this, the test above is a fact about a mock that answers either way.
+      // The replica knows nothing, so the default (no override) must fail to resolve —
+      // which is precisely the 403 the override exists to prevent.
+      expect(await resolveListingAccess(SHADOW, EDITOR)).toBeNull();
+    });
+
+    it('POSITIVE CONTROL: the two pools are distinct objects with independent spies', () => {
+      // A shared fake would make every assertion above vacuous.
+      expect(mockWriteDb).not.toBe(mockDb);
+      expect(mockWriteDb.appCollaborator.findFirst).not.toBe(mockDb.appCollaborator.findFirst);
+    });
+  });
 });
 
 describe('resolveAccessibleAppBlockIds', () => {
@@ -365,6 +437,124 @@ describe('safeCollaboratorQuery — INERT until the manual-apply migration lands
         throw err;
       }, 'FALLBACK')
     ).rejects.toThrow('connection refused');
+  });
+
+  it('the message branch still degrades when the driver attached NO code (relation missing)', async () => {
+    // The reason the message branch exists at all: some driver paths surface the raw PG
+    // text with the SQLSTATE unclassified. This must keep working after the narrowing.
+    const err = new Error('relation "app_collaborators" does not exist');
+    expect(
+      await safeCollaboratorQuery(async () => {
+        throw err;
+      }, 'FALLBACK')
+    ).toBe('FALLBACK');
+  });
+
+  it('…and on Prisma’s own P2021 wording with no code attached', async () => {
+    const err = new Error(
+      'The table `public.app_collaborators` does not exist in the current database.'
+    );
+    expect(
+      await safeCollaboratorQuery(async () => {
+        throw err;
+      }, 'FALLBACK')
+    ).toBe('FALLBACK');
+  });
+
+  describe('🔴 a HALF-APPLIED manual migration must NOT be swallowed', () => {
+    // The blast radius: migrations here are applied BY HAND (datapacket-talos DB rule
+    // #8), so "the table exists but a column is missing" is a routine intermediate state
+    // — and it is the one state where degrading to "no collaborators" is worst, because
+    // it is silent and permanent. A `/does not exist/` message test cannot tell the two
+    // apart; these cases are the mutants that prove it no longer tries.
+    const COLUMN_ERRORS: Array<[string, string]> = [
+      ['a bare missing column', 'column "displayed" does not exist'],
+      [
+        'PG 42703, which NAMES a relation and would match a relation-only regex',
+        'column "invited_by" of relation "app_collaborators" does not exist',
+      ],
+      [
+        'the Prisma-wrapped form',
+        'Invalid `prisma.appCollaborator.findMany()` invocation: The column `app_collaborators.displayed` does not exist in the current database.',
+      ],
+    ];
+
+    for (const [label, message] of COLUMN_ERRORS) {
+      it(`propagates: ${label}`, async () => {
+        await expect(
+          safeCollaboratorQuery(async () => {
+            throw new Error(message);
+          }, 'FALLBACK')
+        ).rejects.toThrow(message);
+      });
+    }
+
+    /**
+     * 🔴 THESE EXIST BECAUSE OF REDUNDANT-GUARD COVERAGE, and finding that out is why
+     * they exist at all.
+     *
+     * The narrowing is TWO clauses: a `\bcolumns?\b` veto, and a final regex that
+     * requires the missing object to be named as a RELATION or TABLE. Every case above
+     * mentions a column, so the veto alone kills them — which means a mutant that
+     * broadened the FINAL regex straight back to `/does not exist/` SURVIVED the first
+     * sweep: the veto caught the column cases and nothing else was asking.
+     *
+     * A `does not exist` message can name plenty of objects that are not columns, and
+     * these two are the ones a hand-applied migration actually produces: the enum TYPE a
+     * migration creates before its table (42704), and the SCHEMA it was pointed at
+     * (3F000). Neither contains the word "column", so ONLY the object-name clause can
+     * refuse them — which is what makes these kills attributable to that clause rather
+     * than to its neighbour.
+     */
+    const NON_COLUMN_ERRORS: Array<[string, string]> = [
+      [
+        'PG 42704 — the enum TYPE a migration creates before its table',
+        'type "app_collaborator_status" does not exist',
+      ],
+      ['PG 3F000 — the schema itself', 'schema "public_v2" does not exist'],
+    ];
+
+    for (const [label, message] of NON_COLUMN_ERRORS) {
+      it(`🔴 propagates (object-name clause, no column word to lean on): ${label}`, async () => {
+        await expect(
+          safeCollaboratorQuery(async () => {
+            throw new Error(message);
+          }, 'FALLBACK')
+        ).rejects.toThrow(message);
+      });
+    }
+
+    it('POSITIVE CONTROL: those same messages differ from a real missing TABLE only in the object named', async () => {
+      // Proves the assertions above are about the OBJECT NAME and not about some other
+      // incidental difference in the string: swap `type`/`schema` for `relation` and the
+      // very same sentence shape IS degraded.
+      expect(
+        await safeCollaboratorQuery(async () => {
+          throw new Error('relation "app_collaborator_status" does not exist');
+        }, 'FALLBACK')
+      ).toBe('FALLBACK');
+    });
+
+    it('🔴 MUTANT: broadening the message test to `not found` must not swallow either', async () => {
+      // The surviving P5 mutant. `not found` is Prisma's wording for a missing RECORD
+      // (P2025) — a normal application-level failure that must never read as "the
+      // feature is not deployed yet".
+      await expect(
+        safeCollaboratorQuery(async () => {
+          throw new Error(
+            'An operation failed because it depends on one or more records that were required but not found.'
+          );
+        }, 'FALLBACK')
+      ).rejects.toThrow('not found');
+    });
+
+    it('a non-string message is not a missing table', async () => {
+      await expect(
+        safeCollaboratorQuery(async () => {
+          throw Object.assign(new Error('x'), { message: undefined, code: 'P1017' });
+        }, 'FALLBACK')
+      ).rejects.toBeTruthy();
+    });
   });
 
   it('resolveAppAccess degrades to owner-only when the seat table is absent', async () => {
