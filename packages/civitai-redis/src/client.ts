@@ -1880,6 +1880,11 @@ export const REDIS_SYS_KEYS = {
     LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock',
   },
   JOB: 'job',
+  METRIC_RECONCILIATION: {
+    // Last completed nightly reaction-exactness result, so the hourly job can
+    // re-publish its gauges after a pod roll. See metric-reconciliation-audit.ts.
+    NIGHTLY_EXACTNESS: 'metric-reconciliation:nightly-exactness',
+  },
   BUZZ_WITHDRAWAL_REQUEST: {
     STATUS: 'buzz-withdrawal-request:status',
   },
