@@ -305,27 +305,22 @@ async function assertViewerIsAppDeveloper(userId: number): Promise<void> {
  * THE app-authoring access gate for this router's four owner-scoped procs
  * (`getMyAppRepo`, `getMyAppManifest`, `updateManifest`, `getMyForgejoCloneInfo`).
  *
- * Replaces four byte-identical open-codings of `block.app?.userId !== ctx.user!.id`,
- * routing them through the single `resolveAppAccess` predicate so an ACCEPTED
- * collaborator reaches them and a pending/rejected invitee does not.
- *
- * 🔴 NO MODERATOR BYPASS — deliberately preserved. All four of these gates were
- * strict before collaborators: a moderator who does not personally own the app was
- * refused, unlike the App Listing asset gates which do bypass for mods. That
- * divergence is PRE-EXISTING; consolidating surfaced it and
- * `app-access.call-site-ledger.test.ts` records it rather than this change silently
- * granting mods a new capability.
- *
- * The message stays `'Not the app owner'` verbatim: it is what a caller sees today and
- * the mutation checks pin this exact string, so a mutant that deletes this guard must
- * die to THIS error and not to a neighbouring one.
+ * A thin re-export of `app-access.service::assertAppEditAccess`, which replaced four
+ * byte-identical open-codings of `block.app?.userId !== ctx.user!.id`. The guard itself
+ * lives in the service so it has one home and can be unit-tested without importing this
+ * 7.9k-line router; this wrapper only keeps the import dynamic, matching the rest of
+ * the file's discipline for cross-service reach.
  */
-async function assertAppEditAccess(appBlockId: string, userId: number): Promise<void> {
-  const { resolveAppAccess } = await import('~/server/services/blocks/app-access.service');
-  const access = await resolveAppAccess(appBlockId, userId);
-  if (!access || !access.role) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'Not the app owner' });
-  }
+async function assertAppEditAccess(
+  block: { id: string; app: { userId: number } | null },
+  userId: number
+): Promise<void> {
+  const { assertAppEditAccess: assertAccess } = await import(
+    '~/server/services/blocks/app-access.service'
+  );
+  // The owner is already in hand from the proc's own AppBlock select — passed through
+  // so the gate costs ZERO extra queries on the owner path.
+  await assertAccess({ appBlockId: block.id, ownerUserId: block.app?.userId, userId });
 }
 
 /**
@@ -5618,7 +5613,7 @@ export const blocksRouter = router({
       // ACCEPTED collaborator. A pending/rejected invitee is refused. FORBIDDEN
       // (authenticated but not permitted) rather than UNAUTHORIZED, to distinguish a
       // logged-in non-owner from an anon caller; mirrors the grantScopes ceiling gate.
-      await assertAppEditAccess(block.id, ctx.user!.id);
+      await assertAppEditAccess(block, ctx.user!.id);
       // A banned/suspended account must not be issued (or re-issued) a live push
       // credential. They still can't deploy (the mod gate holds), but we don't
       // hand out a fresh Forgejo token. Full revoke-on-ban is a follow-up.
@@ -5727,7 +5722,7 @@ export const blocksRouter = router({
       });
       if (!block) throw throwNotFoundError('App block not found');
       // Owner OR accepted collaborator (see `assertAppEditAccess`).
-      await assertAppEditAccess(block.id, ctx.user!.id);
+      await assertAppEditAccess(block, ctx.user!.id);
       // 🔴 BAN PARITY. The three sibling owner-scoped procs (getMyAppRepo,
       // updateManifest, getMyForgejoCloneInfo) each carry an explicit `bannedAt`
       // re-check; this read did NOT, which was a real inconsistency surfaced by
@@ -5876,7 +5871,7 @@ export const blocksRouter = router({
       // Access gate — owner OR accepted collaborator. Shipping a new version is an
       // explicit editor capability; the no-trust review gate downstream is unchanged
       // (the commit still parks a `pending` request a moderator must approve).
-      await assertAppEditAccess(block.id, ctx.user!.id);
+      await assertAppEditAccess(block, ctx.user!.id);
       // A banned/suspended account must not be able to mutate a live app.
       if (ctx.user!.bannedAt) {
         throw new TRPCError({
@@ -6112,7 +6107,7 @@ export const blocksRouter = router({
           });
       if (!block) throw throwNotFoundError('App block not found');
       // Owner OR accepted collaborator (see `assertAppEditAccess`).
-      await assertAppEditAccess(block.id, ctx.user!.id);
+      await assertAppEditAccess(block, ctx.user!.id);
       if (ctx.user!.bannedAt) {
         throw new TRPCError({
           code: 'FORBIDDEN',

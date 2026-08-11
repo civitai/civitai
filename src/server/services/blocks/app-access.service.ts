@@ -1,3 +1,5 @@
+import { TRPCError } from '@trpc/server';
+
 import { dbRead } from '~/server/db/client';
 
 /**
@@ -190,6 +192,49 @@ export async function resolveListingAccess(
   if (!appBlockId) return { ...base, role: null };
   const editor = await hasAcceptedSeat(appBlockId, userId);
   return { ...base, role: editor ? 'editor' : null };
+}
+
+/**
+ * THE app-authoring gate for `blocks.router`'s four owner-scoped procs
+ * (`getMyAppRepo`, `getMyAppManifest`, `updateManifest`, `getMyForgejoCloneInfo`).
+ *
+ * Replaces four byte-identical open-codings of `block.app?.userId !== ctx.user!.id`.
+ * Lives HERE rather than in the router so it has exactly one home AND is directly
+ * unit-testable — importing the 7.9k-line router into a test to exercise one guard
+ * would drag in a module graph that has nothing to do with access.
+ *
+ * 🔴 NO MODERATOR BYPASS — deliberately preserved. All four gates were strict before
+ * collaborators: a moderator who does not personally own the app was refused, unlike
+ * the App Listing asset gates which do bypass. That divergence is PRE-EXISTING and is
+ * recorded in `app-access.call-site-ledger.test.ts` rather than silently changed here.
+ *
+ * The message is `'Not the app owner'` VERBATIM — it is what callers see today, and the
+ * mutation checks assert this exact string so a mutant that breaks this guard dies to
+ * THIS error rather than to a neighbouring one.
+ */
+export async function assertAppEditAccess(args: {
+  appBlockId: string;
+  /**
+   * The owner the CALLER already loaded (`block.app?.userId`).
+   *
+   * 🔴 Passed in rather than re-read. All four call sites have just selected the
+   * AppBlock with its `app: { select: { userId } }`, so re-resolving it here would be a
+   * second identical round trip on every one of those procs — and it would make the
+   * gate's answer depend on a row read at a DIFFERENT instant than the one the proc
+   * goes on to use. `undefined`/`null` (a missing app or a dangling `app_id`) is
+   * refused: an app with no resolvable owner is an app nobody may edit.
+   */
+  ownerUserId: number | null | undefined;
+  userId: number;
+}): Promise<void> {
+  const deny = () => {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Not the app owner' });
+  };
+  if (typeof args.ownerUserId !== 'number') deny();
+  if (args.ownerUserId === args.userId) return;
+  // Not the owner — the only remaining route in is an ACCEPTED seat. Costs one query,
+  // and ONLY on the non-owner path, so the common case is unchanged.
+  if (!(await hasAcceptedSeat(args.appBlockId, args.userId))) deny();
 }
 
 export type AccessibleAppBlocks = {
