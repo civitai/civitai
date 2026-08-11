@@ -5710,6 +5710,13 @@ model Challenge {
 // Pairwise judging (Challenge.judgingEngine = "pairwise-ladder"). Owned entirely by that engine:
 // the legacy absolute engine neither reads nor writes these tables, and nothing is migrated into
 // them from CollectionItem.note.
+//
+// imageId / userId are deliberately PLAIN COLUMNS with no relation — do not add one. Image is huge
+// and delete-heavy (moderation, ban removals); an FK would need indexes on imageId, imageIdA and
+// imageIdB to keep those deletes off a sequential scan, and cascading would destroy the record of
+// what the judge decided. Users are soft-deleted, so a userId FK enforces nothing. Orphans are
+// inert — nothing outside the store reads standings, and the challenge cascade cleans both tables.
+// Full reasoning in migrations/20260811090000_challenge_judging_engines/migration.sql.
 model ChallengeEntryStanding {
   challengeId Int
   challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
