@@ -3,19 +3,21 @@
  *
  * `'session' in data` is a key-presence check that reads as an ordinary null-guard, so
  * collapsing it into a truthiness check looks harmless. It isn't: a response carrying NO
- * `session` key came from the endpoint's own outer catch and is NOT authoritative, and
- * clearing the cookie there durably logs out a valid user. This file makes that collapse
+ * `session` key came from the endpoint's own outer catch and is NOT authoritative, so
+ * treating it as "logged out" throws away a valid session. This file makes that collapse
  * fail loudly.
  *
- * What the discriminator ACTUALLY covers: the endpoint's outer catch (`200 {}`), a fetch
- * that rejects or aborts, and a non-OK status.
+ * Its only observable is `pageProps.hasAuthCookie` (false ⇒ render anonymous). The cookie
+ * itself is never deleted on any path — `session: null` cannot distinguish an expired token
+ * from a fail-soft session lookup (`get-server-auth-session.ts:92,102` `.catch(() => null)`
+ * on both the hub and legacy lookups), so a hub outage would otherwise durably log out
+ * valid users. The `deleteCookie` assertions below pin that: reintroducing a delete fails
+ * them. A dead cookie now lingers until it expires, which is the deliberate trade.
  *
- * What it does NOT cover, and no test here should be read as claiming otherwise: an
- * authoritative-looking `session: null`. `getServerAuthSession` fails SOFT —
- * `get-server-auth-session.ts:92,102` do `.catch(() => null)` on both the hub and legacy
- * lookups — so a hub outage produces `session: null` with the key PRESENT, which `_app`
- * then treats as "token genuinely expired" and clears the cookie. Closing that needs an
- * explicit "session lookup degraded" signal from the endpoint; tracked separately.
+ * What the discriminator covers: the endpoint's outer catch (`200 {}`), a fetch that rejects
+ * or aborts, and a non-OK status. What it still cannot see is a fail-soft lookup — that
+ * yields an anonymous render rather than a logout, and closing it properly needs an explicit
+ * "session lookup degraded" signal from the endpoint. Tracked separately.
  *
  * Lives outside `src/pages` deliberately: Next treats every file under there as a route
  * and `next build` rejects a test file, which only that build catches.
@@ -23,7 +25,6 @@
 import type * as CookiesNext from 'cookies-next';
 import type { AppContext } from 'next/app';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { civitaiTokenCookieName } from '~/libs/auth';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 
 const h = vi.hoisted(() => ({
@@ -99,23 +100,19 @@ beforeEach(() => {
 });
 
 describe('_app settings bootstrap — auth cookie discriminator', () => {
-  it('DELETES the cookie when the fetch succeeds and authoritatively returns session: null', async () => {
+  it('renders anonymous but PRESERVES the cookie when the fetch returns session: null', async () => {
     h.respond = async () => json({ session: null, settings: { features: {} } });
 
     const { pageProps } = await getInitialProps(makeCtx());
 
+    // `hasAuthCookie` — NOT a deleteCookie spy — is the discriminator's only observable now.
+    expect(pageProps.hasAuthCookie, 'an authoritative session: null must render anonymous').toBe(
+      false
+    );
     expect(
       h.deleteCookie,
-      'an authoritative session: null means the token is genuinely expired — the stale cookie must be cleared'
-    ).toHaveBeenCalledTimes(1);
-    // Pins WHICH cookie, not just that one was cleared — without this the argument is
-    // unconstrained and pointing it at a nonexistent name keeps every test green.
-    // NB this pins CURRENT behaviour, and current behaviour is narrower than the jar:
-    // `civitaiTokenCookieName` is the LEGACY `civitai-token` family, while `hasAuthCookie`
-    // above matches `civ-token` too. A session holding only a modern `civ-token` therefore
-    // gets a delete for a name that isn't present. Pre-existing; tracked separately.
-    expect(h.deleteCookie).toHaveBeenCalledWith(civitaiTokenCookieName, expect.anything());
-    expect(pageProps.hasAuthCookie).toBe(false);
+      'the cookie must never be deleted here: session: null is ambiguous between an expired token and a fail-soft session lookup, and deleting on the latter logs out a valid user'
+    ).not.toHaveBeenCalled();
   });
 
   it('PRESERVES the cookie when the endpoint swallowed an error into 200 {} (no session key)', async () => {

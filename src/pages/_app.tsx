@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 // Side-effect import: globally disables next/link route prefetching. Must run
 // before any <Link> mounts — see the file for rationale.
 import '~/utils/disable-router-prefetch';
-import { getCookie, getCookies, deleteCookie } from 'cookies-next';
+import { getCookie, getCookies } from 'cookies-next';
 import type { Session } from '~/types/session';
 import { SessionProvider } from '~/providers/SessionProvider';
 import { resolveAuthGuard } from '~/server/auth/route-guard';
@@ -41,7 +41,6 @@ import { TrackPageView } from '~/components/TrackView/TrackPageView';
 import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
 import { env } from '~/env/client';
 import { isDev, isPreview, isProd } from '~/env/other';
-import { civitaiTokenCookieName } from '~/libs/auth';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
 import { AppProvider } from '~/providers/AppProvider';
 import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
@@ -547,15 +546,16 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
   } else if (hasAuthCookie && !settingsDegraded) {
-    // Only clear the auth cookie when the settings fetch SUCCEEDED and authoritatively
-    // returned no session — i.e. the token is genuinely expired/invalid, so cleaning up
-    // the stale cookie is correct. On the DEGRADED path we never reached the endpoint, so
-    // we DON'T KNOW the session: deleting the cookie here would durably log out a
-    // valid user (worse than the retryable failure this fix exists to soften). Don't
-    // conflate "couldn't reach settings" with "token invalid" — preserve the cookie and
-    // let the client refetch (the SessionProvider seed below already yields `undefined`
-    // → client refetch when hasAuthCookie is true and session is null).
-    deleteCookie(civitaiTokenCookieName, appContext.ctx);
+    // Render anonymous, but DO NOT delete the cookie. A successful fetch returning
+    // `session: null` is ambiguous: `getServerAuthSession` fail-softs to null on a hub
+    // outage (`.catch(() => null)` on both the hub and legacy lookups), so this means
+    // EITHER an expired token OR a degraded lookup, and nothing on the wire separates
+    // them. Deleting on the second case logs a valid user out durably, during the exact
+    // incident that caused it — and a logout storm lands on an auth hub that is already
+    // struggling. Keeping the cookie makes an outage a transient logged-out *appearance*
+    // that recovers on the next successful bootstrap; the cost is that a genuinely dead
+    // cookie lingers until it expires. Deleting it safely needs the endpoint to signal a
+    // degraded lookup distinctly from "no session".
     hasAuthCookie = false;
   }
 
