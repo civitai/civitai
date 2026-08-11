@@ -101,6 +101,18 @@ function CollectionCollaboratorsPanel({
       showErrorNotification({ title: 'Could not send invite', error: new Error(error.message) }),
   });
 
+  // `inviteCollaborator` upserts and resets `createdAt`, so re-sending the same role restarts the
+  // 7-day window and fires a fresh notification. Separate instance only so the toast can say what
+  // happened — the invite form's would name whoever is selected there instead.
+  const resendMutation = trpc.collection.inviteCollaborator.useMutation({
+    onSuccess: async () => {
+      showSuccessNotification({ message: 'Invite sent again' });
+      await invalidateRoster();
+    },
+    onError: (error) =>
+      showErrorNotification({ title: 'Could not resend invite', error: new Error(error.message) }),
+  });
+
   const removeMutation = trpc.collection.removeCollaborator.useMutation({
     onSuccess: () => invalidateRoster(),
     onError: (error) =>
@@ -118,12 +130,24 @@ function CollectionCollaboratorsPanel({
     return targetRole === CollectionCollaboratorRole.Contributor;
   };
 
-  const totalCount = collaborators.length + invites.length;
-  const managerCount = [...collaborators, ...invites].filter(
-    (c) => c.role === CollectionCollaboratorRole.Manager
-  ).length;
-  const atCollaboratorCap = totalCount >= COLLABORATOR_CAP;
-  const atManagerCap = role === CollectionCollaboratorRole.Manager && managerCount >= MANAGER_CAP;
+  // Mirrors `countCollaborators`: seats are counted per user, not per row, and the person about
+  // to be invited doesn't count against the cap they're about to occupy — re-inviting an existing
+  // collaborator replaces their seat. Adding the two lists instead would double-count anyone who
+  // holds a row and a pending invite, and refuse the last seat.
+  const seats = new Set<number>();
+  const managerSeats = new Set<number>();
+  for (const seat of [...collaborators, ...invites]) {
+    seats.add(seat.userId);
+    if (seat.role === CollectionCollaboratorRole.Manager) managerSeats.add(seat.userId);
+  }
+  if (selectedUser) {
+    seats.delete(selectedUser.id);
+    managerSeats.delete(selectedUser.id);
+  }
+
+  const atCollaboratorCap = seats.size >= COLLABORATOR_CAP;
+  const atManagerCap =
+    role === CollectionCollaboratorRole.Manager && managerSeats.size >= MANAGER_CAP;
   const capReason = atCollaboratorCap
     ? `This collection already has ${COLLABORATOR_CAP} collaborators, the maximum allowed.`
     : atManagerCap
@@ -291,6 +315,30 @@ function CollectionCollaboratorsPanel({
                     <Text size="xs" c={expiringSoon ? 'red.6' : 'yellow.6'}>
                       Expires <DaysFromNow date={expiresAt} />
                     </Text>
+                    {/* Resend goes through `inviteCollaborator`, so it is refused wherever a new
+                        invite would be: while collaboration is disabled, without the owner's
+                        membership, or when a Manager reaches for a Manager seat. The invite form
+                        above is hidden in the first two cases; this has to follow it. */}
+                    {!inviteBlockedReason &&
+                      (canGrantManager || invite.role !== CollectionCollaboratorRole.Manager) && (
+                        <Button
+                          variant="subtle"
+                          size="compact-xs"
+                          loading={
+                            resendMutation.isPending &&
+                            resendMutation.variables?.targetUserId === invite.userId
+                          }
+                          onClick={() =>
+                            resendMutation.mutate({
+                              collectionId,
+                              targetUserId: invite.userId,
+                              role: invite.role,
+                            })
+                          }
+                        >
+                          Resend
+                        </Button>
+                      )}
                     <Button
                       variant="subtle"
                       color="red"
