@@ -94,15 +94,17 @@
     {#if result}
       {@const written = filterWritten(result.reviews.items)}
       <ListCard title="Reviews written" total={written.length} capped={result.reviews.truncated}>
-        {#snippet children(limit)}
-          <!-- Retool's filter row. The bulk buttons below act on what is SELECTED, so filtering to the
-               review in question is how a moderator avoids acting on the newest 25 by accident. -->
+        <!-- Retool's filter row. The bulk buttons below act on what is SELECTED, so filtering to the
+             review in question is how a moderator avoids acting on the newest 25 by accident. -->
+        {#snippet controls()}
           <ListFilterBar
             fields={WRITTEN_FILTERS}
             bind:values={writtenFilters}
             matched={written.length}
             total={result.reviews.items.length}
           />
+        {/snippet}
+        {#snippet children(limit)}
           <form method="POST" action="?/contentAction" use:enhance={onSubmit}>
             <input type="hidden" name="userId" value={userId} />
             <input type="hidden" name="kind" value="reviews" />
@@ -165,13 +167,15 @@
         total={received.length} capped={result.receivedReviews.truncated}
         hint="On this user's models, by others. A burst of 1★ from few accounts is the signal."
       >
-        {#snippet children(limit)}
+        {#snippet controls()}
           <ListFilterBar
             fields={RECEIVED_FILTERS}
             bind:values={receivedFilters}
             matched={received.length}
             total={result.receivedReviews.items.length}
           />
+        {/snippet}
+        {#snippet children(limit)}
           <ul class="space-y-1 text-sm">
             {#each received.slice(0, limit) as r (r.id)}
               <li class="flex flex-wrap items-baseline gap-x-2">

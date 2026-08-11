@@ -148,11 +148,19 @@ Open, with the evidence each audit produced:
       shares the per-actor rate limits, and puts the key owner on every `retoolAudit` row. Either mint
       per-moderator keys (the endpoints resolve a real user from the bearer token) or state that
       `isSenior` is the real control — and `updateIdentity` currently has no senior gate at all.
-- [ ] **Filter rows missing on five list panels**, each with the same failure: destructive checkboxes
-      sitting on top of a fixed newest-25. Reviews (Rating / TOS Violation? / NSFW? / Excluded? /
-      Search Review Content — and the review **text** is never rendered, so reviews are deleted on
-      rating and date alone), Comments (search), Bounties (Type / Complete / Name / Description),
-      Reports (reason filter — status is done), Prompt Audit (Filter Prompt / # of Prompts).
+- [x] **Filter rows missing on five list panels** (2026-08-11 completes this). Reviews, Bounties and
+      Reports were done by the 2026-08-10 filter work; **Comments** now has Retool's search on both
+      lists, matched against the plain text rather than the stored HTML — searching the markup meant
+      "p" hit every row.
+      Fixing it exposed a defect in the **existing** filter work, not just the new bar: `ListCard`
+      renders its empty state *instead of* `children`, and every filter bar lived in `children` with a
+      **filtered** count passed as `total`. So filtering down to zero matches hid the filter bar — the
+      only way to undo the filter that emptied the list. `ListCard` now takes a `controls` snippet
+      rendered above that branch, and all four panels pass their bar there. Verified on an account with
+      zero model comments: `Model comments (0) | Search content | 0 of 0 | None.`
+      (`ReportsPanel` was already safe — it passes the unfiltered count.)
+- [ ] **Prompt Audit filters** (Filter Prompt / # of Prompts) — the fifth panel from the old item, split
+      out because that panel has no `ListCard` or filter bar at all yet.
 - [x] **Bulk review/comment deletion has no confirmation step** (2026-08-11 — shared `ConfirmSubmit`,
       used at all four destructive bulk sites: reviews delete, and delete + Remove-as-ToS on both comment
       lists). The confirm button is the **only** real submit — the first click is `type="button"` and

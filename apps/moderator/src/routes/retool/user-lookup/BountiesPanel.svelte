@@ -51,13 +51,15 @@
         total={bounties.length} capped={result.bounties.truncated}
         hint="Created by this user, with the total pledged across all benefactors."
       >
-        {#snippet children(limit)}
+        {#snippet controls()}
           <ListFilterBar
             fields={bountyFields(result.bounties.items)}
             bind:values={bountyFilters}
             matched={bounties.length}
             total={result.bounties.items.length}
           />
+        {/snippet}
+        {#snippet children(limit)}
           <ul class="space-y-1 text-sm">
             {#each bounties.slice(0, limit) as b (b.id)}
               <li class="flex flex-wrap items-baseline gap-x-2">

@@ -13,6 +13,7 @@
     empty = 'None.',
     shown = 5,
     capped = false,
+    controls,
     children,
   }: {
     title: string;
@@ -21,6 +22,10 @@
     empty?: string;
     shown?: number;
     capped?: boolean;
+    /** Filter rows and anything else that must survive an empty list. `children` is NOT rendered when
+     *  `total` is 0, so a filter bar placed there disappears the moment it matches nothing — taking
+     *  with it the only way to clear the filter that emptied the list. */
+    controls?: Snippet;
     /** Receives how many rows to render — the card owns the expand toggle. */
     children: Snippet<[number]>;
   } = $props();
@@ -36,6 +41,8 @@
   {#if hint}
     <p class="mb-3 text-xs text-dark-2">{hint}</p>
   {/if}
+
+  {@render controls?.()}
 
   {#if total === 0}
     <p class="text-sm text-dark-2">{empty}</p>

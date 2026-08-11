@@ -8,7 +8,16 @@
   import type { SubmitFunction } from '@sveltejs/kit';
   import type { FormResult } from './form-result';
   import ListCard from './ListCard.svelte';
+  import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
   import ConfirmSubmit from '$lib/components/ConfirmSubmit.svelte';
+
+  // Retool's comment search. Matched against the PLAIN text, not the stored HTML — searching the markup
+  // meant "p" hit every row.
+  const SEARCH: FilterField[] = [{ kind: 'search', key: 'q', label: 'Search content' }];
+  let modelFilters = $state<Record<string, string>>({});
+  let otherFilters = $state<Record<string, string>>({});
+  const bySearch = <T extends { content: string }>(rows: T[], f: Record<string, string>) =>
+    f.q ? rows.filter((r) => plainText(r.content).toLowerCase().includes(f.q.toLowerCase())) : rows;
 
   // Bound so each confirmation can name a count. The inputs stay in the form, so they still post.
   let selectedComments = $state<number[]>([]);
@@ -53,13 +62,22 @@
     </div>
   {:then result}
     {#if result}
-      <ListCard title="Model comments" total={result.comments.items.length} capped={result.comments.truncated}>
+      {@const shown = bySearch(result.comments.items, modelFilters)}
+      <ListCard title="Model comments" total={shown.length} capped={result.comments.truncated}>
+        {#snippet controls()}
+          <ListFilterBar
+            fields={SEARCH}
+            bind:values={modelFilters}
+            matched={shown.length}
+            total={result.comments.items.length}
+          />
+        {/snippet}
         {#snippet children(limit)}
           <form method="POST" action="?/contentAction" use:enhance={onSubmit}>
             <input type="hidden" name="userId" value={userId} />
             <input type="hidden" name="kind" value="comments" />
             <ul class="space-y-2 text-sm">
-              {#each result.comments.items.slice(0, limit) as c (c.id)}
+              {#each shown.slice(0, limit) as c (c.id)}
                 <li>
                   <div class="flex flex-wrap items-baseline gap-x-2">
                     {#if canAct}
@@ -109,13 +127,22 @@
       </ListCard>
 
       <!-- Retool's "Other Comments" half: image, article, bounty and post threads. -->
-      <ListCard title="Other comments" total={result.commentsV2.items.length} capped={result.commentsV2.truncated}>
+      {@const shownV2 = bySearch(result.commentsV2.items, otherFilters)}
+      <ListCard title="Other comments" total={shownV2.length} capped={result.commentsV2.truncated}>
+        {#snippet controls()}
+          <ListFilterBar
+            fields={SEARCH}
+            bind:values={otherFilters}
+            matched={shownV2.length}
+            total={result.commentsV2.items.length}
+          />
+        {/snippet}
         {#snippet children(limit)}
           <form method="POST" action="?/contentAction" use:enhance={onSubmit}>
             <input type="hidden" name="userId" value={userId} />
             <input type="hidden" name="kind" value="comments" />
             <ul class="space-y-2 text-sm">
-              {#each result.commentsV2.items.slice(0, limit) as c (c.id)}
+              {#each shownV2.slice(0, limit) as c (c.id)}
                 <li>
                   <div class="flex flex-wrap items-baseline gap-x-2">
                     {#if canAct}
