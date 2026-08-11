@@ -56,18 +56,19 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { HistoryCard } from '~/components/CreatorShop/HistoryCard';
-import { CREATOR_SHOP_BORDER } from '~/components/CreatorShop/creator-shop.constants';
+import {
+  CREATOR_SHOP_BORDER,
+  submissionFeeLabel,
+} from '~/components/CreatorShop/creator-shop.constants';
 import {
   reviewQueueTypeOptions,
   type ReviewQueueFilterType,
 } from '~/components/CreatorShop/Submit/submit.constants';
 import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { useCreatorShopFees } from '~/components/CreatorShop/useCreatorShopFees';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import type { CosmeticOffsets } from '~/server/schema/creator-shop.schema';
-import type { CreatorCosmeticType } from '~/server/schema/creator-shop.schema';
 import {
   CREATOR_SHOP_CREATOR_SHARE,
   DECORATION_OFFSET_LIMIT,
@@ -178,7 +179,6 @@ export const getServerSideProps = createServerSideProps({
 
 function CreatorShopReviewPage() {
   const currentUser = useCurrentUser();
-  const fees = useCreatorShopFees();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(
     CosmeticShopItemStatus.PendingReview
   );
@@ -231,15 +231,6 @@ function CreatorShopReviewPage() {
   const submitter = selected?.cosmetic?.creator ?? selected?.addedBy ?? null;
   const selectedMeta = (selected?.meta ?? {}) as CosmeticShopItemMeta;
   const checks = selectedMeta.autoChecks ?? [];
-  // Items submitted before the fee became operator-tunable have no recorded
-  // amount; today's configured fee is the best available answer for those.
-  const submissionFee =
-    selectedMeta.submissionFee ??
-    (isPack
-      ? fees?.pack
-      : selected?.cosmetic
-      ? fees?.submission[selected.cosmetic.type as CreatorCosmeticType]
-      : undefined);
   const dims = selectedMeta.imageMeta;
   const isAnimated = !!(selected?.cosmetic?.data as { animated?: boolean } | null)?.animated;
   const affirmation = selectedMeta.rightsAffirmation;
@@ -781,11 +772,7 @@ function CreatorShopReviewPage() {
                       />
                       <MoneyTile
                         label="Submission fee"
-                        value={
-                          submissionFee === undefined
-                            ? 'Paid'
-                            : `${numberWithCommas(submissionFee)} · Paid`
-                        }
+                        value={submissionFeeLabel(selectedMeta.submissionFee)}
                         icon={<IconCheck size={14} />}
                         iconColor="var(--mantine-color-blue-5)"
                       />

@@ -108,8 +108,10 @@ today's pricing. Read and set it through `/api/admin/creator-shop-fees`.
 
 One read serves both the charge (`creator-shop.service.ts`) and the quote the submit form shows
 (`creatorShop.getFees` → `useCreatorShopFees`); the client never mirrors a constant, because the number a
-creator agrees to and the number charged are the same non-refundable Buzz. The amount actually charged is
-recorded on the item as `meta.submissionFee`, since today's configured fee is not what an older item paid.
+creator agrees to and the number charged are the same non-refundable Buzz. The submit mutation carries the
+quoted fee and the server refuses the submission if it no longer matches, so a form left open across a fee
+change is never charged silently. The amount actually charged is recorded on the item as `meta.submissionFee`;
+items submitted before that existed show no amount rather than today's configured one.
 
 ### Why NOT reuse `CosmeticShopSection` for the storefront
 

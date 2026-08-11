@@ -53,6 +53,16 @@ const submitInput = {
   userId: 11,
 } as const;
 
+const packInput = {
+  userId: 11,
+  name: 'Laurels',
+  description: null,
+  price: 1000,
+  availableQuantity: null,
+  buzzType: 'yellow',
+  acceptsBlueBuzz: false,
+} as const;
+
 const chargedAmount = () => mocks.createBuzzTransaction.mock.calls[0][0].amount;
 const recordedFee = (create: typeof mocks.shopItemCreate) =>
   create.mock.calls[0][0].data.meta.submissionFee;
@@ -84,7 +94,11 @@ describe('submission fee charged', () => {
       value: { submission: { Badge: 5000 } },
     });
 
-    await submitCreatorShopItem({ ...submitInput, cosmeticType: CosmeticType.Badge });
+    await submitCreatorShopItem({
+      ...submitInput,
+      cosmeticType: CosmeticType.Badge,
+      quotedFee: 5000,
+    });
 
     expect(chargedAmount()).toBe(5000);
     expect(recordedFee(mocks.shopItemCreate)).toBe(5000);
@@ -96,14 +110,22 @@ describe('submission fee charged', () => {
       value: { submission: { Badge: 5000 } },
     });
 
-    await submitCreatorShopItem({ ...submitInput, cosmeticType: CosmeticType.ProfileDecoration });
+    await submitCreatorShopItem({
+      ...submitInput,
+      cosmeticType: CosmeticType.ProfileDecoration,
+      quotedFee: 10000,
+    });
 
     expect(chargedAmount()).toBe(10000);
     expect(recordedFee(mocks.shopItemCreate)).toBe(10000);
   });
 
   it('charges 10000 with no configuration at all', async () => {
-    await submitCreatorShopItem({ ...submitInput, cosmeticType: CosmeticType.Badge });
+    await submitCreatorShopItem({
+      ...submitInput,
+      cosmeticType: CosmeticType.Badge,
+      quotedFee: 10000,
+    });
     expect(chargedAmount()).toBe(10000);
   });
 
@@ -113,8 +135,47 @@ describe('submission fee charged', () => {
     mocks.keyValueFindUnique.mockRejectedValue(new Error('KeyValue unavailable'));
 
     await expect(
-      submitCreatorShopItem({ ...submitInput, cosmeticType: CosmeticType.Badge })
+      submitCreatorShopItem({
+        ...submitInput,
+        cosmeticType: CosmeticType.Badge,
+        quotedFee: 10000,
+      })
     ).rejects.toThrow('KeyValue unavailable');
+    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  // The form is a quote, not a suggestion: a modal left open across a fee change
+  // must not be charged the number the creator never saw, in either direction.
+  it('refuses the submission when the quoted fee no longer matches', async () => {
+    mocks.keyValueFindUnique.mockResolvedValue({
+      key: 'creatorShopFees',
+      value: { submission: { Badge: 5000 } },
+    });
+
+    await expect(
+      submitCreatorShopItem({
+        ...submitInput,
+        cosmeticType: CosmeticType.Badge,
+        quotedFee: 10000,
+      })
+    ).rejects.toThrow(/fee changed/i);
+    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(mocks.shopItemCreate).not.toHaveBeenCalled();
+  });
+
+  it('refuses a quote above the configured fee too', async () => {
+    mocks.keyValueFindUnique.mockResolvedValue({
+      key: 'creatorShopFees',
+      value: { submission: { Badge: 12000 } },
+    });
+
+    await expect(
+      submitCreatorShopItem({
+        ...submitInput,
+        cosmeticType: CosmeticType.Badge,
+        quotedFee: 10000,
+      })
+    ).rejects.toThrow(/fee changed/i);
     expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
   });
 });
@@ -144,33 +205,25 @@ describe('pack submission fee charged', () => {
   it('charges the configured pack fee', async () => {
     mocks.keyValueFindUnique.mockResolvedValue({ key: 'creatorShopFees', value: { pack: 2500 } });
 
-    await submitCreatorShopPack({
-      userId: 11,
-      name: 'Laurels',
-      description: null,
-      memberCosmeticIds: members,
-      price: 1000,
-      availableQuantity: null,
-      buzzType: 'yellow',
-      acceptsBlueBuzz: false,
-    });
+    await submitCreatorShopPack({ ...packInput, memberCosmeticIds: members, quotedFee: 2500 });
 
     expect(chargedAmount()).toBe(2500);
     expect(recordedFee(mocks.shopItemCreate)).toBe(2500);
   });
 
   it('charges 1000 with no configuration at all', async () => {
-    await submitCreatorShopPack({
-      userId: 11,
-      name: 'Laurels',
-      description: null,
-      memberCosmeticIds: members,
-      price: 1000,
-      availableQuantity: null,
-      buzzType: 'yellow',
-      acceptsBlueBuzz: false,
-    });
+    await submitCreatorShopPack({ ...packInput, memberCosmeticIds: members, quotedFee: 1000 });
 
     expect(chargedAmount()).toBe(1000);
+  });
+
+  it('refuses the pack when the quoted fee no longer matches', async () => {
+    mocks.keyValueFindUnique.mockResolvedValue({ key: 'creatorShopFees', value: { pack: 2500 } });
+
+    await expect(
+      submitCreatorShopPack({ ...packInput, memberCosmeticIds: members, quotedFee: 1000 })
+    ).rejects.toThrow(/fee changed/i);
+    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(mocks.shopItemCreate).not.toHaveBeenCalled();
   });
 });

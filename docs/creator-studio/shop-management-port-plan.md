@@ -58,14 +58,14 @@ Existing service fns (in `src/server/services/creator-shop.service.ts`, gated to
 
 | Endpoint (new) | Wraps service fn | Existing input schema | Guard / side effects to preserve |
 |---|---|---|---|
-| `POST /items` | `submitCreatorShopItem` | `submitCreatorShopItemSchema` | `assertCreatorProgramMember`; **Buzz fee `CREATOR_SHOP_SUBMISSION_FEE=10000`** (refunded on failure); S3 fetch + `sharp` validate; sha256 dedup; creates `Cosmetic`+`CosmeticShopItem` (status `PendingReview`) |
+| `POST /items` | `submitCreatorShopItem` | `submitCreatorShopItemSchema` | `assertCreatorProgramMember`; **Buzz submission fee, read per cosmetic type from the `creatorShopFees` KeyValue row** (refunded on failure; the client sends the fee it quoted and the server refuses a mismatch); S3 fetch + `sharp` validate; sha256 dedup; creates `Cosmetic`+`CosmeticShopItem` (status `PendingReview`) |
 | `PATCH /items/:id` | `updateCreatorShopItem` | `updateCreatorShopItemSchema` | `getOwnedItemOrThrow` (`addedById===me`); re-validate replaced art; **>±25% price change on Published → back to `PendingReview`**; cross-listers may change price/qty only |
 | `POST /items/:id/archive` / `/unarchive` | `archive`/`unarchiveCreatorShopItem` | `{id}` | owner guard; toggles `status` + `preArchiveStatus` |
 | `POST /resold` / `DELETE /resold` | `add`/`removeResoldItem` | `resoldItemSchema {shopItemId}` | `assertCreatorProgramMember` + item must be `sellableByOthers`, Published, not own; edits `settings.resoldItemIds` |
 | `PUT /settings` | `updateCreatorShopSettings` | `updateCreatorShopSettingsSchema` | **publish guard: `enabled:true` needs active membership + ≥1 item**; read-merge-write JSON; **also the reorder path** (featured / resold / sections order all go here) |
 
 **Business constants to surface in the spoke (display only):** `COSMETIC_PRICE_FLOOR=500`,
-`CREATOR_SHOP_SUBMISSION_FEE=10000`, `CREATOR_SHOP_MAX_FEATURED=6`, creator share `0.7`, price-review threshold `0.25`.
+per-type submission fees from `creatorShop.getFees`, `CREATOR_SHOP_MAX_FEATURED=6`, creator share `0.7`, price-review threshold `0.25`.
 The 70/30 split math (`computeCreatorShopSplit`) can be re-exported to the spoke for the submit form's split preview,
 but the actual split payout happens at **purchase** time in `cosmetic-shop.service.ts` (out of scope here).
 
@@ -219,7 +219,7 @@ The spoke's `isCreatorProgramMember` is only the onboarding bit `(onboarding & 1
 - Manage "Updated" column actually renders `createdAt` (`manage.columns.tsx:164`) — replicate or fix intentionally.
 
 ### Confirmed unchanged
-Constants (`COSMETIC_PRICE_FLOOR=500`, `CREATOR_SHOP_SUBMISSION_FEE=10000`, `CREATOR_SHOP_MAX_FEATURED=6`, `CREATOR_SHOP_CREATOR_SHARE=0.7`, `PRICE_REVIEW_THRESHOLD=0.25` in `creator-shop.schema.ts:10-16`); `addedById`=lister / `createdById`=original creator; all side effects (Buzz fee + refund-on-fail, `sharp` validate, sha256 dedup, ownership guard, `PendingReview` on submit, >±25% price change on Published → re-review, publish guard = active membership + ≥1 item). `computeCreatorShopSplit(price, sellerShare)` is pure and re-exportable for the split preview.
+Constants (`COSMETIC_PRICE_FLOOR=500`, `CREATOR_SHOP_MAX_FEATURED=6`, `CREATOR_SHOP_CREATOR_SHARE=0.7`, `PRICE_REVIEW_THRESHOLD=0.25` in `creator-shop.schema.ts:10-16`); `addedById`=lister / `createdById`=original creator; all side effects (Buzz fee + refund-on-fail, `sharp` validate, sha256 dedup, ownership guard, `PendingReview` on submit, >±25% price change on Published → re-review, publish guard = active membership + ≥1 item). `computeCreatorShopSplit(price, sellerShare)` is pure and re-exportable for the split preview.
 
 ### Per-type artwork requirements (for the client validator port, `creator-shop.schema.ts:47-89`)
 Badge 144×144 1:1 transparent; ProfileDecoration 120×120 1:1 transparent; ProfileBackground 450×144 25:9 (no transparency); ContentDecoration 256×256 1:1 transparent. Submit `Select` offers Badge / ProfileDecoration / ProfileBackground only. Format PNG/WebP; size ≤ `mediaUpload.maxImageFileSize`; ratio within 2% of target. `creator-shop.validation.ts` is pure and portable.

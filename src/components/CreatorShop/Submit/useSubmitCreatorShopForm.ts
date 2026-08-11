@@ -4,7 +4,10 @@ import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
 import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
 import { validateCosmeticImage } from '~/components/CreatorShop/creator-shop.validation';
-import { useCreatorShopFees } from '~/components/CreatorShop/useCreatorShopFees';
+import {
+  FEE_UNAVAILABLE_MESSAGE,
+  useCreatorShopFees,
+} from '~/components/CreatorShop/useCreatorShopFees';
 import {
   buildData,
   editNotice,
@@ -222,7 +225,6 @@ export function useSubmitCreatorShopForm({
   const blueBalance = buzz.accounts.find((a) => a.type === 'blue')?.balance ?? 0;
   const feeAccountBalance =
     buzzType === 'yellow' ? yellowBalance : buzzType === 'green' ? greenBalance : blueBalance;
-  // The fee the server will charge for this type, not a mirrored constant.
   const submissionFee = fees?.submission[type];
   // Only new submissions pay the fee; edits don't. An unresolved fee blocks submit
   // rather than falling back to a default the server may disagree with.
@@ -314,6 +316,8 @@ export function useSubmitCreatorShopForm({
         error: new Error(
           requiresAffirmation && !rightsAffirmed
             ? 'Confirm you have the rights to sell this artwork'
+            : !isEdit && submissionFee === undefined
+            ? FEE_UNAVAILABLE_MESSAGE
             : 'Add valid artwork, a title, and a price of at least 500 Buzz'
         ),
       });
@@ -361,6 +365,10 @@ export function useSubmitCreatorShopForm({
         }
         await updateItem.mutateAsync(payload);
       } else {
+        if (submissionFee === undefined) {
+          showErrorNotification({ title: 'Not ready', error: new Error(FEE_UNAVAILABLE_MESSAGE) });
+          return;
+        }
         await submitItem.mutateAsync({
           cosmeticType: type,
           name: name.trim(),
@@ -378,6 +386,7 @@ export function useSubmitCreatorShopForm({
           uses: isSticker ? uses : undefined,
           pricePerUse: isSticker ? pricePerUse : undefined,
           rightsAffirmed: true,
+          quotedFee: submissionFee,
         });
       }
       resetFiles();

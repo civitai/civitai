@@ -8,20 +8,20 @@
  *   PUT   set the provided fees; omitted types keep their current value
  *         body: { submission?: { Sticker?: 5000, ... }, pack?: 1000 }
  *
- * GET reads the DB directly (this endpoint isn't edge-cached) so it's always live. A write
- * purges the public procedure's edge cache (tag: creator-shop-fees) so the submit form quotes
- * the new fee immediately; already-loaded clients still refetch on their 3-min staleTime.
+ * A form already open when a fee changes is refused at submit rather than charged the
+ * new number, so the creator is never billed an amount they weren't shown.
  */
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
-import { creatorCosmeticTypes } from '~/server/schema/creator-shop.schema';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { CREATOR_SHOP_FEE_MAX, creatorCosmeticTypes } from '~/server/schema/creator-shop.schema';
 import {
   getCreatorShopFees,
   setCreatorShopFees,
 } from '~/server/services/creator-shop-fees.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
-const fee = z.number().int().min(0);
+const fee = z.number().int().min(0).max(CREATOR_SHOP_FEE_MAX);
 
 const bodySchema = z
   .object({
@@ -45,5 +45,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   const parsed = bodySchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: z.flattenError(parsed.error) });
 
-  return res.status(200).json(await setCreatorShopFees(parsed.data));
+  const session = await getServerAuthSession({ req, res });
+  return res
+    .status(200)
+    .json(await setCreatorShopFees(parsed.data, { actorId: session?.user?.id }));
 });

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as CloudflareClient from '~/server/cloudflare/client';
 import type * as LoggingClient from '~/server/logging/client';
 import {
+  CREATOR_SHOP_FEE_MAX,
   DEFAULT_CREATOR_SHOP_FEES,
   creatorCosmeticTypes,
 } from '~/server/schema/creator-shop.schema';
@@ -11,7 +11,7 @@ const { mocks } = vi.hoisted(() => ({
   mocks: {
     keyValueFindUnique: vi.fn(),
     executeRawUnsafe: vi.fn(),
-    purgeCache: vi.fn(),
+    logToAxiom: vi.fn(),
   },
 }));
 
@@ -23,26 +23,20 @@ vi.mock('~/server/db/client', () => ({
   },
 }));
 
-vi.mock('~/server/cloudflare/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof CloudflareClient>()),
-  purgeCache: mocks.purgeCache,
-}));
-
 vi.mock('~/server/logging/client', async (importOriginal) => ({
   ...(await importOriginal<typeof LoggingClient>()),
-  logToAxiom: vi.fn(),
+  logToAxiom: mocks.logToAxiom,
 }));
 
-const { getCreatorShopFees, getCreatorShopSubmissionFee, setCreatorShopFees } = await import(
-  '../creator-shop-fees.service'
-);
+const { assertQuotedFee, getCreatorShopFees, getCreatorShopSubmissionFee, setCreatorShopFees } =
+  await import('../creator-shop-fees.service');
 
 const stored = (value: unknown) => mocks.keyValueFindUnique.mockResolvedValue({ key: 'k', value });
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.keyValueFindUnique.mockResolvedValue(null);
-  mocks.purgeCache.mockResolvedValue(undefined);
+  mocks.logToAxiom.mockResolvedValue(undefined);
 });
 
 describe('getCreatorShopFees', () => {
@@ -82,6 +76,23 @@ describe('getCreatorShopFees', () => {
     }
   });
 
+  // A fat-fingered extra digit is the realistic version of this, and the fee is
+  // taken before review and never refunded.
+  it('falls back rather than serving an absurd fee', async () => {
+    stored({ submission: { Sticker: 1e15 }, pack: CREATOR_SHOP_FEE_MAX + 1 });
+    const fees = await getCreatorShopFees();
+
+    expect(fees.submission.Sticker).toBe(DEFAULT_CREATOR_SHOP_FEES.submission.Sticker);
+    expect(fees.pack).toBe(DEFAULT_CREATOR_SHOP_FEES.pack);
+  });
+
+  it('serves a fee sitting exactly on the ceiling', async () => {
+    stored({ submission: { Sticker: CREATOR_SHOP_FEE_MAX } });
+    await expect(getCreatorShopSubmissionFee(CosmeticType.Sticker)).resolves.toBe(
+      CREATOR_SHOP_FEE_MAX
+    );
+  });
+
   it('keeps a usable sibling when one type is junk', async () => {
     stored({ submission: { Sticker: 5000, Badge: 'free' } });
     const fees = await getCreatorShopFees();
@@ -119,14 +130,33 @@ describe('setCreatorShopFees', () => {
     expect(mocks.executeRawUnsafe).toHaveBeenCalledTimes(1);
   });
 
-  // A stale edge cache is a fee the creator agreed to and did not pay.
-  it('busts the edge cache the submit form reads through', async () => {
-    await setCreatorShopFees({ pack: 1500 });
-    expect(mocks.purgeCache).toHaveBeenCalledWith({ tags: ['creator-shop-fees'] });
+  // This write decides how much Buzz every creator is charged before review, so
+  // "who changed it from what to what" has to survive the request.
+  it('records the actor and both sides of the change', async () => {
+    stored({ submission: { Sticker: 5000 }, pack: 2000 });
+
+    await setCreatorShopFees({ submission: { Sticker: 7000 } }, { actorId: 42 });
+
+    expect(mocks.logToAxiom).toHaveBeenCalledTimes(1);
+    const logged = mocks.logToAxiom.mock.calls[0][0];
+    expect(logged).toMatchObject({ name: 'set-creator-shop-fees', actorId: 42 });
+    expect(logged.previous.submission.Sticker).toBe(5000);
+    expect(logged.next.submission.Sticker).toBe(7000);
+  });
+});
+
+describe('assertQuotedFee', () => {
+  it('accepts the fee the form quoted', () => {
+    expect(() => assertQuotedFee(5000, 5000)).not.toThrow();
   });
 
-  it('does not fail the write when the purge does', async () => {
-    mocks.purgeCache.mockRejectedValue(new Error('cloudflare down'));
-    await expect(setCreatorShopFees({ pack: 1500 })).resolves.toMatchObject({ pack: 1500 });
+  // Charging the new number silently is the bug: the fee is non-refundable and
+  // the creator only ever saw the old one.
+  it('refuses a quote that no longer matches, naming the fee now in force', () => {
+    expect(() => assertQuotedFee(10000, 5000)).toThrow(/5000/);
+  });
+
+  it('refuses a quote that is too low as well as one that is too high', () => {
+    expect(() => assertQuotedFee(0, 5000)).toThrow();
   });
 });

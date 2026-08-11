@@ -139,13 +139,20 @@ export const DEFAULT_CREATOR_SHOP_FEES: CreatorShopFees = {
   pack: PACK_SUBMISSION_FEE_DEFAULT,
 };
 
-// Buzz is integral, and a fee is charged before anything is reviewed — a typo
-// that lands a fraction or a negative in the stored row must not reach the
-// money path, so each value falls back on its own rather than the row as a whole.
-const usableFee = (value: unknown, fallback: number): number =>
-  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : fallback;
+// A fee is charged before anything is reviewed, so a mistyped row must not reach
+// the money path: anything outside this ceiling falls back to the default.
+export const CREATOR_SHOP_FEE_MAX = 1_000_000;
 
-/** Shared by the KeyValue read and the client fallback so both agree on a bad row. */
+// Buzz is integral, and each value falls back on its own rather than the row as
+// a whole, so one bad number can't move the others.
+const usableFee = (value: unknown, fallback: number): number =>
+  typeof value === 'number' &&
+  Number.isSafeInteger(value) &&
+  value >= 0 &&
+  value <= CREATOR_SHOP_FEE_MAX
+    ? value
+    : fallback;
+
 export const normalizeCreatorShopFees = (value: unknown): CreatorShopFees => {
   const row = (value ?? {}) as { submission?: unknown; pack?: unknown };
   const submission = (row.submission ?? {}) as Record<string, unknown>;
@@ -155,11 +162,11 @@ export const normalizeCreatorShopFees = (value: unknown): CreatorShopFees => {
         type,
         usableFee(
           typeof submission === 'object' && submission !== null ? submission[type] : undefined,
-          submissionFeeDefault(type)
+          DEFAULT_CREATOR_SHOP_FEES.submission[type]
         ),
       ])
     ) as Record<CreatorCosmeticType, number>,
-    pack: usableFee(row.pack, PACK_SUBMISSION_FEE_DEFAULT),
+    pack: usableFee(row.pack, DEFAULT_CREATOR_SHOP_FEES.pack),
   };
 };
 
@@ -439,6 +446,11 @@ const rightsAffirmedSchema = z
   .boolean()
   .refine((value) => value === true, 'You must confirm you have the rights to sell this artwork');
 
+// The fee the form quoted. The server charges its own value and rejects the
+// submission when the two disagree, so a form left open across a fee change
+// can't be charged a number the creator never saw.
+const quotedFeeSchema = z.number().int().min(0).max(CREATOR_SHOP_FEE_MAX);
+
 export type SubmitCreatorShopItemInput = z.infer<typeof submitCreatorShopItemSchema>;
 export const submitCreatorShopItemSchema = z
   .object({
@@ -473,6 +485,7 @@ export const submitCreatorShopItemSchema = z
     // The creator's affirmation that they hold the rights to sell this artwork.
     // Recorded on the item (see cosmeticShopItemMeta.rightsAffirmation).
     rightsAffirmed: rightsAffirmedSchema,
+    quotedFee: quotedFeeSchema,
   })
   .superRefine((input, ctx) => {
     // `uses` drives the buyer's balance AND the creator's 10x grant. Absent, both
@@ -534,6 +547,7 @@ export const submitCreatorShopPackSchema = z.object({
   // Required only with a cover: it is a statement about artwork, and a pack
   // without one supplies none. Its members were each affirmed at submission.
   rightsAffirmed: rightsAffirmedSchema.optional(),
+  quotedFee: quotedFeeSchema,
 });
 
 export type UpdateCreatorShopPackInput = z.infer<typeof updateCreatorShopPackSchema>;

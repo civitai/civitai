@@ -57,6 +57,7 @@ const submitInput = {
   sellerShare: 0,
   acceptsBlueBuzz: false,
   rightsAffirmed: true,
+  quotedFee: 10000,
 } as const;
 
 describe('rights affirmation input contract', () => {
@@ -65,6 +66,7 @@ describe('rights affirmation input contract', () => {
     name: 'Golden Laurel',
     imageUrl: 'cf-image-id',
     price: 500,
+    quotedFee: 10000,
   };
 
   it('rejects a submission that omits the affirmation', () => {

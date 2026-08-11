@@ -24,7 +24,10 @@ import {
   refundMultiAccountTransaction,
   refundTransaction,
 } from '~/server/services/buzz.service';
-import { getCreatorShopSubmissionFee } from '~/server/services/creator-shop-fees.service';
+import {
+  assertQuotedFee,
+  getCreatorShopSubmissionFee,
+} from '~/server/services/creator-shop-fees.service';
 import { createNotification } from '~/server/services/notification.service';
 import { getBlockedPairIds } from '~/server/services/user-preferences.service';
 import { NotificationCategory } from '~/server/common/enums';
@@ -281,6 +284,7 @@ export const submitCreatorShopItem = async ({
   uses,
   pricePerUse,
   rightsAffirmed,
+  quotedFee,
 }: SubmitCreatorShopItemInput & { userId: number }) => {
   // The zod schema already requires it; this keeps the item from ever being
   // created without the record if the service is called from anywhere else.
@@ -327,6 +331,7 @@ export const submitCreatorShopItem = async ({
 
   // Charge the (non-refundable) submission fee; refunded only if the write fails.
   const submissionFee = await getCreatorShopSubmissionFee(cosmeticType);
+  assertQuotedFee(quotedFee, submissionFee);
   const feeTx = await createBuzzTransaction({
     fromAccountId: userId,
     fromAccountType: buzzType as BuzzSpendType,

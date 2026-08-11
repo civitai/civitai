@@ -18,7 +18,7 @@ import {
   type PackMemberPricing,
 } from '~/server/schema/creator-shop.schema';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
-import { getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
+import { assertQuotedFee, getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
 import { getCosmeticArtworkUrl } from '~/server/services/cosmetic-phash.service';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
@@ -156,6 +156,7 @@ export const submitCreatorShopPack = async ({
   acceptsBlueBuzz,
   imageUrl,
   rightsAffirmed,
+  quotedFee,
   stickersEnabled,
 }: SubmitCreatorShopPackInput & { userId: number; stickersEnabled?: boolean }) => {
   // Only artwork needs affirming, and only a cover is artwork the lister
@@ -184,6 +185,7 @@ export const submitCreatorShopPack = async ({
     );
 
   const submissionFee = (await getCreatorShopFees()).pack;
+  assertQuotedFee(quotedFee, submissionFee);
   const feeTx = await createBuzzTransaction({
     fromAccountId: userId,
     fromAccountType: buzzType as BuzzSpendType,
