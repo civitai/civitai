@@ -57,7 +57,18 @@ export const actions: Actions = {
     const status = String(data.get('status'));
     if (!id || !isStatus(status)) return fail(400, { message: 'Invalid input' });
 
-    await setReportStatus({ id, status, userId: locals.user.id, ip: getClientAddress() });
+    // `setReportStatus` RETURNS its outcome; discarding it reported success for a report another
+    // moderator had already actioned or deleted. Same defect the batch sweep had — and this is the
+    // path used all day.
+    const result = await setReportStatus({
+      id,
+      status,
+      userId: locals.user.id,
+      ip: getClientAddress(),
+    });
+    if (!result.ok) return fail(400, { message: result.error });
+    if (!result.changed)
+      return fail(409, { message: 'Someone else already set that status. Reload.' });
     return { success: true };
   },
   /**

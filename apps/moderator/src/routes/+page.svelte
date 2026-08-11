@@ -227,6 +227,19 @@
   </div>
 {/if}
 
+<!-- OUTSIDE the {#await}: bumping boardVersion drops the subtree back to pending, so a
+     banner nested inside it vanishes on success and is replaced by the catch branch if the refetch
+     then fails — reporting an error for an action that worked. -->
+{#if form?.error}
+  <div class="mt-8 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300" role="alert">
+    {form.error}
+  </div>
+{:else if form && 'swept' in form && form.swept}
+  <div class="mt-8 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200" role="status">
+    Marked {form.swept} swept.
+  </div>
+{/if}
+
 {#await board}
   <div class="mt-8 grid gap-3 lg:grid-cols-3">
     {#each { length: 3 } as _, i (i)}
@@ -237,21 +250,6 @@
   {@const board = loaded}
   {@const worked = board ? recentlyWorked(board) : []}
   {#if board}
-    {#if form?.error}
-      <div
-        class="mt-8 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-        role="alert"
-      >
-        {form.error}
-      </div>
-    {:else if form && 'swept' in form && form.swept}
-      <div
-        class="mt-8 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200"
-        role="status"
-      >
-        Marked {form.swept} swept.
-      </div>
-    {/if}
     <div class="mt-8 grid gap-3 lg:grid-cols-3">
     <!-- Retool's `RecentReports`, which fed the "last touched by <mod> N minutes ago" on every queue
          row. Its point is telling a queue nobody is working from one being actively drained — a count

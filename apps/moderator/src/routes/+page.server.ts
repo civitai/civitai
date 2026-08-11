@@ -24,7 +24,17 @@ export const actions: Actions = {
     if (status !== ReportStatus.Actioned && status !== ReportStatus.Unactioned)
       return fail(400, { error: 'Unknown status.' });
 
-    await setReportStatus({ id, status, userId: locals.user.id, ip: getClientAddress() });
+    // The row dims to "actioned" on success, so a discarded failure left the dashboard asserting an
+    // action that did not happen.
+    const result = await setReportStatus({
+      id,
+      status,
+      userId: locals.user.id,
+      ip: getClientAddress(),
+    });
+    if (!result.ok) return fail(400, { error: result.error, id });
+    if (!result.changed)
+      return fail(409, { error: 'Someone else already actioned that report.', id });
     return { success: true, id };
   },
 
