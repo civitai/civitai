@@ -129,6 +129,49 @@ describe('StickerCountChip', () => {
     expect(classes).toContain('from-the-row');
   });
 
+  /**
+   * On a feed card there is no `ReactionSettingsProvider`, so no inline style —
+   * `variant` is the only thing painting the revealed state, and the chip is the
+   * card's whole on/off indication.
+   *
+   * Asserted on `data-variant` rather than computed colour on purpose: the
+   * `component` project never imports `@mantine/core/styles.layer.css` (only
+   * `_app.tsx` does), so Mantine sets `--button-bg` and nothing consumes it.
+   * Every variant computes to the same UA default background here, which makes
+   * a colour assertion silently blind to this exact regression.
+   */
+  test('paints the revealed state on a card, where nothing else does', async () => {
+    renderWithProviders(
+      <>
+        <StickerCountChip count={3} revealed tooltip="Hide" onClick={vi.fn()} />
+        <StickerCountChip count={5} revealed={false} tooltip="Show" onClick={vi.fn()} />
+      </>
+    );
+
+    await expect.element(page.getByRole('button', { name: /^3$/ })).toBeInTheDocument();
+    expect(page.getByRole('button', { name: /^3$/ }).element().getAttribute('data-variant')).toBe(
+      'light'
+    );
+    expect(page.getByRole('button', { name: /^5$/ }).element().getAttribute('data-variant')).toBe(
+      'subtle'
+    );
+  });
+
+  test('paints the empty state as its own thing, not as the revealed state', async () => {
+    renderWithProviders(
+      <>
+        <StickerCountChip count={0} revealed={false} tooltip="Place" onClick={vi.fn()} />
+        <StickerCountChip count={5} revealed={false} tooltip="Show" onClick={vi.fn()} />
+      </>
+    );
+
+    await expect.element(page.getByRole('button', { name: /^5$/ })).toBeInTheDocument();
+    const empty = page.getByRole('button', { name: /^stickers$/ }).element() as HTMLElement;
+
+    expect(empty.getAttribute('data-variant')).toBe('light');
+    expect(empty.style.getPropertyValue('--button-bg')).toContain('yellow');
+  });
+
   test('hands the press to the surface, which decides what a press means', async () => {
     const onClick = vi.fn();
     renderWithProviders(

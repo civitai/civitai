@@ -40,14 +40,18 @@ export function StickerPlacementBar({
   const { buttonStyling } = useReactionSettingsContext();
   const inviteStyle = useStickerInviteStyle();
 
-  const { counts, isLoading: countsLoading } = useStickerPlacementCounts([imageId]);
+  const {
+    counts,
+    isLoading: countsLoading,
+    isError: countsError,
+  } = useStickerPlacementCounts([imageId]);
   const count = counts[imageId] ?? 0;
   const { space } = useImagePlacementSpace(imageId);
 
   // The count is approved-only, so an owner whose first placement is still
   // pending had no entry here at all — and therefore no reveal toggle on the
   // page the notification just sent them to.
-  const { byImage } = useStickerPlacements([imageId], !!currentUser);
+  const { byImage, isLoading: placementsLoading } = useStickerPlacements([imageId], !!currentUser);
   const pending = (byImage.get(imageId) ?? []).filter((placement) => placement.isPending).length;
 
   const openTray = useStickerPlacementDraftStore((state) => state.open);
@@ -68,12 +72,13 @@ export function StickerPlacementBar({
   // Approved plus the viewer's own pending, which is what the toggle reveals.
   const total = count + pending;
 
-  // The invitation is shown only once the count has actually arrived, not
-  // merely while it reads zero. The space and the count are separate queries,
-  // so an image with stickers spends the gap between them looking empty — and a
-  // press in that window would open a purchase tray instead of revealing what
-  // is already there.
-  const inviting = !total && canPlace && !countsLoading;
+  // The invitation needs a zero that is KNOWN to be zero. `total` is fed by two
+  // separate queries and a failure of either reads as empty, so an image with
+  // stickers would otherwise show the invitation — and a press there opens a
+  // purchase tray instead of revealing what is already on it. Both queries must
+  // have arrived, and the counts one must not have failed.
+  const settled = !countsLoading && !placementsLoading && !countsError;
+  const inviting = !total && canPlace && settled;
 
   if (!total && !canPlace) return null;
 
@@ -105,7 +110,10 @@ export function StickerPlacementBar({
             count={0}
             revealed={revealed}
             tooltip={`Place a sticker · ${space?.price} Buzz`}
-            ariaLabel="Place a sticker"
+            // Distinct from the plus beside it, which is also "Place a sticker".
+            // They share a Button.Group and an action, so identical names read
+            // to a screen reader as the same control announced twice.
+            ariaLabel="No stickers yet — place the first one"
             onClick={() => openTray(imageId)}
             buttonProps={buttonStyling?.('BuzzTip')}
           />
