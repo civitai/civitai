@@ -2775,6 +2775,32 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
 };
 
 /**
+ * Strip the session user off a search input before it reaches a log sink.
+ *
+ * `getInfiniteImagesHandler` spreads the whole `ctx.user` into the search input
+ * for business logic, so logging the input verbatim shipped `email`,
+ * `emailVerified`, `username` and `createdAt` for every erroring search — 331k
+ * records/day in production, each naming a real account.
+ *
+ * Nothing diagnostic is lost: `getAllImagesIndex` already forwards the only two
+ * fields the search path reads off the session user as `currentUserId`
+ * (`user?.id`) and `isModerator`, and both survive this untouched.
+ *
+ * The user object is dropped WHOLE rather than having its known PII keys
+ * deleted. A denylist fails open — the next field added to the session user
+ * would silently start shipping to logs again, which is exactly how this
+ * regressed. Do not "improve" this by re-adding `user` minus some keys.
+ *
+ * `user.id` is deliberately NOT remapped onto a `userId` key: `userId` is
+ * already a *search filter* on this input (feed-by-creator), and overwriting it
+ * would corrupt the logged query.
+ */
+export function redactSearchInputForLog<T extends Record<string, unknown>>(input: T) {
+  const { user: _sessionUser, ...rest } = input as T & { user?: unknown };
+  return removeEmpty(rest);
+}
+
+/**
  * Defense-in-depth post-filter for BitDex results. The main query uses strict
  * cacheable filters (no per-user clauses), so this rarely removes anything.
  * User's own excluded content is fetched in a separate second pass and merged.
@@ -3907,7 +3933,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
         type: 'search-error',
         error: err.message,
         cause: err.cause,
-        input: removeEmpty(input),
+        input: redactSearchInputForLog(input),
         request,
       },
       'temp-search'
@@ -4988,7 +5014,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
         type: 'search-error',
         error: err.message,
         cause: err.cause,
-        input: removeEmpty(input),
+        input: redactSearchInputForLog(input),
         request,
       },
       'temp-search'
