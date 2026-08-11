@@ -687,31 +687,36 @@ export async function getListingDetail(
   // a missing one (mirrors the AppBlock detail's red-only 404).
   if (!redCapable && isMatureContentRating(row.contentRating)) return null;
 
-  return projectListingDetail(row, await loadDisplayedCollaboratorChips(row.appBlockId));
+  return projectListingDetail(row, await loadDisplayedCollaboratorChips(row.id));
 }
 
 /**
- * Hydrate the PUBLIC collaborator byline for a listing: the ACCEPTED **and**
- * `displayed` collaborators of its backing AppBlock, projected to the same
- * `{id, username, image}` allowlist as the creator chip.
+ * Hydrate the PUBLIC collaborator byline for a listing: its ACCEPTED **and**
+ * `displayed` collaborators, projected to the same `{id, username, image}` allowlist as
+ * the creator chip.
+ *
+ * 🔴 KEYED ON THE LISTING, so it works for BOTH kinds. This read is the whole point of
+ * the block→listing re-key: an OFF-SITE listing has no AppBlock, so while seats were
+ * block-keyed its byline could only ever be empty.
  *
  * 🔴 CONSENT + OPT-IN, both load-bearing (enforced in `listDisplayedCollaboratorUserIds`):
  * a PENDING invitee must never appear publicly — otherwise anyone could attach a
  * stranger's name to their listing simply by inviting them — and an accepted
  * collaborator who opted out of the byline must not appear either.
  *
- * Returns `[]` for a listing with no backing AppBlock (a natively-created offsite
- * listing), and `[]` when the manual-apply migration has not landed — so the public
- * read is byte-identical to today until both the table and a seat exist.
+ * Returns `[]` when the manual-apply migration has not landed — so the public read is
+ * byte-identical to today until both the table and a seat exist. The caller only ever
+ * passes a PARENT listing id (shadow revisions are filtered out of every public read),
+ * which is also the only id a seat can exist under.
  */
 async function loadDisplayedCollaboratorChips(
-  appBlockId: string | null
+  appListingId: string | null
 ): Promise<Array<{ id: number; username: string | null; image: string | null }>> {
-  if (!appBlockId) return [];
+  if (!appListingId) return [];
   const { listDisplayedCollaboratorUserIds } = await import(
     '~/server/services/blocks/app-access.service'
   );
-  const userIds = await listDisplayedCollaboratorUserIds(appBlockId);
+  const userIds = await listDisplayedCollaboratorUserIds(appListingId);
   if (userIds.length === 0) return [];
   // 🔴 EXPLICIT ALLOWLIST at the SELECT, not only at the projection. Two independent
   // narrowings: nothing but these three columns ever leaves the DB, and `creatorChip`

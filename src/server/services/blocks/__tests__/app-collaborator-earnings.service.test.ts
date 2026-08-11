@@ -24,6 +24,10 @@ const { mockDb } = vi.hoisted(() => ({
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
     },
+    appListing: {
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    },
     appCollaborator: {
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
@@ -43,9 +47,48 @@ const { getAppEarnings, getMyAppsEarnings } = await import(
 
 const APP_A = 'ab_appA'; // shared with the editor
 const APP_B = 'ab_appB'; // 🔴 the owner's OTHER app — must never surface to the editor
+/** The store listings that BACK those blocks — the seat key since the re-key. */
+const LISTING_A = 'apl_listingA';
+const LISTING_B = 'apl_listingB';
+/** 🔴 An OFF-SITE listing the editor is ALSO seated on. It has no block, so no earnings. */
+const LISTING_OFF = 'apl_offsite';
 const OWNER = 100;
 const EDITOR = 200;
 const STRANGER = 300;
+
+/**
+ * The listing table. Each row is what `resolveListingAccess` selects.
+ *
+ * 🔴 The OFF-SITE row is the new axis: the editor holds a real, accepted seat on it, so
+ * every "the editor cannot see earnings here" assertion is about the KIND and not about
+ * a missing seat.
+ */
+const LISTINGS: Record<string, Record<string, unknown>> = {
+  [LISTING_A]: {
+    id: LISTING_A,
+    userId: OWNER,
+    kind: 'onsite',
+    appBlockId: APP_A,
+    revisionOfId: null,
+    revisionOf: null,
+  },
+  [LISTING_B]: {
+    id: LISTING_B,
+    userId: OWNER,
+    kind: 'onsite',
+    appBlockId: APP_B,
+    revisionOfId: null,
+    revisionOf: null,
+  },
+  [LISTING_OFF]: {
+    id: LISTING_OFF,
+    userId: OWNER,
+    kind: 'offsite',
+    appBlockId: null,
+    revisionOfId: null,
+    revisionOf: null,
+  },
+};
 
 /** Every attribution row in the fixture DB, per app. */
 const LEDGER = [
@@ -148,14 +191,30 @@ function wireAccess() {
     const ids = (w as { id?: { in: string[] } }).id?.in ?? [];
     return ids.map((id) => ({ id, app: { userId: OWNER } }));
   });
+  mockDb.appListing.findUnique.mockImplementation(async (args: unknown) => {
+    const id = (args as { where: { id: string } }).where.id;
+    return LISTINGS[id] ?? null;
+  });
+  // The seated-LISTINGS → backing-BLOCKS hop, honouring the `appBlockId: { not: null }`
+  // filter that drops off-site seats from a block-id set.
+  mockDb.appListing.findMany.mockImplementation(async (args: unknown) => {
+    const w = (args as { where: { id: { in: string[] }; appBlockId?: unknown } }).where;
+    return Object.values(LISTINGS)
+      .filter((l) => w.id.in.includes(l.id as string))
+      .filter((l) => (w.appBlockId === undefined ? true : l.appBlockId != null))
+      .map((l) => ({ appBlockId: l.appBlockId }));
+  });
+  // 🔴 The editor is seated on the on-site LISTING_A *and* on the off-site LISTING_OFF.
   mockDb.appCollaborator.findFirst.mockImplementation(async (args: unknown) => {
-    const w = (args as { where: { appBlockId: string; userId: number; status?: string } }).where;
-    const ok = w.appBlockId === APP_A && w.userId === EDITOR && w.status === 'accepted';
-    return ok ? { userId: EDITOR } : null;
+    const w = (args as { where: { appListingId: string; userId: number; status?: string } }).where;
+    const seated = w.appListingId === LISTING_A || w.appListingId === LISTING_OFF;
+    return seated && w.userId === EDITOR && w.status === 'accepted' ? { userId: EDITOR } : null;
   });
   mockDb.appCollaborator.findMany.mockImplementation(async (args: unknown) => {
     const w = (args as { where: { userId?: number; status?: string } }).where;
-    return w.userId === EDITOR && w.status === 'accepted' ? [{ appBlockId: APP_A }] : [];
+    return w.userId === EDITOR && w.status === 'accepted'
+      ? [{ appListingId: LISTING_A }, { appListingId: LISTING_OFF }]
+      : [];
   });
 }
 
@@ -245,27 +304,28 @@ describe('getMyAppsEarnings — 🔴 the editor must never see the owner’s oth
   });
 });
 
-describe('getAppEarnings — per-app, fail-closed', () => {
-  it('the owner reads the app’s summary', async () => {
-    const res = await getAppEarnings({ appBlockId: APP_A, userId: OWNER });
+describe('getAppEarnings — per-listing, fail-closed', () => {
+  it('the owner reads the listing’s summary', async () => {
+    const res = await getAppEarnings({ appListingId: LISTING_A, userId: OWNER });
     expect(res.ok).toBe(true);
     if (!res.ok) throw new Error('unreachable');
     expect(res.role).toBe('owner');
+    expect(res.appBlockId).toBe(APP_A);
     expect(res.summary.confirmed.shareCents).toBe(500);
     expect(res.summary.paidOut.shareCents).toBe(250);
   });
 
-  it('the accepted editor reads the SHARED app’s summary', async () => {
-    const res = await getAppEarnings({ appBlockId: APP_A, userId: EDITOR });
+  it('the accepted editor reads the SHARED listing’s summary', async () => {
+    const res = await getAppEarnings({ appListingId: LISTING_A, userId: EDITOR });
     expect(res.ok).toBe(true);
     if (!res.ok) throw new Error('unreachable');
     expect(res.role).toBe('editor');
     expect(res.summary.confirmed.shareCents).toBe(500);
   });
 
-  it('🔴 the editor is REFUSED on the owner’s other app — and no aggregate is run', async () => {
-    const res = await getAppEarnings({ appBlockId: APP_B, userId: EDITOR });
-    expect(res).toEqual({ ok: false, appBlockId: APP_B, reason: 'notPermitted' });
+  it('🔴 the editor is REFUSED on the owner’s other listing — and no aggregate is run', async () => {
+    const res = await getAppEarnings({ appListingId: LISTING_B, userId: EDITOR });
+    expect(res).toEqual({ ok: false, appListingId: LISTING_B, reason: 'notPermitted' });
     // Fail-closed means fail EARLY: refusing after running the query would still have
     // put the owner's numbers in memory on this request.
     expect(mockDb.blockBuzzAttribution.aggregate).not.toHaveBeenCalled();
@@ -274,20 +334,20 @@ describe('getAppEarnings — per-app, fail-closed', () => {
   it('🔴 refusal is `notPermitted`, NOT a zeroed summary', async () => {
     // A zero here would be indistinguishable from "this app earned nothing" — the
     // fabricated-zero trap. The discriminated union makes that unrepresentable.
-    const res = await getAppEarnings({ appBlockId: APP_B, userId: STRANGER });
+    const res = await getAppEarnings({ appListingId: LISTING_B, userId: STRANGER });
     expect(res.ok).toBe(false);
     expect(res).not.toHaveProperty('summary');
   });
 
-  it('a missing app is `notFound`, distinct from `notPermitted`', async () => {
-    const res = await getAppEarnings({ appBlockId: 'ab_nope', userId: OWNER });
-    expect(res).toEqual({ ok: false, appBlockId: 'ab_nope', reason: 'notFound' });
+  it('a missing listing is `notFound`, distinct from `notPermitted`', async () => {
+    const res = await getAppEarnings({ appListingId: 'apl_nope', userId: OWNER });
+    expect(res).toEqual({ ok: false, appListingId: 'apl_nope', reason: 'notFound' });
   });
 
   it('🔴 the query carries BOTH scopes (appBlockId AND the current owner)', async () => {
     // A structural assertion on the WHERE clause, because dropping either axis is the
     // leak and a numeric assertion alone would not localise which axis went missing.
-    await getAppEarnings({ appBlockId: APP_A, userId: EDITOR });
+    await getAppEarnings({ appListingId: LISTING_A, userId: EDITOR });
     const calls = mockDb.blockBuzzAttribution.aggregate.mock.calls as Array<
       [{ where: Record<string, unknown> }]
     >;
@@ -296,5 +356,72 @@ describe('getAppEarnings — per-app, fail-closed', () => {
       expect(args.where.appBlockId).toBe(APP_A);
       expect(args.where.appOwnerUserId).toBe(OWNER);
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 THE KIND AXIS — earnings are structurally ON-SITE ONLY.
+  // -------------------------------------------------------------------------
+
+  describe('🔴 OFF-SITE: the capability is ABSENT, not erroring and not a zero', () => {
+    /**
+     * `BlockBuzzAttribution` is keyed on `appBlockId`. An off-site listing has no
+     * AppBlock, so no attribution row can ever belong to it — the `earnings: false` cell
+     * of `CAPABILITIES_BY_KIND`. The refusal has to be an explicit `unsupportedKind`:
+     *
+     *   - a THROW would read to the client as "something went wrong", and an off-site
+     *     developer would file a bug about their broken earnings page; and
+     *   - a ZEROED SUMMARY would read as "your app earned nothing", which is worse — it
+     *     is a plausible number for a claim the schema cannot support at all.
+     */
+    it('the OWNER of an off-site listing gets `unsupportedKind`', async () => {
+      const res = await getAppEarnings({ appListingId: LISTING_OFF, userId: OWNER });
+      expect(res).toEqual({ ok: false, appListingId: LISTING_OFF, reason: 'unsupportedKind' });
+    });
+
+    it('🔴 a genuinely SEATED off-site editor gets `unsupportedKind` too — it is the KIND, not the seat', async () => {
+      // The fixture seats EDITOR on LISTING_OFF for real, so this cannot be confused
+      // with `notPermitted`.
+      const res = await getAppEarnings({ appListingId: LISTING_OFF, userId: EDITOR });
+      expect(res).toEqual({ ok: false, appListingId: LISTING_OFF, reason: 'unsupportedKind' });
+    });
+
+    it('🔴 the two refusals are DISTINGUISHABLE — a stranger still gets `notPermitted`', async () => {
+      // Collapsing the two would tell an off-site owner they lack permission on their
+      // own listing.
+      const stranger = await getAppEarnings({ appListingId: LISTING_OFF, userId: STRANGER });
+      expect(stranger).toMatchObject({ reason: 'notPermitted' });
+      const owner = await getAppEarnings({ appListingId: LISTING_OFF, userId: OWNER });
+      expect(owner).toMatchObject({ reason: 'unsupportedKind' });
+    });
+
+    it('NO aggregate is run — there is no id to aggregate on', async () => {
+      await getAppEarnings({ appListingId: LISTING_OFF, userId: OWNER });
+      expect(mockDb.blockBuzzAttribution.aggregate).not.toHaveBeenCalled();
+    });
+
+    it('🔴 POSITIVE CONTROL: the SAME owner on the ON-SITE listing does get a summary', async () => {
+      // Without this, "no aggregate ran" is indistinguishable from an aggregate mock
+      // nothing ever calls.
+      const res = await getAppEarnings({ appListingId: LISTING_A, userId: OWNER });
+      expect(res.ok).toBe(true);
+      expect(mockDb.blockBuzzAttribution.aggregate).toHaveBeenCalled();
+    });
+  });
+
+  describe('🔴 getMyAppsEarnings drops the off-site seat entirely', () => {
+    it('the editor’s rows name only the ON-SITE app, though they hold TWO accepted seats', async () => {
+      // The off-site seat is real and accepted; it contributes no block id, so it cannot
+      // widen a block-keyed money query — and it must not appear as a zeroed row either,
+      // which would invite the same "earned nothing" misreading.
+      const rows = await getMyAppsEarnings({ userId: EDITOR });
+      expect(rows.map((r) => r.appBlockId)).toEqual([APP_A]);
+    });
+
+    it('POSITIVE CONTROL: the fixture really does give the editor two accepted seats', async () => {
+      const seats = (await mockDb.appCollaborator.findMany({
+        where: { userId: EDITOR, status: 'accepted' },
+      })) as Array<{ appListingId: string }>;
+      expect(seats.map((s) => s.appListingId).sort()).toEqual([LISTING_A, LISTING_OFF].sort());
+    });
   });
 });

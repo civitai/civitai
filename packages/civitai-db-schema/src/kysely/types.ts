@@ -324,7 +324,7 @@ export type AppBlockReview = {
   updated_at: Timestamp;
 };
 export type AppCollaborator = {
-  app_block_id: string;
+  app_listing_id: string;
   user_id: number;
   /**
    * Capability role. 'editor' today (content + media + submit + app-scoped
@@ -478,9 +478,9 @@ export type AppListingScreenshot = {
 };
 export type AppOwnershipEvent = {
   id: string;
-  app_block_id: string | null;
+  app_listing_id: string | null;
   /**
-   * Denormalized so the event stays self-describing after the app is gone.
+   * Denormalized so the event stays self-describing after the listing is gone.
    */
   slug: string;
   /**
@@ -504,10 +504,10 @@ export type AppOwnershipEvent = {
 };
 export type AppOwnershipTransfer = {
   id: string;
-  app_block_id: string;
+  app_listing_id: string;
   /**
    * Snapshot of the owner at initiate time — re-asserted in-tx at accept, so a
-   * transfer initiated by an owner who has since lost the app cannot complete.
+   * transfer initiated by an owner who has since lost the listing cannot complete.
    */
   from_user_id: number;
   to_user_id: number;

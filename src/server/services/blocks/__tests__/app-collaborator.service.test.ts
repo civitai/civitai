@@ -10,6 +10,11 @@ import { constants } from '~/server/common/constants';
  * reject with its status-guarded flip, remove / leave with the Forgejo revoke, the
  * byline opt-in, and the status-VISIBILITY filter.
  *
+ * 🔴 Since the block→listing re-key, two axes are new and are exercised throughout:
+ * the listing KIND (an OFF-SITE listing has no Forgejo repo, so every grant/revoke must
+ * be SKIPPED rather than called with a slug that names nothing), and the SHADOW
+ * REVISION hazard (a seat may only exist on a parent).
+ *
  * `dbWrite.$transaction` runs its callback against the SAME `dbWrite` mock (the tx
  * client), so a test asserts the exact writes made inside the transaction.
  * `dbRead`/`dbWrite` are the same object here — these paths do not depend on the
@@ -20,6 +25,7 @@ import { constants } from '~/server/common/constants';
 const { mockDb, mockRepo, mockNotify } = vi.hoisted(() => {
   const db = {
     appBlock: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
+    appListing: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
     user: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
     appCollaborator: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
@@ -54,6 +60,7 @@ const {
   inviteCollaborator,
   leaveApp,
   listCollaborators,
+  listMyPendingInvites,
   mapCollaboratorError,
   removeCollaborator,
   respondToInvite,
@@ -64,17 +71,83 @@ const { TRPCError } = await import('@trpc/server');
 
 const APP = 'ab_app1';
 const SLUG = 'my-app';
+/** The ON-SITE parent listing — has a backing AppBlock, so it has a Forgejo repo. */
+const LISTING = 'apl_live';
+/** The OFF-SITE parent listing — no AppBlock, no repo, no earnings. */
+const OFFSITE = 'apl_offsite';
+const OFFSITE_SLUG = 'cool-offsite';
+/** A shadow revision of the on-site parent. No seat may EVER live here. */
+const SHADOW = 'apl_shadow';
 const OWNER = 10;
 const TARGET = 20;
 const STRANGER = 50;
 const NOW = new Date('2026-08-10T12:00:00Z');
 
+/**
+ * The listing table the fixture serves, keyed by id.
+ *
+ * 🔴 PAIRWISE-DISTINCT VALUES on purpose: the on-site and off-site rows differ in id,
+ * slug, kind, appBlockId AND appBlock, so an assertion cannot be satisfied by the wrong
+ * row happening to look like the right one.
+ */
+function listingTable(): Record<string, Record<string, unknown>> {
+  return {
+    [LISTING]: {
+      id: LISTING,
+      slug: SLUG,
+      kind: 'onsite',
+      userId: OWNER,
+      appBlockId: APP,
+      revisionOfId: null,
+      revisionOf: null,
+      appBlock: { appId: 'oc_app1', blockId: SLUG, app: { userId: OWNER } },
+    },
+    [OFFSITE]: {
+      id: OFFSITE,
+      slug: OFFSITE_SLUG,
+      kind: 'offsite',
+      userId: OWNER,
+      appBlockId: null,
+      revisionOfId: null,
+      revisionOf: null,
+      appBlock: null,
+    },
+    [SHADOW]: {
+      id: SHADOW,
+      slug: SLUG,
+      kind: 'onsite',
+      userId: OWNER,
+      // A shadow carries appBlockId: null by construction (@unique stays on the parent).
+      appBlockId: null,
+      revisionOfId: LISTING,
+      revisionOf: { id: LISTING, kind: 'onsite', appBlockId: APP },
+      appBlock: null,
+    },
+  };
+}
+
+let LISTINGS: Record<string, Record<string, unknown>>;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  LISTINGS = listingTable();
   mockDb.$transaction.mockImplementation(async (cb: (tx: typeof mockDb) => Promise<unknown>) =>
     cb(mockDb)
   );
-  mockDb.appBlock.findUnique.mockResolvedValue({ id: APP, blockId: SLUG, app: { userId: OWNER } });
+  mockDb.appListing.findUnique.mockImplementation(async (args: unknown): Promise<unknown> => {
+    const w = (args as { where: { id?: string; appBlockId?: string } }).where;
+    if (w.id) return LISTINGS[w.id] ?? null;
+    if (w.appBlockId) {
+      return Object.values(LISTINGS).find((l) => l.appBlockId === w.appBlockId) ?? null;
+    }
+    return null;
+  });
+  mockDb.appBlock.findUnique.mockResolvedValue({
+    id: APP,
+    blockId: SLUG,
+    app: { userId: OWNER },
+    appListing: { id: LISTING },
+  });
   mockDb.user.findUnique.mockResolvedValue({ id: TARGET, bannedAt: null });
   mockDb.appCollaborator.findUnique.mockResolvedValue(null);
   mockDb.appCollaborator.count.mockResolvedValue(0);
@@ -120,25 +193,90 @@ describe('shouldNotifyInvite — 🔴 the inverted-throttle guard', () => {
 describe('inviteCollaborator', () => {
   it('the OWNER can invite; the row is created PENDING and an event is written', async () => {
     const res = await inviteCollaborator({
-      appBlockId: APP,
+      appListingId: LISTING,
       targetUserId: TARGET,
       actorUserId: OWNER,
       now: NOW,
     });
     expect(res).toMatchObject({ status: 'pending', created: true, notified: true });
     const upsert = mockDb.appCollaborator.upsert.mock.calls[0][0] as {
-      create: { status: string; role: string };
+      create: { status: string; role: string; appListingId: string };
     };
     expect(upsert.create.status).toBe('pending');
     expect(upsert.create.role).toBe('editor');
-    const evt = mockDb.appOwnershipEvent.create.mock.calls[0][0] as { data: { action: string } };
+    // 🔴 The re-key, at the write side: the seat is stored under the LISTING id.
+    expect(upsert.create.appListingId).toBe(LISTING);
+    const evt = mockDb.appOwnershipEvent.create.mock.calls[0][0] as {
+      data: { action: string; appListingId: string };
+    };
     expect(evt.data.action).toBe('invite');
+    expect(evt.data.appListingId).toBe(LISTING);
     expect(mockNotify.notifyAppCollaborator).toHaveBeenCalledOnce();
+  });
+
+  it('🔴 an OFF-SITE listing can be seated — the whole point of the re-key', async () => {
+    const res = await inviteCollaborator({
+      appListingId: OFFSITE,
+      targetUserId: TARGET,
+      actorUserId: OWNER,
+      now: NOW,
+    });
+    expect(res).toMatchObject({ appListingId: OFFSITE, status: 'pending', created: true });
+    const upsert = mockDb.appCollaborator.upsert.mock.calls[0][0] as {
+      create: { appListingId: string };
+    };
+    expect(upsert.create.appListingId).toBe(OFFSITE);
+  });
+
+  it('🔴 the OFF-SITE owner is the LISTING’s userId — there is no OauthClient in that chain', async () => {
+    // The onsite owner comes from `appBlock.app.userId`; offsite has no appBlock, so the
+    // column IS the owner. A resolver that only ever read `appBlock.app.userId` would
+    // refuse every off-site owner with NOT_OWNER.
+    LISTINGS[OFFSITE] = { ...LISTINGS[OFFSITE], userId: 777 };
+    await expect(
+      inviteCollaborator({
+        appListingId: OFFSITE,
+        targetUserId: TARGET,
+        actorUserId: 777,
+        now: NOW,
+      })
+    ).resolves.toMatchObject({ status: 'pending' });
+  });
+
+  it('🔴 ONSITE ownership is the OauthClient’s, even when the listing’s copy is STALE', async () => {
+    // `AppListing.userId` is a DENORMALIZED copy for an on-site listing, and it can
+    // legitimately drift (a mod `claimListing`, a partial write, a backfill). The
+    // canonical owner is `AppBlock.app.userId`. Resolving from the copy would let a
+    // stale row lock the REAL owner out of managing their own collaborators — and would
+    // let whoever the stale row names in.
+    LISTINGS[LISTING] = { ...LISTINGS[LISTING], userId: 999 };
+    await expect(
+      inviteCollaborator({
+        appListingId: LISTING,
+        targetUserId: TARGET,
+        actorUserId: OWNER,
+        now: NOW,
+      })
+    ).resolves.toMatchObject({ status: 'pending' });
+    // …and the stale name does NOT get in.
+    await expect(
+      inviteCollaborator({
+        appListingId: LISTING,
+        targetUserId: TARGET,
+        actorUserId: 999,
+        now: NOW,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_OWNER' });
   });
 
   it('🔴 a NON-OWNER (even an accepted editor) cannot invite — seats are owner-managed', async () => {
     await expect(
-      inviteCollaborator({ appBlockId: APP, targetUserId: TARGET, actorUserId: STRANGER, now: NOW })
+      inviteCollaborator({
+        appListingId: LISTING,
+        targetUserId: TARGET,
+        actorUserId: STRANGER,
+        now: NOW,
+      })
     ).rejects.toMatchObject({ code: 'NOT_OWNER' });
     expect(mockDb.appCollaborator.upsert).not.toHaveBeenCalled();
     expect(mockDb.appOwnershipEvent.create).not.toHaveBeenCalled();
@@ -146,21 +284,37 @@ describe('inviteCollaborator', () => {
 
   it('inviting the OWNER is INVALID_TARGET', async () => {
     await expect(
-      inviteCollaborator({ appBlockId: APP, targetUserId: OWNER, actorUserId: OWNER, now: NOW })
+      inviteCollaborator({ appListingId: LISTING, targetUserId: OWNER, actorUserId: OWNER, now: NOW })
     ).rejects.toMatchObject({ code: 'INVALID_TARGET' });
   });
 
   it('a nonexistent target is INVALID_TARGET (never a raw FK error)', async () => {
     mockDb.user.findUnique.mockResolvedValue(null);
     await expect(
-      inviteCollaborator({ appBlockId: APP, targetUserId: 999, actorUserId: OWNER, now: NOW })
+      inviteCollaborator({ appListingId: LISTING, targetUserId: 999, actorUserId: OWNER, now: NOW })
     ).rejects.toMatchObject({ code: 'INVALID_TARGET' });
+  });
+
+  it('a missing listing is NOT_FOUND', async () => {
+    await expect(
+      inviteCollaborator({
+        appListingId: 'apl_nope',
+        targetUserId: TARGET,
+        actorUserId: OWNER,
+        now: NOW,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
   it('🔴 a BANNED target cannot be seated (the ban decision)', async () => {
     mockDb.user.findUnique.mockResolvedValue({ id: TARGET, bannedAt: new Date() });
     await expect(
-      inviteCollaborator({ appBlockId: APP, targetUserId: TARGET, actorUserId: OWNER, now: NOW })
+      inviteCollaborator({
+        appListingId: LISTING,
+        targetUserId: TARGET,
+        actorUserId: OWNER,
+        now: NOW,
+      })
     ).rejects.toMatchObject({ code: 'BANNED' });
     expect(mockDb.appCollaborator.upsert).not.toHaveBeenCalled();
   });
@@ -171,7 +325,12 @@ describe('inviteCollaborator', () => {
       lastNotifiedAt: null,
     });
     await expect(
-      inviteCollaborator({ appBlockId: APP, targetUserId: TARGET, actorUserId: OWNER, now: NOW })
+      inviteCollaborator({
+        appListingId: LISTING,
+        targetUserId: TARGET,
+        actorUserId: OWNER,
+        now: NOW,
+      })
     ).rejects.toMatchObject({ code: 'ALREADY_SEATED' });
   });
 
@@ -181,7 +340,7 @@ describe('inviteCollaborator', () => {
       lastNotifiedAt: null,
     });
     const res = await inviteCollaborator({
-      appBlockId: APP,
+      appListingId: LISTING,
       targetUserId: TARGET,
       actorUserId: OWNER,
       now: NOW,
@@ -200,7 +359,7 @@ describe('inviteCollaborator', () => {
       lastNotifiedAt: new Date(NOW.getTime() - 60_000),
     });
     const res = await inviteCollaborator({
-      appBlockId: APP,
+      appListingId: LISTING,
       targetUserId: TARGET,
       actorUserId: OWNER,
       now: NOW,
@@ -212,21 +371,28 @@ describe('inviteCollaborator', () => {
   it('the CAP blocks a NEW seat at the configured maximum', async () => {
     mockDb.appCollaborator.count.mockResolvedValue(constants.appCollaborators.maxCollaborators);
     await expect(
-      inviteCollaborator({ appBlockId: APP, targetUserId: TARGET, actorUserId: OWNER, now: NOW })
+      inviteCollaborator({
+        appListingId: LISTING,
+        targetUserId: TARGET,
+        actorUserId: OWNER,
+        now: NOW,
+      })
     ).rejects.toMatchObject({ code: 'CAP_REACHED' });
   });
 
   it('the cap counts PENDING + ACCEPTED only — a rejected row occupies no seat', async () => {
     await inviteCollaborator({
-      appBlockId: APP,
+      appListingId: LISTING,
       targetUserId: TARGET,
       actorUserId: OWNER,
       now: NOW,
     });
     const args = mockDb.appCollaborator.count.mock.calls[0][0] as {
-      where: { status: { in: string[] } };
+      where: { appListingId: string; status: { in: string[] } };
     };
     expect(args.where.status.in.sort()).toEqual(['accepted', 'pending']);
+    // …and the cap is per LISTING, not global.
+    expect(args.where.appListingId).toBe(LISTING);
   });
 
   it('the cap is NOT re-charged when re-touching an existing row', async () => {
@@ -236,16 +402,114 @@ describe('inviteCollaborator', () => {
     });
     mockDb.appCollaborator.count.mockResolvedValue(constants.appCollaborators.maxCollaborators);
     await expect(
-      inviteCollaborator({ appBlockId: APP, targetUserId: TARGET, actorUserId: OWNER, now: NOW })
+      inviteCollaborator({
+        appListingId: LISTING,
+        targetUserId: TARGET,
+        actorUserId: OWNER,
+        now: NOW,
+      })
     ).resolves.toMatchObject({ status: 'pending' });
   });
 
   it('a notification failure does NOT undo the invite (best-effort, post-commit)', async () => {
     mockNotify.notifyAppCollaborator.mockRejectedValueOnce(new Error('notifications down'));
     await expect(
-      inviteCollaborator({ appBlockId: APP, targetUserId: TARGET, actorUserId: OWNER, now: NOW })
+      inviteCollaborator({
+        appListingId: LISTING,
+        targetUserId: TARGET,
+        actorUserId: OWNER,
+        now: NOW,
+      })
     ).resolves.toMatchObject({ status: 'pending' });
     expect(mockDb.appCollaborator.upsert).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 🔴 THE SHADOW HAZARD — a seat may only ever exist on a PARENT listing.
+// ---------------------------------------------------------------------------
+
+describe('🔴 SHADOW HAZARD — a seat can never be created on a revision draft', () => {
+  /**
+   * WHY THIS IS A SAFETY GUARD AND NOT A NICETY.
+   *
+   * `applyApprovedRevision` DELETES the shadow when a moderator approves the revision,
+   * and `app_collaborators.app_listing_id` is `ON DELETE CASCADE`. So a seat that landed
+   * on a shadow would be destroyed by a routine approve — silently, with no error, and
+   * with the audit event still claiming the person was seated. A SQL CHECK cannot
+   * express "parent only" (a row-level CHECK cannot see another row's `revision_of_id`),
+   * so the invariant is held here and in `resolveListingAccess`'s parent hop.
+   *
+   * The sibling direction — a seat on the PARENT SURVIVING an approve — is pinned in
+   * `app-collaborator.revision-non-clobber.test.ts`.
+   */
+  it('inviting on a SHADOW is refused, and nothing is written', async () => {
+    await expect(
+      inviteCollaborator({
+        appListingId: SHADOW,
+        targetUserId: TARGET,
+        actorUserId: OWNER,
+        now: NOW,
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_TARGET' });
+    expect(mockDb.appCollaborator.upsert).not.toHaveBeenCalled();
+    expect(mockDb.appOwnershipEvent.create).not.toHaveBeenCalled();
+  });
+
+  it('🔴 the refusal names the reason (it is a product statement, not an internal error)', async () => {
+    await expect(
+      inviteCollaborator({
+        appListingId: SHADOW,
+        targetUserId: TARGET,
+        actorUserId: OWNER,
+        now: NOW,
+      })
+    ).rejects.toMatchObject({
+      message: 'Collaborators are managed on the live listing, not on a revision draft',
+    });
+  });
+
+  it('🔴 the refusal fires BEFORE the owner check — the id as SUPPLIED is what is tested', async () => {
+    // The guard must not be reachable only via the parent-resolved row: `assertOwner`
+    // hops to the parent, so a check placed after it could never see the shadow at all.
+    // A STRANGER on a shadow must still get the shadow error, not NOT_OWNER.
+    await expect(
+      inviteCollaborator({
+        appListingId: SHADOW,
+        targetUserId: TARGET,
+        actorUserId: STRANGER,
+        now: NOW,
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_TARGET' });
+  });
+
+  it('POSITIVE CONTROL: the SAME invite on the shadow’s PARENT succeeds', async () => {
+    // Proves the refusal is about the shadow and not about some other fixture defect.
+    await expect(
+      inviteCollaborator({
+        appListingId: LISTING,
+        targetUserId: TARGET,
+        actorUserId: OWNER,
+        now: NOW,
+      })
+    ).resolves.toMatchObject({ appListingId: LISTING, created: true });
+  });
+
+  it('🔴 every OTHER seat mutation handed a shadow id acts on the PARENT’s seat', async () => {
+    // Refusing everywhere would break the editor mid-revision; the resolve-to-parent hop
+    // is the single path, so these land on the parent rather than on a doomed namespace.
+    await respondToInvite({ appListingId: SHADOW, userId: TARGET, accept: true, now: NOW });
+    const upd = mockDb.appCollaborator.updateMany.mock.calls[0][0] as {
+      where: { appListingId: string };
+    };
+    expect(upd.where.appListingId).toBe(LISTING);
+
+    mockDb.appCollaborator.deleteMany.mockClear();
+    await leaveApp({ appListingId: SHADOW, userId: TARGET });
+    const del = mockDb.appCollaborator.deleteMany.mock.calls[0][0] as {
+      where: { appListingId: string };
+    };
+    expect(del.where.appListingId).toBe(LISTING);
   });
 });
 
@@ -255,7 +519,12 @@ describe('inviteCollaborator', () => {
 
 describe('respondToInvite', () => {
   it('ACCEPT flips the row and GRANTS Forgejo write', async () => {
-    const res = await respondToInvite({ appBlockId: APP, userId: TARGET, accept: true, now: NOW });
+    const res = await respondToInvite({
+      appListingId: LISTING,
+      userId: TARGET,
+      accept: true,
+      now: NOW,
+    });
     expect(res.status).toBe('accepted');
     const upd = mockDb.appCollaborator.updateMany.mock.calls[0][0] as {
       where: { status: string };
@@ -269,7 +538,12 @@ describe('respondToInvite', () => {
   });
 
   it('REJECT flips the row and grants NOTHING', async () => {
-    const res = await respondToInvite({ appBlockId: APP, userId: TARGET, accept: false, now: NOW });
+    const res = await respondToInvite({
+      appListingId: LISTING,
+      userId: TARGET,
+      accept: false,
+      now: NOW,
+    });
     expect(res.status).toBe('rejected');
     expect(mockRepo.grantAppRepoWrite).not.toHaveBeenCalled();
   });
@@ -279,7 +553,7 @@ describe('respondToInvite', () => {
     // The real $transaction rolls back on throw; the fake runs inline, so assert on the
     // ORDER instead: the guard must throw BEFORE the event create is reached.
     await expect(
-      respondToInvite({ appBlockId: APP, userId: STRANGER, accept: true, now: NOW })
+      respondToInvite({ appListingId: LISTING, userId: STRANGER, accept: true, now: NOW })
     ).rejects.toMatchObject({ code: 'NO_INVITE' });
     expect(mockDb.appOwnershipEvent.create).not.toHaveBeenCalled();
     expect(mockRepo.grantAppRepoWrite).not.toHaveBeenCalled();
@@ -288,14 +562,14 @@ describe('respondToInvite', () => {
   it('🔴 a BANNED user cannot ACCEPT', async () => {
     mockDb.user.findUnique.mockResolvedValue({ bannedAt: new Date() });
     await expect(
-      respondToInvite({ appBlockId: APP, userId: TARGET, accept: true, now: NOW })
+      respondToInvite({ appListingId: LISTING, userId: TARGET, accept: true, now: NOW })
     ).rejects.toMatchObject({ code: 'BANNED' });
   });
 
   it('a BANNED user CAN decline (declining takes nothing away from anyone)', async () => {
     mockDb.user.findUnique.mockResolvedValue({ bannedAt: new Date() });
     await expect(
-      respondToInvite({ appBlockId: APP, userId: TARGET, accept: false, now: NOW })
+      respondToInvite({ appListingId: LISTING, userId: TARGET, accept: false, now: NOW })
     ).resolves.toMatchObject({ status: 'rejected' });
   });
 
@@ -306,7 +580,7 @@ describe('respondToInvite', () => {
   // misleading rather than merely incomplete, and nothing downstream would ever
   // contradict it.
   it('🔴 ACCEPT is recorded as `accept` in the audit trail', async () => {
-    await respondToInvite({ appBlockId: APP, userId: TARGET, accept: true, now: NOW });
+    await respondToInvite({ appListingId: LISTING, userId: TARGET, accept: true, now: NOW });
     const evt = mockDb.appOwnershipEvent.create.mock.calls[0][0] as {
       data: { action: string; actorUserId: number; targetUserId: number };
     };
@@ -316,21 +590,81 @@ describe('respondToInvite', () => {
   });
 
   it('🔴 REJECT is recorded as `reject` — the two are not interchangeable', async () => {
-    await respondToInvite({ appBlockId: APP, userId: TARGET, accept: false, now: NOW });
+    await respondToInvite({ appListingId: LISTING, userId: TARGET, accept: false, now: NOW });
     const evt = mockDb.appOwnershipEvent.create.mock.calls[0][0] as { data: { action: string } };
     expect(evt.data.action).toBe('reject');
   });
 
   it('POSITIVE CONTROL: the two branches really do write DIFFERENT actions', async () => {
     // Otherwise both assertions above could be satisfied by one constant string.
-    await respondToInvite({ appBlockId: APP, userId: TARGET, accept: true, now: NOW });
+    await respondToInvite({ appListingId: LISTING, userId: TARGET, accept: true, now: NOW });
     const a = (mockDb.appOwnershipEvent.create.mock.calls[0][0] as { data: { action: string } })
       .data.action;
     mockDb.appOwnershipEvent.create.mockClear();
-    await respondToInvite({ appBlockId: APP, userId: TARGET, accept: false, now: NOW });
+    await respondToInvite({ appListingId: LISTING, userId: TARGET, accept: false, now: NOW });
     const b = (mockDb.appOwnershipEvent.create.mock.calls[0][0] as { data: { action: string } })
       .data.action;
     expect(a).not.toBe(b);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 🔴 KIND × Forgejo — an off-site seat must never reach the repo service.
+// ---------------------------------------------------------------------------
+
+describe('🔴 Forgejo is ON-SITE ONLY — the `submitVersion: false` capability, enforced', () => {
+  /**
+   * An off-site listing has no bundle and no repo. Calling `grantAppRepoWrite` with a
+   * store slug that names no repository would be a guaranteed remote 404 on EVERY
+   * off-site accept — and because the grant is best-effort post-commit, it would fail
+   * silently forever rather than surface. The guard is "there is a backing AppBlock",
+   * which is the same fact the capability table encodes.
+   */
+  it('accepting a seat on an OFF-SITE listing grants NOTHING', async () => {
+    const res = await respondToInvite({
+      appListingId: OFFSITE,
+      userId: TARGET,
+      accept: true,
+      now: NOW,
+    });
+    expect(res.status).toBe('accepted');
+    expect(mockRepo.grantAppRepoWrite).not.toHaveBeenCalled();
+  });
+
+  it('removing an OFF-SITE seat revokes NOTHING', async () => {
+    const res = await removeCollaborator({
+      appListingId: OFFSITE,
+      targetUserId: TARGET,
+      actorUserId: OWNER,
+    });
+    expect(res.removed).toBe(true);
+    expect(mockRepo.revokeAppRepoWrite).not.toHaveBeenCalled();
+  });
+
+  it('leaving an OFF-SITE listing revokes NOTHING', async () => {
+    await leaveApp({ appListingId: OFFSITE, userId: TARGET });
+    expect(mockRepo.revokeAppRepoWrite).not.toHaveBeenCalled();
+  });
+
+  it('🔴 POSITIVE CONTROL: the SAME three actions on the ON-SITE listing DO reach Forgejo', async () => {
+    // Without this, "not called" is indistinguishable from a repo mock that is never
+    // called by anything — the classic reassuring zero.
+    await respondToInvite({ appListingId: LISTING, userId: TARGET, accept: true, now: NOW });
+    expect(mockRepo.grantAppRepoWrite).toHaveBeenCalledWith({ slug: SLUG, userId: TARGET });
+    await removeCollaborator({ appListingId: LISTING, targetUserId: TARGET, actorUserId: OWNER });
+    expect(mockRepo.revokeAppRepoWrite).toHaveBeenCalledWith({ slug: SLUG, userId: TARGET });
+  });
+
+  it('🔴 the repo slug is the BLOCK slug, not the store slug', async () => {
+    // They coincide for on-site listings today, so the fixture makes them differ to
+    // prove which one is actually read: the Forgejo repo is `civitai-apps/<blockId>`.
+    LISTINGS[LISTING] = {
+      ...LISTINGS[LISTING],
+      slug: 'store-facing-slug',
+      appBlock: { appId: 'oc_app1', blockId: 'repo-slug', app: { userId: OWNER } },
+    };
+    await respondToInvite({ appListingId: LISTING, userId: TARGET, accept: true, now: NOW });
+    expect(mockRepo.grantAppRepoWrite).toHaveBeenCalledWith({ slug: 'repo-slug', userId: TARGET });
   });
 });
 
@@ -341,7 +675,7 @@ describe('respondToInvite', () => {
 describe('removeCollaborator / leaveApp — the REVOKE half', () => {
   it('the owner removes a seat and the repo grant is REVOKED', async () => {
     const res = await removeCollaborator({
-      appBlockId: APP,
+      appListingId: LISTING,
       targetUserId: TARGET,
       actorUserId: OWNER,
     });
@@ -351,7 +685,7 @@ describe('removeCollaborator / leaveApp — the REVOKE half', () => {
 
   it('a NON-OWNER cannot remove someone else', async () => {
     await expect(
-      removeCollaborator({ appBlockId: APP, targetUserId: TARGET, actorUserId: STRANGER })
+      removeCollaborator({ appListingId: LISTING, targetUserId: TARGET, actorUserId: STRANGER })
     ).rejects.toMatchObject({ code: 'NOT_OWNER' });
     expect(mockRepo.revokeAppRepoWrite).not.toHaveBeenCalled();
   });
@@ -359,7 +693,7 @@ describe('removeCollaborator / leaveApp — the REVOKE half', () => {
   it('removing a seat that does not exist is a no-op and revokes nothing', async () => {
     mockDb.appCollaborator.deleteMany.mockResolvedValue({ count: 0 });
     const res = await removeCollaborator({
-      appBlockId: APP,
+      appListingId: LISTING,
       targetUserId: TARGET,
       actorUserId: OWNER,
     });
@@ -369,7 +703,7 @@ describe('removeCollaborator / leaveApp — the REVOKE half', () => {
   });
 
   it('a COLLABORATOR may leave without any owner check — and is revoked', async () => {
-    const res = await leaveApp({ appBlockId: APP, userId: TARGET });
+    const res = await leaveApp({ appListingId: LISTING, userId: TARGET });
     expect(res.removed).toBe(true);
     expect(mockRepo.revokeAppRepoWrite).toHaveBeenCalledWith({ slug: SLUG, userId: TARGET });
     const evt = mockDb.appOwnershipEvent.create.mock.calls[0][0] as { data: { action: string } };
@@ -384,7 +718,7 @@ describe('removeCollaborator / leaveApp — the REVOKE half', () => {
 describe('🔴 leaveApp / removeCollaborator delete EXACTLY ONE seat', () => {
   /**
    * THE WORST SURVIVING MUTANT. Dropping `userId` from `leaveApp`'s `where` turns "I
-   * give up my seat" into "every collaborator on this app is removed" — a one-word
+   * give up my seat" into "every collaborator on this listing is removed" — a one-word
    * deletion, performed by a NON-OWNER (leaving needs no owner check, correctly), that
    * no test noticed. The old fixture asserted only `deleteMany` returned `count: 1`,
    * which a table-wide delete satisfies just as well as a targeted one.
@@ -396,23 +730,23 @@ describe('🔴 leaveApp / removeCollaborator delete EXACTLY ONE seat', () => {
   const OTHER_SEAT = 21;
 
   /** The seat table, mutated for real by the fake `deleteMany`. */
-  let seats: Array<{ appBlockId: string; userId: number }>;
+  let seats: Array<{ appListingId: string; userId: number }>;
 
   beforeEach(() => {
     seats = [
-      { appBlockId: APP, userId: TARGET },
-      { appBlockId: APP, userId: OTHER_SEAT },
-      // A seat on a DIFFERENT app, so an over-broad `where` that keeps `userId` but
-      // drops `appBlockId` is caught too.
-      { appBlockId: 'ab_other', userId: TARGET },
+      { appListingId: LISTING, userId: TARGET },
+      { appListingId: LISTING, userId: OTHER_SEAT },
+      // A seat on a DIFFERENT listing, so an over-broad `where` that keeps `userId` but
+      // drops `appListingId` is caught too.
+      { appListingId: OFFSITE, userId: TARGET },
     ];
     mockDb.appCollaborator.deleteMany.mockImplementation(async (args: unknown) => {
-      const w = (args as { where: { appBlockId?: string; userId?: number } }).where;
+      const w = (args as { where: { appListingId?: string; userId?: number } }).where;
       const before = seats.length;
       seats = seats.filter(
         (s) =>
           !(
-            (w.appBlockId === undefined || s.appBlockId === w.appBlockId) &&
+            (w.appListingId === undefined || s.appListingId === w.appListingId) &&
             (w.userId === undefined || s.userId === w.userId)
           )
       );
@@ -427,32 +761,32 @@ describe('🔴 leaveApp / removeCollaborator delete EXACTLY ONE seat', () => {
     expect(seats).toEqual([]);
   });
 
-  it('🔴 leaveApp removes ONLY the caller’s seat on THIS app', async () => {
-    const res = await leaveApp({ appBlockId: APP, userId: TARGET });
+  it('🔴 leaveApp removes ONLY the caller’s seat on THIS listing', async () => {
+    const res = await leaveApp({ appListingId: LISTING, userId: TARGET });
     expect(res.removed).toBe(true);
     // The co-editor keeps their seat. A `where` missing `userId` deletes them too.
-    expect(seats).toContainEqual({ appBlockId: APP, userId: OTHER_SEAT });
-    // …and the caller's seat on an unrelated app survives. A `where` missing
-    // `appBlockId` takes that one.
-    expect(seats).toContainEqual({ appBlockId: 'ab_other', userId: TARGET });
-    expect(seats).not.toContainEqual({ appBlockId: APP, userId: TARGET });
+    expect(seats).toContainEqual({ appListingId: LISTING, userId: OTHER_SEAT });
+    // …and the caller's seat on an unrelated listing survives. A `where` missing
+    // `appListingId` takes that one.
+    expect(seats).toContainEqual({ appListingId: OFFSITE, userId: TARGET });
+    expect(seats).not.toContainEqual({ appListingId: LISTING, userId: TARGET });
     expect(seats).toHaveLength(2);
   });
 
   it('🔴 leaveApp revokes repo write for the LEAVER only', async () => {
-    await leaveApp({ appBlockId: APP, userId: TARGET });
+    await leaveApp({ appListingId: LISTING, userId: TARGET });
     expect(mockRepo.revokeAppRepoWrite).toHaveBeenCalledOnce();
     expect(mockRepo.revokeAppRepoWrite).toHaveBeenCalledWith({ slug: SLUG, userId: TARGET });
   });
 
   it('🔴 removeCollaborator removes ONLY the named target', async () => {
-    await removeCollaborator({ appBlockId: APP, targetUserId: TARGET, actorUserId: OWNER });
-    expect(seats).toContainEqual({ appBlockId: APP, userId: OTHER_SEAT });
-    expect(seats).not.toContainEqual({ appBlockId: APP, userId: TARGET });
+    await removeCollaborator({ appListingId: LISTING, targetUserId: TARGET, actorUserId: OWNER });
+    expect(seats).toContainEqual({ appListingId: LISTING, userId: OTHER_SEAT });
+    expect(seats).not.toContainEqual({ appListingId: LISTING, userId: TARGET });
   });
 
-  it('leaving an app you hold no seat on removes nothing and revokes nothing', async () => {
-    const res = await leaveApp({ appBlockId: APP, userId: STRANGER });
+  it('leaving a listing you hold no seat on removes nothing and revokes nothing', async () => {
+    const res = await leaveApp({ appListingId: LISTING, userId: STRANGER });
     expect(res.removed).toBe(false);
     expect(seats).toHaveLength(3);
     expect(mockRepo.revokeAppRepoWrite).not.toHaveBeenCalled();
@@ -506,23 +840,28 @@ describe('🔴 recordOwnershipEvent writes through the `tx`, not `dbWrite`', () 
     [
       'inviteCollaborator',
       () =>
-        inviteCollaborator({ appBlockId: APP, targetUserId: TARGET, actorUserId: OWNER, now: NOW }),
+        inviteCollaborator({
+          appListingId: LISTING,
+          targetUserId: TARGET,
+          actorUserId: OWNER,
+          now: NOW,
+        }),
       'invite',
     ],
     [
       'respondToInvite',
-      () => respondToInvite({ appBlockId: APP, userId: TARGET, accept: true, now: NOW }),
+      () => respondToInvite({ appListingId: LISTING, userId: TARGET, accept: true, now: NOW }),
       'accept',
     ],
     [
       'removeCollaborator',
-      () => removeCollaborator({ appBlockId: APP, targetUserId: TARGET, actorUserId: OWNER }),
+      () => removeCollaborator({ appListingId: LISTING, targetUserId: TARGET, actorUserId: OWNER }),
       'remove',
     ],
-    ['leaveApp', () => leaveApp({ appBlockId: APP, userId: TARGET }), 'leave'],
+    ['leaveApp', () => leaveApp({ appListingId: LISTING, userId: TARGET }), 'leave'],
     [
       'setCollaboratorDisplayed',
-      () => setCollaboratorDisplayed({ appBlockId: APP, userId: TARGET, displayed: true }),
+      () => setCollaboratorDisplayed({ appListingId: LISTING, userId: TARGET, displayed: true }),
       'display',
     ],
   ];
@@ -540,7 +879,7 @@ describe('🔴 recordOwnershipEvent writes through the `tx`, not `dbWrite`', () 
   }
 
   it('the seat WRITE goes through the tx too, not just the event', async () => {
-    await respondToInvite({ appBlockId: APP, userId: TARGET, accept: true, now: NOW });
+    await respondToInvite({ appListingId: LISTING, userId: TARGET, accept: true, now: NOW });
     expect(tx.appCollaborator.updateMany).toHaveBeenCalledOnce();
     expect(mockDb.appCollaborator.updateMany).not.toHaveBeenCalled();
   });
@@ -553,26 +892,35 @@ describe('🔴 recordOwnershipEvent writes through the `tx`, not `dbWrite`', () 
 describe('setCollaboratorDisplayed', () => {
   it('an ACCEPTED collaborator can toggle their byline', async () => {
     const res = await setCollaboratorDisplayed({
-      appBlockId: APP,
+      appListingId: LISTING,
       userId: TARGET,
       displayed: false,
     });
     expect(res.displayed).toBe(false);
     const upd = mockDb.appCollaborator.updateMany.mock.calls[0][0] as {
-      where: { status: string };
+      where: { status: string; appListingId: string };
       data: { displayed: boolean };
     };
     // 🔴 Guarded on ACCEPTED: a pending invitee must not be able to pre-arrange public
     // credit for a seat they have not taken.
     expect(upd.where.status).toBe('accepted');
+    expect(upd.where.appListingId).toBe(LISTING);
     expect(upd.data.displayed).toBe(false);
   });
 
   it('a non-accepted (or absent) row is refused', async () => {
     mockDb.appCollaborator.updateMany.mockResolvedValue({ count: 0 });
     await expect(
-      setCollaboratorDisplayed({ appBlockId: APP, userId: STRANGER, displayed: true })
+      setCollaboratorDisplayed({ appListingId: LISTING, userId: STRANGER, displayed: true })
     ).rejects.toMatchObject({ code: 'NO_INVITE' });
+  });
+
+  it('an OFF-SITE collaborator can toggle their byline too', async () => {
+    // The byline is the one collaborator surface that is fully public, and it is
+    // kind-agnostic — an off-site listing's detail page carries the same chips.
+    await expect(
+      setCollaboratorDisplayed({ appListingId: OFFSITE, userId: TARGET, displayed: false })
+    ).resolves.toMatchObject({ appListingId: OFFSITE, displayed: false });
   });
 });
 
@@ -780,10 +1128,10 @@ describe('mapCollaboratorError — the router’s status-code contract', () => {
 
 describe('listCollaborators — 🔴 the caller must hold a REAL role', () => {
   /**
-   * `resolveAppAccess` was consulted here only for `ownerUserId`; its `role` was never
-   * required non-null. The status filter governs which ROWS a viewer sees, not whether
-   * the viewer may read the app at all — so any account with the author flag could
-   * enumerate ANY app's accepted roster, INCLUDING seats whose holder set
+   * `resolveListingAccess` was consulted here only for `ownerUserId`; its `role` was
+   * never required non-null. The status filter governs which ROWS a viewer sees, not
+   * whether the viewer may read the listing at all — so any account with the author flag
+   * could enumerate ANY listing's accepted roster, INCLUDING seats whose holder set
    * `displayed: false` precisely so as not to be listed publicly, plus `invitedBy` and
    * the invite/response timestamps.
    */
@@ -807,26 +1155,26 @@ describe('listCollaborators — 🔴 the caller must hold a REAL role', () => {
 
   it('the OWNER may read the roster', async () => {
     await expect(
-      listCollaborators({ appBlockId: APP, viewerUserId: OWNER, isModerator: false })
+      listCollaborators({ appListingId: LISTING, viewerUserId: OWNER, isModerator: false })
     ).resolves.toHaveLength(1);
   });
 
   it('an ACCEPTED editor may read the roster', async () => {
     mockDb.appCollaborator.findFirst.mockResolvedValue({ userId: TARGET });
     await expect(
-      listCollaborators({ appBlockId: APP, viewerUserId: TARGET, isModerator: false })
+      listCollaborators({ appListingId: LISTING, viewerUserId: TARGET, isModerator: false })
     ).resolves.toHaveLength(1);
   });
 
   it('a MODERATOR may read the roster', async () => {
     await expect(
-      listCollaborators({ appBlockId: APP, viewerUserId: STRANGER, isModerator: true })
+      listCollaborators({ appListingId: LISTING, viewerUserId: STRANGER, isModerator: true })
     ).resolves.toHaveLength(1);
   });
 
   it('🔴 a STRANGER is refused — and the query never runs', async () => {
     await expect(
-      listCollaborators({ appBlockId: APP, viewerUserId: STRANGER, isModerator: false })
+      listCollaborators({ appListingId: LISTING, viewerUserId: STRANGER, isModerator: false })
     ).rejects.toMatchObject({ code: 'NOT_OWNER' });
     // Fail BEFORE the read, not after it: the rows must never be loaded, let alone
     // filtered.
@@ -835,38 +1183,100 @@ describe('listCollaborators — 🔴 the caller must hold a REAL role', () => {
 
   it('🔴 an ANONYMOUS caller is refused', async () => {
     await expect(
-      listCollaborators({ appBlockId: APP, viewerUserId: null, isModerator: false })
+      listCollaborators({ appListingId: LISTING, viewerUserId: null, isModerator: false })
     ).rejects.toMatchObject({ code: 'NOT_OWNER' });
   });
 
   it('🔴 a PENDING invitee is refused (they read their own invite via listMyPendingInvites)', async () => {
-    // `resolveAppAccess` returns role null for a pending seat — the consent rule. So a
-    // pending invitee does not get the app's roster as a side effect of being invited.
+    // `resolveListingAccess` returns role null for a pending seat — the consent rule. So
+    // a pending invitee does not get the listing's roster as a side effect of being
+    // invited.
     mockDb.appCollaborator.findFirst.mockImplementation(async (args: unknown) => {
       const w = (args as { where: { status?: string } }).where;
       return w.status === 'accepted' ? null : { userId: TARGET };
     });
     await expect(
-      listCollaborators({ appBlockId: APP, viewerUserId: TARGET, isModerator: false })
+      listCollaborators({ appListingId: LISTING, viewerUserId: TARGET, isModerator: false })
     ).rejects.toMatchObject({ code: 'NOT_OWNER' });
   });
 
-  it('a missing app is NOT_FOUND, distinct from a refusal', async () => {
-    mockDb.appBlock.findUnique.mockResolvedValue(null);
+  it('a missing listing is NOT_FOUND, distinct from a refusal', async () => {
     await expect(
-      listCollaborators({ appBlockId: APP, viewerUserId: OWNER, isModerator: false })
+      listCollaborators({ appListingId: 'apl_nope', viewerUserId: OWNER, isModerator: false })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('the OFF-SITE owner may read their roster', async () => {
+    await expect(
+      listCollaborators({ appListingId: OFFSITE, viewerUserId: OWNER, isModerator: false })
+    ).resolves.toHaveLength(1);
+  });
+
+  it('🔴 opening the roster from a SHADOW reads the PARENT’s seats, not an empty set', async () => {
+    await listCollaborators({ appListingId: SHADOW, viewerUserId: OWNER, isModerator: false });
+    expect(mockDb.appCollaborator.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { appListingId: LISTING } })
+    );
   });
 
   it('POSITIVE CONTROL: the roster fixture really carries an opted-OUT seat', async () => {
     // The stake of the leak, stated as data: `displayed: false` is exactly the row a
     // stranger must not be able to read back.
     const rows = await listCollaborators({
-      appBlockId: APP,
+      appListingId: LISTING,
       viewerUserId: OWNER,
       isModerator: false,
     });
     expect(rows[0].displayed).toBe(false);
     expect(rows[0].invitedBy).toBe(OWNER);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The invitee's inbox.
+// ---------------------------------------------------------------------------
+
+describe('listMyPendingInvites', () => {
+  it('carries the listing identity AND its kind, so the client can render both kinds', async () => {
+    mockDb.appCollaborator.findMany.mockResolvedValue([
+      {
+        appListingId: LISTING,
+        invitedBy: OWNER,
+        createdAt: NOW,
+        appListing: { slug: SLUG, kind: 'onsite', appBlockId: APP },
+      },
+      {
+        appListingId: OFFSITE,
+        invitedBy: OWNER,
+        createdAt: NOW,
+        appListing: { slug: OFFSITE_SLUG, kind: 'offsite', appBlockId: null },
+      },
+    ]);
+    expect(await listMyPendingInvites(TARGET)).toEqual([
+      {
+        appListingId: LISTING,
+        slug: SLUG,
+        kind: 'onsite',
+        appBlockId: APP,
+        invitedBy: OWNER,
+        createdAt: NOW,
+      },
+      {
+        appListingId: OFFSITE,
+        slug: OFFSITE_SLUG,
+        kind: 'offsite',
+        appBlockId: null,
+        invitedBy: OWNER,
+        createdAt: NOW,
+      },
+    ]);
+  });
+
+  it('only PENDING rows are read', async () => {
+    mockDb.appCollaborator.findMany.mockResolvedValue([]);
+    await listMyPendingInvites(TARGET);
+    expect(mockDb.appCollaborator.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: TARGET, status: 'pending' } })
+    );
   });
 });

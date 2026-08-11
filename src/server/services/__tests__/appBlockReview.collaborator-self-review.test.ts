@@ -39,6 +39,11 @@ vi.mock('~/server/utils/cache-helpers', () => ({ bustCacheTag: vi.fn(async () =>
 const { upsertAppBlockReview } = await import('~/server/services/appBlockReview.service');
 
 const APP = 'ab_app1';
+/**
+ * 🔴 The block's STORE LISTING. Seats are keyed here since the block→listing re-key, so
+ * the insider read hops `AppBlock → AppListing → app_collaborators`.
+ */
+const LISTING = 'apl_live';
 const OWNER = 10;
 const ACCEPTED_EDITOR = 20;
 const HIDDEN_EDITOR = 21; // accepted, displayed:false
@@ -47,19 +52,26 @@ const REJECTED_INVITEE = 40;
 const OUTSIDER = 50;
 
 const SEATS = [
-  { userId: ACCEPTED_EDITOR, status: 'accepted', displayed: true },
-  { userId: HIDDEN_EDITOR, status: 'accepted', displayed: false },
-  { userId: PENDING_INVITEE, status: 'pending', displayed: true },
-  { userId: REJECTED_INVITEE, status: 'rejected', displayed: true },
+  { appListingId: LISTING, userId: ACCEPTED_EDITOR, status: 'accepted', displayed: true },
+  { appListingId: LISTING, userId: HIDDEN_EDITOR, status: 'accepted', displayed: false },
+  { appListingId: LISTING, userId: PENDING_INVITEE, status: 'pending', displayed: true },
+  { appListingId: LISTING, userId: REJECTED_INVITEE, status: 'rejected', displayed: true },
 ];
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockDb.appBlock.findUnique.mockResolvedValue({ app: { userId: OWNER } });
+  mockDb.appBlock.findUnique.mockResolvedValue({
+    app: { userId: OWNER },
+    appListing: { id: LISTING },
+  });
   mockDb.appCollaborator.findMany.mockImplementation(async (args: unknown) => {
-    const w = (args as { where: { status?: string; displayed?: boolean } }).where;
+    const w = (args as { where: { appListingId?: string; status?: string; displayed?: boolean } })
+      .where;
     return SEATS.filter(
       (r) =>
+        // 🔴 Honouring `appListingId` is load-bearing: without it the insider set would
+        // be satisfied by seats on ANY listing and the hop would be untested.
+        (w.appListingId === undefined || r.appListingId === w.appListingId) &&
         (w.status === undefined || r.status === w.status) &&
         (w.displayed === undefined || r.displayed === w.displayed)
     ).map((r) => ({ userId: r.userId }));
@@ -116,5 +128,24 @@ describe('upsertAppBlockReview — the insider set', () => {
     );
     await expect(review(OWNER)).rejects.toThrow('You cannot review your own app');
     await expect(review(ACCEPTED_EDITOR)).resolves.toBeTruthy();
+  });
+
+  it('🔴 a block with NO store listing has an OWNER-ONLY insider set (nothing to seat on)', async () => {
+    // A first-version app pending approval has no `AppListing` row yet, so there is no
+    // id under which a seat could exist. The gate must still refuse the owner, and must
+    // not throw trying to key a query on `undefined`.
+    mockDb.appBlock.findUnique.mockResolvedValue({ app: { userId: OWNER }, appListing: null });
+    await expect(review(OWNER)).rejects.toThrow('You cannot review your own app');
+    await expect(review(ACCEPTED_EDITOR)).resolves.toBeTruthy();
+    expect(mockDb.appCollaborator.findMany).not.toHaveBeenCalled();
+  });
+
+  it('🔴 the seat query is keyed on the block’s LISTING, not on the block', async () => {
+    // The hop, asserted directly. A query still keyed on `appBlockId` would match no
+    // fixture row and every insider would silently become a permitted reviewer.
+    await review(OUTSIDER);
+    expect(mockDb.appCollaborator.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { appListingId: LISTING, status: 'accepted' } })
+    );
   });
 });

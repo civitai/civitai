@@ -1,5 +1,6 @@
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
+import type { ListingKind } from '~/server/services/blocks/app-access.service';
 import {
   AppCollaboratorError,
   recordOwnershipEvent,
@@ -11,26 +12,64 @@ import { newAppOwnershipTransferId } from '~/server/utils/app-block-ids';
 /**
  * App Listing COLLABORATORS — OWNERSHIP TRANSFER (owner initiates → recipient accepts).
  *
+ * 🔴 LISTING-KEYED, so it works for BOTH store kinds. See `app-access.service`'s header.
+ *
  * ## Authorization: no moderator in the loop
  *
- * The prior art, `offsite-moderation.service.ts::claimListing:623`, is MOD-ONLY,
+ * The prior art, `offsite-moderation.service.ts::claimListing`, is MOD-ONLY,
  * OFFSITE-ONLY and reassigns `AppListing.userId` alone. That guard SHAPE is extended
  * here (status-guarded `updateMany`, in-tx primary snapshot, an audit event written in
  * the same transaction so a rolled-back transfer leaves ZERO events, submission
  * history untouched), but the authorization model is different by product decision:
  * the owner initiates and the recipient accepts. Nobody else is involved.
  *
- * 🔴 And `claimListing`'s single write is INSUFFICIENT for an ONSITE app. Ownership is
+ * ## 🔴 HOW THIS RELATES TO `claimListing` — they cannot race or disagree
+ *
+ * Both paths write `AppListing.userId` on an off-site listing, so the relationship is
+ * stated rather than assumed:
+ *
+ *   - DIFFERENT AUTHORITY. `claimListing` is a MODERATOR remedy (the impersonation
+ *     workflow: report → delist → claim → ban) requiring a mod reason and gated on
+ *     `status IN (approved, removed)`. This is an OWNER-initiated, recipient-consented
+ *     hand-over. Neither is a substitute for the other and neither calls the other.
+ *   - THEY CANNOT INTERLEAVE INTO A WRONG STATE. `acceptTransfer`'s off-site write is
+ *     status-guarded on `userId = <the snapshotted fromUserId>`. So if a mod claims the
+ *     listing after the offer was made, the accept matches 0 rows and is refused with
+ *     "ownership has changed" — the pending offer becomes permanently unacceptable
+ *     (fail-closed), rather than silently undoing the mod's remedy. In the other order,
+ *     a mod claim over an already-accepted transfer simply wins, which is the intended
+ *     precedence: moderator authority is final.
+ *   - SEPARATE AUDIT TRAILS, both written. `claimListing` writes an
+ *     `AppListingModerationEvent`; this writes an `AppOwnershipEvent`. Neither is
+ *     derived from the other, so a listing whose owner moved twice shows both.
+ *
+ * 🔴 `claimListing`'s single write is INSUFFICIENT for an ONSITE listing. Ownership is
  * canonically `OauthClient.userId` (`AppBlock.app.userId`); `AppListing.userId` is a
  * DENORMALIZED COPY. Moving only the listing column would leave the app's real owner
  * unchanged — the old owner would keep `getMyAppRepo`/`updateManifest`/`getMyApps`
- * while the new owner got the store listing. So accept writes BOTH columns in ONE
- * transaction. `app-ownership-transfer.service.test.ts` injects a failure on the second
- * write and asserts a full rollback.
+ * while the new owner got the store listing. So an ONSITE accept writes BOTH columns in
+ * ONE transaction. `app-ownership-transfer.service.test.ts` injects a failure on the
+ * second write and asserts a full rollback.
+ *
+ * ## 🔴 OFF-SITE + a linked OAuth client: REFUSED, at both ends
+ *
+ * v1 moves `AppListing.userId` and nothing else. An off-site listing may carry a
+ * `connectClientId` — an `OauthClient` with a SECRET, redirect URIs and allowed
+ * origins. Moving those is a materially different act from handing over a store
+ * listing, and both silent options are bad:
+ *   - silently moving the client hands over live credentials the recipient never asked
+ *     for and the initiator may not have meant to include; and
+ *   - silently NOT moving it leaves ownership SPLIT — the listing says one user, the
+ *     credential says another — which is the state that produces "why can't I rotate my
+ *     own app's secret?" months later.
+ * So the transfer is refused with an error that names the reason. Enforced at INITIATE
+ * (fail fast) AND re-asserted in-tx at ACCEPT — an offer stays open for
+ * `transferExpiryDays`, and a revision approve can LINK a client in that window, so an
+ * initiate-time check alone would be false for the whole window.
  *
  * ## What deliberately does NOT move
  *
- *   - `AppBlockPublishRequest.submittedByUserId` — historical submission record,
+ *   - `AppListingPublishRequest.submittedByUserId` — historical submission record,
  *     preserved for audit fidelity. Same locked decision as `claimListing`.
  *   - 🔴 `BlockBuzzAttribution.appOwnerUserId` — NOT rewritten. Product decision: Buzz
  *     accrued before the transfer stays with the OLD owner; the transfer is a clean
@@ -45,19 +84,26 @@ import { newAppOwnershipTransferId } from '~/server/utils/app-block-ids';
  *
  * ## Forgejo
  *
- * On accept: revoke the OLD owner's repo write, grant the NEW owner's. Collaborator
- * seats are untouched by a transfer — the app keeps its editors.
+ * On accept of an ON-SITE listing: revoke the OLD owner's repo write, grant the NEW
+ * owner's. An OFF-SITE listing has no repo, so neither call fires. Collaborator seats
+ * are untouched by a transfer — the listing keeps its editors.
  */
 
 export type TransferView = {
   id: string;
-  appBlockId: string;
+  appListingId: string;
   fromUserId: number;
   toUserId: number;
   status: string;
   expiresAt: Date;
   createdAt: Date;
 };
+
+/** The message a connect-linked off-site listing is refused with. Asserted verbatim. */
+export const CONNECT_CLIENT_TRANSFER_REFUSAL =
+  'This listing is linked to an OAuth application. Ownership transfer would either hand ' +
+  'over that application’s credentials or split ownership between the listing and the ' +
+  'client, so it is not available for connect listings. Unlink the OAuth client first.';
 
 /**
  * A pending transfer that has passed `expiresAt` is treated as ABSENT everywhere.
@@ -70,23 +116,79 @@ function isLive(t: { status: string; expiresAt: Date }, now: Date): boolean {
   return t.status === 'pending' && t.expiresAt.getTime() > now.getTime();
 }
 
-async function loadOwnedApp(
-  appBlockId: string,
-  actorUserId: number
-): Promise<{ appBlockId: string; appId: string; slug: string; ownerUserId: number }> {
-  const block = await dbRead.appBlock.findUnique({
-    where: { id: appBlockId },
-    select: { id: true, appId: true, blockId: true, app: { select: { userId: true } } },
-  });
-  if (!block?.app) throw new AppCollaboratorError('NOT_FOUND', 'App not found');
-  if (block.app.userId !== actorUserId) {
+/**
+ * 🔴 THE ONE PREDICATE for "may this listing's ownership move?", written once so the
+ * initiate-time check and the in-tx accept-time re-assert cannot drift apart.
+ *
+ * On-site listings are unaffected: their connect column is always null (an on-site
+ * listing's OauthClient is reached through the AppBlock, and THAT one does move).
+ */
+export function refusesTransferForConnectClient(listing: {
+  kind: string;
+  connectClientId: string | null;
+}): boolean {
+  return listing.kind === 'offsite' && listing.connectClientId != null;
+}
+
+type OwnedListing = {
+  appListingId: string;
+  slug: string;
+  kind: ListingKind;
+  /** Backing AppBlock id — null for off-site. */
+  appBlockId: string | null;
+  /** The AppBlock's OauthClient id (the CANONICAL onsite owner column). Null offsite. */
+  appId: string | null;
+  /** The AppBlock's `blockId` — the Forgejo repo slug. Null offsite. */
+  blockSlug: string | null;
+  connectClientId: string | null;
+  ownerUserId: number;
+};
+
+async function loadOwnedListing(appListingId: string, actorUserId: number): Promise<OwnedListing> {
+  const row = (await dbRead.appListing.findUnique({
+    where: { id: appListingId },
+    select: {
+      id: true,
+      slug: true,
+      kind: true,
+      userId: true,
+      appBlockId: true,
+      connectClientId: true,
+      revisionOfId: true,
+      appBlock: { select: { appId: true, blockId: true, app: { select: { userId: true } } } },
+    },
+  })) as {
+    id: string;
+    slug: string;
+    kind: string;
+    userId: number;
+    appBlockId: string | null;
+    connectClientId: string | null;
+    revisionOfId: string | null;
+    appBlock: { appId: string; blockId: string; app: { userId: number } | null } | null;
+  } | null;
+  if (!row) throw new AppCollaboratorError('NOT_FOUND', 'App listing not found');
+  // A shadow revision is an internal draft, not a thing anyone can own or hand over.
+  // Refused rather than hopped to the parent: "transfer this draft" has no meaning.
+  if (row.revisionOfId != null) {
+    throw new AppCollaboratorError(
+      'INVALID_TARGET',
+      'Ownership is transferred on the live listing, not on a revision draft'
+    );
+  }
+  const ownerUserId = row.appBlock?.app?.userId ?? row.userId;
+  if (ownerUserId !== actorUserId) {
     throw new AppCollaboratorError('NOT_OWNER', 'Only the app owner can transfer ownership');
   }
   return {
-    appBlockId: block.id,
-    appId: block.appId,
-    slug: block.blockId,
-    ownerUserId: block.app.userId,
+    appListingId: row.id,
+    slug: row.slug,
+    kind: row.kind as ListingKind,
+    appBlockId: row.appBlockId,
+    appId: row.appBlock?.appId ?? null,
+    blockSlug: row.appBlock?.blockId ?? null,
+    connectClientId: row.connectClientId,
+    ownerUserId,
   };
 }
 
@@ -95,24 +197,31 @@ async function loadOwnedApp(
  * until the recipient accepts.
  *
  * 🔴 A PENDING TRANSFER CONFERS ZERO CAPABILITY on the recipient — it is not a seat,
- * it does not appear in `resolveAppAccess`, and it grants no repo access. Same consent
- * principle as a pending invite.
+ * it does not appear in `resolveListingAccess`, and it grants no repo access. Same
+ * consent principle as a pending invite.
  *
- * One in-flight transfer per app, enforced by the migration's PARTIAL UNIQUE index
- * (`app_block_id WHERE status='pending'`), which Prisma cannot express. A concurrent
+ * One in-flight transfer per listing, enforced by the migration's PARTIAL UNIQUE index
+ * (`app_listing_id WHERE status='pending'`), which Prisma cannot express. A concurrent
  * second initiate loses on P2002 and is surfaced as a friendly error rather than a
  * raw constraint violation.
  */
 export async function initiateTransfer(opts: {
-  appBlockId: string;
+  appListingId: string;
   toUserId: number;
   actorUserId: number;
   now?: Date;
 }): Promise<TransferView> {
   const now = opts.now ?? new Date();
-  const app = await loadOwnedApp(opts.appBlockId, opts.actorUserId);
+  const listing = await loadOwnedListing(opts.appListingId, opts.actorUserId);
 
-  if (opts.toUserId === app.ownerUserId) {
+  // 🔴 FAIL FAST on a connect-linked off-site listing — see the module header. The
+  // same predicate is re-asserted in-tx at accept, because a revision approve can link
+  // a client while the offer sits open.
+  if (refusesTransferForConnectClient(listing)) {
+    throw new AppCollaboratorError('INVALID_TARGET', CONNECT_CLIENT_TRANSFER_REFUSAL);
+  }
+
+  if (opts.toUserId === listing.ownerUserId) {
     throw new AppCollaboratorError('INVALID_TARGET', 'You already own this app');
   }
   const target = await dbRead.user.findUnique({
@@ -125,9 +234,9 @@ export async function initiateTransfer(opts: {
   }
 
   // Reclaim an EXPIRED pending row first — otherwise the partial unique index would
-  // block every future transfer for this app once one invitation lapsed.
+  // block every future transfer for this listing once one invitation lapsed.
   await dbWrite.appOwnershipTransfer.updateMany({
-    where: { appBlockId: app.appBlockId, status: 'pending', expiresAt: { lte: now } },
+    where: { appListingId: listing.appListingId, status: 'pending', expiresAt: { lte: now } },
     data: { status: 'expired', respondedAt: now },
   });
 
@@ -142,15 +251,15 @@ export async function initiateTransfer(opts: {
       const row = (await tx.appOwnershipTransfer.create({
         data: {
           id,
-          appBlockId: app.appBlockId,
-          fromUserId: app.ownerUserId,
+          appListingId: listing.appListingId,
+          fromUserId: listing.ownerUserId,
           toUserId: opts.toUserId,
           status: 'pending',
           expiresAt,
         },
         select: {
           id: true,
-          appBlockId: true,
+          appListingId: true,
           fromUserId: true,
           toUserId: true,
           status: true,
@@ -159,12 +268,12 @@ export async function initiateTransfer(opts: {
         },
       })) as TransferView;
       await recordOwnershipEvent(tx, {
-        appBlockId: app.appBlockId,
-        slug: app.slug,
+        appListingId: listing.appListingId,
+        slug: listing.slug,
         action: 'transfer_initiated',
         actorUserId: opts.actorUserId,
         targetUserId: opts.toUserId,
-        metadata: { transferId: id, expiresAt: expiresAt.toISOString() },
+        metadata: { transferId: id, kind: listing.kind, expiresAt: expiresAt.toISOString() },
       });
       return row;
     });
@@ -186,7 +295,11 @@ export async function initiateTransfer(opts: {
       type: 'app-ownership-transfer-offered',
       userId: opts.toUserId,
       key: `app-ownership-transfer-offered:${id}`,
-      details: { slug: app.slug, appBlockId: app.appBlockId },
+      details: {
+        slug: listing.slug,
+        appListingId: listing.appListingId,
+        appBlockId: listing.appBlockId,
+      },
     });
   } catch {
     /* best-effort, post-commit */
@@ -207,25 +320,32 @@ export async function initiateTransfer(opts: {
  *      is simply false anywhere inside that window. `respondToInvite` re-reads the user
  *      row for exactly this reason; this one goes further and reads in-transaction on
  *      the primary, because unlike a seat an ownership move is not cheap to unwind;
- *   2. re-assert `OauthClient.userId` STILL equals the transfer's `fromUserId` — a
- *      status-guarded `updateMany` whose 0-count means the owner changed since the
- *      offer (a second transfer landed first), rolling everything back;
- *   3. move `AppListing.userId` for the backing listing — the denormalized copy;
+ *   1c. 🔴 re-assert the CONNECT-CLIENT refusal against the listing AS IT IS NOW. A
+ *      revision approve can link an OAuth client after the offer was made, so the
+ *      initiate-time check says nothing about this instant;
+ *   2. ONSITE ONLY — re-assert `OauthClient.userId` STILL equals the transfer's
+ *      `fromUserId` via a status-guarded `updateMany` whose 0-count means the owner
+ *      changed since the offer, rolling everything back;
+ *   3. move `AppListing.userId`;
  *   4. flip the transfer to `accepted`;
  *   5. write the audit event.
  *
- * Steps 2 and 3 are the two ownership columns; a failure in either rolls back BOTH.
- * That is asserted directly (inject a throw on the second write; assert the first is
- * not observable).
+ * 🔴 STEP 3 IS GUARDED FOR OFFSITE AND UNGUARDED FOR ONSITE, and the asymmetry is the
+ * point. Onsite: step 2 is the authority (the canonical column) and step 3 is the
+ * denormalized follow-up, where a 0-count is a legitimate desync that must not fail the
+ * transfer. Offsite: step 2 does not run at all, so step 3's `userId = fromUserId`
+ * predicate is the ONLY TOCTOU protection there is — a mod `claimListing` landing in
+ * the window makes it match 0 rows, and the accept is refused rather than silently
+ * undoing the moderator's remedy.
  *
- * NOT touched, by design: `AppBlockPublishRequest.submittedByUserId`,
+ * NOT touched, by design: `AppListingPublishRequest.submittedByUserId`,
  * `BlockBuzzAttribution.appOwnerUserId`, collaborator seats. See the module header.
  */
 export async function acceptTransfer(opts: {
   transferId: string;
   userId: number;
   now?: Date;
-}): Promise<{ transferId: string; appBlockId: string; fromUserId: number; toUserId: number }> {
+}): Promise<{ transferId: string; appListingId: string; fromUserId: number; toUserId: number }> {
   const now = opts.now ?? new Date();
 
   const result = await dbWrite.$transaction(async (tx) => {
@@ -233,16 +353,36 @@ export async function acceptTransfer(opts: {
       where: { id: opts.transferId },
       select: {
         id: true,
-        appBlockId: true,
+        appListingId: true,
         fromUserId: true,
         toUserId: true,
         status: true,
         expiresAt: true,
-        appBlock: { select: { appId: true, blockId: true } },
+        appListing: {
+          select: {
+            id: true,
+            slug: true,
+            kind: true,
+            connectClientId: true,
+            appBlockId: true,
+            appBlock: { select: { appId: true, blockId: true } },
+          },
+        },
       },
-    })) as (TransferView & { appBlock: { appId: string; blockId: string } | null }) | null;
+    })) as
+      | (TransferView & {
+          appListing: {
+            id: string;
+            slug: string;
+            kind: string;
+            connectClientId: string | null;
+            appBlockId: string | null;
+            appBlock: { appId: string; blockId: string } | null;
+          } | null;
+        })
+      | null;
 
-    if (!transfer || !transfer.appBlock) {
+    if (!transfer || !transfer.appListing) {
       throw new AppCollaboratorError('NOT_FOUND', 'That ownership transfer no longer exists');
     }
     if (transfer.toUserId !== opts.userId) {
@@ -264,26 +404,53 @@ export async function acceptTransfer(opts: {
       throw new AppCollaboratorError('BANNED', 'That account cannot receive app ownership');
     }
 
-    // (2) CANONICAL owner column, status-guarded on the snapshotted previous owner.
-    const movedClient = await tx.oauthClient.updateMany({
-      where: { id: transfer.appBlock.appId, userId: transfer.fromUserId },
-      data: { userId: transfer.toUserId },
-    });
-    if (movedClient.count === 0) {
-      throw new AppCollaboratorError(
-        'NO_INVITE',
-        'Ownership of this app has changed; this transfer can no longer be accepted'
-      );
+    // (1c) 🔴 RE-ASSERT the connect-client refusal on the CURRENT listing row. Same
+    // reasoning as (1b): a revision approve can link an OAuth client while the offer is
+    // open, and moving a listing out from under live credentials is the outcome this
+    // whole decision exists to prevent.
+    if (refusesTransferForConnectClient(transfer.appListing)) {
+      throw new AppCollaboratorError('INVALID_TARGET', CONNECT_CLIENT_TRANSFER_REFUSAL);
     }
 
-    // (3) DENORMALIZED copy. `updateMany` (not `update`) because an app need not have a
-    // listing yet — a first-version app pending approval has no `AppListing` row. A
-    // 0-count is therefore LEGITIMATE here and must not fail the transfer, which is
-    // exactly why this is not status-guarded the way (2) is.
-    await tx.appListing.updateMany({
-      where: { appBlockId: transfer.appBlockId },
+    const isOnsite = transfer.appListing.kind === 'onsite';
+    const appId = transfer.appListing.appBlock?.appId ?? null;
+
+    // (2) CANONICAL owner column — ONSITE ONLY, status-guarded on the snapshotted
+    // previous owner. An off-site listing has no OauthClient in its ownership chain.
+    if (isOnsite) {
+      if (!appId) {
+        throw new AppCollaboratorError(
+          'NOT_FOUND',
+          'This listing’s app record is missing; ownership cannot be transferred'
+        );
+      }
+      const movedClient = await tx.oauthClient.updateMany({
+        where: { id: appId, userId: transfer.fromUserId },
+        data: { userId: transfer.toUserId },
+      });
+      if (movedClient.count === 0) {
+        throw new AppCollaboratorError(
+          'NO_INVITE',
+          'Ownership of this app has changed; this transfer can no longer be accepted'
+        );
+      }
+    }
+
+    // (3) The listing's owner column. See the asymmetry note in the header: guarded
+    // for offsite (it is the ONLY ownership write there), unguarded for onsite (a
+    // denormalized copy whose 0-count is a legitimate desync).
+    const movedListing = await tx.appListing.updateMany({
+      where: isOnsite
+        ? { id: transfer.appListingId }
+        : { id: transfer.appListingId, userId: transfer.fromUserId },
       data: { userId: transfer.toUserId },
     });
+    if (!isOnsite && movedListing.count === 0) {
+      throw new AppCollaboratorError(
+        'NO_INVITE',
+        'Ownership of this listing has changed; this transfer can no longer be accepted'
+      );
+    }
 
     // (4) Close the transfer, guarded so a concurrent cancel cannot be overwritten.
     const closed = await tx.appOwnershipTransfer.updateMany({
@@ -296,13 +463,14 @@ export async function acceptTransfer(opts: {
 
     // (5) Audit — in-tx, so a rollback leaves ZERO events.
     await recordOwnershipEvent(tx, {
-      appBlockId: transfer.appBlockId,
-      slug: transfer.appBlock.blockId,
+      appListingId: transfer.appListingId,
+      slug: transfer.appListing.slug,
       action: 'transfer_accepted',
       actorUserId: opts.userId,
       targetUserId: opts.userId,
       metadata: {
         transferId: transfer.id,
+        kind: transfer.appListing.kind,
         before: { userId: transfer.fromUserId },
         after: { userId: transfer.toUserId },
       },
@@ -310,24 +478,33 @@ export async function acceptTransfer(opts: {
 
     return {
       transferId: transfer.id,
-      appBlockId: transfer.appBlockId,
+      appListingId: transfer.appListingId,
       fromUserId: transfer.fromUserId,
       toUserId: transfer.toUserId,
-      slug: transfer.appBlock.blockId,
+      slug: transfer.appListing.slug,
+      appBlockId: transfer.appListing.appBlockId,
+      blockSlug: transfer.appListing.appBlock?.blockId ?? null,
     };
   });
 
   // POST-COMMIT external effects. Swap the repo grants: the old owner loses write, the
-  // new owner gains it. Collaborator seats are unaffected — the app keeps its editors.
-  await revokeAppRepoWrite({ slug: result.slug, userId: result.fromUserId });
-  await grantAppRepoWrite({ slug: result.slug, userId: result.toUserId });
+  // new owner gains it. ON-SITE ONLY — an off-site listing has no repo. Collaborator
+  // seats are unaffected either way: the listing keeps its editors.
+  if (result.blockSlug) {
+    await revokeAppRepoWrite({ slug: result.blockSlug, userId: result.fromUserId });
+    await grantAppRepoWrite({ slug: result.blockSlug, userId: result.toUserId });
+  }
 
   try {
     await notifyAppCollaborator({
       type: 'app-ownership-transfer-accepted',
       userId: result.fromUserId,
       key: `app-ownership-transfer-accepted:${result.transferId}`,
-      details: { slug: result.slug, appBlockId: result.appBlockId },
+      details: {
+        slug: result.slug,
+        appListingId: result.appListingId,
+        appBlockId: result.appBlockId,
+      },
     });
   } catch {
     /* best-effort, post-commit */
@@ -335,7 +512,7 @@ export async function acceptTransfer(opts: {
 
   return {
     transferId: result.transferId,
-    appBlockId: result.appBlockId,
+    appListingId: result.appListingId,
     fromUserId: result.fromUserId,
     toUserId: result.toUserId,
   };
@@ -358,16 +535,16 @@ export async function cancelTransfer(opts: {
       where: { id: opts.transferId },
       select: {
         id: true,
-        appBlockId: true,
+        appListingId: true,
         fromUserId: true,
         toUserId: true,
         status: true,
         expiresAt: true,
-        appBlock: { select: { blockId: true } },
+        appListing: { select: { slug: true } },
       },
-    })) as (TransferView & { appBlock: { blockId: string } | null }) | null;
+    })) as (TransferView & { appListing: { slug: string } | null }) | null;
 
-    if (!transfer || !transfer.appBlock) {
+    if (!transfer || !transfer.appListing) {
       throw new AppCollaboratorError('NOT_FOUND', 'That ownership transfer no longer exists');
     }
     if (transfer.fromUserId !== opts.actorUserId && transfer.toUserId !== opts.actorUserId) {
@@ -381,8 +558,8 @@ export async function cancelTransfer(opts: {
     if (closed.count === 0) return { transferId: transfer.id, cancelled: false };
 
     await recordOwnershipEvent(tx, {
-      appBlockId: transfer.appBlockId,
-      slug: transfer.appBlock.blockId,
+      appListingId: transfer.appListingId,
+      slug: transfer.appListing.slug,
       action: 'transfer_cancelled',
       actorUserId: opts.actorUserId,
       targetUserId: transfer.toUserId,
@@ -393,7 +570,7 @@ export async function cancelTransfer(opts: {
 }
 
 /**
- * The LIVE pending transfer for an app, or `null`. Expiry is applied as a read-time
+ * The LIVE pending transfer for a listing, or `null`. Expiry is applied as a read-time
  * predicate (see {@link isLive}) so an expired row never surfaces as pending, whether
  * or not anything has swept it.
  *
@@ -401,29 +578,29 @@ export async function cancelTransfer(opts: {
  * `toUserId`) and the offer's deadline; every other transfer proc gates
  * (`initiateTransfer` → owner, `acceptTransfer` → addressee, `cancelTransfer` → either
  * party), and this one took no caller at all, so any flagged account could read who is
- * handing which app to whom. Permitted: the app OWNER (who is the offer's `fromUserId`)
- * and the ADDRESSEE, matching exactly the set that may act on the transfer.
+ * handing which app to whom. Permitted: the listing OWNER (who is the offer's
+ * `fromUserId`) and the ADDRESSEE, matching exactly the set that may act on the transfer.
  *
  * An unauthorized caller gets `null`, NOT a FORBIDDEN. Throwing would make this proc an
- * existence ORACLE — "this app has a pending transfer" is itself the private fact — so
- * the refusal is made indistinguishable from "there is no offer". (`NOT_FOUND` for a
- * missing app is fine: app existence is already public.)
+ * existence ORACLE — "this listing has a pending transfer" is itself the private fact —
+ * so the refusal is made indistinguishable from "there is no offer". (`NOT_FOUND` for a
+ * missing listing is fine: listing existence is already public.)
  */
 export async function getPendingTransfer(opts: {
-  appBlockId: string;
+  appListingId: string;
   /** The caller. Required — this is not a public read; see above. */
   viewerUserId: number;
   now?: Date;
 }): Promise<TransferView | null> {
   const now = opts.now ?? new Date();
-  const { resolveAppAccess } = await import('~/server/services/blocks/app-access.service');
-  const access = await resolveAppAccess(opts.appBlockId, opts.viewerUserId);
-  if (!access) throw new AppCollaboratorError('NOT_FOUND', 'App not found');
+  const { resolveListingAccess } = await import('~/server/services/blocks/app-access.service');
+  const access = await resolveListingAccess(opts.appListingId, opts.viewerUserId);
+  if (!access) throw new AppCollaboratorError('NOT_FOUND', 'App listing not found');
   const row = (await dbRead.appOwnershipTransfer.findFirst({
-    where: { appBlockId: opts.appBlockId, status: 'pending' },
+    where: { appListingId: access.seatListingId, status: 'pending' },
     select: {
       id: true,
-      appBlockId: true,
+      appListingId: true,
       fromUserId: true,
       toUserId: true,
       status: true,
@@ -433,7 +610,7 @@ export async function getPendingTransfer(opts: {
   })) as TransferView | null;
   if (!row || !isLive(row, now)) return null;
   // Owner or addressee only. An EDITOR is deliberately excluded: a seat is a content
-  // capability, and disposing of the app is the one thing an editor may not do or
+  // capability, and disposing of the listing is the one thing an editor may not do or
   // initiate — so it is not theirs to watch either.
   if (access.role !== 'owner' && row.toUserId !== opts.viewerUserId) return null;
   return row;
