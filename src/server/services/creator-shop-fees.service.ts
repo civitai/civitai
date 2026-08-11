@@ -47,12 +47,14 @@ export async function setCreatorShopFees(
     pack: input.pack ?? current.pack,
   });
   await dbKV.set(KEY_VALUE_KEYS.CREATOR_SHOP_FEES, next);
+  // A log failure must not fail the caller: the row is already changed, and a 500 here
+  // invites a retry whose `previous` is the new value.
   await logToAxiom({
     type: 'info',
     name: 'set-creator-shop-fees',
     actorId,
     previous: current,
     next,
-  });
+  }).catch(() => undefined);
   return next;
 }

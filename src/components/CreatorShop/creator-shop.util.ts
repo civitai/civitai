@@ -148,12 +148,19 @@ export const useMutateCreatorShop = () => {
   const onError = (title: string) => (error: { message: string }) =>
     showErrorNotification({ title, error: new Error(error.message) });
 
+  // A submit can be rejected because the quoted fee no longer matches, and the error
+  // tells the creator to reopen the form. That only recovers if the next mount refetches.
+  const onSubmitError = (title: string) => async (error: { message: string }) => {
+    await queryUtils.creatorShop.getFees.invalidate();
+    onError(title)(error);
+  };
+
   const submitItem = trpc.creatorShop.submitItem.useMutation({
     async onSuccess() {
       await queryUtils.creatorShop.getManageItems.invalidate();
       showSuccessNotification({ message: 'Item submitted for review' });
     },
-    onError: onError('Failed to submit item'),
+    onError: onSubmitError('Failed to submit item'),
   });
 
   const updateItem = trpc.creatorShop.updateItem.useMutation({
@@ -173,7 +180,7 @@ export const useMutateCreatorShop = () => {
       await queryUtils.creatorShop.getManageItems.invalidate();
       showSuccessNotification({ message: 'Pack submitted for review' });
     },
-    onError: onError('Failed to submit pack'),
+    onError: onSubmitError('Failed to submit pack'),
   });
 
   const updatePack = trpc.creatorShop.updatePack.useMutation({

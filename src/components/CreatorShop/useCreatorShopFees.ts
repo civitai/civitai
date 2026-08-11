@@ -12,7 +12,9 @@ export const FEE_UNAVAILABLE_MESSAGE =
  */
 export function useCreatorShopFees() {
   const { data } = trpc.creatorShop.getFees.useQuery(undefined, {
-    staleTime: 3 * 60 * 1000,
+    // Against the app-wide `staleTime: Infinity`, a quote cached once would be quoted
+    // for the rest of the tab's life. Each form mount re-reads it.
+    staleTime: 0,
     gcTime: 30 * 60 * 1000,
   });
   return data;

@@ -143,6 +143,18 @@ describe('setCreatorShopFees', () => {
     expect(logged.previous.submission.Sticker).toBe(5000);
     expect(logged.next.submission.Sticker).toBe(7000);
   });
+
+  // The row is written before the log. Rejecting here would return a 500 for a change
+  // that committed, and the retry it invites records `previous` as the new value.
+  it('does not fail the write when the log does', async () => {
+    stored({ submission: { Sticker: 5000 }, pack: 2000 });
+    mocks.logToAxiom.mockRejectedValue(new Error('axiom down'));
+
+    const next = await setCreatorShopFees({ submission: { Sticker: 7000 } }, { actorId: 42 });
+
+    expect(next.submission.Sticker).toBe(7000);
+    expect(mocks.executeRawUnsafe).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('assertQuotedFee', () => {
