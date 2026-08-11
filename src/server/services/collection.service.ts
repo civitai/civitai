@@ -343,7 +343,8 @@ export async function getUserCollectionPermissionsByIds({
     // just closed — only a grant beyond the free tier survives a lapse.
     if (
       contributorPermissions.includes(CollectionContributorPermission.ADD) &&
-      (!collection.collaborationDisabledAt || !freelyGranted.has(CollectionContributorPermission.ADD))
+      (!collection.collaborationDisabledAt ||
+        !freelyGranted.has(CollectionContributorPermission.ADD))
     ) {
       permissions.write = true;
     }
@@ -629,6 +630,11 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
     })),
   };
 };
+
+export const getPendingReviewCount = (collectionId: number) =>
+  dbRead.collectionItem.count({
+    where: { collectionId, status: CollectionItemStatus.REVIEW },
+  });
 
 const inputToCollectionType = {
   modelId: CollectionType.Model,
@@ -1261,10 +1267,7 @@ export const upsertCollection = async ({
     // add network latency to the interactive transaction's timeout budget.
     await userCollectionCountCache.refresh(updated.userId);
 
-    if (
-      nextRead === CollectionReadConfiguration.Public &&
-      currentCollection.read !== nextRead
-    ) {
+    if (nextRead === CollectionReadConfiguration.Public && currentCollection.read !== nextRead) {
       // Set publishedAt for all post belonging to this collection if changing privacy to public
       await dbWrite.$queryRaw`
         UPDATE "Post" SET

@@ -12,6 +12,7 @@ import {
   Divider,
   Tooltip,
 } from '@mantine/core';
+import { CollectionInvitesButton } from '~/components/Collections/CollectionCollaborators/CollectionInvitesButton';
 import { MyCollections } from '~/components/Collections/MyCollections';
 import { useDisclosure } from '@mantine/hooks';
 import {
@@ -52,9 +53,12 @@ const MyCollectionsDrawer = () => {
         onClose={close}
         size="100%"
         title={
-          <Text size="lg" fw={500}>
-            My Collections
-          </Text>
+          <Group gap="xs" wrap="nowrap">
+            <Text size="lg" fw={500}>
+              My Collections
+            </Text>
+            <CollectionInvitesButton />
+          </Group>
         }
         classNames={{ header: classes.drawerHeader, body: 'px-0' }}
       >
@@ -111,18 +115,21 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
             <Card.Section p="xs" mx={0} className="border-t-0" withBorder>
               <Group justify="space-between" wrap="nowrap">
                 <Text fw={500}>My Collections</Text>
-                <Button
-                  onClick={() => {
-                    dialogStore.trigger({
-                      component: CollectionEditModal,
-                    });
-                  }}
-                  variant="subtle"
-                  size="compact-sm"
-                  rightSection={<IconPlus size={14} />}
-                >
-                  Create
-                </Button>
+                <Group gap={4} wrap="nowrap">
+                  <CollectionInvitesButton />
+                  <Button
+                    onClick={() => {
+                      dialogStore.trigger({
+                        component: CollectionEditModal,
+                      });
+                    }}
+                    variant="subtle"
+                    size="compact-sm"
+                    rightSection={<IconPlus size={14} />}
+                  >
+                    Create
+                  </Button>
+                </Group>
               </Group>
             </Card.Section>
 

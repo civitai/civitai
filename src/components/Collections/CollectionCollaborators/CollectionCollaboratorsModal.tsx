@@ -11,7 +11,8 @@ import {
   Text,
   Tooltip,
 } from '@mantine/core';
-import { IconSend, IconTrash, IconX } from '@tabler/icons-react';
+import { IconBolt, IconSend, IconTrash, IconX } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useState } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { INVITE_EXPIRY_DAYS } from '~/server/services/collection-invite.utils';
@@ -23,6 +24,7 @@ import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
+import type { InviteBlockedReason } from '~/server/services/collection-collaborator.service';
 import { CollectionCollaboratorRole } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -84,6 +86,7 @@ function CollectionCollaboratorsPanel({
 
   const collaborators = data?.collaborators ?? [];
   const invites = data?.invites ?? [];
+  const inviteBlockedReason = data?.inviteBlockedReason ?? null;
 
   const invalidateRoster = () => utils.collection.getCollaborators.invalidate({ id: collectionId });
 
@@ -144,7 +147,11 @@ function CollectionCollaboratorsPanel({
 
   return (
     <Stack gap="md">
-      {canManage && (
+      {canManage && !isLoading && inviteBlockedReason && (
+        <InviteBlockedNotice reason={inviteBlockedReason} isOwner={isOwner} />
+      )}
+
+      {canManage && !isLoading && !inviteBlockedReason && (
         <Stack gap={6}>
           <Group gap="xs" align="flex-start" wrap="nowrap">
             <div className="min-w-0 grow">
@@ -316,6 +323,43 @@ function CollectionCollaboratorsPanel({
         </Button>
       </Group>
     </Stack>
+  );
+}
+
+function InviteBlockedNotice({
+  reason,
+  isOwner,
+}: {
+  reason: InviteBlockedReason;
+  isOwner: boolean;
+}) {
+  if (reason === 'collaboration-disabled') {
+    return (
+      <Alert color="gray" variant="light">
+        This collection is not accepting new collaborators right now.
+      </Alert>
+    );
+  }
+
+  if (!isOwner) {
+    return (
+      <Alert color="yellow" variant="light">
+        The collection owner needs an active membership before new collaborators can be added.
+      </Alert>
+    );
+  }
+
+  return (
+    <Alert color="yellow" variant="light" icon={<IconBolt size={18} />}>
+      <Group justify="space-between" gap="md" wrap="nowrap">
+        <Text size="sm">
+          Collaborators are a member feature. Upgrade to invite people to help run this collection.
+        </Text>
+        <Button component={Link} href="/pricing" size="compact-sm" className="shrink-0">
+          Get a membership
+        </Button>
+      </Group>
+    </Alert>
   );
 }
 

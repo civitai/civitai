@@ -21,6 +21,7 @@ const { mockDbRead, mockDbWrite, mockGetPermissions, mockCreateNotification, moc
         },
         collectionContributor: { findMany: vi.fn().mockResolvedValue([]) },
         collectionInvite: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
+        collectionItem: { groupBy: vi.fn().mockResolvedValue([]) },
       },
       mockDbWrite: {
         collection: { findUnique: vi.fn() },
@@ -935,10 +936,92 @@ describe('getCollaborators', () => {
   });
 });
 
+describe('getCollaborators invite gating', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbRead.collection.findUnique.mockResolvedValue({
+      userId: OWNER_ID,
+      read: 'Public',
+      write: 'Public',
+      mode: null,
+    });
+    mockDbRead.collectionContributor.findMany.mockResolvedValue([]);
+    mockDbRead.collectionInvite.findMany.mockResolvedValue([]);
+  });
+
+  it('blocks a Manager on a free owner’s collection before they pick anyone', async () => {
+    asManager();
+    mockGetSessionUser.mockResolvedValue({ id: OWNER_ID, tier: 'free' });
+
+    const result = await getCollaborators({ collectionId: COLLECTION_ID, userId: MANAGER_ID });
+
+    expect(result.canInvite).toBe(false);
+    expect(result.inviteBlockedReason).toBe('owner-membership');
+    // The gate is the OWNER's tier, not the inviter's.
+    expect(mockGetSessionUser).toHaveBeenCalledWith(OWNER_ID);
+  });
+
+  it('allows inviting when the owner holds a membership', async () => {
+    asManager();
+    mockGetSessionUser.mockResolvedValue({ id: OWNER_ID, tier: 'bronze' });
+
+    const result = await getCollaborators({ collectionId: COLLECTION_ID, userId: MANAGER_ID });
+
+    expect(result.canInvite).toBe(true);
+    expect(result.inviteBlockedReason).toBe(null);
+  });
+
+  it('reports a lapsed collection as collaboration-disabled, not as a membership problem', async () => {
+    mockGetPermissions.mockResolvedValue({
+      isOwner: true,
+      manage: true,
+      read: true,
+      collaborationDisabled: true,
+      collectionMode: null,
+    });
+    mockGetSessionUser.mockResolvedValue({ id: OWNER_ID, tier: 'bronze' });
+
+    const result = await getCollaborators({ collectionId: COLLECTION_ID, userId: OWNER_ID });
+
+    expect(result.inviteBlockedReason).toBe('collaboration-disabled');
+  });
+
+  it('lets a moderator invite without consulting the owner’s tier', async () => {
+    asManager();
+
+    const result = await getCollaborators({
+      collectionId: COLLECTION_ID,
+      userId: MANAGER_ID,
+      isModerator: true,
+    });
+
+    expect(result.canInvite).toBe(true);
+    expect(mockGetSessionUser).not.toHaveBeenCalled();
+  });
+
+  it('reports no reason to a viewer who cannot manage', async () => {
+    mockGetPermissions.mockResolvedValue({
+      isOwner: false,
+      manage: false,
+      read: true,
+      collaborationDisabled: false,
+      collectionMode: null,
+    });
+
+    const result = await getCollaborators({ collectionId: COLLECTION_ID, userId: TARGET_ID });
+
+    expect(result.canInvite).toBe(false);
+    expect(result.inviteBlockedReason).toBe(null);
+    expect(mockGetSessionUser).not.toHaveBeenCalled();
+  });
+});
+
 describe('getMyInvites', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockDbRead.collectionInvite.findMany.mockResolvedValue([]);
+    mockDbRead.collectionContributor.findMany.mockResolvedValue([]);
+    mockDbRead.collectionItem.groupBy.mockResolvedValue([]);
   });
 
   it('queries only Pending, non-expired invites — omits Declined and >7-day-old rows', async () => {
@@ -949,5 +1032,75 @@ describe('getMyInvites', () => {
     const cutoff = args.where.createdAt.gte as Date;
     expect(cutoff.getTime()).toBeLessThanOrEqual(Date.now());
     expect(cutoff.getTime()).toBeGreaterThan(Date.now() - 8 * 24 * 60 * 60 * 1000);
+  });
+
+  it('reports accepted item count and a collaborator count that includes the owner', async () => {
+    mockDbRead.collectionInvite.findMany
+      .mockResolvedValueOnce([
+        {
+          id: 1,
+          role: 'Contributor',
+          createdAt: new Date(),
+          invitedById: OWNER_ID,
+          invitedBy: { id: OWNER_ID, username: 'owner', image: null, deletedAt: null },
+          collection: {
+            id: COLLECTION_ID,
+            name: 'Collab',
+            userId: OWNER_ID,
+            read: 'Public',
+            write: 'Private',
+            mode: null,
+            image: null,
+          },
+        },
+      ])
+      // The roster's accepted-invite read shares this mock.
+      .mockResolvedValue([]);
+    mockDbRead.collectionContributor.findMany.mockResolvedValue([
+      { userId: 1, permissions: ['VIEW', 'ADD'] },
+      { userId: 2, permissions: ['VIEW', 'ADD', 'MANAGE'] },
+    ]);
+    mockDbRead.collectionItem.groupBy.mockResolvedValue([
+      { collectionId: COLLECTION_ID, _count: { _all: 42 } },
+    ]);
+
+    const [invite] = await getMyInvites({ userId: TARGET_ID });
+
+    expect(mockDbRead.collectionItem.groupBy.mock.calls[0][0].where.status).toBe('ACCEPTED');
+    expect(invite.collection.itemCount).toBe(42);
+    expect(invite.collection.collaboratorCount).toBe(3);
+  });
+
+  it('does not expose the collection read/write/mode columns the roster rule needs', async () => {
+    mockDbRead.collectionInvite.findMany
+      .mockResolvedValueOnce([
+        {
+          id: 1,
+          role: 'Contributor',
+          createdAt: new Date(),
+          invitedById: OWNER_ID,
+          invitedBy: { id: OWNER_ID, username: 'owner', image: null, deletedAt: null },
+          collection: {
+            id: COLLECTION_ID,
+            name: 'Collab',
+            userId: OWNER_ID,
+            read: 'Private',
+            write: 'Private',
+            mode: null,
+            image: null,
+          },
+        },
+      ])
+      .mockResolvedValue([]);
+
+    const [invite] = await getMyInvites({ userId: TARGET_ID });
+
+    expect(Object.keys(invite.collection).sort()).toEqual([
+      'collaboratorCount',
+      'id',
+      'image',
+      'itemCount',
+      'name',
+    ]);
   });
 });

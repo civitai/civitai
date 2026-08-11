@@ -39,6 +39,7 @@ import {
   getCollectionItemCount,
   getCollectionItemsByCollectionId,
   getContributorCount,
+  getPendingReviewCount,
   getUserCollectionItemsByItem,
   getUserCollectionPermissionsById,
   getUserCollectionPermissionsByIds,
@@ -203,6 +204,7 @@ export const getCollectionByIdHandler = async ({
         collection: null,
         permissions,
         collaborators: [] as Collaborator[],
+        pendingReviewCount: 0,
       };
     }
 
@@ -223,7 +225,9 @@ export const getCollectionByIdHandler = async ({
         })
       : [];
 
-    return { collection, permissions, collaborators };
+    const pendingReviewCount = permissions.manage ? await getPendingReviewCount(collection.id) : 0;
+
+    return { collection, permissions, collaborators, pendingReviewCount };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

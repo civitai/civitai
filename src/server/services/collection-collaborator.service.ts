@@ -19,6 +19,7 @@ import {
   CollectionCollaboratorRole,
   CollectionContributorPermission,
   CollectionInviteStatus,
+  CollectionItemStatus,
   CollectionMode,
 } from '~/shared/utils/prisma/enums';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
@@ -399,6 +400,8 @@ export async function getCollectionRoster(collection: {
     }));
 }
 
+export type InviteBlockedReason = 'collaboration-disabled' | 'owner-membership';
+
 export async function getCollaborators({
   collectionId,
   userId,
@@ -407,7 +410,12 @@ export async function getCollaborators({
   collectionId: number;
   userId?: number;
   isModerator?: boolean;
-}): Promise<{ collaborators: Collaborator[]; invites: PendingInvite[] }> {
+}): Promise<{
+  collaborators: Collaborator[];
+  invites: PendingInvite[];
+  canInvite: boolean;
+  inviteBlockedReason: InviteBlockedReason | null;
+}> {
   const permission = await getUserCollectionPermissionsById({
     id: collectionId,
     userId,
@@ -429,22 +437,35 @@ export async function getCollaborators({
 
   const collaborators = await getCollectionRoster(collection);
 
-  if (!permission.manage) return { collaborators, invites: [] };
+  if (!permission.manage) {
+    return { collaborators, invites: [], canInvite: false, inviteBlockedReason: null };
+  }
 
-  const invites = await dbRead.collectionInvite.findMany({
-    where: {
-      collectionId,
-      status: CollectionInviteStatus.Pending,
-      createdAt: { gte: inviteExpiryCutoff() },
-    },
-    select: { id: true, userId: true, role: true, createdAt: true },
-  });
+  // Mirrors the refusals `inviteCollaborator` throws, so a Manager on a free owner's collection
+  // learns the invite form is dead before picking someone rather than after.
+  const [invites, ownerIsMember] = await Promise.all([
+    dbRead.collectionInvite.findMany({
+      where: {
+        collectionId,
+        status: CollectionInviteStatus.Pending,
+        createdAt: { gte: inviteExpiryCutoff() },
+      },
+      select: { id: true, userId: true, role: true, createdAt: true },
+    }),
+    isModerator ? Promise.resolve(true) : isMemberUser(collection.userId),
+  ]);
 
-  return { collaborators, invites };
+  const inviteBlockedReason: InviteBlockedReason | null = permission.collaborationDisabled
+    ? 'collaboration-disabled'
+    : ownerIsMember
+    ? null
+    : 'owner-membership';
+
+  return { collaborators, invites, canInvite: !inviteBlockedReason, inviteBlockedReason };
 }
 
 export async function getMyInvites({ userId }: { userId: number }) {
-  return dbRead.collectionInvite.findMany({
+  const invites = await dbRead.collectionInvite.findMany({
     where: {
       userId,
       status: CollectionInviteStatus.Pending,
@@ -455,11 +476,15 @@ export async function getMyInvites({ userId }: { userId: number }) {
       role: true,
       createdAt: true,
       invitedById: true,
-      invitedBy: { select: { id: true, username: true, deletedAt: true } },
+      invitedBy: { select: { id: true, username: true, image: true, deletedAt: true } },
       collection: {
         select: {
           id: true,
           name: true,
+          userId: true,
+          read: true,
+          write: true,
+          mode: true,
           image: {
             select: {
               id: true,
@@ -475,5 +500,37 @@ export async function getMyInvites({ userId }: { userId: number }) {
       },
     },
     orderBy: { createdAt: 'desc' },
+    // Bounded because each invite costs a roster read below, and nothing stops a user being
+    // invited to an arbitrary number of collections.
+    take: 50,
   });
+
+  if (!invites.length) return [];
+
+  const collectionIds = invites.map((invite) => invite.collection.id);
+  const [itemCounts, rosters] = await Promise.all([
+    dbRead.collectionItem.groupBy({
+      by: ['collectionId'],
+      where: { collectionId: { in: collectionIds }, status: CollectionItemStatus.ACCEPTED },
+      _count: { _all: true },
+    }),
+    Promise.all(invites.map((invite) => getCollectionRoster(invite.collection))),
+  ]);
+
+  const itemCountByCollection = new Map(
+    itemCounts.map((row) => [row.collectionId, row._count._all])
+  );
+
+  return invites.map(({ collection, ...invite }, index) => ({
+    ...invite,
+    collection: {
+      id: collection.id,
+      name: collection.name,
+      image: collection.image,
+      itemCount: itemCountByCollection.get(collection.id) ?? 0,
+      // The owner holds a seat but is not in the roster, so the card's "N collaborators" adds them
+      // back — an invitee reading "0 collaborators" on a collection with an owner is wrong.
+      collaboratorCount: rosters[index].length + 1,
+    },
+  }));
 }

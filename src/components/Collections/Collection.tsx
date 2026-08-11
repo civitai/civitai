@@ -23,12 +23,14 @@ import {
   IconCirclePlus,
   IconCloudOff,
   IconDotsVertical,
+  IconInbox,
   IconInfoCircle,
   IconLock,
   IconPhoto,
 } from '@tabler/icons-react';
 import { capitalize, truncate } from 'lodash-es';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import type { CSSProperties } from 'react';
 import { useState } from 'react';
@@ -93,6 +95,7 @@ import { getRandom } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
+import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -505,7 +508,8 @@ export function Collection({
   const router = useRouter();
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
-  const { collection, permissions, collaborators, isLoading } = useCollection(collectionId);
+  const { collection, permissions, collaborators, pendingReviewCount, isLoading } =
+    useCollection(collectionId);
   const { data: entryCountDetails } = useCollectionEntryCount(collectionId, {
     enabled:
       !!currentUser?.id &&
@@ -688,9 +692,11 @@ export function Collection({
                     {collection && (
                       <Group gap={4} wrap="nowrap">
                         <CollectionCollaboratorsSummary
+                          collectionId={collection.id}
                           owner={collection.user}
                           collaborators={collaborators ?? []}
                           supportsCollaborators={collection.mode === null}
+                          canManage={permissions?.manage}
                         />
                         {/* TODO.collections: We need some metrics to actually display these badges */}
                         {/* <IconBadge className={classes.iconBadge} icon={<IconLayoutGrid size={14} />}>
@@ -792,6 +798,17 @@ export function Collection({
                               </Tooltip>
                             )}
                           </>
+                        )}
+                        {permissions.manage && !!pendingReviewCount && (
+                          <Button
+                            component={Link}
+                            href={`/collections/${collection.id}/review`}
+                            color="blue"
+                            radius="xl"
+                            leftSection={<IconInbox size={16} />}
+                          >
+                            Review {abbreviateNumber(pendingReviewCount)}
+                          </Button>
                         )}
                         <CollectionContextMenu
                           collectionId={collection.id}

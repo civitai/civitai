@@ -1,11 +1,18 @@
-import { Avatar, Badge, Group, Popover, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Anchor, Avatar, Badge, Group, Popover, Stack, Text, UnstyledButton } from '@mantine/core';
 import clsx from 'clsx';
+import dynamic from 'next/dynamic';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import type { Collaborator } from '~/server/services/collection-collaborator.service';
 import { CollectionCollaboratorRole } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
+const CollectionCollaboratorsModal = dynamic(
+  () => import('~/components/Collections/CollectionCollaborators/CollectionCollaboratorsModal')
+);
+
 const MAX_AVATARS = 4;
+const POPOVER_LIMIT = 5;
 
 const roleLabels: Record<CollectionCollaboratorRole, string> = {
   [CollectionCollaboratorRole.Contributor]: 'CONTRIBUTOR',
@@ -49,13 +56,17 @@ function CollaboratorAvatar({
 }
 
 export function CollectionCollaboratorsSummary({
+  collectionId,
   owner,
   collaborators,
   supportsCollaborators,
+  canManage,
 }: {
+  collectionId: number;
   owner: { id: number; username?: string | null; image?: string | null };
   collaborators: Collaborator[];
   supportsCollaborators: boolean;
+  canManage?: boolean;
 }) {
   const enabled = supportsCollaborators && owner.id > 0;
 
@@ -66,6 +77,8 @@ export function CollectionCollaboratorsSummary({
 
   const shown = collaborators.slice(0, MAX_AVATARS - 1);
   const hidden = collaborators.length - shown.length;
+  const listed = collaborators.slice(0, POPOVER_LIMIT);
+  const notListed = collaborators.length - listed.length;
 
   return (
     <Popover position="bottom-start" width={320} withinPortal zIndex={300} shadow="md">
@@ -108,6 +121,19 @@ export function CollectionCollaboratorsSummary({
             <Text size="sm" fw={600}>
               Collaborators
             </Text>
+            <Anchor
+              component="button"
+              type="button"
+              size="sm"
+              onClick={() =>
+                dialogStore.trigger({
+                  component: CollectionCollaboratorsModal,
+                  props: { collectionId },
+                })
+              }
+            >
+              {canManage ? 'Manage' : 'View all'}
+            </Anchor>
           </Group>
           <Group gap={8} px={4} py={6} wrap="nowrap">
             <UserAvatar user={owner} withUsername linkToProfile size="sm" />
@@ -115,7 +141,7 @@ export function CollectionCollaboratorsSummary({
               OWNER
             </Badge>
           </Group>
-          {collaborators.map((c) => (
+          {listed.map((c) => (
             <Group key={c.userId} gap={8} px={4} py={6} wrap="nowrap">
               <CollaboratorAvatar userId={c.userId} withUsername linkToProfile />
               <Badge
@@ -128,6 +154,11 @@ export function CollectionCollaboratorsSummary({
               </Badge>
             </Group>
           ))}
+          {notListed > 0 && (
+            <Text size="xs" c="dimmed" px={4} pt={8}>
+              + {notListed} more collaborator{notListed === 1 ? '' : 's'}
+            </Text>
+          )}
         </Stack>
       </Popover.Dropdown>
     </Popover>
