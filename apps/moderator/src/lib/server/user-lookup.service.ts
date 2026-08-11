@@ -35,6 +35,10 @@ export type UserIdentity = {
   csamReportCount: number;
   /** Pending + Processing reports filed AGAINST this account. */
   openReportCount: number;
+  /** The avatar behind `profilePictureId`. `image` above is the legacy URL and is not the same thing. */
+  profilePictureUrl: string | null;
+  profilePictureType: string | null;
+  profilePictureNsfwLevel: number | null;
   /** `Pending` means a SYSTEM restriction nobody has ruled on — the case where `mutedAt` is null and
    *  the account still reads as muted. `null` when the account has never been restricted. */
   restrictionStatus: string | null;
@@ -65,10 +69,21 @@ export type UserStats = {
   generations: number;
 };
 
+export type ProfileMedia = {
+  /** Cloudflare key (Image.url), not the numeric id — what EdgeMedia takes as `src`. */
+  url: string;
+  type: string | null;
+  nsfwLevel: number | null;
+};
+
 export type UserProfileText = {
   bio: string | null;
   message: string | null;
   location: string | null;
+  /** Retool's "Look at Cover Image". Both are kept: an account can pass on the SFW one and fail on
+   *  the real one, and a moderator asked about a cover has to see the one that was reported. */
+  coverImage: ProfileMedia | null;
+  sfwCoverImage: ProfileMedia | null;
 };
 
 // Civitai score. Every component is optional: `meta->scores` only carries the parts that have been
@@ -315,21 +330,57 @@ async function getIdentity(userId: number): Promise<UserIdentity | null> {
         JOIN "Report" r ON r.id = urp."reportId"
         WHERE urp."userId" = u.id AND r.status IN ('Pending', 'Processing')
       )`.as('openReportCount'),
+      // Retool's "Look at PFP". `u.image` is the legacy avatar URL and is NOT this — the modern
+      // avatar is an Image row behind `profilePictureId`, which carries the nsfwLevel a moderator is
+      // actually checking against.
+      sql<string | null>`(SELECT i.url FROM "Image" i WHERE i.id = u."profilePictureId")`.as(
+        'profilePictureUrl'
+      ),
+      sql<string | null>`(SELECT i.type::text FROM "Image" i WHERE i.id = u."profilePictureId")`.as(
+        'profilePictureType'
+      ),
+      sql<number | null>`(SELECT i."nsfwLevel" FROM "Image" i WHERE i.id = u."profilePictureId")`.as(
+        'profilePictureNsfwLevel'
+      ),
     ])
     .where('u.id', '=', userId)
     .executeTakeFirst();
   return (row as UserIdentity | undefined) ?? null;
 }
 
-// Retool's UserBio also selected the cover image; the moderator app links to the profile instead of
-// re-rendering it, so only the text a moderator reads is ported.
+// Retool's UserBio, including both cover images. Checking a cover or an avatar for ToS content was an
+// in-tool action there; linking out to the profile instead means the moderator has to load the very
+// page they may be about to act on, in a normal browsing session.
 async function getProfile(userId: number): Promise<UserProfileText | null> {
   const row = await dbRead
-    .selectFrom('UserProfile')
-    .select(['bio', 'message', 'location'])
-    .where('userId', '=', userId)
+    .selectFrom('UserProfile as up')
+    .leftJoin('Image as ci', 'ci.id', 'up.coverImageId')
+    .leftJoin('Image as si', 'si.id', 'up.sfwCoverImageId')
+    .select([
+      'up.bio',
+      'up.message',
+      'up.location',
+      'ci.url as coverUrl',
+      sql<string | null>`ci.type::text`.as('coverType'),
+      'ci.nsfwLevel as coverNsfwLevel',
+      'si.url as sfwCoverUrl',
+      sql<string | null>`si.type::text`.as('sfwCoverType'),
+      'si.nsfwLevel as sfwCoverNsfwLevel',
+    ])
+    .where('up.userId', '=', userId)
     .executeTakeFirst();
-  return row ?? null;
+  if (!row) return null;
+  return {
+    bio: row.bio,
+    message: row.message,
+    location: row.location,
+    coverImage: row.coverUrl
+      ? { url: row.coverUrl, type: row.coverType, nsfwLevel: row.coverNsfwLevel }
+      : null,
+    sfwCoverImage: row.sfwCoverUrl
+      ? { url: row.sfwCoverUrl, type: row.sfwCoverType, nsfwLevel: row.sfwCoverNsfwLevel }
+      : null,
+  };
 }
 
 async function getScores(userId: number): Promise<UserScores | null> {

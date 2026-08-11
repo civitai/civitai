@@ -172,8 +172,14 @@ Open, with the evidence each audit produced:
       **outside** `ListCard` — that component renders its empty state instead of the body snippet, so a
       control nested inside vanishes on exactly the accounts where you need to widen the window to find
       anything. (Caught by looking at the page; it typechecked fine either way.)
-- [ ] **Cover image and profile picture not shown.** Retool had "Look at Cover Image" / "Look at PFP";
-      checking those for TOS content was an in-tool action.
+- [x] **Cover image and profile picture not shown** (2026-08-11 — a Profile media block on Basic:
+      avatar, cover, and the SFW cover, each with its browsing-level badge). Linking out was the wrong
+      trade: it makes a moderator load the profile of an account they may be about to act on.
+      Two things the port had wrong underneath: `getIdentity` selected `u.image`, which is the **legacy**
+      avatar URL and is rendered nowhere — the real avatar is an Image row behind `profilePictureId`,
+      and only that carries the `nsfwLevel` being checked. And `UserProfile` has **two** covers
+      (`coverImageId` and `sfwCoverImageId`); both are shown, because an account can pass on the SFW one
+      and fail on the real one, and a moderator asked about a cover needs the one that was reported.
 
 - [ ] **Header: the strike chip, subscription tier and Force Logout are missing from it.** (The header
       itself, and lookup by id / username / email, are **already done** — `+layout.svelte` keeps

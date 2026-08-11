@@ -10,6 +10,8 @@
   import { LINK_CLASS, dateTime } from '$lib/format';
   import type { FormResult } from './form-result';
   import { PROFILE_FIELDS } from './enforcement-options';
+  import { getBrowsingLevelLabel } from '@civitai/shared';
+  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
 
   type Identity = NonNullable<LayoutData['result']>['identity'];
   type Profile = NonNullable<LayoutData['result']>['profile'];
@@ -62,6 +64,23 @@
       ['Profile message', profile?.message],
       ['Location', profile?.location],
     ].filter((entry): entry is [string, string] => !!entry[1]?.trim())
+  );
+
+  // Retool's "Look at PFP" / "Look at Cover Image". Shown here rather than linked, because the
+  // alternative is loading the profile of an account you may be about to act on.
+  const media = $derived(
+    [
+      identity.profilePictureUrl
+        ? {
+            label: 'Avatar',
+            url: identity.profilePictureUrl,
+            type: identity.profilePictureType,
+            nsfwLevel: identity.profilePictureNsfwLevel,
+          }
+        : null,
+      profile?.coverImage ? { label: 'Cover', ...profile.coverImage } : null,
+      profile?.sfwCoverImage ? { label: 'Cover (SFW)', ...profile.sfwCoverImage } : null,
+    ].filter((m): m is NonNullable<typeof m> => m !== null)
   );
 
   const profileUrl = $derived(
@@ -225,6 +244,31 @@
       role="alert"
     >
       {error}
+    </div>
+  {/if}
+
+  {#if media.length}
+    <div class="mt-4 border-t border-dark-4 pt-4">
+      <h4 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Profile media</h4>
+      <div class="flex flex-wrap gap-4">
+        {#each media as m (m.label)}
+          <figure class="w-40">
+            <EdgeMedia
+              src={m.url}
+              type={m.type === 'video' ? 'video' : 'image'}
+              width={320}
+              alt="{m.label} for {identity.username ?? identity.id}"
+              class="h-32 w-40 rounded-md border border-dark-4 object-cover"
+            />
+            <figcaption class="mt-1 flex items-baseline gap-2 text-xs text-dark-2">
+              {m.label}
+              <Badge variant={(m.nsfwLevel ?? 0) >= 8 ? 'destructive' : 'secondary'}>
+                {getBrowsingLevelLabel(m.nsfwLevel)}
+              </Badge>
+            </figcaption>
+          </figure>
+        {/each}
+      </div>
     </div>
   {/if}
 
