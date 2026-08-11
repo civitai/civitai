@@ -27,7 +27,7 @@ export default ModEndpoint(async (req: NextApiRequest, res: NextApiResponse) => 
       userId,
     });
 
-    await refreshSession(userId);
+    await refreshSession(userId, { caller: 'admin' });
 
     return res.status(200).json({
       message: 'Vault updated successfully.',

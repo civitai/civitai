@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
+// The bound the precheck applies, IMPORTED rather than spelled: a literal here
+// would agree with a precheck that hard-coded a different number.
+import { LISTING_ASSET_MAX_DIMENSION_PX } from '~/server/schema/blocks/app-listing.schema';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -130,14 +133,27 @@ function renderStep(props: Partial<Parameters<typeof ListingAssetStep>[0]> = {})
  * fail `createImageBitmap` in the upload path (readImageDimensions), so the row
  * would never reach the scanning state we assert on.
  */
-async function makeImageFile(name = 'shot.png'): Promise<File> {
+async function makeImageFile(name = 'shot.png', width = 200, height = 150): Promise<File> {
   const canvas = document.createElement('canvas');
-  canvas.width = 200;
-  canvas.height = 150;
+  canvas.width = width;
+  canvas.height = height;
   const blob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob null'))), 'image/png');
   });
-  return new File([blob], name, { type: 'image/png' });
+  const file = new File([blob], name, { type: 'image/png' });
+  // The dimension precheck below is the whole point of the oversize fixtures, so
+  // assert the fixture actually HAS the dimensions asked for before any test
+  // reasons about which side of the bound it falls on — a canvas that silently
+  // clamped would make an "under the bound" result a fact about the fixture.
+  const bitmap = await createImageBitmap(file);
+  try {
+    if (bitmap.width !== width || bitmap.height !== height) {
+      throw new Error(`fixture is ${bitmap.width}×${bitmap.height}, asked for ${width}×${height}`);
+    }
+  } finally {
+    bitmap.close();
+  }
+  return file;
 }
 
 /**
@@ -446,5 +462,96 @@ describe('ListingAssetStep — uploaded-asset preview + cancel mid-scan', () => 
     // One revoke per cancelled cycle (no leak, no crash).
     expect(revokeSpy.mock.calls.length).toBeGreaterThanOrEqual(3);
     revokeSpy.mockRestore();
+  });
+});
+
+describe('ListingAssetStep — per-side dimension precheck (issue #3772)', () => {
+  /**
+   * The server has applied `listingAssetTooLargeReason` to listing uploads since
+   * #3801 — but only in `persistAssetImage`, i.e. AFTER the object-store upload
+   * has finished. `uploadAndPersist` already reads the file's intrinsic dimensions
+   * before it uploads, so the rejection is knowable from the file picker; these
+   * assert it is actually taken there.
+   *
+   * The two fixtures differ by exactly ONE pixel on the side the bound is over
+   * (`LISTING_ASSET_MAX_DIMENSION_PX` and `+ 1`), which is what makes the pair
+   * able to cross the bound rather than merely sit on one side of it. The bound
+   * is imported, not spelled — a literal here would pass just as happily against
+   * a precheck that hard-coded a different number.
+   *
+   * 🔴 These prove the UPLOAD IS SKIPPED, not that the image is rejected: the
+   * server re-derives the dimensions from the stored bytes and re-applies the
+   * same predicate, and that is the enforcement point. A green run here says
+   * nothing about the server-side bound, which
+   * `__tests__/offsite-listing.service.test.ts` covers.
+   */
+  test('an over-bound cover is refused BEFORE the upload starts', async () => {
+    renderStep();
+
+    await userEvent.upload(
+      await fileInputEl('cover'),
+      await makeImageFile('huge.png', LISTING_ASSET_MAX_DIMENSION_PX + 1, 512)
+    );
+
+    // The author is told why, in the server's own words — asserted as the whole
+    // rendered string INCLUDING the offending value, so a guard that fired for a
+    // different reason (or named a different number) cannot satisfy it.
+    await expect
+      .element(
+        page.getByText(
+          `That image is too large (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side, got ${
+            LISTING_ASSET_MAX_DIMENSION_PX + 1
+          }px).`
+        )
+      )
+      .toBeInTheDocument();
+    // … and not one byte was sent to the object store, nor a row persisted.
+    expect(mocks.uploadToCF).not.toHaveBeenCalled();
+    expect(mocks.persistAsync).not.toHaveBeenCalled();
+  });
+
+  test('the bound is caught on EITHER axis — a tall icon is refused too', async () => {
+    renderStep();
+
+    // The landscape case above cannot tell `max(w, h)` apart from a check that
+    // only ever looks at the width; this one crosses the bound on the OTHER axis,
+    // so a single-axis precheck fails here even though it passes there.
+    await userEvent.upload(
+      await fileInputEl('icon'),
+      await makeImageFile('tall.png', 512, LISTING_ASSET_MAX_DIMENSION_PX + 1)
+    );
+
+    await expect
+      .element(
+        page.getByText(
+          `That image is too large (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side, got ${
+            LISTING_ASSET_MAX_DIMENSION_PX + 1
+          }px).`
+        )
+      )
+      .toBeInTheDocument();
+    expect(mocks.uploadToCF).not.toHaveBeenCalled();
+    expect(mocks.persistAsync).not.toHaveBeenCalled();
+  });
+
+  test('a cover EXACTLY at the bound still uploads (the check is >, not >=)', async () => {
+    mocks.setCoverAsync.mockResolvedValue({ status: 'attached', coverId: 501, scanPending: true });
+    renderStep();
+
+    await userEvent.upload(
+      await fileInputEl('cover'),
+      await makeImageFile('at-bound.png', LISTING_ASSET_MAX_DIMENSION_PX, 512)
+    );
+
+    // The positive control for the test above: the SAME code path and the same
+    // slot, one pixel narrower, reaches the store. Without this a precheck that
+    // rejected everything — or one whose comparison was inverted at the boundary —
+    // would look correct.
+    await vi.waitFor(() => expect(mocks.uploadToCF).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(mocks.persistAsync).toHaveBeenCalledWith(
+        expect.objectContaining({ width: LISTING_ASSET_MAX_DIMENSION_PX, height: 512 })
+      )
+    );
   });
 });

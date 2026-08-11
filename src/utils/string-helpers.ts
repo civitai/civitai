@@ -47,6 +47,7 @@ const nameOverrides: Record<string, string> = {
   DoRA: 'DoRA',
   scheduler: 'Scheduler',
   TextualInversion: 'Embedding',
+  ComfyWorkflows: 'ComfyUI Workflows',
   MotionModule: 'Motion',
   BenefactorsOnly: 'Supporters Only',
   ModelVersion: 'Model Version',

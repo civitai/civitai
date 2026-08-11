@@ -1,7 +1,11 @@
+import { sql } from '@civitai/db/kysely';
 import { getClickhouse } from '$lib/server/clickhouse';
 import { dbRead } from '$lib/server/db';
 import { createCache } from '$lib/server/cache';
 import { rangeTtlSeconds } from '$lib/date-range';
+import { bucketReactors, type ReactionAudienceSplit } from '$lib/analytics/reaction-audience';
+
+export type { AudienceBucket, ReactionAudienceSplit } from '$lib/analytics/reaction-audience';
 
 // Content/Creator analytics (B4 section b). Every metric is keyed **directly to the creator's userId** in
 // ClickHouse — no owner-keyed rollup (A1) needed. Daily/weekly counts over a rolling window, gap-filled so the
@@ -63,6 +67,13 @@ export const getTopMedia = createCache({
   name: 'analytics:top-media:v2',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchTopMedia(userId, from, to),
+  ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
+}).get;
+
+export const getReactionAudienceSplit = createCache({
+  name: 'analytics:reaction-split:v1',
+  fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
+    fetchReactionAudienceSplit(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
@@ -157,6 +168,47 @@ async function fetchContentAnalytics(
       profileViews: sum(profileViews),
     },
   };
+}
+
+// Bounded by the number of *reactors*, never the number of followers: `UserEngagement`'s only usable index is its
+// PK `(userId, targetUserId)`, so "does this user follow X" is an index seek while "everyone who follows X" is a
+// seq scan. We therefore aggregate reactors in ClickHouse first and probe Postgres with that list — measured 143
+// index searches / ~96 ms for a creator's all-time reactor set (~87k), against 825M reaction rows.
+//
+// `reactions` carries the reactor on every row back to 2023-04-27 with no TTL, so this is not limited to a rolling
+// window the way an `entityMetricEvents_month` approach would be — any range the picker offers works, including a
+// future lifetime range, with no new materialized view.
+async function fetchReactionAudienceSplit(
+  userId: number,
+  from: string,
+  to: string
+): Promise<ReactionAudienceSplit> {
+  const uid = Number(userId);
+  const rows = await getClickhouse().$query<{
+    reactorId: number | string;
+    reactions: number | string;
+  }>(
+    `SELECT userId AS reactorId, ${netReactions} AS reactions FROM reactions WHERE ownerId = ${uid} AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY reactorId`
+  );
+
+  // Rows with no actor (611 all-time, across 399 owners) fall through to non-followers rather than being filtered:
+  // a reactor with no session isn't following, and dropping them would make the buckets stop summing to the
+  // reactions total this page already shows.
+  const reactors = rows.map((r) => ({ id: Number(r.reactorId), reactions: Number(r.reactions) }));
+  const otherIds = reactors.filter((r) => r.id !== uid && r.id > 0).map((r) => r.id);
+
+  // `= ANY($1)` and not an `in` list: kysely expands `in` to one placeholder per id, and a heavy creator's reactor
+  // set is past Postgres' 65535-parameter ceiling.
+  const followerIds = new Set<number>();
+  if (otherIds.length) {
+    const result = await sql<{ userId: number }>`
+      SELECT "userId" FROM "UserEngagement"
+      WHERE "targetUserId" = ${uid} AND "type" = 'Follow' AND "userId" = ANY(${otherIds})
+    `.execute(dbRead);
+    for (const row of result.rows) followerIds.add(Number(row.userId));
+  }
+
+  return bucketReactors(reactors, uid, followerIds);
 }
 
 // Top reacted media (images + videos) over the range — the /analytics/content tabs filter this by `type`. We rank

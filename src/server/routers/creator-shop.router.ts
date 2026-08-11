@@ -11,11 +11,15 @@ import {
   getManageItemsSchema,
   getPublicShopItemsSchema,
   getReviewQueueSchema,
+  getShopItemResellersSchema,
+  reorderResoldItemsSchema,
   resoldItemSchema,
   reviewCreatorShopItemSchema,
   setCreatorShopItemListedSchema,
   submitCreatorShopItemSchema,
+  submitCreatorShopPackSchema,
   takedownCosmeticShopItemSchema,
+  updateCreatorShopPackSchema,
   updateCreatorShopItemSchema,
   updateCreatorShopSettingsSchema,
 } from '~/server/schema/creator-shop.schema';
@@ -26,11 +30,14 @@ import {
   getCommunityCosmetics,
   getCreatorShop,
   getCreatorShopManageItems,
+  getCreatorShopResaleStats,
   getEarlyAccessModelPrices,
   addResoldItem,
   getPublicShopItemsForResale,
   getResoldItemsForManage,
+  getShopItemResellers,
   removeResoldItem,
+  reorderResoldItems,
   getCreatorShopReviewQueue,
   getCreatorShopReviewQueueCreators,
   getCreatorShopSettings,
@@ -41,7 +48,15 @@ import {
   updateCreatorShopItem,
   updateCreatorShopSettings,
 } from '~/server/services/creator-shop.service';
+import {
+  getBundlableCosmetics,
+  getPackDetail,
+  submitCreatorShopPack,
+  updateCreatorShopPack,
+} from '~/server/services/creator-shop-pack.service';
+import { getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
 import { isStickerSlugAvailable } from '~/server/services/cosmetic.service';
+import * as z from 'zod';
 import {
   isFlagProtected,
   moderatorProcedure,
@@ -59,6 +74,12 @@ const creatorShopProcedure = protectedProcedure.use(isFlagProtected('creatorShop
 
 // Creating stickers is flag-gated; rendering and owning them are not, so this
 // guards the write paths only.
+// Packs are flag-gated at the mutation, not just hidden from lists: an id in
+// hand would otherwise be enough to build or edit one.
+const assertPacksEnabled = (features: FeatureAccess) => {
+  if (!features.cosmeticPacks) throw throwAuthorizationError('Packs are not available yet');
+};
+
 const assertStickersEnabled = (features: FeatureAccess, type?: CosmeticType) => {
   if (type === CosmeticType.Sticker && !features.stickers)
     throw throwAuthorizationError('Stickers are not available yet');
@@ -70,6 +91,50 @@ export const creatorShopRouter = router({
     assertStickersEnabled(ctx.features, input.cosmeticType);
     return submitCreatorShopItem({ ...input, userId: ctx.user.id });
   }),
+  // #region [Packs]
+  submitPack: creatorShopProcedure.input(submitCreatorShopPackSchema).mutation(({ input, ctx }) => {
+    assertPacksEnabled(ctx.features);
+    return submitCreatorShopPack({
+      ...input,
+      userId: ctx.user.id,
+      stickersEnabled: ctx.features.stickers,
+    });
+  }),
+  updatePack: creatorShopProcedure.input(updateCreatorShopPackSchema).mutation(({ input, ctx }) => {
+    assertPacksEnabled(ctx.features);
+    return updateCreatorShopPack({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+      stickersEnabled: ctx.features.stickers,
+    });
+  }),
+  getPack: publicProcedure.input(getByIdSchema).query(({ input, ctx }) =>
+    getPackDetail({
+      shopItemId: input.id,
+      userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+    })
+  ),
+  getBundlable: creatorShopProcedure
+    .input(
+      z.object({
+        query: z.string().optional(),
+        limit: z.number().min(1).max(100).optional(),
+        types: z.array(z.enum(CosmeticType)).optional(),
+      })
+    )
+    .query(({ input, ctx }) =>
+      getBundlableCosmetics({
+        ...input,
+        // Stickers stay out of the picker while the flag is off; the submit
+        // mutation refuses them regardless.
+        types: ctx.features.stickers
+          ? input.types
+          : (input.types ?? Object.values(CosmeticType)).filter((t) => t !== CosmeticType.Sticker),
+      })
+    ),
+  // #endregion
   updateItem: creatorShopProcedure
     .input(updateCreatorShopItemSchema)
     .mutation(({ input, ctx }) =>
@@ -112,6 +177,11 @@ export const creatorShopRouter = router({
       userId: ctx.user.isModerator && input.userId ? input.userId : ctx.user.id,
     })
   ),
+  getResaleStats: creatorShopProcedure.input(getManageItemsSchema).query(({ input, ctx }) =>
+    getCreatorShopResaleStats({
+      userId: ctx.user.isModerator && input.userId ? input.userId : ctx.user.id,
+    })
+  ),
   // Cross-creator selling: browse public cosmetics + list one in your own shop.
   getPublicShopItems: creatorShopProcedure.input(getPublicShopItemsSchema).query(({ input, ctx }) =>
     getPublicShopItemsForResale({
@@ -132,6 +202,17 @@ export const creatorShopRouter = router({
   removeResoldItem: creatorShopProcedure
     .input(resoldItemSchema)
     .mutation(({ input, ctx }) => removeResoldItem({ ...input, userId: ctx.user.id })),
+  reorderResoldItems: creatorShopProcedure
+    .input(reorderResoldItemsSchema)
+    .mutation(({ input, ctx }) => reorderResoldItems({ ...input, userId: ctx.user.id })),
+  // Who resells one of YOUR items — the service refuses anyone else's.
+  getItemResellers: creatorShopProcedure.input(getShopItemResellersSchema).query(({ input, ctx }) =>
+    getShopItemResellers({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    })
+  ),
   // #endregion
 
   // #region [Public: storefront]
@@ -143,10 +224,14 @@ export const creatorShopRouter = router({
         ...input,
         viewerId: ctx.user?.id,
         stickersEnabled: ctx.features.stickers,
+        packsEnabled: ctx.features.cosmeticPacks,
         isModerator: ctx.user?.isModerator,
         preview: input.preview && !!ctx.user?.isModerator,
       })
     ),
+  // Deliberately uncached: the form quotes these numbers and the submission is
+  // rejected if they no longer match what the server charges.
+  getFees: publicProcedure.query(() => getCreatorShopFees()),
   getEarlyAccessPrices: publicProcedure
     .use(isFlagProtected('creatorShop'))
     .input(getEarlyAccessPricesSchema)
@@ -160,6 +245,7 @@ export const creatorShopRouter = router({
         ...input,
         viewerId: ctx.user?.id,
         stickersEnabled: ctx.features.stickers,
+        packsEnabled: ctx.features.cosmeticPacks,
       })
     ),
   // #endregion

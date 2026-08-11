@@ -111,6 +111,14 @@ const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH: 10000,
   NEXTAUTH_URL: 'http://localhost:3000',
   NEXTAUTH_SECRET: 'test-secret',
+  // endpoint-helpers spreads TRPC_ORIGINS at module load, so an undefined value
+  // makes importing ANY api page throw "is not iterable" — which is why tests
+  // have been stubbing the endpoint wrappers instead of exercising them. The
+  // tokens are non-empty so a request that omits `?token=` genuinely fails the
+  // check rather than matching `undefined !== undefined`.
+  TRPC_ORIGINS: [] as string[],
+  WEBHOOK_TOKEN: 'test-webhook-token',
+  JOB_TOKEN: 'test-job-token',
   S3_UPLOAD_ENDPOINT: 'http://localhost:9000',
   S3_IMAGE_UPLOAD_ENDPOINT: 'http://localhost:9000',
   ORCHESTRATOR_ENDPOINT: 'http://localhost:8080',
@@ -173,6 +181,10 @@ const promMetricStub = () => {
 };
 
 vi.mock('~/server/prom/client', () => ({
+  // The real value. Modules that build their own prom-client metrics name them
+  // `PROM_PREFIX + '...'`, and a stubbed prefix would make every such test assert
+  // against a metric name production never emits.
+  PROM_PREFIX: 'civitai_app_',
   // Factory functions — modules call these at import time to build their metrics
   // (e.g. meilisearch/client.ts, eventloop-longtask.ts). Each returns a stub.
   registerCounter: vi.fn(promMetricStub),
@@ -181,6 +193,8 @@ vi.mock('~/server/prom/client', () => ({
   registerHistogram: vi.fn(promMetricStub),
   registerInstrumentationMetric: vi.fn(promMetricStub),
   // Named metric exports the real module ships.
+  placementExhaustedLegsGauge: promMetricStub(),
+  placementUnfundedSettlementsGauge: promMetricStub(),
   missingSignedAtCounter: promMetricStub(),
   newUserCounter: promMetricStub(),
   loginCounter: promMetricStub(),

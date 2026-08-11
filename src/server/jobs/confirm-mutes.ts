@@ -22,7 +22,7 @@ export const confirmMutes = createJob('confirm-mutes', '0 1 * * *', async () => 
     try {
       await cancelSubscriptionPlan({ userId: id });
       await cancelSubscription({ userId: id, atPeriodEnd: true });
-      await refreshSession(id);
+      await refreshSession(id, { caller: 'job' });
     } catch (e) {
       console.error(`Error cancelling subscription for user ${id}:`, e);
     }

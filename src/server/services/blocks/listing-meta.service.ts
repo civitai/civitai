@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 
-import { LISTING_ASSET_MAX_DIMENSION_PX } from '~/server/schema/blocks/app-listing.schema';
+import { listingAssetTooLargeReason } from '~/server/schema/blocks/app-listing.schema';
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
 import type {
   FetchListingMetaInput,
@@ -184,11 +184,13 @@ export async function ingestListingAssetFromUrl(opts: {
 
   // Ceiling on either side — the byte cap alone doesn't bound decoded dimensions
   // (a tiny highly-compressed file can decode to an enormous canvas / bomb). Reject
-  // before the CF upload + createImage scan pipeline.
-  if (width > LISTING_ASSET_MAX_DIMENSION_PX || height > LISTING_ASSET_MAX_DIMENSION_PX) {
+  // before the CF upload + createImage scan pipeline. Shared predicate + text, so
+  // this path and the upload paths name the same bound.
+  const tooLarge = listingAssetTooLargeReason('That image', width, height);
+  if (tooLarge) {
     throw new TRPCError({
       code: 'BAD_REQUEST',
-      message: `That image is too large (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side). Try uploading a smaller one manually.`,
+      message: `${tooLarge}. Try uploading a smaller one manually.`,
     });
   }
 
@@ -304,11 +306,33 @@ export async function ingestListingAssetFromDataUri(opts: {
     });
   }
 
+  const { default: sharp } = await import('sharp');
+
+  // Header-only dimension read (no pixel data decoded) so an over-cap input is
+  // reported as the pixel-count rejection it is, rather than as the catch-all decode
+  // failure below (civitai/cli#270). The cap must be LIFTED here — that is the only
+  // way to learn the dimensions of an input that exceeds it; the rasterize below
+  // keeps the cap and stays the enforcement point.
+  let source: { width: number; height: number } | undefined;
+  try {
+    const meta = await sharp(parsed.bytes, { density: 96, limitInputPixels: false }).metadata();
+    if (meta.width && meta.height) source = { width: meta.width, height: meta.height };
+  } catch {
+    // Unreadable header — let the rasterize below produce the decode-failure message.
+  }
+  if (source && source.width * source.height > INLINE_ICON_MAX_INPUT_PIXELS) {
+    const pixels = (source.width * source.height).toLocaleString('en-US');
+    const limit = INLINE_ICON_MAX_INPUT_PIXELS.toLocaleString('en-US');
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `That icon is ${source.width}×${source.height} (${pixels} pixels), over the ${limit} pixel limit. Resize it to ${INLINE_ICON_RASTER_MAX_PX}×${INLINE_ICON_RASTER_MAX_PX} or smaller and upload it manually.`,
+    });
+  }
+
   // Rasterize to PNG. This is the load-bearing security step: whatever the source
   // (SVG markup or a raster image), the bytes we STORE are always PNG — raw SVG is
   // never persisted or served. sharp reads an SVG via librsvg; `resize(...inside)`
   // bounds the output canvas so a huge intrinsic viewBox can't bomb the pipeline.
-  const { default: sharp } = await import('sharp');
   let png: Buffer;
   let width: number | undefined;
   let height: number | undefined;

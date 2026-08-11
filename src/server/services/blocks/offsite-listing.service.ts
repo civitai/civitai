@@ -6,6 +6,10 @@ import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
+  listingAssetTooLargeReason,
+  MAX_LISTING_ASSET_SIZE_BYTES,
+} from '~/server/schema/blocks/app-listing.schema';
+import {
   assertNoOnPlatformSurface,
   validateExternalUrl,
 } from '~/server/schema/blocks/external-app.schema';
@@ -30,6 +34,8 @@ import {
 } from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionable } from '~/server/services/blocks/app-listing-actionable.service';
 import { computeListingProblems } from '~/server/services/blocks/listing-problems';
+import { measureUploadedImage } from '~/server/services/blocks/measure-uploaded-image';
+import { storedObjectEtagMetadata } from '~/server/services/blocks/stored-object-integrity';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import {
   deriveContentRatingFromAssets,
@@ -834,7 +840,31 @@ const editableListingSelect = {
   coverId: true,
 } as const;
 
-/** Load a listing and assert the caller is its OWNER (strict — no mod override on the author edit path). */
+/**
+ * True when `userId` holds an ACCEPTED collaborator seat reachable from this listing.
+ *
+ * Dynamic import: `app-access.service` is small and IO-only, but keeping the import
+ * inside the body matches this file's existing discipline for cross-service reach
+ * (`beginListingRevision`'s import of the asset service) and keeps the module graph of
+ * a plain listing read unchanged.
+ */
+async function isAcceptedListingEditor(listingId: string, userId: number): Promise<boolean> {
+  const { resolveListingAccess } = await import('~/server/services/blocks/app-access.service');
+  const access = await resolveListingAccess(listingId, userId);
+  return access?.role === 'editor';
+}
+
+/**
+ * Load a listing and assert the caller may edit it: its OWNER or an ACCEPTED
+ * collaborator on the backing AppBlock.
+ *
+ * 🔴 STILL NO MODERATOR OVERRIDE — unchanged, and deliberately different from
+ * `app-listing-assets.service::loadOwnedListing`, which does bypass for mods. That
+ * divergence between two sibling gates PREDATES collaborators; it was surfaced by
+ * consolidating the predicate and is recorded in `app-access.call-site-ledger.test.ts`
+ * rather than quietly normalised, because "make the mod bypass consistent" is a
+ * behaviour change to the author edit path that deserves its own decision.
+ */
 async function loadOwnedEditableListing(
   listingId: string,
   userId: number
@@ -846,7 +876,7 @@ async function loadOwnedEditableListing(
   if (!listing) {
     throw new OffsiteRequestError('NOT_FOUND', `listing ${listingId} not found`);
   }
-  if (listing.userId !== userId) {
+  if (listing.userId !== userId && !(await isAcceptedListingEditor(listingId, userId))) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only edit your own listings');
   }
   return listing;
@@ -968,10 +998,7 @@ export async function beginListingRevision(opts: {
   const parent = await loadOwnedEditableListing(listingId, userId);
 
   if (parent.revisionOfId != null) {
-    throw new OffsiteRequestError(
-      'INVALID_REVISION',
-      'cannot open a revision of a revision draft'
-    );
+    throw new OffsiteRequestError('INVALID_REVISION', 'cannot open a revision of a revision draft');
   }
   if (parent.status !== 'approved') {
     throw new OffsiteRequestError(
@@ -1037,13 +1064,15 @@ export async function beginListingRevision(opts: {
       });
       if (shots.length > 0) {
         await tx.appListingScreenshot.createMany({
-          data: shots.map((s: { imageId: number | null; order: number; caption: string | null }) => ({
-            id: newAppListingScreenshotId(),
-            appListingId: shadowId,
-            imageId: s.imageId,
-            order: s.order,
-            caption: s.caption,
-          })),
+          data: shots.map(
+            (s: { imageId: number | null; order: number; caption: string | null }) => ({
+              id: newAppListingScreenshotId(),
+              appListingId: shadowId,
+              imageId: s.imageId,
+              order: s.order,
+              caption: s.caption,
+            })
+          ),
         });
       }
     });
@@ -1108,24 +1137,27 @@ export async function submitListingRevision(opts: {
       coverId: true,
       revisionOf: { select: { slug: true, status: true } },
     },
-  })) as
-    | {
-        id: string;
-        kind: string;
-        status: string;
-        userId: number;
-        revisionOfId: string | null;
-        externalUrl: string | null;
-        iconId: number | null;
-        coverId: number | null;
-        revisionOf: { slug: string; status: string } | null;
-      }
-    | null;
+  })) as {
+    id: string;
+    kind: string;
+    status: string;
+    userId: number;
+    revisionOfId: string | null;
+    externalUrl: string | null;
+    iconId: number | null;
+    coverId: number | null;
+    revisionOf: { slug: string; status: string } | null;
+  } | null;
 
   if (!shadow) {
     throw new OffsiteRequestError('NOT_FOUND', `revision draft ${shadowId} not found`);
   }
-  if (shadow.userId !== userId) {
+  // Owner OR an ACCEPTED collaborator. 🔴 Note the shadow's `userId` is the PARENT
+  // OWNER's, not the editor's — `beginListingRevision` clones with
+  // `userId: parent.userId` — so an editor's own shadow reads as owned by someone
+  // else and the bare equality refused it. Submitting a new version is an explicit
+  // editor capability, so the seat check is what admits them.
+  if (shadow.userId !== userId && !(await isAcceptedListingEditor(shadowId, userId))) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only submit your own revision');
   }
   if (shadow.revisionOfId == null || !shadow.revisionOf) {
@@ -1619,7 +1651,9 @@ export async function getMyListingForApp(opts: {
       `no listing found for app ${appBlockId ?? slug ?? '(unspecified)'}`
     );
   }
-  if (listing.userId !== userId) {
+  // Owner OR an ACCEPTED collaborator on the backing AppBlock. This is the media
+  // editor's entry read; an editor who cannot reach it cannot edit anything.
+  if (listing.userId !== userId && !(await isAcceptedListingEditor(listing.id, userId))) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only manage your own listings');
   }
   // A pending revision REQUEST (not mere shadow existence) drives the "already
@@ -2158,7 +2192,9 @@ export async function approveExternalRequest(opts: {
       // submit/edit time). A connect listing always has a `connectClient` row here
       // (FK-backed by the non-null `connectClientId`); treat a null ceiling as 0.
       const allowedScopes = primaryListing.connectClient?.allowedScopes ?? 0;
-      if (!connectScopesSubsetOfCeiling(primaryListing.connectRequestedScopes ?? 0, allowedScopes)) {
+      if (
+        !connectScopesSubsetOfCeiling(primaryListing.connectRequestedScopes ?? 0, allowedScopes)
+      ) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: 'requested scopes exceed the OAuth client’s allowed scopes',
@@ -2639,31 +2675,62 @@ export async function rejectExternalRequest(opts: {
 // ---------------------------------------------------------------------------
 
 /**
- * Materialise a CF-uploaded image into an `Image` row (owned by the caller) and
+ * The byte cap is the LOOSEST per-kind cap: bytes above it satisfy no kind, and the
+ * kind is not known until attach, so it is the only size rejection that can happen
+ * this early.
+ *
+ * The DIMENSION ceiling does not need the kind either — it is the same for all of
+ * them — so it is applied here too, on the measured (never the declared) pair. A
+ * byte cap does not bound decoded dimensions: a small, highly-compressed file can
+ * decode to an enormous canvas, and the presigned-upload path had no ceiling at
+ * all, so an image far above the bound was stored at full size and only its
+ * MINIMUMS were ever checked. Rejecting here keeps the bytes out of `createImage`
+ * + the scan pipeline; {@link validateListingImage} re-applies the same bound at
+ * attach for rows this path did not create.
+ */
+const measureListingAssetUpload = async (key: string) => {
+  const measured = await measureUploadedImage(key, {
+    maxBytes: MAX_LISTING_ASSET_SIZE_BYTES,
+    subject: 'listing media',
+  });
+  const tooLarge = listingAssetTooLargeReason('That image', measured.width, measured.height);
+  if (tooLarge) throw new TRPCError({ code: 'BAD_REQUEST', message: `${tooLarge}.` });
+  return measured;
+};
+
+/**
+ * Materialise an uploaded image into an `Image` row (owned by the caller) and
  * return its numeric id, so the submit form's asset step can attach it to the
  * draft listing via the P1 asset-CRUD procs. Kicks off the standard ingestion/scan
  * pipeline (`createImage` with default ingestion) — the P1 attach proc enforces
- * `ingestion === Scanned` + the per-kind image validation, so this proc does NOT
- * re-validate dimensions/mime (it only persists). `createImage` is dynamically
- * imported so the heavy `image.service` module stays out of this service's static
- * graph (mirrors the router's dynamic-import discipline + keeps the unit tests,
- * which mock only `dbRead`/`dbWrite`, light).
+ * `ingestion === Scanned` + the per-kind image validation.
+ *
+ * The persisted dimensions / MIME / byte size are DERIVED FROM THE STORED BYTES
+ * (see {@link measureListingAssetUpload}); the same fields on the input are
+ * ignored. `createImage` and the probe are dynamically imported so the heavy
+ * `image.service` / `sharp` graphs stay out of this service's static graph
+ * (mirrors the router's dynamic-import discipline + keeps the unit tests, which
+ * mock only `dbRead`/`dbWrite`, light).
  */
 export async function persistListingAssetImage(opts: {
   input: PersistListingAssetImageInput;
   userId: number;
 }): Promise<{ imageId: number }> {
   const { input, userId } = opts;
+  const measured = await measureListingAssetUpload(input.url);
   const { createImage } = await import('~/server/services/image.service');
   const image = await createImage({
     url: input.url,
     name: input.name ?? undefined,
     type: 'image',
-    width: input.width,
-    height: input.height,
-    mimeType: input.mimeType,
-    // The P1 image validator reads the byte size from `Image.metadata.size`.
-    metadata: input.sizeBytes != null ? { size: input.sizeBytes } : undefined,
+    width: measured.width,
+    height: measured.height,
+    mimeType: measured.mimeType,
+    // The P1 image validator reads the byte size from `Image.metadata.size`. The
+    // entity tag alongside it records WHICH stored object those measurements came
+    // from, so the attach gate can re-check that the object still is that one
+    // instead of trusting a reading taken before the upload grant expired.
+    metadata: { size: measured.sizeBytes, ...storedObjectEtagMetadata(measured.etag) },
     userId,
   });
   return { imageId: image.id };
@@ -2769,9 +2836,7 @@ export type ListOffsiteRequestsOptions = { limit?: number; cursor?: string };
  * a rejected/withdrawn submission — is still shown.) The shape is otherwise
  * backward-compatible: `hasPendingRevision` is purely additive.
  */
-export async function listMySubmissions(
-  opts: { userId: number } & ListOffsiteRequestsOptions
-) {
+export async function listMySubmissions(opts: { userId: number } & ListOffsiteRequestsOptions) {
   const limit = Math.min(opts.limit ?? 25, 100);
   const rows = await dbRead.appListingPublishRequest.findMany({
     where: {
@@ -2786,11 +2851,7 @@ export async function listMySubmissions(
       // request (all onsite requests are shadow revisions, per the invariant). Include
       // them directly via the `{ kind: 'onsite' }` OR branch so onsite media revisions
       // appear on my-submissions (decision: yes).
-      OR: [
-        { appListingId: null },
-        { appListing: { revisionOfId: null } },
-        { kind: 'onsite' },
-      ],
+      OR: [{ appListingId: null }, { appListing: { revisionOfId: null } }, { kind: 'onsite' }],
     },
     orderBy: { submittedAt: 'desc' },
     take: limit + 1,
@@ -2806,9 +2867,7 @@ export async function listMySubmissions(
   // existence. An abandoned shadow (opened via beginListingRevision but never
   // submitListingRevision-ed → no pending request) must NOT falsely badge the
   // parent "revision in review".
-  const parentIds = page
-    .map((r) => r.appListingId)
-    .filter((id): id is string => id != null);
+  const parentIds = page.map((r) => r.appListingId).filter((id): id is string => id != null);
   const pendingRevisionReqs =
     parentIds.length > 0
       ? await dbRead.appListingPublishRequest.findMany({
@@ -2880,9 +2939,7 @@ export async function listMySubmissions(
       })
     : [];
   const ingestionByImageId = new Map(ingestionRows.map((i) => [i.id, i.ingestion ?? null]));
-  const scanStatusOf = (
-    ingestion: string | null | undefined
-  ): 'scanned' | 'pending' | 'blocked' =>
+  const scanStatusOf = (ingestion: string | null | undefined): 'scanned' | 'pending' | 'blocked' =>
     ingestion === 'Scanned' ? 'scanned' : ingestion === 'Blocked' ? 'blocked' : 'pending';
   const assetScansFor = (listing: {
     iconId: number | null;

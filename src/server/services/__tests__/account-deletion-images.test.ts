@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const {
   mockDbWrite,
   mockResetNsfwLevel,
+  mockDropDeleteQueue,
   mockQueueSearchIndex,
   mockBustCachesForPosts,
   mockLogToAxiom,
@@ -10,6 +11,7 @@ const {
 } = vi.hoisted(() => ({
   mockDbWrite: { $queryRaw: vi.fn(), $executeRaw: vi.fn() },
   mockResetNsfwLevel: vi.fn(async () => undefined),
+  mockDropDeleteQueue: vi.fn(async () => undefined),
   mockQueueSearchIndex: vi.fn(async () => undefined),
   mockBustCachesForPosts: vi.fn(async () => undefined),
   mockLogToAxiom: vi.fn(async () => undefined),
@@ -19,6 +21,7 @@ const {
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbWrite, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/image.service', () => ({
   resetBlockedNsfwLevel: mockResetNsfwLevel,
+  dropBlockedImageDeleteQueue: mockDropDeleteQueue,
   queueImageSearchIndexUpdate: mockQueueSearchIndex,
 }));
 vi.mock('~/server/services/post.service', () => ({ bustCachesForPosts: mockBustCachesForPosts }));
@@ -328,6 +331,16 @@ describe('unblockAccountDeletionImages', () => {
       ids: [1],
       action: SearchIndexUpdateQueueAction.Update,
     });
+  });
+
+  it('disarms the blocked-image purge for the rows it restores', async () => {
+    images = [hidden(1, 'Scanned')];
+
+    await unblockAccountDeletionImages(7);
+
+    // The grace block queued these for deletion. A leftover queue row carries the FIRST
+    // block's timestamp, so a later re-delete would purge them with no retention at all.
+    expect(mockDropDeleteQueue).toHaveBeenCalledWith([1]);
   });
 
   it('busts the caches of the posts that held the restored images', async () => {

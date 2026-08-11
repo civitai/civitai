@@ -33,6 +33,8 @@
       "@civitai/clickhouse/*": ["./packages/civitai-clickhouse/src/*"],
       "@civitai/axiom": ["./packages/civitai-axiom/src/index"],
       "@civitai/axiom/*": ["./packages/civitai-axiom/src/*"],
+      "@civitai/flipt": ["./packages/civitai-flipt/src/index"],
+      "@civitai/flipt/*": ["./packages/civitai-flipt/src/*"],
       "@civitai/telemetry": ["./packages/civitai-telemetry/src/index"],
       "@civitai/telemetry/*": ["./packages/civitai-telemetry/src/*"],
       "@civitai/brand": ["./packages/civitai-brand/src/index"],

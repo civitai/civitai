@@ -48,7 +48,8 @@
 // get-or-create guard against the DEFAULT global registry.
 //
 // 🔴 SURFACE, and why it is not optional. `validateInput` is shared by the
-// on-site generator, the App Blocks bridge, and comics/preset generation. #3520
+// on-site generator, bearer-token API callers (#3665), the App Blocks bridge,
+// and comics/preset generation. #3520
 // defends the on-site substitution as CORRECT (a stale localStorage id after an
 // ecosystem switch, visibly corrected in the picker) and indicts the bridge one
 // as unobservable — opposite verdicts, and without a `surface` label they land
@@ -58,8 +59,11 @@
 // time (`buildGenerationContext(..., surface)`), never inferred here.
 //
 // 🔴 CARDINALITY: exactly two labels, each over a code-owned union declared once
-// in `model-substitution.ts` → 3 reasons × 3 surfaces = 9 series, TOTAL,
-// forever. Deliberately NO version id, model id, ecosystem, workflow, app id, or
+// in `model-substitution.ts` → 3 reasons × 4 surfaces = 12 series, TOTAL.
+// (Was 9; #3665 split `api` out of `onsite`, which had been assigned by a
+// hardcoded literal on two tRPC procedures that also serve bearer-token callers.
+// Widening the union is deliberate and gated by tests on both unions.)
+// Deliberately NO version id, model id, ecosystem, workflow, app id, or
 // user id: this fires once per substituted parse with nothing caching it, the
 // requested version id is caller-controlled and effectively unbounded, and
 // prom-client retains every distinct label set in the Node heap forever (the
@@ -71,11 +75,52 @@
 import client, { type Counter, type Registry } from 'prom-client';
 
 import {
+  GENERATION_SURFACES,
   isGenerationSurface,
   isModelSubstitutionReason,
+  MODEL_SUBSTITUTION_REASONS,
   type GenerationSurface,
   type ModelSubstitutionReason,
 } from '~/shared/data-graph/generation/model-substitution';
+
+/**
+ * Initialise all 12 `(reason, surface)` series to 0 at registration.
+ *
+ * 🔴 WHY, AND WHY IT IS NOT COSMETIC. prom-client only materialises a child
+ * series on its first `inc()`, so before this a pod exposed NOTHING for a
+ * surface until that surface substituted on that pod. A PromQL read of
+ * `…{surface="api"}` then returns `no data`, which is indistinguishable from
+ * "the instrument is not wired" — and this counter exists specifically to be
+ * read as a gate. That is the same defect the `api` split was made to fix
+ * (#3665: a bucket that reads zero cannot gate a decision); leaving the new
+ * bucket unreadable on day 0 would reproduce it one level down. A real zero and
+ * an absent series must be distinguishable.
+ *
+ * Free by construction: 12 series is the counter's whole cardinality budget, so
+ * seeding costs exactly what a fully-exercised pod already costs and cannot
+ * grow.
+ *
+ * 🔴 SEEDING ALONE IS NOT ENOUGH, AND AN EARLIER VERSION OF THIS COMMENT SAID
+ * IT WAS. It claimed `rate()`/`increase()` become "well-defined from the first
+ * scrape". They do not, unless something CALLS this at pod start:
+ * `ensureRegister…` has no caller outside this module, and the only production
+ * path in is `recordGenerationModelSubstitution`, which by definition runs only
+ * once a substitution has already happened. So the metric was absent until the
+ * first event on that pod — exactly the ambiguity the seeding exists to remove.
+ * The missing half is the side-effect call in `src/pages/api/metrics.ts`
+ * (mirroring `~/server/prom/challenge.metrics` two lines above it, which is
+ * there for the same reason). Both halves are required; neither works alone.
+ *
+ * Idempotent — `getOrCreateCounter` returns the EXISTING counter on re-entry and
+ * `inc(…, 0)` is a no-op on an already-materialised series, so calling this on
+ * every request (which `ensureRegister…` is documented to allow) cannot reset or
+ * double-count anything.
+ */
+function seedAllSeries(counter: Counter<string>): void {
+  for (const reason of MODEL_SUBSTITUTION_REASONS) {
+    for (const surface of GENERATION_SURFACES) counter.inc({ reason, surface }, 0);
+  }
+}
 
 function getOrCreateCounter(
   reg: Registry,
@@ -102,9 +147,10 @@ export function ensureRegisterGenerationModelSubstitutionMetrics(reg: Registry =
     'Server-side generation GRAPH VALIDATIONS in which a modelLocked ecosystem SILENTLY replaced the requested checkpoint version with the workflow default. ' +
       'NOT a count of user-visible generations: the ratio is VARIABLE — a block submit normally validates twice (whatIf preflight + real submit), once if the preflight exceeds the buzz budget, plus one per estimateWorkflow call (unbounded) and one per idempotency replay. Use as a rate/trend per surface; attribute individual cases from the snapshot. ' +
       'reason (wrong-workflow = the version is scoped to a different workflow of the same ecosystem; unrecognized = the version is in no scoped list at all; gated = the version IS offered for this workflow but a gate rule hid it from this user). ' +
-      'surface (block = the App Blocks bridge, where the id was deliberate and the correction was unobservable; onsite = the on-site generator, where this substitution is the intended graceful degradation and is visible to the user; preset = comics/preset server-composed generation)',
+      'surface (api = the same two tRPC generation procedures reached with a bearer token — a CLI, script or external integration, where the id was deliberate and nothing reports the correction; block = the App Blocks bridge, where the id was deliberate and the correction was unobservable; onsite = the on-site generator under a COOKIE SESSION, where this substitution is the intended graceful degradation and is visible to the user; preset = comics/preset server-composed generation)',
     ['reason', 'surface']
   );
+  seedAllSeries(modelSubstitutionsTotal);
   return { modelSubstitutionsTotal };
 }
 
@@ -130,8 +176,8 @@ export function recordGenerationModelSubstitution(
   try {
     // 🔴 The cardinality bound rests HERE, on code, not on the erased types
     // above. An unknown reason or surface is DROPPED, not passed through and not
-    // relabelled to a plausible default — either would make the "9 series
-    // forever" claim a wish. Reachable today only by defeating the types.
+    // relabelled to a plausible default — either would make the "12 series"
+    // claim a wish. Reachable today only by defeating the types.
     if (!isModelSubstitutionReason(reason) || !isGenerationSurface(surface)) return;
     const { modelSubstitutionsTotal } = ensureRegisterGenerationModelSubstitutionMetrics();
     modelSubstitutionsTotal.inc({ reason, surface });

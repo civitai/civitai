@@ -1,6 +1,6 @@
 ##### DEPENDENCIES
 
-FROM node:24-alpine3.24 AS deps
+FROM node:24.19.0-alpine3.24 AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
@@ -57,6 +57,24 @@ ENV SOURCE_COMMIT=$SOURCE_COMMIT
 RUN --mount=type=cache,target=/app/.next/cache \
     SKIP_ENV_VALIDATION=1 IS_BUILD=true NODE_OPTIONS="--max_old_space_size=${NODE_BUILD_MEM}" pnpm run build
 
+# Server-graph module identity — a HARD gate, deliberately unlike the report-only
+# bundle budget below.
+#
+# A module's top-level state is per RUNTIME module, and the bundler decides how many
+# runtime modules a source file becomes: Turbopack inlines `src/server/logging/client.ts`
+# into 14 of them in this build. Anything that must be a process-wide singleton therefore
+# has to be reached through `globalThis`. Nothing else we run can see a violation — `tsc`
+# checks one source file, eslint reads source, and Vitest loads a module once, so a
+# module-scope singleton looks like a singleton everywhere except in the emitted output.
+# That is how the OTel logs bridge shipped delivering 1.3% of its records with a green
+# typecheck, a green lint and a green suite.
+#
+# Runs here for the same reason the budget does: `.next` exists in this stage, so there is
+# no second build. It reads the emitted `.js.map` `sources` to attribute code to source
+# modules, and exits 2 (not 0) if it finds no maps — a scan that can see nothing must not
+# report health. Cheap: a few seconds of file reads.
+RUN node scripts/check-server-graph-singletons.mjs
+
 # Bundle-size budget (report-only during the soak). Next 16 (Turbopack) emits
 # opaque hashed chunks and removed per-route build stats, so scripts/bundle-budget.mjs
 # parses .next/build-manifest.json to reconstruct per-page First Load JS (brotli)
@@ -110,7 +128,7 @@ COPY --from=builder /app/server-maps/ /server-maps/
 
 ##### RUNNER
 
-FROM node:24-alpine3.24 AS runner
+FROM node:24.19.0-alpine3.24 AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production

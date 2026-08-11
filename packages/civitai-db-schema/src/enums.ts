@@ -151,6 +151,7 @@ export const ModelType = {
   Poses: 'Poses',
   Wildcards: 'Wildcards',
   Workflows: 'Workflows',
+  ComfyWorkflows: 'ComfyWorkflows',
   Detection: 'Detection',
   VisionLanguage: 'VisionLanguage',
   CLIP: 'CLIP',
@@ -351,6 +352,7 @@ export const ReportReason = {
   CSAM: 'CSAM',
   Automated: 'Automated',
   Spam: 'Spam',
+  StickerPlacement: 'StickerPlacement',
 } as const;
 
 export type ReportReason = (typeof ReportReason)[keyof typeof ReportReason];

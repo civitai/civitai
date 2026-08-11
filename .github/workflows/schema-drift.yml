@@ -2,7 +2,7 @@ name: Schema drift gate
 
 # Fails a pull request that makes the gap between `schema.full.prisma` and the production
 # database WORSE, and only that. Pre-existing drift is warned about, never failed on — the
-# database carries 61 accepted findings today, and a gate red on every run is a gate everyone
+# database carries 63 accepted findings today, and a gate red on every run is a gate everyone
 # learns to click through.
 #
 # "Fails", not "blocks": `main` has branch protection but no `required_status_checks`, so a red

@@ -164,12 +164,15 @@ function setupRefundData({
     },
   ] as AccessRow[],
   amounts = { 'tx-1': 300 } as Record<string, number>,
+  // The account each purchase was PAID FROM. The ledger reports legs by the buyer's account, which
+  // is what the payout account is derived from.
+  spentFrom = {} as Record<string, string>,
 } = {}) {
   mockDbWrite.modelVersion.findMany.mockResolvedValue(versions);
   mockDbWrite.paidAccess.findMany.mockResolvedValue(gates);
   mockDbWrite.entityAccess.findMany.mockResolvedValue(accessRows);
   mockGetMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => [
-    { amount: amounts[prefix] ?? 0 },
+    { amount: amounts[prefix] ?? 0, accountType: spentFrom[prefix] ?? 'yellow' },
   ]);
 }
 
@@ -197,7 +200,7 @@ describe('getModelEarlyAccessRefundRequirement', () => {
 
     const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
 
-    expect(result).toEqual({ purchases: [], buyerCount: 0, totalBuzz: 0 });
+    expect(result).toEqual({ purchases: [], buyerCount: 0, totalBuzz: 0, totalsByAccount: {} });
     expect(mockDbWrite.paidAccess.findMany).not.toHaveBeenCalled();
   });
 
@@ -206,7 +209,7 @@ describe('getModelEarlyAccessRefundRequirement', () => {
 
     const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
 
-    expect(result).toEqual({ purchases: [], buyerCount: 0, totalBuzz: 0 });
+    expect(result).toEqual({ purchases: [], buyerCount: 0, totalBuzz: 0, totalsByAccount: {} });
     expect(mockDbWrite.entityAccess.findMany).not.toHaveBeenCalled();
   });
 
@@ -280,6 +283,35 @@ describe('getModelEarlyAccessRefundRequirement', () => {
     expect(result.buyerCount).toBe(2);
     expect(result.totalBuzz).toBe(375);
   });
+
+  it('books each purchase against the owner account its currency paid into', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: {
+            'download-buzzTransactionId': 'tx-1',
+            'generation-buzzTransactionId': 'tx-2',
+          },
+        },
+        {
+          accessToId: VERSION_ID,
+          accessorId: OTHER_BUYER_ID,
+          meta: { 'download-buzzTransactionId': 'tx-3' },
+        },
+      ],
+      amounts: { 'tx-1': 300, 'tx-2': 200, 'tx-3': 25 },
+      // Green is a buyer-side currency that pays the owner in yellow, so it must land in the
+      // yellow bucket rather than one of its own.
+      spentFrom: { 'tx-1': 'blue', 'tx-2': 'green', 'tx-3': 'yellow' },
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.totalsByAccount).toEqual({ blue: 300, yellow: 225 });
+    expect(result.totalBuzz).toBe(525);
+  });
 });
 
 describe('unpublishModelById — early access refund gate', () => {
@@ -340,7 +372,48 @@ describe('unpublishModelById — early access refund gate', () => {
 
     await expect(
       unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, refundEarlyAccess: true })
-    ).rejects.toThrowError(/requires 300 Buzz but the account only has 10/);
+    ).rejects.toThrowError(/requires 300 yellow Buzz but the account only has 10/);
+    expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  // The two halves of the same bug: the guard used to read yellow for every purchase regardless of
+  // what funded it, so a blue-funded sale both blocked an unpublish it shouldn't have and sailed
+  // past one it should have caught. The ledger exempts refunds from its own sufficiency check, so
+  // this guard is the only thing standing between a creator and a negative balance.
+  it('lets a blue-funded refund through on blue balance alone, with no yellow to its name', async () => {
+    setupRefundData({ spentFrom: { 'tx-1': 'blue' } });
+    setupUnpublishWrites();
+    mockGetUserBuzzAccountByAccountTypes.mockResolvedValue({ blue: 300, yellow: 0 });
+
+    await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, refundEarlyAccess: true });
+
+    expect(mockGetUserBuzzAccountByAccountTypes).toHaveBeenCalledWith(OWNER_ID, ['blue']);
+    expect(mockRefundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    expect(mockTx.model.update).toHaveBeenCalled();
+  });
+
+  it('refuses when a covered yellow balance hides an uncovered blue one', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: {
+            'download-buzzTransactionId': 'tx-1',
+            'generation-buzzTransactionId': 'tx-2',
+          },
+        },
+      ],
+      amounts: { 'tx-1': 300, 'tx-2': 500 },
+      spentFrom: { 'tx-1': 'yellow', 'tx-2': 'blue' },
+    });
+    setupUnpublishWrites();
+    mockGetUserBuzzAccountByAccountTypes.mockResolvedValue({ yellow: 10_000, blue: 0 });
+
+    await expect(
+      unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, refundEarlyAccess: true })
+    ).rejects.toThrowError(/requires 500 blue Buzz but the account only has 0/);
     expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
     expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
   });

@@ -321,6 +321,39 @@ export type AppBlockReview = {
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
 };
+export type AppCollaborator = {
+  app_block_id: string;
+  user_id: number;
+  /**
+   * Capability role. 'editor' today (content + media + submit + app-scoped
+   * analytics/earnings). Owner-only actions (managing collaborators, initiating a
+   * transfer) are NOT a role — they are reserved to the OauthClient owner.
+   */
+  role: Generated<string>;
+  /**
+   * 'pending' | 'accepted' | 'rejected'. Only 'accepted' confers capability, and
+   * only 'accepted' is ever visible publicly.
+   */
+  status: Generated<string>;
+  /**
+   * Public-byline opt-in. Immediate-apply (no mod review) — safe because this row is
+   * outside the revision copy sets (see the header). A collaborator is listed on the
+   * public listing only when status='accepted' AND displayed=true.
+   */
+  displayed: Generated<boolean>;
+  /**
+   * The OWNER who issued the invite (audit + the "invited by" chip).
+   */
+  invited_by: number;
+  /**
+   * Last time an invite NOTIFICATION was emitted for this row — the re-invite
+   * throttle key. NB: the `EntityCollaborator` sibling has an inverted throttle
+   * (`>=` where it means `<=`); this one is written correctly (see the service).
+   */
+  last_notified_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  responded_at: Timestamp | null;
+};
 export type AppDevForgejoIdentity = {
   user_id: number;
   forgejo_username: string;
@@ -440,6 +473,54 @@ export type AppListingScreenshot = {
   caption: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+};
+export type AppOwnershipEvent = {
+  id: string;
+  app_block_id: string | null;
+  /**
+   * Denormalized so the event stays self-describing after the app is gone.
+   */
+  slug: string;
+  /**
+   * invite | accept | reject | remove | leave | display | transfer_initiated |
+   * transfer_accepted | transfer_cancelled. Bounded by a CHECK in the migration.
+   */
+  action: string;
+  /**
+   * Who performed the action.
+   */
+  actor_user_id: number | null;
+  /**
+   * Who it was performed ON (the invitee / removed editor / transfer recipient).
+   */
+  target_user_id: number | null;
+  /**
+   * Structured extras (role, before/after owner, expiry, …).
+   */
+  metadata: unknown | null;
+  created_at: Generated<Timestamp>;
+};
+export type AppOwnershipTransfer = {
+  id: string;
+  app_block_id: string;
+  /**
+   * Snapshot of the owner at initiate time — re-asserted in-tx at accept, so a
+   * transfer initiated by an owner who has since lost the app cannot complete.
+   */
+  from_user_id: number;
+  to_user_id: number;
+  /**
+   * 'pending' | 'accepted' | 'cancelled' | 'rejected' | 'expired'. CHECK in the migration.
+   */
+  status: Generated<string>;
+  /**
+   * Hard expiry — an unaccepted transfer stops being acceptable after this instant.
+   * Enforced in the ACCEPT path (a read-time predicate), so no sweeper job is
+   * required for correctness; a sweeper would only tidy the rows.
+   */
+  expires_at: Timestamp;
+  created_at: Generated<Timestamp>;
+  responded_at: Timestamp | null;
 };
 export type AppReviewAgentReport = {
   id: string;
@@ -1925,7 +2006,7 @@ export type Cosmetic = {
 };
 export type CosmeticShopItem = {
   id: Generated<number>;
-  cosmeticId: number;
+  cosmeticId: number | null;
   unitAmount: number;
   addedById: number | null;
   createdAt: Generated<Timestamp>;
@@ -1941,6 +2022,12 @@ export type CosmeticShopItem = {
   reviewedAt: Timestamp | null;
   rejectionReason: string | null;
   listed: Generated<boolean>;
+};
+export type CosmeticShopItemCosmetic = {
+  shopItemId: number;
+  cosmeticId: number;
+  index: Generated<number>;
+  floorAmount: number;
 };
 export type CosmeticShopSection = {
   id: Generated<number>;
@@ -2875,6 +2962,95 @@ export type Partner = {
   logo: string | null;
   disabled: Generated<boolean>;
 };
+export type Placement = {
+  id: Generated<number>;
+  surface: string;
+  targetType: string;
+  targetId: number;
+  ownerId: number;
+  placerId: number;
+  data: Generated<unknown>;
+  status: string;
+  /**
+   * 'owner' | 'moderator' | 'cosmeticTakedown', set with status 'removed'. The
+   * removals refund different amounts, so the status alone cannot settle the
+   * money. Constrained by "Placement_removedBy_check" — a new value needs a
+   * migration even though the column is TEXT.
+   */
+  removedBy: string | null;
+  /**
+   * What the placer paid into escrow, in Buzz. Kept per row rather than read back from
+   * the space, whose price may move between placement and release.
+   */
+  amount: number;
+  /**
+   * Who sold the thing being placed, when an approved placement owes them a cut.
+   * On the row rather than passed in, because the settlement is resumable and a
+   * sweeper that never saw the argument would strand the seller's share.
+   */
+  sellerId: number | null;
+  /**
+   * Set when a block declined this placement. A block is the owner refusing to
+   * give attention to anyone, and the decline fee is the price of that attention,
+   * so no fee is taken. Stored rather than inferred: settlement is resumable and
+   * must replay the same decision.
+   */
+  feeWaived: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+  expiresAt: Timestamp | null;
+  resolvedAt: Timestamp | null;
+  resolvedById: number | null;
+  /**
+   * A moderator takedown of an already-settled placement. Its own columns because
+   * `resolvedAt`/`resolvedById` record who approved it, and overwriting them on the
+   * one path whose purpose is a moderation record would destroy the approval trail.
+   */
+  takenDownAt: Timestamp | null;
+  takenDownById: number | null;
+};
+export type PlacementSpace = {
+  id: Generated<number>;
+  surface: string;
+  entityType: string;
+  entityId: number;
+  mode: string;
+  /**
+   * What the owner asks. The charged price is min(price, cap) computed at read; a
+   * stored effective price goes stale the moment a membership lapses.
+   */
+  price: number | null;
+  /**
+   * Surface-owned settings, read only by the surface that wrote them — a max
+   * sticker size means nothing to a remix gallery. Kept as JSON so this layer
+   * does not grow a column per surface idea.
+   */
+  settings: Generated<unknown>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
+export type PlacementSuspension = {
+  userId: number;
+  reason: string | null;
+  createdAt: Generated<Timestamp>;
+  createdById: number | null;
+};
+export type PlacementTransaction = {
+  id: Generated<number>;
+  placementId: number;
+  kind: string;
+  transactionId: string | null;
+  amount: number;
+  /**
+   * Failure accounting. Without it a leg that can never succeed is
+   * indistinguishable from one that has not been tried yet, so it stays in the
+   * recovery sweep forever and — past the batch limit — starves it, while the
+   * sweep reports healthy numbers.
+   */
+  attempts: Generated<number>;
+  lastAttemptAt: Timestamp | null;
+  lastError: string | null;
+  createdAt: Generated<Timestamp>;
+};
 export type PlatformDefaultBlock = {
   app_block_id: string;
   slot_id: string;
@@ -3630,14 +3806,27 @@ export type UserCosmetic = {
   forType: CosmeticEntity | null;
   remaining: number | null;
 };
+export type UserCosmeticShopItemResale = {
+  userId: number;
+  shopItemId: number;
+  sellerShare: number;
+  index: Generated<number>;
+  createdAt: Generated<Timestamp>;
+};
 export type UserCosmeticShopItemWishlist = {
   userId: number;
   shopItemId: number;
   createdAt: Generated<Timestamp>;
 };
+export type UserCosmeticShopPurchaseCosmetic = {
+  buzzTransactionId: string;
+  cosmeticId: number;
+  unitAmount: number;
+  meta: unknown | null;
+};
 export type UserCosmeticShopPurchases = {
   userId: number;
-  cosmeticId: number;
+  cosmeticId: number | null;
   shopItemId: number;
   unitAmount: number;
   purchasedAt: Generated<Timestamp>;
@@ -3701,6 +3890,10 @@ export type UserProfile = {
   bio: string | null;
   message: string | null;
   messageAddedAt: Timestamp | null;
+  sfwCoverImageId: number | null;
+  sfwBio: string | null;
+  sfwMessage: string | null;
+  sfwMessageAddedAt: Timestamp | null;
   location: string | null;
   nsfw: Generated<boolean>;
   privacySettings: Generated<unknown>;
@@ -3939,6 +4132,7 @@ export type DB = {
   app_block_publish_requests: AppBlockPublishRequest;
   app_block_reviews: AppBlockReview;
   app_blocks: AppBlock;
+  app_collaborators: AppCollaborator;
   app_dev_forgejo_identity: AppDevForgejoIdentity;
   app_listing_metrics: AppListingMetric;
   app_listing_moderation_events: AppListingModerationEvent;
@@ -3947,6 +4141,8 @@ export type DB = {
   app_listing_reviews: AppListingReview;
   app_listing_screenshots: AppListingScreenshot;
   app_listings: AppListing;
+  app_ownership_events: AppOwnershipEvent;
+  app_ownership_transfers: AppOwnershipTransfer;
   app_review_agent_reports: AppReviewAgentReport;
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
@@ -4042,6 +4238,7 @@ export type DB = {
   CommentV2Report: CommentV2Report;
   Cosmetic: Cosmetic;
   CosmeticShopItem: CosmeticShopItem;
+  CosmeticShopItemCosmetic: CosmeticShopItemCosmetic;
   CosmeticShopSection: CosmeticShopSection;
   CosmeticShopSectionItem: CosmeticShopSectionItem;
   CoveredCheckpoint: CoveredCheckpoint;
@@ -4128,6 +4325,10 @@ export type DB = {
   Outbox: Outbox;
   PaidAccess: PaidAccess;
   Partner: Partner;
+  Placement: Placement;
+  PlacementSpace: PlacementSpace;
+  PlacementSuspension: PlacementSuspension;
+  PlacementTransaction: PlacementTransaction;
   platform_default_blocks: PlatformDefaultBlock;
   Post: Post;
   PostHelper: PostHelper;
@@ -4198,7 +4399,9 @@ export type DB = {
   TrustedSpokeDomain: TrustedSpokeDomain;
   User: User;
   UserCosmetic: UserCosmetic;
+  UserCosmeticShopItemResale: UserCosmeticShopItemResale;
   UserCosmeticShopItemWishlist: UserCosmeticShopItemWishlist;
+  UserCosmeticShopPurchaseCosmetic: UserCosmeticShopPurchaseCosmetic;
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
   UserEngagement: UserEngagement;
   UserLink: UserLink;

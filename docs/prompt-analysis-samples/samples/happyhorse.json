@@ -1,0 +1,10 @@
+[
+  {
+    "prompt": "A blacksmith hammers a glowing bar on the anvil in a dim forge, late evening, slow dolly-in.",
+    "assistantResponse": "{\"issues\":[],\"recommendations\":[\"Say where the sparks go — scattering off the anvil face and dying before they reach the floor — since ember rendering is one of this model's strengths and the prompt leaves it unused.\",\"Name what the light source is between hammer blows (the coal bed pulsing) so the dim forge has something driving its exposure.\"],\"enhancedPrompt\":\"A blacksmith hammers a glowing bar on the anvil in a dim forge, sparks scattering off the anvil face and dying before they reach the floor, the coal bed pulsing between blows, late evening, slow dolly-in.\",\"enhancedNegativePrompt\":\"\"}"
+  },
+  {
+    "prompt": "A heron lifts from still water in a reed bed at dawn, lateral orbit, beautiful cinematic stunning shot with hyperrealistic detail at 1000fps",
+    "assistantResponse": "{\"issues\":[{\"description\":\"Four hedging adjectives carry no steering and crowd out concrete description.\",\"severity\":\"warning\"},{\"description\":\"'1000fps' does not produce time dilation in this model.\",\"severity\":\"warning\"}],\"recommendations\":[\"Drop 'beautiful', 'cinematic', 'stunning' and 'hyperrealistic' — they do not steer the output and cost words against the ~20-word budget.\",\"Replace '1000fps' with the visible motion you want: water beading off the wingtips and hanging before it falls.\"],\"enhancedPrompt\":\"A heron lifts from still water in a reed bed at dawn, water beading off the wingtips and hanging before it falls, reeds bending away from the downbeat, lateral orbit.\",\"enhancedNegativePrompt\":\"\"}"
+  }
+]

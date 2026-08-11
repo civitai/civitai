@@ -9,7 +9,10 @@ import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { getEcosystem } from '~/shared/constants/basemodel.constants';
 import { isWorkflowAvailable } from '~/shared/data-graph/generation/config/workflows';
 import { resolveVersionWorkflowScope } from '~/shared/data-graph/generation/workflow-capability';
-import { isModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
+import {
+  readModelSubstitutionsFromMetadata,
+  WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
+} from '~/shared/data-graph/generation/model-substitution';
 import { getImagesLimit } from '~/shared/data-graph/generation/images-limit';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import type {
@@ -33,8 +36,12 @@ const ORCH_STATUS_MAP: Record<WorkflowStatus, BlockWorkflowSnapshot['status']> =
 };
 
 /**
- * 🔴 KEY under which the submit path stores the request's silent checkpoint
- * substitutions on the ORCHESTRATOR WORKFLOW's `metadata` (issue #3520).
+ * 🔴 The key + reader for silent checkpoint substitutions persisted on the
+ * ORCHESTRATOR WORKFLOW's `metadata` (issue #3520) now live in
+ * `~/shared/data-graph/generation/model-substitution` — the tRPC generation path
+ * needs the identical parse (#3665), and a second copy of a validating predicate
+ * is how the same bug gets fixed at one site and not the other. Re-exported here
+ * because this module is where the block path's callers already look for it.
  *
  * WHY THE ORCHESTRATOR AND NOT A COLUMN. The record is produced during graph
  * validation, which happens once, at submit. But blocks render from the
@@ -43,54 +50,21 @@ const ORCH_STATUS_MAP: Record<WorkflowStatus, BlockWorkflowSnapshot['status']> =
  * `Workflow` with no access to that long-gone request context. A submit-reply-
  * only field is therefore gone by the time there is anything to display beside
  * it, and `block_workflows` does not retain the submitted body, so it is not
- * recoverable afterwards either — i.e. the field would not achieve the thing
- * #3520 asks for ("a caller billed for model A and given model B must be able to
- * find that out").
+ * recoverable afterwards either.
  *
  * `WorkflowTemplate.metadata` is a free-form `{ [key: string]: unknown }` bag
- * that the orchestrator persists and echoes back on every read of the workflow,
- * which makes it the natural carrier: written once at submit, readable on every
- * subsequent poll, and NO database change (no Prisma migration — which in this
- * org is a manually-applied, per-environment human operation, not something a
- * code PR should imply).
+ * that the orchestrator persists and echoes back on every read, which makes it
+ * the natural carrier: written once at submit, readable on every subsequent
+ * poll, and NO database change.
  *
- * The app already relies on this round-trip for its own non-standard top-level
- * metadata keys — `remixOfId` and `isPrivateGeneration` are written here at
- * submit and read back from `workflow.metadata` in
- * `orchestration-new.service.ts`'s workflow formatter — so this is an existing,
- * exercised path rather than a new assumption. The formatter builds its
- * normalized metadata from a fixed key list, so an extra key is inert there.
+ * 🔴 The old note here said the generation formatter "builds its normalized
+ * metadata from a fixed key list, so an extra key is inert there". That was
+ * true, and it was the defect #3665 had to fix: the key round-tripped fine but
+ * `formatGenerationResponse2` dropped it on read-back, so the generation path
+ * could persist the record and still never surface it. The formatter now passes
+ * it through explicitly.
  */
-export const WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY = 'modelSubstitutions';
-
-/**
- * Read substitutions back off a fetched workflow's metadata.
- *
- * 🔴 VALIDATED, not cast. This crosses a service boundary: the value is whatever
- * the orchestrator hands back, and the snapshot it feeds is a public wire
- * contract whose `reason` is also a bounded prom label. So each entry is checked
- * structurally and its `reason` narrowed against the code-owned union; anything
- * else is dropped. Returns `undefined` (not `[]`) when there is nothing to
- * report, so the caller can keep OMITTING the field entirely.
- */
-function readModelSubstitutionsFromMetadata(
-  workflow: Workflow
-): BlockWorkflowSnapshot['modelSubstitutions'] {
-  const raw = (workflow.metadata as Record<string, unknown> | null | undefined)?.[
-    WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY
-  ];
-  if (!Array.isArray(raw)) return undefined;
-  const out: NonNullable<BlockWorkflowSnapshot['modelSubstitutions']> = [];
-  for (const entry of raw) {
-    if (!entry || typeof entry !== 'object') continue;
-    const { requested, applied, reason } = entry as Record<string, unknown>;
-    if (typeof requested !== 'number' || !Number.isFinite(requested)) continue;
-    if (typeof applied !== 'number' || !Number.isFinite(applied)) continue;
-    if (!isModelSubstitutionReason(reason)) continue;
-    out.push({ requested, applied, reason });
-  }
-  return out.length ? out : undefined;
-}
+export { WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY, readModelSubstitutionsFromMetadata };
 
 /**
  * Flatten an orchestrator Workflow into the wire-stable shape the iframe
@@ -186,7 +160,7 @@ export function snapshotFromWorkflow(
   // metadata, which is what makes the field survive to the terminal poll.
   const modelSubstitutions = extra?.modelSubstitutions?.length
     ? extra.modelSubstitutions
-    : readModelSubstitutionsFromMetadata(workflow);
+    : readModelSubstitutionsFromMetadata(workflow.metadata);
   return {
     // A whatif/estimate workflow has no orchestrator id. The block SDK's
     // inbound validator (isValidWorkflowSnapshot) DROPS any snapshot whose

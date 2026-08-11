@@ -55,7 +55,7 @@ export const createCustomer = async ({ id, email }: Schema.CreateCustomerInput) 
 
     userUpdateCounter?.inc({ location: 'stripe.service:createCustomer' });
 
-    await refreshSession(id);
+    await refreshSession(id, { caller: 'subscription' });
 
     return customer.id;
   } else {
@@ -285,7 +285,7 @@ export const createSubscribeSession = async ({
         await bindReferralCodeForUser(user.id, sanitizedRefCode).catch(handleLogError);
       }
 
-      await refreshSession(user.id);
+      await refreshSession(user.id, { caller: 'subscription' });
       return {
         sessionId: null,
         url: isUpgrade
@@ -294,7 +294,7 @@ export const createSubscribeSession = async ({
       };
     } else {
       const { url } = await createManageSubscriptionSession({ customerId });
-      await refreshSession(user.id);
+      await refreshSession(user.id, { caller: 'subscription' });
       return { sessionId: null, url };
     }
   }
@@ -688,6 +688,17 @@ export const upsertSubscription = async (
       create: data,
     }),
   ]);
+
+  // This upsert is keyed on the CASH colour slot, so it leaves any Buzz-purchased
+  // membership live in its own slot. Tier resolution takes the highest across all
+  // subscriptions, so a leftover Buzz gold would keep granting gold to someone now paying
+  // for bronze. End it once the paid one is real.
+  if (['active', 'trialing'].includes(data.status)) {
+    const { supersedeBuzzMembershipForPaidSubscription } = await import(
+      '~/server/services/subscriptions.service'
+    );
+    await supersedeBuzzMembershipForPaidSubscription({ userId: user.id });
+  }
 
   const userVault = await dbRead.vault.findFirst({
     where: { userId: user.id },

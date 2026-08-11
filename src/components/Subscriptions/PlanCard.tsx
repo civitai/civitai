@@ -19,6 +19,12 @@ import type { SubscriptionPlan, UserSubscription } from '~/server/services/subsc
 import { capitalize, getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
+import { getBuzzMembershipPrice, isMembershipActive } from '~/shared/utils/buzz-membership';
+import { numberWithCommas } from '~/utils/number-helpers';
+import Router from 'next/router';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 type PlanCardProps = {
   product: SubscriptionPlan;
@@ -47,13 +53,28 @@ const subscribeBtnProps: Record<string, Partial<ButtonProps>> = {
 export function PlanCard({ product, subscription }: PlanCardProps) {
   const features = useFeatureFlags();
   const hasActiveSubscription = subscription?.status === 'active';
+  const meta = (product.metadata ?? {}) as SubscriptionProductMetadata;
+  const subscriptionMeta = (subscription?.product.metadata ?? {}) as SubscriptionProductMetadata;
+  const isBuzzPurchase = !!meta.buzzPurchase;
+  // Green and yellow memberships can be held at the same time; a Buzz-purchased one cannot
+  // live alongside either. So holding any membership blocks the BUZZ card's button and
+  // nothing else — cash cards keep their own upgrade/downgrade rules.
+  //
+  // Not `hasActiveSubscription`, which reads a status: a lapsed row keeps `status = 'active'`
+  // until something reconciles it, and trialing/other non-'active' states are still rejected
+  // by the purchase guard.
+  const buzzPurchaseBlocked = isBuzzPurchase && !!subscription && isMembershipActive(subscription);
+  const subscriptionIsBuzzPurchase = !!subscriptionMeta.buzzPurchase;
+  // Tier-matching would let a Buzz membership claim the CASH card of the same tier, showing
+  // "Manage your Membership" on a plan the user hasn't bought and hiding the upgrade they're
+  // entitled to. Across the Buzz/cash boundary only an exact product match counts.
+  const crossesBuzzBoundary = subscriptionIsBuzzPurchase !== isBuzzPurchase;
   const _isActivePlan =
     hasActiveSubscription &&
     (subscription?.product?.id === product.id ||
-      // @ts-ignore product metadata will always have tier
-      subscription?.product?.metadata?.tier === product.metadata?.tier);
-  const meta = (product.metadata ?? {}) as SubscriptionProductMetadata;
-  const subscriptionMeta = (subscription?.product.metadata ?? {}) as SubscriptionProductMetadata;
+      (!crossesBuzzBoundary &&
+        // @ts-ignore product metadata will always have tier
+        subscription?.product?.metadata?.tier === product.metadata?.tier));
   const defaultPriceId = _isActivePlan
     ? subscription?.price.id ?? product.defaultPriceId
     : product.defaultPriceId;
@@ -63,6 +84,11 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
       product.prices[0].id
   );
   const price = product.prices.find((p) => p.id === priceId) ?? product.prices[0];
+  const siteBuzzType = features.isGreen ? 'green' : 'yellow';
+  const buzzPrice = getBuzzMembershipPrice({
+    unitAmount: price.unitAmount ?? 0,
+    buzzPrice: meta.buzzPrice,
+  });
   const planDetails = getPlanDetails(product, features, price.interval === 'year') ?? {};
   const { benefits, image } = planDetails;
   const isSameInterval = _isActivePlan && subscription?.price.interval === price.interval;
@@ -88,8 +114,13 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
     ? subscribeBtnProps.downgrade
     : subscribeBtnProps.subscribe;
 
+  // A Buzz membership is on the Civitai provider, so a plain provider comparison would
+  // disable every cash plan for someone holding one. Paid memberships take priority over
+  // Buzz ones, so they must stay purchasable.
   const disabledDueToProvider =
-    !!subscription && subscription.product.provider !== product.provider;
+    !!subscription &&
+    !subscriptionIsBuzzPurchase &&
+    subscription.product.provider !== product.provider;
   const disabledDueToYearlyPlan =
     !!subscription && subscription.price.interval === 'year' && price.interval === 'month';
 
@@ -102,6 +133,25 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
   const metadata = (subscription?.product?.metadata ?? {
     tier: 'free',
   }) as SubscriptionProductMetadata;
+
+  const utils = trpc.useUtils();
+  // The card IS the checkout for Buzz plans — there's nothing to configure beyond the tier,
+  // so a separate confirmation step would only be a speed bump.
+  const purchaseWithBuzz = trpc.subscriptions.purchaseWithBuzz.useMutation({
+    onSuccess: async () => {
+      await utils.subscriptions.invalidate();
+      showSuccessNotification({
+        title: 'Membership activated',
+        message: 'Your perks are available now. Enjoy!',
+      });
+      Router.push('/user/membership');
+    },
+    onError: (error) =>
+      showErrorNotification({
+        title: 'Unable to purchase membership',
+        error: new Error(error.message),
+      }),
+  });
 
   // Spotlight + border glow tracking
   const cardRef = useRef<HTMLDivElement>(null);
@@ -183,36 +233,70 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                 <Stack gap={0} align="center">
                   <Group justify="center" gap={4} align="flex-end">
                     <Text className="text-5xl font-bold" align="center" lh={1}>
-                      {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
+                      {isBuzzPurchase
+                        ? numberWithCommas(buzzPrice)
+                        : getStripeCurrencyDisplay(price.unitAmount, price.currency)}
                     </Text>
                     <Text align="center" c="dimmed">
-                      / {shortenPlanInterval(price.interval)}
+                      {isBuzzPurchase ? 'Buzz' : ''} / {shortenPlanInterval(price.interval)}
                     </Text>
                   </Group>
-                  <Select
-                    data={product.prices.map((p) => ({ label: p.currency, value: p.id }))}
-                    value={priceId}
-                    onChange={(val) => val && setPriceId(val)}
-                    allowDeselect={false}
-                    variant="unstyled"
-                    w={50}
-                    withCheckIcon={false}
-                    rightSection={<IconChevronDown size={14} />}
-                    rightSectionWidth={20}
-                    comboboxProps={{ width: 80, position: 'bottom' }}
-                    classNames={{
-                      root: 'mt-[2px] border-b-2 border-b-current',
-                      input: 'h-[20px] min-h-[20px] text-start uppercase',
-                      option:
-                        'px-[4px] text-center uppercase data-[checked]:bg-dark-5 data-[checked]:font-bold',
-                      section: 'mr-0',
-                    }}
-                  />
+                  {!isBuzzPurchase && (
+                    <Select
+                      data={product.prices.map((p) => ({ label: p.currency, value: p.id }))}
+                      value={priceId}
+                      onChange={(val) => val && setPriceId(val)}
+                      allowDeselect={false}
+                      variant="unstyled"
+                      w={50}
+                      withCheckIcon={false}
+                      rightSection={<IconChevronDown size={14} />}
+                      rightSectionWidth={20}
+                      comboboxProps={{ width: 80, position: 'bottom' }}
+                      classNames={{
+                        root: 'mt-[2px] border-b-2 border-b-current',
+                        input: 'h-[20px] min-h-[20px] text-start uppercase',
+                        option:
+                          'px-[4px] text-center uppercase data-[checked]:bg-dark-5 data-[checked]:font-bold',
+                        section: 'mr-0',
+                      }}
+                    />
+                  )}
                 </Stack>
 
                 {priceId && (
                   <>
-                    {isActivePlan ? (
+                    {isBuzzPurchase ? (
+                      // Already on this exact plan — send them to manage it rather than
+                      // offering a purchase they can't make.
+                      isActivePlan ? (
+                        <Button
+                          radius="xl"
+                          {...subscribeBtnProps.active}
+                          component={Link}
+                          href="/user/membership"
+                        >
+                          Manage your Membership
+                        </Button>
+                      ) : // A disabled Mantine Button still navigates when rendered as an
+                      // anchor, so drop the link entirely while a membership is active.
+                      buzzPurchaseBlocked ? (
+                        <Button radius="xl" {...subscribeBtnProps.subscribe} disabled>
+                          Membership already active
+                        </Button>
+                      ) : (
+                        <BuzzTransactionButton
+                          buzzAmount={buzzPrice}
+                          disabled={buzzPrice <= 0}
+                          loading={purchaseWithBuzz.isPending}
+                          label={`Get ${capitalize(meta?.tier)} with Buzz`}
+                          onPerformTransaction={() =>
+                            purchaseWithBuzz.mutate({ priceId: price.id })
+                          }
+                          radius="xl"
+                        />
+                      )
+                    ) : isActivePlan ? (
                       <Button radius="xl" {...btnProps} component={Link} href="/user/membership">
                         Manage your Membership
                       </Button>
@@ -275,6 +359,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                       </SubscribeButton>
                     )}
                     {features.giftMemberships &&
+                      !isBuzzPurchase &&
                       product.provider === PaymentProvider.Stripe &&
                       ['bronze', 'silver', 'gold'].includes(meta.tier) && (
                         <Button
@@ -299,7 +384,14 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
             {/* Benefits section — slightly darker than default */}
             {benefits && (
               <div className="bg-dark-8/50 p-5 pt-4">
-                <PlanBenefitList benefits={benefits} tier={meta?.tier} buzzType={meta.buzzType} />
+                <PlanBenefitList
+                  benefits={benefits}
+                  tier={meta?.tier}
+                  // Buzz products carry no colour — they're sold on both sites — so the
+                  // colour-specific default perks resolve off the current site instead.
+                  buzzType={isBuzzPurchase ? siteBuzzType : meta.buzzType}
+                  creatorProgramDisabled={isBuzzPurchase}
+                />
               </div>
             )}
           </Stack>

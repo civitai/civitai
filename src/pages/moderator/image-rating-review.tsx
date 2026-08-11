@@ -178,6 +178,7 @@ function ImageRatingCard(
           entityType="image"
           entityId={imageItem.id}
           tags={imageItem.tags}
+          mediaType={imageItem.type}
           canAddModerated
           nsfwLevel={imageItem.nsfwLevel}
         />

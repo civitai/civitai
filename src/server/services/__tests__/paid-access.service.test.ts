@@ -413,7 +413,11 @@ describe('getViewerMonetization — an unset gate/fee is never invented', () => 
       viewer: { id: 2 },
     });
 
-    expect(out[1]).toEqual({ paidAccess: undefined, licensingFee: null });
+    expect(out[1]).toEqual({
+      paidAccess: undefined,
+      licensingFee: null,
+      effectiveLicensingFee: null,
+    });
     expect(mockCacheFetch.mock.calls.filter(([key]) => key === 'test:cap-tier')).toHaveLength(0);
   });
 

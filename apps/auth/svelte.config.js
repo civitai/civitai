@@ -13,6 +13,8 @@ const config = {
     // It can't be scoped per-route (it runs before the handle hook) and trustedOrigins can't cover the
     // no-Origin server-to-server case. These endpoints have their own protection (client_secret/PKCE,
     // per-client allowedOrigins, CORS); the session cookie is SameSite=Lax for the form actions.
+    // The /admin form actions do not rely on that alone — hooks.server.ts applies an equivalent
+    // same-origin check scoped to that area, where it costs nothing to be strict.
     csrf: { checkOrigin: false },
   },
 };

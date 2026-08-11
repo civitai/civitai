@@ -101,6 +101,14 @@ button, input, optgroup, select, textarea {
   flex-shrink: 0;
 }
 
+/* Mantine's default inverts the tooltip against the page. Setting the vars it
+   already reads (rather than `background`/`color`) keeps a per-call-site
+   `color` prop winning, since that prop sets the same vars inline. */
+.mantine-Tooltip-tooltip {
+  --tooltip-bg: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
+  --tooltip-color: light-dark(var(--mantine-color-black), var(--mantine-color-white));
+}
+
 .mantine-Divider-label {
   font-size: var(--mantine-font-size-sm);
   font-weight: bold;

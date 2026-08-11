@@ -9,6 +9,8 @@ import {
 } from '~/server/services/blocks/block-image-upload.logic';
 import type { OffsiteRatingValue } from '~/shared/constants/browsingLevel.constants';
 import type { PersistBlockUploadImageInput } from '~/server/schema/blocks/block-image-upload.schema';
+import { measureUploadedImage } from '~/server/services/blocks/measure-uploaded-image';
+import { storedObjectEtagMetadata } from '~/server/services/blocks/stored-object-integrity';
 import type { SessionUser } from '~/types/session';
 import { uploadImageBufferToStore } from '~/utils/s3-utils';
 
@@ -25,6 +27,13 @@ import { uploadImageBufferToStore } from '~/utils/s3-utils';
  */
 
 /**
+ * Hard cap on the bytes of any image this module materialises — a fetched workflow
+ * output, or a user upload read back out of the store to be measured. Bounds an
+ * unexpected huge blob.
+ */
+const BLOCK_IMAGE_MAX_BYTES = 40 * 1024 * 1024;
+
+/**
  * Materialise a CF-uploaded image into an `Image` row owned by the caller and
  * kick off the STANDARD scan pipeline — `createImage` with DEFAULT ingestion, i.e.
  * NO `skipIngestion` and NEVER `createStoredImage` (which would trust-stamp the
@@ -32,22 +41,35 @@ import { uploadImageBufferToStore } from '~/utils/s3-utils';
  * NSFW scan; the gate below refuses to return an id until it has. `createImage` is
  * dynamically imported so the heavy `image.service` module stays out of this
  * service's static graph (mirrors `persistListingAssetImage`).
+ *
+ * Dimensions / MIME / byte size are DERIVED FROM THE STORED BYTES; the same fields
+ * on the input are ignored. A row created here is attachable as app-listing media
+ * (`loadValidatedImage` gates on ownership, not on provenance) and the listing
+ * geometry rules read exactly those columns, so persisting the declared values
+ * would leave every one of those rules self-reported — issue #3770.
  */
 export async function persistBlockUploadImage(opts: {
   input: PersistBlockUploadImageInput;
   userId: number;
 }): Promise<{ imageId: number }> {
   const { input, userId } = opts;
+  const measured = await measureUploadedImage(input.url, {
+    maxBytes: BLOCK_IMAGE_MAX_BYTES,
+    subject: 'block images',
+  });
   const { createImage } = await import('~/server/services/image.service');
   const image = await createImage({
     url: input.url,
     name: input.name ?? undefined,
     type: 'image',
-    width: input.width,
-    height: input.height,
-    mimeType: input.mimeType,
-    // Byte size is read from `Image.metadata.size` by the image validators.
-    metadata: input.sizeBytes != null ? { size: input.sizeBytes } : undefined,
+    width: measured.width,
+    height: measured.height,
+    mimeType: measured.mimeType,
+    // Byte size is read from `Image.metadata.size` by the image validators. The
+    // entity tag records which stored object they were measured from — a row from
+    // here is attachable as listing media, so it must carry the same evidence the
+    // listing attach gate re-checks.
+    metadata: { size: measured.sizeBytes, ...storedObjectEtagMetadata(measured.etag) },
     userId,
   });
   return { imageId: image.id };
@@ -63,9 +85,6 @@ export async function persistBlockUploadImage(opts: {
  * precedent in `app-listing-assets.service.ts`.
  */
 export const BLOCK_PUBLISHED_APP_ID_META_KEY = 'blockPublishedAppId' as const;
-
-/** Hard cap on a published output's bytes — bounds an unexpected huge blob. */
-const BLOCK_PUBLISH_MAX_BYTES = 40 * 1024 * 1024;
 
 /**
  * Max redirect hops we follow when fetching a workflow output blob. The real
@@ -87,8 +106,14 @@ function sniffSupportedImage(b: Buffer): string | null {
   if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png';
   if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return 'image/gif';
   if (
-    b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && // 'RIFF'
-    b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50 // 'WEBP'
+    b[0] === 0x52 &&
+    b[1] === 0x49 &&
+    b[2] === 0x46 &&
+    b[3] === 0x46 && // 'RIFF'
+    b[8] === 0x57 &&
+    b[9] === 0x45 &&
+    b[10] === 0x42 &&
+    b[11] === 0x50 // 'WEBP'
   ) {
     return 'image/webp';
   }
@@ -112,7 +137,7 @@ function sniffSupportedImage(b: Buffer): string | null {
  * {@link MAX_OUTPUT_REDIRECTS} hops with the host re-validated against
  * {@link isAllowedOutputHost} BEFORE each hop's socket opens (a real output blob
  * 301s to a same-host content url, so we must follow it, but a redirect can never
- * reach an off-allowlist host), byte-capped ({@link BLOCK_PUBLISH_MAX_BYTES}), and
+ * reach an off-allowlist host), byte-capped ({@link BLOCK_IMAGE_MAX_BYTES}), and
  * magic-byte-validated ({@link sniffSupportedImage} — a spoofed content-type can't
  * smuggle a non-image).
  *
@@ -211,11 +236,11 @@ export async function persistBlockWorkflowOutputImage(opts: {
   }
   // Reject early on a declared oversize, then hard-cap the buffered bytes.
   const declaredLen = Number(response.headers.get('content-length') ?? '');
-  if (Number.isFinite(declaredLen) && declaredLen > BLOCK_PUBLISH_MAX_BYTES) {
+  if (Number.isFinite(declaredLen) && declaredLen > BLOCK_IMAGE_MAX_BYTES) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'generation output is too large' });
   }
   const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.byteLength === 0 || bytes.byteLength > BLOCK_PUBLISH_MAX_BYTES) {
+  if (bytes.byteLength === 0 || bytes.byteLength > BLOCK_IMAGE_MAX_BYTES) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'generation output is too large' });
   }
   // Validate by MAGIC BYTES (not the spoofable content-type header / url ext).
@@ -236,8 +261,10 @@ export async function persistBlockWorkflowOutputImage(opts: {
     url: key,
     type: 'image',
     mimeType: contentType,
-    // Dimensions come from the orchestrator projection (may be null when the
-    // orchestrator hasn't populated them); ingestion re-measures either way.
+    // Server-side values from the orchestrator's own workflow projection, never a
+    // caller claim — they may be null when the orchestrator hasn't populated them.
+    // Nothing downstream re-derives them: ingestion writes scan state only, so an
+    // absent pair stays absent (issue #3770).
     width: width ?? undefined,
     height: height ?? undefined,
     metadata: { size: bytes.byteLength, [BLOCK_PUBLISHED_APP_ID_META_KEY]: appId },

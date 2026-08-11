@@ -313,6 +313,34 @@ describe('startDevTunnel', () => {
     expect(s.grantedScopes).toEqual(['ai:write:budgeted', 'user:read:self']);
   });
 
+  it('#3703 step 1: startDevTunnel STILL PERSISTS ai:write:budgeted into the stored grantedScopes', async () => {
+    // The tunnel wrapper hardcodes spendEntitled/spendRequested = true/true, and it
+    // MUST stay that way: `startDevTunnel` clamps ONCE at WRITE and the result is
+    // what every later reader grants. A wrong value would not merely affect future
+    // mints — it would silently strip spend from ALREADY-STORED live sessions, and
+    // no re-clamp could restore them.
+    //
+    // Asserted at the layer where the value is STORED (the persisted session record
+    // read back out of redis), not merely where it is computed: a clamp that returns
+    // the right array but is never written is exactly the failure this guards.
+    await startDevTunnel({
+      userId: 555,
+      blockId: 'my-app',
+      sshPublicKey: PUBKEY,
+      declaredScopes: ['ai:write:budgeted', 'models:read:self'],
+    });
+    const stored = readSession();
+    // Enumerated set, never a word check.
+    expect(stored.grantedScopes).toEqual([
+      'ai:write:budgeted',
+      'models:read:self',
+      'user:read:self',
+    ]);
+    // And it really came off the persisted record, not an in-memory return value.
+    const raw = sysRedis._store.get('system:blocks:dev-tunnel:session:bki_testsession')!;
+    expect(JSON.parse(raw).grantedScopes).toEqual(stored.grantedScopes);
+  });
+
   it('absent declaredScopes → empty raw declared + read-only granted (user:read:self)', async () => {
     await startDevTunnel({ userId: 555, blockId: 'my-app', sshPublicKey: PUBKEY });
     const s = readSession();

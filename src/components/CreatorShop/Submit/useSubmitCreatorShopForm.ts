@@ -5,6 +5,10 @@ import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-sho
 import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
 import { validateCosmeticImage } from '~/components/CreatorShop/creator-shop.validation';
 import {
+  FEE_UNAVAILABLE_MESSAGE,
+  useCreatorShopFees,
+} from '~/components/CreatorShop/useCreatorShopFees';
+import {
   buildData,
   editNotice,
   existingArtUrl,
@@ -22,8 +26,8 @@ import type {
 import {
   cosmeticPriceFloor,
   STICKER_MIN_BUZZ_PER_USE,
+  STICKER_MAX_USES,
   CREATOR_SHOP_CREATOR_SHARE,
-  CREATOR_SHOP_SUBMISSION_FEE,
   isCreatorCosmeticType,
   stickerPerUseFloor,
 } from '~/server/schema/creator-shop.schema';
@@ -53,11 +57,11 @@ export function useSubmitCreatorShopForm({
   const { uploadToCF, files, resetFiles } = useCFImageUpload();
 
   const [type, setTypeState] = useState<CreatorCosmeticType>(
-    item?.cosmetic.type && isCreatorCosmeticType(item.cosmetic.type)
-      ? item.cosmetic.type
+    item?.cosmetic?.type && isCreatorCosmeticType(item.cosmetic?.type)
+      ? item.cosmetic?.type
       : CosmeticType.Badge
   );
-  const existingEconomics = stickerEconomicsFromCosmeticData(item?.cosmetic.data);
+  const existingEconomics = stickerEconomicsFromCosmeticData(item?.cosmetic?.data);
   // Empty, never prefilled with a default. A prefilled field cannot express
   // "unset": seeded to the floor it was indistinguishable from a creator who
   // chose the floor, so an unrelated edit either wrote a price they never
@@ -66,7 +70,7 @@ export function useSubmitCreatorShopForm({
   const [uses, setUses] = useState<number | undefined>(existingEconomics.uses);
   const [pricePerUse, setPricePerUse] = useState<number | undefined>(existingEconomics.pricePerUse);
   const [slug, setSlug] = useState<string>(
-    ((item?.cosmetic.data as { slug?: string } | null)?.slug ?? '') as string
+    ((item?.cosmetic?.data as { slug?: string } | null)?.slug ?? '') as string
   );
   const [name, setName] = useState(item?.title ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
@@ -80,18 +84,29 @@ export function useSubmitCreatorShopForm({
   const [checks, setChecks] = useState<AutoCheck[]>([]);
   const [artReplaced, setArtReplaced] = useState(false);
   const [animated, setAnimated] = useState<boolean>(
-    !!(item?.cosmetic.data as { animated?: boolean } | null)?.animated
+    !!(item?.cosmetic?.data as { animated?: boolean } | null)?.animated
   );
   const [rightsAffirmed, setRightsAffirmed] = useState(false);
-  const [sellableByOthers, setSellableByOthers] = useState(false);
-  const [sellerShare, setSellerShare] = useState(0);
+  const itemResale = (item?.meta ?? null) as {
+    sellableByOthers?: boolean;
+    sellerShare?: number;
+  } | null;
+  const itemSellableByOthers = !!itemResale?.sellableByOthers;
+  const itemSellerShare = itemResale?.sellerShare ?? 0;
+  const [sellableByOthers, setSellableByOthers] = useState(itemSellableByOthers);
+  const [sellerShare, setSellerShare] = useState(itemSellerShare);
+  const resaleChanged =
+    sellableByOthers !== itemSellableByOthers ||
+    // A share edit under a switched-off toggle is not a change: the server
+    // stores 0 either way, so treating it as one would offer a pointless save.
+    (sellableByOthers && sellerShare !== itemSellerShare);
   const itemAcceptsBlueBuzz = !!(item?.meta as { acceptsBlueBuzz?: boolean } | null)
     ?.acceptsBlueBuzz;
   const [acceptsBlueBuzz, setAcceptsBlueBuzz] = useState(itemAcceptsBlueBuzz);
   const acceptsBlueBuzzChanged = acceptsBlueBuzz !== itemAcceptsBlueBuzz;
   // Avatar-decoration fit adjustment (per side, -5..5); all-zero = none stored.
   const [offsets, setOffsetsState] = useState<CosmeticOffsets>(
-    (item?.cosmetic.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? {
+    (item?.cosmetic?.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? {
       top: 0,
       right: 0,
       bottom: 0,
@@ -131,16 +146,19 @@ export function useSubmitCreatorShopForm({
   // `null === userId` is false there, so a cosmetic without a creator — an
   // official one — is refused. Treating a missing creator as permission would
   // demand a price the save then rejects.
-  const canEditEconomics =
-    !isEdit || !!currentUser?.isModerator || item?.cosmetic.createdById === currentUser?.id;
-  const economicsEditable = isSticker && canEditEconomics;
+  //
+  // It gates the resale terms as well, which the server refuses from a
+  // cross-lister on the same rule.
+  const canEditOwnerFields =
+    !isEdit || !!currentUser?.isModerator || item?.cosmetic?.createdById === currentUser?.id;
+  const economicsEditable = isSticker && canEditOwnerFields;
   // Permission and obligation are different questions, and the server only ever
   // answered the first: a moderator MAY change another creator's economics, but
   // nothing says an unrelated edit should force them to invent values for a
   // sticker that isn't theirs — which on a cross-listing would rewrite the
   // original creator's top-up price for every buyer.
   const economicsRequired =
-    economicsEditable && (!isEdit || item?.cosmetic.createdById === currentUser?.id);
+    economicsEditable && (!isEdit || item?.cosmetic?.createdById === currentUser?.id);
   // Consumables must clear a per-use floor as well as the listing floor.
   const usesFloor = isSticker && uses ? uses * STICKER_MIN_BUZZ_PER_USE : 0;
   // An unset economic field is an error the creator can see, not a field that
@@ -153,6 +171,11 @@ export function useSubmitCreatorShopForm({
     ? economicsRequired
       ? 'Set how many uses a purchase grants'
       : null
+    : // Grandfathered: a listing stored above the cap predates it, and the edit
+    // path only sends `uses` when it changes — so refusing it here would block
+    // an unrelated price edit over a value the creator isn't touching.
+    uses > STICKER_MAX_USES && uses !== existingEconomics.uses
+    ? `A purchase can grant at most ${STICKER_MAX_USES} uses`
     : price < usesFloor
     ? `${uses} uses needs at least ${usesFloor} Buzz (${STICKER_MIN_BUZZ_PER_USE} per use)`
     : null;
@@ -183,7 +206,7 @@ export function useSubmitCreatorShopForm({
   const [debouncedSlug] = useDebouncedValue(normalizedSlug, 400);
   const slugCheckEnabled = isSticker && !slugLocked && isValidStickerSlug(debouncedSlug);
   const { data: slugCheck, isFetching: slugChecking } = trpc.creatorShop.checkStickerSlug.useQuery(
-    { slug: debouncedSlug, excludeCosmeticId: item?.cosmetic.id },
+    { slug: debouncedSlug, excludeCosmeticId: item?.cosmetic?.id },
     { enabled: slugCheckEnabled }
   );
   const slugTaken = slugCheckEnabled && slugCheck?.available === false;
@@ -195,14 +218,18 @@ export function useSubmitCreatorShopForm({
     ? 'taken'
     : 'available';
 
+  const fees = useCreatorShopFees();
   const { data: buzz } = useQueryBuzz(['yellow', 'green', 'blue']);
   const yellowBalance = buzz.accounts.find((a) => a.type === 'yellow')?.balance ?? 0;
   const greenBalance = buzz.accounts.find((a) => a.type === 'green')?.balance ?? 0;
   const blueBalance = buzz.accounts.find((a) => a.type === 'blue')?.balance ?? 0;
   const feeAccountBalance =
     buzzType === 'yellow' ? yellowBalance : buzzType === 'green' ? greenBalance : blueBalance;
-  // Only new submissions pay the fee; edits don't.
-  const canAffordFee = isEdit || feeAccountBalance >= CREATOR_SHOP_SUBMISSION_FEE;
+  const submissionFee = fees?.submission[type];
+  // Only new submissions pay the fee; edits don't. An unresolved fee blocks submit
+  // rather than falling back to a default the server may disagree with.
+  const canAffordFee =
+    isEdit || (submissionFee !== undefined && feeAccountBalance >= submissionFee);
 
   const maxSize = constants.mediaUpload.maxImageFileSize;
   const uploading = !!files[0] && files[0].progress < 100;
@@ -278,7 +305,7 @@ export function useSubmitCreatorShopForm({
   // null clears a previously stored adjustment; undefined = nothing to store.
   const normalizedOffsets = isDecoration && hasOffsets ? offsets : null;
   const existingOffsets =
-    (item?.cosmetic.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? null;
+    (item?.cosmetic?.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? null;
   const offsetsChanged =
     isDecoration && JSON.stringify(normalizedOffsets) !== JSON.stringify(existingOffsets);
 
@@ -289,6 +316,8 @@ export function useSubmitCreatorShopForm({
         error: new Error(
           requiresAffirmation && !rightsAffirmed
             ? 'Confirm you have the rights to sell this artwork'
+            : !isEdit && submissionFee === undefined
+            ? FEE_UNAVAILABLE_MESSAGE
             : 'Add valid artwork, a title, and a price of at least 500 Buzz'
         ),
       });
@@ -317,7 +346,7 @@ export function useSubmitCreatorShopForm({
         if (
           isSticker &&
           (artReplaced ||
-            normalizedSlug !== ((item.cosmetic.data as { slug?: string } | null)?.slug ?? ''))
+            normalizedSlug !== ((item.cosmetic?.data as { slug?: string } | null)?.slug ?? ''))
         )
           payload.slug = normalizedSlug;
         // The economics were editable in this form but never sent, so changing
@@ -330,8 +359,16 @@ export function useSubmitCreatorShopForm({
         if (isSticker && pricePerUse !== undefined && pricePerUse !== existingEconomics.pricePerUse)
           payload.pricePerUse = pricePerUse;
         if (acceptsBlueBuzzChanged) payload.acceptsBlueBuzz = acceptsBlueBuzz;
+        if (resaleChanged) {
+          payload.sellableByOthers = sellableByOthers;
+          payload.sellerShare = sellableByOthers ? sellerShare : 0;
+        }
         await updateItem.mutateAsync(payload);
       } else {
+        if (submissionFee === undefined) {
+          showErrorNotification({ title: 'Not ready', error: new Error(FEE_UNAVAILABLE_MESSAGE) });
+          return;
+        }
         await submitItem.mutateAsync({
           cosmeticType: type,
           name: name.trim(),
@@ -349,6 +386,7 @@ export function useSubmitCreatorShopForm({
           uses: isSticker ? uses : undefined,
           pricePerUse: isSticker ? pricePerUse : undefined,
           rightsAffirmed: true,
+          quotedFee: submissionFee,
         });
       }
       resetFiles();
@@ -359,7 +397,7 @@ export function useSubmitCreatorShopForm({
   };
 
   const previewCosmetic = {
-    id: item?.cosmetic.id ?? 0,
+    id: item?.cosmetic?.id ?? 0,
     name: name || 'Preview',
     type,
     source: CosmeticSource.Purchase,
@@ -411,6 +449,11 @@ export function useSubmitCreatorShopForm({
     setSellableByOthers,
     sellerShare,
     setSellerShare,
+    canEditOwnerFields,
+    resaleChanged,
+    // What existing resellers keep if the creator lowers the share — the whole
+    // point of showing them the field on a live item.
+    itemSellerShare,
     acceptsBlueBuzz,
     setAcceptsBlueBuzz,
     acceptsBlueBuzzChanged,
@@ -428,6 +471,7 @@ export function useSubmitCreatorShopForm({
     maxSize,
     uploading,
     artOk,
+    submissionFee,
     canAffordFee,
     canSubmit,
     yellowBalance,

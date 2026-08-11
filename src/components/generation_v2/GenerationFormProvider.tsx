@@ -212,6 +212,15 @@ const storageAdapter = createLocalStorageAdapter({
         return group.ecosystemIds.includes(eco.id);
       },
     })),
+    // MiniMax H3's turbo is a toggle on one model version rather than a separate
+    // version, so model.id alone doesn't separate the two step ranges (1-20 turbo
+    // vs 10-60 base) — scope on the toggle as well.
+    {
+      name: 'ecosystem',
+      keys: ['steps'],
+      scope: ['ecosystem', 'model.id', 'turbo'],
+      condition: (ctx) => ctx.ecosystem === 'MiniMaxH3' && ctx.turbo !== undefined,
+    },
     // cfgScale + steps are scoped per model version for ecosystems that ship
     // a turbo (or otherwise distilled) variant alongside a base variant, where
     // the two have meaningfully different slider ranges. Without this, turbo's

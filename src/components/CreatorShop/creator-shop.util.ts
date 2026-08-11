@@ -30,6 +30,14 @@ export const useQueryCreatorShopManage = (enabled = true, userId?: number) => {
   return { items: data, ...rest };
 };
 
+// Cross-creator resale counts for the manage stat cards, both directions.
+// `userId` is only honored for moderators (enforced server-side); owners omit it.
+export type CreatorShopResaleStats = RouterOutput['creatorShop']['getResaleStats'];
+export const useQueryCreatorShopResaleStats = (enabled = true, userId?: number) => {
+  const { data, ...rest } = trpc.creatorShop.getResaleStats.useQuery({ userId }, { enabled });
+  return { resaleStats: data, ...rest };
+};
+
 // `userId` is only honored for moderators (enforced server-side); owners omit it.
 export const useQueryCreatorShopSettings = (enabled = true, userId?: number) => {
   const { data, ...rest } = trpc.creatorShop.getSettings.useQuery({ userId }, { enabled });
@@ -111,7 +119,7 @@ export const useQueryCreatorShopReviewQueue = ({
   status?: CosmeticShopItemStatus | undefined;
   username?: string;
   userId?: number;
-  cosmeticTypes?: CosmeticType[];
+  cosmeticTypes?: (CosmeticType | 'Pack')[];
   enabled?: boolean;
 } = {}) =>
   trpc.creatorShop.getReviewQueue.useInfiniteQuery(
@@ -140,20 +148,48 @@ export const useMutateCreatorShop = () => {
   const onError = (title: string) => (error: { message: string }) =>
     showErrorNotification({ title, error: new Error(error.message) });
 
+  // A submit can be rejected because the quoted fee no longer matches, and the error
+  // tells the creator to reopen the form. That only recovers if the next mount refetches.
+  const onSubmitError = (title: string) => async (error: { message: string }) => {
+    await queryUtils.creatorShop.getFees.invalidate();
+    onError(title)(error);
+  };
+
   const submitItem = trpc.creatorShop.submitItem.useMutation({
     async onSuccess() {
       await queryUtils.creatorShop.getManageItems.invalidate();
       showSuccessNotification({ message: 'Item submitted for review' });
     },
-    onError: onError('Failed to submit item'),
+    onError: onSubmitError('Failed to submit item'),
   });
 
   const updateItem = trpc.creatorShop.updateItem.useMutation({
     async onSuccess() {
       await queryUtils.creatorShop.getManageItems.invalidate();
+      // Price and resale terms both change what the resale picker offers other
+      // creators, and the storefront reads the item's price too.
+      await queryUtils.creatorShop.getPublicShopItems.invalidate();
+      await queryUtils.creatorShop.getShop.invalidate();
       showSuccessNotification({ message: 'Item updated' });
     },
     onError: onError('Failed to update item'),
+  });
+
+  const submitPack = trpc.creatorShop.submitPack.useMutation({
+    async onSuccess() {
+      await queryUtils.creatorShop.getManageItems.invalidate();
+      showSuccessNotification({ message: 'Pack submitted for review' });
+    },
+    onError: onSubmitError('Failed to submit pack'),
+  });
+
+  const updatePack = trpc.creatorShop.updatePack.useMutation({
+    async onSuccess() {
+      await queryUtils.creatorShop.getManageItems.invalidate();
+      await queryUtils.creatorShop.getPack.invalidate();
+      showSuccessNotification({ message: 'Pack updated' });
+    },
+    onError: onError('Failed to update pack'),
   });
 
   const archiveItem = trpc.creatorShop.archiveItem.useMutation({
@@ -200,6 +236,7 @@ export const useMutateCreatorShop = () => {
       await queryUtils.creatorShop.getShop.invalidate();
       await queryUtils.creatorShop.getResoldItems.invalidate();
       await queryUtils.creatorShop.getPublicShopItems.invalidate();
+      await queryUtils.creatorShop.getResaleStats.invalidate();
       showSuccessNotification({ message: 'Added to your shop' });
     },
     onError: onError('Failed to add item'),
@@ -211,6 +248,7 @@ export const useMutateCreatorShop = () => {
       await queryUtils.creatorShop.getShop.invalidate();
       await queryUtils.creatorShop.getResoldItems.invalidate();
       await queryUtils.creatorShop.getPublicShopItems.invalidate();
+      await queryUtils.creatorShop.getResaleStats.invalidate();
     },
     onError: onError('Failed to remove item'),
   });
@@ -226,8 +264,8 @@ export const useMutateCreatorShop = () => {
     onError: onError('Failed to save settings'),
   });
 
-  // Same endpoint as updateSettings, but quiet — reordering fires on every drop.
-  const reorderResoldItems = trpc.creatorShop.updateSettings.useMutation({
+  // Quiet — reordering fires on every drop.
+  const reorderResoldItems = trpc.creatorShop.reorderResoldItems.useMutation({
     async onSuccess() {
       await queryUtils.creatorShop.getShop.invalidate();
       await queryUtils.creatorShop.getResoldItems.invalidate();
@@ -263,6 +301,16 @@ export const useMutateCreatorShop = () => {
           failed
             ? ` ${failed} Buzz transfer${failed === 1 ? '' : 's'} failed — finish by hand.`
             : ''
+        }${
+          // A pack's split can't be re-derived without a payout record, so the
+          // amount is only knowable here. Telling the moderator to finish by
+          // hand without telling them how much leaves them the one person who
+          // can act and can't see the number.
+          result.unrecoveredPackPool
+            ? ` ${numberWithCommas(
+                result.unrecoveredPackPool
+              )} Buzz of pack payouts could not be reversed.`
+            : ''
         }`,
       });
     },
@@ -272,6 +320,8 @@ export const useMutateCreatorShop = () => {
   return {
     submitItem,
     updateItem,
+    submitPack,
+    updatePack,
     archiveItem,
     setItemListed,
     unarchiveItem,

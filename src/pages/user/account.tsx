@@ -52,11 +52,20 @@ export default function Account() {
           <ContentControlsCard />
           <GenerationSettingsCard />
           {features.canViewNsfw && <ModerationCard />}
-          {features.creatorControls && <CreatorControlsCard />}
+          {/* Either flag mounts the card; each half gates itself inside. ANDing
+              them here put the sticker controls behind `creator-controls`, which
+              is dark by default and whose Flipt flag does not exist — so nobody
+              could price their space, and the review queue nothing else links to
+              became unreachable. */}
+          {(features.creatorControls || features.stickerPlacement) && <CreatorControlsCard />}
           <StickerInventoryCard />
           <AccountsCard />
           <UserPaymentConfigurationCard />
-          {currentUser?.subscriptionId && <SubscriptionCard />}
+          {/* No `subscriptionId` guard: a Buzz-purchased membership writes a
+              CustomerSubscription row but never sets User.subscriptionId, so gating here
+              kept the card unmounted no matter what the query returned. The card already
+              self-hides when it resolves no subscriptions. */}
+          <SubscriptionCard />
           <MembershipGiftsCard />
           <PaymentMethodsCard />
           {/* {buzz && <UserReferralCodesCard />} */}

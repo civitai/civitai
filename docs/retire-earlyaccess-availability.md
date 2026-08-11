@@ -62,22 +62,19 @@ it. `POST /api/v1/model-versions/bust-cache` with the affected ids, or accept up
 
 ---
 
-## Step 3 — remove the readers
+## Step 3 — remove the readers — DONE 2026-08-06 except 3e
 
-Only after step 2 verifies `0`. Each is safe on its own once no row carries the value; do them in any order.
+3a–3d have landed. **3e is the only thing left**, and it is deliberately deferred (see below); this file stays
+until it lands.
 
-### 3a. — the writePaidAccessForModelVersion reconciliation is already removed (safe now that the count is 0)
+### 3a. `process-ending-early-access.ts` — drop the reconciliation pass — DONE
 
-### 3a. `process-ending-early-access.ts` — drop the reconciliation pass
+The second `UPDATE` existed solely to un-strand rows left at `EarlyAccess` by something re-setting it after
+republish. Nothing re-sets it any more, so it could only ever match zero rows. The `reconciled` query is gone
+and the step-1 `CASE` collapsed with it — the job no longer touches `availability` at all, only `publishedAt`.
+That also retires the Private-version hazard the `CASE` guarded against, since there is no longer any write.
 
-The second `UPDATE` exists solely to un-strand rows left at `EarlyAccess` by something re-setting it after
-republish. Nothing re-sets it any more, so it can only ever match zero rows. Delete the whole `reconciled`
-query and fold `republished` into `updated`.
-
-While there, the `CASE` added in step 1 can collapse back to nothing — with no row carrying `EarlyAccess`,
-the job should stop touching `availability` altogether and only bump `publishedAt`.
-
-### 3b. `common.service.ts` — simplify `isOpenAccess`
+### 3b. `common.service.ts` — simplify `isOpenAccess` — DONE (comment only)
 
 ```ts
 const isOpenAccess = (entityId, availability) =>
@@ -85,14 +82,14 @@ const isOpenAccess = (entityId, availability) =>
 ```
 
 The `availability` half is what excluded `EarlyAccess`; with no such rows it only ever excludes `Private`.
-Worth keeping — but the comment above it claiming gated-ness "comes from `PaidAccess`, not `availability`"
-becomes true rather than aspirational, and should say so.
+The predicate was already in its final shape, so this was a comment fix — it no longer describes the
+Phase 1 equivalence as if it still held.
 
-### 3c. `model.service.ts:1082` — drop the `|| mv.availability === 'EarlyAccess'`
+### 3c. `model.service.ts` — drop the `|| mv.availability === 'EarlyAccess'` — DONE
 
-Harmless either way; it treats the value as visible alongside `Public`.
+The `hidePrivateModels` filter now tests `availability === 'Public'` alone.
 
-### 3d. Delete `prisma/programmability/early_access_trigger.sql`
+### 3d. Delete `prisma/programmability/early_access_trigger.sql` — DONE
 
 Not installed in prod, and it would write the value if anyone ever applied it. Removing it is the point of
 the exercise — leaving it is how the column comes back.
@@ -104,7 +101,7 @@ SELECT tgname, tgenabled FROM pg_trigger WHERE tgname LIKE '%early_access%';
 -- expect only: trigger_comic_chapter_early_access_ends_at
 ```
 
-### 3e. `model_availability_trigger.sql`
+### 3e. `model_availability_trigger.sql` — STILL OPEN
 
 ```sql
 UPDATE "ModelVersion" SET availability = 'Public'

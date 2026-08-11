@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AuditModule from '~/utils/metadata/audit';
 
 /**
  * STEP-6 sysRedis soft-dependency (Group C) — promptAuditing.
@@ -69,7 +70,8 @@ vi.mock('~/server/services/blocklist.service', () => ({
 
 // Force the regex audit to flag the prompt so auditPromptServer enters its catch
 // and reaches addBlockedPrompt (the reads under test).
-vi.mock('~/utils/metadata/audit', () => ({
+vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
+  ...(await importOriginal<typeof AuditModule>()),
   auditPromptEnriched: mockAuditPromptEnriched,
 }));
 vi.mock('~/server/integrations/moderation', () => ({
@@ -147,7 +149,7 @@ describe('auditPromptServer → addBlockedPrompt — sysRedis reads (fail-CLOSED
 describe('auditPromptServer → reportProhibitedRequest → getBlockedPrompts (mute path, fail-CAUGHT)', () => {
   // Drive count > muted (constants.imageGeneration.requestBlocking.muted = 8) so
   // reportProhibitedRequest enters the auto-mute branch and calls getBlockedPrompts.
-  // The downstream dbWrite.userRestriction.create throws (dbWrite is mocked {}),
+  // The downstream applyPendingReviewMute throws (dbWrite is mocked {}),
   // absorbed by the existing `catch (banError)` — so no heavy mute-path scaffolding
   // is needed. Unlike addBlockedPrompt (fail-PROPAGATED), a sysRedis error in
   // getBlockedPrompts is fail-CAUGHT: the auto-mute is skipped, and the current

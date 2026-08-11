@@ -11,7 +11,11 @@ import { env } from '$env/dynamic/private';
 import { dbRead, dbWrite } from '$lib/server/db';
 import { mapWithConcurrency, MAIN_APP_WRITE_CONCURRENCY } from '$lib/server/concurrency';
 import { checkbox, optionalBuzz, freePreviewsField } from './form-fields';
-import { isCreatorUsageControl, type CreatorUsageControl } from '$lib/monetization/paid-access';
+import {
+  GENERATION_ONLY_HINT,
+  isCreatorUsageControl,
+  type CreatorUsageControl,
+} from '$lib/monetization/paid-access';
 import type { PaidAccessConfig } from '$lib/monetization/paid-access';
 
 // Paid access is written through the MAIN APP, not kysely: the write has real
@@ -39,6 +43,7 @@ export const paidAccessFormSchema = z
     accessPrice: optionalBuzz,
     generationPrice: optionalBuzz,
     freeGeneration: checkbox,
+    acceptsBlueBuzz: checkbox,
     freePreviewGenerations: freePreviewsField(),
     donationGoalEnabled: checkbox,
     donationGoal: optionalBuzz,
@@ -76,6 +81,7 @@ export async function setPaidAccessConfig(
             freePreviewGenerations: config.freePreviewGenerations ?? 0,
             genOnly,
             freeGeneration: config.freeGeneration,
+            acceptsBlueBuzz: config.acceptsBlueBuzz,
           })
         : {};
     const paidAccess = !config
@@ -175,6 +181,7 @@ export async function bulkSetPaidAccess(
     permanent: boolean;
     timeframe: number;
     freeGeneration?: boolean;
+    acceptsBlueBuzz?: boolean;
     donationGoalEnabled?: boolean;
     donationGoal?: number;
   },
@@ -239,6 +246,7 @@ export async function bulkSetPaidAccess(
       // Only meaningful for downloadable versions — a gen-only version charging via generation can't also
       // give generation away, and buildModelVersionTerms ignores it there.
       freeGeneration: !genOnly && pricing.freeGeneration,
+      acceptsBlueBuzz: pricing.acceptsBlueBuzz,
       freePreviewGenerations: pricing.freePreviewGenerations,
       donationGoalEnabled: wantsGoal && !alreadyHasGoal.has(id),
       donationGoal: wantsGoal && !alreadyHasGoal.has(id) ? pricing.donationGoal : undefined,
@@ -466,17 +474,47 @@ export async function versionsLosingFreeGeneration(userId: number, versionIds: n
     .execute();
 }
 
+/**
+ * A non-Download usage control needs the main app's `generationOnlyModels` entitlement — but only to
+ * MOVE a version off Download. The editor resubmits the stored usage control on every save (including
+ * when clearing paid access), so rejecting outright would make an existing generation-only version
+ * uneditable for a creator who doesn't hold the entitlement — the same stranding this file already
+ * avoids for over-cap prices. Only a version currently on Download is a new grant.
+ */
+async function deniesGenerationOnly(
+  userId: number,
+  versionIds: number[],
+  usageControl: CreatorUsageControl,
+  canSetGenerationOnly: boolean
+): Promise<boolean> {
+  if (usageControl === 'Download' || canSetGenerationOnly) return false;
+  const row = await dbRead
+    .selectFrom('ModelVersion as mv')
+    .innerJoin('Model as m', 'm.id', 'mv.modelId')
+    .where('m.userId', '=', userId)
+    .where('m.deletedAt', 'is', null)
+    .where('mv.id', 'in', versionIds)
+    .where('mv.usageControl', '=', 'Download')
+    .select((eb) => eb.fn.countAll<string>().as('count'))
+    .executeTakeFirst();
+  return Number(row?.count ?? 0) > 0;
+}
+
 export async function bulkSetUsageControl(
   userId: number,
   versionIds: number[],
   usageControl: CreatorUsageControl,
-  cookie: string
+  cookie: string,
+  canSetGenerationOnly: boolean
 ): Promise<
   | { ok: true; updated: number; migrated: number; migrationFailures: number }
   | { ok: false; status: number; error: string }
 > {
   if (versionIds.length === 0)
     return { ok: false, status: 400, error: 'Select at least one version.' };
+
+  if (await deniesGenerationOnly(userId, versionIds, usageControl, canSetGenerationOnly))
+    return { ok: false, status: 403, error: GENERATION_ONLY_HINT };
 
   const gates = await readGates(versionIds);
   const migrations = planUsageControlMigrations(gates, usageControl);
@@ -544,8 +582,12 @@ export async function bulkSetUsageControl(
 export async function setUsageControl(
   userId: number,
   versionId: number,
-  usageControl: CreatorUsageControl
-): Promise<boolean> {
+  usageControl: CreatorUsageControl,
+  canSetGenerationOnly: boolean
+): Promise<{ ok: true; updated: boolean } | { ok: false; status: number; error: string }> {
+  if (await deniesGenerationOnly(userId, [versionId], usageControl, canSetGenerationOnly))
+    return { ok: false, status: 403, error: GENERATION_ONLY_HINT };
+
   const result = await dbWrite
     .updateTable('ModelVersion')
     .set({ usageControl })
@@ -558,7 +600,7 @@ export async function setUsageControl(
         .where('deletedAt', 'is', null)
     )
     .executeTakeFirst();
-  return Number(result.numUpdatedRows ?? 0) > 0;
+  return { ok: true, updated: Number(result.numUpdatedRows ?? 0) > 0 };
 }
 
 export async function isVersionPermanent(versionId: number): Promise<boolean> {

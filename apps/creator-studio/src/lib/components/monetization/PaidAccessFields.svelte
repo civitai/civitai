@@ -10,7 +10,7 @@
     MIN_GENERATION_PRICE,
     MAX_GENERATION_TRIAL_LIMIT,
   } from '$lib/monetization/paid-access';
-  import type { CapTier } from '@civitai/buzz';
+  import { ACCEPTS_BLUE_BUZZ_HINT, type CapTier } from '@civitai/buzz';
   import type { PaidAccessFormValue, PaidAccessContext } from '$lib/monetization/paid-access-form';
 
   // The timed-vs-permanent gate form, shared by the per-version sidebar and the bulk dialog.
@@ -224,6 +224,15 @@
       </span>
     </label>
   {/if}
+  <div class="flex flex-col gap-2">
+    <div class="flex items-center gap-2">
+      <Checkbox id="ea-blue" name="acceptsBlueBuzz" bind:checked={ea.acceptsBlueBuzz} />
+      <Label for="ea-blue" class="cursor-pointer text-sm font-normal text-white">
+        Also accept Blue Buzz
+      </Label>
+    </div>
+    <span class="text-xs text-dark-2">{ACCEPTS_BLUE_BUZZ_HINT}</span>
+  </div>
 </div>
 
 {#if !ea.permanent}

@@ -1,0 +1,10 @@
+[
+  {
+    "prompt": "Low afternoon sun rakes across a school gym as a caretaker drags a mop in long arcs, dust turning in the light, the squeak of the mop and a radio playing faintly from the corridor.",
+    "assistantResponse": "{\"issues\":[],\"recommendations\":[\"Give the arcs a direction of travel — working away from camera toward the far wall — so the shot has a sense of progress rather than repetition.\",\"Say what the wet floor does behind him: the shine closing over as it dries.\"],\"enhancedPrompt\":\"Low afternoon sun rakes across a school gym as a caretaker drags a mop in long arcs, working away from camera toward the far wall, the wet shine closing over behind him as it dries, dust turning in the light, the squeak of the mop and a radio playing faintly from the corridor.\",\"enhancedNegativePrompt\":\"\"}"
+  },
+  {
+    "prompt": "a woman walking through a market",
+    "assistantResponse": "{\"issues\":[{\"description\":\"Nothing is specified beyond the subject and a generic setting, so the clip has no particular moment to render.\",\"severity\":\"warning\"}],\"recommendations\":[\"Give her a purpose and an obstacle — shouldering past a stall as the crowd closes behind her — so the walk becomes an action.\"],\"enhancedPrompt\":\"A woman shoulders through a crowded market, sidestepping a stall of stacked crates as the crowd closes behind her, produce and hanging cloth passing close on both sides.\",\"enhancedNegativePrompt\":\"\"}"
+  }
+]

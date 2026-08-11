@@ -15,6 +15,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { mockDbRead } = vi.hoisted(() => ({
   mockDbRead: {
     appBlock: { findMany: vi.fn() },
+    // App Listing COLLABORATORS: the widened gates consult the seat table on the
+    // NON-owner path. `safeCollaboratorQuery` deliberately swallows ONLY the
+    // missing-TABLE error, so an absent mock surfaces as a TypeError rather than
+    // being silently absorbed — which is why this fixture must declare it.
+    appCollaborator: { findFirst: vi.fn(async () => null), findMany: vi.fn(async () => []) },
     blockUserSubscription: { count: vi.fn() },
     blockSpendAttribution: { aggregate: vi.fn() },
     blockBuzzAttribution: { aggregate: vi.fn() },
@@ -179,12 +184,21 @@ describe('getOwnedAppBlockIds (ownership resolution)', () => {
   it('returns all owned ids when no specific id is requested', async () => {
     const ids = await getOwnedAppBlockIds({ ownerUserId: OWNER_ID });
     expect(ids).toEqual([OWNED_ID, OWNED_ID_2]);
-    expect(mockDbRead.appBlock.findMany).toHaveBeenCalledWith({
-      where: { app: { userId: OWNER_ID } },
+    // App Listing COLLABORATORS: the final select is now filtered by the RESOLVED
+    // permitted-id set (owned + accepted seats), not by a bare `app: { userId }` —
+    // which would drop every app the caller holds a collaborator seat on. The
+    // ownership resolve itself is the FIRST findMany call; this asserts the SECOND.
+    expect(mockDbRead.appBlock.findMany).toHaveBeenLastCalledWith({
+      where: { id: { in: [OWNED_ID, OWNED_ID_2] } },
       // `manifest` rides along on this one query — the installs applicability
       // discriminator needs it, and getMyAppAnalytics is on a per-app fan-out
       // path where a second round trip would be paid N times per page load.
       select: { id: true, manifest: true },
+    });
+    // …and the resolve step really did ask the owner question.
+    expect(mockDbRead.appBlock.findMany).toHaveBeenNthCalledWith(1, {
+      where: { app: { userId: OWNER_ID } },
+      select: { id: true },
     });
   });
 

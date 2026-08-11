@@ -133,6 +133,7 @@ export const ECO = {
   Flux2Klein_4B_base: 57,
   Qwen: 10,
   Qwen2: 62,
+  Qwen3: 80,
   Chroma: 11,
   HyDit1: 12,
   AuraFlow: 13,
@@ -185,6 +186,11 @@ export const ECO = {
   Anima: 59,
   Grok: 61,
   HappyHorse: 52,
+  // FLUX-3 ships as separate weight releases per modality (Video now, Image and
+  // the open-weight Dev backbone later) off a shared multimodal architecture.
+  // Shared architecture is not shared weights, so each gets its own ecosystem —
+  // a LoRA is trained against weights. Same reasoning as the Flux2Klein variants.
+  Flux3Video: 79,
 
   // Root ecosystems - Audio models
   AceAudio: 68,
@@ -305,6 +311,13 @@ export const ecosystems: EcosystemRecord[] = [
     familyId: 1,
     sortOrder: 7,
     parentEcosystemId: ECO.Flux2,
+  },
+  {
+    id: ECO.Flux3Video,
+    key: 'Flux3Video',
+    displayName: 'Flux 3 Video',
+    familyId: 1,
+    sortOrder: 8,
   },
 
   // Stable Diffusion Family (familyId: 2)
@@ -566,6 +579,13 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'Qwen 2',
     familyId: 10,
     sortOrder: 91,
+  },
+  {
+    id: ECO.Qwen3,
+    key: 'Qwen3',
+    displayName: 'Qwen 3',
+    familyId: 10,
+    sortOrder: 92,
   },
 
   // ZImage Family (familyId: 11)
@@ -847,7 +867,8 @@ export const MODEL3D_ECOSYSTEM_KEYS = new Set<string>(
  *  - AceStepAudioInput   → Ace
  *
  * NOTE: lookalikes that are EXTERNAL and must NOT be listed — `Flux2` (≠ Klein),
- * `Qwen2` (≠ Qwen), and all `Wan*` (currently FAL). Keep this in sync when an
+ * `Qwen2` (≠ Qwen, FAL), `Qwen3` (≠ Qwen, Alibaba DashScope), and all `Wan*`
+ * (currently FAL). Keep this in sync when an
  * ecosystem's routing changes.
  */
 export const SELF_HOSTED_ECOSYSTEM_KEYS = [
@@ -968,6 +989,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Qwen 2 - checkpoint only
   { ecosystemId: ECO.Qwen2, supportType: 'generation', modelTypes: [ModelType.Checkpoint] },
 
+  // Qwen 3 - checkpoint only
+  { ecosystemId: ECO.Qwen3, supportType: 'generation', modelTypes: [ModelType.Checkpoint] },
+
   // HyV1 (Hunyuan Video) - LORA only
   { ecosystemId: ECO.HyV1, supportType: 'generation', modelTypes: loraOnly },
 
@@ -1059,8 +1083,10 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Vidu - checkpoint only
   { ecosystemId: ECO.Vidu, supportType: 'generation', modelTypes: checkpointOnly },
 
-  // MiniMax H3 (Hailuo) - checkpoint only
-  { ecosystemId: ECO.MiniMaxH3, supportType: 'generation', modelTypes: checkpointOnly },
+  // MiniMax H3 (Hailuo) - LoRAs apply to the comfy variant only (the hosted API
+  // build takes no resources); LORA training is AI Toolkit only
+  { ecosystemId: ECO.MiniMaxH3, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.MiniMaxH3, supportType: 'training', modelTypes: loraOnly },
 
   // Kling - checkpoint only
   { ecosystemId: ECO.Kling, supportType: 'generation', modelTypes: checkpointOnly },
@@ -1070,6 +1096,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // HappyHorse - checkpoint only
   { ecosystemId: ECO.HappyHorse, supportType: 'generation', modelTypes: checkpointOnly },
+
+  // Flux 3 Video - checkpoint only (BFL via FAL, closed weights)
+  { ecosystemId: ECO.Flux3Video, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Anima - checkpoint, LORA, DoRA and VAE generation, LORA training
   {
@@ -1226,7 +1255,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Krea2,
     defaults: {
-      model: { id: 2983022 },
+      model: { id: 3072329 },
       modelLocked: true,
     },
   },
@@ -1269,6 +1298,14 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2744101 },
       modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Qwen3,
+    defaults: {
+      model: { id: 3207633 },
+      modelLocked: true,
+      engine: 'qwen',
     },
   },
   {
@@ -1501,6 +1538,14 @@ export const ecosystemSettings: EcosystemSettings[] = [
       model: { id: 2864671 },
       modelLocked: true,
       engine: 'seedance',
+    },
+  },
+  {
+    ecosystemId: ECO.Flux3Video,
+    defaults: {
+      model: { id: 3204701 },
+      modelLocked: true,
+      engine: 'flux',
     },
   },
   {
@@ -2008,6 +2053,7 @@ export const BM = {
   Anima: 77,
   Grok: 78,
   Qwen2: 79,
+  Qwen3: 99,
   WanImage27: 86,
   WanVideo27: 81,
   Upscaler: 82,
@@ -2027,6 +2073,7 @@ export const BM = {
   Hunyuan3D: 95,
   Reve: 96,
   MageFlow: 97,
+  Flux3Video: 98,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2291,6 +2338,11 @@ export const licenses: LicenseRecord[] = [
     name: 'Reve AI Terms of Service',
     url: 'https://app.reve.com/terms',
   },
+  {
+    id: 39,
+    name: 'Black Forest Labs Terms of Service',
+    url: 'https://bfl.ai/legal/terms-of-service',
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -2553,6 +2605,14 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Flux2Klein_4B_base,
     licenseId: 13,
+  },
+  {
+    id: BM.Flux3Video,
+    name: 'Flux 3 Video',
+    description: "Black Forest Labs' FLUX 3 video generation model with native audio",
+    type: 'video',
+    ecosystemId: ECO.Flux3Video,
+    licenseId: 39,
   },
 
   // Grok
@@ -2871,6 +2931,14 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Next-generation Qwen image generation model',
     type: 'image',
     ecosystemId: ECO.Qwen2,
+    licenseId: 13,
+  },
+  {
+    id: BM.Qwen3,
+    name: 'Qwen 3',
+    description: "Alibaba's Qwen 3 image generation model",
+    type: 'image',
+    ecosystemId: ECO.Qwen3,
     licenseId: 13,
   },
 

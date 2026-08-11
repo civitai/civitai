@@ -272,6 +272,49 @@ async function cmdAuth(subcmd) {
   console.log(JSON.stringify(result.data, null, 2));
 }
 
+async function cmdApp(name, subcmd) {
+  await ensureDaemon();
+
+  // `app` with no name lists what is registered and what each one is doing.
+  if (!name) {
+    const result = await daemonRequest('/apps');
+    if (!result.ok) {
+      console.error('Error:', result.error || JSON.stringify(result.data));
+      process.exit(1);
+    }
+    for (const app of result.data.apps) {
+      const state = app.ready ? 'ready' : app.status;
+      console.log(`${app.name.padEnd(16)} ${state.padEnd(9)} ${app.url}`);
+      if (app.lastError) console.log(`${' '.repeat(16)} ${app.lastError}`);
+    }
+    return;
+  }
+
+  const action = subcmd || 'status';
+  const routes = {
+    status: ['', 'GET'],
+    logs: ['/logs', 'GET'],
+    start: ['/start', 'POST'],
+    stop: ['/stop', 'POST'],
+    restart: ['/restart', 'POST'],
+  };
+  const route = routes[action];
+  if (!route) {
+    console.error(`Unknown app subcommand: ${action}`);
+    console.error('Usage: app <name> [status|start|stop|restart|logs]');
+    process.exit(1);
+  }
+
+  const [suffix, method] = route;
+  const result = await daemonRequest(`/app/${name}${suffix}`, method === 'POST' ? { method } : undefined);
+  if (!result.ok) {
+    console.error('Error:', result.error || result.data?.error || JSON.stringify(result.data));
+    if (result.data?.available) console.error('Available apps:', result.data.available.join(', '));
+    process.exit(1);
+  }
+  console.log(JSON.stringify(result.data, null, 2));
+}
+
 async function cmdShutdown() {
   const result = await daemonRequest('/shutdown', { method: 'POST' });
   if (!result.ok && result.status !== 0) {
@@ -318,6 +361,9 @@ switch (command) {
   case 'auth':
     cmdAuth(arg1);
     break;
+  case 'app':
+    cmdApp(arg1, process.argv[4]);
+    break;
   case 'shutdown':
     cmdShutdown();
     break;
@@ -334,6 +380,8 @@ Commands:
   restart <session-id> Restart a session
   rgb [subcmd]        RGB proxy control (status|start|stop|restart|logs)
   auth [subcmd]       Auth hub control (status|start|stop|restart|logs)
+  app                 List spoke apps (moderator, creator-studio, storage, notifications)
+  app <name> [subcmd] Spoke app control (status|start|stop|restart|logs)
   shutdown            Shutdown the daemon
 `);
     if (command) {

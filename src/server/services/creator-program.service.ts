@@ -28,7 +28,7 @@ import {
   refundTransaction,
 } from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
-import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
+import { getHighestPaidTierSubscription } from '~/server/services/subscriptions.service';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import { payToTipaltiAccount } from '~/server/services/user-payment-configuration.service';
 import {
@@ -88,7 +88,9 @@ const createUserCapCache = () => {
     lookupFn: async (ids) => {
       if (ids.length === 0 || !clickhouse) return {};
 
-      // Get the highest tier for each user across all active subscriptions (regardless of buzzType)
+      // Get the highest tier for each user across all active subscriptions (regardless of
+      // buzzType). Buzz-purchased memberships are excluded: they confer no Creator Program
+      // benefit, so they must not raise a banking cap either.
       const subscriptions = await dbWrite.$queryRawUnsafe<{ userId: number; tier: UserTier }[]>(`
         SELECT DISTINCT ON (cs."userId")
           cs."userId",
@@ -96,6 +98,7 @@ const createUserCapCache = () => {
         FROM "CustomerSubscription" cs
         JOIN "Product" p ON p.id = cs."productId"
         WHERE cs."userId" IN (${ids.join(',')})
+          AND (p.metadata->>'buzzPurchase') IS DISTINCT FROM 'true'
         ORDER BY cs."userId",
           CASE (p.metadata->>'tier')
             WHEN 'gold' THEN 4
@@ -253,13 +256,14 @@ export async function getCreatorRequirements(userId: number) {
 }
 
 // Whether a user currently holds a valid Creator Program membership — an active,
-// good-standing subscription on a supported tier. Uses getHighestTierSubscription
+// good-standing PAID subscription on a supported tier. Uses getHighestPaidTierSubscription
 // so it honors membership on ANY buzzType (yellow/green/blue paid + referral
 // grants), matching how session-user resolves tier. Checking a single buzzType
 // here would lock out .green/.red members and referral-granted members whose paid
 // sub isn't yellow.
 export async function hasValidCreatorMembership(userId: number) {
-  const subscription = await getHighestTierSubscription(userId);
+  // Paid-only: a Buzz-purchased perks membership does not grant Creator Program access.
+  const subscription = await getHighestPaidTierSubscription(userId);
   const tier = subscription?.tier;
   return !!tier && tier !== 'free' && tier !== 'founder';
 }
@@ -304,7 +308,7 @@ export async function joinCreatorsProgram(userId: number) {
 
   userUpdateCounter?.inc({ location: 'creator-program.service:completeOnboarding' });
 
-  await refreshSession(userId);
+  await refreshSession(userId, { caller: 'membership' });
 }
 
 async function getPoolValue(month?: Date) {
@@ -446,7 +450,12 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
     ? subscriptionProductMetadataSchema.safeParse(activeMembership.product.metadata)
     : undefined;
   const membershipTier = parsedMeta?.success ? parsedMeta.data[env.TIER_METADATA_KEY] : undefined;
-  if (!membershipTier || membershipTier === 'free' || membershipTier === 'founder')
+  if (
+    !membershipTier ||
+    membershipTier === 'free' ||
+    membershipTier === 'founder' ||
+    parsedMeta?.data?.buzzPurchase
+  )
     throw throwBadRequestError('An active Creator Program membership is required to bank Buzz.');
 
   // TODO: Remove flip when we're ready to go live

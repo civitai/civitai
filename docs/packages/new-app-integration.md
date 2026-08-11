@@ -146,6 +146,7 @@ Add to `.env` (real) + `.env.example` (documented) only the rows for packages yo
 | `@civitai/clickhouse` | `CLICKHOUSE_HOST`/`USERNAME`/`PASSWORD` | required in prod, optional in dev |
 | `@civitai/email` | *(all optional)* | `isEmailConfigured()` guards sends |
 | `@civitai/axiom` | *(all optional)* | stderr-only without `AXIOM_TOKEN` |
+| `@civitai/flipt` | `FLIPT_URL`, `FLIPT_FETCHER_SECRET` | or pass them to the factory; missing ⇒ flags fail closed |
 | `@civitai/brand`, `@civitai/telemetry`, `@civitai/db-schema` | *(none)* | |
 
 **Redis footgun**: pulling `@civitai/auth` and setting only `REDIS_URL` (for the session cache) without

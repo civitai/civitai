@@ -8,6 +8,7 @@ import {
   deleteUserNotificationSetting,
   getUserNotifications,
 } from '~/server/services/notification.service';
+import { isOptInNotification } from '~/server/notifications/utils.notifications';
 import { throwDbError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
@@ -47,17 +48,26 @@ export const upsertUserNotificationSettingsHandler = async ({
   input: ToggleNotificationSettingInput;
   ctx: ProtectedContext;
 }) => {
-  try {
-    if (input.toggle) {
-      const deleted = await deleteUserNotificationSetting({ ...input, userId: ctx.user.id });
-      return { deleted };
-    }
+  const userId = ctx.user.id;
+  // `toggle` is the state the user asked for. A row means opted-OUT for almost every type, but
+  // SUBSCRIBED for an opt-in one, so the same request writes in opposite directions per type.
+  // Splitting here rather than at the call site keeps a raw type list (which is all the schema
+  // accepts) from ever writing a row with the wrong polarity.
+  const optIn = input.type.filter(isOptInNotification);
+  const optOut = input.type.filter((type) => !isOptInNotification(type));
 
-    const notificationSetting = await createUserNotificationSetting({
-      ...input,
-      userId: ctx.user.id,
-    });
-    return { notificationSetting };
+  const toRemove = input.toggle ? optOut : optIn;
+  const toAdd = input.toggle ? optIn : optOut;
+
+  try {
+    const deleted = toRemove.length
+      ? await deleteUserNotificationSetting({ ...input, type: toRemove, userId })
+      : undefined;
+    const notificationSetting = toAdd.length
+      ? await createUserNotificationSetting({ ...input, type: toAdd, userId })
+      : undefined;
+
+    return { deleted, notificationSetting };
   } catch (error) {
     throw throwDbError(error);
   }

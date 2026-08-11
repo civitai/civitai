@@ -1,0 +1,11 @@
+[
+  {
+    "prompt": "score_9, score_8_up, a lighthouse keeper trimming the wick by lamplight, brass fittings catching the flame, storm glass rattling in its frame, deep shadow filling the rest of the lamp room",
+    "negativePrompt": "worst quality, low quality",
+    "assistantResponse": "{\"issues\":[],\"recommendations\":[\"Say what his hands are doing with the wick — pinching the char away, the trimmer resting on the sill — so the action reads as a task rather than a pose.\",\"Name the state of the glass: salt-fogged at the edges, wiped clear in one arc where he works.\"],\"enhancedPrompt\":\"score_9, score_8_up, a lighthouse keeper trimming the wick by lamplight, pinching the char away with the trimmer resting on the sill, brass fittings catching the flame, storm glass salt-fogged at the edges and wiped clear in one arc, deep shadow filling the rest of the lamp room\",\"enhancedNegativePrompt\":\"worst quality, low quality\"}"
+  },
+  {
+    "prompt": "a fox",
+    "assistantResponse": "{\"issues\":[{\"description\":\"Two words give the model nothing to work with beyond the subject noun.\",\"severity\":\"error\"}],\"recommendations\":[\"Say what the fox is doing and where — trotting a frosted hedgerow at first light gives the model a scene instead of a noun.\",\"Add score tags at the front; this checkpoint family expects them and they steer aesthetic quality.\"],\"enhancedPrompt\":\"score_9, score_8_up, a red fox trotting along a frosted hedgerow at first light, breath showing, brush held low, frost shaking loose from the stems it brushes past\",\"enhancedNegativePrompt\":\"\"}"
+  }
+]

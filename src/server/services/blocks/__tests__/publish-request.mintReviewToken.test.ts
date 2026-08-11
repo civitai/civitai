@@ -228,7 +228,8 @@ describe('mintReviewBlockToken', () => {
         'models:read:self',
         'user:read:self',
       ]);
-      // Spend-IN survived (keyCanSpend:true) — but every money-OUT / cross-user /
+      // Spend-IN survived (both spend predicates = runForReal = true) — but every
+      // money-OUT / cross-user /
       // private scope the manifest declared is ABSENT.
       expect(scopes).toContain('ai:write:budgeted');
       for (const withheld of [

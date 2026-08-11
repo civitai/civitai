@@ -1,0 +1,11 @@
+[
+  {
+    "prompt": "Slow push in. The woman in the photo turns her head toward the window and the curtain lifts behind her.",
+    "negativePrompt": "blurry, low quality",
+    "assistantResponse": "{\"issues\":[],\"recommendations\":[\"Say how far the turn goes and where it settles — to three-quarter profile, eyes stopping on the glass — so the motion has an endpoint instead of drifting.\",\"Give the curtain a cause: the draught that lifts it, and the fabric falling back before the clip ends.\"],\"enhancedPrompt\":\"Slow push in. The woman turns her head toward the window, settling into three-quarter profile with her eyes stopping on the glass, while a draught lifts the curtain behind her and lets it fall back.\",\"enhancedNegativePrompt\":\"blurry, distorted, low quality, watermark, static, morphing, deformed hands\"}"
+  },
+  {
+    "prompt": "Static camera. Steam begins rising from the cup on the table.",
+    "assistantResponse": "{\"issues\":[{\"description\":\"The scene is described as a state rather than a change, so the clip may render nearly still.\",\"severity\":\"warning\"}],\"recommendations\":[\"Let the steam build over the clip — thin at first, then thickening and bending as it rises — so there is a visible progression rather than a held frame.\"],\"enhancedPrompt\":\"Static camera. Steam rises from the cup on the table, thin at first, then thickening and bending as it climbs.\",\"enhancedNegativePrompt\":\"\"}"
+  }
+]

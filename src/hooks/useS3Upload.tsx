@@ -6,7 +6,12 @@ import type { UploadTypeUnion } from '~/server/common/enums';
 import { UploadType } from '~/server/common/enums';
 import { withRetries } from '~/utils/errorHandling';
 import type { UploadPartError } from '~/utils/upload-retry';
-import { getPartRetryDelay, MAX_PART_ATTEMPTS, shouldRetryPartError } from '~/utils/upload-retry';
+import {
+  getPartRetryDelay,
+  isTerminalCompleteStatus,
+  MAX_PART_ATTEMPTS,
+  shouldRetryPartError,
+} from '~/utils/upload-retry';
 
 const FILE_CHUNK_SIZE = 25 * 1024 * 1024; // 25 MB
 const CONCURRENT_PARTS = 4;
@@ -242,7 +247,10 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
               }),
             });
 
-            if (!res.ok && remainingAttempts > 0) {
+            // Terminal statuses must not be re-POSTed — see isTerminalCompleteStatus.
+            // This exemption was missing here (it existed only in s3-upload.store.ts),
+            // so a terminal status was retried 4 times, 200 ms apart.
+            if (!res.ok && !isTerminalCompleteStatus(res.status) && remainingAttempts > 0) {
               throw new Error('Failed to complete upload');
             }
 

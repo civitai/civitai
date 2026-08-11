@@ -32,7 +32,7 @@ export const RankBadge = ({
   const hasLeaderboardCosmetic = !!rank.leaderboardCosmetic;
 
   return (
-    <Tooltip label={`${rank.leaderboardTitle} Rank`} position="top" color="dark" withArrow>
+    <Tooltip label={`${rank.leaderboardTitle} Rank`} position="top" withArrow>
       <Group gap={0} wrap="nowrap" style={{ position: 'relative' }}>
         {rank.leaderboardCosmetic ? (
           <Box pos="relative" style={{ zIndex: 2 }}>

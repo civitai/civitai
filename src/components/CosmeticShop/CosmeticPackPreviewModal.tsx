@@ -1,0 +1,277 @@
+import {
+  Badge,
+  Box,
+  Button,
+  Center,
+  CloseButton,
+  Grid,
+  Group,
+  Loader,
+  Modal,
+  Paper,
+  Stack,
+  Text,
+} from '@mantine/core';
+import { useState } from 'react';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import { PayWithSelector } from '~/components/CosmeticShop/PayWithSelector';
+import type { PayWithOption } from '~/components/CosmeticShop/PayWithSelector';
+import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { PackCoverTiles } from '~/components/CreatorShop/Pack/PackCoverTiles';
+import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { showSuccessNotification } from '~/utils/notifications';
+import { numberWithCommas } from '~/utils/number-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
+import type { CosmeticType } from '~/shared/utils/prisma/enums';
+import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { trpc } from '~/utils/trpc';
+
+/**
+ * A pack's own modal rather than a branch inside the single-item one: nearly
+ * every line of that component reads `shopItem.cosmetic`, which a pack does not
+ * have.
+ *
+ * Showing the contents is not decoration. A pack may be bought regardless of
+ * what the buyer already owns (D16), and seeing what's inside beforehand is the
+ * stated mitigation for that.
+ */
+export const CosmeticPackPreviewModal = ({
+  shopItemId,
+  viaShopUserId,
+}: {
+  shopItemId: number;
+  viaShopUserId?: number;
+}) => {
+  const dialog = useDialogContext();
+  const { data: pack, isLoading } = trpc.creatorShop.getPack.useQuery({ id: shopItemId });
+  const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
+  const [domainType] = useAvailableBuzz();
+  const [payWith, setPayWith] = useState<PayWithOption>('default');
+
+  const acceptsBlue = !!pack?.meta.acceptsBlueBuzz;
+  const accountTypes: BuzzSpendType[] =
+    !acceptsBlue || payWith === 'default' ? [domainType] : ['blue', domainType];
+  const unavailable = (pack?.unavailableCount ?? 0) > 0;
+  // The server refuses a purchase that costs nothing — a free pack is
+  // repeatable, and each one stacks another consumable balance. Say so here
+  // rather than letting the button fail.
+  const nothingLeftToBuy = !!pack && pack.amountDue <= 0;
+  // The card that opened this can be stale — a pack delisted, withdrawn or sold
+  // out since it rendered would otherwise show a priced, enabled button that the
+  // server refuses.
+  const offSale = !!pack && (!pack.listed || pack.status !== CosmeticShopItemStatus.Published);
+  const soldOut =
+    !!pack &&
+    pack.availableQuantity !== null &&
+    (pack.meta.purchases ?? 0) >= pack.availableQuantity;
+  // The server refuses the lister outright. Without this the button renders
+  // priced and enabled for the one person guaranteed to fail.
+  const isOwnPack = !!pack?.isPackCreator;
+
+  const handlePurchase = async () => {
+    if (!pack) return;
+    try {
+      const result = await purchaseShopItem({
+        shopItemId: pack.id,
+        viaShopUserId,
+        payWith: acceptsBlue ? payWith : undefined,
+      });
+      dialog.onClose();
+      // A pack buyer spent more Buzz on more things than a single purchase and
+      // was getting one line of toast; the single-item path opens a modal.
+      if (result && 'granted' in result)
+        dialogStore.trigger({
+          component: PackPurchaseCompleteModal,
+          props: { title: pack.title, granted: result.granted },
+        });
+      else showSuccessNotification({ message: 'Pack purchased' });
+    } catch {
+      // Handled in the hook.
+    }
+  };
+
+  return (
+    <Modal {...dialog} size="xl" withCloseButton={false} radius="lg" classNames={{ body: 'p-0' }}>
+      <Grid classNames={{ inner: 'my-0' }}>
+        <Grid.Col span={{ base: 12, md: 5 }} p="lg">
+          <Stack gap="lg" px="md" h="100%">
+            <Group justify="space-between" wrap="nowrap">
+              <Text className="text-black dark:text-white" size="sm">
+                Pack
+              </Text>
+              <CloseButton className="show-mobile" onClick={dialog.onClose} />
+            </Group>
+            <Center my="auto" h={250}>
+              {pack?.meta.coverUrl ? (
+                <EdgeMedia src={pack.meta.coverUrl} width={450} alt={pack.title} />
+              ) : (
+                <PackCoverTiles tiles={pack?.meta.coverTiles ?? []} size={230} fallbackIcon />
+              )}
+            </Center>
+            <Text className="text-black dark:text-white" mt="auto" fw="bold" size="lg">
+              {pack?.title}
+            </Text>
+            {isLoading && (
+              <Center>
+                <Loader type="bars" />
+              </Center>
+            )}
+            {pack && (
+              <Stack gap={6}>
+                {pack.discount > 0 && (
+                  <Text size="xs" c="dimmed">
+                    You already own part of this pack, so {numberWithCommas(pack.discount)} Buzz of
+                    it is discounted.
+                  </Text>
+                )}
+                {pack.selfAuthored > 0 && (
+                  <Text size="xs" c="dimmed">
+                    You made {numberWithCommas(pack.selfAuthored)} Buzz worth of what&apos;s in
+                    here, so you aren&apos;t charged for it.
+                  </Text>
+                )}
+                {unavailable && (
+                  <Text size="xs" c="yellow">
+                    Something in this pack is no longer for sale, so it can&apos;t be bought right
+                    now.
+                  </Text>
+                )}
+                {acceptsBlue && (
+                  <PayWithSelector value={payWith} onChange={setPayWith} domainType={domainType} />
+                )}
+                {offSale ? (
+                  <Text size="xs" c="dimmed">
+                    This pack isn&apos;t on sale right now.
+                  </Text>
+                ) : soldOut ? (
+                  <Text size="xs" c="dimmed">
+                    This pack is sold out.
+                  </Text>
+                ) : isOwnPack ? (
+                  <Text size="xs" c="dimmed">
+                    This is your pack. Anything in it made by other creators is on sale
+                    individually.
+                  </Text>
+                ) : (
+                  nothingLeftToBuy && (
+                    <Text size="xs" c="dimmed">
+                      You already own everything in this pack.
+                    </Text>
+                  )
+                )}
+                <BuzzTransactionButton
+                  disabled={
+                    purchasingShopItem ||
+                    unavailable ||
+                    nothingLeftToBuy ||
+                    isOwnPack ||
+                    offSale ||
+                    soldOut
+                  }
+                  loading={purchasingShopItem}
+                  buzzAmount={pack.amountDue}
+                  radius="xl"
+                  onPerformTransaction={handlePurchase}
+                  label="Purchase pack"
+                  accountTypes={accountTypes}
+                  showTypePct={acceptsBlue && payWith === 'blue-first'}
+                />
+              </Stack>
+            )}
+          </Stack>
+        </Grid.Col>
+        <Grid.Col span={{ base: 12, md: 7 }} p="lg" className="bg-gray-0 dark:bg-dark-8">
+          <Stack gap={0} h={0} align="flex-end" className="hide-mobile">
+            <CloseButton onClick={dialog.onClose} />
+          </Stack>
+          <Stack px="md" gap="xs">
+            <Text fw={600} size="sm">
+              What&apos;s inside ({pack?.members.length ?? 0})
+            </Text>
+            {pack?.members.map((member) => (
+              <Paper key={member.cosmeticId} withBorder radius="md" p="xs">
+                <Group gap="xs" wrap="nowrap" align="center">
+                  <CosmeticThumb data={member.data} name={member.name} />
+                  <Stack gap={0} style={{ minWidth: 0, flex: 1 }}>
+                    <Text size="sm" fw={600} lineClamp={1}>
+                      {member.name}
+                    </Text>
+                    <Text size="xs" c="dimmed" lineClamp={1}>
+                      {getDisplayName(member.type)}
+                      {member.creatorUsername ? ` · by @${member.creatorUsername}` : ''}
+                    </Text>
+                  </Stack>
+                  <Stack gap={2} align="flex-end">
+                    <Text size="xs">{numberWithCommas(member.listPrice)} Buzz</Text>
+                    {/* A consumable's whole value is how many uses it grants, so
+                        the count belongs on the row whether or not it's owned —
+                        "adds uses" without a number says nothing. */}
+                    {member.consumable && member.uses != null && (
+                      <Text size="xs" c="dimmed">
+                        {numberWithCommas(member.uses)} uses
+                      </Text>
+                    )}
+                    {member.owned && (
+                      <Badge size="xs" variant="light" color={member.consumable ? 'blue' : 'gray'}>
+                        {/* Owning a consumable is not a duplicate — the purchase
+                            adds uses (D23), which is why it isn't discounted. */}
+                        {member.consumable ? 'Adds to yours' : 'Owned'}
+                      </Badge>
+                    )}
+                  </Stack>
+                </Group>
+              </Paper>
+            ))}
+            {!!pack?.unavailableCount && (
+              <Box>
+                <Text size="xs" c="dimmed">
+                  {pack.unavailableCount} item(s) in this pack are no longer listed.
+                </Text>
+              </Box>
+            )}
+          </Stack>
+        </Grid.Col>
+      </Grid>
+    </Modal>
+  );
+};
+
+export const PackPurchaseCompleteModal = ({
+  title,
+  granted,
+}: {
+  title: string;
+  granted: { cosmeticId: number; name: string; type: CosmeticType }[];
+}) => {
+  const dialog = useDialogContext();
+  return (
+    <Modal {...dialog} size="md" withCloseButton={false} radius="lg">
+      <Stack gap="lg" px="md">
+        <Group justify="space-between">
+          <Text className="text-black dark:text-white">You unpacked {title}!</Text>
+          <CloseButton onClick={dialog.onClose} />
+        </Group>
+        <Stack gap={4}>
+          {granted.map((item) => (
+            <Group key={item.cosmeticId} justify="space-between" wrap="nowrap">
+              <Text size="sm" lineClamp={1}>
+                {item.name}
+              </Text>
+              <Text size="xs" c="dimmed">
+                {getDisplayName(item.type)}
+              </Text>
+            </Group>
+          ))}
+        </Stack>
+        <Button radius="xl" mx="auto" onClick={dialog.onClose}>
+          Done
+        </Button>
+      </Stack>
+    </Modal>
+  );
+};

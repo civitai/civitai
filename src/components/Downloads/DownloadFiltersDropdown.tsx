@@ -69,7 +69,7 @@ function FilterButton({
   return (
     <Popover position="bottom-start" withArrow shadow="md" withinPortal>
       <Popover.Target>
-        <Tooltip label={label} color="dark" withArrow withinPortal>
+        <Tooltip label={label} withArrow withinPortal>
           <ActionIcon
             variant={isActive ? 'light' : 'subtle'}
             color={isActive ? 'blue' : 'gray'}

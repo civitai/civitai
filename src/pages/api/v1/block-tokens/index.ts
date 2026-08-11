@@ -3,6 +3,7 @@ import * as z from 'zod';
 import { env } from '~/env/server';
 import { withAxiom } from '@civitai/next-axiom';
 import { dbWrite } from '~/server/db/client';
+import { emitMintAuditToStdout } from '~/server/logging/mint-audit-stdout';
 
 // H2 (audit-10): cap the request body BEFORE Next's default 1MB parse runs.
 // slotContext is z.record(z.string(), z.unknown()) so a determined attacker
@@ -15,6 +16,7 @@ export const config = {
   },
 };
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { BlockTokenService } from '~/server/services/block-token.service';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -230,23 +232,18 @@ function setSameOriginCors(req: NextApiRequest, res: NextApiResponse): 'handled'
 }
 
 /**
- * Returns the IP used for per-IP rate limiting. cf-connecting-ip is trusted
- * ONLY when cf-ray is also present (Cloudflare always emits cf-ray on every
- * proxied request and direct-to-origin attackers can't set it because the
- * value identifies a specific CF datacenter request).
+ * Returns the IP used for per-IP rate limiting.
  *
- * Audit M-4: when cf-ray is absent we do NOT fall back to XFF / X-Real-IP —
- * those headers are attacker-controlled the moment the origin is reachable
- * without CF transit. The trade is that direct-to-origin debug traffic gets
- * bucketed under the LB / socket peer IP, which is the right fail-closed.
+ * This derivation started out here as a file-local helper. It is now
+ * the shared `getTrustedClientIp` in `~/server/utils/client-ip` — same rule
+ * (cf-connecting-ip only alongside cf-ray, otherwise the socket peer), one
+ * definition, so the download endpoints and this one cannot drift apart. The
+ * only behaviour change is that both candidates are now validated as real IP
+ * addresses, and an unresolvable one yields the same `'unknown'` bucket this
+ * helper already returned when the socket had no address.
  */
 function getClientIp(req: NextApiRequest): string {
-  const cfRay = req.headers['cf-ray'];
-  if (typeof cfRay === 'string' && cfRay.length > 0) {
-    const cf = req.headers['cf-connecting-ip'];
-    if (typeof cf === 'string' && cf.length > 0) return cf;
-  }
-  return req.socket?.remoteAddress ?? 'unknown';
+  return getTrustedClientIp(req) ?? 'unknown';
 }
 
 // M-2 (audit): in-process LRU fallback for the per-IP rate limit when Redis
@@ -337,8 +334,10 @@ function resolveBuzzBudget(
  *     RUNTIME `submitWorkflow` spends the AUTHOR's OWN Buzz, gated by
  *     `assertViewerIsAppDeveloper(sub)` + the per-call (DEV_BUZZ_BUDGET_CAP) /
  *     per-session / per-day caps. There is NO bearer credential here, so the
- *     dev-token 7f AIServicesWrite ceiling doesn't map → `keyCanSpend: true`; the
- *     runtime author-flag re-check is the substitute spend gate.
+ *     dev-token 7f AIServicesWrite ceiling doesn't map → `spendEntitled: true` (and
+ *     `spendRequested: true`, since this path has no request body — the declaring
+ *     manifest IS the request); the runtime author-flag re-check is the substitute
+ *     spend gate.
  *   - SCOPE SOURCE (the resolver is the single authority — `app.scopes`): the
  *     caller's OWN pending submission's SERVER-READ `manifest.scopes` (pending), else
  *     the AUTHENTICATED CLI's dev-tunnel SESSION `grantedScopes` (brand-new — NEVER a
@@ -442,17 +441,24 @@ async function tryDevTunnelScopedMint(args: {
 
   // MINT-TIME AUDIT (dev-token.ts `blocks.dev-token.*-mint` parity): a synthetic
   // `ephemeral-<slug>` app has NO durable AppBlock-backed row, so this structured
-  // event (Axiom/Loki-queryable, NEVER the token) is the forensic record of granting
-  // a (possibly spend-capable) dev token to an un-approved app. The runtime `bsi`
-  // row records the later SPEND invocation — this records the GRANT decision.
-  req.log?.info('app-blocks.dev-tunnel.mint', {
+  // event (NEVER the token) is the forensic record of granting a (possibly
+  // spend-capable) dev token to an un-approved app. The runtime `bsi` row records the
+  // later SPEND invocation — this records the GRANT decision.
+  //
+  // DUAL SINK: `req.log?.info` (Axiom) plus `emitMintAuditToStdout`, because the
+  // next-axiom logger writes nothing to stdout once AXIOM_* is set, so the
+  // stdout-scraped log store cannot see the Axiom copy — see
+  // `src/server/logging/mint-audit-stdout.ts`.
+  const mintAudit = {
     mode: app.ephemeralSource,
     userId,
     slug,
     sessionId: tunnel?.sessionId,
     scopes: granted,
     spendGranted: granted.includes('ai:write:budgeted'),
-  });
+  };
+  req.log?.info('app-blocks.dev-tunnel.mint', mintAudit);
+  emitMintAuditToStdout('app-blocks.dev-tunnel.mint', mintAudit);
 
   res.setHeader('Cache-Control', 'no-store');
   res.status(200).json({
@@ -594,9 +600,7 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
   const granted = clampTunnelDeclaredScopes(app.approvedScopes);
   // BUDGET = the manifest's page.buzzBudgetPerGen (clamped to the dev cap), defaulting
   // as the ephemeral path when absent. Only meaningful if ai:write:budgeted survived.
-  const manifestBudget = parseManifestBuzzBudget(
-    (app.manifest as { page?: unknown }).page
-  );
+  const manifestBudget = parseManifestBuzzBudget((app.manifest as { page?: unknown }).page);
   const buzzBudget = resolveDevBuzzBudget(granted, undefined, manifestBudget);
 
   // SIGN with the app's REAL ids (appId/appBlockId/blockId), the client's page
@@ -613,15 +617,18 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
 
   // MINT-TIME AUDIT (parity with the ephemeral branch): the forensic record of
   // granting a (possibly spend-capable) dev token to a NON-approved owned app. Never
-  // the token itself.
-  req.log?.info('app-blocks.dev-tunnel.owned-nonapproved-mint', {
+  // the token itself. DUAL-SINKED to Axiom AND stdout for the reason given at the
+  // ephemeral branch's audit above (`src/server/logging/mint-audit-stdout.ts`).
+  const mintAudit = {
     status: app.status,
     userId,
     slug: app.blockId,
     sessionId: tunnel.sessionId,
     scopes: granted,
     spendGranted: granted.includes('ai:write:budgeted'),
-  });
+  };
+  req.log?.info('app-blocks.dev-tunnel.owned-nonapproved-mint', mintAudit);
+  emitMintAuditToStdout('app-blocks.dev-tunnel.owned-nonapproved-mint', mintAudit);
 
   res.setHeader('Cache-Control', 'no-store');
   res.status(200).json({
@@ -732,7 +739,9 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // For a page there is no install row, so modelId is null and installedBy is
   // null (no per-content owner); settings are empty.
   type ResolvedForMint = {
-    appBlock: NonNullable<Awaited<ReturnType<typeof BlockRegistry.resolveBlockInstance>>>['appBlock'];
+    appBlock: NonNullable<
+      Awaited<ReturnType<typeof BlockRegistry.resolveBlockInstance>>
+    >['appBlock'];
     modelId: number | null;
     slotId: string;
     installedByUserId: number | null;
@@ -817,7 +826,9 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     // Passing a number through unconditionally (not pre-filtering to >0) keeps
     // a non-positive manifest budget a HARD ERROR rather than a silent default,
     // matching the model-slot contract.
-    const pageManifest = (page.appBlock.manifest ?? {}) as { page?: { buzzBudgetPerGen?: unknown } };
+    const pageManifest = (page.appBlock.manifest ?? {}) as {
+      page?: { buzzBudgetPerGen?: unknown };
+    };
     const manifestBudget = pageManifest.page?.buzzBudgetPerGen;
     const pageSettings: Record<string, unknown> =
       typeof manifestBudget === 'number' && Number.isFinite(manifestBudget)
@@ -907,12 +918,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     }
   }
 
-  const rawManifestScopes =
-    Array.isArray((block.manifest as { scopes?: unknown }).scopes)
-      ? ((block.manifest as { scopes: string[] }).scopes.filter(
-          (s) => typeof s === 'string'
-        ) as string[])
-      : [];
+  const rawManifestScopes = Array.isArray((block.manifest as { scopes?: unknown }).scopes)
+    ? ((block.manifest as { scopes: string[] }).scopes.filter(
+        (s) => typeof s === 'string'
+      ) as string[])
+    : [];
 
   // Graceful deprecation: drop any scope that is no longer part of the known
   // block-scope vocabulary BEFORE the OAuth / approved-snapshot gates below.
@@ -1140,7 +1150,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // leaves the run-page 404 as the only surface). The dev-token path is a
   // SEPARATE endpoint (forced-SFW) and is unaffected.
   const appContentRating = (block.manifest as { contentRating?: unknown }).contentRating;
-  if (typeof appContentRating === 'string' && isMatureContentRating(appContentRating) && !redCapableHost) {
+  if (
+    typeof appContentRating === 'string' &&
+    isMatureContentRating(appContentRating) &&
+    !redCapableHost
+  ) {
     res.status(403).json({ error: 'This app is only available on civitai.red.' });
     return;
   }

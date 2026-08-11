@@ -188,6 +188,7 @@ const featureFlags = createFeatureFlags({
   fluxTwoKleinTraining: { availability: ['mod'], fliptKey: 'flux2-klein-training' },
   ltx2Training: { availability: ['mod'], fliptKey: 'ltx2-training' },
   ltx23Training: { availability: ['mod'], fliptKey: 'ltx23-training' },
+  minimaxh3Training: { availability: ['mod'], fliptKey: 'minimaxh3-training' },
   wan22Training: { availability: ['mod'], fliptKey: 'wan22-training' },
   ernieTraining: { availability: ['mod'], fliptKey: 'ernie-training' },
   hidreamO1Training: { availability: ['mod'], fliptKey: 'hidream-o1-training' },
@@ -294,6 +295,17 @@ const featureFlags = createFeatureFlags({
   // does NOT gate rendering — a sticker already in a comment or DM must render
   // for everyone, or flipping this off orphans content that is already out there.
   stickers: { availability: ['mod'], fliptKey: 'stickers' },
+  // Placing a sticker on someone else's work, gated apart from owning one. The
+  // harassment surface is different in kind — a sticker in a comment is a
+  // comment; a sticker on an image is on the creator's work — so this stays with
+  // testers while stickers themselves open up. Required *in addition to*
+  // `stickers`, so placement cannot outlive the feature it belongs to.
+  stickerPlacement: { availability: ['mod'], fliptKey: 'sticker-placement' },
+  // Gates BUILDING a pack, seeing packs in shops, and buying one. Like
+  // `stickers` it does not gate what a buyer already owns: turning it off must
+  // not strip cosmetics people paid for, only stop new packs being listed,
+  // discovered or sold.
+  cosmeticPacks: { availability: ['mod'], fliptKey: 'cosmetic-packs' },
   impersonation: isDev ? ['mod'] : ['granted'],
   donationGoals: ['public'],
   creatorComp: ['public'],
@@ -361,6 +373,7 @@ const featureFlags = createFeatureFlags({
   disablePayments: ['blue', 'red', 'public'],
   prepaidMemberships: ['public'],
   giftMemberships: { availability: ['mod'], fliptKey: 'gift-memberships' },
+  buzzMemberships: { availability: ['mod'], fliptKey: 'buzz-memberships' },
   coinbasePayments: [],
   emerchantpayPayments: ['public'],
   nowpaymentPayments: [],
@@ -662,7 +675,9 @@ const hasFeature = (
       fliptContext
     );
     if (fliptResult !== null) {
-      if (isDev) {
+      // Opt-in: this fires once per Flipt-backed flag per evaluation, which is
+      // hundreds of lines per page load and buries everything else in the dev log.
+      if (isDev && process.env.FLIPT_DEBUG === 'true') {
         console.log(`[Flipt] ${key} (${feature.fliptKey}) => ${fliptResult}`);
       }
       return fliptResult;

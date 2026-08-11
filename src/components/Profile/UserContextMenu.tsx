@@ -23,6 +23,7 @@ import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
+import { SuspendPlacerMenuItem } from '~/components/Sticker/SuspendPlacerMenuItem';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 // import { ProfileHeader } from '~/components/Profile/ProfileHeader';
@@ -348,6 +349,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               >
                 {user.muted ? 'Unmute user' : 'Mute user'}
               </Menu.Item>
+              <SuspendPlacerMenuItem userId={user.id} />
               {canManageUserPayments && (
                 <>
                   <Menu.Item

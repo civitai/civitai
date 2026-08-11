@@ -17,7 +17,9 @@
  *   Controls: aspectRatio / resources (LoRA) / negativePrompt / cfgScale / steps / seed.
  *
  * The selected version is mapped to a `krea2Variant` discriminator
- * ('fal' | 'raw' | 'turbo') that swaps in the engine-appropriate controls.
+ * ('fal' | 'raw' | 'turbo') that swaps in the engine-appropriate controls. The
+ * `img2img:edit` workflow selects a fourth 'edit' variant regardless of version
+ * — Krea 2 exposes editing as an operation, not as its own build.
  */
 
 import z from 'zod';
@@ -29,6 +31,7 @@ import {
   createCheckpointGraph,
   createResourcesGraph,
   enumNode,
+  imagesNode,
   negativePromptGraph,
   promptGraph,
   seedNode,
@@ -62,7 +65,7 @@ export const krea2VersionIds = {
 export type Krea2Size = 'medium' | 'large';
 
 /** Control-set discriminator derived from the selected version. */
-type Krea2Variant = 'fal' | 'raw' | 'turbo';
+type Krea2Variant = 'fal' | 'raw' | 'turbo' | 'editRaw' | 'editTurbo';
 
 const krea2VersionOptions = [
   { label: 'Medium', value: krea2VersionIds.medium },
@@ -70,6 +73,21 @@ const krea2VersionOptions = [
   { label: 'Raw', value: krea2VersionIds.raw },
   { label: 'Turbo', value: krea2VersionIds.turbo },
 ];
+
+/**
+ * Edit has no checkpoint of its own — it runs either Krea 2 build plus the
+ * identity-edit LoRA and a pair of conditioning nodes, so the selected version
+ * is both the base the handler sends as `diffusionModel` and the resource the
+ * generation is attributed to. Turbo is the default fast path; Raw is what the
+ * upstream notes recommend for removals.
+ * @see https://github.com/lbouaraba/comfyui-krea2edit
+ */
+const krea2EditVersionOptions = [
+  { label: 'Turbo', value: krea2VersionIds.turbo },
+  { label: 'Raw', value: krea2VersionIds.raw },
+];
+
+export const KREA2_EDIT_DEFAULT_VERSION_ID = krea2VersionIds.turbo;
 
 /** Map version ID → FAL size string (only the medium/large FAL tiers). */
 export const krea2VersionIdToSize = new Map<number, Krea2Size>([
@@ -144,6 +162,8 @@ const krea2CreativityOptions = [
 // =============================================================================
 // Style References
 // =============================================================================
+
+export const KREA2_EDIT_IMAGES_LIMIT = 4;
 
 export const KREA2_STYLE_REFERENCES_LIMIT = 10;
 export const KREA2_STYLE_REFERENCE_STRENGTH_DEFAULT = 0.5;
@@ -263,6 +283,31 @@ const turboVariantGraph = new DataGraph<Krea2VariantCtx, GenerationCtx>()
   .node('cfgScale', sliderNode({ min: 0, max: 2, step: 0.1, defaultValue: 1 }))
   .node('steps', sliderNode({ min: 1, max: 15, defaultValue: 8 }));
 
+/**
+ * Comfy edit variants (`model: 'edit'` on the wire, base picked via
+ * `diffusionModel`): the comfy control set plus the source images being edited.
+ * Selected by the `img2img:edit` workflow rather than by a version — edit is a
+ * Krea 2 build plus the identity-edit LoRA, an operation on the existing
+ * offering rather than a separate build. Community Krea 2 LoRAs stack on top of
+ * the identity-edit LoRA the orchestrator applies.
+ *
+ * Step/cfg defaults track the upstream guidance per base: turbo runs 8 steps at
+ * CFG 1, raw runs at CFG 3.
+ */
+const editBaseGraph = () =>
+  new DataGraph<Krea2VariantCtx, GenerationCtx>()
+    .node('images', imagesNode({ min: 1, max: KREA2_EDIT_IMAGES_LIMIT }))
+    .merge(createResourcesGraph())
+    .merge(negativePromptGraph);
+
+const editTurboVariantGraph = editBaseGraph()
+  .node('cfgScale', sliderNode({ min: 0, max: 2, step: 0.1, defaultValue: 1 }))
+  .node('steps', sliderNode({ min: 1, max: 15, defaultValue: 8 }));
+
+const editRawVariantGraph = editBaseGraph()
+  .node('cfgScale', sliderNode({ min: 1, max: 10, step: 0.5, defaultValue: 3 }))
+  .node('steps', sliderNode({ min: 1, max: 60, defaultValue: 30 }));
+
 // =============================================================================
 // Krea 2 Graph
 // =============================================================================
@@ -271,13 +316,17 @@ export const krea2Graph = new DataGraph<
   { ecosystem: string; workflow: string; model: ResourceData },
   GenerationCtx
 >()
+  // Edit runs on the comfy builds only, so the FAL size tiers drop out of the
+  // picker there — the remaining choice is the base the request actually uses.
   .merge(
-    () =>
-      createCheckpointGraph({
-        versions: { options: krea2VersionOptions },
-        defaultModelId: krea2VersionIds.large,
-      }),
-    []
+    (ctx) => {
+      const isEdit = ctx.workflow === 'img2img:edit';
+      return createCheckpointGraph({
+        versions: { options: isEdit ? krea2EditVersionOptions : krea2VersionOptions },
+        defaultModelId: isEdit ? KREA2_EDIT_DEFAULT_VERSION_ID : krea2VersionIds.raw,
+      });
+    },
+    ['workflow']
   )
   .node(
     'aspectRatio',
@@ -291,14 +340,19 @@ export const krea2Graph = new DataGraph<
   // engine-appropriate controls (FAL: creativity/styleRefs; comfy: LoRA/cfg/steps).
   .computed(
     'krea2Variant',
-    (ctx): Krea2Variant =>
-      (ctx.model?.id ? krea2VersionIdToVariant.get(ctx.model.id) : undefined) ?? 'fal',
-    ['model']
+    (ctx): Krea2Variant => {
+      if (ctx.workflow === 'img2img:edit')
+        return ctx.model?.id === krea2VersionIds.raw ? 'editRaw' : 'editTurbo';
+      return (ctx.model?.id ? krea2VersionIdToVariant.get(ctx.model.id) : undefined) ?? 'fal';
+    },
+    ['model', 'workflow']
   )
   .discriminator('krea2Variant', {
     fal: falVariantGraph,
     raw: rawVariantGraph,
     turbo: turboVariantGraph,
+    editRaw: editRawVariantGraph,
+    editTurbo: editTurboVariantGraph,
   })
   // Prompt + triggerWords are common to all variants. negativePrompt lives in
   // the comfy branches; its registration effect self-adds to the snippets

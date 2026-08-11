@@ -38,6 +38,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { RemoveReportedPlacement } from '~/components/Sticker/RemoveReportedPlacement';
 import { env } from '~/env/client';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { Form, InputTextArea, useForm } from '~/libs/form';
@@ -72,6 +73,9 @@ export default function Reports() {
       value: [
         ReportReason.AdminAttention,
         ReportReason.Claim,
+        // Sticker reports rode TOSViolation until they got their own reason, so
+        // omitting it here hid them from the default queue entirely.
+        ReportReason.StickerPlacement,
         ReportReason.Ownership,
         ReportReason.TOSViolation,
         ReportReason.Spam,
@@ -284,6 +288,10 @@ function ReportDrawer({
   const theme = useMantineTheme();
   const mobile = useIsMobile();
   const href = useMemo(() => (report ? getReportLink(report) : null), [report]);
+  const reportedPlacementId = useMemo(
+    () => (report ? getReportedPlacementId(report) : null),
+    [report]
+  );
   const queryUtils = trpc.useUtils();
 
   const form = useForm({
@@ -348,6 +356,9 @@ function ReportDrawer({
             </Link>
           )}
           <ReportDetails report={report} />
+          {reportedPlacementId !== null && (
+            <RemoveReportedPlacement placementId={reportedPlacementId} />
+          )}
           <Input.Wrapper
             label="Status"
             description="Use this input to set the status of the report"
@@ -441,6 +452,22 @@ function ReportDetails({ report }: { report: ReportDetail }) {
 
   return <DescriptionTable items={detailItems} labelWidth="30%" />;
 }
+
+/**
+ * `details` is untyped JSON off the row, and the form coerces `placementId` from
+ * a radio value, so it can arrive as either a number or its string. Anything
+ * else means this report predates the field or was written by hand, and the
+ * action is not offered rather than pointed at a guess.
+ */
+const getReportedPlacementId = (report: ReportDetail) => {
+  if (report.reason !== ReportReason.StickerPlacement) return null;
+  const { details } = report;
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return null;
+
+  const raw = (details as Record<string, unknown>).placementId;
+  const id = typeof raw === 'string' ? Number(raw) : raw;
+  return typeof id === 'number' && Number.isInteger(id) && id > 0 ? id : null;
+};
 
 const getReportLink = (report: ReportDetail) => {
   if (report.model) return getModelUrl({ modelId: report.model.id, modelName: report.model.name });
