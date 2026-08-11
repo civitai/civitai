@@ -43,11 +43,8 @@ import { IconAlertTriangleFilled } from '@tabler/icons-react';
 import dayjs from '~/shared/utils/dayjs';
 import { NotificationToggle } from '~/components/Notifications/NotificationToggle';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
-import {
-  stickerPricePerUseFromCosmeticData,
-  stickerSurfaceLabels,
-  stickerUsesFromCosmeticData,
-} from '~/shared/utils/sticker-token';
+import { stickerPurchaseTerms } from '~/components/Sticker/sticker.util';
+import { stickerSurfaceLabels } from '~/shared/utils/sticker-token';
 
 const { charged, free } = stickerSurfaceLabels();
 const stickerSurfaceCopy = [...charged, ...free].join(' and ');
@@ -144,12 +141,6 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
   const dialog = useDialogContext();
   // See CosmeticShopItemPurchaseCompleteModal: packs have their own modal.
   const cosmetic = shopItem.cosmetic as NonNullable<CosmeticShopItemGetById['cosmetic']>;
-  const stickerUses =
-    cosmetic.type === CosmeticType.Sticker ? stickerUsesFromCosmeticData(cosmetic.data) : null;
-  const pricePerUse =
-    cosmetic.type === CosmeticType.Sticker
-      ? stickerPricePerUseFromCosmeticData(cosmetic.data)
-      : null;
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
   const { data: userCosmetics, isLoading } = useQueryUserCosmetics();
   const { equip, isLoading: isEquipping } = useEquipProfileDecoration();
@@ -185,6 +176,8 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
     shopItem.unitAmount,
     resaleShare ?? 0
   );
+  const stickerTerms =
+    cosmetic.type === CosmeticType.Sticker ? stickerPurchaseTerms(cosmetic.data) : null;
 
   const handlePurchaseShopItem = async () => {
     try {
@@ -247,10 +240,10 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
             </Text>
             {/* A sticker is sold by the use, so how many you get is the offer —
                 without it the price has nothing to be judged against. */}
-            {stickerUses != null && (
+            {stickerTerms && (
               <Text size="sm" c="dimmed">
-                Includes <b>{numberWithCommas(stickerUses)}</b> uses
-                {pricePerUse ? `, then ${numberWithCommas(pricePerUse)} Buzz each` : ''}
+                {stickerTerms.usesLabel}
+                {stickerTerms.extraUseLabel ? ` · ${stickerTerms.extraUseLabel}` : ''}
               </Text>
             )}
             {isLoading && (

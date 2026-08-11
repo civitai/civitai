@@ -119,6 +119,19 @@ export enum CollectionSort {
   Newest = 'Newest',
 }
 
+// Order of any cosmetic shop grid — the official /shop sections, a creator's
+// storefront, and the community hub all offer the same list. "Newest" is
+// approval order, not submission order: an item stuck in review for a week
+// would otherwise publish already buried.
+export enum CosmeticShopSort {
+  Newest = 'Newest',
+  Oldest = 'Oldest',
+  PriceLowToHigh = 'Price: Low to High',
+  PriceHighToLow = 'Price: High to Low',
+  MostPopular = 'Most Popular',
+  Name = 'Name (A-Z)',
+}
+
 export enum SignalMessages {
   BuzzUpdate = 'buzz:update',
   ImageGenStatusUpdate = 'image-gen:status-update',

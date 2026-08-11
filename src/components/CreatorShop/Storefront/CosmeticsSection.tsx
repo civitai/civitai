@@ -1,16 +1,17 @@
-import { Group, Stack } from '@mantine/core';
+import { Stack } from '@mantine/core';
 import { useMemo, useState } from 'react';
+import { useQueryWishlistedShopItems } from '~/components/CosmeticShop/cosmetic-shop.util';
+import type { ShopFilters } from '~/components/CosmeticShop/ShopFiltersDropdown';
 import type { CreatorShopItem } from '~/components/CreatorShop/creator-shop.util';
 import { sectionIcons } from '~/components/CreatorShop/section-meta';
 import { SectionHeader } from '~/components/CreatorShop/Storefront/SectionHeader';
 import { ShopItemGrid } from '~/components/CreatorShop/Storefront/ShopItemGrid';
-import type { SortKey } from '~/components/CreatorShop/Storefront/storefront.constants';
-import { SORT_OPTIONS } from '~/components/CreatorShop/Storefront/storefront.constants';
 import { shopFilterTypesWithPack } from '~/components/CreatorShop/Submit/submit.constants';
-import { PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
-import { ShopFiltersDropdown } from '~/components/CosmeticShop/ShopFiltersDropdown';
-import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
-import type { GetShopInput } from '~/server/schema/cosmetic-shop.schema';
+import { NoContent } from '~/components/NoContent/NoContent';
+import { ShopBrowseControls, ShopBrowsePagination } from '~/components/Shop/ShopBrowseControls';
+import { browseShopItems, shopBrowseKey, usePagedList } from '~/components/Shop/shop-browse';
+import { CosmeticShopSort } from '~/server/common/enums';
+import { COSMETIC_SHOP_DEFAULT_PAGE_SIZE } from '~/shared/constants/cosmetic-shop.constants';
 
 export function CosmeticsSection({
   items,
@@ -21,30 +22,29 @@ export function CosmeticsSection({
   ownedCosmeticIds: Set<number>;
   ownerUserId: number;
 }) {
-  const [filters, setFilters] = useState<GetShopInput>({});
-  const [sort, setSort] = useState<SortKey>('newest');
+  const [filters, setFilters] = useState<ShopFilters>({});
+  const [sort, setSort] = useState(CosmeticShopSort.Newest);
+  const [pageSize, setPageSize] = useState<number>(COSMETIC_SHOP_DEFAULT_PAGE_SIZE);
+  const { wishlistedIds } = useQueryWishlistedShopItems();
 
-  const cosmetics = useMemo(() => {
-    let list = [...items];
-    const types = filters.cosmeticTypes;
-    // A pack has no type of its own; it matches only the Pack chip.
-    if (types?.length)
-      list = list.filter((c) =>
-        c.cosmetic ? types.includes(c.cosmetic.type) : types.includes(PACK_FILTER_VALUE)
-      );
-    switch (sort) {
-      case 'price-asc':
-        list.sort((a, b) => a.unitAmount - b.unitAmount);
-        break;
-      case 'price-desc':
-        list.sort((a, b) => b.unitAmount - a.unitAmount);
-        break;
-      case 'name':
-        list.sort((a, b) => a.title.localeCompare(b.title));
-        break;
-    }
-    return list;
-  }, [items, filters, sort]);
+  const matched = useMemo(
+    () =>
+      browseShopItems({
+        entries: items,
+        shopItemOf: (item) => item,
+        filters,
+        sort,
+        ownedCosmeticIds,
+        wishlistedIds,
+      }),
+    [items, filters, sort, ownedCosmeticIds, wishlistedIds]
+  );
+  const {
+    items: cosmetics,
+    page,
+    setPage,
+    totalPages,
+  } = usePagedList(matched, pageSize, shopBrowseKey(filters, sort, pageSize));
 
   return (
     <Stack gap="md">
@@ -52,30 +52,32 @@ export function CosmeticsSection({
         icon={sectionIcons.cosmetics}
         title="Cosmetics"
         right={
-          <Group gap="xs" wrap="nowrap">
-            <SelectMenuV2
-              label={SORT_OPTIONS.find((o) => o.value === sort)?.label ?? 'Sort'}
-              value={sort}
-              onClick={(v) => setSort(v as SortKey)}
-              options={SORT_OPTIONS.map((o) => ({ label: o.label, value: o.value }))}
-            />
-            <ShopFiltersDropdown
-              filters={filters}
-              setFilters={setFilters}
-              availableTypes={shopFilterTypesWithPack}
-              hideModifiers
-            />
-          </Group>
+          <ShopBrowseControls
+            sort={sort}
+            onSortChange={setSort}
+            pageSize={pageSize}
+            onPageSizeChange={setPageSize}
+            filters={filters}
+            setFilters={setFilters}
+            availableTypes={shopFilterTypesWithPack}
+          />
         }
       />
-      <ShopItemGrid
-        items={cosmetics}
-        ownedCosmeticIds={ownedCosmeticIds}
-        ownerUserId={ownerUserId}
-        // Attribute purchases to this storefront — unattributed purchases of
-        // sellable items pay the platform the reseller share.
-        viaShopUserId={ownerUserId}
-      />
+      {matched.length ? (
+        <>
+          <ShopItemGrid
+            items={cosmetics}
+            ownedCosmeticIds={ownedCosmeticIds}
+            ownerUserId={ownerUserId}
+            // Attribute purchases to this storefront — unattributed purchases of
+            // sellable items pay the platform the reseller share.
+            viaShopUserId={ownerUserId}
+          />
+          <ShopBrowsePagination page={page} onChange={setPage} totalPages={totalPages} />
+        </>
+      ) : (
+        <NoContent message="No cosmetics match your filters." />
+      )}
     </Stack>
   );
 }
