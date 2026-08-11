@@ -332,8 +332,12 @@ export async function reinsertTop(
   return { order: finalOrder, bouts, unresolvedGroups, nearBoundary };
 }
 
-/** Finishing this high is what makes a near-boundary arrival rank worth warning about. */
-const PODIUM_WATCH = 15;
+/**
+ * How many of the ranked leaders play the round-robin that decides places, and — the same number,
+ * for the same reason — how high a finisher has to be for a near-boundary arrival rank to matter.
+ */
+export const PODIUM_SIZE = 15;
+const PODIUM_WATCH = PODIUM_SIZE;
 
 /**
  * Standings that cover a subset of the field are not a result — they are a result-shaped subset,

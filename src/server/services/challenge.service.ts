@@ -56,6 +56,7 @@ import {
   type PlaygroundGenerateContentInput,
   type PlaygroundReviewImageInput,
   type PlaygroundPickWinnersInput,
+  type PlaygroundRunLadderInput,
   type UserChallengeEntriesResult,
   type WinnerCooldownStatus,
 } from '~/server/schema/challenge.schema';
@@ -159,6 +160,7 @@ import {
   JUDGING_ENGINES,
   recapField,
 } from '~/server/games/daily-challenge/challenge-judging-engine';
+import { runLadderDryRun } from '~/server/games/daily-challenge/challenge-ladder-playground';
 import { collectionsSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { NotificationCategory } from '~/server/common/enums';
@@ -3778,6 +3780,60 @@ export async function playgroundReviewImage(input: PlaygroundReviewImageInput) {
 /**
  * Playground: Pick winners from a challenge's judged entries.
  */
+/**
+ * Dry-run a challenge's real field through the pairwise ladder without touching its state.
+ *
+ * Reads what the challenge already has (judged entries, rubric, theme) and returns the ranking the
+ * engine WOULD produce. Nothing is persisted: no standings, no comparison rows, no winners, no
+ * operationSpent — so this can be pointed at a live challenge, or one that finished months ago,
+ * without changing its outcome.
+ */
+export async function playgroundRunLadder(input: PlaygroundRunLadderInput) {
+  const challengeConfig = await getChallengeConfig();
+  const challenge = await getChallengeById(input.challengeId);
+  if (!challenge) throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
+  if (!challenge.collectionId)
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Challenge has no collection' });
+
+  const parsed = challengeJudgingCategoriesSchema.safeParse(challenge.judgingCategories);
+  const userCategories = parsed.success ? parsed.data : undefined;
+
+  // The whole eligible field, not the absolute-score cut — the point is to see what the ladder
+  // does with everything, which is exactly what the cut would hide.
+  const entries = await getJudgedEntries(
+    challenge.collectionId,
+    challengeConfig,
+    undefined,
+    challenge.source,
+    userCategories,
+    { limit: Infinity }
+  );
+  if (entries.length < 2)
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `Need at least 2 judged entries, found ${entries.length}`,
+    });
+
+  const ctx = buildJudgingEngineContext({
+    challengeId: challenge.id,
+    collectionId: challenge.collectionId,
+    theme: challenge.theme ?? '',
+    themeElements: parseChallengeMetadata(challenge.metadata).themeElements,
+    categories: userCategories,
+  });
+
+  return runLadderDryRun({
+    challengeId: challenge.id,
+    entries: entries.map((e) => ({ imageId: e.imageId, userId: e.userId, username: e.username })),
+    theme: ctx.theme,
+    themeElements: ctx.themeElements,
+    categories: ctx.categories,
+    criteriaByKey: ctx.criteriaByKey,
+    topK: input.topK,
+    includePodium: input.includePodium,
+  });
+}
+
 export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
   const challengeConfig = await getChallengeConfig();
   const judgeId = input.judgeId ?? challengeConfig.defaultJudgeId ?? 1;

@@ -14,6 +14,7 @@ import {
   CLAIM_WINDOW_MINUTES,
   findSlot,
   LADDER_CONCURRENCY,
+  PODIUM_SIZE,
   reinsertTop,
   roundRobinPairs,
   runPool,
@@ -32,8 +33,7 @@ import {
 import * as store from '~/server/games/daily-challenge/challenge-pairwise-store';
 import { logToAxiom } from '~/server/logging/client';
 
-/** How many of the ladder's leaders play the round-robin that decides places. */
-export const PODIUM_SIZE = 15;
+export { PODIUM_SIZE } from '~/server/games/daily-challenge/challenge-ladder';
 
 const PODIUM_CONCURRENCY = LADDER_CONCURRENCY;
 

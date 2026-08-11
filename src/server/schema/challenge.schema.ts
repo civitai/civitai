@@ -790,6 +790,17 @@ export const playgroundReviewImageSchema = z.object({
   nsfw: z.boolean().optional(),
 });
 
+// Playground: dry-run a challenge's field through the pairwise ladder. Writes nothing — see
+// runLadderDryRun — but the comparisons are real LLM calls and really cost Buzz.
+export type PlaygroundRunLadderInput = z.infer<typeof playgroundRunLadderSchema>;
+export const playgroundRunLadderSchema = z.object({
+  challengeId: z.number(),
+  // Bounded well below the production K by default: a moderator experimenting should not be able
+  // to start a several-thousand-comparison run from a form field by accident.
+  topK: z.number().int().min(2).max(60).optional(),
+  includePodium: z.boolean().optional(),
+});
+
 // Playground: Pick winners from a challenge
 export type PlaygroundPickWinnersInput = z.infer<typeof playgroundPickWinnersSchema>;
 export const playgroundPickWinnersSchema = z.object({
