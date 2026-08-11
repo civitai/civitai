@@ -12,14 +12,13 @@ import {
   Divider,
   Tooltip,
 } from '@mantine/core';
+import { CollectionInvitesButton } from '~/components/Collections/CollectionCollaborators/CollectionInvitesButton';
 import { MyCollections } from '~/components/Collections/MyCollections';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconLayoutSidebarLeftCollapse,
   IconLayoutSidebarLeftExpand,
   IconPlus,
-  IconSortAscending,
-  IconSortDescending,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
@@ -31,15 +30,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 
 const CollectionEditModal = dynamic(() => import('~/components/Collections/CollectionEditModal'));
 
-type SortOrder = 'asc' | 'desc';
-
-const MyCollectionsDrawer = ({
-  sortOrder,
-  setSortOrder,
-}: {
-  sortOrder: SortOrder;
-  setSortOrder: React.Dispatch<React.SetStateAction<SortOrder>>;
-}) => {
+const MyCollectionsDrawer = () => {
   const [drawerOpen, { close, toggle }] = useDisclosure();
 
   return (
@@ -62,37 +53,25 @@ const MyCollectionsDrawer = ({
         onClose={close}
         size="100%"
         title={
-          <Text size="lg" fw={500}>
-            My Collections
-          </Text>
+          <Group gap="xs" wrap="nowrap">
+            <Text size="lg" fw={500}>
+              My Collections
+            </Text>
+            <CollectionInvitesButton />
+          </Group>
         }
         classNames={{ header: classes.drawerHeader, body: 'px-0' }}
       >
-        <MyCollections onSelect={() => close()} sortOrder={sortOrder}>
-          {({ FilterBox, TypeFilter, Collections }) => (
+        <MyCollections onSelect={() => close()}>
+          {({ FilterBox, Filters, ListMenu, Collections, InviteList }) => (
             <Stack gap={4}>
               <Stack gap="xs" px="sm">
+                {InviteList}
                 <Group gap="xs" wrap="nowrap">
                   <div style={{ flex: 1 }}>{FilterBox}</div>
-                  <Tooltip
-                    label={sortOrder === 'asc' ? 'Sort Z-A' : 'Sort A-Z'}
-                    position="top"
-                    withArrow
-                  >
-                    <LegacyActionIcon
-                      variant="light"
-                      size="sm"
-                      onClick={() => setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
-                    >
-                      {sortOrder === 'asc' ? (
-                        <IconSortDescending size={18} />
-                      ) : (
-                        <IconSortAscending size={18} />
-                      )}
-                    </LegacyActionIcon>
-                  </Tooltip>
+                  {ListMenu}
                 </Group>
-                {TypeFilter}
+                {Filters}
               </Stack>
               <Divider />
               <ScrollArea.Autosize mah="calc(100vh - 105px)">{Collections}</ScrollArea.Autosize>
@@ -108,12 +87,11 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
   const isMobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
   const [showSidebar, setShowSidebar] = useState(true);
-  const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
 
   return (
     <Container fluid className={classes.container}>
-      <MyCollections sortOrder={sortOrder}>
-        {({ FilterBox, TypeFilter, Collections, isLoading }) => (
+      <MyCollections>
+        {({ FilterBox, Filters, ListMenu, Collections, InviteList, isLoading }) => (
           <Card
             className={classes.sidebar}
             w={300}
@@ -137,44 +115,33 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
             <Card.Section p="xs" mx={0} className="border-t-0" withBorder>
               <Group justify="space-between" wrap="nowrap">
                 <Text fw={500}>My Collections</Text>
-                <Button
-                  onClick={() => {
-                    dialogStore.trigger({
-                      component: CollectionEditModal,
-                    });
-                  }}
-                  variant="subtle"
-                  size="compact-sm"
-                  rightSection={<IconPlus size={14} />}
-                >
-                  Create
-                </Button>
+                <Group gap={4} wrap="nowrap">
+                  <CollectionInvitesButton />
+                  <Button
+                    onClick={() => {
+                      dialogStore.trigger({
+                        component: CollectionEditModal,
+                      });
+                    }}
+                    variant="subtle"
+                    size="compact-sm"
+                    rightSection={<IconPlus size={14} />}
+                  >
+                    Create
+                  </Button>
+                </Group>
               </Group>
             </Card.Section>
+
+            {InviteList}
 
             <Card.Section p="xs" mx={0} withBorder>
               <Stack gap="xs">
                 <Group gap="xs" wrap="nowrap">
                   <div style={{ flex: 1 }}>{FilterBox}</div>
-                  <Tooltip
-                    label={sortOrder === 'asc' ? 'Sort Z-A' : 'Sort A-Z'}
-                    position="top"
-                    withArrow
-                  >
-                    <LegacyActionIcon
-                      variant="light"
-                      size="sm"
-                      onClick={() => setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
-                    >
-                      {sortOrder === 'asc' ? (
-                        <IconSortDescending size={18} />
-                      ) : (
-                        <IconSortAscending size={18} />
-                      )}
-                    </LegacyActionIcon>
-                  </Tooltip>
+                  {ListMenu}
                 </Group>
-                {TypeFilter}
+                {Filters}
               </Stack>
             </Card.Section>
             {isLoading && (
@@ -191,9 +158,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
         )}
       </MyCollections>
       <div className={classes.content}>
-        {!!currentUser && isMobile && (
-          <MyCollectionsDrawer sortOrder={sortOrder} setSortOrder={setSortOrder} />
-        )}
+        {!!currentUser && isMobile && <MyCollectionsDrawer />}
         {children}
       </div>
     </Container>
