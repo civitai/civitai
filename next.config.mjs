@@ -224,6 +224,10 @@ export default defineNextConfig(
       // Off because the builder's memory ceiling is now enforced and that ~+33% peak RSS is
       // what puts the release build over it. Re-enable only with a measured peak-RSS margin.
       turbopackServerSideNestedAsyncChunking: false,
+      // Not the same as omitting it: Next 16.3.0 defaults this to true, and turbopack-build
+      // derives `dependencyTracking` from it, so the flag governs what turbo-tasks retains in
+      // memory and not just what lands on disk.
+      turbopackFileSystemCacheForBuild: false,
       optimizePackageImports: [
         '@civitai/client',
         './src/libs/form',
