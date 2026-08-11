@@ -35,8 +35,7 @@ export default defineNextConfig(
       // by exposing it to the client bundle as NEXT_PUBLIC_AUTH_HUB_URL — so there's no separate var to set. An
       // explicit NEXT_PUBLIC_AUTH_HUB_URL still wins if provided. (AUTH_JWT_ISSUER is public: the JWT `iss` /
       // JWKS origin.)
-      NEXT_PUBLIC_AUTH_HUB_URL:
-        process.env.NEXT_PUBLIC_AUTH_HUB_URL ?? process.env.AUTH_JWT_ISSUER,
+      NEXT_PUBLIC_AUTH_HUB_URL: process.env.NEXT_PUBLIC_AUTH_HUB_URL ?? process.env.AUTH_JWT_ISSUER,
     },
     // webpack: (config, options) => {
     //   if (isDev && !options.isServer) {
@@ -157,9 +156,17 @@ export default defineNextConfig(
     ],
     // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
     serverExternalPackages: [
-      'redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series',
-      '@opentelemetry/sdk-node', '@opentelemetry/instrumentation', '@opentelemetry/instrumentation-http',
-      '@opentelemetry/instrumentation-redis', '@prisma/instrumentation',
+      'redis',
+      '@redis/client',
+      '@redis/bloom',
+      '@redis/json',
+      '@redis/search',
+      '@redis/time-series',
+      '@opentelemetry/sdk-node',
+      '@opentelemetry/instrumentation',
+      '@opentelemetry/instrumentation-http',
+      '@opentelemetry/instrumentation-redis',
+      '@prisma/instrumentation',
       // Bundling this gives the app layer its own copy of the Prisma runtime while
       // `dbRead`/`dbWrite` (reached through the transpiled `@civitai/db-schema`) hold a
       // second one. `$queryRaw` identifies its template argument with `instanceof Sql`,
@@ -172,7 +179,8 @@ export default defineNextConfig(
       // gate. The logs bridge does not depend on it: it binds to the Logs API lazily, so
       // a second bundled module copy is survivable, and `no_provider` on its skip counter
       // is the runtime signal if one ever appears.
-      '@pyroscope/nodejs', '@datadog/pprof',
+      '@pyroscope/nodejs',
+      '@datadog/pprof',
     ],
     // Several entry points read markdown from src/static-content at runtime via fs
     // (dynamic string paths that @vercel/nft can't trace). With output:'standalone'
@@ -229,14 +237,20 @@ export default defineNextConfig(
       turbopackFileSystemCacheForBuild: false,
       // NB: `lodash-es`, `@tabler/icons-react` and `@headlessui/react` are already in Next's
       // built-in default list (config.js merges ours into it) — kept here only as intent.
-      // `@mantine/core` is NOT a Next default and is the widest barrel we import.
+      //
+      // 🔴 Do NOT add a package that creates React context — `@mantine/core`, `@mantine/modals`,
+      // `@mantine/notifications`. This rewrites barrel imports into deep per-component imports,
+      // which can put the provider and its consumers on DIFFERENT module instances: the provider
+      // is in the tree, but consumers read a context object created by another copy. Adding
+      // `@mantine/core` here 500'd every Mantine-heavy route in preview with "MantineProvider was
+      // not found in component tree" (PR #3802). Nothing local catches it — typecheck, lint and
+      // both vitest projects stayed green; only a real build renders the provider.
       optimizePackageImports: [
         '@civitai/client',
         './src/libs/form',
         'lodash-es',
         '@tabler/icons-react',
         '@headlessui/react',
-        '@mantine/core',
       ],
     },
     headers: async () => {
@@ -271,8 +285,9 @@ export default defineNextConfig(
         headers: [
           {
             key: 'Content-Security-Policy',
-            value: "frame-src 'self' https://www.kinguin.net https://sandbox.kinguin.net https://gateway.kinguin.net https://*.kinguin.net;"
-          }
+            value:
+              "frame-src 'self' https://www.kinguin.net https://sandbox.kinguin.net https://gateway.kinguin.net https://*.kinguin.net;",
+          },
           // NOTE: Intentionally NO X-Frame-Options header as per Kinguin's documentation
           // NOTE: Only setting frame-src, letting other resources use browser defaults
         ],
