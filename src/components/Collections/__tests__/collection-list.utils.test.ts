@@ -101,7 +101,11 @@ describe('buildCollectionSections', () => {
 });
 
 describe('sortCollections', () => {
-  const rows = [{ id: 1, name: 'Beta' }, { id: 2, name: 'alpha' }, { id: 3, name: 'Gamma' }];
+  const rows = [
+    { id: 1, name: 'Beta' },
+    { id: 2, name: 'alpha' },
+    { id: 3, name: 'Gamma' },
+  ];
 
   it('sorts name-asc case-insensitively', () => {
     expect(sortCollections(rows, 'name-asc').map((r) => r.id)).toEqual([2, 1, 3]);

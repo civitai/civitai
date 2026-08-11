@@ -257,10 +257,7 @@ export async function respondToInvite({
     where: { id: invite.collectionId },
     select: { mode: true },
   });
-  if (
-    collection?.mode === CollectionMode.Bookmark ||
-    collection?.mode === CollectionMode.Contest
-  ) {
+  if (collection?.mode === CollectionMode.Bookmark || collection?.mode === CollectionMode.Contest) {
     throw throwBadRequestError('This collection does not support collaborators.');
   }
 

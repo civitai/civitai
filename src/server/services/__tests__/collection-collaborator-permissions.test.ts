@@ -205,7 +205,7 @@ describe('addContributorToCollection authorization', () => {
     mockDbWrite.collectionContributor.upsert.mockResolvedValue({});
   });
 
-  it('refuses to write another user\'s row without manage', async () => {
+  it("refuses to write another user's row without manage", async () => {
     arrange({ write: 'Public', contributorPermissions: ['VIEW', 'ADD'] });
 
     await expect(

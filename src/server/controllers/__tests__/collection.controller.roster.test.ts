@@ -246,7 +246,13 @@ describe('collection.getById roster — invite data', () => {
       { userId: CONTRIBUTOR_ID, permissions: ['VIEW', 'ADD', 'MANAGE'] },
     ]);
     mockDbRead.collectionInvite.findMany.mockResolvedValue([
-      { userId: CONTRIBUTOR_ID, id: 9, role: 'Contributor', createdAt: new Date(), status: 'Pending' },
+      {
+        userId: CONTRIBUTOR_ID,
+        id: 9,
+        role: 'Contributor',
+        createdAt: new Date(),
+        status: 'Pending',
+      },
     ]);
 
     const result = await callHandler();

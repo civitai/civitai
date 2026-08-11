@@ -796,7 +796,9 @@ describe('getCollaborators', () => {
       mockDbRead.collectionContributor.findMany.mockResolvedValue([
         { userId: TARGET_ID, permissions: ['VIEW', 'ADD'] },
       ]);
-      const invites = [{ id: 9, userId: TARGET_ID, role: 'Contributor', status, createdAt: new Date() }];
+      const invites = [
+        { id: 9, userId: TARGET_ID, role: 'Contributor', status, createdAt: new Date() },
+      ];
       mockDbRead.collectionInvite.findMany.mockImplementation(
         async ({ where }: { where: { status?: string } }) =>
           invites.filter((invite) => !where.status || invite.status === where.status)
