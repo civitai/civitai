@@ -302,7 +302,9 @@ export enum EntityAccessPermission {
 // domain now). Re-exported here so the ~90 existing `~/server/common/enums` importers are unchanged and
 // there is ONE definition shared with the package — no enum-vs-union mismatch across the seam.
 // nb: when updating the values, similar updates must be made to the notification DB.
-export { NotificationCategory } from '@civitai/notifications';
+// Deep path, not the package barrel: the barrel re-exports `./client`, an HTTP client for the
+// internal notifications service, and this module has 56 client-side importers.
+export { NotificationCategory } from '@civitai/notifications/constants';
 
 export enum BanReasonCode {
   SexualMinor = 'SexualMinor',

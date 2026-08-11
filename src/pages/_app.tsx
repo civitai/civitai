@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 // Side-effect import: globally disables next/link route prefetching. Must run
 // before any <Link> mounts — see the file for rationale.
 import '~/utils/disable-router-prefetch';
-import { getCookie, getCookies, deleteCookie } from 'cookies-next';
+import { getCookie, getCookies } from 'cookies-next';
 import type { Session } from '~/types/session';
 import { SessionProvider } from '~/providers/SessionProvider';
 import { resolveAuthGuard } from '~/server/auth/route-guard';
@@ -41,7 +41,6 @@ import { TrackPageView } from '~/components/TrackView/TrackPageView';
 import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
 import { env } from '~/env/client';
 import { isDev, isPreview, isProd } from '~/env/other';
-import { civitaiTokenCookieName } from '~/libs/auth';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
 import { AppProvider } from '~/providers/AppProvider';
 import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
@@ -117,7 +116,7 @@ type CustomAppProps = {
   following?: number[];
   seed: number;
   settings: UserContentSettings;
-  browsingSettingsAddons: BrowsingSettingsAddon[];
+  browsingSettingsAddons?: BrowsingSettingsAddon[];
   liveNow: boolean;
   // SSR-seeded `chat.getUserSettings` (logged-in only) — the per-user chat
   // settings (mute sounds / bad-word filter / acknowledged). Derived from the
@@ -421,14 +420,18 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     tosMeta?: TosMeta;
     announcements?: AnnouncementsSeed;
     following?: number[];
+    // Absent on the degraded path. `browsingSettingsAddons` must stay possibly-
+    // undefined all the way to the provider — see the endpoint for why `[]` is
+    // not a safe substitute.
+    browsingSettingsAddons?: BrowsingSettingsAddon[];
+    liveNow?: boolean;
     session: Session | null;
   };
   let settingsBootstrap: SettingsBootstrap;
-  // True only on the DEGRADED fallback path (we couldn't reach/parse the
-  // settings endpoint). Distinct from a SUCCESSFUL fetch that returned
-  // `session: null` (genuinely expired/invalid token). The two look identical in
-  // the destructured shape below (both have `session: null`) but must be treated
-  // differently for the auth cookie — see the cookie carve-out near the return.
+  // True only on the DEGRADED fallback path (we couldn't reach/parse the settings
+  // endpoint). A SUCCESSFUL fetch returning `session: null` looks identical in the
+  // destructured shape below, but the two drive `hasAuthCookie` differently — see the
+  // carve-out near the return.
   let settingsDegraded = false;
   try {
     const res = await fetch(`${baseUrl as string}/api/user/settings`, {
@@ -437,15 +440,12 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     });
     if (!res.ok) throw new Error(`settings fetch returned ${res.status}`);
     const data = (await res.json()) as SettingsBootstrap;
-    // The endpoint's OWN internal catch swallows transient errors (e.g. a DB
-    // blip on a draining pod mid-roll) into a SUCCESSFUL `200 {}` — a body with
-    // NO `session` key. That sails past the `!res.ok` guard but carries no
-    // authoritative session, so treating it as a real result would delete the
-    // auth cookie (key absent ≠ `session: null`) and log the user out — the exact
-    // vector this fix exists to kill. Distinguish on KEY PRESENCE: a genuinely
-    // logged-out user gets `session: null` (key present → not degraded, cookie
-    // cleanup is correct); an internal swallow gets `{}` (key absent → degrade,
-    // preserve the cookie). `'session' in data` is the precise discriminator.
+    // The endpoint's OWN internal catch swallows transient errors (e.g. a DB blip on a
+    // draining pod mid-roll) into a SUCCESSFUL `200 {}` — a body with NO `session` key.
+    // That sails past the `!res.ok` guard but carries no authoritative session, so
+    // treating it as a real result would render a logged-in user as signed out. Key
+    // ABSENT (`{}`) ⇒ degraded; key PRESENT (`session: null`) ⇒ render anonymous.
+    // `'session' in data` is the discriminator — a truthiness check erases it.
     if (!data || typeof data !== 'object' || !('session' in data)) {
       throw new Error('settings fetch returned no session payload (endpoint-swallowed error)');
     }
@@ -473,49 +473,32 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       tosMeta: undefined,
       announcements: undefined,
       following: undefined,
+      browsingSettingsAddons: undefined,
+      liveNow: undefined,
       session: null,
     };
   }
-  const { settings, session, tosMeta, announcements, following } = settingsBootstrap;
-  // Pass these via the request so we can use them in SSR. Resolve the per-user
-  // feature flags and the global (redis-cached, identical-for-all-users) browsing
-  // setting addons in PARALLEL — neither depends on the other and both sit on
-  // every full render's critical path. SSR-injecting the addons keeps the
-  // `system.getBrowsingSettingAddons` round-trip off api-primary (it becomes
-  // `initialData` for the client provider).
-  const [
-    { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay },
-    { getBrowsingSettingAddons, getLiveNow },
-  ] = await Promise.all([
-    import('~/server/services/feature-flags.service'),
-    import('~/server/services/system-cache'),
-  ]);
-  const [flags, browsingSettingsAddons] = await Promise.all([
-    getFeatureFlagsAsync({
-      user: session?.user,
-      host: request?.headers.host,
-      req: request,
-    }),
-    getBrowsingSettingAddons(),
-  ]);
-
-  // SSR-seed the global `system.getLiveNow` boolean (a single `redis.get`,
-  // identical for every user) so the ambient `useIsLive` client query reads a
-  // primed cache and never fires on bootstrap (~26 req/s off api-primary).
-  // Fail open to `false` (the "not live" default): `getLiveNow` has no internal
-  // try/catch, and an uncaught redis throw here would 500 every page render —
-  // so a degraded sysRedis must degrade to "not live", never to an error. The
-  // client query still self-heals on its 5-minute refetch interval.
-  let liveNow = false;
-  try {
-    liveNow = await getLiveNow();
-  } catch (e) {
-    console.warn(
-      `[_app] getLiveNow bootstrap failed, defaulting to not-live: ${
-        e instanceof Error ? e.message : String(e)
-      }`
-    );
-  }
+  const {
+    settings,
+    session,
+    tosMeta,
+    announcements,
+    following,
+    browsingSettingsAddons,
+    // Fail closed to "not live". `getLiveNow` reads the main redis with no internal
+    // catch and no deadline race, so the endpoint's own `.catch` is what turns a
+    // degraded read into `false`; this default covers the bootstrap fetch failing
+    // outright. The client query self-heals on its 5-minute refetch.
+    liveNow = false,
+  } = settingsBootstrap;
+  const { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay } = await import(
+    '~/server/services/feature-flags.service'
+  );
+  const flags = await getFeatureFlagsAsync({
+    user: session?.user,
+    host: request?.headers.host,
+    req: request,
+  });
 
   const domain = getRequestDomainColor(request);
 
@@ -533,7 +516,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   //   ToS content only changes on a deploy (never mid-session). The show/hide
   //   decision is computed client-side in `useToSUpdateModal` against the seeded
   //   `user.getSettings`, so there is no tRPC query to seed here — `tosMeta` just
-  //   rides down through pageProps to AppProvider (its `lastmod` is revived there).
+  //   rides down through pageProps to AppProvider as-is.
   let userFeatureFlags: FeatureAccess | undefined;
   if (session?.user && settings) {
     userFeatureFlags = computeUserFeatureFlagsOverlay(settings.features, flags);
@@ -559,15 +542,16 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
   } else if (hasAuthCookie && !settingsDegraded) {
-    // Only clear the auth cookie when the settings fetch SUCCEEDED and authoritatively
-    // returned no session — i.e. the token is genuinely expired/invalid, so cleaning up
-    // the stale cookie is correct. On the DEGRADED path we never reached the endpoint, so
-    // we DON'T KNOW the session: deleting the cookie here would durably log out a
-    // valid user (worse than the retryable failure this fix exists to soften). Don't
-    // conflate "couldn't reach settings" with "token invalid" — preserve the cookie and
-    // let the client refetch (the SessionProvider seed below already yields `undefined`
-    // → client refetch when hasAuthCookie is true and session is null).
-    deleteCookie(civitaiTokenCookieName, appContext.ctx);
+    // Render anonymous, but DO NOT delete the cookie. `session: null` is ambiguous:
+    // `getServerAuthSession` fail-softs to null (`.catch(() => null)` at
+    // get-server-auth-session.ts:92,102), so a hub outage is indistinguishable on the
+    // wire from an expired token — and deleting on the outage durably logs out a valid
+    // user. Scope: the delete this replaces named the LEGACY `civitai-token` family only,
+    // so only legacy holders were ever affected either way. Cost of keeping it is near
+    // zero: a civ-token's Max-Age comes from its own `exp` (civ-cookie.ts:163), so an
+    // expired one is never in the jar to linger; a stale legacy cookie costs one failed
+    // jose decode per request. Deleting safely needs the endpoint to signal a degraded
+    // lookup distinctly from "no session".
     hasAuthCookie = false;
   }
 

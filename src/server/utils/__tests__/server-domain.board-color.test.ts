@@ -10,19 +10,18 @@ import { describe, expect, it, vi } from 'vitest';
  * `getRequestDomainColor` would be hidden on every host rather than moved to .red.
  * These tests pin the escape hatch so that regression can't come back a third time
  * (App Blocks hit it first).
+ *
+ * `serverDomainMap` is built from `process.env` at module load, so the stubs must be
+ * in place before the `await import('../server-domain')` inside each test.
  */
-vi.mock('~/env/server', () => ({
-  env: {
-    SERVER_DOMAIN_GREEN: 'civitai.com',
-    SERVER_DOMAIN_GREEN_ALIASES: '',
-    // Mirrors prod exactly, including the blue alias — `civitaired.com` is a live
-    // front door configured ONLY as a blue alias, while red has no aliases at all.
-    SERVER_DOMAIN_BLUE: 'civitai.red',
-    SERVER_DOMAIN_BLUE_ALIASES: 'civitaired.com',
-    SERVER_DOMAIN_RED: 'civitai.red',
-    SERVER_DOMAIN_RED_ALIASES: 'www.civitai.red',
-  },
-}));
+vi.stubEnv('SERVER_DOMAIN_GREEN', 'civitai.com');
+vi.stubEnv('SERVER_DOMAIN_GREEN_ALIASES', '');
+// Mirrors prod exactly, including the blue alias — `civitaired.com` is a live
+// front door configured ONLY as a blue alias, while red has no aliases at all.
+vi.stubEnv('SERVER_DOMAIN_BLUE', 'civitai.red');
+vi.stubEnv('SERVER_DOMAIN_BLUE_ALIASES', 'civitaired.com');
+vi.stubEnv('SERVER_DOMAIN_RED', 'civitai.red');
+vi.stubEnv('SERVER_DOMAIN_RED_ALIASES', 'www.civitai.red');
 
 const req = (host?: string) => ({ headers: { host } });
 

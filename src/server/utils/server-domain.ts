@@ -1,4 +1,3 @@
-import { env } from '~/env/server';
 import {
   colorDomainNames,
   type ColorDomain,
@@ -29,10 +28,24 @@ function buildConfig(primary: string | undefined, aliases: string[]): DomainConf
   return { primary: primary.toLowerCase(), aliases };
 }
 
+// Read from `process.env` rather than `~/env/server`: these are the only vars this
+// module needs, they are declared `z.string().optional()` with no default or
+// transform (server-schema.ts:738-743), so the value is identical — and importing
+// the validated `env` object would drag the whole server env schema into every
+// graph that touches domain resolution, including `_app`'s client graph.
 export const serverDomainMap: ServerDomains = {
-  green: buildConfig(env.SERVER_DOMAIN_GREEN, parseAliases(env.SERVER_DOMAIN_GREEN_ALIASES)),
-  blue: buildConfig(env.SERVER_DOMAIN_BLUE, parseAliases(env.SERVER_DOMAIN_BLUE_ALIASES)),
-  red: buildConfig(env.SERVER_DOMAIN_RED, parseAliases(env.SERVER_DOMAIN_RED_ALIASES)),
+  green: buildConfig(
+    process.env.SERVER_DOMAIN_GREEN,
+    parseAliases(process.env.SERVER_DOMAIN_GREEN_ALIASES)
+  ),
+  blue: buildConfig(
+    process.env.SERVER_DOMAIN_BLUE,
+    parseAliases(process.env.SERVER_DOMAIN_BLUE_ALIASES)
+  ),
+  red: buildConfig(
+    process.env.SERVER_DOMAIN_RED,
+    parseAliases(process.env.SERVER_DOMAIN_RED_ALIASES)
+  ),
 };
 
 /** Canonical-only projection. Used by client and outbound URL helpers. */
