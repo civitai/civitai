@@ -159,8 +159,17 @@ Open, with the evidence each audit produced:
       rendered above that branch, and all four panels pass their bar there. Verified on an account with
       zero model comments: `Model comments (0) | Search content | 0 of 0 | None.`
       (`ReportsPanel` was already safe — it passes the unfiltered count.)
-- [ ] **Prompt Audit filters** (Filter Prompt / # of Prompts) — the fifth panel from the old item, split
-      out because that panel has no `ListCard` or filter bar at all yet.
+- [x] **Prompt Audit filters** (2026-08-11 — Retool's Filter Prompt and # of Prompts, 25/50/100/500).
+      The count was hardcoded at 25, which is the wrong default for the one question this panel answers:
+      whether a pattern repeats. The filter searches the negative prompt too — a blocked term sitting in
+      the negative is the same finding, and Retool's matched both. The collapsed-by-default behaviour is
+      kept: these are prohibited prompts, so reading them stays a deliberate act.
+      Also fixed a truncation lie: the footer compared the server cap against itself, so a server-capped
+      list reported its cap as the total. It now says "N of M loaded from the server", which is a
+      different fact from the count control's cap.
+      ⚠️ **Typecheck only — not exercised in a browser.** Blocked prompts come from ClickHouse and no
+      account reachable from local dev has any (every one tried renders "0 blocked prompts"), so the
+      filter, the count control and the new footer are all unrun.
 - [x] **Bulk review/comment deletion has no confirmation step** (2026-08-11 — shared `ConfirmSubmit`,
       used at all four destructive bulk sites: reviews delete, and delete + Remove-as-ToS on both comment
       lists). The confirm button is the **only** real submit — the first click is `type="button"` and

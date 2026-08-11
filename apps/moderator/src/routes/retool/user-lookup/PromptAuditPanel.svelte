@@ -2,11 +2,41 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import type { Signals } from './signals';
+  import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
 
   let { signals }: { signals: Promise<Signals> | null } = $props();
 
-  const SHOWN = 25;
   let showPrompts = $state(false);
+
+  // Retool's "Filter Prompt" and "# of Prompts". The count was hardcoded at 25, which is the wrong
+  // default for the one question this panel answers — whether a pattern repeats.
+  const FIELDS: FilterField[] = [
+    { kind: 'search', key: 'q', label: 'Filter prompt' },
+    {
+      kind: 'select',
+      key: 'n',
+      label: '# of prompts',
+      options: [
+        ['25', '25'],
+        ['50', '50'],
+        ['100', '100'],
+        ['500', '500'],
+      ],
+    },
+  ];
+  let filters = $state<Record<string, string>>({});
+  const shownCount = $derived(Number(filters.n) || 25);
+
+  // Negative prompts are searched too: an account whose blocked term sits in the negative is the same
+  // finding, and Retool's filter matched both fields.
+  const matching = <T extends { prompt: string | null; negativePrompt: string | null }>(
+    rows: T[]
+  ): T[] =>
+    filters.q
+      ? rows.filter((p) =>
+          `${p.prompt ?? ''} ${p.negativePrompt ?? ''}`.toLowerCase().includes(filters.q.toLowerCase())
+        )
+      : rows;
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -27,11 +57,18 @@
              The count is what a moderator needs at a glance; reading the text is a deliberate act,
              not something the page does to whoever is looking at the screen. -->
         <button type="button" class="text-sm {LINK_CLASS}" onclick={() => (showPrompts = true)}>
-          Show {Math.min(SHOWN, result.generation.blocked.length)} blocked prompts
+          Show blocked prompts
         </button>
       {:else}
+        {@const matched = matching(result.generation.blocked)}
+        <ListFilterBar
+          fields={FIELDS}
+          bind:values={filters}
+          matched={matched.length}
+          total={result.generation.blocked.length}
+        />
         <ul class="space-y-1.5 text-sm">
-          {#each result.generation.blocked.slice(0, SHOWN) as p (p.key)}
+          {#each matched.slice(0, shownCount) as p (p.key)}
             <li>
               <div class="flex flex-wrap items-baseline gap-x-2">
                 <Badge variant="destructive">{p.source === 'External' ? 'OpenAI' : p.source}</Badge>
@@ -51,11 +88,12 @@
         >
           Hide prompts
         </button>
-        {#if result.generation.blockedTotal > Math.min(SHOWN, result.generation.blocked.length)}
+        {#if result.generation.blockedTotal > result.generation.blocked.length}
+          <!-- Two different truncations: the SERVER capped what it sent, and the count control caps
+               what is rendered. Reporting only the second would present a server cap as a total. -->
           <p class="mt-2 text-xs text-dark-2">
-            Showing {Math.min(SHOWN, result.generation.blocked.length)} of {num(
-              result.generation.blockedTotal
-            )}.
+            {num(result.generation.blocked.length)} of {num(result.generation.blockedTotal)} loaded from
+            the server.
           </p>
         {/if}
       {/if}
