@@ -94,7 +94,12 @@ export const PLACEMENT_SURFACES = {
   sticker: {
     label: 'stickers',
     targets: ['image'],
-    defaultMode: 'off',
+    // `defaultMode` and `defaultPrice` are one decision, not two. An open space
+    // with no price is the state `setPlacementSpace` refuses to write, so a mode
+    // above `off` here without a price would make the default unreachable by
+    // hand and invisible in the UI.
+    defaultMode: 'review',
+    defaultPrice: 100,
     defaultDeclineFeeRate: 0.3,
     defaultSellerShare: 0,
     defaultPlatformShare: 0.3,
@@ -104,6 +109,7 @@ export const PLACEMENT_SURFACES = {
     label: 'remix galleries',
     targets: ['image'],
     defaultMode: 'off',
+    defaultPrice: null,
     defaultDeclineFeeRate: 0.3,
     defaultSellerShare: 0,
     defaultPlatformShare: 0.3,
@@ -115,6 +121,7 @@ export const PLACEMENT_SURFACES = {
     label: string;
     targets: readonly PlacementSpaceEntity[];
     defaultMode: PlacementSpaceMode;
+    defaultPrice: number | null;
     defaultDeclineFeeRate: number;
     defaultSellerShare: number;
     defaultPlatformShare: number;
@@ -176,7 +183,9 @@ export function resolvePlacementSpace(
     mode:
       ordered.find((level) => level?.mode !== undefined)?.mode ??
       PLACEMENT_SURFACES[surface].defaultMode,
-    price: ordered.find((level) => level?.price != null)?.price ?? null,
+    price:
+      ordered.find((level) => level?.price != null)?.price ??
+      PLACEMENT_SURFACES[surface].defaultPrice,
     // Merged per key, most specific last, rather than taking the first level
     // that has any settings at all: an owner who set a max size on their account
     // and something unrelated on one image should keep both.
@@ -212,6 +221,15 @@ export const PLACEMENT_PRICE_CAP_TIERS: PlacementPriceTier[] = [
 ];
 
 export const PLACEMENT_MIN_PRICE = 0;
+
+/**
+ * The price control's granularity and where its track starts. Not a server
+ * floor: `PLACEMENT_MIN_PRICE` is, and prices set before this existed can sit
+ * below the track, so the control widens to include the value it was given
+ * rather than snapping it up on open.
+ */
+export const PLACEMENT_PRICE_STEP = 5;
+export const PLACEMENT_PRICE_TRACK_START = 50;
 
 export function placementPriceCap(
   score: number,

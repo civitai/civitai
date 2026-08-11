@@ -1,6 +1,11 @@
-import { Loader, NumberInput, SegmentedControl, Stack, Text } from '@mantine/core';
+import { Anchor, Group, Loader, SegmentedControl, Slider, Stack, Text } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import {
+  PLACEMENT_PRICE_STEP,
+  PLACEMENT_PRICE_TRACK_START,
+  PLACEMENT_SURFACES,
+} from '~/shared/utils/placement';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -34,6 +39,10 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
 
   const { data: row, isLoading } = trpc.placement.getSpaceRow.useQuery(
     { surface: 'sticker', entityType: level, entityId },
+    { enabled: !!features.stickerPlacement }
+  );
+  const { data: range } = trpc.placement.getPriceRange.useQuery(
+    { surface: 'sticker' },
     { enabled: !!features.stickerPlacement }
   );
 
@@ -83,6 +92,14 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
     });
   };
 
+  const defaultPrice = PLACEMENT_SURFACES.sticker.defaultPrice;
+  // A price set before the track existed, or under an operator cap that has
+  // since dropped, must stay reachable — a control that cannot represent the
+  // stored value silently rewrites it the first time it is touched.
+  const sliderMin = Math.min(PLACEMENT_PRICE_TRACK_START, price === '' ? Infinity : price);
+  const sliderMax = Math.max(range?.max ?? defaultPrice, sliderMin, price === '' ? 0 : price);
+  const sliderValue = price === '' ? Math.min(Math.max(defaultPrice, sliderMin), sliderMax) : price;
+
   return (
     <Stack gap={4}>
       <Text size="xs" fw={600}>
@@ -109,15 +126,57 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
         </Text>
       ) : (
         mode !== 'off' && (
-          <NumberInput
-            size="xs"
-            label="Price"
-            description="Leave empty to use the price from the level above."
-            value={price}
-            min={0}
-            onChange={(value) => setPrice(typeof value === 'number' ? value : '')}
-            onBlur={() => commit(mode, price)}
-          />
+          <Stack gap={2}>
+            <Group justify="space-between" gap="xs">
+              <Text size="xs" fw={500}>
+                Price
+              </Text>
+              {price !== '' && (
+                <Anchor
+                  component="button"
+                  type="button"
+                  size="xs"
+                  onClick={() => {
+                    setPrice('');
+                    commit(mode, '');
+                  }}
+                >
+                  Use the price from the level above
+                </Anchor>
+              )}
+            </Group>
+            <Slider
+              size="xs"
+              // Committing on release rather than on every value: dragging a
+              // slider emits a value per pixel, and each one is a write. This is
+              // also why there is no debounce — a trailing timer can still land
+              // after the pointer is up, and `onChangeEnd` cannot drop the value
+              // the creator actually chose.
+              value={sliderValue}
+              // Until the range loads, the ceiling is a guess, and a creator who
+              // drags against the guess sets a price against a cap that is not
+              // theirs.
+              disabled={!range}
+              min={sliderMin}
+              max={sliderMax}
+              step={PLACEMENT_PRICE_STEP}
+              marks={[
+                { value: sliderMin, label: `${sliderMin}` },
+                { value: sliderMax, label: `${sliderMax}` },
+              ]}
+              label={(value) => `${value} Buzz`}
+              onChange={setPrice}
+              onChangeEnd={(value) => {
+                setPrice(value);
+                commit(mode, value);
+              }}
+            />
+            <Text size="xs" c="dimmed">
+              {price === ''
+                ? `Following the price from the level above, or ${defaultPrice} Buzz if none is set.`
+                : `Placers pay ${price} Buzz. Your tier caps this at ${sliderMax}.`}
+            </Text>
+          </Stack>
         )
       )}
     </Stack>

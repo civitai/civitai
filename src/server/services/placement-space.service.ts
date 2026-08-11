@@ -11,6 +11,7 @@ import type {
 } from '~/shared/utils/placement';
 import {
   effectivePlacementPrice,
+  PLACEMENT_SURFACES,
   resolvePlacementSpace,
   surfaceAcceptsTarget,
 } from '~/shared/utils/placement';
@@ -162,7 +163,10 @@ export async function setPlacementSpace({
   // would refuse every attempt while the owner's UI showed the space as open.
   // Requiring the price here makes that state unreachable rather than a puzzle
   // the placer discovers.
-  const resolvedPrice = price ?? (await inheritedPrice({ surface, entityType, entityId, userId }));
+  const resolvedPrice =
+    price ??
+    (await inheritedPrice({ surface, entityType, entityId, userId })) ??
+    PLACEMENT_SURFACES[surface].defaultPrice;
   if (mode !== 'off' && resolvedPrice == null)
     throw throwBadRequestError('placement: set a price before opening this space');
 

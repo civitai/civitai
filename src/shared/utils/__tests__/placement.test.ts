@@ -278,6 +278,29 @@ describe('space resolution', () => {
     expect(resolvePlacementSpace('sticker', {}).mode).toBe(PLACEMENT_SURFACES.sticker.defaultMode);
   });
 
+  // `setPlacementSpace` refuses to write a mode above `off` with no price, so a
+  // surface whose defaults are that pair produces, by default, the one state a
+  // creator is forbidden to create: the space reads open and the place
+  // affordance renders nothing, because `effectivePlacementPrice(null, cap)` is
+  // null by design. The two values have to move together.
+  it('never defaults a surface to an open mode with no price', () => {
+    for (const surface of placementSurfaces) {
+      const { defaultMode, defaultPrice } = PLACEMENT_SURFACES[surface];
+      if (defaultMode === 'off') continue;
+
+      expect(defaultPrice, `${surface} opens by default with no default price`).not.toBeNull();
+      expect(resolvePlacementSpace(surface, {}).price).toBe(defaultPrice);
+    }
+  });
+
+  it('resolves an unconfigured sticker space to the surface default price', () => {
+    expect(resolvePlacementSpace('sticker', {})).toEqual({
+      mode: PLACEMENT_SURFACES.sticker.defaultMode,
+      price: PLACEMENT_SURFACES.sticker.defaultPrice,
+      settings: {},
+    });
+  });
+
   it('keeps an account-level price when only the image mode was changed', () => {
     const resolved = resolvePlacementSpace('sticker', {
       image: mode('auto'),
