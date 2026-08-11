@@ -19,6 +19,7 @@ import { parseNumericString } from '~/utils/query-string-helpers';
 import type { CommentV2Model } from '~/server/selectors/commentv2.selector';
 import { ThreadSort } from '../../server/common/enums';
 import { constants } from '~/server/common/constants';
+import { RETURN_TO_ROOT_THREAD_ID } from '~/components/CommentsV2/commentv2.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export type CommentV2BadgeProps = {
@@ -183,8 +184,9 @@ export function CommentsProvider({
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const utils = trpc.useUtils();
-  const { sort, setSort, activeComment, rootEntityType } = useRootThreadContext();
+  const { sort, setSort, activeComment, rootEntityType, isInitialThread } = useRootThreadContext();
   const setExpanded = useNewCommentStore((state) => state.setExpanded);
+  const collapse = useNewCommentStore((state) => state.collapse);
   const autoExpanded = useRef(new Set<number>());
   const storeKey = getKey(entityType, entityId);
   const created = useNewCommentStore(
@@ -317,6 +319,37 @@ export function CommentsProvider({
     return result;
   }, [data]);
 
+  // Expansion state is global and sticky, so what a thread view opened would otherwise follow the
+  // reader back out and leave the full conversation heavier than it started. Undo this section's
+  // own auto-expansion when it re-roots. Keyed on the entity alone: loading another page must not
+  // collapse what earlier pages opened.
+  useEffect(() => {
+    const openedHere = autoExpanded.current;
+    return () => {
+      collapse([...openedHere]);
+      openedHere.clear();
+    };
+  }, [entityId, entityType, collapse]);
+
+  // Opening a thread replaces the whole section, which collapses the page under the reader and
+  // leaves them somewhere they never asked to be. Put them at the comment they opened, once the
+  // thread has actually rendered — surfaces show a loader in its place until then, and child
+  // effects run before this one, so the element is in the DOM by the time this fires.
+  // `scrollIntoView` rather than window scrolling: the app scrolls an inner container.
+  const activeCommentId = activeComment?.id;
+  const threadSettled = !isLoading && !isRefetching;
+  useEffect(() => {
+    if (level !== 1 || isInitialThread || !activeCommentId || !threadSettled) return;
+    // Prefer the way back out: landing on the comment itself scrolls that link off the top, and
+    // how far above it sits differs per surface, so aiming at it beats guessing an offset.
+    const el =
+      document.getElementById(RETURN_TO_ROOT_THREAD_ID) ??
+      document.getElementById(`comment-${activeCommentId}`);
+    if (!el) return;
+    el.style.scrollMarginTop = '16px';
+    el.scrollIntoView({ block: 'start' });
+  }, [level, isInitialThread, activeCommentId, threadSettled]);
+
   // Get thread metadata from dedicated query (includes locked status and hiddenCount)
   const threadMeta = threadDetails;
   const hiddenCount = threadMeta?.hiddenCount ?? 0;
@@ -403,6 +436,7 @@ type StoreProps = {
   comments: Record<string, CommentV2Model[]>;
   expandedComments: number[];
   setExpanded: (commentIds: number[]) => void;
+  collapse: (commentIds: number[]) => void;
   toggleExpanded: (commentId: number) => void;
   addComment: (entityType: string, entityId: number, comment: CommentV2Model) => void;
   editComment: (entityType: string, entityId: number, comment: CommentV2Model) => void;
@@ -419,6 +453,11 @@ export const useNewCommentStore = create<StoreProps>()(
       setExpanded: (commentIds: number[]) =>
         set((state) => {
           state.expandedComments = [...new Set([...state.expandedComments, ...commentIds])];
+        }),
+      collapse: (commentIds: number[]) =>
+        set((state) => {
+          const dropping = new Set(commentIds);
+          state.expandedComments = state.expandedComments.filter((x) => !dropping.has(x));
         }),
       toggleExpanded: (commentId: number) =>
         set((state) => {
