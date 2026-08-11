@@ -192,12 +192,16 @@ Open, with the evidence each audit produced:
       panel's Paddle button — find account by customer id, unlink an old one, link this one — writing
       `User.paddleCustomerId` with a `retool_db` audit row. The port reads that column and deep-links
       to Paddle, but nothing can re-link a mis-linked billing account.
-- [ ] **"Content (click rows!)" is a drill-down, and ours goes somewhere else.** Retool's rows clicked
-      through inside the console; ours link out to the **public** civitai profile — where deleted,
-      unpublished and TOS'd content is not shown, so the count and the page it opens legitimately
-      disagree. Three of eight rows (model comments, image comments, reviews) do not link at all.
-      Point each row at the in-app section instead.
-- [ ] **A ninth Content row, Chat Messages**, that `AllCountsUnion` does not produce and we do not show.
+- [x] **"Content (click rows!)" is a drill-down, and ours goes somewhere else** (2026-08-11). Rows now
+      prefer an in-app destination: Images → Bulk Image Manager, both comment rows → the Comments
+      section, Reviews → Reviews, Chat Messages → Chat. Those last four linked **nowhere** before, and
+      the public profile hides exactly the deleted / unpublished / TOS'd content a moderator came for,
+      so a row reading 40 could open a page showing 12.
+      ⚠️ Models, Posts, Articles and Collections still link out to the public profile — the app has no
+      in-app list for those content types yet, so the count-vs-page mismatch survives on those four.
+- [x] **A ninth Content row, Chat Messages** (2026-08-11). `AllCountsUnion` does not produce it, which
+      is exactly why an export-driven port could not see it — and a moderator judging harassment is
+      counting DMs.
 - [ ] **Placement**: Retool put mute / ban / purge / freshdesk / refresh-session / clear-cache in a bar
       on the landing section. Ours are all one section away under Admin. Reachable, but not in front of
       the moderator on arrival.
@@ -237,8 +241,9 @@ Open, with the evidence each audit produced:
       and queried nowhere, so all pre-migration history is absent while the panel reads as complete.
       (Correction: "must show who did each action" is **already done** — `getModActivity` joins the
       moderator name and the panel renders it.)
-- [ ] **Model/comment breakdowns** (`NumTos`, `NumPoi`, `NumNSFW`, `NumLocked`, `NumDeleted`,
-      `NumTOSViolations`, `NumHidden`) collapsed to a single `COUNT(*)`.
+- [x] **Model/comment breakdowns** — already built and ticked on evidence (2026-08-11): `getModelFlags`
+      returns NSFW / ToS / POI / locked / deleted and `getCommentFlags` returns ToS / hidden, rendered
+      beside each count and hidden when zero. Stale entry, no new work.
 - [x] **Review text (`details`) is never shown** (2026-08-11). Half of this was already stale — the
       filter-row work rendered it on *Reviews written*. **Reviews received still dropped it**, while its
       own Search filter matched against it, so a moderator could search for text the page would not show.

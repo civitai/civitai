@@ -82,6 +82,7 @@
         counts={result.counts}
         civitaiUrl={data.civitaiUrl}
         username={result.identity.username}
+        userId={result.identity.id}
       />
       <CosmeticsPanel
         {account}

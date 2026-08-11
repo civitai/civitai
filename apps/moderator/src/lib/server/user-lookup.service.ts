@@ -53,6 +53,9 @@ export type UserCount = {
   label: string;
   count: number;
   profilePath: string | null;
+  /** Section slug under /retool/user-lookup, or the bulk-image-manager cross-link. Preferred over
+   *  `profilePath`: the public profile hides exactly the content a moderator came to look at. */
+  appSection: string | null;
   /** Retool's per-flag breakdown, on the two entities that had one. Absent elsewhere, not zero. */
   flags?: { label: string; count: number }[];
 };
@@ -411,15 +414,21 @@ async function getScores(userId: number): Promise<UserScores | null> {
 // Retool ran these as a UNION ALL of COUNT(*)s. Kept as parallel counts so a new one is a line, not a
 // string edit, and so a single slow table cannot stall the rest. `profilePath` is the segment under
 // /user/<username> that lists this content — absent where the site has no such page.
+// `[label, table, public profile path, in-app section]`. The fourth entry is preferred when present:
+// the public profile does not show deleted, unpublished or TOS'd content, so a count taken here and the
+// page it opened legitimately disagreed — which is the opposite of what a drill-down is for.
 const COUNT_SOURCES = [
-  ['Models', 'Model', 'models'],
-  ['Images', 'Image', 'images'],
-  ['Posts', 'Post', 'posts'],
-  ['Articles', 'Article', 'articles'],
-  ['Collections', 'Collection', 'collections'],
-  ['Model comments', 'Comment', null],
-  ['Image comments', 'CommentV2', null],
-  ['Reviews', 'ResourceReview', null],
+  ['Models', 'Model', 'models', null],
+  ['Images', 'Image', 'images', 'bulk-image-manager'],
+  ['Posts', 'Post', 'posts', null],
+  ['Articles', 'Article', 'articles', null],
+  ['Collections', 'Collection', 'collections', null],
+  ['Model comments', 'Comment', null, 'comments'],
+  ['Image comments', 'CommentV2', null, 'comments'],
+  ['Reviews', 'ResourceReview', null, 'reviews'],
+  // Retool's ninth row. `AllCountsUnion` does not produce it, so it was invisible to an export-driven
+  // port — but a moderator judging harassment is counting DMs.
+  ['Chat Messages', 'ChatMessage', null, 'chat'],
 ] as const;
 
 /**
@@ -469,13 +478,13 @@ async function getCommentFlags(userId: number) {
 async function getCounts(userId: number): Promise<UserCounts> {
   const [counts, modelFlags, commentFlags] = await Promise.all([
     Promise.all(
-      COUNT_SOURCES.map(async ([label, table, profilePath]) => {
+      COUNT_SOURCES.map(async ([label, table, profilePath, appSection]) => {
         const r = await dbRead
           .selectFrom(table)
           .select((eb) => eb.fn.countAll<string>().as('count'))
           .where('userId', '=', userId)
           .executeTakeFirst();
-        return { label, count: Number(r?.count ?? 0), profilePath };
+        return { label, count: Number(r?.count ?? 0), profilePath, appSection };
       })
     ),
     getModelFlags(userId),
