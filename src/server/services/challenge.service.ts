@@ -155,7 +155,10 @@ import {
   buildJudgingEngineContext,
   resolveJudgingEngine,
 } from '~/server/games/daily-challenge/challenge-engine-registry';
-import { recapField } from '~/server/games/daily-challenge/challenge-judging-engine';
+import {
+  JUDGING_ENGINES,
+  recapField,
+} from '~/server/games/daily-challenge/challenge-judging-engine';
 import { collectionsSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { NotificationCategory } from '~/server/common/enums';
@@ -2484,6 +2487,19 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     });
   }
 
+  // A comparison engine's close-time stage is minutes of LLM round-trips. That does not belong in
+  // a tRPC mutation the moderator's browser is holding open, so it is handed to the completion
+  // cron instead: ending the challenge NOW makes `getEndedActiveChallenges` pick it up on the next
+  // tick and complete it through `pickWinnersForChallenge`, which is the same engine-aware path.
+  // Resolved BEFORE the claim on purpose — the cron only sees Active challenges, and claiming here
+  // would move it to Completing where nothing would ever pick it up.
+  const engineForChallenge = await resolveJudgingEngine(challenge.judgingEngine);
+  if (engineForChallenge.key !== JUDGING_ENGINES.LegacyAbsolute) {
+    await dbWrite.challenge.update({ where: { id: challengeId }, data: { endsAt: new Date() } });
+    log('Challenge ended; winner selection queued for the completion job:', challengeId);
+    return { success: true, winnersCount: 0, queued: true };
+  }
+
   // Atomic claim to prevent concurrent processing
   const claimed = await claimChallengeForCompletion(challengeId);
   if (!claimed) {
@@ -2585,10 +2601,8 @@ export async function endChallengeAndPickWinners(challengeId: number) {
       );
       const userCategories = userJudgingCategories.success ? userJudgingCategories.data : undefined;
 
-      // This is the SECOND completion path — a moderator ending a challenge early. It has to
-      // consult the same engine the cron path does, or the same challenge pays out different
-      // winners depending on who ended it, and every comparison it bought is discarded.
-      const judgingEngine = await resolveJudgingEngine(challenge.judgingEngine);
+      // Legacy only — anything else was queued above, before the claim.
+      const judgingEngine = engineForChallenge;
       const judgedEntries = await getJudgedEntries(
         challenge.collectionId,
         config,

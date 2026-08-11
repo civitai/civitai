@@ -78,106 +78,175 @@ export async function runPool<T, R>(
 ): Promise<R[]> {
   const out = new Array<R>(items.length);
   let next = 0;
+  // A separate flag rather than `failure !== undefined`: a worker is allowed to throw `undefined`,
+  // and testing the value alone would let that one failure through as a success.
+  let failed = false;
   let failure: unknown;
 
   const lane = async () => {
-    while (next < items.length && failure === undefined) {
+    while (next < items.length && !failed) {
       const i = next++;
       try {
         out[i] = await worker(items[i], i);
       } catch (error) {
-        failure ??= error;
+        if (!failed) {
+          failed = true;
+          failure = error;
+        }
       }
     }
   };
 
   await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, lane));
-  if (failure !== undefined) throw failure;
+  if (failed) throw failure;
   return out;
 }
 
 /**
- * The second run: pull every entry out and re-insert it against the finished ladder. Measured on
- * the prototype this takes worst-case misplacement from 3 places to 1, which per-bout confirmation
- * does not buy. It is also the repair pass — an entry that never got placed on arrival is placed
- * here, which is what makes the coverage assertion at the call site meaningful.
+ * How many of the arrival ladder's leaders are re-inserted at close.
  *
- * Every entry searches the SAME frozen order, concurrently. That is sound only because this pass
- * does not mutate the list it searches — unlike arrival, where each insertion has to see the live
- * standings. Serially it is one LLM round-trip deep per bout: ~90 minutes for a 284-entry field,
- * which outlives the 10-minute completion claim and lets a second run start a second podium.
+ * Measured on the only real full field we have (challenge 424, 284 entries, luna): every entry
+ * that finished in the final top 15 was already inside the **arrival top 27**. Final top 3 needed
+ * arrival top 7; final top 10 needed 13. 40 is ~1.5x the observed requirement, not a guess.
+ *
+ * Two honest limits on that evidence. It is mildly circular — the "final" ranking it is measured
+ * against is itself the output of an unbounded rerun — though the direction is right: that
+ * unbounded rerun moved nobody from beyond rank 27 into the top 15. And it is one field under one
+ * judge, not a law; a field whose arrival order is noisier could need more. `rankField` warns when
+ * a finisher entered the rerun near this boundary, which is the cheap signal that it wants raising.
  */
-export async function reinsertAll(
+export const RERUN_TOP_K = 40;
+
+/**
+ * Tie groups larger than this are left in arrival order rather than resolved by comparison.
+ * Resolving a group is inherently serial (each member searches the members already settled), so an
+ * unbounded group is an unbounded serial chain inside a stage that has ~10 minutes to live.
+ */
+export const MAX_TIE_GROUP = 8;
+
+export type RerunResult = {
+  order: number[];
+  bouts: number;
+  /** Groups left in arrival order because they exceeded MAX_TIE_GROUP. */
+  unresolvedGroups: number;
+  /** Re-inserted entries whose ARRIVAL rank was close enough to K to suggest K is too small. */
+  nearBoundary: number[];
+};
+
+/**
+ * The second run, bounded: re-insert the top `topK` of the arrival ladder against the FULL
+ * standings, and leave everything below that at its arrival position.
+ *
+ * Re-inserting the whole field was priced at 5,491-8,461 comparisons and 71-306 minutes for a
+ * 284-entry field, against a 10-minute completion claim — it raced the claim rather than fitting
+ * inside it. Bounding the rerun instead of the field keeps arrival placement ranking everyone
+ * (that stage is spread over days and is unchanged) and spends the close-time budget where the
+ * money is.
+ *
+ * This is NOT the cut that was removed in round 2. That one was `Math.random()` breaking ties on a
+ * saturated 0-10 absolute score — a coin flip deciding who could be ranked. This is a cut on the
+ * ladder's own measured order, with no random component and no saturated scale.
+ *
+ * Single pass, deliberately. A repeat-until-settled loop was measured never to settle (0/200 seeds
+ * under a judge with the seat bias we actually have), so it always ran its cap; and later passes
+ * cost 41-65% of the first rather than being free, because a changed order means changed midpoints
+ * means new pairs. Four passes at this K would put the stage back outside the claim window.
+ */
+export async function reinsertTop(
   order: readonly number[],
   bout: Bout,
-  concurrency = LADDER_CONCURRENCY,
-  maxPasses = 4
-): Promise<{ order: number[]; bouts: number; passes: number }> {
-  let current = [...order];
-  let bouts = 0;
-  let passes = 0;
-
-  // A binary search is only meaningful against a roughly-ordered list, and one concurrent pass
-  // over a badly-ordered one improves it without finishing the job — which matters because
-  // `rankField` appends entries the arrival pass never placed, and a challenge opted in near its
-  // close has a starting order that is arbitrary. Repeat until the order stops moving. Passes
-  // after the first are nearly free: every pair they ask for has already been answered and the
-  // caller's cache returns it without a comparison.
-  while (passes < maxPasses) {
-    const pass = await reinsertOnce(current, bout, concurrency);
-    passes++;
-    bouts += pass.bouts;
-    const settled =
-      pass.order.length === current.length && pass.order.every((id, i) => id === current[i]);
-    current = pass.order;
-    if (settled) break;
+  topK = RERUN_TOP_K,
+  concurrency = LADDER_CONCURRENCY
+): Promise<RerunResult> {
+  const frozen = [...order];
+  const contenders = frozen.slice(0, Math.min(topK, frozen.length));
+  if (frozen.length < 2 || contenders.length < 1) {
+    return { order: frozen, bouts: 0, unresolvedGroups: 0, nearBoundary: [] };
   }
 
-  return { order: current, bouts, passes };
-}
-
-async function reinsertOnce(
-  order: readonly number[],
-  bout: Bout,
-  concurrency: number
-): Promise<{ order: number[]; bouts: number }> {
-  const frozen = [...order];
-  const placed = await runPool(frozen, concurrency, async (id) => {
+  const placed = await runPool(contenders, concurrency, async (id) => {
     const others = frozen.filter((x) => x !== id);
     const slot = await findSlot(id, others, bout);
-    return { id, key: slot.index, bouts: slot.bouts };
+    return { id, key: slot.index, bouts: slot.bouts, from: frozen.indexOf(id) };
   });
+  let bouts = placed.reduce((sum, row) => sum + row.bouts, 0);
 
-  // Searching a frozen list means two entries can land on the same index, and their order relative
-  // to each other is then genuinely unmeasured. The prototype resolved that by arrival order,
-  // which is the misplacement this pass exists to remove. They all belong between the same two
-  // neighbours, so ordering them among themselves — and only them — settles it. Groups are small
-  // and the extra bouts are few.
+  // `key` indexes the list WITHOUT this entry, so map it back to a position between two frozen
+  // neighbours before mixing it with the entries that kept their arrival index.
+  const positionOf = (row: { key: number; from: number }) =>
+    row.key < row.from ? row.key - 0.5 : row.key + 0.5;
+
+  const reinserted = new Set(contenders);
+  const slots: { id: number; pos: number }[] = frozen
+    .map((id, index) => ({ id, pos: index }))
+    .filter((row) => !reinserted.has(row.id));
+  for (const row of placed) slots.push({ id: row.id, pos: positionOf(row) });
+
+  // Entries that searched to the same position have no measured order relative to each other.
+  // Comparing them settles it — which NARROWS the prototype's arrival-order fallback rather than
+  // removing it: a group that mutually ties, or one too large to resolve, still falls back.
   const groups = new Map<number, number[]>();
-  for (const row of placed) {
-    if (!groups.has(row.key)) groups.set(row.key, []);
-    groups.get(row.key)!.push(row.id);
+  for (const row of slots) {
+    const key = Math.floor(row.pos);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(row.id);
   }
 
-  let bouts = placed.reduce((sum, row) => sum + row.bouts, 0);
-  const result: number[] = [];
-  for (const key of [...groups.keys()].sort((a, b) => a - b)) {
-    const tied = groups.get(key)!;
-    if (tied.length === 1) {
-      result.push(tied[0]);
-      continue;
+  let unresolvedGroups = 0;
+  const contested = [...groups.entries()].filter(([, ids]) => ids.length > 1);
+  // Groups are independent of each other, so they resolve in parallel even though each one is
+  // internally serial.
+  const resolved = await runPool(contested, concurrency, async ([, ids]) => {
+    if (ids.length > MAX_TIE_GROUP) {
+      unresolvedGroups++;
+      return ids;
     }
     let settled: number[] = [];
-    for (const id of tied) {
+    for (const id of ids) {
       const slot = await findSlot(id, settled, bout);
       bouts += slot.bouts;
       settled = spliceAt(settled, id, slot.index);
     }
-    result.push(...settled);
+    return settled;
+  });
+
+  const ordering = new Map<number, number[]>();
+  contested.forEach(([key], i) => ordering.set(key, resolved[i]));
+
+  const finalOrder: number[] = [];
+  const emitted = new Set<number>();
+  for (const row of [...slots].sort((a, b) => a.pos - b.pos)) {
+    if (emitted.has(row.id)) continue;
+    const group = ordering.get(Math.floor(row.pos));
+    if (group) {
+      for (const id of group) {
+        finalOrder.push(id);
+        emitted.add(id);
+      }
+    } else {
+      finalOrder.push(row.id);
+      emitted.add(row.id);
+    }
   }
 
-  return { order: result, bouts };
+  // An entry that started near the K boundary and finished high says the boundary is close to
+  // binding. Cheap to compute, and it is the only warning we get before K is actually too small.
+  // Only meaningful when the bound actually excluded someone (K covering the whole field leaves
+  // no boundary to be near) AND when the rerun is wider than the shortlist it feeds — at
+  // topK <= PODIUM_WATCH every re-inserted entry is a potential finalist and the signal is noise.
+  const boundary = Math.floor(topK * 0.75);
+  const nearBoundary =
+    frozen.length > topK && topK > PODIUM_WATCH
+      ? placed
+          .filter((row) => row.from >= boundary && finalOrder.indexOf(row.id) < PODIUM_WATCH)
+          .map((row) => row.id)
+      : [];
+
+  return { order: finalOrder, bouts, unresolvedGroups, nearBoundary };
 }
+
+/** Finishing this high is what makes a near-boundary arrival rank worth warning about. */
+const PODIUM_WATCH = 15;
 
 /**
  * Standings that cover a subset of the field are not a result — they are a result-shaped subset,

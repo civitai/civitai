@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   assertLadderCoverage,
   findSlot,
-  reinsertAll,
+  reinsertTop,
+  RERUN_TOP_K,
+  MAX_TIE_GROUP,
   roundRobinPairs,
   runPool,
   spliceAt,
@@ -68,34 +70,40 @@ describe('findSlot', () => {
   });
 });
 
-describe('reinsertAll', () => {
-  // The second run is a repair pass over a roughly-ordered ladder, not a sort: each entry
-  // binary-searches the others, which only means anything while the list is close to ordered.
-  it('repairs an entry the arrival pass misplaced', async () => {
-    // 60 arrived early against a short ladder and sits above five entries that all beat it.
-    const { bout } = trueOrderBout();
-    const { order } = await reinsertAll([60, 10, 20, 30, 40, 50], bout);
-    expect(order).toEqual([10, 20, 30, 40, 50, 60]);
+describe('reinsertTop', () => {
+  it('re-inserts only the top K, and leaves the tail at its arrival position', async () => {
+    const { bout, seats } = trueOrderBout();
+    // A roughly-ordered arrival ladder — which is the precondition a binary search needs — with
+    // 50 sitting too high. Only the first 3 are re-inserted.
+    const arrival = [10, 20, 50, 30, 40, 60, 70, 80, 90, 100, 110, 120];
+
+    const { order } = await reinsertTop(arrival, bout, 3);
+
+    expect(order.slice(0, 5)).toEqual([10, 20, 30, 40, 50]);
+    // Nothing below K searched: every bout has a re-inserted entry as its challenger.
+    const rerunSet = new Set([10, 20, 50]);
+    expect(seats.every((s) => rerunSet.has(s.challenger))).toBe(true);
   });
 
-  it('leaves an already-correct ladder alone', async () => {
+  it('lets a re-inserted leader fall past entries that were never re-inserted', async () => {
     const { bout } = trueOrderBout();
-    const { order } = await reinsertAll([10, 20, 30, 40, 50], bout);
-    expect(order).toEqual([10, 20, 30, 40, 50]);
+    // 90 arrived first but is the weakest; it must end up behind 20 and 30, which are outside K.
+    const { order } = await reinsertTop([90, 10, 20, 30], bout, 1);
+    expect(order.indexOf(90)).toBeGreaterThan(order.indexOf(30));
   });
 
-  it('places an entry that was appended with no arrival placement at all', async () => {
-    // What the repair pass exists for: an entry whose arrival comparison failed is put on the end
-    // by rankField and has to find its real place here.
-    const { bout } = trueOrderBout();
-    const { order } = await reinsertAll([10, 20, 40, 50, 30], bout);
-    expect(order).toEqual([10, 20, 30, 40, 50]);
+  it('costs K searches, not one per entry', async () => {
+    const { bout, seats } = trueOrderBout();
+    const arrival = Array.from({ length: 60 }, (_, i) => (i + 1) * 10);
+
+    const { bouts } = await reinsertTop(arrival, bout, 10);
+
+    // 10 searches over a 60-long list is ~6 bouts each; a full-field rerun would be ~60 searches.
+    expect(bouts).toBe(seats.length);
+    expect(bouts).toBeLessThan(10 * 8);
   });
 
-  it('searches concurrently — serially this outlives the completion claim', async () => {
-    // One LLM round-trip deep per bout, serially, is ~90 minutes for a 284-entry field. The
-    // completion claim is reclaimed after 10, so a second run starts a second podium and a
-    // second path to createChallengeWinner. Concurrency is what keeps the stage inside the claim.
+  it('runs the re-insertions concurrently', async () => {
     let inFlight = 0;
     let peak = 0;
     const slowBout: Bout = async (challenger, opponent) => {
@@ -104,46 +112,61 @@ describe('reinsertAll', () => {
       inFlight--;
       return challenger < opponent ? 'challenger' : 'opponent';
     };
-
-    const { order } = await reinsertAll([80, 10, 60, 20, 70, 30, 50, 40], slowBout, 4);
-
+    await reinsertTop([80, 10, 60, 20, 70, 30, 50, 40], slowBout, 8, 4);
     expect(peak).toBeGreaterThan(1);
-    expect(order).toEqual([10, 20, 30, 40, 50, 60, 70, 80]);
   });
 
-  it('converges from an arbitrary order, which is what a late opt-in hands it', async () => {
-    // rankField appends entries the arrival pass never placed. A challenge switched to this
-    // engine near its close has no arrival placements at all, so the starting order is whatever
-    // the query returned — and one pass over that improves it without finishing.
-    const { bout } = trueOrderBout();
-    const scrambled = [70, 30, 90, 10, 50, 20, 80, 40, 60];
+  it('leaves an oversized tie group in arrival order instead of resolving it serially', async () => {
+    // Every entry ties, so they all land on one key. Resolving that group is a serial chain, and
+    // an unbounded chain is unbounded wall clock inside a stage with ~10 minutes to live.
+    const alwaysTie: Bout = async () => 'tie';
+    const arrival = Array.from({ length: MAX_TIE_GROUP + 4 }, (_, i) => i + 1);
 
-    const { order, passes } = await reinsertAll(scrambled, bout, 4);
+    const { order, unresolvedGroups } = await reinsertTop(arrival, alwaysTie, arrival.length);
 
-    expect(order).toEqual([10, 20, 30, 40, 50, 60, 70, 80, 90]);
-    expect(passes).toBeGreaterThan(1);
-  });
-
-  it('stops as soon as the order settles rather than always paying for every pass', async () => {
-    const { bout } = trueOrderBout();
-    const { passes } = await reinsertAll([10, 20, 30, 40, 50], bout, 4);
-    expect(passes).toBe(1);
-  });
-
-  it('resolves entries that searched to the same slot by comparing them, not by arrival order', async () => {
-    // Concurrent searches all read the same frozen list, so ties on the index are expected. The
-    // prototype broke them by arrival order, which is the misplacement this pass exists to fix.
-    const { bout } = trueOrderBout();
-    const { order } = await reinsertAll([10, 20, 30, 55, 54, 53], bout, 4);
-    expect(order.indexOf(53)).toBeLessThan(order.indexOf(54));
-    expect(order.indexOf(54)).toBeLessThan(order.indexOf(55));
+    expect(unresolvedGroups).toBeGreaterThan(0);
+    expect([...order].sort((a, b) => a - b)).toEqual(arrival);
   });
 
   it('returns every entry it was given', async () => {
     const { bout } = trueOrderBout();
-    const field = [5, 1, 4, 2, 3];
-    const { order } = await reinsertAll(field, bout);
-    expect([...order].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5]);
+    const arrival = [5, 1, 4, 2, 3, 9, 7, 8, 6];
+    const { order } = await reinsertTop(arrival, bout, 4);
+    expect([...order].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  });
+
+  it('flags a finisher that entered the rerun near the K boundary', async () => {
+    const { bout } = trueOrderBout();
+    // The strongest entry in the field arrived at rank 17 of a K=20 rerun and finishes first —
+    // exactly the case that says K is close to binding.
+    const arrival = [
+      100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240, 250, 260, 1, 270,
+      280, 290, 300, 310, 320, 330,
+    ];
+
+    const { nearBoundary } = await reinsertTop(arrival, bout, 20);
+
+    expect(nearBoundary).toContain(1);
+  });
+
+  it('does not flag an entry that arrived comfortably inside K', async () => {
+    const { bout } = trueOrderBout();
+    const arrival = Array.from({ length: 25 }, (_, i) => (i + 1) * 10);
+    const { nearBoundary } = await reinsertTop(arrival, bout, 20);
+    expect(nearBoundary).toEqual([]);
+  });
+
+  it('stays silent when the rerun is no wider than the shortlist it feeds', async () => {
+    // At K <= 15 every re-inserted entry is a potential finalist, so "near the boundary" carries
+    // no information and the warning would fire on ordinary runs.
+    const { bout } = trueOrderBout();
+    const arrival = Array.from({ length: 30 }, (_, i) => (i + 1) * 10);
+    const { nearBoundary } = await reinsertTop(arrival, bout, 12);
+    expect(nearBoundary).toEqual([]);
+  });
+
+  it('defaults K to the measured constant', () => {
+    expect(RERUN_TOP_K).toBe(40);
   });
 });
 
@@ -268,6 +291,22 @@ describe('runPool', () => {
 
     // The three slow lanes were already running; none of them is still pending after the throw.
     expect(finished).toBe(3);
+  });
+
+  it('treats a thrown `undefined` as a failure, not as a success', async () => {
+    // Tracking failure by `value !== undefined` lets exactly one kind of throw through as though
+    // the work had succeeded — and the caller then reads `out[i]` as a real result.
+    const seen: number[] = [];
+    await expect(
+      runPool([0, 1, 2, 3, 4, 5, 6, 7], 2, async (item) => {
+        seen.push(item);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        // eslint-disable-next-line @typescript-eslint/no-throw-literal
+        if (item === 1) throw undefined;
+        return item;
+      })
+    ).rejects.toBeUndefined();
+    expect(seen.length).toBeLessThan(8);
   });
 
   it('reports the FIRST failure, not whichever landed last', async () => {

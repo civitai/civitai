@@ -13,7 +13,7 @@ import {
   assertLadderCoverage,
   findSlot,
   LADDER_CONCURRENCY,
-  reinsertAll,
+  reinsertTop,
   roundRobinPairs,
   runPool,
   tallyPodium,
@@ -21,6 +21,7 @@ import {
   type BoutResult,
   type Seat,
 } from '~/server/games/daily-challenge/challenge-ladder';
+import { RERUN_TOP_K } from '~/server/games/daily-challenge/challenge-ladder';
 import {
   buildComparisonPrompt,
   comparePair,
@@ -83,8 +84,27 @@ export const pairwiseLadderEngine: ChallengeJudgingEngine = {
     const images = await loadComparisonImages(startingOrder);
     const session = createSession(ctx, images, 'rerun');
     session.seed(await store.getComparisons(ctx.challengeId, ['arrive', 'rerun']));
-    const { order } = await session.run(() => reinsertAll(startingOrder, session.bout));
+    const rerun = await session.run(() => reinsertTop(startingOrder, session.bout));
 
+    logToAxiom({
+      type:
+        rerun.unresolvedGroups || rerun.nearBoundary.length || missing.length ? 'warning' : 'info',
+      name: 'challenge-pairwise-rerun',
+      challengeId: ctx.challengeId,
+      field: eligible.length,
+      rerunTopK: RERUN_TOP_K,
+      bouts: rerun.bouts,
+      // Entries that reached the rerun with no arrival placement at all. A challenge switched to
+      // this engine near its close has a starting order that is arbitrary rather than measured,
+      // and a bounded rerun over an arbitrary order ranks arbitrarily.
+      unplacedOnArrival: missing.length,
+      // Tie groups too large to resolve by comparison; these kept their arrival order.
+      unresolvedGroups: rerun.unresolvedGroups,
+      // Finishers that entered the rerun near the K boundary — the signal that K wants raising.
+      nearBoundary: rerun.nearBoundary,
+    }).catch(() => undefined);
+
+    const order = rerun.order;
     assertLadderCoverage(
       ctx.challengeId,
       order,
@@ -114,6 +134,12 @@ export const pairwiseLadderEngine: ChallengeJudgingEngine = {
     // stage decides money and a disagreement between the seatings is a real tie. The seat is on
     // the job — anything derived at call time from shared state gives concurrent bouts the same
     // seat, and the duplicate is then discarded on write after it has been paid for.
+    //
+    // Seating is deterministic per pair only while the pair is UNCONTENDED. Two lanes racing for
+    // the same pair share one comparison via the promise cache, and whichever arrived first fixed
+    // its seat — so the loser's requested seat is not the one that was played. Correct for the
+    // podium (both seats are queued anyway) and immaterial for placement (which never asks for a
+    // pair twice), but it is not the stronger guarantee it might read as.
     session.seed(await store.getComparisons(ctx.challengeId, ['podium']));
     const jobs = roundRobinPairs(contenders.map((entry) => entry.imageId)).flatMap(
       ([x, y]): { x: number; y: number; seat: Seat }[] => [

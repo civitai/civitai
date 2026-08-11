@@ -400,11 +400,11 @@ describe('pairwise engine — ranking the field at close', () => {
     // challenge outcome is the bug that silently deleted 54 of 284 entries from a live run.
     trueOrderComparisons();
     const field = [entry(1), entry(2), entry(3), entry(4)];
-    const { reinsertAll } = await import('~/server/games/daily-challenge/challenge-ladder');
+    const { reinsertTop } = await import('~/server/games/daily-challenge/challenge-ladder');
     const spy = vi
-      .spyOn(await import('~/server/games/daily-challenge/challenge-ladder'), 'reinsertAll')
-      .mockImplementation(async (order, bout) => {
-        const result = await reinsertAll(order, bout);
+      .spyOn(await import('~/server/games/daily-challenge/challenge-ladder'), 'reinsertTop')
+      .mockImplementation(async (order, bout, topK, concurrency) => {
+        const result = await reinsertTop(order, bout, topK, concurrency);
         return { ...result, order: result.order.slice(1) };
       });
 

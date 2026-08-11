@@ -545,60 +545,55 @@ describe('endChallengeAndPickWinners — the payout is built ONCE, outside the r
 // getJudgedEntries and generateWinners directly, with no engine anywhere — so a pairwise challenge
 // ended early by a mod paid out on absolute scores and discarded every comparison it had bought.
 // Same challenge, same prize money, different winners depending on who ended it.
-describe('endChallengeAndPickWinners — routes through the judging engine', () => {
-  const pairwiseEngine = () => ({
+// The moderator path is a SECOND completion path. It used to call getJudgedEntries and
+// generateWinners directly with no engine anywhere, so a pairwise challenge ended early by a mod
+// paid out on absolute scores and discarded every comparison it had bought.
+//
+// It no longer runs that pipeline for a comparison engine at all: a close-time stage is minutes of
+// LLM round-trips and does not belong in a tRPC mutation the moderator's browser is holding open.
+// It ends the challenge and hands it to the completion cron, which is the same engine-aware path.
+describe('endChallengeAndPickWinners — hands a comparison engine to the completion job', () => {
+  const pairwiseEngine = {
     key: 'pairwise-ladder' as const,
     ranksFullField: true,
     shortlistSize: 15,
     recordEntry: vi.fn(),
     rankField: mockRankField,
     selectWinners: mockSelectWinners,
+  };
+
+  it('ends the challenge and queues it instead of judging inline', async () => {
+    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine);
+    mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'pairwise-ladder' });
+
+    const result = await endChallengeAndPickWinners(CHALLENGE_ID);
+
+    expect(result).toMatchObject({ success: true, queued: true });
+    // endsAt in the past is what `getEndedActiveChallenges` selects on.
+    const update = mockDbWrite.challenge.update.mock.calls.at(-1)?.[0] as {
+      data: { endsAt: Date };
+    };
+    expect(update.data.endsAt).toBeInstanceOf(Date);
+    expect(update.data.endsAt.getTime()).toBeLessThanOrEqual(Date.now());
   });
 
-  it("pays the engine's places, not the LLM's picks", async () => {
-    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine());
+  it('does not judge, pay, or claim on the way out', async () => {
+    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine);
     mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'pairwise-ladder' });
-    mockGetJudgedEntries.mockResolvedValue(JUDGED_ENTRIES);
-    mockSelectWinners.mockResolvedValue([
-      { userId: 300, imageId: 3, reason: 'won the round-robin' },
-      { userId: 100, imageId: 1, reason: 'second on win rate' },
-    ]);
-    llmWinners([
-      { creatorId: 200, creator: 'bob' },
-      { creatorId: 100, creator: 'alice' },
-    ]);
 
     await endChallengeAndPickWinners(CHALLENGE_ID);
 
-    const places = mockCreateChallengeWinner.mock.calls.map((call) => call[0]);
-    expect(places.map((p: { userId: number }) => p.userId)).toEqual([300, 100]);
-    expect(places[0]).toMatchObject({ place: 1, reason: 'won the round-robin' });
+    expect(mockGetJudgedEntries).not.toHaveBeenCalled();
+    expect(mockGenerateWinners).not.toHaveBeenCalled();
+    expect(mockCreateChallengeWinner).not.toHaveBeenCalled();
+    expect(mockCreateBuzzTransactionMany).not.toHaveBeenCalled();
+    // Claiming would move it to Completing, where the cron — which only looks at Active — would
+    // never pick it up.
+    const helpers = await import('~/server/games/daily-challenge/challenge-helpers');
+    expect(vi.mocked(helpers.claimChallengeForCompletion)).not.toHaveBeenCalled();
   });
 
-  it('asks the engine to rank the field before anyone is paid', async () => {
-    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine());
-    mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'pairwise-ladder' });
-    mockGetJudgedEntries.mockResolvedValue(JUDGED_ENTRIES);
-    llmWinners([{ creatorId: 100, creator: 'alice' }]);
-
-    await endChallengeAndPickWinners(CHALLENGE_ID);
-
-    expect(mockRankField).toHaveBeenCalledTimes(1);
-    expect(mockSelectWinners).toHaveBeenCalledTimes(1);
-  });
-
-  it('hands a comparison engine the whole eligible field, not the absolute-score cut', async () => {
-    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine());
-    mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'pairwise-ladder' });
-    mockGetJudgedEntries.mockResolvedValue(JUDGED_ENTRIES);
-    llmWinners([{ creatorId: 100, creator: 'alice' }]);
-
-    await endChallengeAndPickWinners(CHALLENGE_ID);
-
-    expect(mockGetJudgedEntries.mock.calls[0][5]).toEqual({ limit: Infinity });
-  });
-
-  it('leaves a legacy challenge on the LLM pick, with the historical cut', async () => {
+  it('still runs a legacy challenge inline, exactly as before', async () => {
     mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'legacy-absolute' });
     mockGetJudgedEntries.mockResolvedValue(JUDGED_ENTRIES);
     llmWinners([
@@ -611,26 +606,5 @@ describe('endChallengeAndPickWinners — routes through the judging engine', () 
     const places = mockCreateChallengeWinner.mock.calls.map((call) => call[0]);
     expect(places.map((p: { userId: number }) => p.userId)).toEqual([200, 100]);
     expect(mockGetJudgedEntries.mock.calls[0][5]).toBeUndefined();
-  });
-
-  it('writes the recap from the podium shortlist, not just the top N', async () => {
-    // An entry the ladder placed 11-15 winning the round-robin is the stated reason the podium
-    // exists. A recap fed only the top 10 would describe a challenge somebody else won.
-    const wide = Array.from({ length: 24 }, (_, i) => ({
-      imageId: i + 1,
-      userId: (i + 1) * 100,
-      username: `u${i + 1}`,
-      summary: 's',
-      score: 1,
-    }));
-    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine());
-    mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'pairwise-ladder' });
-    mockGetJudgedEntries.mockResolvedValue(wide);
-    llmWinners([]);
-
-    await endChallengeAndPickWinners(CHALLENGE_ID);
-
-    // finalReviewAmount is 10, the shortlist is 15 — the recap gets the longer of the two.
-    expect(mockGenerateWinners.mock.calls[0][0].entries).toHaveLength(15);
   });
 });
