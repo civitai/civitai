@@ -286,6 +286,10 @@ export const userSettingsSchema = z.object({
   // Opt-in: horizontal drag on multi-image gallery post cards. Off by default —
   // the feed mounts hundreds of cards and each one costs an embla engine.
   swipeGalleryCards: z.boolean().optional(),
+  // Opt-out: the arrival pop and idle sway on placed stickers. Animation that
+  // never ends is the kind a viewer wants a way out of, and `prefers-reduced-motion`
+  // only covers people who set it at the OS level.
+  disableStickerMotion: z.boolean().optional(),
   // Creator opt-out: when true, the public donation-goal display (progress + collected
   // amount) is hidden from non-owner/non-mod viewers on all of this user's models.
   hideDonationGoals: z.boolean().optional(),
@@ -350,6 +354,7 @@ export const setUserSettingsInput = z.object({
   cosmeticStoreLastViewed: z.date().optional(),
   allowAds: z.boolean().optional(),
   swipeGalleryCards: z.boolean().optional(),
+  disableStickerMotion: z.boolean().optional(),
   hideDonationGoals: z.boolean().optional(),
   hideModelBuzz: z.boolean().optional(),
   hideModelDownloads: z.boolean().optional(),

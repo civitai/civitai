@@ -114,7 +114,15 @@ export const STICKER_TREATMENTS: Record<StickerTreatmentKey, StickerTreatment> =
   },
 };
 
-export const DEFAULT_STICKER_TREATMENT: StickerTreatmentKey = 'none';
+export const DEFAULT_STICKER_TREATMENT: StickerTreatmentKey = 'motion';
+
+/**
+ * Where the motion opt-out lands, and where a card lands for an animating
+ * treatment. Both want the same thing: keep the sticker reading as a sticker
+ * without the movement. Turning motion off is not a request to lose the
+ * treatment.
+ */
+export const STILL_STICKER_TREATMENT: StickerTreatmentKey = 'lift';
 
 /**
  * What a card renders for a treatment that animates.
@@ -125,7 +133,7 @@ export const DEFAULT_STICKER_TREATMENT: StickerTreatmentKey = 'none';
  * but any multiplier is a function of how many cards you chose to measure, so
  * there is deliberately no number here.
  */
-export const CARD_TREATMENT_FALLBACK: StickerTreatmentKey = 'lift';
+export const CARD_TREATMENT_FALLBACK: StickerTreatmentKey = STILL_STICKER_TREATMENT;
 
 export const isStickerTreatmentKey = (value: unknown): value is StickerTreatmentKey =>
   typeof value === 'string' && (STICKER_TREATMENT_KEYS as readonly string[]).includes(value);

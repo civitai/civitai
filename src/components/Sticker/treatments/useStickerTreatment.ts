@@ -2,8 +2,10 @@ import { useRouter } from 'next/router';
 import {
   DEFAULT_STICKER_TREATMENT,
   isStickerTreatmentKey,
+  STILL_STICKER_TREATMENT,
   type StickerTreatmentKey,
 } from '~/components/Sticker/treatments/sticker-treatments';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 
 /**
  * Which treatment the placed stickers on this page draw with.
@@ -16,11 +18,20 @@ import {
  */
 export function useStickerTreatment(): StickerTreatmentKey {
   const router = useRouter();
+  const { disableStickerMotion } = useCurrentUserSettings();
 
-  if (process.env.NODE_ENV !== 'development') return DEFAULT_STICKER_TREATMENT;
+  // The opt-out drops motion to the still treatment rather than to nothing: the
+  // point of a treatment is that a sticker reads as a sticker, and someone who
+  // turned off the movement did not ask to lose that.
+  const preferred: StickerTreatmentKey =
+    DEFAULT_STICKER_TREATMENT === 'motion' && disableStickerMotion
+      ? STILL_STICKER_TREATMENT
+      : DEFAULT_STICKER_TREATMENT;
+
+  if (process.env.NODE_ENV !== 'development') return preferred;
 
   const requested = router.query.stickerTreatment;
   const value = Array.isArray(requested) ? requested[0] : requested;
 
-  return isStickerTreatmentKey(value) ? value : DEFAULT_STICKER_TREATMENT;
+  return isStickerTreatmentKey(value) ? value : preferred;
 }

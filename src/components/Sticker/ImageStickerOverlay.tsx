@@ -52,11 +52,11 @@ export function ImageStickerOverlay({
   const { byImage } = useStickerPlacements(imageIds, revealed || isPlacing || !!currentUser);
 
   const all = byImage.get(imageId) ?? [];
-  // Pending rows are already scoped server-side to the placer and the owner, so
-  // anything pending in this payload belongs to the person looking at it. That
-  // is what makes "always show pending" safe rather than a leak.
-  const pending = all.filter((placement) => placement.isPending);
-  const placements = revealed || isPlacing ? all : pending;
+  // Off means off, pending included. The owner still finds a pending placement
+  // because the count chip counts it and toggles reveal — the fetch above stays
+  // ungated so that total is right, which is the part the notification path
+  // actually depends on.
+  const placements = revealed || isPlacing ? all : [];
 
   if (!placements.length && !isPlacing) return null;
   if (width <= 0 || height <= 0) return null;

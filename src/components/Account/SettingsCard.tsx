@@ -83,6 +83,7 @@ export function SettingsCard() {
           />
         </Group>
         <SwipeGalleryCardsToggle />
+        <StickerMotionToggle />
 
         <Divider label="Model File Preferences" mb={-12} />
         <Group wrap="nowrap" grow>
@@ -226,6 +227,25 @@ function SwipeGalleryCardsToggle() {
       checked={swipeGalleryCards ?? false}
       disabled={isPending}
       onChange={(e) => mutate({ swipeGalleryCards: e.target.checked })}
+      styles={{ track: { flex: '0 0 1em' } }}
+    />
+  );
+}
+
+function StickerMotionToggle() {
+  const { disableStickerMotion } = useCurrentUserSettings();
+  const { mutate, isPending } = useMutateUserSettings();
+
+  return (
+    <Switch
+      name="stickerMotion"
+      label="Animate stickers placed on images"
+      description="Placed stickers pop in and drift gently. Turn this off to keep them still — they stay visible either way. Already off if your device asks for reduced motion."
+      // Stored as an opt-out so the default costs no row, and so a creator who
+      // never opens this page gets the animation rather than a silent no.
+      checked={!(disableStickerMotion ?? false)}
+      disabled={isPending}
+      onChange={(e) => mutate({ disableStickerMotion: !e.target.checked })}
       styles={{ track: { flex: '0 0 1em' } }}
     />
   );

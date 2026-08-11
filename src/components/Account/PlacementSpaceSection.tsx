@@ -4,7 +4,6 @@ import {
   Badge,
   Divider,
   Group,
-  NumberInput,
   SegmentedControl,
   Slider,
   Stack,
@@ -24,7 +23,13 @@ import {
   STICKER_PLACEMENT_MIN_SCALE,
   stickerMaxScale,
 } from '~/shared/utils/sticker-placement';
-import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
+import {
+  onPlacementPriceGrid,
+  PLACEMENT_PRICE_STEP,
+  placementPriceTrack,
+  placementPriceUsable,
+  PLACEMENT_SURFACES,
+} from '~/shared/utils/placement';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -38,8 +43,12 @@ const { defaultMode: DEFAULT_MODE, defaultPrice: DEFAULT_PRICE } = PLACEMENT_SUR
  *
  * The price the creator sets is what gets stored; the cap is computed at read
  * from their score and membership tier, so a lapse or a score change moves it
- * immediately. Clamping the input here would make the stored number silently
- * disagree with what they typed the moment their tier changed.
+ * immediately.
+ *
+ * The slider's ceiling is that cap, so a price above it is no longer settable
+ * here — but a price stored before the cap moved is left alone and disclosed
+ * rather than rounded on sight, because silently rewriting it is how a creator
+ * finds out from their earnings.
  */
 export function PlacementSpaceSection() {
   const features = useFeatureFlags();
@@ -107,6 +116,17 @@ export function PlacementSpaceSection() {
   const overCap = typeof price === 'number' && cap > 0 && price > cap;
   const waiting = pending?.length ?? 0;
 
+  // Same track as the per-post and per-image control, so a creator does not meet
+  // two different sets of prices for one decision.
+  const track = placementPriceTrack('sticker', range?.max ?? null);
+  const sliderValue =
+    price === ''
+      ? Math.min(Math.max(DEFAULT_PRICE ?? track.min, track.min), track.max)
+      : Math.min(Math.max(price, track.min), track.max);
+  // A stored price the grid cannot land on. The slider will round it the moment
+  // it moves, and a creator who is not told discovers that from their earnings.
+  const offGrid = typeof price === 'number' && !onPlacementPriceGrid(price, track);
+
   const commit = (nextMode: string, nextPrice: number | '', nextMaxScale = maxScale) =>
     save.mutate({
       settings: { maxScale: nextMaxScale },
@@ -153,25 +173,55 @@ export function PlacementSpaceSection() {
         ]}
       />
 
-      <NumberInput
-        label={
-          <Group gap={4} wrap="nowrap">
+      <Stack gap={4} maw={320}>
+        <Group gap={4} wrap="nowrap">
+          <Text size="sm" fw={500}>
             Price per placement
-            <InfoPopover size="xs" iconProps={{ size: 14 }} width={300}>
-              <Text size="sm" maw={280} style={{ whiteSpace: 'normal' }}>
-                Your cap is {cap} Buzz, set by your creator score and membership tier. We store the
-                price you choose, so if the cap rises later your price takes effect on its own.
-              </Text>
-            </InfoPopover>
-          </Group>
-        }
-        leftSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
-        value={price}
-        min={0}
-        onChange={(value) => setPrice(typeof value === 'number' ? value : '')}
-        onBlur={() => commit(mode, price)}
-        maw={220}
-      />
+          </Text>
+          <CurrencyIcon currency={Currency.BUZZ} size={16} />
+          <InfoPopover size="xs" iconProps={{ size: 14 }} width={300}>
+            <Text size="sm" maw={280} style={{ whiteSpace: 'normal' }}>
+              Your cap is {cap} Buzz, set by your creator score and membership tier. We store the
+              price you choose, so if the cap rises later your price takes effect on its own.
+            </Text>
+          </InfoPopover>
+        </Group>
+        <Slider
+          value={sliderValue}
+          // Until the range loads the ceiling is a guess, and a creator who drags
+          // against a guess sets a price against a cap that is not theirs.
+          disabled={!range || !placementPriceUsable('sticker', range?.max ?? null)}
+          min={track.min}
+          max={track.max}
+          step={PLACEMENT_PRICE_STEP}
+          marks={
+            cap > track.min && cap < track.max
+              ? [
+                  { value: track.min, label: `${track.min}` },
+                  { value: cap, label: `cap ${cap}` },
+                  { value: track.max, label: `${track.max}` },
+                ]
+              : [
+                  { value: track.min, label: `${track.min}` },
+                  { value: track.max, label: `${track.max}` },
+                ]
+          }
+          label={(value) => `${value} Buzz`}
+          onChange={setPrice}
+          // Commits on release rather than per pixel: dragging emits a value per
+          // pixel and each one would be a write.
+          onChangeEnd={(value) => {
+            setPrice(value);
+            commit(mode, value);
+          }}
+        />
+        {offGrid && (
+          <Text size="xs" c="yellow">
+            Placers pay {price} Buzz. The slider moves in {PLACEMENT_PRICE_STEP}s from {track.min},
+            so using it will change this price.
+          </Text>
+        )}
+      </Stack>
 
       <Stack gap={4}>
         <Group gap={4} wrap="nowrap">
