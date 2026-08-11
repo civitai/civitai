@@ -128,7 +128,6 @@ export type Account = {
   bountyEntries: Capped<BountyEntry>;
   /** Null when the notifications service is unreachable — distinct from "none sent". */
   notifications: Capped<Notification> | null;
-  resourceGenerations: ResourceGeneration[];
   shopPurchases: Capped<ShopPurchase>;
   availableBadges: AvailableCosmetic[];
 };

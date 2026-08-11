@@ -8,6 +8,26 @@ export const dateTime = (value: Date | string | null) =>
 export const num = (value: number) => value.toLocaleString();
 
 /**
+ * User-authored rich text (review `details`, comment bodies) is stored as HTML. Svelte escapes it, so
+ * rendering it raw shows a moderator the markup — and any filter matching on it matches the tags, which
+ * made a search for "p" hit every row. Strips tags and decodes the handful of entities that survive.
+ *
+ * Deliberately NOT a route to `{@html}`: this is display and search text for hostile user input, and
+ * the only safe thing to do with it is stop treating it as markup.
+ */
+export const plainText = (value: string | null | undefined): string =>
+  (value ?? '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/**
  * A server row as it arrives over `/api/*`: `Date` becomes `string`, everything else is unchanged.
  *
  * Importing a TYPE from `$lib/server` is erased at build and pulls no database client into the client

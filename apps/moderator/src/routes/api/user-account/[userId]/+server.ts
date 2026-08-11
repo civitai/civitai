@@ -12,12 +12,10 @@ import {
   getCosmetics,
   getReactionTargets,
   getReceivedReviews,
-  getResourceGenerations,
   getReviews,
   getTrainingRuns,
   getUserNotifications,
 } from '$lib/server/user-account.service';
-import { softly } from '$lib/server/user-signals.service';
 
 // Client-fetched: the Buzz balance is an external HTTP call and the lists are only wanted once an
 // investigation is already underway. Keeping them off the load means identity still renders immediately.
@@ -36,7 +34,6 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     bounties,
     bountyEntries,
     notifications,
-    resourceGenerations,
     shopPurchases,
     availableBadges,
   ] = await Promise.all([
@@ -51,9 +48,6 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     getBounties(userId),
     getBountyEntries(userId),
     getUserNotifications(userId),
-    // The only ClickHouse read on this endpoint. Left unguarded it took Reviews, Comments, Bounties
-    // and Cosmetics down with it, none of which touch ClickHouse.
-    softly('resourceGenerations', () => getResourceGenerations(userId), []),
     getShopPurchases(userId),
     getAvailableBadges(userId),
   ]);
@@ -70,7 +64,6 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     bounties,
     bountyEntries,
     notifications,
-    resourceGenerations,
     shopPurchases,
     availableBadges,
   });

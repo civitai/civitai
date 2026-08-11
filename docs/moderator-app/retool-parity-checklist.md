@@ -152,8 +152,15 @@ Open, with the evidence each audit produced:
       Notification, and `notificationLink`. The last is live on the receiving end:
       `system-announcement`'s `prepareMessage` reads `details.url`, and the send form posts `message`
       only.
-- [ ] **`GensPerResource` look-back days hardcoded to 30** — the service takes the parameter, nothing
-      passes it.
+- [x] **`GensPerResource` look-back days hardcoded to 30** (2026-08-11 — Retool's selector, 7/30/90/365).
+      Moved to its own `/api/user-generations/[userId]?days=` endpoint rather than a parameter on the
+      account bundle, so changing the window does not refetch the other thirteen queries — and this app's
+      only ClickHouse read now fails on its own instead of taking Reviews, Comments, Bounties and
+      Cosmetics with it (the reason it needed a `softly` wrapper there). `days` is **clamped** in the
+      endpoint: it is interpolated into the ClickHouse query, not bound. The control is deliberately
+      **outside** `ListCard` — that component renders its empty state instead of the body snippet, so a
+      control nested inside vanishes on exactly the accounts where you need to widen the window to find
+      anything. (Caught by looking at the page; it typechecked fine either way.)
 - [ ] **Cover image and profile picture not shown.** Retool had "Look at Cover Image" / "Look at PFP";
       checking those for TOS content was an in-tool action.
 
@@ -212,7 +219,15 @@ Open, with the evidence each audit produced:
       moderator name and the panel renders it.)
 - [ ] **Model/comment breakdowns** (`NumTos`, `NumPoi`, `NumNSFW`, `NumLocked`, `NumDeleted`,
       `NumTOSViolations`, `NumHidden`) collapsed to a single `COUNT(*)`.
-- [ ] **Review text (`details`) is never shown** — reviews can be deleted on rating and date alone.
+- [x] **Review text (`details`) is never shown** (2026-08-11). Half of this was already stale — the
+      filter-row work rendered it on *Reviews written*. **Reviews received still dropped it**, while its
+      own Search filter matched against it, so a moderator could search for text the page would not show.
+      Now rendered on both.
+- [x] **Review text rendered as raw markup** (2026-08-11 — found while verifying the item above, not
+      previously listed). `details` is stored as HTML, and Svelte escapes it, so moderators read literal
+      `<p>` tags; the Search filter matched the tags too, making a search for "p" hit every row. A shared
+      `plainText` helper now strips tags for both display and search. Deliberately not `{@html}` — this is
+      hostile user input, and the safe thing is to stop treating it as markup.
 - [ ] **Notification bodies dropped** from the panel captioned "context for 'I was never warned'".
 - [ ] **`setRewardsEligibility` has no UI**, and as wired it cannot succeed (`callMainApp` sends query
       params; the endpoint reads `req.body` and requires `modId`).

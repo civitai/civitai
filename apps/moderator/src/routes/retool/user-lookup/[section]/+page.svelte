@@ -124,7 +124,7 @@
         {submitting}
       />
     {:else if section === 'generation'}
-      <GenerationPanel {signals} {account} civitaiUrl={data.civitaiUrl} />
+      <GenerationPanel {signals} userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
     {:else if section === 'training'}
       <TrainingsPanel {account} civitaiUrl={data.civitaiUrl} />
     {:else if section === 'bounties'}

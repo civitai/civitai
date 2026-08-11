@@ -2,7 +2,7 @@
   import { enhance } from '$app/forms';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { LINK_CLASS, dateTime } from '$lib/format';
+  import { LINK_CLASS, dateTime, plainText } from '$lib/format';
   import type { Account } from './user-account';
   import type { SubmitFunction } from '@sveltejs/kit';
   import type { FormResult } from './form-result';
@@ -37,7 +37,7 @@
     r: { rating?: number | null; details?: string | null }
   ) =>
     (!f.rating || String(r.rating ?? '') === f.rating) &&
-    (!f.q || (r.details ?? '').toLowerCase().includes(f.q.toLowerCase()));
+    (!f.q || plainText(r.details).toLowerCase().includes(f.q.toLowerCase()));
 
   const filterWritten = (rows: Account['reviews']['items']) =>
     rows.filter(
@@ -123,7 +123,7 @@
                   {#if r.exclude}<Badge variant="secondary">excluded</Badge>{/if}
                   <span class="text-xs text-dark-2">{dateTime(r.createdAt)}</span>
                   {#if r.details}
-                    <p class="w-full wrap-break-word text-dark-1">{r.details}</p>
+                    <p class="w-full wrap-break-word text-dark-1">{plainText(r.details)}</p>
                   {/if}
                 </li>
               {/each}
@@ -177,6 +177,9 @@
                 {/if}
                 {#if r.exclude}<Badge variant="secondary">excluded</Badge>{/if}
                 <span class="text-xs text-dark-2">{dateTime(r.createdAt)}</span>
+                {#if r.details}
+                  <p class="w-full wrap-break-word text-dark-1">{plainText(r.details)}</p>
+                {/if}
               </li>
             {/each}
           </ul>
