@@ -4,6 +4,7 @@ import { getClickhouse } from './clickhouse';
 import { clickhouseDate } from './clickhouse-date';
 import { getBuzz } from './buzz';
 import { getNotifications } from './notifications';
+import { getModeratorDb } from './moderator-db';
 import { usersByIds } from './users.service';
 import type { BuzzTransaction } from '../../routes/retool/user-lookup/buzz-history';
 
@@ -644,6 +645,45 @@ export async function getModActivity(userId: number, limit = 40): Promise<ModAct
     moderatorId: r.userId,
     moderatorUsername: r.userId ? byId.get(r.userId)?.username ?? null : null,
   }));
+}
+
+// RETOOL-ERA MODERATION HISTORY (`ReToolActions`, 131k rows).
+//
+// This table has NO target column — the account is embedded in free text, e.g.
+// `BAN: User tipclub5org1 12895025` or `Strike 1 on user 674388`. So the only way to attribute a row to
+// an account is to match the id inside the string, with a word boundary so 1290051 does not also match
+// 12900510. Format-agnostic on purpose: the phrasing varies by app and by year, and a prefix-based
+// parser misses the older rows entirely.
+//
+// Seq scan by necessity (no index supports this, and one on a free-text column would not help a
+// substring match) — measured at ~80ms over the full table, which is fine for a single lookup and is
+// why it is a separate call rather than part of the account bundle.
+//
+// `User` is a Retool DISPLAY NAME, not a Civitai account, and only 5 of 37 map to one. It is shown
+// as-is; a name -> userId mapping is a separate migration.
+export type RetoolActivityRow = {
+  id: number;
+  at: Date;
+  moderator: string | null;
+  app: string | null;
+  action: string | null;
+};
+
+export async function getRetoolActivity(
+  userId: number,
+  limit = 25
+): Promise<RetoolActivityRow[]> {
+  const rows = await getModeratorDb()
+    .selectFrom('ReToolActions')
+    .select(['id', 'Event as at', 'User as moderator', 'App as app', 'ActionType as action'])
+    // `\\y` and not `\y`: in a template literal `\y` is an unrecognised escape and collapses to a bare
+    // `y`, so the pattern silently became `y<id>y` and matched nothing — a broken query that returns 200
+    // and renders as "this account has no Retool history".
+    .where(sql<boolean>`"ActionType" ~ ('\\y' || ${String(userId)} || '\\y')`)
+    .orderBy('Event', 'desc')
+    .limit(limit)
+    .execute();
+  return rows as RetoolActivityRow[];
 }
 
 // TRAINING RUNS (Retool's NewSubmittedTrainsBrett). Retool selected `ModelFile.*` plus ~20 training

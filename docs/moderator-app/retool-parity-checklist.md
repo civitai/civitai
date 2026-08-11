@@ -237,10 +237,21 @@ Open, with the evidence each audit produced:
 - [x] **The send form is missing `EntityType` / `EntityId`**, which Retool's `buzzSendEntityType` carries.
 - [x] **Deduct Types reference table** beside the send form (which types lower lifetime balance, which
       can go negative).
-- [ ] **Moderation activity omits the Retool era.** Only `ModActivity` is read; `ReToolActions` is typed
-      and queried nowhere, so all pre-migration history is absent while the panel reads as complete.
-      (Correction: "must show who did each action" is **already done** — `getModActivity` joins the
-      moderator name and the panel renders it.)
+- [x] **Moderation activity omits the Retool era** (2026-08-11 — a `Retool era (N)` list under the
+      current one). The panel previously said this history "cannot be queried per-account"; that was
+      wrong. `ReToolActions` has no subject column, but the account id is present **inside the free-text
+      action** (`BAN: User tipclub5org1 12895025`, `Strike 1 on user 674388`), so matching the id with a
+      word boundary recovers it — format-agnostic, because the phrasing varies by app and year and a
+      prefix parser misses the older rows. ~80ms seq scan over 131k rows; no index helps a substring
+      match, which is why it is its own call and not part of the account bundle.
+      Kept as a separate list, not merged: these rows have no entity link and their `User` is a Retool
+      **display name** (only 5 of 37 map to an account), so interleaving would imply a continuity the
+      data does not have.
+      WARNING on how this nearly shipped broken: the pattern was written with a single backslash in a
+      template literal, where it is an unrecognised escape that collapses to a bare letter — so it
+      searched for `y<id>y`, matched nothing, typechecked, returned 200, and rendered an empty section
+      that reads as "this account has no Retool history". Only comparing the endpoint against the same
+      query run directly caught it.
 - [x] **Model/comment breakdowns** — already built and ticked on evidence (2026-08-11): `getModelFlags`
       returns NSFW / ToS / POI / locked / deleted and `getCommentFlags` returns ToS / hidden, rendered
       beside each count and hidden when zero. Stale entry, no new work.

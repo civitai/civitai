@@ -21,12 +21,22 @@
   let expanded = $state(false);
 
   // Same shape as SecuritySignals: derived promise, no state to reassign.
+  export type RetoolActivityRow = {
+    id: number;
+    at: string;
+    moderator: string | null;
+    app: string | null;
+    action: string | null;
+  };
+
   const activity = $derived(
     browser
-      ? fetch(`/api/user-mod-activity/${userId}`).then((r): Promise<ModActivityRow[]> => {
-          if (!r.ok) throw new Error(String(r.status));
-          return r.json();
-        })
+      ? fetch(`/api/user-mod-activity/${userId}`).then(
+          (r): Promise<{ current: ModActivityRow[]; retool: RetoolActivityRow[] }> => {
+            if (!r.ok) throw new Error(String(r.status));
+            return r.json();
+          }
+        )
       : null
   );
 
@@ -65,16 +75,16 @@
 
   {#await activity}
     <p class="text-sm text-dark-2">Loading moderator activity…</p>
-  {:then rows}
+  {:then data}
+    {@const rows = data?.current}
+    {@const retool = data?.retool ?? []}
     {#if !rows}
       <p class="text-sm text-dark-2">Loading moderator activity…</p>
     {:else if rows.length === 0}
-      <!-- NOT "no moderator activity": actions taken in Retool were logged to `ReToolActions`, which
-           records the moderator and the app but no subject id, so it cannot be queried per-account.
-           An account actioned only before the migration is silent here, not clean. -->
       <p class="text-sm text-dark-2">
-        Nothing in ModActivity for this account. Actions taken in Retool before the migration are not
-        recorded per-account and would not appear here.
+        Nothing in ModActivity for this account.{retool.length
+          ? ' The Retool era below is not empty — read that before concluding anything.'
+          : ''}
       </p>
     {:else}
       {@const shown = filterRows(rows)}
@@ -112,6 +122,32 @@
           {expanded ? 'Show less' : `Show all ${rows.length}`}
         </button>
       {/if}
+    {/if}
+
+    <!-- Pre-migration history from `ReToolActions`. Kept in its own list rather than merged: these rows
+         have no entity link and no moderator id — `User` is a Retool DISPLAY NAME, and only 5 of 37 map
+         to a Civitai account — so interleaving them would imply a continuity the data does not have.
+         The table has no subject column either; rows are matched by the account id appearing in the
+         free-text action, which is why the phrasing varies so much below. -->
+    {#if retool.length}
+      <div class="mt-5 border-t border-dark-4 pt-4">
+        <h4 class="mb-1 text-xs tracking-wide text-dark-2 uppercase">
+          Retool era ({retool.length})
+        </h4>
+        <p class="mb-2 text-xs text-dark-2">
+          Before the migration. Matched on the account id inside the logged action, so the wording is
+          whatever the Retool app wrote; the moderator is a Retool display name, not an account.
+        </p>
+        <ul class="space-y-1.5 text-sm">
+          {#each retool as row (row.id)}
+            <li class="flex flex-wrap items-baseline gap-x-2">
+              <span class="text-dark-2">{dateTime(row.at)}</span>
+              <span class="text-dark-0">{row.action}</span>
+              <span class="text-xs text-dark-2">by {row.moderator ?? 'unknown'}</span>
+            </li>
+          {/each}
+        </ul>
+      </div>
     {/if}
   {:catch}
     <p class="text-sm text-red-300">Could not load moderator activity.</p>
