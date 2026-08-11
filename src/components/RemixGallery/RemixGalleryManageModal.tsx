@@ -18,7 +18,6 @@ import {
 import { IconCheck, IconPin, IconPinnedOff, IconTrash, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useMemo, useState } from 'react';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
