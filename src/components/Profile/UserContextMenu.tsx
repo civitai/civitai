@@ -276,7 +276,6 @@ export const UserContextMenu = ({ username }: { username: string }) => {
         <>
           {isMod && (
             <>
-              <SuspendPlacerMenuItem userId={user.id} />
               {env.NEXT_PUBLIC_USER_LOOKUP_URL && (
                 <Menu.Item
                   component="a"
@@ -350,6 +349,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               >
                 {user.muted ? 'Unmute user' : 'Mute user'}
               </Menu.Item>
+              <SuspendPlacerMenuItem userId={user.id} />
               {canManageUserPayments && (
                 <>
                   <Menu.Item
