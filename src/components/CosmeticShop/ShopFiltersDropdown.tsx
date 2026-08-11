@@ -13,7 +13,7 @@ import {
 import { IconFilter } from '@tabler/icons-react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { getDisplayName } from '~/utils/string-helpers';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
@@ -41,6 +41,15 @@ export function ShopFiltersDropdown({ filters, setFilters, availableTypes }: Pro
   // Owned and wishlisted both read the viewer's own collection, so neither can
   // do anything logged out.
   const canFilterByAccount = !!currentUser;
+  const accountFiltersActive = !!filters.modifier || !!filters.wishlisted;
+
+  // Logging out mid-browse leaves those filters set with no chip to unset them,
+  // and they'd keep matching against an empty owned/wishlisted set — an empty
+  // grid the viewer can't recover from.
+  useEffect(() => {
+    if (canFilterByAccount || !accountFiltersActive) return;
+    setFilters((prev) => ({ ...prev, modifier: undefined, wishlisted: undefined }));
+  }, [canFilterByAccount, accountFiltersActive, setFilters]);
 
   const [opened, setOpened] = useState(false);
   const filterLength =

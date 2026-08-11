@@ -19,7 +19,6 @@ export type ShopBrowseItem = {
   cosmeticId: number;
   title: string;
   unitAmount: number;
-  createdAt: Date;
   reviewedAt?: Date | null;
   availableQuantity?: number | null;
   availableTo?: Date | null;
@@ -71,12 +70,22 @@ export function browseShopItems<T>({
   });
 
   const listedAt = (entry: T) => {
-    const item = shopItemOf(entry);
-    return new Date(listedAtOf?.(entry) ?? item.reviewedAt ?? item.createdAt).getTime();
+    const date = listedAtOf?.(entry) ?? shopItemOf(entry).reviewedAt;
+    return date ? new Date(date).getTime() : null;
   };
   // Newest resolves ties by id so a page boundary can't drop or repeat a card,
-  // matching what the server-paged hub does for the same reason.
-  const byNewest = (a: T, b: T) => listedAt(b) - listedAt(a) || shopItemOf(b).id - shopItemOf(a).id;
+  // matching what the server-paged hub does for the same reason. An item with no
+  // listing date sorts as the oldest in both directions, the same way the hub's
+  // `reviewedAt` NULLS LAST/FIRST does — falling back to its submission time
+  // would order the two surfaces differently.
+  const byNewest = (a: T, b: T) => {
+    const aAt = listedAt(a);
+    const bAt = listedAt(b);
+    if (aAt == null || bAt == null) {
+      if (aAt !== bAt) return aAt == null ? 1 : -1;
+    } else if (aAt !== bAt) return bAt - aAt;
+    return shopItemOf(b).id - shopItemOf(a).id;
+  };
 
   const compare: Record<CosmeticShopSort, (a: T, b: T) => number> = {
     [CosmeticShopSort.Newest]: byNewest,
@@ -102,6 +111,11 @@ export function browseShopItems<T>({
  *
  * Separate from `usePagedList` for the community hub, which pages server-side
  * and so needs the reset without the slicing.
+ *
+ * Adjusted during render on purpose (React's "adjusting state when a prop
+ * changes" pattern) rather than in an effect: an effect would let one render
+ * through with the stale page, which on the server-paged hub is a wasted fetch
+ * of a page the new filters may not even have.
  */
 export function useResettingPage(resetKey: string) {
   const [page, setPage] = useState(1);
