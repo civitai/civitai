@@ -36,6 +36,7 @@ export type UserIdentity = {
   /** Pending + Processing reports filed AGAINST this account. */
   openReportCount: number;
   /** The avatar behind `profilePictureId`. `image` above is the legacy URL and is not the same thing. */
+  browsingLevel: number | null;
   profilePictureUrl: string | null;
   profilePictureType: string | null;
   profilePictureNsfwLevel: number | null;
@@ -305,6 +306,9 @@ async function getIdentity(userId: number): Promise<UserIdentity | null> {
       'u.rewardsEligibility',
       'u.onboarding',
       'u.excludeFromLeaderboards',
+      // Retool's "Viewing: PG, PG13, …" — what this account has chosen to be shown, which is context
+      // for a report about what they saw or posted.
+      'u.browsingLevel',
       // jsonb path extraction has no builder equivalent.
       sql<string | null>`u.meta #>> '{banDetails,reasonCode}'`.as('banReason'),
       sql<string | null>`u.meta #>> '{banDetails,detailsInternal}'`.as('banDetails'),

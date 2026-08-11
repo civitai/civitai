@@ -4,6 +4,9 @@
   import { cn } from '@civitai/ui/utils.js';
   import LookupSearch from '$lib/components/LookupSearch.svelte';
   import { LINK_CLASS } from '$lib/format';
+  import { getBrowsingLevelLabel } from '@civitai/shared';
+  import { enhance } from '$app/forms';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { userUrl } from '$lib/entity-url';
   import type { LayoutData } from './$types';
   import { ADMIN_SECTIONS, DEFAULT_SECTION, SECTIONS, SECTION_LINKS } from './sections';
@@ -54,7 +57,17 @@
       {/if}
     </h2>
     <code class="text-sm text-dark-2">#{identity.id}</code>
-    {#if identity.bannedAt}<Badge variant="destructive">banned</Badge>{/if}
+    {#if identity.bannedAt}
+      <!-- Retool's "Banned for CSAM" was its own chip. The reason decides what a moderator does next —
+           a Nudify ban and a SexualMinor ban are not the same conversation — so it rides on the badge
+           rather than sitting one section away under Admin. -->
+      <Badge variant="destructive">
+        banned{identity.banReason ? `: ${identity.banReason}` : ''}
+      </Badge>
+      {#if identity.banReason?.startsWith('SexualMinor')}
+        <Badge variant="destructive">CSAM ban</Badge>
+      {/if}
+    {/if}
     <!-- Retool put both of these in the persistent header. A CSAM report against the account is the
          single most important thing on the screen, and a Pending restriction is a SYSTEM mute nobody
          has ruled on — without it that account reads as an unexplained manual mute. -->
@@ -104,6 +117,9 @@
         spoke with a mod ×{data.result.modContact.chats}
       </Badge>
     {/if}
+    {#if identity.browsingLevel}
+      <Badge variant="secondary">Viewing: {getBrowsingLevelLabel(identity.browsingLevel)}</Badge>
+    {/if}
     {#if identity.email}
       <span class="text-xs text-dark-2">{identity.email}</span>
     {/if}
@@ -111,6 +127,22 @@
 
   <!-- The ticket asked for open reports "very clearly at the top", and actionable from here. A report
        nobody has ruled on changes what every other panel on this page means. -->
+  <!-- Retool kept Force Logout in the persistent header, not one section away: it is the thing you
+       reach for while reading something else. `?/forceLogout` resolves against the current section
+       route, which defines the action, so this works from every section. Sessions only — it does not
+       mute, ban or change the account. -->
+  {#if data.canAct && identity}
+    <form
+      method="POST"
+      action="?/forceLogout"
+      use:enhance
+      class="mb-4 flex justify-end"
+    >
+      <input type="hidden" name="userId" value={identity.id} />
+      <Button type="submit" size="xs" variant="outline">Force logout</Button>
+    </form>
+  {/if}
+
   {#if identity.openReportCount > 0}
     <div
       class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-200"

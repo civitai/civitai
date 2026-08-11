@@ -181,10 +181,13 @@ Open, with the evidence each audit produced:
       (`coverImageId` and `sfwCoverImageId`); both are shown, because an account can pass on the SFW one
       and fail on the real one, and a moderator asked about a cover needs the one that was reported.
 
-- [ ] **Header: the strike chip, subscription tier and Force Logout are missing from it.** (The header
-      itself, and lookup by id / username / email, are **already done** — `+layout.svelte` keeps
-      username, id and the banned/muted/deleted/moderator badges on every section, and `resolveUserId`
-      already tries all three.) Force Logout, mute, ban and purge exist but live under Admin.
+- [x] **Header: the strike chip, subscription tier and Force Logout** (2026-08-11). The first two were
+      already there; **Force Logout** is now in the header too, where Retool had it — it is the thing
+      you reach for while reading something else, and it was a section away. `?/forceLogout` resolves
+      against the current section route, so it works from every section. Sessions only: it does not
+      mute, ban or change the account, so it needs no confirmation.
+      Mute / ban / purge stay under Admin deliberately — see the Placement item below, which is about
+      those three and is still open.
 - [ ] **Paddle account linking is absent.** Retool had a three-step wizard behind the Membership
       panel's Paddle button — find account by customer id, unlink an old one, link this one — writing
       `User.paddleCustomerId` with a `retool_db` audit row. The port reads that column and deep-links
@@ -287,11 +290,16 @@ browser as user 1290051, not by reading the code.
       (2026-08-09 — all three on the Admin section; see 1a).
 - [ ] **Notifications**: a **Delete Notification** action and a **Link** field on the send form; ours is
       message-only with no delete.
-- [ ] **Browsing level shown** ("Viewing: PG, PG13, R, X, XXX, Blocked") and a **Comment Spammer** alert
-      in Quick Info.
+- [x] **Browsing level shown** (2026-08-11 — a `Viewing: <label>` header chip off `User.browsingLevel`,
+      labelled with the shared `getBrowsingLevelLabel` so it matches the rest of the site).
+- [ ] **Comment Spammer alert** in Quick Info — the other half of the old browsing-level item, split out
+      because it is a separate signal and nothing computes it yet.
 - [ ] **Timed mutes**: a **Mute Start** datetime and a **Notify User** button beside the presets.
-- [ ] Header chips the checklist missed: **Banned for CSAM**, **UserReport by \<mod\>**, and a
-      **Copy Retool URL / Profile** pair.
+- [x] **Banned for CSAM** (2026-08-11). The ban badge now carries its reason code, and a separate
+      **CSAM ban** chip appears for the `SexualMinor*` codes — a Nudify ban and a SexualMinor ban are
+      not the same next conversation, and the reason was a section away under Admin. Verified against
+      both a `SexualMinor` account (both chips) and a `SexualPOI` one (reason only, no CSAM chip).
+- [ ] Header chips still missing: **UserReport by \<mod\>**, and a **Copy Retool URL / Profile** pair.
 
 ## 2. Bulk Image Manager
 
