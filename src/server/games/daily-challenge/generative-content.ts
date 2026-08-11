@@ -54,11 +54,17 @@ function pickClient(model: string) {
 export const MODEL_BUZZ_RATES: Record<string, { input: number; output: number }> = {
   [AI_MODELS.GPT_5_NANO]: { input: 0.05, output: 0.4 },
   [AI_MODELS.GPT_4O_MINI]: { input: 0.15, output: 0.6 },
-  // Pairwise judging routes. Cross-checked against the two full-field runs of challenge 424:
-  // these rates reproduce the billed $0.462 (qwen-flash, 3005 comparisons) to within 2% and the
-  // billed $2.773 (luna, 4228 comparisons) to within 4%.
-  [AI_MODELS.QWEN_FLASH]: { input: 0.03, output: 0.12 },
-  [AI_MODELS.GPT_5_6_LUNA]: { input: 0.125, output: 0.5 },
+  // Pairwise judging routes. Published OpenRouter rates, verified 2026-08-11. Neither model
+  // exposes a separate pricing.image component — per-image cost is already inside the
+  // prompt-token rate.
+  //
+  // These UNDER-COUNT the permissive route by ~17%: luna bills reasoning tokens that never
+  // appear in the reported usage. Measured over 4,228 comparisons on challenge 424 — $2.77
+  // actually billed against the $2.36 these rates predict from the reported counts. qwen-flash
+  // reconciles to 0.9% over the same run. Treat recorded spend on the permissive route as a
+  // floor, never as the number to size a budget guard against. Fix in #3815.
+  [AI_MODELS.QWEN_FLASH]: { input: 0.03, output: 0.13 },
+  [AI_MODELS.GPT_5_6_LUNA]: { input: 0.1, output: 0.6 },
 };
 
 /** Pure: token usage -> Buzz (1 Buzz = $0.001), priced via MODEL_BUZZ_RATES. 0 for unrated models. */
