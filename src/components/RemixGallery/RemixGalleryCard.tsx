@@ -8,10 +8,12 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { RemixGalleryManageModal } from '~/components/RemixGallery/RemixGalleryManageModal';
 import { RemixGallerySubmitModal } from '~/components/RemixGallery/RemixGallerySubmitModal';
 import {
+  dedupeGalleryItems,
   galleryDialogImages,
   trimToWholeRows,
   type RemixGalleryItem,
 } from '~/components/RemixGallery/remix-gallery.utils';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -29,6 +31,11 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const enabled = !!features.remixGallery;
+  // Gallery entries are other people's images, so the viewer's own browsing
+  // level has to travel with the request. It is also what resolves their
+  // content addons server-side, so omitting it silently disables `disableMinor`
+  // and their blocked-tag list as well as the level filter itself.
+  const browsingLevel = useBrowsingLevelDebounced();
 
   const { data: visibility } = trpc.placement.getRemixGalleryVisibility.useQuery(
     { imageId },
@@ -37,7 +44,7 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.placement.getRemixGallery.useInfiniteQuery(
-      { imageId },
+      { imageId, browsingLevel },
       {
         enabled: enabled && !!visibility?.render,
         getNextPageParam: (lastPage) => lastPage.nextCursor,
@@ -46,7 +53,9 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
 
   if (!enabled || !visibility?.render) return null;
 
-  const items: RemixGalleryItem[] = data?.pages.flatMap((page) => page.items) ?? [];
+  const items: RemixGalleryItem[] = dedupeGalleryItems(
+    data?.pages.flatMap((page) => page.items) ?? []
+  );
   // Trimming only applies while more entries are waiting. On the last page the
   // remainder is everything that is left, and dropping it would make entries
   // the owner was paid for permanently unreachable.

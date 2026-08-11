@@ -18,10 +18,12 @@ import {
 import { IconCheck, IconPin, IconPinnedOff, IconTrash, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useMemo, useState } from 'react';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { RemixGalleryItem } from '~/components/RemixGallery/remix-gallery.utils';
+import { dedupeGalleryItems } from '~/components/RemixGallery/remix-gallery.utils';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { REMIX_GALLERY_MAX_PINNED } from '~/shared/utils/remix-gallery';
 import { showErrorNotification } from '~/utils/notifications';
@@ -39,15 +41,18 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
   const dialog = useDialogContext();
   const utils = trpc.useUtils();
 
+  const browsingLevel = useBrowsingLevelDebounced();
+
   const { data: pending, isLoading: pendingLoading } =
     trpc.placement.getPendingRemixGallerySubmissions.useQuery();
-  const { data, isLoading } = trpc.placement.getRemixGallery.useInfiniteQuery(
-    { imageId },
-    { getNextPageParam: (lastPage) => lastPage.nextCursor }
-  );
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    trpc.placement.getRemixGallery.useInfiniteQuery(
+      { imageId, browsingLevel },
+      { getNextPageParam: (lastPage) => lastPage.nextCursor }
+    );
 
   const items: RemixGalleryItem[] = useMemo(
-    () => data?.pages.flatMap((page) => page.items) ?? [],
+    () => dedupeGalleryItems(data?.pages.flatMap((page) => page.items) ?? []),
     [data]
   );
 
@@ -247,6 +252,20 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
             <Text size="sm" c="dimmed" mt="xs">
               Nothing live in this gallery yet.
             </Text>
+          )}
+
+          {/* Without this an owner past the first page cannot remove or pin
+              anything below it — the entries are simply not in the list. */}
+          {hasNextPage && (
+            <Button
+              variant="subtle"
+              size="compact-sm"
+              mt="xs"
+              loading={isFetchingNextPage}
+              onClick={() => fetchNextPage()}
+            >
+              Show more
+            </Button>
           )}
         </div>
       </Stack>

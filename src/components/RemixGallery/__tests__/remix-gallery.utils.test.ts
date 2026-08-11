@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { RemixGalleryItem } from '~/components/RemixGallery/remix-gallery.utils';
 import {
+  dedupeGalleryItems,
   galleryDialogImages,
   trimToWholeRows,
 } from '~/components/RemixGallery/remix-gallery.utils';
@@ -12,6 +13,26 @@ const items = (count: number, startId = 1) =>
     pinned: false,
     image: { id: startId + index },
   })) as unknown as RemixGalleryItem[];
+
+describe('dedupeGalleryItems', () => {
+  it('keeps the first occurrence when a page repeats a placement', () => {
+    // The server has already shipped one cursor bug that returned a pinned
+    // entry on two consecutive pages. Two cards would then share a React key,
+    // and the row trimming below would count the duplicate toward a row it does
+    // not fill.
+    const [a, b] = items(2);
+    expect(dedupeGalleryItems([a, b, a]).map((item) => item.placementId)).toEqual([1, 2]);
+  });
+
+  it('leaves a page with no repeats untouched', () => {
+    const page = items(4);
+    expect(dedupeGalleryItems(page)).toEqual(page);
+  });
+
+  it('returns nothing for an empty gallery', () => {
+    expect(dedupeGalleryItems([])).toEqual([]);
+  });
+});
 
 describe('trimToWholeRows', () => {
   it('drops a partial trailing row', () => {

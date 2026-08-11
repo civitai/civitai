@@ -34,9 +34,12 @@ export default function RemixSubmissions() {
 
   const retract = trpc.placement.retractRemixGallerySubmission.useMutation({
     onSuccess: () => {
+      // States what happened, not what the ledger has done. A successful settle
+      // means the transition was claimed, not that the refund leg has paid —
+      // chunk C ships a sweep for unpaid legs precisely because those differ.
       showSuccessNotification({
         title: 'Withdrawn',
-        message: 'Your Buzz has been returned in full.',
+        message: 'Your submission is withdrawn. Your Buzz is on its way back.',
       });
       utils.placement.invalidate();
     },
