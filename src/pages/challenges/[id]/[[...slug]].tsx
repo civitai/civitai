@@ -1,3 +1,4 @@
+import { challengeEndedMessage } from '~/components/Challenge/challenge-messages';
 import {
   Accordion,
   ActionIcon,
@@ -270,9 +271,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   const endAndPickWinnersMutation = trpc.challenge.endAndPickWinners.useMutation({
     onSuccess: (data) => {
       queryUtils.challenge.getById.invalidate({ id });
-      showSuccessNotification({
-        message: `Challenge ended. ${data.winnersCount} winner(s) selected.`,
-      });
+      showSuccessNotification({ message: challengeEndedMessage(data) });
     },
     onError: handleMutationError,
   });

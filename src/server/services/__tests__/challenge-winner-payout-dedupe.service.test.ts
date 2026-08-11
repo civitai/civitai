@@ -593,6 +593,43 @@ describe('endChallengeAndPickWinners — hands a comparison engine to the comple
     expect(vi.mocked(helpers.claimChallengeForCompletion)).not.toHaveBeenCalled();
   });
 
+  // A moderator who just saw a success toast and no winners is LIKELY to click again, so this is
+  // a sequence that will happen rather than a hypothetical one.
+  it('is idempotent on a double-click: two clicks queue one completion, not two', async () => {
+    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine);
+    mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'pairwise-ladder' });
+
+    const first = await endChallengeAndPickWinners(CHALLENGE_ID);
+    const second = await endChallengeAndPickWinners(CHALLENGE_ID);
+
+    expect(first).toMatchObject({ queued: true });
+    expect(second).toMatchObject({ queued: true });
+    // There is no queue to double up: both clicks write the same state — an endsAt in the past —
+    // and the completion job takes it exactly once under claimChallengeForCompletion.
+    expect(mockCreateChallengeWinner).not.toHaveBeenCalled();
+    expect(mockCreateBuzzTransactionMany).not.toHaveBeenCalled();
+    const updates = mockDbWrite.challenge.update.mock.calls.filter(
+      (call) => (call[0] as { data: Record<string, unknown> }).data.endsAt
+    );
+    expect(updates).toHaveLength(2);
+  });
+
+  it('refuses once the completion job has claimed it, rather than re-queueing underneath it', async () => {
+    // The claim moves the challenge to Completing. A third click then has to bounce off the status
+    // guard — re-queueing here is what would put a second completion behind an in-flight one.
+    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine);
+    mockGetChallengeById.mockResolvedValue({
+      ...challengeRow,
+      judgingEngine: 'pairwise-ladder',
+      status: ChallengeStatus.Completing,
+    });
+
+    await expect(endChallengeAndPickWinners(CHALLENGE_ID)).rejects.toThrow(
+      /Challenge must be Active/
+    );
+    expect(mockDbWrite.challenge.update).not.toHaveBeenCalled();
+  });
+
   it('still runs a legacy challenge inline, exactly as before', async () => {
     mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'legacy-absolute' });
     mockGetJudgedEntries.mockResolvedValue(JUDGED_ENTRIES);

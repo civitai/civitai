@@ -193,10 +193,15 @@ export type RerunResult = {
  * saturated 0-10 absolute score — a coin flip deciding who could be ranked. This is a cut on the
  * ladder's own measured order, with no random component and no saturated scale.
  *
- * Single pass, deliberately. A repeat-until-settled loop was measured never to settle (0/200 seeds
- * under a judge with the seat bias we actually have), so it always ran its cap; and later passes
- * cost 41-65% of the first rather than being free, because a changed order means changed midpoints
- * means new pairs. Four passes at this K would put the stage back outside the claim window.
+ * Single pass, deliberately — and the durable reason is not the clock. **Every quality number
+ * quoted for this engine (rho 0.748 full-field, 0.770 on the blend) came from a harness that ran
+ * exactly one rerun pass.** One pass is the configuration those measurements describe; multi-pass
+ * was always the part nothing had validated.
+ *
+ * The timing agrees but is the weaker argument, because it moves whenever latency does: a
+ * repeat-until-settled loop was measured never to settle (0/200 seeds under a judge with the seat
+ * bias we actually have) so it always ran its cap, and later passes cost 41-65% of the first
+ * rather than being free, because a changed order means changed midpoints means new pairs.
  */
 export async function reinsertTop(
   order: readonly number[],

@@ -2628,7 +2628,7 @@ export async function endChallengeAndPickWinners(challengeId: number) {
         });
         log('No judged entries, challenge marked as completed without winners');
         recordChallengeCompleted({ source: challenge.source });
-        return { success: true, winnersCount: 0 };
+        return { success: true, winnersCount: 0, queued: false };
       }
 
       const engineContext = buildJudgingEngineContext({
@@ -2901,7 +2901,7 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     });
     log('Winners notified');
 
-    return { success: true, winnersCount: winningEntries.length };
+    return { success: true, winnersCount: winningEntries.length, queued: false };
   } catch (error) {
     // On failure, challenge stays in 'Completing' for recovery to handle
     log('Error during manual winner picking, challenge stays in Completing for recovery:', error);
