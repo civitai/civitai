@@ -1,6 +1,8 @@
-import { useEffect, useRef } from 'react';
+import clsx from 'clsx';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
+import { shouldFlipPlaceButton } from '~/components/Sticker/place-button-position';
 import {
   useCreateStickerPlacement,
   useImagePlacementSpace,
@@ -19,6 +21,9 @@ const KNOB_OFFSET = 0.22;
 
 /** Enough for the label and the currency badge at the smallest allowed sticker. */
 const BUY_BUTTON_MIN_WIDTH = 132;
+
+/** `mt-2` / `mb-2`, in pixels, for the geometry that decides which of the two applies. */
+const BUY_BUTTON_GAP = 8;
 
 const CORNERS = [
   { sx: -1, sy: -1, className: '-left-1.5 -top-1.5 cursor-nwse-resize' },
@@ -144,6 +149,34 @@ export function DraftStickerLayer() {
     };
   }, [move, setInteraction]);
 
+  // The tray paints over this whole layer, so a sticker low on the image would
+  // put its own buy button underneath the tray. Measured from where the button
+  // would sit UNFLIPPED, so flipping cannot remove its own cause and oscillate.
+  const [flipped, setFlipped] = useState(false);
+  const buttonRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const measure = () => {
+      const element = rootRef.current;
+      const button = buttonRef.current;
+      const tray = useStickerPlacementDraftStore.getState().tray;
+      if (!element || !button) return;
+
+      setFlipped(
+        shouldFlipPlaceButton({
+          sticker: element.getBoundingClientRect(),
+          tray: tray?.getBoundingClientRect() ?? null,
+          buttonHeight: button.offsetHeight,
+          gap: BUY_BUTTON_GAP,
+        })
+      );
+    };
+
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [draft]);
+
   // Picking a sticker up from the tray starts a move with no offset — the press
   // happened outside the image, so there is no grab point to preserve.
   const trayInteraction = useStickerPlacementDraftStore((state) => state.interaction);
@@ -241,12 +274,16 @@ export function DraftStickerLayer() {
       />
 
       <div
+        ref={buttonRef}
         // `w-max` and the floor together: an absolutely positioned child is
         // shrink-to-fit against its containing block, which here is the sticker
         // itself — so a small sticker was squeezing the button until its label
         // clipped and its currency badge lost its padding. The button's size
         // must not be a function of the sticker's.
-        className="absolute left-1/2 top-full mt-2 w-max -translate-x-1/2 cursor-auto whitespace-nowrap"
+        className={clsx(
+          'absolute left-1/2 w-max -translate-x-1/2 cursor-auto whitespace-nowrap',
+          flipped ? 'bottom-full mb-2' : 'top-full mt-2'
+        )}
         style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
         // The button is inside the draggable body, so without this every press
         // on it would also start a move and the click would land mid-drag.
