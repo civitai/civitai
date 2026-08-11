@@ -540,15 +540,17 @@ async function remapScreenshotRowIds(args: {
  * cannot be checked cost no extra round trip — and `stored-image-probe` (and the
  * S3 client graph behind it) stays out of this module's static import graph.
  *
- * 🔴 EVERY OUTCOME THAT IS NOT `match` IS LOGGED, and the four `unverifiable`
- * reasons are kept apart on the way out. Without that, a guard that is firing and a
- * guard that is inert produce exactly the same observable — nothing — and the four
- * reasons are operationally different signals rather than one blob: a rising
- * `store-unreachable` is an infrastructure incident, a rising `no-current-etag` is a
- * backend that stopped returning tags (which quietly disarms this check for every
- * row), and `mismatch` is the case the guard exists for. A steady trickle of any of
- * them is the only way to notice that the fail-open branch has become the ONLY
- * branch.
+ * 🔴 EVERY OUTCOME THAT IS NOT `match` IS LOGGED, and the three `unverifiable`
+ * reasons reachable from here are kept apart on the way out. (Three, not the
+ * classifier's four: `no-recorded-etag` is short-circuited above and can never be
+ * emitted from this consumer — see the note at the end of this block.) Without that,
+ * a guard that is firing and a guard that is inert produce exactly the same
+ * observable — nothing — and the reasons are operationally different signals rather
+ * than one blob: a rising `store-unreachable` is an infrastructure incident, a rising
+ * `no-current-etag` is a backend that stopped returning tags (which quietly disarms
+ * this check for every row), and `mismatch` is the case the guard exists for. A
+ * steady trickle of any of them is the only way to notice that the fail-open branch
+ * has become the ONLY branch.
  *
  * 🔴 The event carries NO storage key, bucket, URL or caller identity — the reason
  * plus the asset kind plus the row id is everything an operator needs to tell these
@@ -572,12 +574,38 @@ async function assertStoredObjectUnchanged(
 
   logToAxiom({
     name: 'listing-asset-integrity',
-    type: verdict.status === 'mismatch' ? 'error' : 'warning',
+    /**
+     * 🔴 `warning`, INCLUDING for `mismatch`, and deliberately so.
+     *
+     * `type` is what the Alloy→Loki pipeline reads as the log level (see the
+     * SEVERITY FIELD note in `~/server/logging/client`), and that same file states
+     * the rule this obeys: a BAD_REQUEST-class fault is normal user feedback and
+     * "must never be logged at error severity, or they drown out the real
+     * server-side failures on the error board". A `mismatch` ends in exactly such a
+     * rejection, and any author can produce one at will simply by replacing the
+     * object behind a key they own — so at `error` this is an author-controlled tap
+     * on the error board, which is the failure mode that rule exists to prevent.
+     *
+     * The severity was never the discriminator anyway: `status` and `reason` are
+     * emitted as their own fields precisely so these outcomes are separable, and a
+     * query or alert on `status="mismatch"` is both narrower and more stable than
+     * one on a level shared with every other error in the app. Nothing is lost by
+     * dropping to `warning` except the flooding.
+     */
+    type: 'warning',
     status: verdict.status,
     reason: verdict.status === 'unverifiable' ? verdict.reason : null,
     kind,
     imageId: image.id,
   }).catch(() => null);
+  // 🔴 That `.catch(() => null)` is LOAD-BEARING, not tidiness. Nothing awaits the
+  // call above, so a rejecting sink — `logToAxiom` awaits an ingest that rejects
+  // when Axiom itself is degraded — has nowhere to go but `unhandledRejection`, and
+  // the attach it is merely OBSERVING would be taken down by the observation. Same
+  // reasoning as `~/server/redis/fail-open-log`, `~/server/meilisearch/client` and
+  // `~/server/signals/wrapper`. Pinned by
+  // `./__tests__/listing-asset-integrity-logging.test.ts`, which needs a file of its
+  // own to be falsifiable at all — a `vi.fn()` sink marks the rejection handled.
 
   if (verdict.status !== 'mismatch') return;
 
