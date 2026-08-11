@@ -119,6 +119,9 @@ export function StickerPlacementTray() {
     : 'Drag a sticker onto the image.';
 
   return (
+    // Measured as the obstacle the buy button avoids, and deliberately measured
+    // at full width rather than at the visible panel's `max-w-xl`: this root
+    // spans the viewport and takes the clicks across all of it.
     <div ref={trayRef} className="fixed inset-x-0 bottom-0 z-30 flex justify-center p-3">
       <div className="w-full max-w-xl overflow-hidden rounded-lg border border-gray-3 bg-white shadow-lg dark:border-dark-4 dark:bg-dark-7">
         <div className="flex items-start gap-2 border-b border-gray-3 px-3 py-2 dark:border-dark-4">
