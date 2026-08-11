@@ -1,0 +1,11 @@
+[
+  {
+    "prompt": "The camera slowly dollies left along a rain-slicked fish market at dawn, crates of silver mackerel catching the low grey light, a vendor in a yellow oilskin hosing the concrete as water runs into the gutter.",
+    "negativePrompt": "worst quality, blurry",
+    "assistantResponse": "{\"issues\":[],\"recommendations\":[\"Say how the hosed water behaves as it goes — sheeting across the slope, then thinning to a film that mirrors the crates — so the surface has a progression rather than a single state.\",\"Name what the mackerel do under the spray: scales shifting as the pile settles.\"],\"enhancedPrompt\":\"The camera slowly dollies left along a rain-slicked fish market at dawn, crates of silver mackerel catching the low grey light, their scales shifting as the pile settles. A vendor in a yellow oilskin hoses the concrete, the water sheeting across the slope before thinning to a film that mirrors the crates.\",\"enhancedNegativePrompt\":\"worst quality, inconsistent motion, blurry, jittery, distorted\"}"
+  },
+  {
+    "prompt": "a dramatic seascape",
+    "assistantResponse": "{\"issues\":[{\"description\":\"'Dramatic' is a mood word standing in for the visual content; nothing in frame is specified.\",\"severity\":\"error\"}],\"recommendations\":[\"Replace 'dramatic' with what is actually in shot — the water's colour and state, the rock it meets, what the spray does.\",\"Name what stays still against the motion, since the static elements are what hold the frame together.\"],\"enhancedPrompt\":\"Turquoise waves crash against dark jagged rocks, sending white foam spraying into the air and draining back through the crevices. The headland behind stays fixed, its wet basalt holding a dull sheen under an overcast sky.\",\"enhancedNegativePrompt\":\"\"}"
+  }
+]

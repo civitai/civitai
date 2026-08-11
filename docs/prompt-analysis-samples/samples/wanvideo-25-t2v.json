@@ -1,0 +1,11 @@
+[
+  {
+    "prompt": "Slow zoom in on a lighthouse keeper climbing the spiral stair, lamp room glowing above him, storm light through the salt-crusted glass.",
+    "negativePrompt": "blurry, low quality",
+    "assistantResponse": "{\"issues\":[],\"recommendations\":[\"Give the climb effort — hand pulling on the rail, the pause on the half-landing — so the ascent reads as work rather than a glide.\",\"Say what the storm light does across the take: the beam sweeping past the glass and washing the stairwell, then leaving it dim.\"],\"enhancedPrompt\":\"Slow zoom in on a lighthouse keeper climbing the spiral stair, one hand pulling hard on the rail, pausing at the half-landing, the lamp beam sweeping past the salt-crusted glass above and washing the stairwell before leaving it dim.\",\"enhancedNegativePrompt\":\"blurry, distorted, low quality, watermark, static, morphing, deformed hands\"}"
+  },
+  {
+    "prompt": "Tracking shot alongside a fox trotting through frosted bracken at first light, breath showing.",
+    "assistantResponse": "{\"issues\":[],\"recommendations\":[\"Let the bracken answer the fox — stems knocking aside and springing back as it passes — so the movement has contact with the world.\"],\"enhancedPrompt\":\"Tracking shot alongside a fox trotting through frosted bracken at first light, breath showing, stems knocking aside and springing back in its wake, frost shaking loose where it brushes past.\",\"enhancedNegativePrompt\":\"\"}"
+  }
+]
