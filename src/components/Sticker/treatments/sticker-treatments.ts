@@ -49,8 +49,9 @@ const dieCutEdge = (px: number): CSSProperties => ({
  * opacity plus a dashed yellow outline, and a treatment that reads as pending
  * tells an owner they have a decision waiting that they do not. Every option
  * here stays fully opaque and uses no dashes and no yellow — enforced by
- * `sticker-treatments.test.ts`, because a sixth option added later is exactly
- * when a rule that lives only in comments gets broken.
+ * `sticker-treatments.test.ts` over both the inline styles here and the
+ * stylesheet behind `animationClassName`, because a sixth option added later is
+ * exactly when a rule that lives only in comments gets broken.
  */
 export const STICKER_TREATMENTS: Record<StickerTreatmentKey, StickerTreatment> = {
   none: {
@@ -118,9 +119,11 @@ export const DEFAULT_STICKER_TREATMENT: StickerTreatmentKey = 'none';
 /**
  * What a card renders for a treatment that animates.
  *
- * Measured at ~2x the next most expensive option per frame, and a card is a
- * link the reader is aiming at — movement under the cursor is a target that
- * moves.
+ * A card is a link the reader is aiming at, and movement under the cursor is a
+ * target that moves. Animations also tick whether or not they are on screen,
+ * so their cost grows with the length of the feed while a filter's does not —
+ * but any multiplier is a function of how many cards you chose to measure, so
+ * there is deliberately no number here.
  */
 export const CARD_TREATMENT_FALLBACK: StickerTreatmentKey = 'lift';
 

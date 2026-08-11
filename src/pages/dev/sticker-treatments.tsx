@@ -24,15 +24,28 @@ type DevImage = { id: number; url: string; width: number | null; height: number 
 export const getServerSideProps: GetServerSideProps = async () => {
   if (process.env.NODE_ENV === 'production') return { notFound: true };
 
-  const images = await dbRead.image.findMany({
+  const found = await dbRead.image.findMany({
     where: { id: { in: SEEDED_IMAGE_IDS } },
     select: { id: true, url: true, width: true, height: true },
   });
 
+  // Ordered by the seed list rather than by whatever the database returns, so
+  // the image that draws nothing stays last.
+  const images = SEEDED_IMAGE_IDS.map((id) => found.find((image) => image.id === id)).filter(
+    (image): image is (typeof found)[number] => !!image
+  );
+
   return { props: { images } };
 };
 
-/** From the placement seed script; see the sticker handoff notes. */
+/**
+ * From the placement seed script; see the sticker handoff notes.
+ *
+ * `45391881` is last on purpose: its two placements are both pending, and
+ * pending rows are scoped server-side to the placer and the owner, so it draws
+ * nothing for anyone else. First in the list it was the first thing the page
+ * showed, which is the one pair that demonstrates nothing.
+ */
 const SEEDED_IMAGE_IDS = [135356251, 131420251, 130110988, 45392021, 45391881];
 
 const CARD_WIDTH = 300;

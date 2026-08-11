@@ -8,8 +8,26 @@
  * a 16.67ms interval, so the numbers come back as exact multiples of the vsync
  * period and the harness measures *dropped intervals* rather than cost —
  * anything between 0.1ms and 16.6ms reads identically, and re-running produces
- * whichever ranking the scheduler felt like. `--disable-gpu-vsync` plus
- * `--disable-frame-rate-limit` is what makes the differences observable.
+ * whichever ranking the scheduler felt like.
+ *
+ * ## Read this before believing a table
+ *
+ * **Uncapped is not a property of this script. It is a property of this script
+ * plus enough work to outrun the compositor.** Below roughly 50 elements the
+ * flags stop taking effect and the readings fall back to multiples of 16.6ms —
+ * at `CARDS=15` the ordering comes out *reversed*, with motion reading 40x
+ * cheaper than doing nothing. If any column is near 17, 33 or 50, the run is
+ * measuring vsync and the table means nothing. Do not quote it.
+ *
+ * **Only visible cards paint, but every animation ticks.** The grid is 5x300px
+ * in a 900px viewport scrolled 720px, so about 20 cards are ever painted no
+ * matter what `CARDS` says. So the filtered options (lift, dieCut, plate) are
+ * flat in `CARDS` while motion grows linearly with it — 1.3ms at 50, 2.4 at
+ * 200, 12.3 at 1000. The motion multiplier is therefore a function of the
+ * number you picked, not a property of the treatment. Do not cite one.
+ *
+ * What survives every count: **plate is reproducibly ~3x the others and is the
+ * only count-independent non-zero reading.** That is the finding.
  *
  * It is still synthetic: no React, no data fetching, no image decode, no
  * network, and headless desktop Chromium is not a mid-range phone. Read it as
@@ -124,5 +142,11 @@ for (const key of Object.keys(TREATMENTS)) {
 }
 await browser.close();
 
-console.log(`${CARDS} elements, ${FRAMES} frames/run, median of 3 runs, VSYNC OFF. ms/frame.`);
+const capped = Object.values(out).some((r) => r.p50 > 8);
+console.log(`${CARDS} elements, ${FRAMES} frames/run, median of 3 runs. ms/frame.`);
+if (capped) {
+  console.log('WARNING: readings look vsync-capped — a p50 above 8ms means multiples of 16.6.');
+  console.log('The flags did not take effect at this element count. Raise CARDS to ~50 or more.');
+  console.log('The table below counts dropped intervals, not cost. Do not quote it.');
+}
 console.table(out);
