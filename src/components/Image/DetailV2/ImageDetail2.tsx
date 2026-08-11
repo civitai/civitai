@@ -61,6 +61,7 @@ import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/Image
 import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
 import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta';
 import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
+import { RemixGalleryCard } from '~/components/RemixGallery/RemixGalleryCard';
 import { ImageProcess } from '~/components/Image/DetailV2/ImageProcess';
 import { DownloadImage } from '~/components/Image/DownloadImage';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
@@ -652,6 +653,7 @@ export function ImageDetail2() {
                       </Card>
                     )}
                     <ImageProcess imageId={image.id} />
+                    <RemixGalleryCard imageId={image.id} />
                     <ImageGenerationData imageId={image.id} />
                     {/* <ImageRemixOfDetails imageId={image.id} />
                     <ImageRemixesDetails imageId={image.id} /> */}
