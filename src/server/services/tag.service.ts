@@ -8,9 +8,15 @@ import {
   type TagVotableEntityType,
   type VotableTagModel,
 } from '~/libs/tags';
+import {
+  listImageTagVotes,
+  listImageTagVotesMany,
+  listModelTagVotes,
+} from '@civitai/db-queries/tag';
 import { CacheTTL, constants } from '~/server/common/constants';
 import { NsfwLevel, TagSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { kyselyRead } from '~/server/db/kyselyDb';
 import {
   imageTagsCache,
   modelVotableTagsCache,
@@ -464,10 +470,7 @@ export const getVotableTags = async ({
       }))
     );
     if (userId) {
-      const userVotes = await dbRead.tagsOnModelsVote.findMany({
-        where: { modelId: id, userId },
-        select: { tagId: true, vote: true },
-      });
+      const userVotes = await listModelTagVotes(kyselyRead, { modelId: id, userId });
 
       for (const tag of results) {
         const userVote = userVotes.find((vote) => vote.tagId === tag.id);
@@ -505,10 +508,7 @@ export const getVotableTags = async ({
       );
     }
     if (userId) {
-      const userVotes = await dbRead.tagsOnImageVote.findMany({
-        where: { imageId: id, userId },
-        select: { tagId: true, vote: true },
-      });
+      const userVotes = await listImageTagVotes(kyselyRead, { imageId: id, userId });
 
       for (const tag of results) {
         const userVote = userVotes.find((vote) => vote.tagId === tag.id);
@@ -573,10 +573,7 @@ export async function getVotableImageTags({
     allImageTags.push(...filteredTags);
   }
 
-  const userVotes = await dbRead.tagsOnImageVote.findMany({
-    where: { imageId: { in: ids }, userId: user.id },
-    select: { tagId: true, vote: true },
-  });
+  const userVotes = await listImageTagVotesMany(kyselyRead, { imageIds: ids, userId: user.id });
 
   for (const tag of allImageTags) {
     const userVote = userVotes.find((vote) => vote.tagId === tag.id);
