@@ -428,11 +428,10 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     session: Session | null;
   };
   let settingsBootstrap: SettingsBootstrap;
-  // True only on the DEGRADED fallback path (we couldn't reach/parse the
-  // settings endpoint). Distinct from a SUCCESSFUL fetch that returned
-  // `session: null` (genuinely expired/invalid token). The two look identical in
-  // the destructured shape below (both have `session: null`) but must be treated
-  // differently for the auth cookie — see the cookie carve-out near the return.
+  // True only on the DEGRADED fallback path (we couldn't reach/parse the settings
+  // endpoint). A SUCCESSFUL fetch returning `session: null` looks identical in the
+  // destructured shape below, but the two drive `hasAuthCookie` differently — see the
+  // carve-out near the return.
   let settingsDegraded = false;
   try {
     const res = await fetch(`${baseUrl as string}/api/user/settings`, {
@@ -441,15 +440,12 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     });
     if (!res.ok) throw new Error(`settings fetch returned ${res.status}`);
     const data = (await res.json()) as SettingsBootstrap;
-    // The endpoint's OWN internal catch swallows transient errors (e.g. a DB
-    // blip on a draining pod mid-roll) into a SUCCESSFUL `200 {}` — a body with
-    // NO `session` key. That sails past the `!res.ok` guard but carries no
-    // authoritative session, so treating it as a real result would delete the
-    // auth cookie (key absent ≠ `session: null`) and log the user out — the exact
-    // vector this fix exists to kill. Distinguish on KEY PRESENCE: a genuinely
-    // logged-out user gets `session: null` (key present → not degraded, cookie
-    // cleanup is correct); an internal swallow gets `{}` (key absent → degrade,
-    // preserve the cookie). `'session' in data` is the precise discriminator.
+    // The endpoint's OWN internal catch swallows transient errors (e.g. a DB blip on a
+    // draining pod mid-roll) into a SUCCESSFUL `200 {}` — a body with NO `session` key.
+    // That sails past the `!res.ok` guard but carries no authoritative session, so
+    // treating it as a real result would render a logged-in user as signed out. Key
+    // ABSENT (`{}`) ⇒ degraded; key PRESENT (`session: null`) ⇒ render anonymous.
+    // `'session' in data` is the discriminator — a truthiness check erases it.
     if (!data || typeof data !== 'object' || !('session' in data)) {
       throw new Error('settings fetch returned no session payload (endpoint-swallowed error)');
     }
@@ -546,16 +542,16 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
   } else if (hasAuthCookie && !settingsDegraded) {
-    // Render anonymous, but DO NOT delete the cookie. A successful fetch returning
-    // `session: null` is ambiguous: `getServerAuthSession` fail-softs to null on a hub
-    // outage (`.catch(() => null)` on both the hub and legacy lookups), so this means
-    // EITHER an expired token OR a degraded lookup, and nothing on the wire separates
-    // them. Deleting on the second case logs a valid user out durably, during the exact
-    // incident that caused it — and a logout storm lands on an auth hub that is already
-    // struggling. Keeping the cookie makes an outage a transient logged-out *appearance*
-    // that recovers on the next successful bootstrap; the cost is that a genuinely dead
-    // cookie lingers until it expires. Deleting it safely needs the endpoint to signal a
-    // degraded lookup distinctly from "no session".
+    // Render anonymous, but DO NOT delete the cookie. `session: null` is ambiguous:
+    // `getServerAuthSession` fail-softs to null (`.catch(() => null)` at
+    // get-server-auth-session.ts:92,102), so a hub outage is indistinguishable on the
+    // wire from an expired token — and deleting on the outage durably logs out a valid
+    // user. Scope: the delete this replaces named the LEGACY `civitai-token` family only,
+    // so only legacy holders were ever affected either way. Cost of keeping it is near
+    // zero: a civ-token's Max-Age comes from its own `exp` (civ-cookie.ts:163), so an
+    // expired one is never in the jar to linger; a stale legacy cookie costs one failed
+    // jose decode per request. Deleting safely needs the endpoint to signal a degraded
+    // lookup distinctly from "no session".
     hasAuthCookie = false;
   }
 

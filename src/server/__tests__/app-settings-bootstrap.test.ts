@@ -199,4 +199,21 @@ describe('_app settings bootstrap — auth cookie discriminator', () => {
     ).not.toHaveBeenCalled();
     expect(pageProps.hasAuthCookie).toBe(false);
   });
+
+  // The LEGACY family is the only population the cookie behaviour ever reached — the
+  // delete removed here named `civitai-token`, never `civ-token`. Without this case,
+  // dropping `|| x.endsWith('civitai-token')` from the matcher passes the whole file:
+  // every other fixture uses a modern cookie.
+  it('recognises a legacy civitai-token as an auth cookie', async () => {
+    h.jar = { '__Secure-civitai-token': 'legacy-token-value' };
+    h.respond = async () => json({});
+
+    const { pageProps } = await getInitialProps(makeCtx());
+
+    expect(
+      pageProps.hasAuthCookie,
+      'a legacy-cookie session must survive a degraded settings response too'
+    ).toBe(true);
+    expect(h.deleteCookie).not.toHaveBeenCalled();
+  });
 });
