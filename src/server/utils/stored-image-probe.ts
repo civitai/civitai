@@ -1,4 +1,4 @@
-import { GetObjectCommand } from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 
 import { logToAxiom } from '~/server/logging/client';
 import { getImageUploadBackend } from '~/utils/s3-utils';
@@ -18,6 +18,11 @@ import { getImageUploadBackend } from '~/utils/s3-utils';
  * remains usable for its whole expiry window, so the object can be replaced after
  * this returns. Callers may record "these values were measured from real bytes",
  * never "these values describe the object".
+ *
+ * {@link StoredImageProbe.etag} is what lets a later consumer tell those two apart:
+ * recorded alongside the measurement, it turns "true at probe time" into a claim
+ * that can be RE-CHECKED at the point of use via {@link headStoredImage}, without
+ * re-reading (or re-decoding) the bytes.
  */
 
 export type StoredImageProbeReason =
@@ -49,7 +54,48 @@ export type StoredImageProbe = {
   format: string;
   /** The object's true byte length in the store. */
   sizeBytes: number;
+  /**
+   * The store's entity tag for the object these values were read from, or `null`
+   * when the backend did not return one. An OPAQUE token — never parsed, only
+   * compared for equality against a later {@link headStoredImage} of the same key.
+   * `null` is "the store said nothing", NOT "no object": it can never be treated
+   * as evidence of anything.
+   */
+  etag: string | null;
 };
+
+/**
+ * Outcome of re-reading the entity tag of an already-measured key.
+ *
+ * 🔴 THREE states, mirroring `headObject` in `~/utils/s3-utils`. `absent` = the
+ * bucket ANSWERED that the key is gone; `unknown` = the bucket could not be
+ * consulted at all, or answered without an `ETag`. Only `present` carries a token
+ * that may be compared; the other two mean "we do not know", and a caller must
+ * not read them as either agreement or disagreement.
+ */
+export type StoredImageHead =
+  | { status: 'present'; etag: string | null }
+  | { status: 'absent' }
+  | { status: 'unknown' };
+
+/**
+ * Cheap HeadObject re-read of the entity tag at `key`, for a consumer that holds a
+ * tag recorded by {@link probeStoredImage} and needs to know whether the object is
+ * STILL the one that was measured. No bytes are transferred and nothing is decoded.
+ *
+ * 🔴 Never throws, and never converts a failure into a verdict: an unreachable or
+ * unconfigured store lands on `unknown`, which is the caller's cue that the check
+ * could not run — not that it failed.
+ */
+export async function headStoredImage(key: string): Promise<StoredImageHead> {
+  try {
+    const { s3, bucket } = await getImageUploadBackend();
+    const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+    return { status: 'present', etag: typeof head?.ETag === 'string' ? head.ETag : null };
+  } catch (err) {
+    return isNotFoundError(err) ? { status: 'absent' } : { status: 'unknown' };
+  }
+}
 
 function isNotFoundError(e: unknown) {
   const err = e as { name?: string; Code?: string; $metadata?: { httpStatusCode?: number } };
@@ -90,6 +136,7 @@ export async function probeStoredImage(
 ): Promise<StoredImageProbe> {
   let bytes: Buffer;
   let sizeBytes: number;
+  let etag: string | null;
   try {
     const { s3, bucket } = await getImageUploadBackend();
     const object = await s3.send(
@@ -98,6 +145,10 @@ export async function probeStoredImage(
     if (!object.Body) throw new StoredImageProbeError('unreadable', 'stored image has no body');
     bytes = Buffer.from(await object.Body.transformToByteArray());
     sizeBytes = parseTotalSize(object.ContentRange, bytes.byteLength);
+    // A ranged GET still reports the WHOLE object's entity tag, so this costs no
+    // extra request: it identifies the very bytes the measurement below is taken
+    // from, which is exactly what a later re-check needs.
+    etag = typeof object.ETag === 'string' ? object.ETag : null;
   } catch (err) {
     if (err instanceof StoredImageProbeError) throw err;
     if (isNotFoundError(err)) {
@@ -157,5 +208,6 @@ export async function probeStoredImage(
     height: quarterTurned ? width : height,
     format,
     sizeBytes,
+    etag,
   };
 }

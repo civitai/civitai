@@ -17,6 +17,10 @@ import {
 } from '~/server/schema/blocks/app-listing.schema';
 import type { SessionUser } from '~/types/session';
 import {
+  classifyStoredObjectIntegrity,
+  readRecordedEtag,
+} from '~/server/services/blocks/stored-object-integrity';
+import {
   appInitial,
   categoryGlyph,
   listingPlaceholderSeed,
@@ -222,7 +226,9 @@ export function buildPlaceholderIconSvg(args: {
     `<stop offset="100%" stop-color="${placeholderStop('icon', 'to', hue2)}"/>`,
     `</linearGradient></defs>`,
     `<rect width="${size}" height="${size}" rx="${Math.round(size * 0.18)}" fill="url(#g)"/>`,
-    `<text x="50%" y="50%" dy="0.35em" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-weight="700" font-size="${Math.round(size * 0.5)}" fill="#ffffff" fill-opacity="0.92">${initial}</text>`,
+    `<text x="50%" y="50%" dy="0.35em" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-weight="700" font-size="${Math.round(
+      size * 0.5
+    )}" fill="#ffffff" fill-opacity="0.92">${initial}</text>`,
     `</svg>`,
   ].join('');
 }
@@ -252,8 +258,12 @@ export function buildPlaceholderCoverSvg(args: {
     `<stop offset="100%" stop-color="${placeholderStop('cover', 'to', hue2)}"/>`,
     `</linearGradient></defs>`,
     `<rect width="${width}" height="${height}" fill="url(#g)"/>`,
-    `<text x="50%" y="44%" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="${Math.round(height * 0.22)}" fill="#ffffff" fill-opacity="0.85">${glyph}</text>`,
-    `<text x="50%" y="66%" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-weight="600" font-size="${Math.round(height * 0.07)}" fill="#ffffff" fill-opacity="0.9">${name}</text>`,
+    `<text x="50%" y="44%" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="${Math.round(
+      height * 0.22
+    )}" fill="#ffffff" fill-opacity="0.85">${glyph}</text>`,
+    `<text x="50%" y="66%" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-weight="600" font-size="${Math.round(
+      height * 0.07
+    )}" fill="#ffffff" fill-opacity="0.9">${name}</text>`,
     `</svg>`,
   ].join('');
 }
@@ -500,6 +510,50 @@ async function remapScreenshotRowIds(args: {
 }
 
 /**
+ * Re-check that the stored object an `Image` row was MEASURED from is still the
+ * object at that key, and refuse the attach if it demonstrably is not.
+ *
+ * WHY THIS EXISTS. Every rule {@link loadValidatedImage} applies — the per-kind
+ * dimension bounds, the aspect ratio, the MIME allowlist, the byte cap — reads the
+ * `Image` row's own columns. Those columns are trustworthy at the moment they are
+ * written, because the persist procs derive them from the stored bytes rather than
+ * from anything the client said. They are not automatically trustworthy LATER: the
+ * upload grant for a key outlives the measurement, so an object can be replaced
+ * after its row was written, leaving the row describing bytes that are no longer
+ * there. Validating the columns then validates a description, not the media.
+ *
+ * Persist records the store's entity tag next to the measurement; this compares it
+ * to the live one at the point the measurement is relied upon, which is the only
+ * place the guarantee actually has to hold.
+ *
+ * 🔴 FAILS CLOSED ON DISAGREEMENT ONLY. A row with no recorded tag (written before
+ * this existed, or by a path that never measures an uploaded object), an object the
+ * store says is gone, or a store that cannot be consulted all classify as
+ * `unverifiable` — and are ALLOWED through, because none of them is evidence that
+ * anything changed, and rejecting on them would turn a store hiccup into a blocked
+ * attach for images that are perfectly fine. See
+ * {@link classifyStoredObjectIntegrity}, which owns that distinction, and the same
+ * three-state posture on `headObject` in `~/utils/s3-utils`.
+ *
+ * The head request is issued ONLY when the row actually carries a tag, so rows that
+ * cannot be checked cost no extra round trip — and `stored-image-probe` (and the
+ * S3 client graph behind it) stays out of this module's static import graph.
+ */
+async function assertStoredObjectUnchanged(image: { url: string; metadata: unknown }) {
+  const recordedEtag = readRecordedEtag(image.metadata);
+  if (recordedEtag === null) return;
+
+  const { headStoredImage } = await import('~/server/utils/stored-image-probe');
+  const verdict = classifyStoredObjectIntegrity(recordedEtag, await headStoredImage(image.url));
+  if (verdict.status !== 'mismatch') return;
+
+  throw new TRPCError({
+    code: 'BAD_REQUEST',
+    message: 'that image has changed since it was uploaded — upload it again',
+  });
+}
+
+/**
  * The result of {@link loadValidatedImage}: a discriminated union.
  *
  *   - `{ pending: true }`  — the Image exists, is owned + format-valid, but its
@@ -533,10 +587,15 @@ type LoadValidatedImageResult =
  *
  * TERMINAL failures ALWAYS THROW regardless of `allowPending` (real errors the
  * client surfaces + stops polling on): missing → NOT_FOUND; not owned → FORBIDDEN;
- * bad format → BAD_REQUEST; `ImageIngestionStatus.NotFound` (scanner couldn't fetch
- * the bytes) → BAD_REQUEST; `Blocked` (prohibited content) → BAD_REQUEST. A
- * `Blocked` / `NotFound` image is terminal-bad and is NEVER written, even under
- * `allowPending`.
+ * the stored object no longer being the one the row was measured from
+ * ({@link assertStoredObjectUnchanged}) → BAD_REQUEST; bad format → BAD_REQUEST;
+ * `ImageIngestionStatus.NotFound` (scanner couldn't fetch the bytes) → BAD_REQUEST;
+ * `Blocked` (prohibited content) → BAD_REQUEST. A `Blocked` / `NotFound` image is
+ * terminal-bad and is NEVER written, even under `allowPending`.
+ *
+ * 🔴 The integrity re-check runs BEFORE the column validation deliberately: the
+ * validation's inputs are the persisted measurements, so confirming they still
+ * describe the stored object is a precondition for the bounds meaning anything.
  *
  * Content RATING is deliberately NOT gated here (W13): the scanner's per-image
  * level is imprecise, every off-site listing is mod-reviewed before it is visible,
@@ -555,6 +614,9 @@ async function loadValidatedImage(
     select: {
       id: true,
       userId: true,
+      // The storage key the row's measurements were taken from — the integrity
+      // re-check below needs it; nothing else here reads it.
+      url: true,
       type: true,
       width: true,
       height: true,
@@ -568,6 +630,7 @@ async function loadValidatedImage(
   if (image.userId !== user.id && !user.isModerator) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this image' });
   }
+  await assertStoredObjectUnchanged(image);
   const size = (image.metadata as { size?: unknown } | null)?.size;
   const result = validateListingImage(
     {
@@ -838,7 +901,12 @@ export async function getAssetScanStatuses(
  */
 async function reDeriveContentRatingForModLiveEdit(
   tx: Prisma.TransactionClient,
-  listing: { id: string; status: string; revisionOfId: string | null; contentRating: string | null },
+  listing: {
+    id: string;
+    status: string;
+    revisionOfId: string | null;
+    contentRating: string | null;
+  },
   user: SessionUser
 ): Promise<void> {
   if (!user.isModerator) return;
@@ -863,7 +931,8 @@ async function reDeriveContentRatingForModLiveEdit(
   // RAISE-ONLY floor: bump the stored rating up to `derived` only if derived's
   // ceiling is strictly higher (never auto-lower). `nsfwLevelFromContentRating`
   // maps null → the SFW floor, so a null stored rating is raised by any mature asset.
-  if (nsfwLevelFromContentRating(derived) <= nsfwLevelFromContentRating(current.contentRating)) return;
+  if (nsfwLevelFromContentRating(derived) <= nsfwLevelFromContentRating(current.contentRating))
+    return;
   await tx.appListing.update({ where: { id: listing.id }, data: { contentRating: derived } });
 }
 
@@ -1267,20 +1336,16 @@ export async function getListingAssets(
   });
 
   // Resolve the detected nsfwLevel of every backing Image in ONE query.
-  const imageIds = [
-    listing.iconId,
-    listing.coverId,
-    ...screenshots.map((s) => s.imageId),
-  ].filter((v): v is number => v != null);
+  const imageIds = [listing.iconId, listing.coverId, ...screenshots.map((s) => s.imageId)].filter(
+    (v): v is number => v != null
+  );
   const images = imageIds.length
     ? await dbRead.image.findMany({
         where: { id: { in: imageIds } },
         select: { id: true, nsfwLevel: true, ingestion: true },
       })
     : [];
-  const levelById = new Map<number, number | null>(
-    images.map((i) => [i.id, i.nsfwLevel ?? null])
-  );
+  const levelById = new Map<number, number | null>(images.map((i) => [i.id, i.nsfwLevel ?? null]));
   const ingestionById = new Map<number, string | null>(
     images.map((i) => [i.id, i.ingestion ?? null])
   );
@@ -1532,8 +1597,7 @@ export async function backfillListingAssets(
     // A screenshot row whose Image was deleted (imageId → null) does NOT count
     // as a present screenshot — it must be re-filled, not treated as complete.
     const hasScreenshots = candidate.screenshots.some((s) => s.imageId != null);
-    const complete =
-      candidate.iconId != null && candidate.coverId != null && hasScreenshots;
+    const complete = candidate.iconId != null && candidate.coverId != null && hasScreenshots;
     if (complete) {
       result.skippedComplete += 1;
       continue;
