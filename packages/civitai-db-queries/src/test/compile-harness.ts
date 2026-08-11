@@ -15,9 +15,16 @@ import { updatedAtPlugin } from '../infra/updated-at-plugin';
 // `harness.ts`. Those two resolve a connection string, falling back to `process.env.DATABASE_URL` —
 // a REAL environment's writer in any checkout that has one — so exporting them across a package
 // boundary would let a non-test importer open a second pool against production by calling one
-// function. Nothing reachable from here touches a connection string or opens a socket; the parity
-// suite's refusal to fall back to `DATABASE_URL` is a property of the whole module graph it imports,
-// not just of its own code. Pinned by `harness-exports.test.ts`.
+// function.
+//
+// `harness-exports.test.ts` pins that, and pins the IMPORT GRAPH as well as the export names: it
+// walks every import reachable from this file, asserts the resulting first-party files and
+// third-party packages against an exact ledger (`pg` is not in it), and scans each first-party file
+// for pool/connection-string tokens. So the parity suite's refusal to fall back to `DATABASE_URL`
+// is a checked property of what this module pulls in, not only of its own body — a
+// `process.env.DATABASE_URL` added to the function below fails that scan even though it changes no
+// export name and no subpath. Scope, exactly: first-party sources are read; `kysely` is ledgered by
+// name, its own sources are not scanned.
 
 // Query functions take a Kysely client as their first argument (executor injection). This harness builds
 // the client a test passes in — no global wiring.

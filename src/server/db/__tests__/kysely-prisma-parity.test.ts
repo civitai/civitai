@@ -61,13 +61,29 @@ const expectParity = <T extends Record<string, unknown>>(kysely: T[], prisma: T[
 
 // Every query this PR ported, with arguments that reach the statement (a bulk query's empty-array
 // guard short-circuits before compiling anything). The array-column seam guard below runs each one
-// and reads the select list back off EVERY statement it compiles, so adding a port here is what
-// extends the check — there is no second list to keep in sync.
-const PORTED_QUERIES: Array<[name: string, run: (db: Kysely<DB>) => Promise<unknown>]> = [
-  ['listImageTagVotes', (db) => listImageTagVotes(db, { imageId: 1, userId: 1 })],
-  ['listImageTagVotesMany', (db) => listImageTagVotesMany(db, { imageIds: [1], userId: 1 })],
-  ['listModelTagVotes', (db) => listModelTagVotes(db, { modelId: 1, userId: 1 })],
-  ['listModelEngagements', (db) => listModelEngagements(db, { userId: 1, modelIds: [1] })],
+// and reads the select list back off every statement the call COMPILES, so adding a port here is
+// what extends the check — there is no second list to keep in sync. What it does not cover is a
+// statement that never compiles, which is what the count below is for.
+//
+// The middle field is how many statements that call is expected to COMPILE under the offline
+// harness, and it is the guard's blind spot made explicit. `DummyDriver` resolves every `.execute()`
+// to zero rows, so the common two-step read
+//
+//   const ids = await select(...);  if (!ids.length) return [];  return select(...).where('id','in',ids);
+//
+// compiles its FIRST statement only — the second is unreachable behind a guard the harness can never
+// satisfy. Nothing about that is visible in the compiled output, so a port whose second statement
+// silently stopped compiling would have gone unnoticed while the fleet-wide yield control below
+// still cleared on the other ports' rows. Declaring the count per port turns that into a failure:
+// a two-step port cannot be added here with `2` and pass, which is the intended outcome — this
+// harness cannot check its second statement, and the entry has to say so rather than look covered.
+const PORTED_QUERIES: Array<
+  [name: string, compiledStatements: number, run: (db: Kysely<DB>) => Promise<unknown>]
+> = [
+  ['listImageTagVotes', 1, (db) => listImageTagVotes(db, { imageId: 1, userId: 1 })],
+  ['listImageTagVotesMany', 1, (db) => listImageTagVotesMany(db, { imageIds: [1], userId: 1 })],
+  ['listModelTagVotes', 1, (db) => listModelTagVotes(db, { modelId: 1, userId: 1 })],
+  ['listModelEngagements', 1, (db) => listModelEngagements(db, { userId: 1, modelIds: [1] })],
 ];
 
 /**
@@ -328,21 +344,43 @@ describe.skipIf(!parityUrl)('Kysely ports return exactly what Prisma returned', 
     // Compiled offline against DummyDriver — the SQL is real, nothing executes.
     const harness = compileHarness();
     const selected: Array<[table: string, column: string]> = [];
-    for (const [name, run] of PORTED_QUERIES) {
+    for (const [name, compiledStatements, run] of PORTED_QUERIES) {
       harness.queries.length = 0;
       await run(harness.db);
-      if (!harness.queries.length)
-        throw new Error(`${name} compiled no query — the derivation saw nothing`);
+
+      // PER-PORT control, not a fleet-wide one. The floor below is a TOTAL, so it can only see a
+      // shortfall big enough to drop the total under it: with the four ports here it does catch one
+      // of them compiling nothing (6 < 8), but it cannot see a NEWLY ADDED port compiling fewer
+      // statements than intended — those four already satisfy the floor on their own, so the new
+      // port's shortfall is hidden. That is the case this assertion exists for.
+      expect(
+        harness.queries.length,
+        `${name} compiled ${harness.queries.length} statement(s), expected ${compiledStatements}. ` +
+          `A statement gated on a previous statement's ROWS never compiles here — DummyDriver ` +
+          `resolves every execute() to zero rows — so this port is not covered by the array-column ` +
+          `check below and the count must be corrected rather than the expectation lowered.`
+      ).toBe(compiledStatements);
+
       // EVERY statement the call compiled, not just the last one. Reading only `lastQuery()` meant
       // a port that issues two statements was checked on its final statement alone, so an
       // array-typed select in any earlier one passed unseen — the same silent green this guard
       // exists to remove. Verified by mutation: an enum-array select in the FIRST of two.
-      for (const compiled of harness.queries) selected.push(...selectedColumns(name, compiled.sql));
+      const derived = harness.queries.flatMap((compiled) => selectedColumns(name, compiled.sql));
+
+      // ...and the derivation must actually yield for THIS port. Belt-and-braces: `selectedColumns`
+      // THROWS on any statement it cannot parse (it never returns an empty list), and the count
+      // above already rejects zero statements, so with the entries as they stand today this cannot
+      // fire. It is here to catch a future entry that declares `0`.
+      expect(
+        derived.length,
+        `${name} contributed no (table, column) pair — the derivation saw nothing for this port`
+      ).toBeGreaterThanOrEqual(1);
+      selected.push(...derived);
     }
 
-    // Positive control on the derivation's YIELD. A parse that silently produced nothing would make
-    // every assertion below pass vacuously, which is the failure this guard replaced. 4 queries × 2
-    // columns today; widening a select, or a port growing a second statement, only ever raises it.
+    // Fleet-wide floor, kept as a coarse second net: 4 queries × 2 columns today. The per-port
+    // controls above are what make a single port's shortfall fail; this one only catches a
+    // collapse across all of them.
     expect(selected.length).toBeGreaterThanOrEqual(8);
 
     const tables = [...new Set(selected.map(([table]) => table))];
