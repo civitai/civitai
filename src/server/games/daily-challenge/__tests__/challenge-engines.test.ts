@@ -78,8 +78,8 @@ const entry = (imageId: number) => ({
 /** Lower imageId is the better entry, so the true order of any field is ascending. */
 function trueOrderComparisons() {
   const recorded: Pairwise.PairwiseVerdict[] = [];
-  comparePair.mockImplementation(async ({ challenger, opponent, step }) => {
-    const first = step % 2 === 0 ? challenger : opponent;
+  comparePair.mockImplementation(async ({ challenger, opponent, seat }) => {
+    const first = seat === 1 ? challenger : opponent;
     const verdict: Pairwise.PairwiseVerdict = {
       imageIdA: challenger.imageId,
       imageIdB: opponent.imageId,
@@ -97,6 +97,82 @@ function trueOrderComparisons() {
     return verdict;
   });
   return recorded;
+}
+
+/**
+ * The same fake, but each comparison takes a real tick. Instantly-resolving mocks serialise the
+ * engine's concurrency and hide anything that depends on two bouts being in flight at once —
+ * which is the only regime a seating race can appear in.
+ */
+function delayedComparisons(delayMs = 5) {
+  const recorded: Pairwise.PairwiseVerdict[] = [];
+  comparePair.mockImplementation(async ({ challenger, opponent, seat }) => {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    const first = seat === 1 ? challenger : opponent;
+    const verdict: Pairwise.PairwiseVerdict = {
+      imageIdA: challenger.imageId,
+      imageIdB: opponent.imageId,
+      firstSeatImageId: first.imageId,
+      winnerImageId: Math.min(challenger.imageId, opponent.imageId),
+      margin: 'clear',
+      perCategory: {},
+      reason: 'because',
+      model: 'test-judge',
+      rerouted: false,
+      usage: { promptTokens: 10, completionTokens: 1 },
+      buzzCost: 0.5,
+    };
+    recorded.push(verdict);
+    return verdict;
+  });
+  return recorded;
+}
+
+/**
+ * An in-memory stand-in for the comparison table that keeps the two properties the real one has
+ * and that a canned `getComparisons` mock throws away: the pair columns are normalised low-id
+ * first, and a repeated (phase, pair, seat) is DISCARDED rather than stored twice. That discard is
+ * how a seating bug turns into a missing row instead of an error, so a fixture without it cannot
+ * observe the bug at all.
+ */
+function fakeComparisonStore() {
+  const rows: (Store.StoredComparison & { phase: string })[] = [];
+  store.recordComparison.mockImplementation(
+    async ({ phase, verdict }: Parameters<typeof Store.recordComparison>[0]) => {
+      const [imageIdA, imageIdB] = [verdict.imageIdA, verdict.imageIdB].sort((a, b) => a - b);
+      const exists = rows.some(
+        (r) =>
+          r.phase === phase &&
+          r.imageIdA === imageIdA &&
+          r.imageIdB === imageIdB &&
+          r.firstSeatImageId === verdict.firstSeatImageId
+      );
+      if (exists) return;
+      rows.push({
+        phase,
+        imageIdA,
+        imageIdB,
+        firstSeatImageId: verdict.firstSeatImageId,
+        winnerImageId: verdict.winnerImageId,
+        reason: verdict.reason,
+      });
+    }
+  );
+  store.getComparisons.mockImplementation(async (_challengeId: number, phases: string[]) =>
+    rows.filter((r) => phases.includes(r.phase))
+  );
+  return rows;
+}
+
+/** pair -> the set of images that actually sat first across that pair's bouts. */
+function seatsPlayed(verdicts: Pairwise.PairwiseVerdict[]) {
+  const seats = new Map<string, Set<number>>();
+  for (const v of verdicts) {
+    const key = [v.imageIdA, v.imageIdB].sort((a, b) => a - b).join(':');
+    if (!seats.has(key)) seats.set(key, new Set());
+    seats.get(key)!.add(v.firstSeatImageId);
+  }
+  return seats;
 }
 
 beforeEach(() => {
@@ -348,27 +424,60 @@ describe('pairwise engine — ranking the field at close', () => {
 });
 
 describe('pairwise engine — picking the places', () => {
-  it('plays both seats of every shortlist pair and ranks by win rate', async () => {
+  it('ranks by win rate, from the bouts it actually played', async () => {
+    fakeComparisonStore();
     trueOrderComparisons();
     const field = [entry(2), entry(1), entry(3)];
-    store.getComparisons.mockResolvedValue([
-      { imageIdA: 1, imageIdB: 2, winnerImageId: 1, firstSeatImageId: 1, reason: null },
-      { imageIdA: 1, imageIdB: 3, winnerImageId: 1, firstSeatImageId: 1, reason: null },
-      { imageIdA: 2, imageIdB: 3, winnerImageId: 2, firstSeatImageId: 2, reason: null },
-    ]);
 
     const winners = await pairwiseLadderEngine.selectWinners(ctx, field, 3);
 
-    // 3 pairs x 2 seats.
-    expect(comparePair).toHaveBeenCalledTimes(6);
     expect(winners?.map((w) => w.imageId)).toEqual([1, 2, 3]);
     expect(winners?.[0]).toMatchObject({ userId: 100, imageId: 1 });
     expect(winners?.[0].reason).toMatch(/head-to-head/);
   });
 
+  // The defect this replaces a vacuous test for. The old version asserted a call count and a
+  // winner order that came entirely from a canned mock, under the title "plays both seats" — it
+  // passed with every pair single-seated, which is exactly what the code did. Seats were derived
+  // from a session counter read before an await and incremented after it, so two concurrent bouts
+  // for one pair read the same value, took the same seat, and the second row was then discarded by
+  // ON CONFLICT DO NOTHING after it had been paid for.
+  it('plays BOTH seats of every shortlist pair, with comparisons genuinely in flight together', async () => {
+    fakeComparisonStore();
+    const recorded = delayedComparisons();
+    const field = Array.from({ length: 6 }, (_, i) => entry(i + 1));
+
+    await pairwiseLadderEngine.selectWinners(ctx, field, 3);
+
+    const pairs = (6 * 5) / 2;
+    expect(recorded).toHaveLength(pairs * 2);
+    const seats = seatsPlayed(recorded);
+    expect(seats.size).toBe(pairs);
+    // Not "two bouts happened" — two DIFFERENT seats happened. A pair played twice on one seat
+    // is a rank built on the seat bias the alternation exists to cancel, and a wasted call.
+    const singleSeated = [...seats.entries()].filter(([, s]) => s.size !== 2);
+    expect(singleSeated.map(([pair]) => pair)).toEqual([]);
+  });
+
+  it('never asks for the same pair and seat twice — a duplicate is silently dropped on write', async () => {
+    const stored = fakeComparisonStore();
+    const recorded = delayedComparisons();
+    const field = Array.from({ length: 6 }, (_, i) => entry(i + 1));
+
+    await pairwiseLadderEngine.selectWinners(ctx, field, 3);
+
+    // Every paid comparison survived the write. The gap between these two numbers IS the defect:
+    // 30 calls billed, 19 rows kept.
+    expect(stored).toHaveLength(recorded.length);
+    const keys = recorded.map((v) =>
+      [...[v.imageIdA, v.imageIdB].sort((a, b) => a - b), v.firstSeatImageId].join(':')
+    );
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
   it('returns only as many winners as there are prize places', async () => {
+    fakeComparisonStore();
     trueOrderComparisons();
-    store.getComparisons.mockResolvedValue([]);
     const winners = await pairwiseLadderEngine.selectWinners(
       ctx,
       [entry(1), entry(2), entry(3), entry(4)],
@@ -378,8 +487,8 @@ describe('pairwise engine — picking the places', () => {
   });
 
   it('shortlists the ladder leaders rather than round-robining the whole field', async () => {
+    fakeComparisonStore();
     trueOrderComparisons();
-    store.getComparisons.mockResolvedValue([]);
     const field = Array.from({ length: 30 }, (_, i) => entry(i + 1));
 
     await pairwiseLadderEngine.selectWinners(ctx, field, 3);
@@ -389,15 +498,55 @@ describe('pairwise engine — picking the places', () => {
   });
 
   it('writes the podium order back over the ladder, keeping the rest of the field behind it', async () => {
-    trueOrderComparisons();
-    store.getComparisons.mockResolvedValue([
-      { imageIdA: 1, imageIdB: 2, winnerImageId: 2, firstSeatImageId: 1, reason: null },
-    ]);
+    fakeComparisonStore();
+    // 2 beats 1 on both seats, inverting the ladder order it arrived with.
+    comparePair.mockImplementation(async ({ challenger, opponent, seat }) => ({
+      imageIdA: challenger.imageId,
+      imageIdB: opponent.imageId,
+      firstSeatImageId: seat === 1 ? challenger.imageId : opponent.imageId,
+      winnerImageId: 2,
+      margin: 'clear',
+      perCategory: {},
+      reason: 'because',
+      model: 'test-judge',
+      rerouted: false,
+      usage: { promptTokens: 10, completionTokens: 1 },
+      buzzCost: 0.5,
+    }));
 
     await pairwiseLadderEngine.selectWinners(ctx, [entry(1), entry(2)], 2);
 
     const written = store.replaceStandings.mock.calls.at(-1)?.[1] as { imageId: number }[];
     expect(written.map((row) => row.imageId)).toEqual([2, 1]);
+  });
+
+  it('still charges for the comparisons it made when the stage throws', async () => {
+    // The provider bills a comparison the moment it returns, so a stage that dies half way
+    // through has spent real money. Settling only on success made a mid-stage 429 look free.
+    fakeComparisonStore();
+    let calls = 0;
+    comparePair.mockImplementation(async ({ challenger, opponent, seat }) => {
+      if (++calls > 3) throw new Error('HTTP 429: rate limited');
+      return {
+        imageIdA: challenger.imageId,
+        imageIdB: opponent.imageId,
+        firstSeatImageId: seat === 1 ? challenger.imageId : opponent.imageId,
+        winnerImageId: Math.min(challenger.imageId, opponent.imageId),
+        margin: 'clear',
+        perCategory: {},
+        reason: 'because',
+        model: 'test-judge',
+        rerouted: false,
+        usage: { promptTokens: 10, completionTokens: 1 },
+        buzzCost: 4,
+      };
+    });
+
+    await expect(
+      pairwiseLadderEngine.selectWinners(ctx, [entry(1), entry(2), entry(3), entry(4)], 3)
+    ).rejects.toThrow(/rate limited/);
+
+    expect(incrementOperationSpent).toHaveBeenCalledWith(424, 12);
   });
 
   it('defers to the caller when there is nothing to compare', async () => {

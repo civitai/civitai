@@ -67,7 +67,7 @@ beforeEach(() => {
 });
 
 describe('comparePair seating', () => {
-  it('alternates which entry sits second as the step advances', async () => {
+  it('seats the challenger where the caller says, not where a counter happens to land', async () => {
     completion.mockResolvedValue(verdict({ winner: '1', margin: 'clear', perCategory: {} }));
 
     await comparePair({
@@ -75,23 +75,24 @@ describe('comparePair seating', () => {
       categories: CATEGORIES,
       challenger: sfw(1),
       opponent: sfw(2),
-      step: 0,
+      seat: 1,
     });
     await comparePair({
       systemPrompt: 'system',
       categories: CATEGORIES,
       challenger: sfw(1),
       opponent: sfw(2),
-      step: 1,
+      seat: 2,
     });
 
-    // Whichever image sits second won 127 of 210 comparisons in the round-robin, so the seat has
-    // to move: a fixed seat bakes that bias into every rank.
+    // Whichever image sits second won 127 of 210 comparisons in the round-robin, so the seat is a
+    // decision about the result. The caller owns it; deriving it here from shared state gave two
+    // concurrent bouts the same seat.
     expect(seatedUuids(0)[0]).toContain('uuid-1');
     expect(seatedUuids(1)[0]).toContain('uuid-2');
   });
 
-  it('reports the winner as an imageId, not a seat, so an alternated seat cannot invert it', async () => {
+  it('reports the winner as an imageId, not a seat, so swapping seats cannot invert it', async () => {
     completion.mockResolvedValue(verdict({ winner: '1', margin: 'clear', perCategory: {} }));
 
     const even = await comparePair({
@@ -99,14 +100,14 @@ describe('comparePair seating', () => {
       categories: CATEGORIES,
       challenger: sfw(1),
       opponent: sfw(2),
-      step: 0,
+      seat: 1,
     });
     const odd = await comparePair({
       systemPrompt: 'system',
       categories: CATEGORIES,
       challenger: sfw(1),
       opponent: sfw(2),
-      step: 1,
+      seat: 2,
     });
 
     expect(even.winnerImageId).toBe(1);
@@ -122,7 +123,7 @@ describe('comparePair seating', () => {
       categories: CATEGORIES,
       challenger: sfw(1),
       opponent: sfw(2),
-      step: 0,
+      seat: 1,
     });
     expect(result.winnerImageId).toBeNull();
   });
@@ -137,7 +138,7 @@ describe('comparePair routing and refusals', () => {
       categories: CATEGORIES,
       challenger: sfw(1),
       opponent: adult(2),
-      step: 0,
+      seat: 1,
     });
 
     expect(completion.mock.calls[0][0]).toBe(PERMISSIVE_JUDGE);
@@ -153,7 +154,7 @@ describe('comparePair routing and refusals', () => {
       categories: CATEGORIES,
       challenger: sfw(1),
       opponent: sfw(2),
-      step: 0,
+      seat: 1,
     });
 
     // Unhandled, this refusal silently deleted 54 of 284 entries from a live run and still
@@ -173,7 +174,7 @@ describe('comparePair routing and refusals', () => {
         categories: CATEGORIES,
         challenger: adult(1),
         opponent: adult(2),
-        step: 0,
+        seat: 1,
       })
     ).rejects.toThrow(/data_inspection_failed/);
     expect(completion).toHaveBeenCalledTimes(1);
@@ -187,7 +188,7 @@ describe('comparePair routing and refusals', () => {
         categories: CATEGORIES,
         challenger: sfw(1),
         opponent: sfw(2),
-        step: 0,
+        seat: 1,
       })
     ).rejects.toThrow(/rate limited/);
     expect(completion).toHaveBeenCalledTimes(1);
@@ -200,14 +201,14 @@ describe('comparePair routing and refusals', () => {
       categories: CATEGORIES,
       challenger: sfw(1),
       opponent: sfw(2),
-      step: 0,
+      seat: 1,
     });
     const permissive = await comparePair({
       systemPrompt: 'system',
       categories: CATEGORIES,
       challenger: adult(1),
       opponent: adult(2),
-      step: 0,
+      seat: 1,
     });
 
     expect(cheap.buzzCost).toBeGreaterThan(0);
@@ -229,7 +230,7 @@ describe('comparePair per-category verdicts', () => {
       categories: CATEGORIES,
       challenger: sfw(1),
       opponent: sfw(2),
-      step: 0,
+      seat: 1,
     });
 
     expect(result.perCategory).toEqual({ Theme: 2, Creativity: 1, Aesthetic: null });
@@ -242,7 +243,7 @@ describe('comparePair per-category verdicts', () => {
       categories: CATEGORIES,
       challenger: sfw(1),
       opponent: sfw(2),
-      step: 0,
+      seat: 1,
     });
     expect(Object.keys(result.perCategory)).toEqual(['Theme', 'Creativity', 'Aesthetic']);
     expect(result.perCategory.Creativity).toBeNull();
@@ -287,7 +288,7 @@ describe('comparison messages', () => {
       categories: CATEGORIES,
       challenger: sfw(11),
       opponent: sfw(22),
-      step: 0,
+      seat: 1,
     });
 
     expect(systemText(0)).toBe('judge these two');

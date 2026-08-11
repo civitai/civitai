@@ -5,11 +5,14 @@
 
 export type BoutResult = 'challenger' | 'opponent' | 'tie';
 
+/** Which seat the CHALLENGER takes: 1 = shown first, 2 = shown second. */
+export type Seat = 1 | 2;
+
 /**
- * Decide one bout. `step` is the caller's comparison counter and exists so the implementation can
- * alternate seating; the ladder itself never looks at it.
+ * Decide one bout. The seat is decided here and passed explicitly — never derived downstream from
+ * a shared counter, which is a race as soon as two bouts are in flight at once.
  */
-export type Bout = (challengerId: number, opponentId: number, step: number) => Promise<BoutResult>;
+export type Bout = (challengerId: number, opponentId: number, seat: Seat) => Promise<BoutResult>;
 
 export type SlotResult = { index: number; bouts: number };
 
@@ -32,7 +35,9 @@ export async function findSlot(
   while (lo < hi) {
     if (step >= ceiling) throw new Error(`findSlot did not converge after ${step} bouts`);
     const mid = (lo + hi) >> 1;
-    const result = await bout(challengerId, list[mid], step);
+    // Seats alternate down the search so the second-seat advantage does not accumulate against
+    // whichever entry is always the challenger.
+    const result = await bout(challengerId, list[mid], step % 2 === 0 ? 1 : 2);
     if (result === 'challenger') hi = mid;
     else lo = mid + 1;
     step++;
@@ -107,11 +112,18 @@ export type PodiumRow = {
  * Round-robin standings over the shortlist. The ladder nominates contenders; this decides places,
  * because at field scale the ladder alone put only 7 of the true top 10 inside its own top 10.
  * A tie scores half a win to each side rather than being discarded.
+ *
+ * `seatsPerPair` is asserted, not assumed. This stage decides money, and a win RATE is a ratio
+ * that stays plausible while its denominator quietly shrinks — a contender who played half its
+ * bouts still reports a tidy percentage. The bouts are written through an `ON CONFLICT DO
+ * NOTHING`, so a duplicated pair+seat is discarded at the database and never raises anything;
+ * counting the games is what makes that visible instead of merely cheaper.
  */
 export function tallyPodium(
   contenders: readonly number[],
   bouts: readonly PodiumBout[],
-  ladderRank: (imageId: number) => number
+  ladderRank: (imageId: number) => number,
+  seatsPerPair: 1 | 2
 ): PodiumRow[] {
   const tally = new Map(contenders.map((id) => [id, { wins: 0, games: 0 }]));
   for (const bout of bouts) {
@@ -127,6 +139,19 @@ export function tallyPodium(
       b.wins += 0.5;
     }
   }
+  const expected = (contenders.length - 1) * seatsPerPair;
+  const short = contenders.filter((id) => tally.get(id)!.games !== expected);
+  if (short.length) {
+    const detail = short
+      .slice(0, 5)
+      .map((id) => `${id} played ${tally.get(id)!.games}`)
+      .join(', ');
+    throw new Error(
+      `Podium is incomplete: ${short.length} of ${contenders.length} contenders did not play ` +
+        `${expected} bouts (${detail}). A win rate over a short denominator still looks like a result.`
+    );
+  }
+
   return contenders
     .map((imageId) => {
       const row = tally.get(imageId)!;

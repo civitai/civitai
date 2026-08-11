@@ -1414,12 +1414,14 @@ export async function pickWinnersForChallenge(
       }
 
       // 3. Get judged entries + LLM judgment
+      const judgingEngine = await resolveJudgingEngine(challengeJudgeRow?.judgingEngine);
       const judgedEntries = await getJudgedEntries(
         currentChallenge.collectionId,
         config,
         eventContext,
         challengeJudgeRow?.source ?? ChallengeSource.System,
-        userCategories
+        userCategories,
+        judgingEngine.ranksFullField ? { limit: Infinity } : undefined
       );
       if (!judgedEntries.length) {
         log('No judged entries for challenge:', currentChallenge.challengeId);
@@ -1460,9 +1462,9 @@ export async function pickWinnersForChallenge(
       // generateWinners and award place 1 deterministically instead. judgedEntries.length is
       // already guaranteed >= 1 here (see the empty-entries return above), so "< 2 distinct"
       // can only mean exactly one distinct entrant.
-      // The engine orders the eligible field. Legacy returns it untouched, so a challenge on the
-      // legacy engine reaches the winner pick with exactly the list it always did.
-      const judgingEngine = await resolveJudgingEngine(challengeJudgeRow?.judgingEngine);
+      // The engine orders the eligible field. Legacy returns it untouched — and was handed the
+      // same top-N cut it always was — so a challenge on the legacy engine reaches the winner pick
+      // with exactly the list it always did.
       const engineContext = buildJudgingEngineContext({
         challengeId: currentChallenge.challengeId,
         collectionId: currentChallenge.collectionId,
@@ -1470,7 +1472,12 @@ export async function pickWinnersForChallenge(
         themeElements: parseChallengeMetadata(challengeJudgeRow?.metadata).themeElements,
         categories: userCategories,
       });
-      const rankedEntries = await judgingEngine.rankField(engineContext, judgedEntries);
+      const rankedField = await judgingEngine.rankField(engineContext, judgedEntries);
+      // Cut to finalReviewAmount AFTER ranking, not before: the engine ranks the whole field, and
+      // only then is it meaningful to say which entries are the top N. Legacy was already handed
+      // the cut, so this slice is a no-op for it. The full ranking still goes to `selectWinners`,
+      // which draws its own shortlist and would otherwise be capped below its own podium size.
+      const rankedEntries = rankedField.slice(0, config.finalReviewAmount);
 
       const distinctEntrantIds = new Set(rankedEntries.map((entry) => entry.userId));
 
@@ -1515,7 +1522,7 @@ export async function pickWinnersForChallenge(
         // called for the recap it writes, and its own picks are discarded in that case.
         const engineWinners = await judgingEngine.selectWinners(
           engineContext,
-          rankedEntries,
+          rankedField,
           currentChallenge.prizes.length
         );
 
@@ -1913,7 +1920,11 @@ export async function getJudgedEntries(
   config: ChallengeConfig,
   eventContext?: EventContext,
   source: ChallengeSource = ChallengeSource.System,
-  categories?: ChallengeJudgingCategory[]
+  categories?: ChallengeJudgingCategory[],
+  // Defaults to the historical cut at config.finalReviewAmount. An engine that ranks by
+  // comparison passes Infinity so the absolute score (and its random tiebreak) does not decide
+  // which entries are eligible to be ranked.
+  options?: { limit?: number }
 ) {
   // A challenge with no usable stored rubric (only a malformed value now that every challenge is
   // seeded) is ranked by the same fixed split the judge scored it against.
@@ -2022,7 +2033,7 @@ export async function getJudgedEntries(
   // categories tie often, and the tied set is what gets cut at finalReviewAmount.
   return [...bestPerUser.values()]
     .sort((a, b) => b.weightedRating - a.weightedRating || Math.random() - 0.5)
-    .slice(0, config.finalReviewAmount);
+    .slice(0, options?.limit ?? config.finalReviewAmount);
 }
 
 // Types

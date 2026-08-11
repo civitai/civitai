@@ -7,6 +7,7 @@ import {
   spliceAt,
   tallyPodium,
   type Bout,
+  type Seat,
 } from '~/server/games/daily-challenge/challenge-ladder';
 
 /**
@@ -14,9 +15,9 @@ import {
  * test can assert a search stayed logarithmic instead of walking the ladder.
  */
 function trueOrderBout() {
-  const seats: { challenger: number; opponent: number; step: number }[] = [];
-  const bout: Bout = async (challenger, opponent, step) => {
-    seats.push({ challenger, opponent, step });
+  const seats: { challenger: number; opponent: number; seat: Seat }[] = [];
+  const bout: Bout = async (challenger, opponent, seat) => {
+    seats.push({ challenger, opponent, seat });
     return challenger < opponent ? 'challenger' : 'opponent';
   };
   return { bout, seats };
@@ -121,7 +122,8 @@ describe('tallyPodium', () => {
         { imageIdA: 1, imageIdB: 3, winnerImageId: 1 },
         { imageIdA: 2, imageIdB: 3, winnerImageId: null },
       ],
-      rank
+      rank,
+      1
     );
 
     expect(table.map((row) => row.imageId)).toEqual([1, 2, 3]);
@@ -136,14 +138,25 @@ describe('tallyPodium', () => {
         { imageIdA: 9, imageIdB: 4, winnerImageId: 9 },
         { imageIdA: 9, imageIdB: 4, winnerImageId: 4 },
       ],
-      rank
+      rank,
+      2
     );
     expect(table.map((row) => row.imageId)).toEqual([4, 9]);
   });
 
-  it('ignores bouts involving an entry outside the shortlist', () => {
-    const table = tallyPodium([1, 2], [{ imageIdA: 1, imageIdB: 99, winnerImageId: 99 }], rank);
-    expect(table.every((row) => row.games === 0)).toBe(true);
+  it('refuses to rank a shortlist whose bouts did not all happen', () => {
+    // A bout naming an entry outside the shortlist is not a bout this shortlist played, so both
+    // contenders are short of their games. Returning a table of zeroes here would hand the caller
+    // a win rate computed from nothing, which reads exactly like a real result.
+    expect(() =>
+      tallyPodium([1, 2], [{ imageIdA: 1, imageIdB: 99, winnerImageId: 99 }], rank, 1)
+    ).toThrow(/Podium is incomplete: 2 of 2 contenders did not play 1 bouts/);
+  });
+
+  it('refuses a shortlist that played one seat when it was told to play two', () => {
+    expect(() =>
+      tallyPodium([1, 2], [{ imageIdA: 1, imageIdB: 2, winnerImageId: 1 }], rank, 2)
+    ).toThrow(/did not play 2 bouts/);
   });
 });
 

@@ -166,6 +166,9 @@ const { pickWinnersForChallenge, reviewEntries } = await import(
 );
 const { ChallengeSource } = await import('~/shared/utils/prisma/enums');
 
+/** Mirrors BASE_CONFIG below, which is cast to `never` and so cannot be read back. */
+const FINAL_REVIEW_AMOUNT = 10;
+
 const BASE_CONFIG = {
   challengeType: 'world-morph',
   challengeCollectionId: 1,
@@ -216,6 +219,7 @@ const currentChallenge = {
 
 const engine = {
   key: 'pairwise-ladder' as const,
+  ranksFullField: true,
   recordEntry: mockRecordEntry,
   rankField: mockRankField,
   selectWinners: mockSelectWinners,
@@ -457,6 +461,70 @@ describe('pickWinnersForChallenge — who picks the places', () => {
       (entry: { userId: number }) => entry.userId
     );
     expect(recapEntries.map((entry) => entry.creatorId)).toEqual(rankedIds);
+  });
+
+  // The absolute cut used to happen BEFORE the engine saw anything: getJudgedEntries sorts by the
+  // absolute weighted score with a `Math.random()` tiebreak and slices to finalReviewAmount. An
+  // engine that ranks by comparison would then be reordering ten entries the coin flip had already
+  // chosen — the ranking replaced by the very mechanism it exists to replace.
+  function wideField(n: number) {
+    return Array.from({ length: n }, (_, i) => ({
+      imageId: i + 1,
+      userId: (i + 1) * 100,
+      username: `u${i + 1}`,
+    }));
+  }
+
+  function recapOnly() {
+    mockGenerateWinners.mockResolvedValue({
+      process: 'llm',
+      outcome: 'llm',
+      model: 'test-model',
+      usage: { promptTokens: 0, completionTokens: 0 },
+      winners: [],
+    });
+  }
+
+  it('hands a comparison engine the WHOLE eligible field, not the absolute-score top ten', async () => {
+    mockJudgeRow('pairwise-ladder');
+    mockJudgedEntryRows(wideField(24));
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    mockSelectWinners.mockResolvedValue(null);
+    recapOnly();
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    expect((mockRankField.mock.calls[0][1] as unknown[]).length).toBe(24);
+  });
+
+  it('keeps the historical cut for an engine that does not rank the field', async () => {
+    mockResolveJudgingEngine.mockResolvedValue({ ...engine, ranksFullField: false });
+    mockJudgeRow('legacy-absolute');
+    mockJudgedEntryRows(wideField(24));
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    mockSelectWinners.mockResolvedValue(null);
+    recapOnly();
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    expect((mockRankField.mock.calls[0][1] as unknown[]).length).toBe(FINAL_REVIEW_AMOUNT);
+  });
+
+  it('gives the podium the full ranking but the recap only the top N', async () => {
+    // finalReviewAmount is 10 and the podium shortlists 15, so slicing before `selectWinners`
+    // would silently cap the round-robin below its own shortlist size.
+    mockJudgeRow('pairwise-ladder');
+    mockJudgedEntryRows(wideField(24));
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    mockSelectWinners.mockResolvedValue(null);
+    recapOnly();
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    expect((mockSelectWinners.mock.calls[0][1] as unknown[]).length).toBe(24);
+    expect((mockGenerateWinners.mock.calls[0][0].entries as unknown[]).length).toBe(
+      FINAL_REVIEW_AMOUNT
+    );
   });
 
   it('lets a coverage failure abort the payout rather than paying a subset', async () => {

@@ -17,6 +17,7 @@ import {
   tallyPodium,
   type Bout,
   type BoutResult,
+  type Seat,
 } from '~/server/games/daily-challenge/challenge-ladder';
 import {
   buildComparisonPrompt,
@@ -43,6 +44,7 @@ const PODIUM_CONCURRENCY = 8;
  */
 export const pairwiseLadderEngine: ChallengeJudgingEngine = {
   key: JUDGING_ENGINES.PairwiseLadder,
+  ranksFullField: true,
 
   async recordEntry(ctx: JudgingEngineContext, entry: JudgedEntryRef): Promise<void> {
     const standings = await store.getStandings(ctx.challengeId);
@@ -55,7 +57,7 @@ export const pairwiseLadderEngine: ChallengeJudgingEngine = {
     });
 
     const session = createSession(ctx, images, 'arrive');
-    const { index, bouts } = await findSlot(entry.imageId, ladder, session.bout);
+    const { index, bouts } = await session.run(() => findSlot(entry.imageId, ladder, session.bout));
     await store.insertStanding({
       challengeId: ctx.challengeId,
       imageId: entry.imageId,
@@ -63,7 +65,6 @@ export const pairwiseLadderEngine: ChallengeJudgingEngine = {
       rank: index + 1,
       comparisons: bouts,
     });
-    await session.settle();
   },
 
   async rankField<T extends RankableEntry>(ctx: JudgingEngineContext, eligible: T[]): Promise<T[]> {
@@ -80,8 +81,7 @@ export const pairwiseLadderEngine: ChallengeJudgingEngine = {
     const images = await loadComparisonImages(startingOrder);
     const session = createSession(ctx, images, 'rerun');
     session.seed(await store.getComparisons(ctx.challengeId, ['arrive', 'rerun']));
-    const { order } = await reinsertAll(startingOrder, session.bout);
-    await session.settle();
+    const { order } = await session.run(() => reinsertAll(startingOrder, session.bout));
 
     assertLadderCoverage(
       ctx.challengeId,
@@ -109,24 +109,31 @@ export const pairwiseLadderEngine: ChallengeJudgingEngine = {
     const session = createSession(ctx, images, 'podium');
 
     // Both seats, unlike placement: confirmation buys nothing during a binary search, but this
-    // stage decides money and a disagreement between the seatings is a real tie.
-    const jobs = roundRobinPairs(contenders.map((entry) => entry.imageId)).flatMap(([x, y]) => [
-      { x, y, step: 0 },
-      { x, y, step: 1 },
-    ]);
-    await limitConcurrency(
-      jobs.map((job) => async () => {
-        await session.bout(job.x, job.y, job.step);
-      }),
-      PODIUM_CONCURRENCY
+    // stage decides money and a disagreement between the seatings is a real tie. The seat is on
+    // the job — anything derived at call time from shared state gives concurrent bouts the same
+    // seat, and the duplicate is then discarded on write after it has been paid for.
+    session.seed(await store.getComparisons(ctx.challengeId, ['podium']));
+    const jobs = roundRobinPairs(contenders.map((entry) => entry.imageId)).flatMap(
+      ([x, y]): { x: number; y: number; seat: Seat }[] => [
+        { x, y, seat: 1 },
+        { x, y, seat: 2 },
+      ]
     );
-    await session.settle();
+    await session.run(() =>
+      limitConcurrency(
+        jobs.map((job) => async () => {
+          await session.bout(job.x, job.y, job.seat);
+        }),
+        PODIUM_CONCURRENCY
+      )
+    );
 
     const ladderRank = new Map(contenders.map((entry, i) => [entry.imageId, i]));
     const table = tallyPodium(
       contenders.map((entry) => entry.imageId),
       await store.getComparisons(ctx.challengeId, ['podium']),
-      (imageId) => ladderRank.get(imageId) ?? Number.MAX_SAFE_INTEGER
+      (imageId) => ladderRank.get(imageId) ?? Number.MAX_SAFE_INTEGER,
+      2
     );
 
     const byImageId = new Map(ranked.map((entry) => [entry.imageId, entry]));
@@ -157,9 +164,8 @@ export const pairwiseLadderEngine: ChallengeJudgingEngine = {
 const formatWins = (wins: number) => (Number.isInteger(wins) ? String(wins) : wins.toFixed(1));
 
 /**
- * One engine call's worth of comparisons: the pair cache, the seat counter, the persistence of
- * each verdict, and the spend it accrued. `settle` reports the totals once, so a challenge is
- * charged and logged per stage rather than per bout.
+ * One engine call's worth of comparisons: the pair cache, the persistence of each verdict, and
+ * the spend it accrued. Totals are reported once per stage rather than per bout, via `run`.
  */
 function createSession(
   ctx: JudgingEngineContext,
@@ -172,19 +178,22 @@ function createSession(
     categories: ctx.categories,
     criteriaByKey: ctx.criteriaByKey,
   });
+  // Placement caches by PAIR — a binary search never wants the same two entries twice, whatever
+  // the seating. The podium caches by pair AND seat, because playing both seats is the point of
+  // that stage.
   const results = new Map<string, number | null>();
   const pairKey = (x: number, y: number) => (x < y ? `${x}:${y}` : `${y}:${x}`);
+  const cacheKey = (x: number, y: number, firstSeatImageId: number) =>
+    phase === 'podium' ? `${pairKey(x, y)}:${firstSeatImageId}` : pairKey(x, y);
 
-  let step = 0;
   let buzz = 0;
   let comparisons = 0;
   let reroutes = 0;
 
-  const bout: Bout = async (challengerId, opponentId, boutStep): Promise<BoutResult> => {
-    const key = pairKey(challengerId, opponentId);
-    if (phase !== 'podium' && results.has(key)) {
-      return toResult(results.get(key) ?? null, challengerId);
-    }
+  const bout: Bout = async (challengerId, opponentId, seat): Promise<BoutResult> => {
+    const firstSeatImageId = seat === 1 ? challengerId : opponentId;
+    const key = cacheKey(challengerId, opponentId, firstSeatImageId);
+    if (results.has(key)) return toResult(results.get(key) ?? null, challengerId);
 
     const challenger = images.get(challengerId);
     const opponent = images.get(opponentId);
@@ -192,16 +201,13 @@ function createSession(
       throw new Error(`Missing image for comparison ${challengerId} vs ${opponentId}`);
     }
 
-    // Seats alternate on the session's own counter rather than the caller's step, so a stage made
-    // of many short searches still alternates instead of always opening on the same seat.
     const verdict = await comparePair({
       systemPrompt,
       categories: ctx.categories,
       challenger,
       opponent,
-      step: step + boutStep,
+      seat,
     });
-    step++;
     comparisons++;
     buzz += verdict.buzzCost;
     if (verdict.rerouted) reroutes++;
@@ -211,24 +217,50 @@ function createSession(
     return toResult(verdict.winnerImageId, challengerId);
   };
 
+  async function settle() {
+    const spend = Math.ceil(buzz);
+    if (spend > 0) await incrementOperationSpent(ctx.challengeId, spend);
+    logToAxiom({
+      type: 'info',
+      name: 'challenge-pairwise-stage',
+      challengeId: ctx.challengeId,
+      phase,
+      comparisons,
+      reroutes,
+      buzz: spend,
+    }).catch(() => undefined);
+  }
+
   return {
     bout,
     /** Seed the cache from comparisons this challenge already paid for. */
     seed(stored: store.StoredComparison[]) {
-      for (const row of stored) results.set(pairKey(row.imageIdA, row.imageIdB), row.winnerImageId);
+      for (const row of stored) {
+        results.set(cacheKey(row.imageIdA, row.imageIdB, row.firstSeatImageId), row.winnerImageId);
+      }
     },
-    async settle() {
-      const spend = Math.ceil(buzz);
-      if (spend > 0) await incrementOperationSpent(ctx.challengeId, spend);
-      logToAxiom({
-        type: 'info',
-        name: 'challenge-pairwise-stage',
-        challengeId: ctx.challengeId,
-        phase,
-        comparisons,
-        reroutes,
-        buzz: spend,
-      }).catch(() => undefined);
+    /**
+     * Run a stage and account for it whether or not it finishes. Comparisons are billed by the
+     * provider the moment they return, so a stage that throws half way through has still spent
+     * real money; settling only on success made a mid-stage 429 look free. The accounting failure
+     * is swallowed rather than allowed to replace the error that actually stopped the stage.
+     */
+    async run<T>(work: () => Promise<T>): Promise<T> {
+      try {
+        return await work();
+      } finally {
+        try {
+          await settle();
+        } catch (error) {
+          logToAxiom({
+            type: 'error',
+            name: 'challenge-pairwise-settle',
+            challengeId: ctx.challengeId,
+            phase,
+            message: (error as Error).message,
+          }).catch(() => undefined);
+        }
+      }
     },
   };
 }

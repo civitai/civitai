@@ -56,6 +56,16 @@ export interface ChallengeJudgingEngine {
   readonly key: JudgingEngineKey;
 
   /**
+   * Whether the engine wants the whole eligible field or the caller's top-N cut.
+   *
+   * The cut is by ABSOLUTE score with a `Math.random()` tiebreak. For the legacy engine that is
+   * simply how it has always worked. For anything that ranks by comparison it would mean the coin
+   * flip still decides who is eligible to be ranked at all — the field would be chosen by the
+   * mechanism the ranking exists to replace, and the ranking would only reorder the survivors.
+   */
+  readonly ranksFullField: boolean;
+
+  /**
    * Called once per entry as it is judged on submission, after the absolute pass. Runs inside the
    * review job's per-entry error boundary, so a throw costs this entry's placement and nothing
    * else — `rankField` places anything that was missed.
