@@ -11,6 +11,7 @@ import type {
 } from '~/shared/utils/placement';
 import {
   effectivePlacementPrice,
+  PLACEMENT_SURFACES,
   resolvePlacementSpace,
   surfaceAcceptsTarget,
 } from '~/shared/utils/placement';
@@ -162,7 +163,34 @@ export async function setPlacementSpace({
   // would refuse every attempt while the owner's UI showed the space as open.
   // Requiring the price here makes that state unreachable rather than a puzzle
   // the placer discovers.
-  const resolvedPrice = price ?? (await inheritedPrice({ surface, entityType, entityId, userId }));
+  const [existing, inherited] = await Promise.all([
+    dbWrite.placementSpace.findUnique({
+      where: { surface_entityType_entityId: { surface, entityType, entityId } },
+      select: { price: true },
+    }),
+    inheritedPrice({ surface, entityType, entityId, userId }),
+  ]);
+
+  // `undefined` leaves this level's own price alone, so the guard has to read it
+  // rather than treating it as unset — otherwise it refuses a configuration the
+  // cascade resolves fine, which is the disagreement this guard exists to avoid.
+  const ownPrice = price === undefined ? existing?.price ?? null : price;
+  const resolvedPrice = ownPrice ?? inherited ?? PLACEMENT_SURFACES[surface].defaultPrice;
+
+  // Clearing a stored price used to be refused wherever nothing sat above it,
+  // and that refusal was the only thing standing between an emptied field and
+  // an account price being replaced by the surface default. A creator charging
+  // 500 who blanks the box means "set my own price", not "take 100".
+  //
+  // Only at the account level, though. Below it "the level above" is a real
+  // place a price can come from, the control offers exactly that, and refusing
+  // it there throws a paragraph at the ordinary case of having no account
+  // price. Closing a space while clearing its price is coherent and allowed.
+  if (entityType === 'user' && mode !== 'off' && price === null && existing?.price != null)
+    throw throwBadRequestError(
+      'placement: set a price rather than clearing it — your account price is the one placers are charged, so clearing it would drop your space to the platform default'
+    );
+
   if (mode !== 'off' && resolvedPrice == null)
     throw throwBadRequestError('placement: set a price before opening this space');
 

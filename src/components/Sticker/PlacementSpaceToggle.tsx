@@ -1,6 +1,12 @@
-import { Loader, NumberInput, SegmentedControl, Stack, Text } from '@mantine/core';
+import { Anchor, Group, Loader, SegmentedControl, Slider, Stack, Text } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import {
+  onPlacementPriceGrid,
+  PLACEMENT_PRICE_STEP,
+  placementPriceTrack,
+  PLACEMENT_SURFACES,
+} from '~/shared/utils/placement';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -32,8 +38,16 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
   const features = useFeatureFlags();
   const utils = trpc.useUtils();
 
-  const { data: row, isLoading } = trpc.placement.getSpaceRow.useQuery(
+  const {
+    data: row,
+    isPending: rowPending,
+    isError: rowFailed,
+  } = trpc.placement.getSpaceRow.useQuery(
     { surface: 'sticker', entityType: level, entityId },
+    { enabled: !!features.stickerPlacement }
+  );
+  const { data: range } = trpc.placement.getPriceRange.useQuery(
+    { surface: 'sticker' },
     { enabled: !!features.stickerPlacement }
   );
 
@@ -45,8 +59,14 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
     setPrice(row?.price ?? '');
   }, [row]);
 
-  const onError = (error: { message: string }) =>
+  // A refused write leaves the control asserting a price the server did not
+  // take. Rolling back to the row is the same failure the price guard exists to
+  // prevent, moved from the database to the screen.
+  const onError = (error: { message: string }) => {
+    setMode(row?.mode ?? 'inherit');
+    setPrice(row?.price ?? '');
     showErrorNotification({ title: "Couldn't save that", error: new Error(error.message) });
+  };
 
   const save = trpc.placement.setSpace.useMutation({
     onSuccess: () => utils.placement.invalidate(),
@@ -58,7 +78,11 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
   });
 
   if (!features.stickerPlacement) return null;
-  if (isLoading) return <Loader size="xs" />;
+  if (rowPending) return <Loader size="xs" />;
+  // `row` is undefined after a failed read exactly as it is for a level with no
+  // row of its own, and the control cannot tell them apart. Showing `inherit`
+  // means one click clears or overwrites a setting the creator never saw.
+  if (rowFailed) return null;
 
   const commit = (nextMode: string, nextPrice: number | '') => {
     // Inheriting is the absence of a row, so it deletes rather than writing
@@ -82,6 +106,18 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
       price: nextPrice === '' ? null : nextPrice,
     });
   };
+
+  const defaultPrice = PLACEMENT_SURFACES.sticker.defaultPrice;
+  const cap = range?.max ?? null;
+  const track = placementPriceTrack('sticker', cap);
+  const { min: sliderMin, max: sliderMax } = track;
+  const clamp = (value: number) => Math.min(Math.max(value, sliderMin), sliderMax);
+  const sliderValue = price === '' ? clamp(defaultPrice) : clamp(price);
+  const overCap = cap != null && typeof price === 'number' && price > cap;
+  // A legacy price the grid cannot land on. Saying so is the whole remedy: the
+  // slider will round it, and a creator who is not told discovers that from
+  // their earnings.
+  const offGrid = typeof price === 'number' && !onPlacementPriceGrid(price, track);
 
   return (
     <Stack gap={4}>
@@ -109,15 +145,61 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
         </Text>
       ) : (
         mode !== 'off' && (
-          <NumberInput
-            size="xs"
-            label="Price"
-            description="Leave empty to use the price from the level above."
-            value={price}
-            min={0}
-            onChange={(value) => setPrice(typeof value === 'number' ? value : '')}
-            onBlur={() => commit(mode, price)}
-          />
+          <Stack gap={2}>
+            <Group justify="space-between" gap="xs">
+              <Text size="xs" fw={500}>
+                Price
+              </Text>
+              {price !== '' && (
+                <Anchor component="button" type="button" size="xs" onClick={() => commit(mode, '')}>
+                  Use the price from the level above
+                </Anchor>
+              )}
+            </Group>
+            <Slider
+              size="xs"
+              // Committing on release rather than on every value: dragging a
+              // slider emits a value per pixel, and each one is a write. This is
+              // also why there is no debounce — a trailing timer can still land
+              // after the pointer is up, and `onChangeEnd` cannot drop the value
+              // the creator actually chose.
+              value={sliderValue}
+              // Until the range loads, the ceiling is a guess, and a creator who
+              // drags against the guess sets a price against a cap that is not
+              // theirs.
+              disabled={!range}
+              min={sliderMin}
+              max={sliderMax}
+              step={PLACEMENT_PRICE_STEP}
+              marks={
+                cap != null && cap > sliderMin && cap < sliderMax
+                  ? [
+                      { value: sliderMin, label: `${sliderMin}` },
+                      { value: cap, label: `cap ${cap}` },
+                      { value: sliderMax, label: `${sliderMax}` },
+                    ]
+                  : [
+                      { value: sliderMin, label: `${sliderMin}` },
+                      { value: sliderMax, label: `${sliderMax}` },
+                    ]
+              }
+              label={(value) => `${value} Buzz`}
+              onChange={setPrice}
+              onChangeEnd={(value) => {
+                setPrice(value);
+                commit(mode, value);
+              }}
+            />
+            <Text size="xs" c={overCap || offGrid ? 'yellow' : 'dimmed'}>
+              {price === ''
+                ? `Following the price from the level above, or ${defaultPrice} Buzz if none is set.`
+                : overCap
+                ? `Placers pay ${cap} Buzz — your current cap — until your score or membership raises it.`
+                : offGrid
+                ? `Placers pay ${price} Buzz. The slider moves in ${PLACEMENT_PRICE_STEP}s from ${sliderMin}, so using it will change this price.`
+                : `Placers pay ${price} Buzz.`}
+            </Text>
+          </Stack>
         )
       )}
     </Stack>

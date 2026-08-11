@@ -24,8 +24,11 @@ import {
   STICKER_PLACEMENT_MIN_SCALE,
   stickerMaxScale,
 } from '~/shared/utils/sticker-placement';
+import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+
+const { defaultMode: DEFAULT_MODE, defaultPrice: DEFAULT_PRICE } = PLACEMENT_SURFACES.sticker;
 
 /**
  * Account-level control over who may place stickers on this creator's images.
@@ -48,16 +51,28 @@ export function PlacementSpaceSection() {
     { surface: 'sticker' },
     { enabled }
   );
-  const { data: spaces } = trpc.placement.getMySpaces.useQuery({ surface: 'sticker' }, { enabled });
+  const {
+    data: spaces,
+    isPending: spacesPending,
+    isError: spacesFailed,
+  } = trpc.placement.getMySpaces.useQuery({ surface: 'sticker' }, { enabled });
   const { data: pending } = trpc.placement.getPending.useQuery(undefined, { enabled });
 
   const stored = spaces?.[0];
-  const [mode, setMode] = useState('off');
-  const [price, setPrice] = useState<number | ''>('');
+  // Seeded from the surface defaults, not from `off`. With no row the cascade
+  // resolves this space open, and a control that showed "No stickers" would be
+  // telling a creator their space is closed on the one screen where they say so
+  // — they would find out it was open from a review notification.
+  const [mode, setMode] = useState<string>(DEFAULT_MODE);
+  const [price, setPrice] = useState<number | ''>(DEFAULT_PRICE ?? '');
   const [maxScale, setMaxScale] = useState(STICKER_PLACEMENT_DEFAULT_MAX_SCALE);
 
   useEffect(() => {
-    if (!stored) return;
+    if (!stored) {
+      setMode(DEFAULT_MODE);
+      setPrice(DEFAULT_PRICE ?? '');
+      return;
+    }
     setMode(stored.mode);
     setPrice(stored.price ?? '');
     setMaxScale(stickerMaxScale(stored.settings as Record<string, unknown>));
@@ -67,11 +82,22 @@ export function PlacementSpaceSection() {
     // No success toast: every control here commits on change, and three toasts
     // for three nudges of one slider is noise rather than confirmation.
     onSuccess: () => utils.placement.invalidate(),
-    onError: (error) =>
-      showErrorNotification({ title: "Couldn't save that", error: new Error(error.message) }),
+    onError: (error) => {
+      // Without this the field keeps the value the server refused, and the page
+      // states a price nobody is being charged.
+      setMode(stored?.mode ?? DEFAULT_MODE);
+      setPrice(stored?.price ?? DEFAULT_PRICE ?? '');
+      showErrorNotification({ title: "Couldn't save that", error: new Error(error.message) });
+    },
   });
 
   if (!enabled || !currentUser) return null;
+  // `spaces` is undefined in every terminal state except success — in flight
+  // AND after the retries are exhausted — and undefined is indistinguishable
+  // from "no row". Rendering against either would seed the defaults and let one
+  // click write `review` over a space the creator had explicitly closed. A
+  // failed read is not permission to assume they have no preference.
+  if (spacesPending || spacesFailed) return null;
 
   const cap = range?.max ?? 0;
   const overCap = typeof price === 'number' && cap > 0 && price > cap;
@@ -86,7 +112,11 @@ export function PlacementSpaceSection() {
       // cannot be pointed at someone else's account.
       entityId: currentUser.id,
       mode: nextMode as 'off' | 'review' | 'auto',
-      price: nextPrice === '' ? null : nextPrice,
+      // A creator with no row who only touches the mode has not chosen a price,
+      // and writing the seeded one would freeze today's platform default into
+      // their account where a later change to it would never reach them.
+      price:
+        !stored && nextPrice === DEFAULT_PRICE ? undefined : nextPrice === '' ? null : nextPrice,
     });
 
   return (
@@ -196,9 +226,19 @@ export function PlacementSpaceSection() {
         </Alert>
       )}
 
+      {/* Gated on there being no price rather than no row: a row with a null
+          price is now the ordinary result of setting a mode without touching
+          the price, and the page would otherwise say nothing at all about what
+          placers pay. */}
       {mode !== 'off' && price === '' && (
-        <Alert color="red" p="xs">
-          <Text size="xs">Set a price before opening your space, or nobody can place.</Text>
+        <Alert color="blue" p="xs">
+          <Text size="xs">
+            {!stored && 'This is the default and it is already in effect. '}
+            You haven&apos;t set a price, so placers pay the platform default of {
+              DEFAULT_PRICE
+            }{' '}
+            Buzz. Set one to charge your own.
+          </Text>
         </Alert>
       )}
     </>
