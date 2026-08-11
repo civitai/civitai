@@ -28,9 +28,13 @@ import type * as PromClient from '~/server/prom/client';
  * absence assertion over `Object.keys(undefined ?? {})` passes on precisely
  * the shape being rejected; `toEqual` fails on `undefined` by itself. An
  * earlier revision followed the `toEqual` with a loop asserting each tagged
- * `Post` column was absent — unreachable, since any select containing one had
- * already failed the line above — and it has been removed. The `toBeDefined`
- * that remains is for its failure message, not for coverage.
+ * `Post` column was absent, and it has been removed. Given a FIXED `expected`
+ * that loop was redundant — any select containing one of those columns had
+ * already failed the line above — but it also went red when `expected` was
+ * widened ALONGSIDE the source, which a `toEqual` against the widened
+ * `expected` cannot catch, so removing it accepts the loss of that narrow
+ * ratchet against a test-file edit. The `toBeDefined` that remains is for its
+ * failure message, not for coverage.
  *
  * The mock block mirrors the established recipe from
  * `getAllImages-prioritized-guards.test.ts`, with one difference: `isFlipt`

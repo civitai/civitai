@@ -17,16 +17,28 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * guards — they pass on both sides of the narrowing by design, and are not
  * counted as regression coverage.
  *
- * 🔴 Every shape assertion pins the projection's EXACT key set with `toEqual`,
- * never "does not contain <column>". That distinction is the whole reason this
- * file looks the way it does: an unnarrowed `findUnique` has no `select` at
- * all, and `Object.keys(undefined ?? {})` is empty, so an absence-check passes
- * on precisely the shape being rejected. `toEqual` has no such hole — it fails
- * on `undefined` by itself — so it is the only shape assertion here, and there
- * are no absence-checks left to be vacuous. The `toBeDefined` line inside
- * `expectProjection` survives for its FAILURE MESSAGE, not for coverage: it
- * names the real defect ("a bare Prisma call fetches every column") instead of
- * leaving a bare `undefined` mismatch for the reader to decode.
+ * 🔴 Wherever the thing under test is a Prisma call ARGUMENT, the shape is
+ * pinned by its EXACT key set with `toEqual`, never "does not contain
+ * <column>". That distinction is the whole reason those assertions look the way
+ * they do: an unnarrowed `findUnique` has no `select` at all, and
+ * `Object.keys(undefined ?? {})` is empty, so an absence-check passes on
+ * precisely the shape being rejected. `toEqual` has no such hole — it fails on
+ * `undefined` by itself. The two `toBeDefined` lines inside `expectProjection`
+ * survive for their FAILURE MESSAGE, not for coverage: they name the real
+ * defect ("a bare Prisma call fetches every column") instead of leaving a bare
+ * `undefined` mismatch for the reader to decode.
+ *
+ * The `getReactionsSelect` cases are the deliberate exception, and they do use
+ * targeted presence/absence checks. That selector is a module-level object
+ * literal rather than a call argument, so it has no "no `select` key at all"
+ * shape for an absence-check to pass vacuously on. Its `user` projection is
+ * still pinned by exact key set with `toEqual`, and the `not.toHaveProperty`
+ * trio beside it is reachable rather than vacuous: deleting `user.select` does
+ * not quietly satisfy it, it fails it with `TypeError: Cannot convert undefined
+ * or null to object`, and re-adding `profilePicture` fails it by name. The two
+ * `toHaveProperty(…, true)` reaction-field checks are presence checks on the
+ * top-level selector; like the behavioural cases above they hold on both sides
+ * of the narrowing and are not counted as regression coverage.
  *
  * The remaining narrowed path — `hasSystemPosts` in `getAllImages` — is pinned
  * in the sibling file `hot-path-select-narrowing.image.test.ts`. It lives apart
@@ -89,10 +101,14 @@ const TARGET_USER_ID = 404;
  * the `Post` columns that cost a client-side decode per row — `metadata`,
  * `createdAt`, `updatedAt`, `publishedAt` — fails it, as does dropping to a
  * bare call with no `select`. An earlier revision also looped over those four
- * column names asserting each was absent; that loop sat AFTER the `toEqual`
- * and could therefore never report, since any select containing one of them
- * already failed above it. It was removed rather than reordered: `toEqual` is
- * strictly stronger, so the loop had nothing to add in either position.
+ * column names asserting each was absent. Given a FIXED `expected`, that loop
+ * was redundant: it sat AFTER the `toEqual`, and any select containing one of
+ * those columns had already failed there. It was not redundant in every
+ * scenario, though — it also went red when `expected` was widened ALONGSIDE the
+ * source (the ordinary "developer updates the failing expectation" edit),
+ * naming the re-added column, and a `toEqual` against a widened `expected` by
+ * construction cannot catch that. Removing the loop accepts the loss of that
+ * narrow ratchet against a test-file edit.
  *
  * The two `toBeDefined` lines are for the failure message only — see the file
  * header.
@@ -134,9 +150,10 @@ describe('getEntityCollaborators — Post owner lookup is projected, not a full 
     //
     // This went through the shared helper along with the other two `Post`
     // narrowings when its former companion case — a separate `it` looping over
-    // the tagged column names — was deleted. That case asserted strictly less
-    // than this line does about every possible implementation, so it could not
-    // fail on any mutant this one survives.
+    // the tagged column names — was deleted. Against a fixed `expected` that
+    // case asserted less than this line does, so it could not fail on a SOURCE
+    // mutant this one survives; the one edit it did still catch is described on
+    // `expectProjection`.
     expectProjection(args, { userId: true }, 'getEntityCollaborators');
   });
 

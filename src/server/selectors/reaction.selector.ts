@@ -21,12 +21,14 @@ import { Prisma } from '@prisma/client';
  *    round-trip rather than a widened one. Selecting it meant one `Image`
  *    SELECT per call — not per row — whenever AT LEAST ONE reactor in the batch
  *    has a profile picture; when the collected FK set is empty Prisma skips the
- *    child query entirely. Measured on this exact shape (Prisma 6.13.0, PG16,
- *    SQL captured via `$on('query')`): a batch of 5 reactors issues 0 `Image`
- *    SELECTs with none of them carrying a picture, and 1 (`WHERE "Image"."id"
- *    IN (…)`) whether one carries one or all five do. That query is on top of
- *    the `User` SELECT the `user` relation still costs; dropping
- *    `profilePicture` removes it, rather than just a column.
+ *    child query entirely. Measured on a minimal MIRROR of this shape
+ *    (`CommentReaction -> User -> Image` via a nullable FK; Prisma 6.13.0, SQL
+ *    captured via `$on('query')`; reproduced on SQLite, and once on PG16): a
+ *    batch of 5 reactors issues 0 `Image` SELECTs with none of them carrying a
+ *    picture, and 1 (`WHERE "Image"."id" IN (…)`) whether one carries one or
+ *    all five do. That query is on top of the `User` SELECT the `user` relation
+ *    still costs; dropping `profilePicture` removes it, rather than just a
+ *    column.
  *
  * 2. Per-row decoding, but only CONDITIONALLY. Prisma converts tagged values
  *    on the JS main thread (`DateTime` -> `new Date`, `Json` -> `JSON.parse`),
