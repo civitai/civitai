@@ -233,8 +233,14 @@ function SwipeGalleryCardsToggle() {
 }
 
 function StickerMotionToggle() {
+  const features = useFeatureFlags();
   const { disableStickerMotion } = useCurrentUserSettings();
   const { mutate, isPending } = useMutateUserSettings();
+
+  // Nothing animates until placement ships, so until then this is a switch over
+  // a thing that does not happen — and the only way to find that out is to turn
+  // it off and see no difference.
+  if (!features.stickerPlacement) return null;
 
   return (
     <Switch
