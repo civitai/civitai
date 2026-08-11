@@ -145,6 +145,14 @@ export const getRemixGalleryVisibilitySchema = z.object({
 export const submitToRemixGallerySchema = z.object({
   hostImageId: z.number().int().positive(),
   imageId: z.number().int().positive(),
+  /**
+   * The price the submitter was shown. Refused if the owner has moved it since,
+   * rather than silently charging the new one — the client can only check
+   * affordability against the number it rendered, so without this an owner
+   * raising their price between the modal opening and the button being pressed
+   * is charged without consent.
+   */
+  expectedPrice: z.number().int().min(0),
 });
 
 export const actOnRemixGallerySubmissionSchema = z.object({
@@ -164,4 +172,9 @@ export const retractRemixGallerySubmissionSchema = z.object({
 export const setRemixGalleryPinsSchema = z.object({
   hostImageId: z.number().int().positive(),
   placementIds: z.array(z.number().int().positive()).max(REMIX_GALLERY_MAX_PINNED),
+});
+
+export const getPendingRemixGallerySubmissionsSchema = z.object({
+  /** Omitted for the account-wide queue; set to scope to one gallery. */
+  hostImageId: z.number().int().positive().optional(),
 });

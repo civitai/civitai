@@ -6,6 +6,7 @@ import {
   getPlacementSpaceSchema,
   countPendingPlacementsFromSchema,
   getPlacementSettlementStatesSchema,
+  getPendingRemixGallerySubmissionsSchema,
   getRemixGallerySchema,
   getRemixGalleryVisibilitySchema,
   getStickerPlacementDetailSchema,
@@ -57,6 +58,7 @@ import {
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import type { PlacementSurface } from '~/shared/utils/placement';
 import type { Context } from '~/server/createContext';
 
 /**
@@ -92,6 +94,19 @@ function assertRemixGalleryEnabled(ctx: Context) {
 }
 
 /**
+ * The space endpoints are shared by both surfaces, so their gate has to follow
+ * the surface being configured rather than the sticker flags.
+ *
+ * Without this a tester holding only `remix-gallery` gets a settings section
+ * that renders and a save that always fails — the flag opens the feature
+ * everywhere except the one endpoint that turns it on.
+ */
+function assertSurfaceEnabled(ctx: Context, surface: PlacementSurface) {
+  if (surface === 'remixGallery') return assertRemixGalleryEnabled(ctx);
+  return assertPlacementEnabled(ctx);
+}
+
+/**
  * What the viewer may see, with the SFW domain applied.
  *
  * The level itself is client-supplied, as it is for every image listing. The
@@ -114,7 +129,7 @@ export const placementRouter = router({
     .query(({ input, ctx }) => getPlacementSpaceRow({ ...input, userId: ctx.user.id })),
 
   clearSpace: protectedProcedure.input(getPlacementSpaceRowSchema).mutation(({ input, ctx }) => {
-    assertPlacementEnabled(ctx);
+    assertSurfaceEnabled(ctx, input.surface);
     return clearPlacementSpace({ ...input, userId: ctx.user.id });
   }),
 
@@ -127,7 +142,7 @@ export const placementRouter = router({
     .query(({ input, ctx }) => placementPriceRange(ctx.user.id, input.surface)),
 
   setSpace: protectedProcedure.input(placementSpaceSchema).mutation(({ input, ctx }) => {
-    assertPlacementEnabled(ctx);
+    assertSurfaceEnabled(ctx, input.surface);
     return setPlacementSpace({ ...input, userId: ctx.user.id });
   }),
 
@@ -332,9 +347,11 @@ export const placementRouter = router({
       return setRemixGalleryPins({ ...input, ownerId: ctx.user.id });
     }),
 
-  getPendingRemixGallerySubmissions: protectedProcedure.query(({ ctx }) =>
-    getPendingRemixGallerySubmissions({ ownerId: ctx.user.id })
-  ),
+  getPendingRemixGallerySubmissions: protectedProcedure
+    .input(getPendingRemixGallerySubmissionsSchema)
+    .query(({ input, ctx }) =>
+      getPendingRemixGallerySubmissions({ ownerId: ctx.user.id, hostImageId: input.hostImageId })
+    ),
 
   getMyRemixGallerySubmissions: protectedProcedure.query(({ ctx }) =>
     getMyRemixGallerySubmissions({ placerId: ctx.user.id })

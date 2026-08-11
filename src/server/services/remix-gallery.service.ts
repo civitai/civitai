@@ -66,6 +66,8 @@ export type CreateRemixGallerySubmission = {
   hostImageId: number;
   /** The image being submitted into it. */
   imageId: number;
+  /** What the submitter was shown. Refused if the owner has moved it since. */
+  expectedPrice?: number;
 };
 
 /**
@@ -85,6 +87,7 @@ export async function createRemixGallerySubmission({
   placerId,
   hostImageId,
   imageId,
+  expectedPrice,
 }: CreateRemixGallerySubmission) {
   if (hostImageId === imageId)
     throw throwBadRequestError('remix gallery: an image cannot be submitted to its own gallery');
@@ -108,6 +111,14 @@ export async function createRemixGallerySubmission({
 
   if (space.price == null)
     throw throwBadRequestError('remix gallery: this creator has not set a price yet');
+
+  // Refused rather than charged. The client can only check affordability against
+  // the number it rendered, so charging a price the submitter never saw is a
+  // spend without consent — and an owner can move their price at any time.
+  if (expectedPrice != null && expectedPrice !== space.price)
+    throw throwBadRequestError(
+      `remix gallery: the price changed to ${space.price} Buzz while you were deciding`
+    );
 
   const submission = await loadSubmissionImage(imageId);
   if (submission.userId !== placerId)
@@ -735,13 +746,25 @@ export async function getRemixGalleryVisibility({
  */
 export async function getPendingRemixGallerySubmissions({
   ownerId,
+  hostImageId,
   limit = 50,
 }: {
   ownerId: number;
+  /**
+   * Scopes the queue to one gallery. Filtering client-side instead meant an
+   * owner with 50 submissions elsewhere saw "nothing waiting" on an image that
+   * had some: the limit truncated the list before the filter ever ran.
+   */
+  hostImageId?: number;
   limit?: number;
 }) {
   const rows = await dbRead.placement.findMany({
-    where: { surface: SURFACE, ownerId, status: 'pending' },
+    where: {
+      surface: SURFACE,
+      ownerId,
+      status: 'pending',
+      ...(hostImageId ? { targetType: TARGET_TYPE, targetId: hostImageId } : {}),
+    },
     select: {
       id: true,
       targetId: true,
