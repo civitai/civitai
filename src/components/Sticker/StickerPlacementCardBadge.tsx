@@ -1,6 +1,5 @@
-import { Button, Text, Tooltip } from '@mantine/core';
-import { IconSticker } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { StickerCountChip } from '~/components/Sticker/StickerCountChip';
 import { useStickerPlacementBatch } from '~/components/Sticker/StickerPlacementBatchProvider';
 import { useStickerRevealStore } from '~/store/sticker-reveal.store';
 
@@ -30,28 +29,17 @@ export function StickerPlacementCardBadge({
   if (!total) return null;
 
   return (
-    <Tooltip
-      label={revealed ? 'Hide stickers on all images' : 'Show stickers on all images'}
-      withArrow
-    >
-      <Button
-        size="compact-sm"
-        radius="xl"
-        variant={revealed ? 'light' : 'subtle'}
-        color="gray"
-        className={clsx('pointer-events-auto', className)}
-        onClick={(event: React.MouseEvent) => {
-          // A card is a link, and this sits inside it.
-          event.preventDefault();
-          event.stopPropagation();
-          toggle();
-        }}
-        leftSection={<IconSticker size={16} />}
-      >
-        <Text size="xs" fw={600}>
-          {total}
-        </Text>
-      </Button>
-    </Tooltip>
+    <StickerCountChip
+      count={total}
+      revealed={revealed}
+      tooltip={revealed ? 'Hide stickers on all images' : 'Show stickers on all images'}
+      className={clsx('pointer-events-auto', className)}
+      onClick={(event: React.MouseEvent) => {
+        // A card is a link, and this sits inside it.
+        event.preventDefault();
+        event.stopPropagation();
+        toggle();
+      }}
+    />
   );
 }
