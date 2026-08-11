@@ -4,6 +4,9 @@ import {
   findSlot,
   reinsertTop,
   RERUN_TOP_K,
+  LADDER_CONCURRENCY,
+  CLAIM_WINDOW_MINUTES,
+  projectedCloseMinutes,
   MAX_TIE_GROUP,
   roundRobinPairs,
   runPool,
@@ -337,5 +340,55 @@ describe('findSlot seating', () => {
     await findSlot(50, [1, 2, 3, 4, 5, 6, 7], bout);
     const alternating = seats.every((s, i) => i === 0 || s.seat !== seats[i - 1].seat);
     expect(alternating).toBe(true);
+  });
+});
+
+describe('close-time concurrency is load-bearing', () => {
+  // The gap this closes: changing only the DEFAULT concurrency failed nothing, because every test
+  // passed its own. If the default is what keeps the stage inside the completion claim, moving it
+  // has to break something.
+  const FIELD = 284;
+
+  it('fits the completion claim at the shipped concurrency', () => {
+    const minutes = projectedCloseMinutes({ entries: FIELD });
+    expect(minutes).toBeLessThan(CLAIM_WINDOW_MINUTES);
+  });
+
+  it('does NOT fit at half the shipped concurrency — so this is not a free knob', () => {
+    const minutes = projectedCloseMinutes({
+      entries: FIELD,
+      concurrency: Math.floor(LADDER_CONCURRENCY / 2),
+    });
+    expect(minutes).toBeGreaterThan(CLAIM_WINDOW_MINUTES);
+  });
+
+  it('leaves real headroom rather than scraping the limit', () => {
+    // Scraping in means an ordinary slow day for the provider blows the claim. Measured latency is
+    // 9s median but 12.4s on the self-hosted route, so require the shipped setting to survive that.
+    const slow = projectedCloseMinutes({ entries: FIELD, boutSeconds: 12.4 });
+    expect(slow).toBeLessThan(CLAIM_WINDOW_MINUTES);
+  });
+
+  it('would not fit if the rerun were unbounded', () => {
+    // The design change this PR made, as arithmetic: bounding the rerun is what buys the window,
+    // not the concurrency alone.
+    const unbounded = projectedCloseMinutes({ entries: FIELD, topK: FIELD });
+    expect(unbounded).toBeGreaterThan(CLAIM_WINDOW_MINUTES);
+  });
+
+  it('actually uses that default when no concurrency is passed', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const slowBout: Bout = async (challenger, opponent) => {
+      peak = Math.max(peak, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      inFlight--;
+      return challenger < opponent ? 'challenger' : 'opponent';
+    };
+    const arrival = Array.from({ length: 40 }, (_, i) => (i + 1) * 10);
+
+    await reinsertTop(arrival, slowBout);
+
+    expect(peak).toBeGreaterThan(Math.floor(LADDER_CONCURRENCY / 2));
   });
 });

@@ -11,6 +11,7 @@ import {
 } from '~/server/games/daily-challenge/challenge-judging-engine';
 import {
   assertLadderCoverage,
+  CLAIM_WINDOW_MINUTES,
   findSlot,
   LADDER_CONCURRENCY,
   reinsertTop,
@@ -35,6 +36,13 @@ import { logToAxiom } from '~/server/logging/client';
 export const PODIUM_SIZE = 15;
 
 const PODIUM_CONCURRENCY = LADDER_CONCURRENCY;
+
+/**
+ * Warn when one close-time stage runs longer than this. Deliberately below the completion claim:
+ * at the claim the challenge has already been re-taken by another run, so a warning there is a
+ * post-mortem. 70% of the window is enough slack to be actionable.
+ */
+const CLOSE_STAGE_WARN_MS = CLAIM_WINDOW_MINUTES * 60_000 * 0.7;
 
 /**
  * Pairwise judging. An entry binary-searches the standings as it arrives and becomes a rung for
@@ -259,14 +267,23 @@ function createSession(
     return toResult(await pending, challengerId);
   };
 
+  const startedAt = Date.now();
+
   async function settle() {
     const spend = Math.ceil(buzz);
     if (spend > 0) await incrementOperationSpent(ctx.challengeId, spend);
+    // The empirical form of the wall-clock arithmetic behind LADDER_CONCURRENCY. It fires BEFORE
+    // the claim does, so a stage drifting toward the window announces itself instead of being
+    // discovered from a double payout.
+    const durationMs = Date.now() - startedAt;
+    const slow = durationMs > CLOSE_STAGE_WARN_MS;
     logToAxiom({
-      type: 'info',
+      type: slow ? 'warning' : 'info',
       name: 'challenge-pairwise-stage',
       challengeId: ctx.challengeId,
       phase,
+      durationMs,
+      claimWindowMs: CLAIM_WINDOW_MINUTES * 60_000,
       comparisons,
       reroutes,
       buzz: spend,

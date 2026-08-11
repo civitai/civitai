@@ -3,10 +3,17 @@ import type * as Store from '~/server/games/daily-challenge/challenge-pairwise-s
 import type * as Pairwise from '~/server/games/daily-challenge/challenge-pairwise';
 import type * as ChallengeHelpers from '~/server/games/daily-challenge/challenge-helpers';
 import type * as Flipt from '~/server/flipt/client';
+import type * as Logging from '~/server/logging/client';
 
-const { queryRaw, isFliptMock } = vi.hoisted(() => ({
+const { queryRaw, isFliptMock, axiom } = vi.hoisted(() => ({
   queryRaw: vi.fn(),
   isFliptMock: vi.fn().mockResolvedValue(true),
+  axiom: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('~/server/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof Logging>()),
+  logToAxiom: axiom,
 }));
 
 // The engine only reads Image rows directly; everything else it touches goes through the store.
@@ -178,6 +185,7 @@ function seatsPlayed(verdicts: Pairwise.PairwiseVerdict[]) {
 beforeEach(() => {
   vi.clearAllMocks();
   isFliptMock.mockResolvedValue(true);
+  axiom.mockResolvedValue(undefined);
   store.getStandings.mockResolvedValue([]);
   store.getComparisons.mockResolvedValue([]);
   store.insertStanding.mockResolvedValue(undefined);
@@ -586,6 +594,39 @@ describe('pairwise engine — picking the places', () => {
     await expect(pairwiseLadderEngine.selectWinners(ctx, field, 3)).rejects.toThrow(/rate limited/);
 
     expect(calls).toBeLessThan(20);
+  });
+
+  it('warns when a close-time stage runs long enough to threaten the claim', async () => {
+    // The empirical guard beside the arithmetic one: it fires before the completion claim is
+    // revoked, rather than after a second run has already started a second podium.
+    fakeComparisonStore();
+    trueOrderComparisons();
+    const logs: { type: string; name: string; durationMs?: number }[] = [];
+    axiom.mockImplementation(async (entry: { type: string; name: string; durationMs?: number }) => {
+      logs.push(entry);
+    });
+    let clock = 0;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => (clock += 500_000));
+
+    await pairwiseLadderEngine.selectWinners(ctx, [entry(1), entry(2), entry(3)], 3);
+    nowSpy.mockRestore();
+
+    const stage = logs.find((l) => l.name === 'challenge-pairwise-stage');
+    expect(stage?.type).toBe('warning');
+    expect(stage?.durationMs).toBeGreaterThan(0);
+  });
+
+  it('reports a normal stage as info, not as a warning', async () => {
+    fakeComparisonStore();
+    trueOrderComparisons();
+    const logs: { type: string; name: string }[] = [];
+    axiom.mockImplementation(async (entry: { type: string; name: string }) => {
+      logs.push(entry);
+    });
+
+    await pairwiseLadderEngine.selectWinners(ctx, [entry(1), entry(2), entry(3)], 3);
+
+    expect(logs.find((l) => l.name === 'challenge-pairwise-stage')?.type).toBe('info');
   });
 
   it('defers to the caller when there is nothing to compare', async () => {

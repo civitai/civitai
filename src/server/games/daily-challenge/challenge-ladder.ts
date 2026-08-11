@@ -17,11 +17,57 @@ export type Bout = (challengerId: number, opponentId: number, seat: Seat) => Pro
 export type SlotResult = { index: number; bouts: number };
 
 /**
- * In-flight comparisons at close. Sized against MEASURED two-image bout latency — 9s median on the
- * blend, 12.4s on the self-hosted route with a 56s worst case — not against a mock. The harness ran
- * this stage at 12-16 against OpenRouter without rate-limiting.
+ * In-flight comparisons at close. **Load-bearing for correctness, not a tuning knob** — halving it
+ * as a "safety" measure puts the stage back outside the completion claim, where a second run claims
+ * the challenge and starts a second podium and a second path to payout.
+ *
+ * The arithmetic, at the MEASURED 9s median for a two-image bout (12.4s on the self-hosted route,
+ * 56s worst case) and a 284-entry field:
+ *
+ *   depth        = ceil(log2(284))               = 9 bouts per search, serial within one entry
+ *   rerun waves  = ceil(RERUN_TOP_K / C)
+ *   rerun        = waves x depth x 9s
+ *   podium       = ceil(210 / C) x 9s
+ *
+ *   C = 16 -> 3 waves -> 4.1 min + 2.1 min = 6.2 min   inside the 10-minute claim
+ *   C =  8 -> 5 waves -> 6.8 min + 4.0 min = 10.8 min  OVER
+ *
+ * 12-16 is also what the harness sustained against OpenRouter without rate-limiting, so this is the
+ * top of the range that is both fast enough and safe. `assertConcurrencyFitsClaimWindow` below is
+ * the executable form of this comment.
  */
 export const LADDER_CONCURRENCY = 16;
+
+/** Completion claim, in minutes — `resetStuckCompletingChallenges` revokes on this. */
+export const CLAIM_WINDOW_MINUTES = 10;
+
+/** Measured median latency of one two-image comparison, in seconds. */
+export const MEASURED_BOUT_SECONDS = 9;
+
+/**
+ * Projected wall clock of the whole close-time stage. Exported so the arithmetic above is a thing
+ * that can FAIL rather than a comment that can rot: the guard test drives this with the real
+ * constants, and lowering the concurrency reds it.
+ */
+export function projectedCloseMinutes(input: {
+  entries: number;
+  topK?: number;
+  concurrency?: number;
+  podiumBouts?: number;
+  boutSeconds?: number;
+}): number {
+  const {
+    entries,
+    topK = RERUN_TOP_K,
+    concurrency = LADDER_CONCURRENCY,
+    podiumBouts = 210,
+    boutSeconds = MEASURED_BOUT_SECONDS,
+  } = input;
+  const depth = Math.ceil(Math.log2(Math.max(2, entries)));
+  const rerunWaves = Math.ceil(Math.min(topK, entries) / concurrency);
+  const podiumWaves = Math.ceil(podiumBouts / concurrency);
+  return ((rerunWaves * depth + podiumWaves) * boutSeconds) / 60;
+}
 
 /**
  * Binary-search `challengerId` into an ordered `list` (best first). A tie places the challenger
