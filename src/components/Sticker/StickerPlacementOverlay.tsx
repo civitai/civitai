@@ -6,9 +6,9 @@ import type { PlacedSticker } from '~/components/Sticker/placement.util';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
 import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
 import {
-  CARD_TREATMENT_FALLBACK,
   DEFAULT_STICKER_TREATMENT,
-  STICKER_TREATMENTS,
+  resolveTreatment,
+  type StickerSurface,
   type StickerTreatmentKey,
 } from '~/components/Sticker/treatments/sticker-treatments';
 import { useMemo } from 'react';
@@ -33,6 +33,7 @@ export function StickerPlacementOverlay({
   sticker,
   artworkWidth = 512,
   treatment = DEFAULT_STICKER_TREATMENT,
+  surface = 'detail',
 }: {
   placements: PlacedSticker[];
   viewerId?: number;
@@ -79,6 +80,13 @@ export function StickerPlacementOverlay({
    * "waiting on you" and "settled" look the same to the owner.
    */
   treatment?: StickerTreatmentKey;
+  /**
+   * Which surface is drawing, kept separate from `interactive` — that prop
+   * already carries pointer-events, the hover card and the moderator remove
+   * action, and a detail view that turned those off would still want the
+   * detail treatment.
+   */
+  surface?: StickerSurface;
 }) {
   const cosmeticIds = useMemo(
     () =>
@@ -89,16 +97,6 @@ export function StickerPlacementOverlay({
   );
   const { sticker: resolved } = useStickerCosmetics(cosmeticIds);
   const artwork = sticker ?? resolved;
-
-  // `interactive` is the detail-view/card distinction the overlay already
-  // carries, so an animating treatment degrades where ~50 of these exist at
-  // once without a second prop meaning the same thing.
-  const active =
-    STICKER_TREATMENTS[
-      !interactive && STICKER_TREATMENTS[treatment].animationClassName
-        ? CARD_TREATMENT_FALLBACK
-        : treatment
-    ];
 
   if (!placements.length) return null;
 
@@ -114,8 +112,11 @@ export function StickerPlacementOverlay({
         // would be a filter where a refusal is needed.
         const isOwner = placement.ownerId === viewerId;
 
-        // Pending already has a treatment of its own and keeps it alone.
-        const dressed = placement.isPending ? STICKER_TREATMENTS.none : active;
+        const dressed = resolveTreatment({
+          treatment,
+          surface,
+          isPending: placement.isPending,
+        });
 
         const artworkImage = (
           <EdgeImage
@@ -125,7 +126,12 @@ export function StickerPlacementOverlay({
             // a natural size and the element scales it down in layout.
             options={{ width: artworkWidth, anim: art.animated, optimized: true }}
             className={clsx(placement.isPending && 'opacity-60')}
-            style={{ width: '100%', height: 'auto', display: 'block', ...dressed.imageStyle }}
+            style={{
+              width: '100%',
+              height: 'auto',
+              display: 'block',
+              ...dressed.imageStyle?.[surface],
+            }}
           />
         );
 
@@ -138,7 +144,6 @@ export function StickerPlacementOverlay({
               top: `${placement.data.y * 100}%`,
               width: `${placement.data.scale * 100}%`,
               transform: `translate(-50%, -50%) rotate(${placement.data.rotation}deg)`,
-              ...dressed.wrapperStyle,
             }}
           >
             {/* The wrapper's own transform makes it a stacking context, so a

@@ -53,8 +53,6 @@ function Surface({
 
   const ratio = image.width && image.height ? image.height / image.width : 1;
   const height = Math.round(width * ratio);
-  // The card surface is what `interactive={false}` means everywhere else, and it
-  // is what drops an animating treatment to its static fallback.
   const isCard = width === CARD_WIDTH;
 
   return (
@@ -69,6 +67,7 @@ function Surface({
         <StickerPlacementOverlay
           placements={placements}
           interactive={!isCard}
+          surface={isCard ? 'card' : 'detail'}
           treatment={treatment}
         />
       )}

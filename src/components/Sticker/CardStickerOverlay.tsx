@@ -144,6 +144,7 @@ export function CardStickerOverlay({ imageId }: { imageId: number }) {
             sticker={batch?.sticker}
             artworkWidth={CARD_ARTWORK_WIDTH}
             treatment={treatment}
+            surface="card"
           />
         </div>
       )}
