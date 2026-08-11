@@ -1,11 +1,11 @@
-import { Anchor, Group, Loader, SegmentedControl, Slider, Stack, Text } from '@mantine/core';
+import { Anchor, Group, Loader, SegmentedControl, Stack, Text } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { PlacementPriceSlider } from '~/components/Placement/PlacementPriceSlider';
 import {
   onPlacementPriceGrid,
   PLACEMENT_PRICE_STEP,
   placementPriceTrack,
-  placementPriceUsable,
   PLACEMENT_SURFACES,
 } from '~/shared/utils/placement';
 import { showErrorNotification } from '~/utils/notifications';
@@ -111,9 +111,7 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
   const defaultPrice = PLACEMENT_SURFACES.sticker.defaultPrice;
   const cap = range?.max ?? null;
   const track = placementPriceTrack('sticker', cap);
-  const { min: sliderMin, max: sliderMax } = track;
-  const clamp = (value: number) => Math.min(Math.max(value, sliderMin), sliderMax);
-  const sliderValue = price === '' ? clamp(defaultPrice) : clamp(price);
+  const { min: sliderMin } = track;
   const overCap = cap != null && typeof price === 'number' && price > cap;
   // A legacy price the grid cannot land on. Saying so is the whole remedy: the
   // slider will round it, and a creator who is not told discovers that from
@@ -157,39 +155,14 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
                 </Anchor>
               )}
             </Group>
-            <Slider
+            <PlacementPriceSlider
               size="xs"
-              // Committing on release rather than on every value: dragging a
-              // slider emits a value per pixel, and each one is a write. This is
-              // also why there is no debounce — a trailing timer can still land
-              // after the pointer is up, and `onChangeEnd` cannot drop the value
-              // the creator actually chose.
-              value={sliderValue}
-              // Until the range loads, the ceiling is a guess, and a creator who
-              // drags against the guess sets a price against a cap that is not
-              // theirs.
-              // An unusably narrow cap is the other way this control asks a
-              // question with one answer: every position resolves to the same
-              // charge once the server clamps.
-              disabled={!range || !placementPriceUsable('sticker', cap)}
-              min={sliderMin}
-              max={sliderMax}
-              step={PLACEMENT_PRICE_STEP}
-              marks={
-                cap != null && cap > sliderMin && cap < sliderMax
-                  ? [
-                      { value: sliderMin, label: `${sliderMin}` },
-                      { value: cap, label: `cap ${cap}` },
-                      { value: sliderMax, label: `${sliderMax}` },
-                    ]
-                  : [
-                      { value: sliderMin, label: `${sliderMin}` },
-                      { value: sliderMax, label: `${sliderMax}` },
-                    ]
-              }
-              label={(value) => `${value} Buzz`}
+              surface="sticker"
+              cap={cap}
+              value={price}
+              fallback={defaultPrice}
               onChange={setPrice}
-              onChangeEnd={(value) => {
+              onCommit={(value) => {
                 setPrice(value);
                 commit(mode, value);
               }}
