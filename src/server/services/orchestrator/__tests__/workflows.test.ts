@@ -41,12 +41,8 @@ vi.mock('@civitai/client', () => ({
   }),
 }));
 
-import {
-  shouldRefreshBlobUrl,
-  collectBlobRefs,
-  refreshBlobUrlsInBody,
-  submitWorkflow,
-} from '../workflows';
+import { collectBlobRefs, refreshBlobUrlsInBody, submitWorkflow } from '../workflows';
+import { shouldRefreshBlobUrl } from '~/shared/orchestrator/blob-url';
 
 import { refreshBlob, submitWorkflow as clientSubmitWorkflow } from '@civitai/client';
 

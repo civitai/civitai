@@ -29,6 +29,7 @@ import type {
 } from '~/server/schema/orchestrator/workflows.schema';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import { observeOrchestratorRead } from '~/server/services/orchestrator/orchestrator-read-metrics';
+import { refreshableBlobId } from '~/shared/orchestrator/blob-url';
 import {
   isUpstreamNetworkError,
   isUpstreamServerOrNetworkError,
@@ -410,7 +411,12 @@ export async function submitWorkflow({
         // `cause`, which `buildServerFaultErrorLog` renders EMPTY. That is the
         // causeless-generic-500 signature seen on orchestrator.whatIfFromGraph /
         // generateFromGraph; this is its submit-path fix and the read-path analogue.
-        if (isUpstreamServerOrNetworkError({ clientError: { status: response.status }, thrown: error }))
+        if (
+          isUpstreamServerOrNetworkError({
+            clientError: { status: response.status },
+            thrown: error,
+          })
+        )
           throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error);
         // Anything else (a non-4xx/5xx anomaly with no `data` — e.g. a malformed
         // "success", a genuine bug) stays a 500 so real problems remain visible, but
@@ -619,8 +625,6 @@ export async function patchWorkflowTags({
   );
 }
 
-const CONSUMER_BLOB_RE = /\/v\d+\/consumer\/blobs\/(?<blobId>[a-zA-Z0-9_.-]+)/;
-const BLOB_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const MAX_BLOB_DEPTH = 20;
 
 type BlobRef = { blobId: string; apply: (url: string) => void };
@@ -677,26 +681,4 @@ export function collectBlobRefs(body: unknown): BlobRef[] {
 
   visit(body, () => undefined, 0);
   return refs;
-}
-
-// blobId if this is a consumer blob URL that needs refreshing, else undefined.
-function refreshableBlobId(url: string): string | undefined {
-  const blobId = url.match(CONSUMER_BLOB_RE)?.groups?.blobId;
-  return blobId && shouldRefreshBlobUrl(url) ? blobId : undefined;
-}
-
-export function shouldRefreshBlobUrl(url: string): boolean {
-  try {
-    if (!CONSUMER_BLOB_RE.test(url)) return false;
-    const urlObj = new URL(url);
-    const sig = urlObj.searchParams.get('sig');
-    const exp = urlObj.searchParams.get('exp');
-    if (!sig || !exp) return true;
-
-    const expiryDate = new Date(exp);
-    if (isNaN(expiryDate.getTime())) return true; // Unparseable exp → treat as expired
-    return expiryDate.getTime() - Date.now() < BLOB_REFRESH_BUFFER_MS;
-  } catch {
-    return false;
-  }
 }

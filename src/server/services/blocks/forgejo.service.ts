@@ -405,6 +405,36 @@ export async function addCollaborator(opts: {
 }
 
 /**
+ * REVOKE a user's collaborator row on `civitai-apps/<slug>`.
+ *
+ * 🔴 THE MISSING HALF. Until App Listing Collaborators, this codebase could only ever
+ * GRANT (`addCollaborator`) — a developer handed `write` kept it forever, because no
+ * caller and no function existed to take it back. Removing a collaborator seat (or
+ * transferring ownership away) is the first operation with a genuine revoke
+ * requirement, so this is its counterpart.
+ *
+ * Gitea/Forgejo `DELETE /repos/{owner}/{repo}/collaborators/{user}` answers 204 on a
+ * successful removal AND on a user who was not a collaborator; 404 is the repo (or
+ * user) not existing. Both are treated as success, mirroring `deleteForgejoUser` /
+ * `deleteReviewRepo` — revocation is idempotent, and "they already do not have it" is
+ * the desired end state, not an error.
+ *
+ * 🔴 UNLIKE `addCollaborator` this does NOT read the current permission first. That
+ * read exists there only to implement grant-AT-LEAST (never downgrade); a revoke has
+ * no level to preserve. Deliberately NOT symmetric — do not "fix" it by adding one.
+ */
+export async function removeCollaborator(opts: { slug: string; username: string }): Promise<void> {
+  const res = await fjFetch(
+    `/api/v1/repos/${FORGEJO_ORG}/${opts.slug}/collaborators/${encodeURIComponent(opts.username)}`,
+    { method: 'DELETE' }
+  );
+  if (!res.ok && res.status !== 204 && res.status !== 404) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Forgejo removeCollaborator ${res.status}: ${body.slice(0, 240)}`);
+  }
+}
+
+/**
  * Attach a push webhook pointing at our webhook handler. HMAC secret is
  * read from FORGEJO_WEBHOOK_SECRET so all repos share the same key (the
  * receiver doesn't need per-repo state to verify). If a webhook with the

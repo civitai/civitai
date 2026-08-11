@@ -20,6 +20,11 @@ import { Prisma } from '@prisma/client';
 const { mockDb, mockBust } = vi.hoisted(() => ({
   mockDb: {
     appBlock: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
+    // App Listing COLLABORATORS: the widened gates consult the seat table on the
+    // NON-owner path. `safeCollaboratorQuery` deliberately swallows ONLY the
+    // missing-TABLE error, so an absent mock surfaces as a TypeError rather than
+    // being silently absorbed — which is why this fixture must declare it.
+    appCollaborator: { findFirst: vi.fn(async () => null), findMany: vi.fn(async () => []) },
     blockUserSubscription: {
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
     },

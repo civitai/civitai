@@ -24,6 +24,13 @@ export const promptEnhancementSchema = z.object({
   snippetTargets: z.record(z.string(), snippetReferenceSchema.array()).nullish(),
   segmentPrompt: z.boolean().nullish(),
   /**
+   * Video ecosystems only. `true` asks for a single continuous take, `false`
+   * allows cuts between shots. Shot structure is a per-generation choice, so it
+   * belongs here rather than in an ecosystem's static prompt-analysis guide.
+   * Leave unset for image ecosystems, where it has no meaning.
+   */
+  singleTake: z.boolean().nullish(),
+  /**
    * Optional reference images. Forwarded to the orchestrator's prompt-enhancement
    * step where a vision-capable LLM (configured per-ecosystem) uses them as visual
    * context when rewriting the prompt. Non-VLM ecosystems silently ignore them.

@@ -24,6 +24,8 @@ vi.mock('~/server/db/client', () => ({
     cosmeticShopItem: { findUnique: mocks.shopItemFindUnique, findFirst: vi.fn() },
   },
   dbWrite: {
+    // The submission fee is read from KeyValue; unset means the compiled defaults.
+    keyValue: { findUnique: vi.fn() },
     cosmeticShopItem: { update: mocks.shopItemUpdate },
     $transaction: (cb: (tx: unknown) => unknown) =>
       cb({
@@ -55,6 +57,7 @@ const submitInput = {
   sellerShare: 0,
   acceptsBlueBuzz: false,
   rightsAffirmed: true,
+  quotedFee: 10000,
 } as const;
 
 describe('rights affirmation input contract', () => {
@@ -63,6 +66,7 @@ describe('rights affirmation input contract', () => {
     name: 'Golden Laurel',
     imageUrl: 'cf-image-id',
     price: 500,
+    quotedFee: 10000,
   };
 
   it('rejects a submission that omits the affirmation', () => {

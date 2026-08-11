@@ -603,6 +603,14 @@ model User {
   appListingReportsReported          AppListingReport[]         @relation("AppListingReportReporter")
   appListingReportsResolved          AppListingReport[]         @relation("AppListingReportResolver")
   appListingModerationEvents         AppListingModerationEvent[] @relation("AppListingModEventActor")
+  // App Listing Collaborators — editor seats held / issued, the ownership audit
+  // trail this user acted in or was targeted by, and any transfer they are party to.
+  appCollaboratorSeats               AppCollaborator[]          @relation("AppCollaboratorMember")
+  appCollaboratorInvitesSent         AppCollaborator[]          @relation("AppCollaboratorInviter")
+  appOwnershipEventsActed            AppOwnershipEvent[]        @relation("AppOwnershipEventActor")
+  appOwnershipEventsTargeted         AppOwnershipEvent[]        @relation("AppOwnershipEventTarget")
+  appOwnershipTransfersFrom          AppOwnershipTransfer[]     @relation("AppOwnershipTransferFrom")
+  appOwnershipTransfersTo            AppOwnershipTransfer[]     @relation("AppOwnershipTransferTo")
   targetedAnnouncements              AnnouncementUser[]
   placementSuspension                PlacementSuspension?       @relation("PlacementSuspensionUser")
   placementsReceived                 Placement[]                @relation("PlacementOwner")
@@ -2503,6 +2511,13 @@ model AppBlock {
   userScopeGrants    AppUserScopeGrant[]
   reviews            AppBlockReview[]
   appListing         AppListing?
+  // App Listing Collaborators — the editor seats + the append-only ownership
+  // audit trail + any in-flight ownership transfer. Keyed to the AppBlock (NOT
+  // the AppListing) because ownership is canonically the backing OauthClient's
+  // and the listing only carries a denormalized copy.
+  collaborators      AppCollaborator[]
+  ownershipEvents    AppOwnershipEvent[]
+  ownershipTransfers AppOwnershipTransfer[]
 
   @@unique([appId, blockId], map: "app_blocks_app_block_uniq")
   // W1 audit C-3 fix: enforce one app per slug at the DB layer. The
@@ -2548,6 +2563,138 @@ model AppBlockReview {
   // Aggregate read path (AVG/COUNT WHERE NOT exclude).
   @@index([appBlockId, exclude], map: "app_block_reviews_app_agg_idx")
   @@map("app_block_reviews")
+}
+
+/// App Listing COLLABORATORS — a consent-gated editor seat on an app.
+///
+/// 🔴 KEYED TO `AppBlock`, NOT `AppListing`. Ownership is canonically
+/// `OauthClient.userId` reached as `AppBlock.app.userId`; `AppListing.userId` is a
+/// DENORMALIZED COPY (written by `app-listing-mapper`). Keying the seat to the
+/// listing would make it a property of the copy, and a listing can be cloned into a
+/// shadow revision (`revisionOfId`) whose scalars are copied back onto the parent on
+/// approve — so a seat stored listing-side would be duplicated per shadow and could
+/// be silently reverted by `applyApprovedRevision`.
+///
+/// 🔴 `displayed` (the public-byline opt-in) LIVES HERE FOR THE SAME REASON, and
+/// this is load-bearing rather than incidental: `applyApprovedRevision`'s OFFSITE
+/// branch copies the shadow's `name/tagline/description/category/contentRating/
+/// externalUrl/connect*` straight onto the live parent. An `AppListing` column
+/// holding a display-author flag would therefore be CLOBBERED by any later shadow
+/// approve — an immediate-apply product decision would silently revert on the next
+/// mod re-review. Collaborator rows are outside BOTH branches' copy sets, so
+/// immediate-apply is correct BY CONSTRUCTION, not by a promise to remember.
+///
+/// CONSENT MODEL (mirrors `EntityCollaborator`'s status-visibility rules, NOT its
+/// code — that model is hard-scoped to Posts): an invite starts `pending` and confers
+/// ZERO capability and ZERO public visibility. Only `accepted` grants anything.
+///
+/// `role` is TEXT (not an enum) so a future role needs no migration; `'editor'` is the
+/// only value the code writes today. `status` is TEXT for the same reason, bounded by
+/// a CHECK constraint in the migration.
+///
+/// MANUAL-APPLY (datapacket-talos rule #8): the main civitai DB (CNPG nvme0) does NOT
+/// run `prisma migrate deploy`. The committed SQL is hand-applied per environment. All
+/// reads are NULL-safe / empty-safe, so the feature is INERT until it lands.
+model AppCollaborator {
+  appBlockId  String    @map("app_block_id")
+  appBlock    AppBlock  @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
+  userId      Int       @map("user_id")
+  user        User      @relation("AppCollaboratorMember", fields: [userId], references: [id], onDelete: Cascade)
+  /// Capability role. 'editor' today (content + media + submit + app-scoped
+  /// analytics/earnings). Owner-only actions (managing collaborators, initiating a
+  /// transfer) are NOT a role — they are reserved to the OauthClient owner.
+  role        String    @default("editor")
+  /// 'pending' | 'accepted' | 'rejected'. Only 'accepted' confers capability, and
+  /// only 'accepted' is ever visible publicly.
+  status      String    @default("pending")
+  /// Public-byline opt-in. Immediate-apply (no mod review) — safe because this row is
+  /// outside the revision copy sets (see the header). A collaborator is listed on the
+  /// public listing only when status='accepted' AND displayed=true.
+  displayed   Boolean   @default(true)
+  /// The OWNER who issued the invite (audit + the "invited by" chip).
+  invitedBy   Int       @map("invited_by")
+  inviter     User      @relation("AppCollaboratorInviter", fields: [invitedBy], references: [id], onDelete: Cascade)
+  /// Last time an invite NOTIFICATION was emitted for this row — the re-invite
+  /// throttle key. NB: the `EntityCollaborator` sibling has an inverted throttle
+  /// (`>=` where it means `<=`); this one is written correctly (see the service).
+  lastNotifiedAt DateTime? @map("last_notified_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  respondedAt DateTime? @map("responded_at") @db.Timestamptz(6)
+
+  @@id([appBlockId, userId])
+  /// "which apps can this user edit" — the hot path (`resolveAccessibleAppBlockIds`).
+  @@index([userId, status], map: "app_collaborators_user_status_idx")
+  /// "who is on this app" — the roster + the public byline read.
+  @@index([appBlockId, status], map: "app_collaborators_app_status_idx")
+  @@map("app_collaborators")
+}
+
+/// APPEND-ONLY audit trail of every collaborator/ownership action on an app.
+///
+/// Deliberately a separate table from `AppListingModerationEvent` (which is
+/// listing-scoped and mod-action-scoped): these are AUTHOR actions on the AppBlock.
+/// Mirrors that table's survivability posture — every FK is NULLABLE + SET NULL so an
+/// event outlives the app, the actor and the target.
+model AppOwnershipEvent {
+  id           String    @id // aoe_<ULID>
+  appBlockId   String?   @map("app_block_id")
+  appBlock     AppBlock? @relation(fields: [appBlockId], references: [id], onDelete: SetNull)
+  /// Denormalized so the event stays self-describing after the app is gone.
+  slug         String
+  /// invite | accept | reject | remove | leave | display | transfer_initiated |
+  /// transfer_accepted | transfer_cancelled. Bounded by a CHECK in the migration.
+  action       String
+  /// Who performed the action.
+  actorUserId  Int?      @map("actor_user_id")
+  actor        User?     @relation("AppOwnershipEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  /// Who it was performed ON (the invitee / removed editor / transfer recipient).
+  targetUserId Int?      @map("target_user_id")
+  target       User?     @relation("AppOwnershipEventTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+  /// Structured extras (role, before/after owner, expiry, …).
+  metadata     Json?
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([appBlockId, createdAt(sort: Desc)], map: "app_ownership_events_app_idx")
+  @@index([actorUserId, createdAt(sort: Desc)], map: "app_ownership_events_actor_idx")
+  @@map("app_ownership_events")
+}
+
+/// An IN-FLIGHT ownership transfer (owner initiates → recipient accepts).
+///
+/// 🔴 WHY A THIRD TABLE rather than folding this into `AppCollaborator` with a
+/// `role='owner_transfer'` row: `AppCollaborator`'s PK is `(appBlockId, userId)`, so a
+/// transfer to someone who is ALREADY an editor would collide with their seat row and
+/// the two states would have to share one `status` column. And deriving the pending
+/// state from `AppOwnershipEvent` (the append-only log) cannot carry a UNIQUE, so two
+/// concurrent `initiateTransfer` calls could both "succeed". This table carries the
+/// real constraint: a PARTIAL UNIQUE on `app_block_id WHERE status='pending'` — at
+/// most one in-flight transfer per app, enforced at the DB.
+model AppOwnershipTransfer {
+  id          String    @id // aot_<ULID>
+  appBlockId  String    @map("app_block_id")
+  appBlock    AppBlock  @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
+  /// Snapshot of the owner at initiate time — re-asserted in-tx at accept, so a
+  /// transfer initiated by an owner who has since lost the app cannot complete.
+  fromUserId  Int       @map("from_user_id")
+  fromUser    User      @relation("AppOwnershipTransferFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUserId    Int       @map("to_user_id")
+  toUser      User      @relation("AppOwnershipTransferTo", fields: [toUserId], references: [id], onDelete: Cascade)
+  /// 'pending' | 'accepted' | 'cancelled' | 'rejected' | 'expired'. CHECK in the migration.
+  status      String    @default("pending")
+  /// Hard expiry — an unaccepted transfer stops being acceptable after this instant.
+  /// Enforced in the ACCEPT path (a read-time predicate), so no sweeper job is
+  /// required for correctness; a sweeper would only tidy the rows.
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  respondedAt DateTime? @map("responded_at") @db.Timestamptz(6)
+
+  /// NB: the migration ALSO creates a PARTIAL UNIQUE index
+  /// (`app_block_id WHERE status='pending'`) that Prisma cannot express. That partial
+  /// index — not this plain one — is the one-in-flight-transfer guard; the service
+  /// relies on its P2002.
+  @@index([appBlockId, status], map: "app_ownership_transfers_app_status_idx")
+  @@index([toUserId, status], map: "app_ownership_transfers_to_status_idx")
+  @@map("app_ownership_transfers")
 }
 
 /// W1 v0 publish request — every version of every app goes through the

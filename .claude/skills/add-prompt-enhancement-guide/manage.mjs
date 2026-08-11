@@ -74,8 +74,25 @@ loadEnv();
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const BASE_PATH = '/v1/manager/prompt-analysis';
-const WRITE_COMMANDS = new Set(['register', 'put', 'set-model', 'reset', 'delete']);
-const ECOSYSTEM_COMMANDS = new Set(['get', 'defaults', 'register', 'put', 'set-model', 'reset', 'delete']);
+const WRITE_COMMANDS = new Set([
+  'register',
+  'put',
+  'set-model',
+  'set-samples',
+  'reset',
+  'delete',
+  'import',
+]);
+const ECOSYSTEM_COMMANDS = new Set([
+  'get',
+  'defaults',
+  'register',
+  'put',
+  'set-model',
+  'set-samples',
+  'reset',
+  'delete',
+]);
 
 const args = process.argv.slice(2);
 let writable = false;
@@ -85,6 +102,8 @@ let modelId = '';
 let promptOnly = false;
 let rawKey = false;
 let force = false;
+let clearSamples = false;
+let dryRun = false;
 let outputPath = '';
 let quiet = false;
 let timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
@@ -104,6 +123,10 @@ for (let i = 0; i < args.length; i++) {
     promptOnly = true;
   } else if (arg === '--raw-key') {
     rawKey = true;
+  } else if (arg === '--dry-run') {
+    dryRun = true;
+  } else if (arg === '--clear-samples') {
+    clearSamples = true;
   } else if (arg === '--force') {
     force = true;
   } else if (arg === '--output' || arg === '-o') {
@@ -141,6 +164,10 @@ Commands:
   put <ecosystem>          PUT config (requires --writable + --prompt-file or --file)
   set-model <ecosystem>    Rebind the analysis model, keeping the guide as-is
                            (requires --writable + --model)
+  set-samples <ecosystem>  Replace the few-shot samples, keeping the guide as-is
+                           (requires --writable + --file or --clear-samples)
+  export                   Snapshot every ecosystem's config to JSON (for revert)
+  import                   Restore from a snapshot (requires --writable + --file)
   reset <ecosystem>        POST reset to defaults (requires --writable)
   delete <ecosystem>       DELETE from the registry (requires --writable)
 
@@ -149,6 +176,8 @@ Options:
   --prompt-file <path>     Plain-text system prompt for put
   --file, -f <path>        Full JSON body for put (alternative to --prompt-file)
   --model, -m <id>         Model id for put (default: keep the ecosystem's current value)
+  --clear-samples          Drop existing few-shot samples (put / set-samples)
+  --dry-run                import: report what would change, write nothing
   --prompt-only            get: print only the systemPrompt
   --raw-key                Do not lowercase the ecosystem argument
   --output, -o <path>      Save response to file
@@ -175,11 +204,11 @@ if (ECOSYSTEM_COMMANDS.has(command)) {
   ecosystem = positional[1] || '';
   if (!ecosystem) usage(`Command "${command}" requires an ecosystem argument`);
   if (!rawKey) ecosystem = ecosystem.toLowerCase();
-} else if (command !== 'list' && command !== 'status') {
+} else if (!['list', 'status', 'export', 'import'].includes(command)) {
   usage(`Unknown command: ${command}`);
 }
 
-if (WRITE_COMMANDS.has(command) && !writable) {
+if (WRITE_COMMANDS.has(command) && !writable && !dryRun) {
   usage(
     `Command "${command}" changes orchestrator state — pass --writable to confirm.\n` +
       `This affects every subsequent prompt-analysis call for "${ecosystem}".`
@@ -192,6 +221,14 @@ if (command === 'put' && !filePath && !promptFilePath) {
 
 if (command === 'set-model' && !modelId) {
   usage('Command "set-model" requires --model <id>.');
+}
+
+if (command === 'import' && !filePath) {
+  usage('Command "import" requires --file <path> (an export produced by this tool).');
+}
+
+if (command === 'set-samples' && !filePath && !clearSamples) {
+  usage('Command "set-samples" requires --file <path> (a JSON array) or --clear-samples.');
 }
 
 const endpoint = process.env.ORCHESTRATOR_ENDPOINT;
@@ -240,7 +277,8 @@ async function request(method, path, body) {
   }
 
   if (!res.ok) {
-    const detail = parsed == null ? '' : typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
+    const detail =
+      parsed == null ? '' : typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
     throw new Error(`HTTP ${res.status} ${res.statusText} ${detail}`.trim());
   }
 
@@ -284,8 +322,9 @@ function emit(value) {
 
 async function runStatus() {
   const names = await request('GET', BASE_PATH);
-  const defaultPrompt = (await request('GET', `${BASE_PATH}/${encodeURIComponent(names[0] ?? 'x')}/default`))
-    ?.systemPrompt;
+  const defaultPrompt = (
+    await request('GET', `${BASE_PATH}/${encodeURIComponent(names[0] ?? 'x')}/default`)
+  )?.systemPrompt;
 
   const rows = [];
   for (const name of names) {
@@ -299,7 +338,9 @@ async function runStatus() {
     });
   }
 
-  rows.sort((a, b) => (a.guide === b.guide ? a.ecosystem.localeCompare(b.ecosystem) : a.guide === 'custom' ? -1 : 1));
+  rows.sort((a, b) =>
+    a.guide === b.guide ? a.ecosystem.localeCompare(b.ecosystem) : a.guide === 'custom' ? -1 : 1
+  );
 
   if (outputPath) {
     emit(rows);
@@ -310,38 +351,234 @@ async function runStatus() {
   console.log(`${'ecosystem'.padEnd(width)}  guide    chars  samples  modelId`);
   for (const r of rows) {
     console.log(
-      `${r.ecosystem.padEnd(width)}  ${r.guide.padEnd(7)}  ${String(r.promptChars).padStart(5)}  ${String(
-        r.samples
-      ).padStart(7)}  ${r.modelId}`
+      `${r.ecosystem.padEnd(width)}  ${r.guide.padEnd(7)}  ${String(r.promptChars).padStart(
+        5
+      )}  ${String(r.samples).padStart(7)}  ${r.modelId}`
     );
   }
   const custom = rows.filter((r) => r.guide === 'custom').length;
-  console.error(`\n${rows.length} registered, ${custom} custom, ${rows.length - custom} on the built-in default`);
+  console.error(
+    `\n${rows.length} registered, ${custom} custom, ${rows.length - custom} on the built-in default`
+  );
 }
 
 async function runPut() {
-  let body;
-  if (filePath) {
-    body = readJsonBody();
-  } else {
-    body = { systemPrompt: readPromptFile(), samples: [] };
-  }
+  const path = `${BASE_PATH}/${encodeURIComponent(ecosystem)}`;
+  const body = filePath ? readJsonBody() : { systemPrompt: readPromptFile() };
 
   if (modelId) body.modelId = modelId;
-  if (!body.modelId) {
-    const current = await request('GET', `${BASE_PATH}/${encodeURIComponent(ecosystem)}`);
-    body.modelId = current.modelId;
-    if (!quiet) console.error(`Keeping current modelId: ${body.modelId}`);
+
+  // PUT replaces the whole config, so anything the caller did not supply has to
+  // be carried over explicitly or it is destroyed.
+  if (!body.modelId || (body.samples === undefined && !clearSamples)) {
+    const current = await request('GET', path);
+    if (!body.modelId) {
+      body.modelId = current.modelId;
+      if (!quiet) console.error(`Keeping current modelId: ${body.modelId}`);
+    }
+    if (body.samples === undefined && !clearSamples) {
+      body.samples = current.samples ?? [];
+      if (body.samples.length && !quiet) {
+        console.error(
+          `Keeping ${body.samples.length} existing sample(s) — --clear-samples to drop them`
+        );
+      }
+    }
   }
+  if (clearSamples) body.samples = [];
 
-  await request('PUT', `${BASE_PATH}/${encodeURIComponent(ecosystem)}`, body);
+  await request('PUT', path, body);
 
-  const verify = await request('GET', `${BASE_PATH}/${encodeURIComponent(ecosystem)}`);
-  const ok = verify.systemPrompt === body.systemPrompt;
+  const ok = await verifyWrite(path, body.systemPrompt, body.samples?.length ?? 0);
   console.error(
     ok
-      ? `✓ ${ecosystem} updated and verified (${verify.systemPrompt.length} chars, model ${verify.modelId})`
-      : `✗ ${ecosystem} readback does not match what was sent`
+      ? `✓ ${ecosystem} updated and verified (${body.systemPrompt.length} chars, ${
+          body.samples?.length ?? 0
+        } sample(s))`
+      : `✗ ${ecosystem} readback does not match what was sent — re-check with \`status\` before rewriting`
+  );
+  if (!ok) process.exit(1);
+}
+
+async function runExport() {
+  const names = await request('GET', BASE_PATH);
+  const ecosystems = [];
+  for (const name of names) {
+    const config = await request('GET', `${BASE_PATH}/${encodeURIComponent(name)}`);
+    ecosystems.push({
+      ecosystem: name,
+      systemPrompt: config.systemPrompt,
+      modelId: config.modelId,
+      samples: config.samples ?? [],
+    });
+  }
+
+  const builtIn = await request(
+    'GET',
+    `${BASE_PATH}/${encodeURIComponent(names[0] ?? 'x')}/default`
+  );
+  const custom = ecosystems.filter((e) => e.systemPrompt !== builtIn.systemPrompt).length;
+
+  emit({
+    exportedAt: new Date().toISOString(),
+    endpoint,
+    note: 'Point-in-time snapshot for reverting. NOT a source of truth — the orchestrator is. Re-importing wholesale will overwrite anything edited since.',
+    defaultSystemPrompt: builtIn.systemPrompt,
+    ecosystems,
+  });
+  console.error(`Exported ${ecosystems.length} ecosystems (${custom} with a custom guide)`);
+}
+
+async function runImport() {
+  const backup = readJsonBody();
+  const list = Array.isArray(backup) ? backup : backup.ecosystems;
+  if (!Array.isArray(list)) {
+    console.error(
+      'Error: --file must be an export produced by this tool, or a JSON array of configs'
+    );
+    process.exit(1);
+  }
+
+  const builtIn = backup.defaultSystemPrompt;
+  let written = 0;
+  const skipped = [];
+
+  for (const entry of list) {
+    if (!entry?.ecosystem || !entry.systemPrompt) {
+      console.error(`Skipping malformed entry: ${JSON.stringify(entry)?.slice(0, 80)}`);
+      continue;
+    }
+    // Restoring a fallback-serving entry would freeze that text as its permanent
+    // guide — the same trap set-model guards against.
+    if (builtIn && entry.systemPrompt === builtIn && !force) {
+      skipped.push(entry.ecosystem);
+      continue;
+    }
+    if (dryRun) {
+      const live = await request('GET', `${BASE_PATH}/${encodeURIComponent(entry.ecosystem)}`);
+      const changes = [];
+      if (live.systemPrompt !== entry.systemPrompt)
+        changes.push(`guide ${live.systemPrompt.length} -> ${entry.systemPrompt.length} chars`);
+      if (live.modelId !== entry.modelId) changes.push(`model ${live.modelId} -> ${entry.modelId}`);
+      if ((live.samples?.length ?? 0) !== (entry.samples?.length ?? 0))
+        changes.push(`samples ${live.samples?.length ?? 0} -> ${entry.samples?.length ?? 0}`);
+      if (changes.length) {
+        console.error(`  ${entry.ecosystem}: ${changes.join(', ')}`);
+        written++;
+      }
+      continue;
+    }
+
+    await request('PUT', `${BASE_PATH}/${encodeURIComponent(entry.ecosystem)}`, {
+      systemPrompt: entry.systemPrompt,
+      modelId: entry.modelId,
+      samples: entry.samples ?? [],
+    });
+    console.error(`  restored ${entry.ecosystem}`);
+    written++;
+  }
+
+  console.error(
+    dryRun ? `\n${written} ecosystem(s) would change` : `\n✓ restored ${written} ecosystem(s)`
+  );
+  if (skipped.length) {
+    console.error(
+      `skipped ${skipped.length} that were serving the built-in default (--force to write them as frozen copies)`
+    );
+  }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * PUT replaces the whole config, so `set-samples` has to send a systemPrompt it did not
+ * author. Reads can lag a write by up to a minute, so a GET taken right after someone
+ * else's `put` returns the *previous* guide — and writing that back silently reverts it.
+ * Observed on `seedance`: a verified 2588-char deploy was reinstated as the old 2659-char
+ * guide by the very next `set-samples`.
+ *
+ * Two consecutive agreeing reads mean nothing is in flight. `--prompt-file` skips the
+ * problem entirely by making the guide explicit.
+ */
+/**
+ * Reads lag writes, so a single readback reports both false failures and false successes.
+ * Poll instead of asserting once — a mismatch only counts after the value has had time
+ * to settle.
+ */
+async function verifyWrite(path, expectedPrompt, expectedSampleCount) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const v = await request('GET', path);
+    if (v.systemPrompt === expectedPrompt && (v.samples?.length ?? 0) === expectedSampleCount) {
+      return true;
+    }
+    await sleep(5000);
+  }
+  return false;
+}
+
+async function readStableConfig(path) {
+  const first = await request('GET', path);
+  await sleep(3000);
+  const second = await request('GET', path);
+  if (first.systemPrompt !== second.systemPrompt) return null;
+  return second;
+}
+
+async function runSetSamples() {
+  const path = `${BASE_PATH}/${encodeURIComponent(ecosystem)}`;
+  const samples = clearSamples ? [] : readJsonBody();
+
+  let current;
+  if (promptFilePath) {
+    current = { systemPrompt: readPromptFile(), modelId: (await request('GET', path)).modelId };
+  } else {
+    current = await readStableConfig(path);
+    if (!current) {
+      console.error(
+        `✗ ${ecosystem}: the stored guide is still changing between reads — a write is in flight.\n` +
+          `  Writing samples now would reinstate whichever guide this command happened to read.\n` +
+          `  Wait a minute and retry, or pass --prompt-file <guide> to state the guide explicitly.`
+      );
+      process.exit(1);
+    }
+  }
+
+  if (!Array.isArray(samples)) {
+    console.error(
+      'Error: --file must contain a JSON array of { prompt, negativePrompt?, assistantResponse }'
+    );
+    process.exit(1);
+  }
+
+  for (const [i, s] of samples.entries()) {
+    if (!s?.prompt || !s?.assistantResponse) {
+      console.error(`Error: sample ${i} needs both "prompt" and "assistantResponse"`);
+      process.exit(1);
+    }
+    try {
+      JSON.parse(s.assistantResponse);
+    } catch {
+      console.error(
+        `Error: sample ${i} assistantResponse is not valid JSON. It is replayed as an assistant turn\n` +
+          `under a strict json_schema response format, so it must match that schema exactly.`
+      );
+      process.exit(1);
+    }
+  }
+
+  await request('PUT', path, {
+    systemPrompt: current.systemPrompt,
+    modelId: modelId || current.modelId,
+    samples,
+  });
+
+  const ok = await verifyWrite(path, current.systemPrompt, samples.length);
+  console.error(
+    ok
+      ? `✓ ${ecosystem}: ${current.samples?.length ?? 0} -> ${
+          samples.length
+        } sample(s) (guide unchanged)`
+      : `✗ ${ecosystem} readback does not match what was sent — re-check with \`status\` before rewriting`
   );
   if (!ok) process.exit(1);
 }
@@ -406,6 +643,15 @@ async function main() {
         break;
       case 'put':
         await runPut();
+        break;
+      case 'export':
+        await runExport();
+        break;
+      case 'import':
+        await runImport();
+        break;
+      case 'set-samples':
+        await runSetSamples();
         break;
       case 'set-model':
         await runSetModel();

@@ -56,7 +56,10 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { HistoryCard } from '~/components/CreatorShop/HistoryCard';
-import { CREATOR_SHOP_BORDER } from '~/components/CreatorShop/creator-shop.constants';
+import {
+  CREATOR_SHOP_BORDER,
+  submissionFeeLabel,
+} from '~/components/CreatorShop/creator-shop.constants';
 import {
   reviewQueueTypeOptions,
   type ReviewQueueFilterType,
@@ -68,8 +71,6 @@ import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema'
 import type { CosmeticOffsets } from '~/server/schema/creator-shop.schema';
 import {
   CREATOR_SHOP_CREATOR_SHARE,
-  CREATOR_SHOP_PACK_SUBMISSION_FEE,
-  CREATOR_SHOP_SUBMISSION_FEE,
   DECORATION_OFFSET_LIMIT,
 } from '~/server/schema/creator-shop.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -771,9 +772,7 @@ function CreatorShopReviewPage() {
                       />
                       <MoneyTile
                         label="Submission fee"
-                        value={`${numberWithCommas(
-                          isPack ? CREATOR_SHOP_PACK_SUBMISSION_FEE : CREATOR_SHOP_SUBMISSION_FEE
-                        )} · Paid`}
+                        value={submissionFeeLabel(selectedMeta.submissionFee)}
                         icon={<IconCheck size={14} />}
                         iconColor="var(--mantine-color-blue-5)"
                       />

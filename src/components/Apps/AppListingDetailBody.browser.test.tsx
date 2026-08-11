@@ -96,6 +96,7 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     serialId: 1,
     slug: 'my-app',
     kind: 'onsite',
+    collaborators: [],
     name: 'My App',
     tagline: 'A handy app',
     description: null,
