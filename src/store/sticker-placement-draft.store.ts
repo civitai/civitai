@@ -37,6 +37,12 @@ interface StickerPlacementDraftStore {
   targetImageId: number | null;
   surface: HTMLElement | null;
   /**
+   * The tray element, for the one thing outside it that has to know where it is:
+   * the buy button, which is drawn in the image's overlay and would otherwise be
+   * painted over by it.
+   */
+  tray: HTMLElement | null;
+  /**
    * What the pointer is currently doing, in the store rather than in the layer
    * that draws the handles — a drag can *start* in the tray, which is a
    * different subtree, and the sticker has to follow the same gesture that
@@ -47,6 +53,7 @@ interface StickerPlacementDraftStore {
   open: (imageId: number) => void;
   close: () => void;
   setSurface: (element: HTMLElement | null) => void;
+  setTray: (element: HTMLElement | null) => void;
   begin: (cosmeticId: number, at?: { x: number; y: number }, maxScale?: number) => void;
   setInteraction: (interaction: StickerInteraction | null) => void;
   move: (next: Partial<Omit<StickerDraft, 'imageId' | 'cosmeticId'>>) => void;
@@ -58,12 +65,14 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
   draft: null,
   targetImageId: null,
   surface: null,
+  tray: null,
   interaction: null,
 
   open: (imageId) => set({ targetImageId: imageId, draft: null, interaction: null }),
   close: () => set({ targetImageId: null, draft: null, interaction: null }),
   setInteraction: (interaction) => set({ interaction }),
   setSurface: (element) => set({ surface: element }),
+  setTray: (element) => set({ tray: element }),
 
   begin: (cosmeticId, at, maxScale) =>
     set((state) =>
@@ -78,7 +87,10 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
               // The creator's ceiling, not just the global one. A creator below
               // the 18% default is a third of the slider's range, and their
               // space refused the very first gesture with no hint why.
-              scale: Math.min(STICKER_PLACEMENT_DEFAULT_SCALE, maxScale ?? STICKER_PLACEMENT_MAX_SCALE),
+              scale: Math.min(
+                STICKER_PLACEMENT_DEFAULT_SCALE,
+                maxScale ?? STICKER_PLACEMENT_MAX_SCALE
+              ),
               rotation: 0,
             },
           }
