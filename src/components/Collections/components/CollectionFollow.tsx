@@ -1,18 +1,46 @@
 import type { ButtonProps } from '@mantine/core';
-import { Button, Group } from '@mantine/core';
-import { IconMinus, IconPlus, IconProgress } from '@tabler/icons-react';
+import { Button, Group, Text } from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
+import { IconLogout, IconMinus, IconPlus, IconProgress } from '@tabler/icons-react';
 import React from 'react';
 import type { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import { trpc } from '~/utils/trpc';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCollection } from '~/components/Collections/collection.utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
-export const CollectionFollowAction = ({ collectionId, permissions, ...btnProps }: Props) => {
+export const CollectionFollowAction = ({
+  collectionId,
+  permissions,
+  showLeaveAction,
+  ...btnProps
+}: Props) => {
   const utils = trpc.useUtils();
+  const currentUser = useCurrentUser();
 
   const { permissions: serverPermissions } = useCollection(collectionId);
   const mergedPermissions = { ...serverPermissions, ...permissions };
+
+  // Leaving is NOT unfollowing. `CollectionContributor` is one row carrying both the follow and
+  // the collaborator grant, so `unfollow` deletes the seat too — and it strands the accepted
+  // invite, which then blocks a re-invite on the (collectionId, userId) unique. `removeCollaborator`
+  // clears both rows together and is the only exit a collaborator can be offered.
+  const { isPending: leaving, mutate: leaveCollection } =
+    trpc.collection.removeCollaborator.useMutation({
+      async onSuccess() {
+        showSuccessNotification({ message: 'You have left this collection' });
+        await utils.collection.getById.invalidate({ id: collectionId });
+        await utils.collection.getCollaborators.invalidate({ id: collectionId });
+        await utils.collection.getAllUser.refetch();
+      },
+      onError(error) {
+        showErrorNotification({
+          title: 'Unable to leave this collection',
+          error: new Error(error.message),
+        });
+      },
+    });
 
   const { isPending: creatingFollow, mutate: followCollection } =
     trpc.collection.follow.useMutation({
@@ -48,6 +76,51 @@ export const CollectionFollowAction = ({ collectionId, permissions, ...btnProps 
   ) {
     // For contributors, we will still make it possible to un-follow
     return null;
+  }
+
+  const isCollaborator = !!mergedPermissions.isCollaborator;
+
+  // Leaving is destructive and irreversible without a fresh invite, so it lives in the context
+  // menu only. Rendering it wherever Follow used to appear would put it in the page header and
+  // on model pages too, one stray click from discarding the seat.
+  if (isCollaborator && !showLeaveAction) return null;
+
+  if (isCollaborator) {
+    return (
+      <Button
+        size="xs"
+        pl={4}
+        pr={8}
+        color="red"
+        variant="light"
+        loading={leaving}
+        {...btnProps}
+        onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!currentUser) return;
+
+          openConfirmModal({
+            title: 'Leave this collection?',
+            children: (
+              <Text size="sm">
+                You will lose your collaborator role and can only rejoin if someone invites you
+                again.
+              </Text>
+            ),
+            labels: { confirm: 'Leave collection', cancel: 'Stay' },
+            confirmProps: { color: 'red' },
+            onConfirm: () =>
+              leaveCollection({ collectionId, targetUserId: currentUser.id }),
+          });
+        }}
+      >
+        <Group gap={4} wrap="nowrap">
+          <IconLogout size={18} />
+          Leave collection
+        </Group>
+      </Button>
+    );
   }
 
   const isProcessing = creatingFollow || removingFollow;
@@ -98,4 +171,6 @@ export const CollectionFollowAction = ({ collectionId, permissions, ...btnProps 
 type Props = Omit<ButtonProps, 'onClick'> & {
   collectionId: number;
   permissions?: CollectionContributorPermissionFlags;
+  /** Opt in to the collaborator "Leave collection" action; elsewhere collaborators get nothing. */
+  showLeaveAction?: boolean;
 };

@@ -237,6 +237,7 @@ export function CollectionContextMenu({
               variant="transparent"
               collectionId={collectionId}
               permissions={permissions}
+              showLeaveAction
               p={0}
               pl={0}
               pr={0}
