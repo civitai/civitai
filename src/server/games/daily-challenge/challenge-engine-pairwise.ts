@@ -21,8 +21,8 @@ import {
   type Bout,
   type BoutResult,
   type Seat,
+  RERUN_TOP_K,
 } from '~/server/games/daily-challenge/challenge-ladder';
-import { RERUN_TOP_K } from '~/server/games/daily-challenge/challenge-ladder';
 import {
   buildComparisonPrompt,
   comparePair,
@@ -43,6 +43,13 @@ const PODIUM_CONCURRENCY = LADDER_CONCURRENCY;
  * post-mortem. 70% of the window is enough slack to be actionable.
  */
 const CLOSE_STAGE_WARN_MS = CLAIM_WINDOW_MINUTES * 60_000 * 0.7;
+
+/**
+ * Above this share of the field missing an arrival placement, the standings order is not a
+ * measurement and must not be cut at K. Half is generous: even a third unplaced means a third of
+ * the order is absolute score with a random tiebreak.
+ */
+const UNPLACED_BOUND_LIMIT = 0.5;
 
 /**
  * Pairwise judging. An entry binary-searches the standings as it arrives and becomes a rung for
@@ -92,7 +99,15 @@ export const pairwiseLadderEngine: ChallengeJudgingEngine = {
     const images = await loadComparisonImages(startingOrder);
     const session = createSession(ctx, images, 'rerun');
     session.seed(await store.getComparisons(ctx.challengeId, ['arrive', 'rerun']));
-    const rerun = await session.run(() => reinsertTop(startingOrder, session.bout));
+    // Bounding the rerun is only safe when the order it bounds came from ARRIVAL placement. When a
+    // challenge was opted in too late for arrival to have run, `startingOrder` is mostly the
+    // eligible order — absolute score with a Math.random() tiebreak — and cutting it at K would be
+    // that coin flip deciding who reaches the podium. Such a challenge has spent no arrival budget,
+    // so it can afford the unbounded rerun instead.
+    const unplacedFraction = missing.length / startingOrder.length;
+    const arrivalUsable = missing.length === 0 || unplacedFraction < UNPLACED_BOUND_LIMIT;
+    const topK = arrivalUsable ? RERUN_TOP_K : startingOrder.length;
+    const rerun = await session.run(() => reinsertTop(startingOrder, session.bout, topK));
 
     logToAxiom({
       type:
@@ -100,7 +115,10 @@ export const pairwiseLadderEngine: ChallengeJudgingEngine = {
       name: 'challenge-pairwise-rerun',
       challengeId: ctx.challengeId,
       field: eligible.length,
-      rerunTopK: RERUN_TOP_K,
+      rerunTopK: topK,
+      // False means arrival placement had not covered enough of the field to be worth bounding, so
+      // the rerun ran unbounded. Expect a much longer stage and a much larger bout count.
+      arrivalUsable,
       bouts: rerun.bouts,
       // Entries that reached the rerun with no arrival placement at all. A challenge switched to
       // this engine near its close has a starting order that is arbitrary rather than measured,
@@ -276,13 +294,17 @@ function createSession(
     // the claim does, so a stage drifting toward the window announces itself instead of being
     // discovered from a double payout.
     const durationMs = Date.now() - startedAt;
-    const slow = durationMs > CLOSE_STAGE_WARN_MS;
+    // Against the CUMULATIVE close-time clock, not this stage's own: the claim covers every stage
+    // together, so six minutes of rerun plus six of podium blows it with neither stage over budget.
+    const closeMs = ctx.startedAt ? Date.now() - ctx.startedAt : durationMs;
+    const slow = closeMs > CLOSE_STAGE_WARN_MS;
     logToAxiom({
       type: slow ? 'warning' : 'info',
       name: 'challenge-pairwise-stage',
       challengeId: ctx.challengeId,
       phase,
       durationMs,
+      closeMs,
       claimWindowMs: CLAIM_WINDOW_MINUTES * 60_000,
       comparisons,
       reroutes,

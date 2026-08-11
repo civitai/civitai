@@ -168,8 +168,10 @@ describe('reinsertTop', () => {
     expect(nearBoundary).toEqual([]);
   });
 
-  it('defaults K to the measured constant', () => {
-    expect(RERUN_TOP_K).toBe(40);
+  it('keeps K above the arrival rank a finalist was actually observed to need', () => {
+    // Challenge 424: every entry that finished in the final top 15 was already inside the arrival
+    // top 27. K below that would have excluded a real finalist on the one field we have measured.
+    expect(RERUN_TOP_K).toBeGreaterThan(27);
   });
 });
 

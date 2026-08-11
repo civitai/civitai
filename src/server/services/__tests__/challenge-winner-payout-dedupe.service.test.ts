@@ -577,6 +577,19 @@ describe('endChallengeAndPickWinners — hands a comparison engine to the comple
     expect(update.data.endsAt.getTime()).toBeLessThanOrEqual(Date.now());
   });
 
+  it('closes submissions immediately, not when the completion job gets to it', async () => {
+    // A moderator ending a challenge early is usually trying to STOP something. Leaving the
+    // collection open until the next tick lets entries land in that window, get reviewed, and
+    // become eligible for the prizes the mod was trying to close off.
+    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine);
+    mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'pairwise-ladder' });
+
+    await endChallengeAndPickWinners(CHALLENGE_ID);
+
+    const helpers = await import('~/server/games/daily-challenge/challenge-helpers');
+    expect(vi.mocked(helpers.closeChallengeCollection)).toHaveBeenCalledTimes(1);
+  });
+
   it('does not judge, pay, or claim on the way out', async () => {
     mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine);
     mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'pairwise-ladder' });

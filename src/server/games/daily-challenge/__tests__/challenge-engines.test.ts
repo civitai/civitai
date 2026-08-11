@@ -61,6 +61,7 @@ const { legacyAbsoluteEngine } = await import(
 const { pairwiseLadderEngine, PODIUM_SIZE } = await import(
   '~/server/games/daily-challenge/challenge-engine-pairwise'
 );
+const { RERUN_TOP_K } = await import('~/server/games/daily-challenge/challenge-ladder');
 const { buildJudgingEngineContext, resolveJudgingEngine } = await import(
   '~/server/games/daily-challenge/challenge-engine-registry'
 );
@@ -402,6 +403,59 @@ describe('pairwise engine — ranking the field at close', () => {
     expect(ranked.map((e) => e.imageId)).toEqual([1, 3]);
   });
 
+  // The K-cut is only defensible when it cuts the ARRIVAL ladder. `startingOrder` appends unplaced
+  // entries in eligible order, which is still absolute score with a Math.random() tiebreak — so
+  // bounding a field arrival never placed is the coin flip deciding who reaches the podium.
+  it('does NOT bound the rerun when arrival never placed the field', async () => {
+    fakeComparisonStore();
+    trueOrderComparisons();
+    // Larger than RERUN_TOP_K, or bounding and not bounding look identical and the test is vacuous.
+    const field = Array.from({ length: RERUN_TOP_K + 18 }, (_, i) => entry(i + 1));
+    queryRaw.mockImplementation(async () =>
+      field.map((e) => ({ imageId: e.imageId, url: `uuid-${e.imageId}`, nsfwLevel: 1 }))
+    );
+    store.getStandings.mockResolvedValue([]); // opted in too late for arrival to have run
+
+    await pairwiseLadderEngine.rankField(ctx, field);
+
+    // Every entry searched, not just the first K: the count of distinct challengers is the field.
+    const challengers = new Set(comparePair.mock.calls.map((c) => c[0].challenger.imageId));
+    expect(challengers.size).toBe(field.length);
+  });
+
+  it('bounds the rerun when arrival DID place the field', async () => {
+    fakeComparisonStore();
+    trueOrderComparisons();
+    // Larger than RERUN_TOP_K, or the bound has nothing to exclude and the test proves nothing.
+    const field = Array.from({ length: RERUN_TOP_K + 18 }, (_, i) => entry(i + 1));
+    queryRaw.mockImplementation(async () =>
+      field.map((e) => ({ imageId: e.imageId, url: `uuid-${e.imageId}`, nsfwLevel: 1 }))
+    );
+    store.getStandings.mockResolvedValue(
+      field.map((e, i) => ({ imageId: e.imageId, userId: e.userId, rank: i + 1, comparisons: 2 }))
+    );
+
+    await pairwiseLadderEngine.rankField(ctx, field);
+
+    const challengers = new Set(comparePair.mock.calls.map((c) => c[0].challenger.imageId));
+    expect(challengers.size).toBeLessThan(field.length);
+  });
+
+  it('records which way it went, so a long stage is explicable afterwards', async () => {
+    fakeComparisonStore();
+    trueOrderComparisons();
+    const logs: Record<string, unknown>[] = [];
+    axiom.mockImplementation(async (e: Record<string, unknown>) => {
+      logs.push(e);
+    });
+    store.getStandings.mockResolvedValue([]);
+
+    await pairwiseLadderEngine.rankField(ctx, [entry(1), entry(2), entry(3)]);
+
+    const rerun = logs.find((l) => l.name === 'challenge-pairwise-rerun');
+    expect(rerun).toMatchObject({ arrivalUsable: false, type: 'warning' });
+  });
+
   it('fails loudly rather than returning standings that cover a subset of the field', async () => {
     // The engine is handed four eligible entries but the ladder can only account for three. A
     // three-name ladder is not a result — it is a result-shaped subset, and reading one as the
@@ -614,6 +668,25 @@ describe('pairwise engine — picking the places', () => {
     const stage = logs.find((l) => l.name === 'challenge-pairwise-stage');
     expect(stage?.type).toBe('warning');
     expect(stage?.durationMs).toBeGreaterThan(0);
+  });
+
+  it('measures the close budget CUMULATIVELY across stages, not per stage', async () => {
+    // Two stages of six minutes each pass their own budget and blow the claim between them. The
+    // clock that matters starts when close-time judging starts.
+    fakeComparisonStore();
+    trueOrderComparisons();
+    const logs: Record<string, unknown>[] = [];
+    axiom.mockImplementation(async (e: Record<string, unknown>) => {
+      logs.push(e);
+    });
+    // Context started 8 minutes ago; this stage itself is instant.
+    const staleCtx = { ...ctx, startedAt: Date.now() - 8 * 60_000 };
+
+    await pairwiseLadderEngine.selectWinners(staleCtx, [entry(1), entry(2), entry(3)], 3);
+
+    const stage = logs.find((l) => l.name === 'challenge-pairwise-stage');
+    expect(stage?.type).toBe('warning');
+    expect(stage?.durationMs as number).toBeLessThan(60_000);
   });
 
   it('reports a normal stage as info, not as a warning', async () => {

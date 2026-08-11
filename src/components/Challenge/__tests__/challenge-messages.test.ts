@@ -22,7 +22,10 @@ describe('challengeEndedMessage', () => {
     expect(challengeEndedMessage({ queued: false, winnersCount: 0 })).toMatch(/0 winner/);
   });
 
-  it('treats a missing flag as the inline path, so an older response is not misread as queued', () => {
-    expect(challengeEndedMessage({ winnersCount: 2 })).toMatch(/2 winner/);
+  it('requires the flag rather than defaulting it', () => {
+    // `queued` is required on the type, so a caller cannot omit it and silently get the inline
+    // message for a queued challenge. This pins the contract that makes that a compile error.
+    // @ts-expect-error - omitting `queued` must not type-check
+    expect(() => challengeEndedMessage({ winnersCount: 2 })).not.toThrow();
   });
 });

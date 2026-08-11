@@ -22,6 +22,12 @@ export type JudgingEngineContext = {
   categories: JudgingCategory[];
   /** Per-category criteria text, keyed by category key, for prompts that want it. */
   criteriaByKey?: Record<string, string>;
+  /**
+   * When close-time judging started, for the CUMULATIVE budget. The completion claim covers every
+   * stage together, so a per-stage budget lets two stages of six minutes each pass their own check
+   * and blow the claim between them.
+   */
+  startedAt?: number;
 };
 
 /** One entry, as it exists the moment the absolute pass finishes with it. */

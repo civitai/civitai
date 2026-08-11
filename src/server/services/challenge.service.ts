@@ -2470,7 +2470,14 @@ const log = createLogger('challenge-service', 'blue');
  * End an active challenge early and pick winners.
  * This closes the collection and runs the full winner-picking flow.
  */
-export async function endChallengeAndPickWinners(challengeId: number) {
+/**
+ * `queued` is REQUIRED, not optional. Optional would let a future return site omit it and have the
+ * caller render the inline message for a queued challenge — "0 winner(s) selected" for a challenge
+ * whose judging has not run — which is the bug challengeEndedMessage exists to prevent.
+ */
+type EndChallengeResult = { success: true; winnersCount: number; queued: boolean };
+
+export async function endChallengeAndPickWinners(challengeId: number): Promise<EndChallengeResult> {
   // Get the challenge
   const challenge = await getChallengeById(challengeId);
   if (!challenge) {
@@ -2499,8 +2506,15 @@ export async function endChallengeAndPickWinners(challengeId: number) {
   // would move it to Completing where nothing would ever pick it up.
   const engineForChallenge = await resolveJudgingEngine(challenge.judgingEngine);
   if (engineForChallenge.key !== JUDGING_ENGINES.LegacyAbsolute) {
+    // Close submissions HERE, not when the completion job gets round to it. A moderator ending a
+    // challenge early is usually trying to stop something, and entries landing between the click
+    // and the next tick would still be reviewed and still become eligible.
+    await closeChallengeCollection(challenge);
     await dbWrite.challenge.update({ where: { id: challengeId }, data: { endsAt: new Date() } });
-    log('Challenge ended; winner selection queued for the completion job:', challengeId);
+    log(
+      'Challenge ended and collection closed; winners queued for the completion job:',
+      challengeId
+    );
     return { success: true, winnersCount: 0, queued: true };
   }
 

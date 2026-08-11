@@ -41,8 +41,23 @@ export const LADDER_CONCURRENCY = 16;
 /** Completion claim, in minutes — `resetStuckCompletingChallenges` revokes on this. */
 export const CLAIM_WINDOW_MINUTES = 10;
 
-/** Measured median latency of one two-image comparison, in seconds. */
-export const MEASURED_BOUT_SECONDS = 9;
+/** Measured MEDIAN latency of one two-image comparison, in seconds. */
+export const MEDIAN_BOUT_SECONDS = 9;
+
+/**
+ * Mean, which is what a budget has to be sized on. The distribution has a long tail — 12.4s median
+ * on the self-hosted route, 56s worst observed — so the mean sits at 10.7-16.7s depending on the
+ * fit. Projections use this rather than the median: sizing a deadline on a median means half the
+ * stages are over it.
+ */
+export const MEAN_BOUT_SECONDS = 12;
+
+/**
+ * Sequential bouts the tie-resolution stage costs. Groups resolve in parallel with each other but
+ * each group is internally serial, so this is a depth, not a count. Measured at 2.4-2.7 min at
+ * concurrency 16 on an arbitrary start, i.e. ~13 bouts deep.
+ */
+export const TIE_STAGE_BOUT_DEPTH = 13;
 
 /**
  * Projected wall clock of the whole close-time stage. Exported so the arithmetic above is a thing
@@ -55,18 +70,22 @@ export function projectedCloseMinutes(input: {
   concurrency?: number;
   podiumBouts?: number;
   boutSeconds?: number;
+  tieDepth?: number;
 }): number {
   const {
     entries,
     topK = RERUN_TOP_K,
     concurrency = LADDER_CONCURRENCY,
     podiumBouts = 210,
-    boutSeconds = MEASURED_BOUT_SECONDS,
+    boutSeconds = MEAN_BOUT_SECONDS,
+    tieDepth = TIE_STAGE_BOUT_DEPTH,
   } = input;
   const depth = Math.ceil(Math.log2(Math.max(2, entries)));
   const rerunWaves = Math.ceil(Math.min(topK, entries) / concurrency);
   const podiumWaves = Math.ceil(podiumBouts / concurrency);
-  return ((rerunWaves * depth + podiumWaves) * boutSeconds) / 60;
+  // The tie stage is a real stage `reinsertTop` runs, not a rounding error — omitting it let a
+  // projection of 8.5 min pass the headroom test while the stage actually took 12.2.
+  return ((rerunWaves * depth + podiumWaves + tieDepth) * boutSeconds) / 60;
 }
 
 /**
@@ -153,7 +172,12 @@ export async function runPool<T, R>(
  *
  * Measured on the only real full field we have (challenge 424, 284 entries, luna): every entry
  * that finished in the final top 15 was already inside the **arrival top 27**. Final top 3 needed
- * arrival top 7; final top 10 needed 13. 40 is ~1.5x the observed requirement, not a guess.
+ * arrival top 7; final top 10 needed 13.
+ *
+ * 32 is 1.19x that observed requirement — thinner than the 1.5x we wanted, and the claim window is
+ * why. At MEAN bout latency (not median) the whole close-time stage has to fit in 10 minutes, and
+ * solving that constraint caps K here. `projectedCloseMinutes` is the constraint as code, and the
+ * guard test fails if a larger K is set without the budget to pay for it.
  *
  * Two honest limits on that evidence. It is mildly circular — the "final" ranking it is measured
  * against is itself the output of an unbounded rerun — though the direction is right: that
@@ -161,7 +185,7 @@ export async function runPool<T, R>(
  * judge, not a law; a field whose arrival order is noisier could need more. `rankField` warns when
  * a finisher entered the rerun near this boundary, which is the cheap signal that it wants raising.
  */
-export const RERUN_TOP_K = 40;
+export const RERUN_TOP_K = 32;
 
 /**
  * Tie groups larger than this are left in arrival order rather than resolved by comparison.
@@ -189,9 +213,16 @@ export type RerunResult = {
  * (that stage is spread over days and is unchanged) and spends the close-time budget where the
  * money is.
  *
- * This is NOT the cut that was removed in round 2. That one was `Math.random()` breaking ties on a
- * saturated 0-10 absolute score — a coin flip deciding who could be ranked. This is a cut on the
- * ladder's own measured order, with no random component and no saturated scale.
+ * This is not the cut that was removed earlier — **provided the order it cuts is the arrival
+ * ladder's**. That one was `Math.random()` breaking ties on a saturated 0-10 absolute score, a coin
+ * flip deciding who could be ranked; this cuts the ladder's own measured order.
+ *
+ * ⚠️ The distinction collapses when arrival never ran. `rankField` hands this the standings order
+ * with unplaced entries appended in *eligible* order — and eligible order is still absolute score
+ * with a `Math.random()` tiebreak. So for a challenge with no arrival placements, cutting at K
+ * would be exactly the coin flip, deciding who reaches the podium: at the measured rho 0.748
+ * between such an order and truth, 99.1% of trials exclude at least one true top-15 entry, 4.1
+ * finalists lost on average. The caller must not bound an unplaced field — see `rankField`.
  *
  * Single pass, deliberately — and the durable reason is not the clock. **Every quality number
  * quoted for this engine (rho 0.748 full-field, 0.770 on the blend) came from a harness that ran
@@ -281,7 +312,12 @@ export async function reinsertTop(
   }
 
   // An entry that started near the K boundary and finished high says the boundary is close to
-  // binding. Cheap to compute, and it is the only warning we get before K is actually too small.
+  // binding. Cheap, and the only warning available before K is actually too small.
+  //
+  // ⚠️ It filters `placed`, so it can only ever see entries that WERE re-inserted. The failure it
+  // is a proxy for — a finalist that K already excluded — is structurally unobservable from here,
+  // because that entry was never compared against anything. This detects the approach to the cliff,
+  // never the fall.
   // Only meaningful when the bound actually excluded someone (K covering the whole field leaves
   // no boundary to be near) AND when the rerun is wider than the shortlist it feeds — at
   // topK <= PODIUM_WATCH every re-inserted entry is a potential finalist and the signal is noise.
