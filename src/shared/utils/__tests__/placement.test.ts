@@ -10,6 +10,8 @@ import {
   PLACEMENT_SURFACES,
   placementOutcomeFromStatus,
   placementPriceCap,
+  onPlacementPriceGrid,
+  PLACEMENT_PRICE_TRACK_START,
   placementPriceTrack,
   placementSurfaces,
   placementTransactionId,
@@ -312,27 +314,38 @@ describe('space resolution', () => {
     });
   });
 
-  // Prod holds account prices of 10, 50, 67, 100 and 200, three of which sit
-  // outside the track for a free-tier creator. A control that cannot represent
-  // the stored value rewrites it the moment it is touched.
-  it('keeps a stored price reachable however far outside the track it sits', () => {
-    expect(placementPriceTrack(10, 100, 100)).toEqual({ min: 10, max: 100 });
-    expect(placementPriceTrack(200, 100, 100)).toEqual({ min: 50, max: 200 });
-    expect(placementPriceTrack(67, 500, 100)).toEqual({ min: 50, max: 500 });
-    expect(placementPriceTrack(null, 500, 100)).toEqual({ min: 50, max: 500 });
+  // The track does NOT re-derive from what is stored. It did, and every commit
+  // refetched the row and recomputed the floor, so a legacy price ratcheted
+  // upward one drag at a time: 10 -> 55 leaves the floor at 50 and 10 is gone.
+  it('does not depend on the stored price', () => {
+    const track = placementPriceTrack(500, 100);
+    expect(track).toEqual({ min: PLACEMENT_PRICE_TRACK_START, max: 500 });
+
+    // Same cap, same track, whatever the creator is currently charging.
+    for (const cap of [100, 500, 2_500]) {
+      expect(placementPriceTrack(cap, 100).min).toBe(PLACEMENT_PRICE_TRACK_START);
+    }
   });
 
-  it('never produces an inverted or empty track', () => {
-    for (const stored of [null, 0, 10, 50, 100, 5_000]) {
-      for (const cap of [null, 0, 1, 100, 5_000]) {
-        const { min, max } = placementPriceTrack(stored, cap, 100);
-        expect(max, `stored=${stored} cap=${cap}`).toBeGreaterThanOrEqual(min);
-        if (stored != null) {
-          expect(stored, `stored=${stored} cap=${cap} unreachable`).toBeGreaterThanOrEqual(min);
-          expect(stored, `stored=${stored} cap=${cap} unreachable`).toBeLessThanOrEqual(max);
-        }
-      }
+  // "Within the bounds" is not "reachable". The slider steps from `min`, so the
+  // landable values are `min + 5k` — prod's stored 67 sits between two of them
+  // and the first nudge rounds it away.
+  it('produces a track whose bounds are on its own grid', () => {
+    for (const cap of [null, 0, 1, 50, 55, 100, 2_500]) {
+      const track = placementPriceTrack(cap, 100);
+      expect(track.max, `cap=${cap} zero-width track`).toBeGreaterThan(track.min);
+      expect(onPlacementPriceGrid(track.min, track), `cap=${cap} min off-grid`).toBe(true);
+      expect(onPlacementPriceGrid(track.max, track), `cap=${cap} max off-grid`).toBe(true);
     }
+  });
+
+  it('reports a stored price the slider cannot land on', () => {
+    const track = placementPriceTrack(500, 100);
+
+    expect(onPlacementPriceGrid(67, track)).toBe(false);
+    expect(onPlacementPriceGrid(10, track)).toBe(false);
+    expect(onPlacementPriceGrid(65, track)).toBe(true);
+    expect(onPlacementPriceGrid(100, track)).toBe(true);
   });
 
   it('keeps an account-level price when only the image mode was changed', () => {

@@ -83,6 +83,32 @@ describe('setPlacementSpace — the price guard', () => {
     expect(spaceUpsert).not.toHaveBeenCalled();
   });
 
+  // The refusal is account-level only. Below it "the level above" is a real
+  // place, and the surface default is a legitimate thing to fall back to.
+  it('allows clearing an image price even with no account price above it', async () => {
+    storedRow(500);
+    levelsAbove([]);
+
+    await setPlacementSpace({
+      surface: 'sticker',
+      entityType: 'image',
+      entityId: 42,
+      userId: OWNER,
+      mode: 'review',
+      price: null,
+    });
+
+    expect(priceWritten()).toMatchObject({ price: null });
+  });
+
+  it('allows closing an account space while clearing its price', async () => {
+    storedRow(500);
+
+    await setPlacementSpace({ ...base, mode: 'off', price: null });
+
+    expect(priceWritten()).toMatchObject({ price: null, mode: 'off' });
+  });
+
   it('allows clearing a price that has a level above it to inherit', async () => {
     storedRow(500);
     levelsAbove([{ entityType: 'user', price: 250 }]);

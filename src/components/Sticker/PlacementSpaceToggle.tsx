@@ -2,6 +2,7 @@ import { Anchor, Group, Loader, SegmentedControl, Slider, Stack, Text } from '@m
 import { useEffect, useState } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
+  onPlacementPriceGrid,
   PLACEMENT_PRICE_STEP,
   placementPriceTrack,
   PLACEMENT_SURFACES,
@@ -54,8 +55,14 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
     setPrice(row?.price ?? '');
   }, [row]);
 
-  const onError = (error: { message: string }) =>
+  // A refused write leaves the control asserting a price the server did not
+  // take. Rolling back to the row is the same failure the price guard exists to
+  // prevent, moved from the database to the screen.
+  const onError = (error: { message: string }) => {
+    setMode(row?.mode ?? 'inherit');
+    setPrice(row?.price ?? '');
     showErrorNotification({ title: "Couldn't save that", error: new Error(error.message) });
+  };
 
   const save = trpc.placement.setSpace.useMutation({
     onSuccess: () => utils.placement.invalidate(),
@@ -94,18 +101,15 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
 
   const defaultPrice = PLACEMENT_SURFACES.sticker.defaultPrice;
   const cap = range?.max ?? null;
-  // Bounds come from the price AS LOADED, never from the live value. Derived
-  // from live state the floor follows the thumb upward and the price can only
-  // ever be raised: stored 10 goes to 15 and will not come back.
-  const { min: sliderMin, max: sliderMax } = placementPriceTrack(
-    row?.price ?? null,
-    cap,
-    defaultPrice
-  );
-  const sliderValue = price === '' ? Math.min(Math.max(defaultPrice, sliderMin), sliderMax) : price;
-  // The track is widened to keep an out-of-cap stored price reachable, so it is
-  // not the cap and must not be described as one.
+  const track = placementPriceTrack(cap, defaultPrice);
+  const { min: sliderMin, max: sliderMax } = track;
+  const clamp = (value: number) => Math.min(Math.max(value, sliderMin), sliderMax);
+  const sliderValue = price === '' ? clamp(defaultPrice) : clamp(price);
   const overCap = cap != null && typeof price === 'number' && price > cap;
+  // A legacy price the grid cannot land on. Saying so is the whole remedy: the
+  // slider will round it, and a creator who is not told discovers that from
+  // their earnings.
+  const offGrid = typeof price === 'number' && !onPlacementPriceGrid(price, track);
 
   return (
     <Stack gap={4}>
@@ -139,15 +143,7 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
                 Price
               </Text>
               {price !== '' && (
-                <Anchor
-                  component="button"
-                  type="button"
-                  size="xs"
-                  onClick={() => {
-                    setPrice('');
-                    commit(mode, '');
-                  }}
-                >
+                <Anchor component="button" type="button" size="xs" onClick={() => commit(mode, '')}>
                   Use the price from the level above
                 </Anchor>
               )}
@@ -186,11 +182,13 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
                 commit(mode, value);
               }}
             />
-            <Text size="xs" c={overCap ? 'yellow' : 'dimmed'}>
+            <Text size="xs" c={overCap || offGrid ? 'yellow' : 'dimmed'}>
               {price === ''
                 ? `Following the price from the level above, or ${defaultPrice} Buzz if none is set.`
                 : overCap
                 ? `Placers pay ${cap} Buzz — your current cap — until your score or membership raises it.`
+                : offGrid
+                ? `Placers pay ${price} Buzz. The slider moves in ${PLACEMENT_PRICE_STEP}s from ${sliderMin}, so using it will change this price.`
                 : `Placers pay ${price} Buzz.`}
             </Text>
           </Stack>

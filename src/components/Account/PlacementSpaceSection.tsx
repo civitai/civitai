@@ -51,7 +51,10 @@ export function PlacementSpaceSection() {
     { surface: 'sticker' },
     { enabled }
   );
-  const { data: spaces } = trpc.placement.getMySpaces.useQuery({ surface: 'sticker' }, { enabled });
+  const { data: spaces, isPending: spacesPending } = trpc.placement.getMySpaces.useQuery(
+    { surface: 'sticker' },
+    { enabled }
+  );
   const { data: pending } = trpc.placement.getPending.useQuery(undefined, { enabled });
 
   const stored = spaces?.[0];
@@ -78,11 +81,20 @@ export function PlacementSpaceSection() {
     // No success toast: every control here commits on change, and three toasts
     // for three nudges of one slider is noise rather than confirmation.
     onSuccess: () => utils.placement.invalidate(),
-    onError: (error) =>
-      showErrorNotification({ title: "Couldn't save that", error: new Error(error.message) }),
+    onError: (error) => {
+      // Without this the field keeps the value the server refused, and the page
+      // states a price nobody is being charged.
+      setMode(stored?.mode ?? DEFAULT_MODE);
+      setPrice(stored?.price ?? DEFAULT_PRICE ?? '');
+      showErrorNotification({ title: "Couldn't save that", error: new Error(error.message) });
+    },
   });
 
   if (!enabled || !currentUser) return null;
+  // `spaces` is undefined while in flight and indistinguishable from "no row",
+  // so committing against it during the load window would write the seeded
+  // default over a space the creator had explicitly closed.
+  if (spacesPending) return null;
 
   const cap = range?.max ?? 0;
   const overCap = typeof price === 'number' && cap > 0 && price > cap;
@@ -97,7 +109,11 @@ export function PlacementSpaceSection() {
       // cannot be pointed at someone else's account.
       entityId: currentUser.id,
       mode: nextMode as 'off' | 'review' | 'auto',
-      price: nextPrice === '' ? null : nextPrice,
+      // A creator with no row who only touches the mode has not chosen a price,
+      // and writing the seeded one would freeze today's platform default into
+      // their account where a later change to it would never reach them.
+      price:
+        !stored && nextPrice === DEFAULT_PRICE ? undefined : nextPrice === '' ? null : nextPrice,
     });
 
   return (

@@ -232,22 +232,30 @@ export const PLACEMENT_PRICE_STEP = 5;
 export const PLACEMENT_PRICE_TRACK_START = 50;
 
 /**
- * The bounds of the price control.
+ * The bounds of the price control: a fixed grid of `[start, cap]` in `step`
+ * increments, independent of what is stored.
  *
- * Takes the **stored** price and never the live one: derived from the value
- * under the thumb, the floor follows it upward and a price below the track can
- * only ever be raised. The parameter list is the guard — there is no live value
- * to pass.
+ * Widening the track to swallow the stored price was worse than the problem.
+ * Every commit refetches the row and recomputes, so the floor climbed one drag
+ * at a time — 10 to 55 leaves the floor at 50 and 10 is gone for good. And a
+ * stored 67 sat *between* steps, so the track claimed a value the grid could
+ * not land on and the first nudge silently rounded it away.
+ *
+ * So the slider owns `[start, cap]` and nothing else. A price outside that grid
+ * is preserved until the creator moves the control, and the UI says what it is
+ * rather than pretending the slider can return to it.
  */
-export function placementPriceTrack(
-  storedPrice: number | null,
-  cap: number | null,
-  defaultPrice: number | null
-) {
-  const min = Math.min(PLACEMENT_PRICE_TRACK_START, storedPrice ?? PLACEMENT_PRICE_TRACK_START);
-  const max = Math.max(cap ?? defaultPrice ?? PLACEMENT_PRICE_TRACK_START, min, storedPrice ?? 0);
-  return { min, max };
+export function placementPriceTrack(cap: number | null, defaultPrice: number | null) {
+  const min = PLACEMENT_PRICE_TRACK_START;
+  const ceiling = cap ?? defaultPrice ?? min;
+  // A cap at or below the track start would give a zero-width track, which is a
+  // division by zero inside the slider rather than a disabled control.
+  return { min, max: Math.max(ceiling, min + PLACEMENT_PRICE_STEP) };
 }
+
+/** Whether the slider can land on this price exactly, or would round it away. */
+export const onPlacementPriceGrid = (price: number, track: { min: number; max: number }) =>
+  price >= track.min && price <= track.max && (price - track.min) % PLACEMENT_PRICE_STEP === 0;
 
 export function placementPriceCap(
   score: number,
