@@ -31,10 +31,10 @@ detail before doing anything destructive.
 
 | # | Decide | Detail |
 | --- | --- | --- |
-| 6 | **Where the 2 Retool Workflows live.** Retool Workflows is a scheduled product separate from its apps; our cron lives in the main app. These are backfill/timer jobs (`MinorInsert`, `PoIInsert`, `*_catchup`, `*Timer`) — most may already be covered by existing jobs. Needs the workflow exports and a yes/no per job, not a port. | [detail](retool-migration-handover-detail.md#6-the-two-retool-workflows-cron) |
+| ~~6~~ | ~~**Where the 2 Retool Workflows live.**~~ **RESOLVED 2026-08-11** — not ported. Both are inert alerting wrappers (no crontab, `isEnabled: false`, orphaned Discord block); the underlying jobs are already ours. The alert they provided was genuinely missing and is reimplemented as `src/server/jobs/challenge-health-check.ts`. | [decision](retool-workflows-decision.md) |
 | 7 | **Two schemas Front Page Audit needs** to resume and log (`FrontPageTimers`, `RatingChanges`) — `research_ratings` is closed, the main app deliberately dropped it. The sweep works without them; what is missing is the shared resume point and the audit trail. | [detail](retool-migration-handover-detail.md#2d-two-schemas-front-page-audit-needs-before-it-can-resume-or-log) |
 | 8 | **`aiNsfwLevel` and `aiModel` exist in production but not in `schema.full.prisma`.** The scan webhook writes them; the moderator app reads `aiNsfwLevel` through raw `sql` because it cannot be typed. Add to the schema, or accept the raw read. | [detail](retool-migration-handover-detail.md#4-known-open-decided-or-deferred) |
-| 9 | **`ReToolActions` vs `ModActivity`** — two mod-action logs, nothing reconciles them. Retool-era history is invisible in the new app. | [detail](retool-migration-handover-detail.md#4-known-open-decided-or-deferred) |
+| 9 | **`ReToolActions` vs `ModActivity`** — two mod-action logs, nothing reconciles them. **Recommendation made 2026-08-11**: migrate as a read-only archive, do NOT merge into `ModActivity` — the user id is embedded in free text and matched with `LIKE`, so any merge would invent `entityType`/`entityId` and attribution that then reads as real. Still needs a human's yes. | [decision](retool-db-cutover.md) |
 | 10 | **Two strike systems** — this app writes Retool's `UserStrikes`, not the main app's newer `Strike`. | [detail](retool-migration-handover-detail.md#4-known-open-decided-or-deferred) |
 
 ## Before Retool access is lost

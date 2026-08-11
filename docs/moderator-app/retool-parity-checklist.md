@@ -60,10 +60,17 @@ tracker only ever listed nine of the parent's **thirteen** subtasks. Export pull
 - [ ] **Model Reports** (`868kne95c`): *"include the link and display the modelId to reduce the amount
       of clicking."* 🎥 the walkthrough says *"we don't need this one, actually"* — **the ticket and the
       video disagree; ask before building or dropping.**
-- [ ] **ReTool Database Migration** (`868kn67aq`) — the tables to move off Retool's Postgres:
-      `User`, `UserNotes`, `UserStrikes`, `ModelNotes`, `RatingChanges`, `ReToolActions`, and
-      `BuzzCodes` ("could potentially be dropped"). **`ModelNotes` is not in
-      `moderator-db-types.ts`** and nothing in the app reads it.
+- [x] **ReTool Database Migration** (`868kn67aq`) — **planned and the SQL is written**; a human still has
+      to run it. Plan: [`retool-db-cutover.md`](retool-db-cutover.md), scripts:
+      `apps/moderator/moderator-db/cutover/`. The tables are already copied into the moderator database;
+      what remained was a delta, the sequences, and one collision.
+      Two findings that change earlier assumptions: **`Mods_TaskTimers` (+22) and `FrontPageTimers` (+18)
+      are drifting too** and were on no list, though the dashboard reads both; and **the id collision has
+      already happened** — two `UserNotes` ids were spent locally on 2026-08-07 while Retool spent the
+      same two, so id preservation is no longer universal and those two rows are re-idded with the remap
+      recorded. Everything else is byte-identical below its watermark (md5-verified, not just counted).
+      `ModelNotes` **is** being migrated (935 rows, wanted by `868kn8aa0`); it still needs a
+      `moderator-db-types.ts` entry when that feature is built.
       🔒 That ticket body contains a **live Postgres connection string with its password** — rotate it.
 
 ## 1. User Lookup — the primary console
@@ -424,9 +431,19 @@ Retool's board is the triage entry point, and the walkthrough's colour quote lan
 
 ## 9. Workflows (cron)
 
-- [ ] 🎥 **Only one is live: the DALEN challenge runs.** *"I think the only ones that currently are being
-      used is the DALEN challenge runs; we would need to move these into Civitai somewhere."* Port that
-      one into the main app's cron; confirm the rest can die with Retool.
+- [x] 🎥 **Only one is live: the DALEN challenge runs.** *"I think the only ones that currently are being
+      used is the DALEN challenge runs; we would need to move these into Civitai somewhere."*
+      Resolved 2026-08-11 — decision and evidence in
+      [`retool-workflows-decision.md`](retool-workflows-decision.md). Both exports are **alerting
+      wrappers around the challenge jobs, not the runs themselves**, and both are inert: no crontab,
+      `isEnabled: false`, webhook-only trigger, and the Discord block orphaned in the graph. The
+      underlying work is already ours (`daily-challenge-setup`, `challenge-auto-queue`,
+      `challenge-activation`). What was genuinely missing is the **alert**: `createJob` catches thrown
+      failures, but the pipeline fails by silent no-op and nothing watched for that. Reimplemented as
+      `src/server/jobs/challenge-health-check.ts` (`0 */6 * * *`) → Axiom + `DISCORD_WEBHOOK_MOD_ALERTS`.
+      No PagerDuty; the repo has no integration for it.
+      **Open**: the 24h "not started" window is Retool's number and nobody has confirmed the intended
+      challenge cadence, so it may alert on a deliberate pause.
 
 ## 10. Cross-cutting
 
@@ -438,8 +455,14 @@ Retool's board is the triage entry point, and the walkthrough's colour quote lan
 
 ## 11. Operational
 
-- [ ] `CIVITAI_MOD_API_KEY`, `RETOOL_DATABASE_URL`, `FRESHDESK_API_KEY` — see the handover.
+- [ ] `CIVITAI_MOD_API_KEY`, `FRESHDESK_API_KEY` — see the handover.
+      **`RETOOL_DATABASE_URL` is superseded**: the cutover retires it in favour of
+      `MODERATOR_DATABASE_URL`, which already points at the same database the xguard lab uses. Set that
+      one in every deployed environment instead — see [`retool-db-cutover.md`](retool-db-cutover.md).
 - [ ] Three SQL migrations, applied by hand.
+- [ ] **The database cutover itself** — four scripts in `apps/moderator/moderator-db/cutover/`, run in
+      order, with Retool writes frozen from the export until the app is repointed. `04-verify.sql` is the
+      gate; a non-zero exit means stop.
 - [ ] Grant five new pages on `/admin`.
 - [x] **Re-extract every export while access remains** — done 2026-08-10; all nine carry option sets
       and layout geometry, and sanitized copies are committed under `retool-exports/raw/`.
