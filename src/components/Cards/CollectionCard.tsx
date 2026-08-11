@@ -14,7 +14,7 @@ import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { SimpleUser } from '~/server/selectors/user.selector';
-import type { MediaType } from '~/shared/utils/prisma/enums';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import type { CollectionGetInfinite } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -187,6 +187,7 @@ export function ImageCover({ data, coverImages }: { data: HeaderData; coverImage
                 <EdgeMedia
                   src={image.url}
                   type="image"
+                  transcode={image.type === MediaType.video}
                   className={cardClasses.image}
                   name={image.name ?? image.id.toString()}
                   alt={

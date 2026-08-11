@@ -287,6 +287,8 @@ export default function UserProfileEditModal() {
     profileBackground,
     message,
     bio,
+    sfwMessage,
+    sfwBio,
     location,
     profileImage,
     profilePicture,
@@ -300,6 +302,8 @@ export default function UserProfileEditModal() {
     'profileBackground',
     'message',
     'bio',
+    'sfwMessage',
+    'sfwBio',
     'location',
     'profileImage',
     'profilePicture',
@@ -329,8 +333,14 @@ export default function UserProfileEditModal() {
       );
       const formData = {
         ...user.profile,
+        // `profile.bio`/`message`/`coverImage` are resolved for the current domain, so
+        // editing them on civitai.com would write the SFW copy back over the default.
+        // The editor always works on the two stored variants.
+        bio: user.profile.defaultBio,
+        message: user.profile.defaultMessage,
         // TODO: Fix typing at some point :grimacing:.
-        coverImage: user.profile.coverImage as any,
+        coverImage: user.profile.defaultCoverImage as unknown as FormDataSchema['coverImage'],
+        sfwCoverImage: user.profile.sfwCoverImage as unknown as FormDataSchema['sfwCoverImage'],
         profileImage: user?.image,
         socialLinks: (user?.links ?? [])
           .filter((link) => link.type === LinkType.Social)
@@ -729,6 +739,73 @@ export default function UserProfileEditModal() {
             }
             maxLength={constants.profile.locationMaxLength}
           />
+
+          <Divider label="Civitai.com" />
+          <Text size="xs" c="dimmed">
+            Show something different to visitors on civitai.com. Anything you leave off here is
+            shown the same on every Civitai site.
+          </Text>
+          <InputSimpleImageUpload
+            name="sfwCoverImage"
+            label="Cover Image (civitai.com)"
+            description="Leave empty to use the cover image above."
+            aspectRatio={constants.profile.coverImageAspectRatio}
+            previewWidth={constants.profile.coverImageWidth}
+          />
+          <Stack gap="xs">
+            <Switch
+              label="Different announcement on civitai.com"
+              checked={sfwMessage != null}
+              onChange={(e) =>
+                form.setValue('sfwMessage', e.currentTarget.checked ? '' : null, {
+                  shouldDirty: true,
+                })
+              }
+            />
+            {sfwMessage != null && (
+              <InputTextArea
+                autosize
+                name="sfwMessage"
+                description="Leave blank to show no announcement on civitai.com."
+                maxLength={constants.profile.messageMaxLength}
+                labelProps={{ style: { width: '100%' } }}
+                label={
+                  <Group className="w-full" justify="space-between">
+                    <Text>Announcement (civitai.com)</Text>
+                    <Text size="xs">
+                      {sfwMessage.length}/{constants.profile.messageMaxLength}
+                    </Text>
+                  </Group>
+                }
+              />
+            )}
+          </Stack>
+          <Stack gap="xs">
+            <Switch
+              label="Different bio on civitai.com"
+              checked={sfwBio != null}
+              onChange={(e) =>
+                form.setValue('sfwBio', e.currentTarget.checked ? '' : null, { shouldDirty: true })
+              }
+            />
+            {sfwBio != null && (
+              <InputTextArea
+                autosize
+                name="sfwBio"
+                description="Leave blank to show no bio on civitai.com."
+                maxLength={constants.profile.bioMaxLength}
+                labelProps={{ style: { width: '100%' } }}
+                label={
+                  <Group className="w-full" justify="space-between">
+                    <Text>Bio (civitai.com)</Text>
+                    <Text size="xs">
+                      {sfwBio.length}/{constants.profile.bioMaxLength}
+                    </Text>
+                  </Group>
+                }
+              />
+            )}
+          </Stack>
 
           {user?.profile && (
             <InputProfileSectionsSettingsInput

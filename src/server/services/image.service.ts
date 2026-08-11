@@ -331,6 +331,22 @@ export async function purgeResizeCache({ url }: { url: string }) {
 
 export async function deleteImageFromS3({ id, url }: { id: number; url: string }) {
   if (!env.DATABASE_IS_PROD) return;
+  // Legacy avatar rows hold a full external URL where every other row holds a bucket key.
+  // Handing one to deleteObject as a Key can only fail, and it is not ours to delete anyway.
+  if (!url || url.startsWith('http')) {
+    // Skipping is safe because no row stores a url for a bucket we own — a property of the data,
+    // not of this code. A first-party url arriving here means that changed, and the skip would
+    // then be dropping a real delete instead of declining someone else's.
+    if (/^https?:\/\/[^/]*\bcivitai\.com/i.test(url))
+      await logToAxiom({
+        type: 'warning',
+        name: 'delete-image-from-s3-skipped-first-party-url',
+        message: 'Image.url holds a first-party url, not a bucket key; nothing was deleted',
+        imageId: id,
+        url,
+      }).catch(() => undefined);
+    return;
+  }
 
   try {
     const otherImagesWithSameUrl = await dbWrite.image.findFirst({
@@ -360,7 +376,6 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
         getImageS3Client().deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET!, key: url })
       );
     }
-    await purgeResizeCache({ url: url });
   } catch (error) {
     // Nothing retries this: deleteImages drops the DB row first, so a lost object stays
     // publicly reachable (CDN urls are unsigned) with only this line to find it by.
@@ -373,6 +388,12 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
       error: safeError(error),
     }).catch(() => undefined);
   }
+
+  // Outside the try: a failed object delete is exactly when invalidation matters, because the
+  // bytes are still in the bucket and a live cache entry keeps serving content whose row is
+  // already gone. The `otherImagesWithSameUrl` return above still skips this — that url belongs
+  // to an image that is still live.
+  await purgeResizeCache({ url: url });
 }
 
 export const invalidateManyImageExistence = async (ids: number[]) => {
@@ -2754,6 +2775,35 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
 };
 
 /**
+ * Strip the session user off a search input before it reaches a log sink.
+ *
+ * `getInfiniteImagesHandler` spreads the whole `ctx.user` into the search input
+ * for business logic, so logging the input verbatim shipped `email`,
+ * `emailVerified`, `username` and `createdAt` for every erroring search — 331k
+ * records/day in production, each naming a real account.
+ *
+ * Nothing diagnostic is lost: of the session user, `getAllImagesIndex` forwards
+ * exactly `currentUserId` (= `user?.id`) and `isModerator` into this function as
+ * separate top-level keys, and both survive redaction untouched. (It also reads
+ * `user?.username` for `enforceBlockedBrowsingTags`, but that is consumed in the
+ * caller and never reaches this input — so the redacted payload still carries
+ * every session-user field the search path actually had.)
+ *
+ * The user object is dropped WHOLE rather than having its known PII keys
+ * deleted. A denylist fails open — the next field added to the session user
+ * would silently start shipping to logs again, which is exactly how this
+ * regressed. Do not "improve" this by re-adding `user` minus some keys.
+ *
+ * `user.id` is deliberately NOT remapped onto a `userId` key: `userId` is
+ * already a *search filter* on this input (feed-by-creator), and overwriting it
+ * would corrupt the logged query.
+ */
+export function redactSearchInputForLog<T extends Record<string, unknown>>(input: T) {
+  const { user: _sessionUser, ...rest } = input as T & { user?: unknown };
+  return removeEmpty(rest);
+}
+
+/**
  * Defense-in-depth post-filter for BitDex results. The main query uses strict
  * cacheable filters (no per-user clauses), so this rarely removes anything.
  * User's own excluded content is fetched in a separate second pass and merged.
@@ -3886,7 +3936,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
         type: 'search-error',
         error: err.message,
         cause: err.cause,
-        input: removeEmpty(input),
+        input: redactSearchInputForLog(input),
         request,
       },
       'temp-search'
@@ -4967,7 +5017,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
         type: 'search-error',
         error: err.message,
         cause: err.cause,
-        input: removeEmpty(input),
+        input: redactSearchInputForLog(input),
         request,
       },
       'temp-search'
@@ -5090,6 +5140,25 @@ export async function getResourceIdsForImages(imageIds: number[]) {
     return acc;
   }, {} as Record<number, number[]>);
   return imageResources;
+}
+
+/**
+ * Narrow a pinned post's media down to what the pinned model version made.
+ *
+ * Media with no resource rows at all is kept: it can't be attributed either way, and
+ * dropping it is what made pinned posts with videos vanish before 7518ca4f54.
+ */
+export async function filterPinnedImagesToVersion<T extends { id: number }>(
+  images: T[],
+  modelVersionId: number
+) {
+  if (!images.length) return images;
+
+  const resources = await getResourceIdsForImages(images.map((x) => x.id));
+  return images.filter((image) => {
+    const imageResources = resources[image.id];
+    return !imageResources?.length || imageResources.includes(modelVersionId);
+  });
 }
 
 type GetImageRaw = GetAllImagesRaw & {

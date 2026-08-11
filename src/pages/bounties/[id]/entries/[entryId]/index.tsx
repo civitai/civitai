@@ -495,6 +495,7 @@ export default function BountyEntryDetailsPage({
                 nsfwLevel={activeImage.nsfwLevel}
                 canAdd
                 collapsible
+                mediaType={activeImage.type}
               />
             )}
             {notesSection}

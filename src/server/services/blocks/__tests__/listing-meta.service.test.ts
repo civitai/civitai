@@ -333,4 +333,19 @@ describe('ingestListingAssetFromDataUri', () => {
     expect(mockUploadImageBufferToStore).not.toHaveBeenCalled();
     expect(mockCreateImage).not.toHaveBeenCalled();
   });
+
+  it('keeps the EXPLICIT input-pixel cap on the rasterize (the enforcement backstop)', async () => {
+    // The dimension pre-check that produces the over-cap MESSAGE reads the header
+    // with the cap lifted, so it cannot cover this: the rasterize must still carry
+    // the cap for any input whose header the pre-check could not measure.
+    primeRaster();
+    await ingestListingAssetFromDataUri({
+      input: { dataUri: 'data:image/png;base64,QG5vdC1hLXBuZw==', kind: 'icon' },
+      userId: 7,
+    });
+    expect(mockSharp).toHaveBeenCalledWith(
+      expect.any(Buffer),
+      expect.objectContaining({ density: 96, limitInputPixels: 16 * 1024 * 1024 })
+    );
+  });
 });

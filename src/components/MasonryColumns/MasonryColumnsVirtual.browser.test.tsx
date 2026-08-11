@@ -42,8 +42,24 @@ const ITEM_HEIGHT = 200;
 type Item = { id: number };
 const items: Item[] = Array.from({ length: 60 }, (_, i) => ({ id: i }));
 
+const BADGE_SIZE = 12;
+const BADGE_OFFSET = 6;
+
 function Card({ data }: { data: Item }) {
-  return <div data-testid="card" data-id={data.id} style={{ height: ITEM_HEIGHT }} />;
+  return (
+    <div data-testid="card" data-id={data.id} style={{ height: ITEM_HEIGHT, position: 'relative' }}>
+      <div
+        data-testid="badge"
+        style={{
+          position: 'absolute',
+          right: -BADGE_OFFSET,
+          top: -BADGE_OFFSET,
+          width: BADGE_SIZE,
+          height: BADGE_SIZE,
+        }}
+      />
+    </div>
+  );
 }
 
 function Gallery() {
@@ -120,11 +136,36 @@ async function expectGalleryTopOnScreen() {
   });
 }
 
+// A card badge that hangs off the card's corner (the pinned-post indicator) is painted, not
+// laid out, outside the card. `contentVisibility: 'auto'` on each virtual item implies
+// `contain: paint`, which clips descendants to the item's border box regardless of `overflow`
+// — so the badge lost its outer half with nothing in the computed styles to point at. The item
+// is padded outward by ITEM_BLEED to give that overhang somewhere to land.
+
 describe('MasonryColumnsVirtual', () => {
   beforeEach(async () => {
     renderWithProviders(<Gallery />);
     await vi.waitFor(() => expect(columns().length).toBe(2));
     await vi.waitFor(() => expect(renderedIds().length).toBeGreaterThan(0));
+  });
+
+  test('does not clip a badge that overhangs the top-right of its card', async () => {
+    // Deliberately NOT scrolled to the gallery: the first row has to sit clear of the window's
+    // top edge, or the probe lands outside the viewport and elementFromPoint returns null for
+    // a reason that has nothing to do with clipping.
+    const badge = document.querySelector('[data-testid="badge"]') as HTMLElement;
+    const card = badge.closest('[data-testid="card"]') as HTMLElement;
+    const badgeRect = badge.getBoundingClientRect();
+    const cardRect = card.getBoundingClientRect();
+    const probe = { x: badgeRect.right - 2, y: badgeRect.top + 2 };
+
+    expect(badgeRect.right).toBeGreaterThan(cardRect.right);
+    expect(badgeRect.top).toBeLessThan(cardRect.top);
+    expect(probe.y).toBeGreaterThan(0);
+
+    // The probe is outside the card on BOTH axes, so it can only be the badge if the overhang
+    // survives paint containment. Read synchronously — nothing here is transient.
+    expect(document.elementFromPoint(probe.x, probe.y)).toBe(badge);
   });
 
   test('fills the viewport when scrolled to the gallery', async () => {

@@ -71,7 +71,7 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
                 <Group align="flex-start">
                   <Text style={{ lineHeight: 1 }}>Browsing Level</Text>
                   {showNsfw && features.newOrderGame && (
-                    <Tooltip label="Help us improve by playing!" withArrow color="dark">
+                    <Tooltip label="Help us improve by playing!" withArrow>
                       <Button
                         onClick={closeMenu}
                         component={Link}

@@ -684,8 +684,37 @@ export const saveItemInCollections = async ({
     }
   }
 
+  // Every collection this request touches, in one lookup — the adds need it to spot no-op re-submissions
+  // (below) and the removes need each item's id and author. Keyed on the item column alone: `input` also
+  // carries `note`, and spreading it into the filter made a save-with-note silently match nothing.
+  const touchedCollectionIds = uniq([
+    ...upsertCollectionItems.map((c) => c.collectionId),
+    ...removeFromCollectionIds,
+  ]);
+  const existingItems = await dbRead.collectionItem.findMany({
+    where: { collectionId: { in: touchedCollectionIds }, [itemKey]: input[itemKey] },
+    select: { id: true, collectionId: true, tagId: true, addedById: true },
+  });
+  const existingItemsByCollection = new Map(existingItems.map((item) => [item.collectionId, item]));
+
+  // Collections the item is ALREADY in with the same tag — the upsert below writes nothing for these.
+  // Callers may send the item's whole desired membership rather than just the additions, and re-running
+  // the contest gates on an existing entry fails the save to an UNRELATED collection as soon as one of
+  // those entries sits in a contest whose submission window has closed (or whose per-user cap it already
+  // counts against). A tag CHANGE is a real write, so it still validates.
+  const unwrittenCollectionIds = new Set(
+    upsertCollectionItems
+      .filter((upsert) => {
+        const item = existingItemsByCollection.get(upsert.collectionId);
+        return item && (upsert.tagId ?? null) === (item.tagId ?? null);
+      })
+      .map((upsert) => upsert.collectionId)
+  );
+
   // Check if any contest collections are involved and validate ONCE
-  const contestCollections = collections.filter((c) => c.mode === CollectionMode.Contest);
+  const contestCollections = collections.filter(
+    (c) => c.mode === CollectionMode.Contest && !unwrittenCollectionIds.has(c.id)
+  );
   if (contestCollections.length > 0) {
     // Validate once for all contest collections instead of in the loop
     for (const contestCollection of contestCollections) {
@@ -711,14 +740,20 @@ export const saveItemInCollections = async ({
     });
   }
 
-  // Batch fetch all permissions upfront instead of in the loop (N queries → 1 query)
-  const collectionIds = upsertCollectionItems.map((c) => c.collectionId);
+  // Batch fetch all permissions upfront instead of in the loop (N queries → 1 query), adds and removes
+  // together — they're one round trip over the same table whether or not this request does both.
   const permissionsArray = await getUserCollectionPermissionsByIds({
-    ids: collectionIds,
+    ids: touchedCollectionIds,
     userId,
     isModerator,
   });
   const permissionsMap = new Map(permissionsArray.map((p) => [p.collectionId, p]));
+
+  // Submitting to a collection you don't already follow follows it — but that's a side effect of the
+  // entry landing, so it's collected here and applied after the write. Doing it inline left a user
+  // following collections they never joined whenever the save went on to write nothing (no write
+  // permission on any of them, or the empty-transaction guard below).
+  const followCollectionIds: number[] = [];
 
   const data = (
     await Promise.all(
@@ -759,21 +794,8 @@ export const saveItemInCollections = async ({
           return null;
         }
 
-        if (
-          !permission.isContributor &&
-          !permission.isOwner &&
-          !metadata?.disableFollowOnSubmission
-        ) {
-          // Make sure to follow the collection
-          await addContributorToCollection({
-            targetUserId: userId,
-            userId: userId,
-            collectionId,
-          });
-        }
-
         // Non-owners who don't contribute may still submit to Public-write (write) or Review-write
-        // (writeReview) collections — the follow above is skipped when disableFollowOnSubmission is
+        // (writeReview) collections — the follow below is skipped when disableFollowOnSubmission is
         // set, so gate on the standing write grant rather than contributor status.
         if (
           !permission.isContributor &&
@@ -786,6 +808,18 @@ export const saveItemInCollections = async ({
 
         if (!permission.writeReview && !permission.write) {
           return null;
+        }
+
+        // Queued rather than written: applied once the entry is actually in. `follow`/`manage` is what
+        // addContributorToCollection would throw on, and a missing grant must not fail a save that has
+        // already succeeded — so an ineligible collection is simply not followed.
+        if (
+          !permission.isContributor &&
+          !permission.isOwner &&
+          !metadata?.disableFollowOnSubmission &&
+          (permission.follow || permission.manage)
+        ) {
+          followCollectionIds.push(collectionId);
         }
 
         return {
@@ -833,46 +867,22 @@ export const saveItemInCollections = async ({
   }
 
   if (removeFromCollectionIds?.length) {
-    // Batch permissions for remove operations too
-    const removePermissionsArray = await getUserCollectionPermissionsByIds({
-      ids: removeFromCollectionIds,
-      userId,
-      isModerator,
-    });
-    const removePermissionsMap = new Map(removePermissionsArray.map((p) => [p.collectionId, p]));
+    const removeAllowedCollectionItemIds = removeFromCollectionIds
+      .map((collectionId) => {
+        const permission = permissionsMap.get(collectionId);
+        const item = existingItemsByCollection.get(collectionId);
+        if (!permission || !item) {
+          return null;
+        }
 
-    const removeAllowedCollectionItemIds = (
-      await Promise.all(
-        removeFromCollectionIds.map(async (collectionId) => {
-          const permission = removePermissionsMap.get(collectionId);
-          if (!permission) {
-            return null;
-          }
+        if (item.addedById !== userId && !permission.isOwner && !permission.manage) {
+          // This person shouldn't cannot be removing that item
+          return null;
+        }
 
-          const item = await dbRead.collectionItem.findFirst({
-            where: {
-              collectionId,
-              ...input,
-            },
-            select: {
-              addedById: true,
-              id: true,
-            },
-          });
-
-          if (!item) {
-            return null;
-          }
-
-          if (item.addedById !== userId && !permission.isOwner && !permission.manage) {
-            // This person shouldn't cannot be removing that item
-            return null;
-          }
-
-          return item.id;
-        })
-      )
-    ).filter(isDefined);
+        return item.id;
+      })
+      .filter(isDefined);
 
     // if we have items to remove, add a deleteMany mutation to the transaction
     if (removeAllowedCollectionItemIds.length > 0) {
@@ -895,6 +905,19 @@ export const saveItemInCollections = async ({
   }
 
   await dbWrite.$transaction(transactions);
+
+  if (followCollectionIds.length > 0) {
+    await Promise.all(
+      followCollectionIds.map((collectionId) =>
+        addContributorToCollection({
+          targetUserId: userId,
+          userId,
+          collectionId,
+          permissionFlags: permissionsMap.get(collectionId),
+        })
+      )
+    );
+  }
 
   if (itemKey === 'imageId' && input.imageId) {
     const imageId = input.imageId;
@@ -1842,17 +1865,18 @@ export const addContributorToCollection = async ({
   userId,
   targetUserId,
   permissions,
+  permissionFlags,
 }: {
   userId: number;
   targetUserId: number;
   collectionId: number;
   permissions?: CollectionContributorPermission[];
+  /** The caller's flags for this collection, when it has already resolved them — skips the lookup. */
+  permissionFlags?: CollectionContributorPermissionFlags;
 }) => {
   // check if user can add contributors:
-  const { followPermissions, manage, follow } = await getUserCollectionPermissionsById({
-    id: collectionId,
-    userId,
-  });
+  const { followPermissions, manage, follow } =
+    permissionFlags ?? (await getUserCollectionPermissionsById({ id: collectionId, userId }));
 
   if (!manage && !follow) {
     throw throwAuthorizationError(

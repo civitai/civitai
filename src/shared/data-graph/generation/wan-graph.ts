@@ -585,9 +585,12 @@ export const wanGraph = new DataGraph<WanCtx, GenerationCtx>()
 
       if (def.version === 'v2.1') {
         // v2.1: Only handle T2V here. I2V needs resolution (wan21Graph handles it).
+        // Normalizing on "not already T2V" also catches the root `WanVideo` key, which
+        // maps here via extraEcosystems and would otherwise reach prompt analysis
+        // unversioned — landing on the built-in image fallback for a video request.
         if (!isImg2vid) {
           const v21 = wanVersionDefs[0];
-          if (ctx.ecosystem === v21.ecosystems.i2v || ctx.ecosystem === v21.ecosystems.i2v_480p) {
+          if (ctx.ecosystem !== v21.ecosystems.t2v) {
             set('ecosystem', v21.ecosystems.t2v);
           }
         }

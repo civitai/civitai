@@ -1,4 +1,3 @@
-import { NotificationCategory } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -14,17 +13,9 @@ import {
 } from '~/server/schema/user-restriction.schema';
 import type { BlockedPromptEntry } from '~/server/services/orchestrator/promptAuditing';
 import { debugAuditPrompt, type DebugAuditMatch } from '~/utils/metadata/audit';
-import { moderationActionEmail } from '~/server/email/templates';
-import { createNotification } from '~/server/services/notification.service';
-import {
-  bustPromptAllowlistCache,
-  resetProhibitedRequestCount,
-} from '~/server/services/orchestrator/promptAuditing';
-import { updateUserById } from '~/server/services/user.service';
-import { cancelSubscription, reinstateSubscription } from '~/server/services/stripe.service';
+import { bustPromptAllowlistCache } from '~/server/services/orchestrator/promptAuditing';
+import { resolveUserRestriction } from '~/server/services/user-restriction-resolve.service';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
-import { UserRestrictionStatus } from '~/shared/utils/prisma/enums';
-import { refreshSession } from '~/server/auth/session-invalidation';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const userRestrictionRouter = router({
@@ -96,115 +87,7 @@ export const userRestrictionRouter = router({
 
   /** Moderator resolves a restriction — uphold or overturn. */
   resolve: moderatorProcedure.input(resolveRestrictionSchema).mutation(async ({ ctx, input }) => {
-    const { userRestrictionId, status, resolvedMessage } = input;
-    const moderatorId = ctx.user.id;
-
-    const restriction = await dbRead.userRestriction.findUnique({
-      where: { id: userRestrictionId },
-      select: {
-        id: true,
-        userId: true,
-        status: true,
-        user: { select: { email: true, username: true } },
-      },
-    });
-
-    if (!restriction) throw new Error('Restriction record not found');
-    if (restriction.status !== UserRestrictionStatus.Pending)
-      throw new Error('Restriction has already been resolved');
-
-    await dbWrite.userRestriction.update({
-      where: { id: userRestrictionId },
-      data: {
-        status,
-        resolvedAt: new Date(),
-        resolvedBy: moderatorId,
-        resolvedMessage,
-      },
-    });
-
-    if (status === UserRestrictionStatus.Upheld) {
-      // Set mutedAt to confirm the restriction (moderator review)
-      await updateUserById({
-        id: restriction.userId,
-        data: { mutedAt: new Date() },
-        updateSource: 'moderator:generationRestrictionUpheld',
-      });
-      // Stop the recurring membership from auto-renewing for the restricted
-      // user. Cancel at period end (reversible) rather than waiting for the
-      // daily confirm-mutes safety-net job.
-      await cancelSubscription({ userId: restriction.userId, atPeriodEnd: true }).catch((error) =>
-        logToAxiom({
-          name: 'cancel-stripe-subscription-restriction-upheld',
-          type: 'error',
-          message: (error as Error).message,
-        })
-      );
-      await refreshSession(restriction.userId);
-    } else if (status === UserRestrictionStatus.Overturned) {
-      // Unmute the user and reset their violation count
-      await updateUserById({
-        id: restriction.userId,
-        data: { muted: false },
-        updateSource: 'moderator:generationRestrictionOverturned',
-      });
-      // Reverse the at-period-end cancellation if the membership is still live.
-      await reinstateSubscription({ userId: restriction.userId }).catch((error) =>
-        logToAxiom({
-          name: 'reinstate-stripe-subscription-restriction-overturned',
-          type: 'error',
-          message: (error as Error).message,
-        })
-      );
-      await resetProhibitedRequestCount(restriction.userId);
-      await refreshSession(restriction.userId);
-    }
-
-    // Send notification to the user
-    const notifType =
-      status === UserRestrictionStatus.Upheld
-        ? 'generation-restriction-upheld'
-        : 'generation-restriction-overturned';
-
-    await createNotification({
-      type: notifType,
-      key: `${notifType}:${restriction.userId}:${userRestrictionId}`,
-      category: NotificationCategory.System,
-      userId: restriction.userId,
-      details: { resolvedMessage: resolvedMessage ?? '' },
-    }).catch();
-
-    // Send transactional email mirroring the in-app notification
-    try {
-      if (restriction.user?.email) {
-        // Intentionally omit `resolvedMessage` from the email — moderator
-        // free-text is shown only in-app (notification above), never emailed,
-        // to avoid exposing potentially explicit/targeted prose. The TOS link
-        // in the email template provides the policy reference for upheld cases.
-        await moderationActionEmail.send({
-          to: restriction.user.email,
-          username: restriction.user.username ?? 'User',
-          kind:
-            status === UserRestrictionStatus.Upheld
-              ? 'restriction-upheld'
-              : 'restriction-overturned',
-        });
-      }
-    } catch (error) {
-      logToAxiom({
-        type: 'error',
-        name: 'restriction-email-failed',
-        message: (error as Error).message,
-        error,
-      });
-    }
-
-    logToAxiom({
-      name: 'user-restriction-resolved',
-      type: 'info',
-      details: { userRestrictionId, status, moderatorId, userId: restriction.userId },
-    });
-
+    await resolveUserRestriction({ ...input, moderatorId: ctx.user.id });
     return { success: true };
   }),
 

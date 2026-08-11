@@ -1,6 +1,7 @@
 import { useLocalStorage } from '@mantine/hooks';
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { ImageStickerOverlay } from '~/components/Sticker/ImageStickerOverlay';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
@@ -322,6 +323,7 @@ function ImageContent({
               }}
             />
           )}
+          {safe && <ImageStickerOverlay imageId={image.id} width={width} height={height} />}
         </div>
       )}
     </ImageGuardContent>

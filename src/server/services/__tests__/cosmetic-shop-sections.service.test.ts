@@ -63,6 +63,15 @@ const sectionRow = {
 
 const capturedShopItemWhere = () =>
   mocks.sectionFindMany.mock.calls[0][0].select.items.where.shopItem;
+// Packs have no cosmetic, so the viewer gating moved into an OR whose second
+// branch carries every cosmetic condition. These read that branch, so the
+// assertions below still describe the same rules.
+const capturedCosmeticWhere = () => {
+  const branches = capturedShopItemWhere().OR as { cosmetic?: Record<string, unknown> }[];
+  return branches.find((b) => b.cosmetic)?.cosmetic;
+};
+const capturedPackBranch = () =>
+  (capturedShopItemWhere().OR as { cosmeticId?: null }[]).find((b) => 'cosmeticId' in b);
 
 describe('getShopSectionsWithItems viewer gating', () => {
   beforeEach(() => {
@@ -78,10 +87,14 @@ describe('getShopSectionsWithItems viewer gating', () => {
     const where = capturedShopItemWhere();
     // `type` excludes stickers until the flag is on; the createdById gate is
     // what this test is about.
-    expect(where.cosmetic).toMatchObject({ createdById: null });
+    expect(capturedCosmeticWhere()).toMatchObject({ createdById: null });
     expect(where.status).toBe('Published');
     expect(where.archivedAt).toBeNull();
-    expect(where.OR).toEqual([{ availableTo: { gte: expect.any(Date) } }, { availableTo: null }]);
+    expect(where.AND).toEqual([
+      { OR: [{ availableTo: { gte: expect.any(Date) } }, { availableTo: null }] },
+    ]);
+    // A pack has no cosmetic to gate on, so it rides its own branch.
+    expect(capturedPackBranch()).toBeDefined();
     // The regression: official items have addedById set (the listing mod), so
     // this key must never appear in the viewer filter.
     expect(JSON.stringify(where)).not.toContain('addedById');
@@ -94,7 +107,7 @@ describe('getShopSectionsWithItems viewer gating', () => {
     await getShopSectionsWithItems({ creatorShopEnabled: true, stickersEnabled: true });
 
     const where = capturedShopItemWhere();
-    expect(where.cosmetic).toEqual({});
+    expect(capturedCosmeticWhere()).toEqual({});
     expect(where.status).toBe('Published');
   });
 
@@ -102,9 +115,9 @@ describe('getShopSectionsWithItems viewer gating', () => {
     await getShopSectionsWithItems({ isModerator: true, stickersEnabled: true });
 
     const where = capturedShopItemWhere();
-    expect(where.cosmetic).toEqual({});
+    expect(capturedCosmeticWhere()).toEqual({});
     expect(where.status).toBeUndefined();
-    expect(where.OR).toBeUndefined();
+    expect(where.AND).toBeUndefined();
   });
 
   it('flagged viewer with blocks: creator items from blocked pairs are filtered, official items stay', async () => {
@@ -113,7 +126,10 @@ describe('getShopSectionsWithItems viewer gating', () => {
     await getShopSectionsWithItems({ creatorShopEnabled: true, userId: 1 });
 
     const where = capturedShopItemWhere();
-    expect(where.cosmetic.OR).toEqual([{ createdById: null }, { createdById: { notIn: [777] } }]);
+    expect(capturedCosmeticWhere()?.OR).toEqual([
+      { createdById: null },
+      { createdById: { notIn: [777] } },
+    ]);
   });
 
   it('skips the block lookup for anonymous, unflagged, and moderator viewers', async () => {

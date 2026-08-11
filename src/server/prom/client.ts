@@ -262,3 +262,47 @@ if (!global.pgGaugeInitialized) {
 
   global.pgGaugeInitialized = true;
 }
+
+/**
+ * Buzz still parked in escrow because a payout leg gave up.
+ *
+ * A gauge rather than an error log, because this is "something is still broken"
+ * rather than "something just broke". The one-shot error at the moment a leg
+ * exhausts carries the event; a windowed error log cannot carry the state, since
+ * an exhausted leg stops being touched and so drops out of any window over its
+ * last attempt — reporting for a while and then going permanently silent with
+ * the money still parked.
+ */
+export const placementExhaustedLegsGauge = registerInstrumentationMetric(
+  PROM_PREFIX + 'placement_exhausted_legs',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'placement_exhausted_legs',
+      help: 'Placement payout legs that have exhausted their retries and still hold Buzz in escrow',
+      registers: [instrumentationRegistry],
+    })
+);
+
+/**
+ * Settled placements with no payout plan and no escrow behind them.
+ *
+ * These are terminal rather than recoverable, so `sweepUnplannedSettlements`
+ * excludes them from its batch — otherwise they match its query forever and,
+ * past the batch limit, crowd out settlements that can still be resolved. A
+ * gauge is what keeps that exclusion from meaning silence.
+ *
+ * The population is mostly benign: a placement whose escrow could not be taken
+ * is expired immediately and lands here. It also contains the one case nothing
+ * can recover — a hold charged whose receipt was lost to a crash — which is
+ * indistinguishable from a hold that never charged, and is the reason this is
+ * reported at all rather than filtered away.
+ */
+export const placementUnfundedSettlementsGauge = registerInstrumentationMetric(
+  PROM_PREFIX + 'placement_unfunded_settlements',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'placement_unfunded_settlements',
+      help: 'Settled placements with no payout plan and no receipted escrow behind them',
+      registers: [instrumentationRegistry],
+    })
+);

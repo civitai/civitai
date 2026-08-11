@@ -17,6 +17,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
+import { PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
+import type { ShopFilterType } from '~/server/schema/creator-shop.schema';
 import type { GetShopInput } from '~/server/schema/cosmetic-shop.schema';
 import classes from './ShopFiltersDropdown.module.scss';
 
@@ -36,7 +38,10 @@ export function ShopFiltersDropdown({ filters, setFilters, availableTypes }: Pro
   const mobile = useIsMobile();
   const currentUser = useCurrentUser();
 
-  const types = availableTypes ?? (Object.values(CosmeticType) as CosmeticType[]);
+  const types: ShopFilterType[] = availableTypes ?? [
+    ...(Object.values(CosmeticType) as CosmeticType[]),
+    PACK_FILTER_VALUE,
+  ];
 
   // Owned and wishlisted both read the viewer's own collection, so neither can
   // do anything logged out.
@@ -96,14 +101,14 @@ export function ShopFiltersDropdown({ filters, setFilters, availableTypes }: Pro
         <Chip.Group
           value={filters.cosmeticTypes ?? []}
           onChange={(cosmeticTypes) => {
-            setFilters((prev) => ({ ...prev, cosmeticTypes: cosmeticTypes as CosmeticType[] }));
+            setFilters((prev) => ({ ...prev, cosmeticTypes: cosmeticTypes as ShopFilterType[] }));
           }}
           multiple
         >
           <Group gap={8}>
             {types.map((type, index) => (
               <Chip key={index} value={type} {...chipProps}>
-                <span>{getDisplayName(type)}</span>
+                <span>{type === PACK_FILTER_VALUE ? 'Pack' : getDisplayName(type)}</span>
               </Chip>
             ))}
           </Group>
@@ -216,5 +221,5 @@ type Props = {
   setFilters: React.Dispatch<React.SetStateAction<Filters>>;
   filters: Filters;
   // Restrict the cosmetic-type chips (e.g. Creator Shop shows only sellable types).
-  availableTypes?: CosmeticType[];
+  availableTypes?: ShopFilterType[];
 };

@@ -18,15 +18,23 @@ import * as z from 'zod';
  *     moderated id + rating + url.
  */
 
-// Mirrors persistListingAssetImageSchema — the CF upload key + intrinsic dims the
-// scanner + validators need. The block uploads via the SAME `useCFImageUpload`
-// path as the listing asset step, so the shape is identical.
+/**
+ * 🔴 `width` / `height` / `mimeType` / `sizeBytes` are NOT persisted. The server
+ * reads the uploaded object back and measures all four, because a row created here
+ * is attachable as app-listing media — `loadValidatedImage` gates on ownership, not
+ * on provenance — and the listing geometry/size/MIME bounds are expressed over
+ * exactly those columns, which nothing else re-derives (issue #3770). The guarantee
+ * is "measured from real bytes at persist time", NOT "still true of the object":
+ * the presigned PUT stays usable for its full expiry, so the key can be overwritten
+ * afterwards. They stay in the contract as optional so clients that still send them
+ * keep working.
+ */
 export const persistBlockUploadImageSchema = z.object({
   // The CF upload key returned by `useCFImageUpload` — imageSchema requires a uuid.
   url: z.string().uuid(),
   name: z.string().max(255).nullish(),
-  width: z.number().int().positive(),
-  height: z.number().int().positive(),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
   mimeType: z.string().max(120).optional(),
   sizeBytes: z.number().int().nonnegative().optional(),
 });

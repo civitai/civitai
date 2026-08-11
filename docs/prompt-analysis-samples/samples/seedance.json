@@ -1,0 +1,10 @@
+[
+  {
+    "prompt": "Steadicam long take following a courier weaving a bicycle through wet night traffic, tyre spray catching the headlights, city hum and rain hiss under the chain's steady tick.",
+    "assistantResponse": "{\"issues\":[{\"description\":\"The rider's effort is unstated, so the pedalling may render weightless against the traffic around it.\",\"severity\":\"warning\"}],\"recommendations\":[\"Give the courier physical effort — shoulders working, the bike leaning into each gap, spray flicking off the front tyre — so the motion carries weight rather than gliding.\",\"Name the road surface where the light lands (slick asphalt, painted lane markings going glossy) so the reflections resolve as a specific street.\"],\"enhancedPrompt\":\"Steadicam long take following a courier weaving a bicycle through wet night traffic, shoulders working as the bike leans into each gap, spray flicking off the front tyre and catching the headlights, slick asphalt and glossy lane markings throwing the light back, city hum and rain hiss under the chain's steady tick.\",\"enhancedNegativePrompt\":\"\"}"
+  },
+  {
+    "prompt": "Macro shot holding on a kettle coming to the boil on a gas ring, steam building against a cold window, the rising whistle over the burner's low roar.",
+    "assistantResponse": "{\"issues\":[],\"recommendations\":[\"Let the steam do something over the clip — thin at first, then thickening until it fogs the pane and a bead runs down.\"],\"enhancedPrompt\":\"Macro shot holding on a kettle coming to the boil on a gas ring, steam thin at first then thickening until it fogs the cold window and a single bead runs down the pane, the rising whistle over the burner's low roar.\",\"enhancedNegativePrompt\":\"\"}"
+  }
+]

@@ -1,0 +1,950 @@
+import { Prisma } from '@prisma/client';
+import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import {
+  placementExhaustedLegsGauge,
+  placementUnfundedSettlementsGauge,
+} from '~/server/prom/client';
+import { isSafeToRetry } from '@civitai/buzz';
+import {
+  createBuzzTransaction,
+  createMultiAccountBuzzTransaction,
+  refundMultiAccountTransaction,
+} from '~/server/services/buzz.service';
+import { getPlacementConfig } from '~/server/services/placement.service';
+import { withDistributedLock } from '~/server/utils/distributed-lock';
+import { PLACEMENT_SPEND_TYPES } from '~/shared/constants/placement.constants';
+import { TransactionType } from '~/shared/constants/buzz.constants';
+import type {
+  PlacementRemovedBy,
+  PlacementSurface,
+  PlacementTransactionKind,
+} from '~/shared/utils/placement';
+import {
+  PLACEMENT_SURFACES,
+  declineFeeAmount,
+  placementOutcomeFromStatus,
+  placementTransactionId,
+  splitPlacementPayment,
+} from '~/shared/utils/placement';
+
+/** Where held Buzz sits between placement and settlement. */
+const ESCROW_ACCOUNT_ID = 0;
+
+/**
+ * Receipt for a leg where nothing leaves the escrow account. Without it the row
+ * is created null and updated null, so "claimed" and "paid" stay
+ * indistinguishable for exactly the kinds that can never be audited by their
+ * transaction id.
+ */
+const PLATFORM_KEEP_RECEIPT = 'platform-keep';
+
+/**
+ * After this many failed attempts a leg stops being retried and starts being
+ * reported.
+ *
+ * The recurring defect in this feature has been a row the recovery sweep can
+ * find and can never finish: it consumes a slot in every bounded batch, and
+ * enough of them starve the mechanism that recovers from an outage — while the
+ * sweep reports healthy numbers, because the counter measures work attempted
+ * rather than work landed. Three separate instances were fixed by narrowing a
+ * query; this is the general answer, so the fourth is a page rather than a
+ * silence.
+ *
+ * The cost, stated plainly: a leg that exhausts its attempts is **not paid**,
+ * and its share stays in the escrow account until a human acts. That is the
+ * deliberate trade — money parked and reported beats money parked and silent —
+ * but it means the ceiling must not be reachable by an outage that would have
+ * cleared on its own, which is what the backoff below is for.
+ */
+export const MAX_LEG_ATTEMPTS = 5;
+
+/**
+ * Minimum gap between attempts on the same leg.
+ *
+ * Without it the ceiling is a function of how often the sweep runs rather than
+ * of how long the failure lasted: a ten-minute cron would burn all five attempts
+ * inside an hour, so a transient Buzz outage would permanently strand a leg that
+ * only needed waiting out.
+ */
+export const LEG_RETRY_BACKOFF_MINUTES = 30;
+
+/**
+ * How long a Buzz call may run before it is aborted.
+ *
+ * **Derived from the retry gap on purpose, not written as its own number.** The
+ * invariant is not "30 seconds" — it is *the request must be over well before
+ * the leg becomes eligible again*. The per-leg lock reliably covers a hang of
+ * seconds (5s TTL, renewed every ~1.7s, and a lost renewal is silent), so if a
+ * call could still be in flight when the backoff expires, a second caller can
+ * enter with the same external id and only the remote's deduplication stands
+ * between that and a double payment.
+ *
+ * Two independent constants cannot express that: shorten the gap next quarter
+ * and the timeout stays put, and the hazard returns with nothing failing.
+ */
+export const BUZZ_CALL_TIMEOUT_MS = Math.min((LEG_RETRY_BACKOFF_MINUTES * 60_000) / 60, 120_000);
+
+// Only the ceiling clamps, because a huge gap yielding a two-minute timeout
+// fails in the safe direction. A floor must NOT clamp: raising a too-short gap's
+// timeout would make it longer than the gap itself, inverting the invariant the
+// derivation exists to hold. That lower bound is asserted in the tests rather
+// than thrown at import — the gap is a compile-time constant, so a bad value
+// cannot arrive at runtime, and an import-time throw in a module the routers
+// will soon load would take the app down at boot for a mistake CI already
+// catches.
+
+/**
+ * The Buzz client's own retry is disabled for these calls, and `runLeg` owns it
+ * instead.
+ *
+ * An aborted request is not cancelled server-side, so retrying a timeout puts a
+ * second write on the wire with the same external id while the first may still
+ * be running — four of them inside two minutes at the client's default. That is
+ * the double-payment shape the timeout exists to prevent, moved inside a single
+ * attempt. `runLeg` already has backoff, a ceiling, receipts, a lock and an
+ * alert; a second, dumber retry loop underneath it is a second path to a thing
+ * that already has rules.
+ */
+const BUZZ_CALL_OPTIONS = {
+  timeoutMs: BUZZ_CALL_TIMEOUT_MS,
+  // An allowlist of failures that provably never reached the server, not a
+  // denylist of known-unsafe ones. A rolling restart refuses connections for a
+  // few seconds and the client absorbs that in milliseconds — handing it to
+  // `runLeg` would spend one of five attempts and wait 30 minutes for a
+  // non-failure. Everything else, including a 504 that may have landed after the
+  // write, is outcome-unknown and belongs to `runLeg`.
+  shouldRetry: isSafeToRetry,
+};
+
+/**
+ * How recently a leg must have given up to be alerted on.
+ *
+ * Re-reporting every exhausted leg on every run would fire forever and be muted
+ * within a week, at which point the next one is invisible. Anything older is
+ * found through `listExhaustedLegs`, which is the deliberate query rather than
+ * the alert.
+ */
+/**
+ * Every leg that has given up, for an operator arriving from the placement side.
+ *
+ * The evidence lives on the leg rather than on `Placement`, which reads
+ * `approved` and settled either way. A denormalised `needsAttention` flag would
+ * be a second source of truth for a state the ledger already knows, and this
+ * feature has been bitten repeatedly by exactly that; a query is the honest
+ * version.
+ */
+export const listExhaustedLegs = ({ limit = 100 }: { limit?: number } = {}) =>
+  dbWrite.placementTransaction.findMany({
+    where: {
+      kind: { in: [...PAYOUT_KINDS] },
+      transactionId: null,
+      amount: { gt: 0 },
+      attempts: { gte: MAX_LEG_ATTEMPTS },
+    },
+    select: {
+      placementId: true,
+      kind: true,
+      amount: true,
+      attempts: true,
+      lastAttemptAt: true,
+      lastError: true,
+    },
+    orderBy: { lastAttemptAt: 'desc' },
+    take: limit,
+  });
+
+const HOLD_KINDS = ['holdFee', 'holdPrincipal'] as const;
+
+/** Where the unfunded-settlement gauge stops counting. See the gauge's own note. */
+const UNFUNDED_GAUGE_CEILING = 1_000;
+const PAYOUT_KINDS = [
+  'toOwner',
+  'toSeller',
+  'toPlatform',
+  'feeToOwner',
+  'principalToPlacer',
+  'feeToPlacer',
+  'forfeit',
+] as const;
+
+type SettleAction =
+  | 'approve'
+  | 'decline'
+  /**
+   * A block declines every pending placement from that user at once. The fee is
+   * the price of the owner's *attention* to a submission, and a block is the
+   * owner refusing to give attention to anyone — so no fee is taken.
+   *
+   * It also closes a farming vector the spec's toll-booth reasoning missed:
+   * accepting submissions at a high price and then blocking everyone is one
+   * action that collects N fees, and the "declined users will say so publicly"
+   * mitigation inverts when the blocked can no longer see or contact the blocker.
+   *
+   * ⚠️ Provisional pending Justin. Waiving is the reversible direction: adding a
+   * fee later is additive, refunding one taken wrongly is not.
+   */
+  | 'declineByBlock'
+  | 'expire'
+  | 'removeByOwner'
+  | 'removeByModerator'
+  /**
+   * The cosmetic itself was taken down as abusive. Refunds the placer in full:
+   * they are a holder of the revoked artwork, not its author, and the takedown
+   * makes them whole for it everywhere else.
+   */
+  | 'removeByCosmeticTakedown';
+
+const STATUS_FOR_ACTION: Record<SettleAction, 'approved' | 'declined' | 'expired' | 'removed'> = {
+  approve: 'approved',
+  decline: 'declined',
+  declineByBlock: 'declined',
+  expire: 'expired',
+  removeByOwner: 'removed',
+  removeByModerator: 'removed',
+  removeByCosmeticTakedown: 'removed',
+};
+
+const REMOVED_BY_FOR_ACTION: Partial<Record<SettleAction, PlacementRemovedBy>> = {
+  removeByOwner: 'owner',
+  removeByModerator: 'moderator',
+  removeByCosmeticTakedown: 'cosmeticTakedown',
+};
+
+const isUniqueViolation = (error: unknown) =>
+  error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+
+/**
+ * Runs one movement of money exactly once, across retries, races and crashes.
+ *
+ * Three things cooperate, and each covers a window the others don't:
+ *
+ * 1. The **lock** serialises the payment. The unique constraint below only
+ *    serialises the *claim* — two concurrent callers can both find a claimed
+ *    row with no receipt yet and both reach the Buzz call, which would leave the
+ *    remote's deduplication as the only thing preventing a double payment.
+ * 2. The **unique constraint** on `(placementId, kind)` makes the claim itself
+ *    atomic, so a leg cannot be planned twice.
+ * 3. The **receipt ordering** — claim first with a null `transactionId`, fill it
+ *    in after the money moves — means a crash between the two leaves a
+ *    claimed-but-unpaid leg that `sweepUnpaidLegs` can finish. The reverse
+ *    ordering leaves money moved with no receipt, indistinguishable from money
+ *    never moved.
+ *
+ * The external id is derived from the row, so the Buzz service's own dedupe
+ * backs all of this rather than being asked to carry it.
+ */
+async function runLeg(
+  placementId: number,
+  kind: PlacementTransactionKind,
+  amount: number,
+  pay: (externalTransactionId: string, amount: number) => Promise<string | null>
+) {
+  if (amount <= 0) return null;
+
+  // The claim is taken OUTSIDE the lock, deliberately. `withDistributedLock`
+  // returns null without running when Redis is unavailable or the key is
+  // contended — so a claim inside it would leave no row at all, the placement
+  // would read settled with nobody paid, and `sweepUnpaidLegs` would have
+  // nothing to find. Claiming first means the worst case is always a
+  // receipt-less row, which is exactly what the sweeper is for.
+  try {
+    await dbWrite.placementTransaction.create({ data: { placementId, kind, amount } });
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+  }
+
+  const existing = await dbWrite.placementTransaction.findUnique({
+    where: { placementId_kind: { placementId, kind } },
+  });
+  if (existing?.transactionId) return existing.transactionId;
+
+  return withDistributedLock(
+    { key: `placement:${placementId}:${kind}`, autoRenew: true },
+    async () => {
+      // Re-read inside the lock: a holder that finished between the check above
+      // and the acquisition has already paid this leg.
+      const claimed = await dbWrite.placementTransaction.findUnique({
+        where: { placementId_kind: { placementId, kind } },
+      });
+      if (claimed?.transactionId) return claimed.transactionId;
+
+      // The winning claim decides the amount, not this caller's copy of it. Two
+      // callers can compute different numbers — they read live config at
+      // slightly different moments — and whoever lost the insert would otherwise
+      // move an amount the ledger does not record.
+      // The ceiling is enforced here, not only in the sweep query. The sweep
+      // selects placements and then re-runs the whole payout, so filtering there
+      // would skip *choosing* an exhausted leg and still retry it — a list
+      // operation where a refusal is needed.
+      if ((claimed?.attempts ?? 0) >= MAX_LEG_ATTEMPTS) return null;
+
+      // Backoff belongs here for the same reason as the ceiling: the sweep picks
+      // *placements* and `payOutPlacement` then re-runs every leg, so a leg that
+      // failed moments ago would be retried immediately on the back of some other
+      // eligible leg on the same placement.
+      if (
+        claimed?.lastAttemptAt &&
+        claimed.lastAttemptAt > new Date(Date.now() - LEG_RETRY_BACKOFF_MINUTES * 60_000)
+      )
+        return null;
+
+      const attempted = await dbWrite.placementTransaction.update({
+        where: { placementId_kind: { placementId, kind } },
+        data: { attempts: { increment: 1 }, lastAttemptAt: new Date() },
+      });
+
+      // Fired once, on the transition into exhausted. A windowed query over
+      // `lastAttemptAt` cannot do this job: the timestamp freezes at the final
+      // attempt, so such an alert reports for its window and then goes silent
+      // forever while the money is still parked. "Something just broke" is an
+      // event; "something is still broken" is the gauge below.
+      if (attempted.attempts >= MAX_LEG_ATTEMPTS)
+        logToAxiom({
+          name: 'placement-escrow',
+          type: 'error',
+          message: 'placement leg exhausted its retries and needs a human',
+          placementId,
+          kind,
+          amount: attempted.amount,
+        }).catch(() => null);
+
+      let transactionId: string | null;
+      try {
+        transactionId = await pay(
+          placementTransactionId(placementId, kind),
+          claimed?.amount ?? amount
+        );
+      } catch (error) {
+        // Recorded before rethrowing, so a leg that keeps failing says why on the
+        // row rather than only in a log nobody correlates.
+        await dbWrite.placementTransaction.update({
+          where: { placementId_kind: { placementId, kind } },
+          data: { lastError: String((error as Error).message ?? error).slice(0, 500) },
+        });
+        throw error;
+      }
+
+      await dbWrite.placementTransaction.update({
+        where: { placementId_kind: { placementId, kind } },
+        data: { transactionId, lastError: null },
+      });
+
+      return transactionId;
+    }
+  );
+  // A null result means the lock was not acquired — another caller is mid-payment,
+  // or Redis is down. Either way the claim row is on disk with no receipt, so the
+  // sweeper finishes it rather than the money being silently skipped.
+}
+
+/**
+ * Takes the escrow as two holds — the decline fee and the principal — so every
+ * later release is a whole-hold operation and the placer's money can always
+ * return through a real refund, in the currency mix it was drawn from.
+ *
+ * Paid Buzz only. This refuses on the mutation rather than relying on a listing
+ * or a picker to filter: a listing that filters is not a mutation that refuses.
+ *
+ * **Callers must create the placement row and call this in one transaction.**
+ * The row must exist first — its id is a parameter here — so a caller that
+ * commits it separately and then fails to take the escrow leaves a pending
+ * placement backed by nothing. Nothing downstream will pay out against it (the
+ * hold amounts are read receipted-only), but it is a live placement nobody paid
+ * for, and only the caller can prevent it.
+ */
+export async function holdPlacementEscrow({
+  placementId,
+  placerId,
+  surface,
+  amount,
+}: {
+  placementId: number;
+  placerId: number;
+  surface: PlacementSurface;
+  amount: number;
+}) {
+  if (!Number.isSafeInteger(amount) || amount < 0)
+    throw new Error(`placement escrow: amount must be a non-negative integer, got ${amount}`);
+
+  // Stamped from the surface's compiled default BEFORE the config is read.
+  // `getPlacementConfig` touches KeyValue, so it can throw — and a throw here
+  // used to leave a pending row with a null `expiresAt`, which is never
+  // `<= now()`, so the expiry sweep steps over it forever. That row is then
+  // permanent: it shows in the owner's queue and holds one of the placer's
+  // pending slots against that creator for good. The operator override is
+  // applied immediately after, so a configured expiry still wins.
+  const fallbackHours = PLACEMENT_SURFACES[surface].expiryHours;
+  const stamped = await dbWrite.placement.updateMany({
+    where: { id: placementId, expiresAt: null },
+    data: { expiresAt: new Date(Date.now() + fallbackHours * 3_600_000) },
+  });
+
+  const config = await getPlacementConfig();
+  const configured = config.expiryHours(surface);
+  // Only when this call is the one that stamped it, so a retry cannot extend a
+  // deadline that is already running.
+  if (stamped.count > 0 && configured !== fallbackHours)
+    await dbWrite.placement.updateMany({
+      where: { id: placementId },
+      data: { expiresAt: new Date(Date.now() + configured * 3_600_000) },
+    });
+
+  if (amount === 0) return { fee: 0, principal: 0 };
+
+  const fee = declineFeeAmount(amount, config.declineFeeRate(surface));
+  const principal = amount - fee;
+
+  const hold = (kind: PlacementTransactionKind, holdAmount: number) =>
+    runLeg(placementId, kind, holdAmount, async (externalTransactionIdPrefix, payAmount) => {
+      const result = await createMultiAccountBuzzTransaction(
+        {
+          amount: payAmount,
+          fromAccountId: placerId,
+          toAccountId: ESCROW_ACCOUNT_ID,
+          type: TransactionType.Fee,
+          // Yellow and Green only. Blue is non-transferable by design, and a
+          // placement that took it and paid it out would be a laundering channel.
+          fromAccountTypes: PLACEMENT_SPEND_TYPES,
+          description: `Placement escrow (${kind}) for placement ${placementId}`,
+          externalTransactionIdPrefix,
+        },
+        BUZZ_CALL_OPTIONS
+      );
+
+      if (result.transactionCount === 0)
+        throw new Error(
+          `placement escrow: ${kind} hold moved nothing for placement ${placementId}`
+        );
+
+      return externalTransactionIdPrefix;
+    });
+
+  // A leg returns null when the lock was not acquired — Redis down, or contended
+  // past its retries — which means nothing was charged. Reporting the amounts
+  // anyway would let the caller create a placement whose escrow does not exist,
+  // and approving it later would pay out of an account that never received it.
+  // The hold legs cannot be swept, either: the sweeper skips pending placements,
+  // and a hold only exists while a placement is pending. So it has to fail here.
+  const held = {
+    holdFee: await hold('holdFee', fee),
+    holdPrincipal: await hold('holdPrincipal', principal),
+  };
+
+  for (const [kind, amount] of [
+    ['holdFee', fee],
+    ['holdPrincipal', principal],
+  ] as const)
+    if (amount > 0 && !held[kind])
+      throw new Error(
+        `placement escrow: ${kind} could not be taken for placement ${placementId} — nothing was charged`
+      );
+
+  return { fee, principal };
+}
+
+/**
+ * Flips a pending placement to its settled status and pays out, once.
+ *
+ * The claim is the status transition itself — `WHERE status = 'pending'` on the
+ * primary — so two callers racing (a block landing during an approval, the
+ * expiry sweep firing during a decline) cannot both settle: the loser matches no
+ * rows and moves no money. The winner's per-leg receipts then make the payout
+ * itself resumable, which the claim alone cannot do.
+ */
+export async function settlePlacement({
+  placementId,
+  action,
+  actorId,
+}: {
+  placementId: number;
+  action: SettleAction;
+  actorId?: number;
+}) {
+  const status = STATUS_FOR_ACTION[action];
+  const removedBy = REMOVED_BY_FOR_ACTION[action] ?? null;
+
+  const before = await dbWrite.placement.findUnique({ where: { id: placementId } });
+  if (!before) throw new Error(`placement escrow: placement ${placementId} not found`);
+
+  const feeWaived = action === 'declineByBlock' ? true : before.feeWaived;
+  const held = await heldAmountsFor(placementId);
+  // Computed against the status this settle is *about to* write, since the row
+  // still says `pending` and a pending placement has no settled outcome.
+  const legs = await computePayoutLegs({ ...before, status, removedBy, feeWaived }, held);
+
+  // The status flip and the payout plan go in one transaction. Two statements
+  // would let a crash between them leave a placement settled — approved and live
+  // — with no plan at all. Nothing recovers that state: it is not pending so
+  // expiry skips it, and it has no claimed-but-unpaid leg so the sweeper skips
+  // it too. Worse, a later moderator takedown would then flip it to `removed`
+  // and the first thing to compute a plan would forfeit money the owner had
+  // earned and never been paid.
+  const { count } = await dbWrite.$transaction(async (tx) => {
+    const updated = await tx.placement.updateMany({
+      where: { id: placementId, status: 'pending' },
+      data: {
+        status,
+        removedBy,
+        resolvedAt: new Date(),
+        resolvedById: actorId ?? null,
+        ...(action === 'declineByBlock' ? { feeWaived: true } : {}),
+      },
+    });
+
+    if (updated.count > 0)
+      await tx.placementTransaction.createMany({
+        data: legs.map((leg) => ({ placementId, ...leg })),
+        skipDuplicates: true,
+      });
+
+    return updated;
+  });
+
+  const placement = await dbWrite.placement.findUnique({ where: { id: placementId } });
+  if (!placement) throw new Error(`placement escrow: placement ${placementId} not found`);
+
+  // Someone else settled it. Not an error — a double-submitted approve and a
+  // retried webhook both land here — but this call moves no money of its own:
+  // the payout below reads the winner's outcome off the row, not this action.
+  if (count === 0 && placement.status !== status) return { settled: false, placement };
+
+  await payOutPlacement(placement);
+
+  return { settled: count > 0, placement };
+}
+
+type PlacementRow = NonNullable<Awaited<ReturnType<typeof dbWrite.placement.findUnique>>>;
+type PlannedLeg = { kind: PlacementTransactionKind; amount: number };
+
+/**
+ * The payout plan, written to the ledger once and thereafter read back.
+ *
+ * **Nothing recomputes an amount at settle time.** The holds were sized by the
+ * config as it stood when the placement was made, and an operator retuning the
+ * decline rate or the approval shares while placements are pending would
+ * otherwise produce a release that does not match what is actually held — paying
+ * out more than was taken, or stranding the difference in the escrow account
+ * with no ledger row to find it by. Refunds come from the hold amounts; the
+ * approve split is computed once and persisted.
+ */
+async function planPayout(placement: PlacementRow, held: Map<string, number>) {
+  const existing = await dbWrite.placementTransaction.findMany({
+    where: { placementId: placement.id, kind: { in: [...PAYOUT_KINDS] } },
+    select: { kind: true, amount: true },
+  });
+  if (existing.length) return existing as PlannedLeg[];
+
+  // Zero-amount legs are not movements of money and must not be persisted: they
+  // could never acquire a receipt (a leg with nothing to pay returns before
+  // writing one), so they would sit in the sweeper's result set forever, and
+  // past its batch limit they would crowd out genuinely stranded legs — starving
+  // the one mechanism that recovers from an outage, while reporting success.
+  const legs = await computePayoutLegs(placement, held);
+
+  await dbWrite.placementTransaction.createMany({
+    data: legs.map((leg) => ({ placementId: placement.id, ...leg })),
+    skipDuplicates: true,
+  });
+
+  // Re-read rather than returning what we just computed: `skipDuplicates` means
+  // a concurrent caller may have written the plan first, and its numbers are the
+  // ones on disk. Trusting the local copy would pay amounts the ledger disagrees
+  // with.
+  return (await dbWrite.placementTransaction.findMany({
+    where: { placementId: placement.id, kind: { in: [...PAYOUT_KINDS] } },
+    select: { kind: true, amount: true },
+  })) as PlannedLeg[];
+}
+
+async function computePayoutLegs(
+  placement: PlacementRow,
+  held: Map<string, number>
+): Promise<PlannedLeg[]> {
+  return (await payoutLegsFor(placement, held)).filter((leg) => leg.amount > 0);
+}
+
+/**
+ * Zero-amount legs are filtered by the caller above, not here: a leg with
+ * nothing to pay can never acquire a receipt, so persisting one leaves a row the
+ * sweeper can never clear, and past its batch limit those crowd out genuinely
+ * stranded legs.
+ *
+ * **Every field this reads must be either immutable or overridden by the
+ * synthesised row in `settlePlacement`.** It runs twice against the same
+ * placement — once inside the settle transaction against a row that does not
+ * exist yet, and once from `planPayout` on resume — and a plan-affecting field
+ * that only one of them sees would make those two disagree silently.
+ */
+async function payoutLegsFor(
+  placement: PlacementRow,
+  held: Map<string, number>
+): Promise<PlannedLeg[]> {
+  const fee = held.get('holdFee') ?? 0;
+  const principal = held.get('holdPrincipal') ?? 0;
+  const outcome = placementOutcomeFromStatus(
+    placement.status as never,
+    placement.removedBy as PlacementRemovedBy | null
+  );
+
+  switch (outcome) {
+    case 'approved': {
+      const config = await getPlacementConfig();
+      const shares = config.approvalShares(placement.surface as PlacementSurface);
+      const split = splitPlacementPayment({
+        amount: fee + principal,
+        outcome,
+        declineFeeRate: config.declineFeeRate(placement.surface as PlacementSurface),
+        sellerShare: shares.seller,
+        platformShare: shares.platform,
+      });
+      // With no seller on the row there is nobody to pay, so their share stays
+      // with the platform rather than being invented a recipient.
+      const seller = placement.sellerId ? split.toSeller : 0;
+
+      return [
+        { kind: 'toOwner', amount: split.toOwner },
+        { kind: 'toSeller', amount: seller },
+        { kind: 'toPlatform', amount: split.toPlatform + (split.toSeller - seller) },
+      ];
+    }
+    // The fee that was held is the fee that is paid. Recomputing it here is what
+    // let a rate change mint the difference.
+    case 'declined':
+      // A waived fee returns the whole escrow, both holds, to the placer.
+      return placement.feeWaived
+        ? [
+            { kind: 'principalToPlacer', amount: principal },
+            { kind: 'feeToPlacer', amount: fee },
+          ]
+        : [
+            { kind: 'feeToOwner', amount: fee },
+            { kind: 'principalToPlacer', amount: principal },
+          ];
+    // A cosmetic takedown refunds the same as an owner's removal — the placer
+    // holds revoked artwork rather than having authored it — and differs only in
+    // what the row records about who did it and why.
+    case 'expired':
+    case 'removedByOwner':
+    case 'removedByCosmeticTakedown':
+      return [
+        { kind: 'principalToPlacer', amount: principal },
+        { kind: 'feeToPlacer', amount: fee },
+      ];
+    case 'removedByModerator':
+      return [{ kind: 'forfeit', amount: fee + principal }];
+  }
+}
+
+/** Idempotent by construction, so a partly-finished payout can be re-driven. */
+async function payOutPlacement(placement: PlacementRow) {
+  const held = await heldAmountsFor(placement.id);
+  const plan = await planPayout(placement, held);
+
+  const payFromEscrow = (kind: PlacementTransactionKind, toAccountId: number, amount: number) =>
+    runLeg(placement.id, kind, amount, async (externalTransactionId, payAmount) => {
+      const { transactionId } = await createBuzzTransaction(
+        {
+          amount: payAmount,
+          fromAccountId: ESCROW_ACCOUNT_ID,
+          toAccountId,
+          type: TransactionType.Fee,
+          description: `Placement ${placement.id} (${kind})`,
+          externalTransactionId,
+        },
+        BUZZ_CALL_OPTIONS
+      );
+
+      return transactionId;
+    });
+
+  // A whole hold returning to the placer. This is the reason the escrow is taken
+  // as two holds: the Buzz service restores the exact account-type mix it drew
+  // from, so nothing here has to reconstruct it.
+  const refundHold = (kind: PlacementTransactionKind, holdKind: string, amount: number) =>
+    runLeg(placement.id, kind, amount, async () => {
+      const result = await refundMultiAccountTransaction(
+        {
+          externalTransactionIdPrefix: placementTransactionId(
+            placement.id,
+            holdKind as PlacementTransactionKind
+          ),
+          description: `Placement ${placement.id} refund (${holdKind})`,
+        },
+        BUZZ_CALL_OPTIONS
+      );
+
+      return result.externalTransactionIdPrefix;
+    });
+
+  for (const { kind, amount } of plan) {
+    switch (kind) {
+      case 'toOwner':
+      case 'feeToOwner':
+        await payFromEscrow(kind, placement.ownerId, amount);
+        break;
+      case 'toSeller':
+        if (placement.sellerId) await payFromEscrow(kind, placement.sellerId, amount);
+        break;
+      case 'principalToPlacer':
+        await refundHold(kind, 'holdPrincipal', amount);
+        break;
+      case 'feeToPlacer':
+        await refundHold(kind, 'holdFee', amount);
+        break;
+      // Nothing leaves the escrow account; the receipt records that it was
+      // decided rather than dropped.
+      case 'toPlatform':
+      case 'forfeit':
+        await runLeg(placement.id, kind, amount, async () => PLATFORM_KEEP_RECEIPT);
+        break;
+    }
+  }
+}
+
+/**
+ * What is actually sitting in the escrow account for this placement.
+ *
+ * **Receipted holds only.** A claimed-but-unpaid hold is a leg that was planned
+ * and never charged — Redis down, or the process died mid-hold — and counting it
+ * would size payouts against Buzz that was never taken, paying real money out of
+ * an account that never received it. An unfunded placement must plan nothing.
+ */
+const heldAmountsFor = async (placementId: number) => {
+  const rows = await dbWrite.placementTransaction.findMany({
+    where: {
+      placementId,
+      kind: { in: [...HOLD_KINDS] },
+      transactionId: { not: null },
+    },
+    select: { kind: true, amount: true },
+  });
+
+  return new Map(rows.map((row) => [row.kind, row.amount]));
+};
+
+/**
+ * Pending placements the owner never answered. An owner who did not respond has
+ * not done the work the decline fee pays for, so both holds return in full.
+ *
+ * Claims before it pays, and in a bounded batch: a backlog must not turn one run
+ * into an unbounded one.
+ */
+export async function expirePlacements({ limit = 100 }: { limit?: number } = {}) {
+  const due = await dbWrite.placement.findMany({
+    where: { status: 'pending', expiresAt: { lte: new Date() } },
+    select: { id: true },
+    take: limit,
+  });
+
+  let expired = 0;
+  for (const { id } of due) {
+    try {
+      const result = await settlePlacement({ placementId: id, action: 'expire' });
+      if (result.settled) expired++;
+    } catch (error) {
+      logToAxiom({
+        name: 'placement-escrow',
+        type: 'error',
+        message: 'expiry failed',
+        placementId: id,
+        error: (error as Error).message,
+      }).catch(() => null);
+    }
+  }
+
+  return { considered: due.length, expired };
+}
+
+/**
+ * Legs that were claimed but whose payment never landed — a crash between the
+ * ledger write and the Buzz call, or a Buzz call that failed after the status
+ * had already moved.
+ *
+ * This is the half a status column cannot express: the placement reads settled
+ * and somebody is still owed. Without this sweep the only evidence is a null
+ * column nothing looks at.
+ */
+export async function sweepUnpaidLegs({
+  limit = 100,
+  olderThanMinutes = 10,
+}: { limit?: number; olderThanMinutes?: number } = {}) {
+  const before = new Date(Date.now() - olderThanMinutes * 60_000);
+  const stranded = await dbWrite.placementTransaction.findMany({
+    // Payout kinds only. Hold legs also match "claimed but unpaid", and this
+    // sweep can never finish one — it skips pending placements, and after a
+    // settle nothing writes a hold's receipt either. They would be permanent
+    // residents, and past `take` they crowd out legs that can actually be
+    // finished: the recovery path starves while reporting a healthy count.
+    where: {
+      kind: { in: [...PAYOUT_KINDS] },
+      transactionId: null,
+      amount: { gt: 0 },
+      attempts: { lt: MAX_LEG_ATTEMPTS },
+      createdAt: { lt: before },
+      // Spread the attempts out, so the budget measures how long the failure has
+      // persisted rather than how often the sweep happens to run.
+      OR: [
+        { lastAttemptAt: null },
+        { lastAttemptAt: { lt: new Date(Date.now() - LEG_RETRY_BACKOFF_MINUTES * 60_000) } },
+      ],
+    },
+    select: { placementId: true },
+    distinct: ['placementId'],
+    take: limit,
+  });
+
+  // Legs past the ceiling are no longer retried, so they must be reported —
+  // otherwise "stopped starving the batch" would just mean "stopped mentioning
+  // it". This is the signal that something needs a human.
+  // A count of what is still outstanding, not an error log. A gauge is allowed
+  // to be persistently non-zero — that is what gauges are for — and it moves
+  // "has this been non-zero for a week?" to the alerting layer, which owns it.
+  // The one-shot error on the transition above is the "just broke" signal.
+  const exhausted = await dbWrite.placementTransaction.count({
+    where: {
+      kind: { in: [...PAYOUT_KINDS] },
+      transactionId: null,
+      amount: { gt: 0 },
+      attempts: { gte: MAX_LEG_ATTEMPTS },
+    },
+  });
+
+  placementExhaustedLegsGauge.set(exhausted);
+
+  let resumed = 0;
+  for (const { placementId } of stranded) {
+    const placement = await dbWrite.placement.findUnique({ where: { id: placementId } });
+    if (!placement || placement.status === 'pending') continue;
+
+    try {
+      await payOutPlacement(placement);
+      resumed++;
+    } catch (error) {
+      logToAxiom({
+        name: 'placement-escrow',
+        type: 'error',
+        message: 'unpaid leg could not be resumed',
+        placementId,
+        error: (error as Error).message,
+      }).catch(() => null);
+    }
+  }
+
+  return { stranded: stranded.length, resumed, exhausted };
+}
+
+/**
+ * Placements that settled but never got a payout plan.
+ *
+ * `sweepUnpaidLegs` finds legs that were claimed and not paid. It cannot see a
+ * settlement that produced no legs at all, and nothing else can either: the row
+ * is not pending, so expiry skips it. Writing the plan inside the settle
+ * transaction makes this state unreachable going forward; this sweep exists for
+ * rows that predate that, and as the check that it stays unreachable.
+ */
+export async function sweepUnplannedSettlements({
+  limit = 100,
+  olderThanMinutes = 10,
+}: { limit?: number; olderThanMinutes?: number } = {}) {
+  const before = new Date(Date.now() - olderThanMinutes * 60_000);
+  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT p.id FROM "Placement" p
+    WHERE p.status <> 'pending'
+      AND p."resolvedAt" < ${before}
+      -- Only settlements that *should* have a plan. A placement whose escrow
+      -- never landed plans nothing and never will, so without this it matches
+      -- forever and consumes a slot in every bounded batch — the starvation
+      -- shape this sweep exists to be the recovery from. That population is
+      -- terminal rather than silent: it is counted into the gauge below.
+      AND EXISTS (
+        SELECT 1 FROM "PlacementTransaction" h
+        WHERE h."placementId" = p.id
+          AND h.kind = ANY(${[...HOLD_KINDS]}::text[])
+          AND h."transactionId" IS NOT NULL
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM "PlacementTransaction" t
+        WHERE t."placementId" = p.id AND t.kind = ANY(${[...PAYOUT_KINDS]}::text[])
+      )
+    LIMIT ${limit}
+  `;
+
+  // Bounded, so the count cannot become a sequential scan of every settled
+  // placement as the table grows. It saturates rather than lying upward, and a
+  // gauge pinned at its ceiling is itself the signal that a human is overdue.
+  const unfundedRows = await dbWrite.$queryRaw<{ count: number }[]>`
+    SELECT count(*)::int AS count FROM (
+      SELECT 1 FROM "Placement" p
+      WHERE p.status <> 'pending'
+        AND p.amount > 0
+        AND NOT EXISTS (
+          SELECT 1 FROM "PlacementTransaction" t
+          WHERE t."placementId" = p.id AND t.kind = ANY(${[...PAYOUT_KINDS]}::text[])
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM "PlacementTransaction" h
+          WHERE h."placementId" = p.id
+            AND h.kind = ANY(${[...HOLD_KINDS]}::text[])
+            AND h."transactionId" IS NOT NULL
+        )
+        -- A hold was *claimed* and never receipted, which is the only state
+        -- where money may have moved and left no record. Without this the gauge
+        -- also counts two entirely routine populations — a placement whose
+        -- escrow could not be taken (someone was short on Buzz) and a free
+        -- space priced at zero — neither of which anyone can act on. Both are
+        -- permanent by construction, so they would pin the gauge at its ceiling
+        -- and turn "a human is overdue" into background noise.
+        AND EXISTS (
+          SELECT 1 FROM "PlacementTransaction" c
+          WHERE c."placementId" = p.id
+            AND c.kind = ANY(${[...HOLD_KINDS]}::text[])
+            AND c.amount > 0
+        )
+      LIMIT ${UNFUNDED_GAUGE_CEILING}
+    ) capped
+  `;
+
+  const unfundedOutstanding = unfundedRows[0]?.count ?? 0;
+  placementUnfundedSettlementsGauge.set(unfundedOutstanding);
+
+  let planned = 0;
+  let unfunded = 0;
+  for (const { id } of rows) {
+    const placement = await dbWrite.placement.findUnique({ where: { id } });
+    if (!placement) continue;
+
+    try {
+      await payOutPlacement(placement);
+
+      // Counts what landed, not what was attempted. The query above already
+      // excludes settlements with no escrow behind them, so reaching this branch
+      // means a funded placement produced no legs — which should be impossible
+      // and is worth a page rather than a silent increment.
+      const planExists = await dbWrite.placementTransaction.count({
+        where: { placementId: id, kind: { in: [...PAYOUT_KINDS] } },
+      });
+
+      if (planExists > 0) planned++;
+      else {
+        unfunded++;
+        logToAxiom({
+          name: 'placement-escrow',
+          type: 'error',
+          message: 'settled placement has no funded escrow behind it',
+          placementId: id,
+        }).catch(() => null);
+      }
+    } catch (error) {
+      logToAxiom({
+        name: 'placement-escrow',
+        type: 'error',
+        message: 'unplanned settlement could not be resolved',
+        placementId: id,
+        error: (error as Error).message,
+      }).catch(() => null);
+    }
+  }
+
+  return { unplanned: rows.length, planned, unfunded, unfundedOutstanding };
+}

@@ -1,10 +1,18 @@
 import { ActionIcon, Button, Group, Stack, Text, Title, Tooltip } from '@mantine/core';
-import { IconArrowLeft, IconPlus, IconSettings, IconShoppingBagPlus } from '@tabler/icons-react';
+import {
+  IconArrowLeft,
+  IconPackage,
+  IconPlus,
+  IconSettings,
+  IconShoppingBagPlus,
+} from '@tabler/icons-react';
 import Link from 'next/link';
 import { CreatorShopSettingsModal } from '~/components/CreatorShop/CreatorShopSettingsModal';
 import { CreatorShopSubmitModal } from '~/components/CreatorShop/CreatorShopSubmitModal';
 import { ListExistingModal } from '~/components/CreatorShop/Manage/ListExistingModal';
+import { CreatorShopPackModal } from '~/components/CreatorShop/Pack/CreatorShopPackModal';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function ManageHeader({
   canAddItems = true,
@@ -18,6 +26,7 @@ export function ManageHeader({
   // Where the back arrow returns to (the storefront).
   backHref?: string;
 }) {
+  const features = useFeatureFlags();
   return (
     <Group justify="space-between" align="flex-end">
       <Group gap="sm" align="center" wrap="nowrap">
@@ -61,6 +70,15 @@ export function ManageHeader({
             >
               Resell a cosmetic
             </Button>
+            {features.cosmeticPacks && (
+              <Button
+                variant="light"
+                leftSection={<IconPackage size={16} />}
+                onClick={() => dialogStore.trigger({ component: CreatorShopPackModal })}
+              >
+                Build a pack
+              </Button>
+            )}
             <Button
               leftSection={<IconPlus size={16} />}
               onClick={() => dialogStore.trigger({ component: CreatorShopSubmitModal })}

@@ -53,7 +53,6 @@ export const packItemFloor = (type: CosmeticType): number => {
 export const COSMETIC_PRICE_FLOOR_MIN = Math.min(
   ...Object.values(CosmeticType).map((type) => cosmeticPriceFloor(type))
 );
-export const CREATOR_SHOP_SUBMISSION_FEE = 10000;
 export const CREATOR_SHOP_MAX_FEATURED = 6;
 // Creator keeps this share of each sale; platform keeps the remainder.
 export const CREATOR_SHOP_CREATOR_SHARE = 0.7;
@@ -91,6 +90,12 @@ export const MAX_ANIMATION_FPS = 30;
 export const MIN_ANIMATION_FRAME_DELAY_MS = Math.floor(1000 / MAX_ANIMATION_FPS);
 
 // Cosmetic subtypes a creator may submit (merch is a separate, later product).
+/** Review-queue filter value for packs, which have no CosmeticType of their own. */
+export const PACK_FILTER_VALUE = 'Pack' as const;
+/** A shop type filter: a CosmeticType, or the pack pseudo-type. */
+export type ShopFilterType = CosmeticType | typeof PACK_FILTER_VALUE;
+export const shopFilterTypeSchema = z.union([z.enum(CosmeticType), z.literal(PACK_FILTER_VALUE)]);
+
 export const creatorCosmeticTypes = [
   CosmeticType.Badge,
   CosmeticType.ProfileDecoration,
@@ -99,9 +104,80 @@ export const creatorCosmeticTypes = [
   CosmeticType.Sticker,
 ] as const;
 
+const SUBMISSION_FEE_DEFAULT = 10000;
+/**
+ * Packs list for less. The fee prices the review a submission costs, and a pack
+ * has no artwork to validate — every member was reviewed and paid for when it
+ * was submitted.
+ */
+const PACK_SUBMISSION_FEE_DEFAULT = 1000;
+
+/** What a creator pays to submit this cosmetic type for review. */
+export const submissionFeeDefault = (type: CosmeticType): number => {
+  switch (type) {
+    case CosmeticType.Sticker:
+    case CosmeticType.Badge:
+    case CosmeticType.ProfileDecoration:
+    case CosmeticType.ProfileBackground:
+    case CosmeticType.ContentDecoration:
+    default:
+      return SUBMISSION_FEE_DEFAULT;
+  }
+};
+
+/**
+ * Operator-tunable submission fees. A pack carries one figure rather than a
+ * per-type map because it has no CosmeticType of its own.
+ */
+export type CreatorShopFees = {
+  submission: Record<CreatorCosmeticType, number>;
+  pack: number;
+};
+
+export const DEFAULT_CREATOR_SHOP_FEES: CreatorShopFees = {
+  submission: Object.fromEntries(
+    creatorCosmeticTypes.map((type) => [type, submissionFeeDefault(type)])
+  ) as Record<CreatorCosmeticType, number>,
+  pack: PACK_SUBMISSION_FEE_DEFAULT,
+};
+
+// A fee is charged before anything is reviewed, so a mistyped row must not reach
+// the money path: anything outside this ceiling falls back to the default.
+export const CREATOR_SHOP_FEE_MAX = 1_000_000;
+
+// Buzz is integral, and each value falls back on its own rather than the row as
+// a whole, so one bad number can't move the others.
+const usableFee = (value: unknown, fallback: number): number =>
+  typeof value === 'number' &&
+  Number.isSafeInteger(value) &&
+  value >= 0 &&
+  value <= CREATOR_SHOP_FEE_MAX
+    ? value
+    : fallback;
+
+export const normalizeCreatorShopFees = (value: unknown): CreatorShopFees => {
+  const row = (value ?? {}) as { submission?: unknown; pack?: unknown };
+  const submission = (row.submission ?? {}) as Record<string, unknown>;
+  return {
+    submission: Object.fromEntries(
+      creatorCosmeticTypes.map((type) => [
+        type,
+        usableFee(
+          typeof submission === 'object' && submission !== null ? submission[type] : undefined,
+          DEFAULT_CREATOR_SHOP_FEES.submission[type]
+        ),
+      ])
+    ) as Record<CreatorCosmeticType, number>,
+    pack: usableFee(row.pack, DEFAULT_CREATOR_SHOP_FEES.pack),
+  };
+};
+
 // Consumables are priced per use, so a listing has to clear both floors.
 export const STICKER_MIN_BUZZ_PER_USE = 5;
 export const STICKER_DEFAULT_USES = 100;
+// Bounds the creator's own 10x approval grant, which the flat submission fee
+// does not scale with — the per-use price floor only governs what a BUYER pays.
+export const STICKER_MAX_USES = 100;
 
 /**
  * Minimum Buzz a creator may charge for a single top-up use.
@@ -117,6 +193,129 @@ export const stickerPerUseFloor = (type: CosmeticType): number => {
     default:
       return STICKER_MIN_BUZZ_PER_USE;
   }
+};
+
+// Consumables grant a balance rather than a thing, so buying one you already
+// hold gives you more uses (D23). That makes them ineligible for the ownership
+// discount and immune to the already-own check.
+export const isConsumableCosmeticType = (type: CosmeticType): boolean =>
+  type === CosmeticType.Sticker;
+
+/**
+ * A pack is a listing with no cosmetic of its own — its contents live in
+ * `CosmeticShopItemCosmetic`. Nullable rather than pointed at a primary member
+ * so an unmigrated read path fails loudly instead of silently rendering (and
+ * granting) one cosmetic.
+ */
+export const isPackShopItem = (item: { cosmeticId: number | null }): boolean =>
+  item.cosmeticId == null;
+
+export type PackMemberPricing = {
+  cosmeticId: number;
+  type: CosmeticType;
+  /** The member's authoritative individual list price. */
+  listPrice: number;
+  /** Whether the pack's creator also created this member. */
+  isOwn: boolean;
+};
+
+/**
+ * Minimum a pack may be listed for. Foreign members must be covered at their
+ * own list price so bundling can't undercut their creators; every member must
+ * additionally clear its type's pack floor, summed rather than multiplied so a
+ * mixed-type pack prices correctly once the per-type floors diverge.
+ */
+export const packPriceFloor = (members: PackMemberPricing[]): number => {
+  const foreignSum = members.reduce((sum, m) => (m.isOwn ? sum : sum + m.listPrice), 0);
+  const typeSum = members.reduce((sum, m) => sum + packItemFloor(m.type), 0);
+  return Math.max(foreignSum, typeSum);
+};
+
+/**
+ * Per-member discount shown to a buyer who already owns part of a pack (D16).
+ * Only the pack creator's own portion is discountable — foreign members are
+ * already covered at their list price, and discounting them would pay their
+ * creator less than they listed for.
+ *
+ * Consumable members still carry weight in the split but earn no discount
+ * (D23): owning one means the purchase tops it up, which is not a lesser good.
+ * The weight they hold therefore stays with the pack creator rather than
+ * inflating the discount on the rest.
+ */
+export const computePackOwnershipDiscount = ({
+  packPrice,
+  members,
+  ownedCosmeticIds,
+}: {
+  packPrice: number;
+  members: PackMemberPricing[];
+  ownedCosmeticIds: number[];
+}): { discount: number; perMember: { cosmeticId: number; discount: number }[] } => {
+  const owned = new Set(ownedCosmeticIds);
+  const foreignSum = members.reduce((sum, m) => (m.isOwn ? sum : sum + m.listPrice), 0);
+  const ownPortion = Math.max(0, packPrice - foreignSum);
+  const ownMembers = members.filter((m) => m.isOwn);
+  const weightTotal = ownMembers.reduce((sum, m) => sum + m.listPrice, 0);
+
+  const perMember = ownMembers.map((m) => {
+    const eligible =
+      weightTotal > 0 && owned.has(m.cosmeticId) && !isConsumableCosmeticType(m.type);
+    // Floored individually (D18) so rounding favours the creator rather than
+    // accumulating into a larger discount.
+    return {
+      cosmeticId: m.cosmeticId,
+      discount: eligible ? Math.floor((m.listPrice / weightTotal) * ownPortion) : 0,
+    };
+  });
+
+  return { discount: perMember.reduce((sum, m) => sum + m.discount, 0), perMember };
+};
+
+/**
+ * What a specific viewer owes for a pack.
+ *
+ * Shared deliberately: the detail view quotes this and the purchase charges it.
+ * Two implementations of the same arithmetic drifted apart once already — the
+ * button subtracted a discount the server never applied — and the only way that
+ * cannot recur is for there to be one.
+ */
+export const computePackAmountDue = ({
+  packPrice,
+  members,
+  ownedCosmeticIds,
+  buyerId,
+  packCreatorId,
+}: {
+  packPrice: number;
+  members: (PackMemberPricing & { createdById: number | null })[];
+  ownedCosmeticIds: number[];
+  buyerId?: number;
+  packCreatorId: number | null;
+}) => {
+  const { discount, perMember } = computePackOwnershipDiscount({
+    packPrice,
+    members,
+    ownedCosmeticIds,
+  });
+  // A member the buyer created is theirs already; charging for it and paying
+  // them back through the bank would cost them the platform's cut to buy their
+  // own work. They are excluded from the payout for the same reason.
+  const selfAuthored = buyerId
+    ? members
+        .filter((m) => m.createdById === buyerId && m.createdById !== packCreatorId)
+        .reduce((sum, m) => sum + m.listPrice, 0)
+    : 0;
+
+  // The pack's own lister is refused outright rather than priced specially — see
+  // assertPackPurchasable. A second pricing branch here priced an all-own pack
+  // at zero, which bought unlimited free consumable top-ups and a way to exhaust
+  // a member's quantity so that *other* creators' packs containing it refused.
+  return {
+    discount,
+    perMember,
+    selfAuthored,
+    amountDue: Math.max(0, packPrice - discount - selfAuthored),
+  };
 };
 
 export type CreatorCosmeticType = (typeof creatorCosmeticTypes)[number];
@@ -249,6 +448,11 @@ const rightsAffirmedSchema = z
   .boolean()
   .refine((value) => value === true, 'You must confirm you have the rights to sell this artwork');
 
+// The fee the form quoted. The server charges its own value and rejects the
+// submission when the two disagree, so a form left open across a fee change
+// can't be charged a number the creator never saw.
+const quotedFeeSchema = z.number().int().min(0).max(CREATOR_SHOP_FEE_MAX);
+
 export type SubmitCreatorShopItemInput = z.infer<typeof submitCreatorShopItemSchema>;
 export const submitCreatorShopItemSchema = z
   .object({
@@ -262,7 +466,7 @@ export const submitCreatorShopItemSchema = z
     // Sticker only — the `:slug:` users type. Required for Sticker, ignored otherwise.
     slug: z.string().optional(),
     // Sticker only — uses granted per purchase.
-    uses: z.number().int().positive().optional(),
+    uses: z.number().int().positive().max(STICKER_MAX_USES).optional(),
     // Sticker only — what one additional use costs when a buyer runs out.
     // Intrinsic to the sticker, not to the offer: resale by reference means one
     // cosmetic can be listed at several prices, and a top-up must cost the same
@@ -283,6 +487,7 @@ export const submitCreatorShopItemSchema = z
     // The creator's affirmation that they hold the rights to sell this artwork.
     // Recorded on the item (see cosmeticShopItemMeta.rightsAffirmation).
     rightsAffirmed: rightsAffirmedSchema,
+    quotedFee: quotedFeeSchema,
   })
   .superRefine((input, ctx) => {
     // `uses` drives the buyer's balance AND the creator's 10x grant. Absent, both
@@ -305,6 +510,71 @@ export const submitCreatorShopItemSchema = z
       });
   });
 
+// A pack is flat by construction (D15): a member is always a cosmetic, never
+// another pack, so the floor is a sum rather than a recursion and the delist
+// cascade is one level deep.
+export const PACK_MIN_MEMBERS = 2;
+export const PACK_MAX_MEMBERS = 20;
+
+export type SubmitCreatorShopPackInput = z.infer<typeof submitCreatorShopPackSchema>;
+export const submitCreatorShopPackSchema = z.object({
+  name: z.string().min(1).max(255),
+  description: z.string().max(1000).nullish(),
+  // Members are named by cosmetic, not by listing: resale-by-reference means one
+  // cosmetic can be reachable through several listings, and bundling must not
+  // let the builder pick whichever of them is cheapest.
+  memberCosmeticIds: z
+    .array(z.number())
+    .min(PACK_MIN_MEMBERS)
+    .max(PACK_MAX_MEMBERS)
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: 'A pack cannot contain the same cosmetic twice',
+    }),
+  // Authoritative floor is per-member and type-dependent, so the real check runs
+  // in the service; this only rejects what no pack could ever clear.
+  price: z
+    .number()
+    .int()
+    .min(COSMETIC_PRICE_FLOOR_MIN * PACK_MIN_MEMBERS),
+  availableQuantity: z.number().int().positive().nullish(),
+  buzzType: z.enum(['green', 'yellow', 'blue']).default('yellow'),
+  // Requested, not granted: the service clears it unless every member's own
+  // listing accepts blue, since paying blue for a pack pays each member's
+  // creator in blue.
+  acceptsBlueBuzz: z.boolean().default(false),
+  // Optional cover art. A pack's cover is a storefront image, not a cosmetic
+  // anyone receives, so it has none of the artwork rules a cosmetic does — and
+  // without one the card shows the contents instead.
+  imageUrl: z.string().optional(),
+  // Required only with a cover: it is a statement about artwork, and a pack
+  // without one supplies none. Its members were each affirmed at submission.
+  rightsAffirmed: rightsAffirmedSchema.optional(),
+  quotedFee: quotedFeeSchema,
+});
+
+export type UpdateCreatorShopPackInput = z.infer<typeof updateCreatorShopPackSchema>;
+export const updateCreatorShopPackSchema = z.object({
+  id: z.number(),
+  name: z.string().min(1).max(255).optional(),
+  description: z.string().max(1000).nullish(),
+  price: z.number().int().min(COSMETIC_PRICE_FLOOR_MIN).optional(),
+  availableQuantity: z.number().int().positive().nullish(),
+  acceptsBlueBuzz: z.boolean().optional(),
+  // `null` clears the cover; omitted leaves it as-is.
+  imageUrl: z.string().nullish(),
+  // Re-snapshots every member's floor, so changing contents re-prices the pack
+  // against today's list prices rather than the ones it was built against.
+  memberCosmeticIds: z
+    .array(z.number())
+    .min(PACK_MIN_MEMBERS)
+    .max(PACK_MAX_MEMBERS)
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: 'A pack cannot contain the same cosmetic twice',
+    })
+    .optional(),
+  rightsAffirmed: rightsAffirmedSchema.optional(),
+});
+
 export type UpdateCreatorShopItemInput = z.infer<typeof updateCreatorShopItemSchema>;
 export const updateCreatorShopItemSchema = z.object({
   id: z.number(),
@@ -317,13 +587,18 @@ export const updateCreatorShopItemSchema = z.object({
   availableQuantity: z.number().int().positive().nullish(),
   // Payment term like price/quantity — editable on published items, no re-review.
   acceptsBlueBuzz: z.boolean().optional(),
+  // Resale terms, same deal: editable after publish, no re-review. Changing them
+  // only ever affects listings made from here on — creators already reselling
+  // keep the share recorded on their UserCosmeticShopItemResale row.
+  sellableByOthers: z.boolean().optional(),
+  sellerShare: z.number().int().min(0).max(70).optional(),
   // ProfileDecoration only — null clears the adjustment; treated as a content
   // change (same rules as name/description/artwork).
   offsets: cosmeticOffsetsSchema.nullish(),
   // Sticker only. Omitted leaves the existing slug alone — replacing artwork must
   // not silently drop it, since owners' `:slug:` text depends on it.
   slug: z.string().optional(),
-  uses: z.number().int().positive().optional(),
+  uses: z.number().int().positive().max(STICKER_MAX_USES).optional(),
   pricePerUse: z.number().int().positive().optional(),
   // Required by the service when `imageUrl` replaces the artwork: the stored
   // affirmation covers the art that was submitted, so new art needs a new one.
@@ -363,6 +638,19 @@ export const resoldItemSchema = z.object({
   shopItemId: z.number(),
 });
 
+// Storefront order of the caller's own resale listings.
+export type ReorderResoldItemsInput = z.infer<typeof reorderResoldItemsSchema>;
+export const reorderResoldItemsSchema = z.object({
+  shopItemIds: z.array(z.number()).max(500),
+});
+
+// Who resells one of your items (and on what terms) — the creator-facing view of
+// who a resale-terms change would affect.
+export type GetShopItemResellersInput = z.infer<typeof getShopItemResellersSchema>;
+export const getShopItemResellersSchema = z.object({
+  shopItemId: z.number(),
+});
+
 export type GetPublicShopItemsInput = z.infer<typeof getPublicShopItemsSchema>;
 export const getPublicShopItemsSchema = z.object({
   limit: z.number().min(1).max(100).default(50),
@@ -379,7 +667,10 @@ export type GetCommunityCosmeticsInput = z.infer<typeof getCommunityCosmeticsSch
 export const getCommunityCosmeticsSchema = z.object({
   limit: z.number().min(1).max(100).default(COSMETIC_SHOP_DEFAULT_PAGE_SIZE),
   page: z.number().min(1).default(1),
-  cosmeticTypes: z.array(z.enum(CosmeticType)).optional(),
+  // 'Pack' is not a CosmeticType — a pack has no cosmetic and therefore no type.
+  // It rides in this filter because to a shopper it is one more kind of thing on
+  // the same shelf.
+  cosmeticTypes: z.array(shopFilterTypeSchema).optional(),
   sort: z.enum(CosmeticShopSort).default(CosmeticShopSort.Newest),
   // Viewer-scoped, so both are ignored for anonymous callers.
   wishlisted: z.boolean().optional(),
@@ -419,7 +710,10 @@ export const getReviewQueueSchema = z.object({
   status: z.enum(CosmeticShopItemStatus).optional(),
   username: z.string().optional(),
   userId: z.number().optional(),
-  cosmeticTypes: z.array(z.enum(CosmeticType)).optional(),
+  // 'Pack' is not a CosmeticType — a pack has no cosmetic and therefore no type.
+  // It rides in this filter because to a moderator it is one more kind of thing
+  // in the same queue.
+  cosmeticTypes: z.array(z.union([z.enum(CosmeticType), z.literal(PACK_FILTER_VALUE)])).optional(),
 });
 
 export type GetManageItemsInput = z.infer<typeof getManageItemsSchema>;
@@ -456,8 +750,6 @@ export const updateCreatorShopSettingsSchema = z.object({
   enabled: z.boolean().optional(),
   showModels: z.boolean().optional(),
   featuredItemIds: z.array(z.number()).max(CREATOR_SHOP_MAX_FEATURED).optional(),
-  // Other creators' shop items this creator resells (referenced by id).
-  resoldItemIds: z.array(z.number()).optional(),
   description: z.string().max(1000).nullish(),
   coverImageId: z.number().nullish(),
   sections: z.array(creatorShopSectionSchema).optional(),

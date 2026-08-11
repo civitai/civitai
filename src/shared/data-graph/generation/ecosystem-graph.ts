@@ -233,7 +233,7 @@ export const ecosystemGraph = new DataGraph<
         ctx.output === 'audio'
           ? 'Ace'
           : ctx.output === 'video'
-          ? 'Kling'
+          ? 'Seedance'
           : ctx.output === 'model3d'
           ? 'PolyGen'
           : 'ZImageTurbo';
@@ -363,7 +363,7 @@ export const ecosystemGraph = new DataGraph<
       graph: fluxGraph,
     },
     // Image ecosystems - individual families
-    { values: ['Qwen', 'Qwen2'] as const, graph: qwenGraph },
+    { values: ['Qwen', 'Qwen2', 'Qwen3'] as const, graph: qwenGraph },
     { values: ['NanoBanana'] as const, graph: nanoBananaGraph },
     { values: ['Seedream'] as const, graph: seedreamGraph },
     { values: ['Imagen4'] as const, graph: imagen4Graph },

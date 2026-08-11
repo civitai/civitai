@@ -1,13 +1,12 @@
 import { CacheTTL, constants } from '~/server/common/constants';
-import { BlocklistType, NotificationCategory } from '~/server/common/enums';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { BlocklistType } from '~/server/common/enums';
+import { dbRead } from '~/server/db/client';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
-import { createNotification } from '~/server/services/notification.service';
-import { updateUserById } from '~/server/services/user.service';
+import { applyPendingReviewMute } from '~/server/services/user-restriction.service';
 import { fetchThroughCache, bustFetchThroughCache } from '~/server/utils/cache-helpers';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
@@ -16,7 +15,6 @@ import {
   type PromptTrigger,
   type PromptTriggerCategory,
 } from '~/utils/metadata/audit';
-import { refreshSession } from '~/server/auth/session-invalidation';
 
 // --- Blocked Prompt Store ---
 // Single Redis list stores both count (list length) and prompt data.
@@ -511,41 +509,16 @@ async function reportProhibitedRequest(options: {
   // Auto-mute when count exceeds the muted threshold
   if (count > constants.imageGeneration.requestBlocking.muted) {
     try {
-      // Retrieve all blocked prompts from Redis for the UserRestriction record
       const allBlockedPrompts = await getBlockedPrompts(userId);
 
-      // Create a UserRestriction record with ALL trigger data for moderator review
-      await dbWrite.userRestriction.create({
-        data: {
-          userId,
-          type: 'generation',
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          triggers: allBlockedPrompts as any,
-        },
-      });
-
-      // Only gate the user via `muted`. `mutedAt` is reserved for moderator
-      // confirmation (uphold) — setting it here would make a Pending restriction
-      // display as "Upheld" and trip the confirm-mutes cron.
-      await updateUserById({
-        id: userId,
-        data: { muted: true },
+      await applyPendingReviewMute({
+        userId,
+        triggers: allBlockedPrompts,
         updateSource: 'promptAuditing:autoMute',
       });
 
-      await refreshSession(userId);
-
       // Clear the blocked prompts from Redis now that they're stored in the DB
       await clearBlockedPromptsAfterMute(userId);
-
-      // Notify the user about the restriction
-      await createNotification({
-        type: 'generation-muted',
-        key: `generation-muted:${userId}:${Date.now()}`,
-        category: NotificationCategory.System,
-        userId,
-        details: {},
-      }).catch();
     } catch (banError) {
       logToAxiom({
         name: 'user-ban-creation-error',

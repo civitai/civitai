@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { ShopFilters } from '~/components/CosmeticShop/ShopFiltersDropdown';
 import { CosmeticShopSort } from '~/server/common/enums';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
+import { PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -13,17 +14,20 @@ import { CosmeticType } from '~/shared/utils/prisma/enums';
  * changing there too.
  */
 
-/** The shop-item fields the filters and sorts read, whatever else an entry wraps. */
+/**
+ * The shop-item fields the filters and sorts read, whatever else an entry wraps.
+ * A pack has no cosmetic of its own, so both cosmetic fields are nullable.
+ */
 export type ShopBrowseItem = {
   id: number;
-  cosmeticId: number;
+  cosmeticId: number | null;
   title: string;
   unitAmount: number;
   reviewedAt?: Date | null;
   availableQuantity?: number | null;
   availableTo?: Date | null;
   meta?: unknown;
-  cosmetic: { type: CosmeticType };
+  cosmetic: { type: CosmeticType } | null;
 };
 
 const metaOf = (item: ShopBrowseItem) => (item.meta ?? {}) as CosmeticShopItemMeta;
@@ -54,15 +58,26 @@ export function browseShopItems<T>({
 
   const filtered = entries.filter((entry) => {
     const item = shopItemOf(entry);
-    if (cosmeticTypes?.length && !cosmeticTypes.includes(item.cosmetic.type)) return false;
+    // A pack has no type of its own; it matches only the Pack chip.
+    if (
+      cosmeticTypes?.length &&
+      !cosmeticTypes.includes(item.cosmetic ? item.cosmetic.type : PACK_FILTER_VALUE)
+    )
+      return false;
     if (wishlisted && !wishlistedIds.has(item.id)) return false;
     if (modifier) {
-      const owned = ownedCosmeticIds.has(item.cosmeticId);
-      if (modifier === 'owned' && !owned) return false;
-      // Owning a content decoration doesn't stop you buying another, which is
-      // also why the card never marks them owned — so they stay in "not owned".
-      const repeatable = item.cosmetic.type === CosmeticType.ContentDecoration;
-      if (modifier === 'notOwned' && owned && !repeatable) return false;
+      // Neither modifier speaks to a pack: there is no single cosmetic to own,
+      // so "owned" can't match it and "not owned" must not drop it.
+      if (!item.cosmetic) {
+        if (modifier === 'owned') return false;
+      } else {
+        const owned = item.cosmeticId != null && ownedCosmeticIds.has(item.cosmeticId);
+        if (modifier === 'owned' && !owned) return false;
+        // Owning a content decoration doesn't stop you buying another, which is
+        // also why the card never marks them owned — so they stay in "not owned".
+        const repeatable = item.cosmetic.type === CosmeticType.ContentDecoration;
+        if (modifier === 'notOwned' && owned && !repeatable) return false;
+      }
     }
     if (limited && item.availableQuantity == null && item.availableTo == null) return false;
     if (acceptsBlueBuzz && !metaOf(item).acceptsBlueBuzz) return false;

@@ -14,7 +14,7 @@ import {
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconCheck, IconSparkles } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import * as z from 'zod';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -24,6 +24,7 @@ import {
   GenerationFooter,
   useHasGenerationSlots,
 } from '~/components/generation_v2/GenerationLayout';
+import { getGenerationEcosystemsForMediaType } from '~/shared/constants/basemodel.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import type { SnippetReferenceValue } from '~/shared/data-graph/schemas/snippet-schema';
 import { showErrorNotification } from '~/utils/notifications';
@@ -32,6 +33,7 @@ import { submitPromptEnhancement, useGetPromptEnhancementHistory } from './promp
 const ENHANCE_COST = 1;
 const TEMPERATURE_STORAGE_KEY = 'prompt-enhance-temperature';
 const SEGMENT_PROMPT_STORAGE_KEY = 'prompt-enhance-segment-prompt';
+const SINGLE_TAKE_STORAGE_KEY = 'prompt-enhance-single-take';
 const DEFAULT_TEMPERATURE = 0.7;
 
 const enhanceFormSchema = z.object({
@@ -92,6 +94,18 @@ export function EnhanceTab({
     defaultValue: false,
     getInitialValueInEffect: false,
   });
+  const [singleTake, setSingleTake] = useLocalStorage({
+    key: SINGLE_TAKE_STORAGE_KEY,
+    defaultValue: true,
+    getInitialValueInEffect: false,
+  });
+  const isVideoEcosystem = useMemo(
+    () =>
+      getGenerationEcosystemsForMediaType('video').some(
+        (key) => key.toLowerCase() === ecosystem.toLowerCase()
+      ),
+    [ecosystem]
+  );
   const [storedTemperature, setStoredTemperature] = useLocalStorage({
     key: TEMPERATURE_STORAGE_KEY,
     defaultValue: DEFAULT_TEMPERATURE,
@@ -149,6 +163,10 @@ export function EnhanceTab({
       // snippets node (non-snippet-enabled ecosystems).
       snippetTargets: snippetTargets ?? null,
       segmentPrompt,
+      // Shot structure only means something for video; sending it for image
+      // ecosystems would put a stray directive in front of the analyzer, and
+      // every unused line costs instruction budget.
+      singleTake: isVideoEcosystem ? singleTake : null,
     };
   };
 
@@ -367,11 +385,19 @@ export function EnhanceTab({
                 onChange={setPreserveTriggerWords}
               />
               <Checkbox
-                label="Break prompt into segments"
-                description="Split the enhanced prompt into logical segments separated by newlines"
+                label="Reorganize into thematic segments"
+                description="Regroup the prompt by subject, setting, style, and lighting. Enhanced prompts are already multi-line, and your own formatting is kept, so leave this off unless you want it restructured."
                 checked={segmentPrompt}
                 onChange={(e) => setSegmentPrompt(e.currentTarget.checked)}
               />
+              {isVideoEcosystem && (
+                <Checkbox
+                  label="Single continuous take"
+                  description="Keep the action in one unbroken shot instead of cutting between shots"
+                  checked={singleTake}
+                  onChange={(e) => setSingleTake(e.currentTarget.checked)}
+                />
+              )}
               <div className="px-2">
                 <Text size="sm" fw={500} mb={4}>
                   Creativity ({currentTemperature?.toFixed(1)})

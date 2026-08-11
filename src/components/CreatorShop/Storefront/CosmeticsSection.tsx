@@ -6,7 +6,7 @@ import type { CreatorShopItem } from '~/components/CreatorShop/creator-shop.util
 import { sectionIcons } from '~/components/CreatorShop/section-meta';
 import { SectionHeader } from '~/components/CreatorShop/Storefront/SectionHeader';
 import { ShopItemGrid } from '~/components/CreatorShop/Storefront/ShopItemGrid';
-import { creatorShopFilterTypes } from '~/components/CreatorShop/Submit/submit.constants';
+import { shopFilterTypesWithPack } from '~/components/CreatorShop/Submit/submit.constants';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { ShopBrowseControls, ShopBrowsePagination } from '~/components/Shop/ShopBrowseControls';
 import { browseShopItems, shopBrowseKey, usePagedList } from '~/components/Shop/shop-browse';
@@ -59,7 +59,7 @@ export function CosmeticsSection({
             onPageSizeChange={setPageSize}
             filters={filters}
             setFilters={setFilters}
-            availableTypes={creatorShopFilterTypes}
+            availableTypes={shopFilterTypesWithPack}
           />
         }
       />

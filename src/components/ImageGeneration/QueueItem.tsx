@@ -672,7 +672,6 @@ function WorkflowStatusAlert({
 const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withinPortal: true,
   withArrow: true,
-  color: 'dark',
   zIndex: imageGenerationDrawerZIndex + 1,
 };
 

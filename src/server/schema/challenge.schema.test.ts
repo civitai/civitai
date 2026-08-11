@@ -46,22 +46,31 @@ describe('userChallengeUpsertSchema money/quantity floors', () => {
     expect(userChallengeUpsertSchema.safeParse({ ...valid, entryFee: -50 }).success).toBe(false);
     expect(userChallengeUpsertSchema.safeParse({ ...valid, entryFee: 0 }).success).toBe(false);
     expect(
-      userChallengeUpsertSchema.safeParse({ ...valid, entryFee: CHALLENGE_MIN_ENTRY_FEE - 1 }).success
+      userChallengeUpsertSchema.safeParse({ ...valid, entryFee: CHALLENGE_MIN_ENTRY_FEE - 1 })
+        .success
     ).toBe(false);
   });
 
   it('rejects negative or over-cap initial prize', () => {
-    expect(userChallengeUpsertSchema.safeParse({ ...valid, initialPrizeBuzz: -1 }).success).toBe(false);
+    expect(userChallengeUpsertSchema.safeParse({ ...valid, initialPrizeBuzz: -1 }).success).toBe(
+      false
+    );
     expect(
-      userChallengeUpsertSchema.safeParse({ ...valid, initialPrizeBuzz: CHALLENGE_MAX_INITIAL_PRIZE + 1 })
-        .success
+      userChallengeUpsertSchema.safeParse({
+        ...valid,
+        initialPrizeBuzz: CHALLENGE_MAX_INITIAL_PRIZE + 1,
+      }).success
     ).toBe(false);
   });
 
   it('rejects negative judgeId and non-positive limits', () => {
     expect(userChallengeUpsertSchema.safeParse({ ...valid, judgeId: -1 }).success).toBe(false);
-    expect(userChallengeUpsertSchema.safeParse({ ...valid, maxEntriesPerUser: 0 }).success).toBe(false);
-    expect(userChallengeUpsertSchema.safeParse({ ...valid, maxParticipants: 0 }).success).toBe(false);
+    expect(userChallengeUpsertSchema.safeParse({ ...valid, maxEntriesPerUser: 0 }).success).toBe(
+      false
+    );
+    expect(userChallengeUpsertSchema.safeParse({ ...valid, maxParticipants: 0 }).success).toBe(
+      false
+    );
   });
 
   it('rejects a negative prize-distribution slice', () => {
@@ -172,7 +181,9 @@ describe('userChallengeUpsertSchema duration limits', () => {
   const endingAfter = (ms: number) => ({ ...valid, endsAt: new Date(startsAt.getTime() + ms) });
 
   it('accepts a duration exactly at the minimum', () => {
-    expect(userChallengeUpsertSchema.safeParse(endingAfter(CHALLENGE_MIN_DURATION_MS)).success).toBe(true);
+    expect(
+      userChallengeUpsertSchema.safeParse(endingAfter(CHALLENGE_MIN_DURATION_MS)).success
+    ).toBe(true);
   });
 
   it('rejects a duration just under the minimum', () => {
@@ -181,7 +192,9 @@ describe('userChallengeUpsertSchema duration limits', () => {
   });
 
   it('accepts a duration exactly at the maximum', () => {
-    expect(userChallengeUpsertSchema.safeParse(endingAfter(CHALLENGE_MAX_DURATION_MS)).success).toBe(true);
+    expect(
+      userChallengeUpsertSchema.safeParse(endingAfter(CHALLENGE_MAX_DURATION_MS)).success
+    ).toBe(true);
   });
 
   it('rejects a duration just over the maximum', () => {

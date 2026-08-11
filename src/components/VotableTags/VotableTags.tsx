@@ -14,6 +14,7 @@ import type { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
 import { NsfwLevel } from '~/server/common/enums';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
@@ -28,6 +29,7 @@ export function VotableTags({
   nsfwLevel,
   highlightContested,
   onTagsLoaded,
+  mediaType,
   ...props
 }: GalleryTagProps) {
   const currentUser = useCurrentUser();
@@ -139,6 +141,7 @@ export function VotableTags({
           nsfwLevel={tag.nsfwLevel}
           score={tag.score}
           highlightContested={highlightContested}
+          mediaType={mediaType}
           onChange={({ name, vote }) => {
             handleVote({ tags: [name], vote });
           }}
@@ -168,4 +171,5 @@ type GalleryTagProps = {
   nsfwLevel?: number;
   highlightContested?: boolean;
   onTagsLoaded?: (tags: VotableTagModel[]) => void;
+  mediaType?: MediaType;
 } & Omit<GroupProps, 'id'>;

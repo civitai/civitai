@@ -224,7 +224,7 @@ export const userRouter = router({
         data: input,
         updateSource: 'updateBrowsingMode',
       });
-      await refreshSession(ctx.user.id);
+      await refreshSession(ctx.user.id, { caller: 'browsing-mode' });
     }),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.Full })

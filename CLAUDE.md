@@ -53,6 +53,62 @@ pnpm run prettier:check   # Check Prettier formatting
 pnpm run prettier:write   # Auto-fix Prettier formatting
 ```
 
+#### SvelteKit apps have their own standard
+
+`apps/moderator`, `apps/auth` and `apps/creator-studio` are SvelteKit 5 + Kysely + shadcn-svelte +
+Tailwind v4 — none of the Mantine/tRPC/Prisma guidance above applies to them. Their shared conventions
+live in **[`docs/svelte-app-standard.md`](docs/svelte-app-standard.md)**, and each app's `CLAUDE.md`
+records only its deltas. Review a segment there with `svelte-correctness-review`,
+`svelte-idiom-review` and `svelte-abstraction-review`.
+
+#### In SvelteKit apps (`apps/moderator`, `apps/auth`, `apps/creator-studio`): use `typecheck`, never `check`
+
+They are **not** synonyms. `typecheck` is `svelte-check` alone and writes nothing. `check` prefixes it
+with `svelte-kit sync`, which regenerates ~690 files under `.svelte-kit/` — a directory the Vite dev
+server watches — so running it in an edit→verify loop has Vite re-optimising the module graph while
+`svelte-check` loads ~9,000 files. That collision froze an entire day's work before it was diagnosed
+(2026-08-07), and it does not reproduce in the main app because `tsc --noEmit` emits nothing.
+
+Reach for `check` **only** after changing the route tree — adding, removing or renaming a
+`+page`/`+server`/`+layout` file — which is the only time the generated `$types` go stale. Symptom of
+needing it: `Cannot find module './$types'`, or component props resolving to `never`. `prepare` runs
+`sync` on install, so a fresh checkout is already covered.
+
+**`build` runs `svelte-kit sync` too** (`svelte-kit sync && vite build`), so it carries the same cost —
+and it is **not** a check: it catches nothing `svelte-check` doesn't.
+
+**Read `svelte-check`'s WARNING lines, not just ERROR.** It reports Svelte compiler warnings, and
+`state_referenced_locally` — `let x = $state(data.foo)` capturing only the first value, so the UI
+silently shows stale data after a navigation — is a real bug that appears there and nowhere else in
+the loop. Filtering output to `ERROR` hides it.
+
+#### Never run `npx prettier --plugin=prettier-plugin-svelte` on `.svelte` files
+
+It **empties every file it touches to zero bytes**, and reports success on each one. It took out 28
+components in one command (2026-08-07); they were only recoverable because they were committed. The
+first symptom is `svelte-check` reporting props as `never`, which reads like stale `$types` and sends
+you diagnosing the wrong thing.
+
+Note what `pnpm run prettier:write` does **not** cover: the root Prettier is 2.8.8 and globs
+`.ts`/`.tsx` only, so **no root command formats `.svelte` at all**. `apps/creator-studio` formats
+itself with its own Prettier 3 + plugin (`.prettierignore` explains why ownership must be exclusive);
+the other SvelteKit apps' `.svelte` files are hand-formatted.
+
+#### Prettier runs on UNCOMMITTED files only — never the whole repo
+
+`prettier:write`/`prettier:check` are `scripts/prettier-changed.mjs`, which formats what git reports as
+dirty (modified-vs-HEAD plus untracked) and nothing else. Do not "fix" them back into a `**/*` glob,
+and do not reach for a repo-wide `npx prettier --write` instead.
+
+**The repo is not Prettier-clean and will not be until the 2→3 upgrade reformats it deliberately.**
+`.github/workflows/lint.yml` puts the number at 789 of 4,116 `src` files; across the whole workspace it
+is ~1,000. So a repo-wide `--write` is not a formatting pass, it is a ~1,000-file commit that buries the
+actual change — and it rewrites **other people's uncommitted work in place**, which is how it was found
+(2026-08-08: one `pnpm run prettier:write` produced 1,085 modified files, and telling the reformatting
+apart from real edits afterwards needed a per-file diff against `prettier(HEAD)`).
+
+CI already scopes itself this way and gates only on **added** files for exactly this reason.
+
 ### Testing
 ```bash
 pnpm run test:unit:run    # Vitest unit suite (the one you almost always want)
@@ -82,6 +138,30 @@ Use a top-level `import type * as PromClient` — an inline `typeof import('...'
 #### Convention guards run as tests
 Several repo conventions are enforced by tests, not by eslint — `pnpm run test:lint-rules` runs all of them:
 `no-wholesale-module-mock` (the `importOriginal` rule above), `no-io-in-transaction`, `no-module-scope-cache`, `no-unloadable-image-fixture`. They live in `src/server/services/__tests__/`. If one fails, fix the code — don't add an exemption without saying why.
+
+#### A passing test says nothing about how it FAILS — check the revert
+**"The tests would catch a regression here" is a claim about the failure mode, not about coverage.** A green
+suite proves current behaviour. Whether a revert is *legible* is a separate property, and it is the one that
+decides if the test protects anything. Review your own tests by asking what a reverted fix would look like:
+an assertion message, a timeout, or nothing at all.
+
+🔴 **Proving a property by absence of termination is not proof — a test runner cannot observe it.** A fake
+that drives a loop and never terminates turns a regression into an infinite loop of `await`-on-already-resolved
+promises. That is a pure **microtask** loop: it starves the macrotask queue, and vitest's `testTimeout` is
+`setTimeout`-based, so **it never fires**. Measured: 4,194,305 iterations in 4 s with a 300 ms `setTimeout`
+that never ran. CI hangs until the job is killed — no assertion failure, no timeout, nothing to read.
+
+So **any fake driving a bounded loop must terminate on its own**, and the test must assert the loop stopped
+early. Capping a cursor fake at 50 pages turns an unreportable hang into `expected 51 to be less than 5` in
+under a second. Same rule as sizing a slow-path regression test so a revert *fails fast* rather than wedging
+the runner — see the `n = 10_000` cap in `session-invalidation.test.ts` and the terminating pages beside it.
+
+Two things this does NOT cover, stated so a green run isn't over-read: the paging guard in
+`test:lint-rules` catches cursor-shaped fakes only, so it reduces this class rather than closing it; and a
+loop driven by something other than a cursor is still on you to bound.
+
+(The formulation above is @ivy's, from reviewing PR #3756 — where the assertions were all correct and the
+failure mode was a hang. Both reviewers checked the assertions; neither asked what a revert would print.)
 
 #### Never `await` a browser-test state that DELETES ITSELF
 `expect.element` polls — first attempt immediate, then every **50 ms** — against the test's remaining budget (browser-mode `testTimeout` defaults to **15 s**, and the `component` project does not override it). Awaiting a state to **arrive** is safe: load only makes it arrive later and the matcher keeps polling. Awaiting a state that will **leave** — a spinner on a ceiling, a debounce window, anything a component tears down on a timer — is a race the matcher cannot win: once the state is gone it never comes back, so every remaining poll is also too late. Such a test is green on a quiet box, red on a busy one, and has no PR to blame.
@@ -430,3 +510,13 @@ pnpm run dev-debug  # Includes --max_old_space_size=8192
 1. Check connection string
 2. Apply pending migrations manually (we do NOT use `prisma migrate deploy` — see Database section above)
 3. Regenerate client: `pnpm run db:generate`
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

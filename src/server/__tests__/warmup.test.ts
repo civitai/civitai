@@ -53,9 +53,8 @@ vi.mock('~/server/prom/client', () => {
   };
 });
 
-// env.NEXTAUTH_URL / env.WEBHOOK_TOKEN are read by warmup.ts. The global setup
-// proxy already supplies NEXTAUTH_URL='http://localhost:3000'; WEBHOOK_TOKEN
-// falls through to undefined which is fine for these tests.
+// env.NEXTAUTH_URL / env.WEBHOOK_TOKEN are read by warmup.ts; both come from the
+// defaults in src/__tests__/setup.ts.
 
 // Helper: a deferred promise that never resolves on its own — used to simulate a
 // hung fetch. We expose resolve so a test can release it if needed.

@@ -5,7 +5,7 @@
  *
  * WHAT THIS GATE IS FOR. The detector reports the drift that exists; a gate has to answer a
  * narrower question — did THIS change make it worse? Blocking on the whole report would be
- * red on every run (there are 61 findings on `main` today) and a permanently-red gate just
+ * red on every run (there are 63 findings on `main` today) and a permanently-red gate just
  * teaches everyone to click through it. So the shape here is the one this org already runs
  * in its infrastructure repo: block only a PASS->FAIL regression the change introduces,
  * warn about everything that was already broken, and never block on a pre-existing finding.

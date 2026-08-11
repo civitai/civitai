@@ -92,7 +92,15 @@ export function useOwnedSticker() {
  */
 export function useStickerCosmetics(ids: number[]) {
   const chunks = useMemo(() => {
-    const unique = [...new Set(ids)].sort((a, b) => a - b);
+    // **Insertion order, not sorted.** Sorting makes a key independent of the
+    // order ids arrive in, which is worth a little when two components ask for
+    // the same set differently ordered — and costs a lot to the one consumer
+    // whose list GROWS. A feed appends older, lower cosmetic ids as it pages;
+    // sorted, each one lands mid-list, shifts every chunk boundary after it,
+    // changes every chunk key, and refetches the whole surface's artwork. Below
+    // 100 distinct stickers there is one chunk and no boundary to shift, so this
+    // only bites the case that matters: a long scroll once stickers are popular.
+    const unique = [...new Set(ids)];
     const result: number[][] = [];
     for (let i = 0; i < unique.length; i += STICKER_FETCH_CHUNK)
       result.push(unique.slice(i, i + STICKER_FETCH_CHUNK));
@@ -102,7 +110,13 @@ export function useStickerCosmetics(ids: number[]) {
 
   const queries = trpc.useQueries((t) =>
     chunks.map((chunk) =>
-      t.cosmetic.getSticker({ ids: chunk }, { staleTime: Infinity, gcTime: Infinity })
+      // Sticker artwork is immutable once published, so it never goes stale. It
+      // is not kept forever, though: a growing list mints a new key per page and
+      // the superseded ones are all subsets of the newest, so `gcTime: Infinity`
+      // would accumulate every intermediate list for the length of a session —
+      // the same never-leaves shape this feature keeps producing, in client
+      // memory this time.
+      t.cosmetic.getSticker({ ids: chunk }, { staleTime: Infinity, gcTime: 10 * 60_000 })
     )
   );
 

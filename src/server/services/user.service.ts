@@ -426,6 +426,9 @@ export const isUsernamePermitted = async (username: string): Promise<boolean> =>
 /**
  * Mod-driven: clear public profile fields (location/bio/message) on UserProfile.
  * No-op if no UserProfile row exists yet.
+ *
+ * Clearing bio/message also clears its SFW (civitai.com) override — otherwise the
+ * copy a moderator just removed keeps rendering on the green domain.
  */
 export async function clearUserProfileFields({
   userId,
@@ -437,8 +440,15 @@ export async function clearUserProfileFields({
   if (fields.length === 0) return { updated: false };
   const data: Prisma.UserProfileUpdateInput = {};
   if (fields.includes('location')) data.location = null;
-  if (fields.includes('bio')) data.bio = null;
-  if (fields.includes('message')) data.message = null;
+  if (fields.includes('bio')) {
+    data.bio = null;
+    data.sfwBio = null;
+  }
+  if (fields.includes('message')) {
+    data.message = null;
+    data.sfwMessage = null;
+    data.sfwMessageAddedAt = null;
+  }
   const result = await dbWrite.userProfile.updateMany({ where: { userId }, data });
   return { updated: result.count > 0 };
 }
@@ -457,7 +467,7 @@ export async function setUserMuted({ userId, muted }: { userId: number; muted: b
     updateSource: muted ? 'retool:mute' : 'retool:unmute',
   });
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
-  await invalidateSession(userId);
+  await invalidateSession(userId, 'moderation');
   return user;
 }
 
@@ -487,7 +497,7 @@ export async function setUserModerator({
     updateSource: 'retool:setModerator',
   });
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
-  await invalidateSession(userId);
+  await invalidateSession(userId, 'admin');
   return user;
 }
 
@@ -548,7 +558,7 @@ export async function forceUpdateUserIdentity({
   }
 
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
-  await invalidateSession(userId);
+  await invalidateSession(userId, 'moderation');
 
   return { updated: true, user };
 }
@@ -591,7 +601,7 @@ export const updateUserById = async ({
     data.browsingLevel !== undefined ||
     data.autoplayGifs !== undefined
   ) {
-    await userSettingsCache.bust([id]);
+    await userSettingsCache().bust([id]);
   }
 
   if (data.email && user.paddleCustomerId) {
@@ -1070,7 +1080,7 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
   await cancelSubscriptionPlan({ userId: user.id }).catch((error) =>
     logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
   );
-  await invalidateSession(id);
+  await invalidateSession(id, 'moderation');
 
   return result;
 };
@@ -1769,7 +1779,7 @@ export const toggleBan = async ({
     updateSource: 'toggleBan',
   });
 
-  await invalidateSession(id);
+  await invalidateSession(id, 'ban');
 
   if (!bannedAt) {
     // Run cleanup operations in parallel groups
@@ -1950,7 +1960,7 @@ export const toggleContestBan = async ({
     updateSource: 'toggleContestBan',
   });
 
-  await refreshSession(id);
+  await refreshSession(id, { caller: 'ban' });
 
   return updatedUser;
 };
@@ -2555,7 +2565,7 @@ export async function updateContentSettings({
       data: { blurNsfw, showNsfw, browsingLevel, autoplayGifs },
     });
     userUpdateCounter?.inc({ location: 'user.service:updateUserContentSettings' });
-    await userSettingsCache.bust([userId]);
+    await userSettingsCache().bust([userId]);
   }
   if (Object.keys(data).length > 0 || (domain === 'red' && browsingLevel !== undefined)) {
     const settings = await getUserSettings(userId);
@@ -2569,7 +2579,7 @@ export async function updateContentSettings({
   // Otherwise the fire-and-forget can race the next API call / session read
   // and hand back a stale session.user, which then overrides the user's
   // toggle client-side via BrowserSettingsProvider's smart-merge.
-  await refreshSession(userId).catch((err) => {
+  await refreshSession(userId, { caller: 'profile' }).catch((err) => {
     console.error('Failed to refresh session for user', userId, err);
   });
 }
@@ -2600,39 +2610,50 @@ type CachedUserSettings = UserSettingsSchema & {
   autoplayGifs: boolean | null;
 };
 
-const userSettingsCache = createCachedObject<CachedUserSettings>({
-  key: REDIS_KEYS.USER.SETTINGS,
-  idKey: 'userId',
-  ttl: CacheTTL.hour * 4,
-  staleWhileRevalidate: false,
-  lookupFn: async (ids) => {
-    const rows = await dbWrite.$queryRaw<
-      {
-        id: number;
-        settings: UserSettingsSchema | null;
-        showNsfw: boolean;
-        blurNsfw: boolean;
-        autoplayGifs: boolean | null;
-      }[]
-    >`
+// Built on first USE, not on import. A module-scope createCachedObject() runs during module
+// evaluation, so any suite that wholesale-mocks `~/server/utils/cache-helpers` or
+// `~/server/redis/client` and merely reaches this service transitively fails at COLLECTION —
+// before a single test runs, with nothing in the failing suite naming this file.
+function createUserSettingsCache() {
+  return createCachedObject<CachedUserSettings>({
+    key: REDIS_KEYS.USER.SETTINGS,
+    idKey: 'userId',
+    ttl: CacheTTL.hour * 4,
+    staleWhileRevalidate: false,
+    lookupFn: async (ids) => {
+      const rows = await dbWrite.$queryRaw<
+        {
+          id: number;
+          settings: UserSettingsSchema | null;
+          showNsfw: boolean;
+          blurNsfw: boolean;
+          autoplayGifs: boolean | null;
+        }[]
+      >`
     SELECT id, settings, "showNsfw", "blurNsfw", "autoplayGifs"
     FROM "User"
     WHERE id IN (${Prisma.join(ids)})
   `;
-    return Object.fromEntries(
-      rows.map((x) => [
-        x.id,
-        {
-          userId: x.id,
-          ...((x.settings ?? {}) as UserSettingsSchema),
-          showNsfw: x.showNsfw,
-          blurNsfw: x.blurNsfw,
-          autoplayGifs: x.autoplayGifs,
-        },
-      ])
-    );
-  },
-});
+      return Object.fromEntries(
+        rows.map((x) => [
+          x.id,
+          {
+            userId: x.id,
+            ...((x.settings ?? {}) as UserSettingsSchema),
+            showNsfw: x.showNsfw,
+            blurNsfw: x.blurNsfw,
+            autoplayGifs: x.autoplayGifs,
+          },
+        ])
+      );
+    },
+  });
+}
+
+let userSettingsCacheInstance: ReturnType<typeof createUserSettingsCache> | undefined;
+function userSettingsCache() {
+  return (userSettingsCacheInstance ??= createUserSettingsCache());
+}
 
 /**
  * JSON-settings-only view. Used by internal callers (e.g. setUserSetting) that
@@ -2640,7 +2661,7 @@ const userSettingsCache = createCachedObject<CachedUserSettings>({
  * User-column fields.
  */
 export async function getUserSettings(id: number): Promise<UserSettingsSchema> {
-  const result = await userSettingsCache.fetch([id]);
+  const result = await userSettingsCache().fetch([id]);
   const raw = result[id];
   if (!raw) return {};
   const { userId, showNsfw, blurNsfw, autoplayGifs, ...settings } = raw;
@@ -2653,7 +2674,7 @@ export async function getUserSettings(id: number): Promise<UserSettingsSchema> {
  * client can patch all toggles in a single React Query cache.
  */
 export async function getUserContentSettings(id: number): Promise<UserContentSettings> {
-  const result = await userSettingsCache.fetch([id]);
+  const result = await userSettingsCache().fetch([id]);
   const raw = result[id];
   if (!raw) return {};
   const { userId, ...rest } = raw;
@@ -2690,7 +2711,7 @@ export async function setUserSetting(userId: number, settings: UserSettingsInput
     userUpdateCounter?.inc({ location: 'user.service:setUserSetting:remove' });
   }
 
-  await userSettingsCache.bust([userId]);
+  await userSettingsCache().bust([userId]);
   // Keep the read-time metric-privacy defaults cache consistent with a settings write
   // (the `hideModel*` flags live in `settings`); TTL backstops any other writer.
   await bustUserMetricPrivacyDefaultsCache(userId);
@@ -2702,6 +2723,6 @@ export async function setDismissedAlerts(userId: number, alertIds: string[]) {
     JSON.stringify(alertIds),
     userId
   );
-  await userSettingsCache.bust([userId]);
+  await userSettingsCache().bust([userId]);
 }
 // #endregion

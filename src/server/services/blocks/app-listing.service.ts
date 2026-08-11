@@ -372,10 +372,33 @@ export async function getListingPreviewForReview(args: {
   return { card: projectListingCard(row), detail: projectListingDetail(row) };
 }
 
-/** Project a hydrated listing row → the PUBLIC detail DTO (allowlist). */
-export function projectListingDetail(row: HydratedListing): ListingDetail {
+/**
+ * Project a hydrated listing row → the PUBLIC detail DTO (allowlist).
+ *
+ * `collaborators` is passed IN rather than selected on `row`, and that is deliberate
+ * on two counts:
+ *   1. INERTNESS. `app_collaborators` is a MANUAL-APPLY table. A nested Prisma select
+ *      on it would make the whole public store-detail read fail with P2021 until a
+ *      human applies the migration — turning an additive feature into an outage. The
+ *      caller resolves them through `safeCollaboratorQuery`, which degrades to `[]`.
+ *   2. PURITY. This projection stays synchronous and IO-free, so it remains directly
+ *      unit-testable (which is how the public-projection allowlist is pinned).
+ *
+ * 🔴 The chips are built by the SAME `creatorChip` allowlist as `creator` — exactly
+ * `{id, username, image}`, nothing else, ever.
+ * `app-collaborator.public-projection.test.ts` asserts the projected key set is exactly
+ * those three even when the input user row carries extra fields (email, bannedAt, …), so
+ * a wider `select` upstream cannot leak through this seam.
+ */
+export function projectListingDetail(
+  row: HydratedListing,
+  collaborators: Array<{ id: number; username: string | null; image: string | null }> = []
+): ListingDetail {
   const recommend = recommendRollup(row.metric);
   return {
+    collaborators: collaborators
+      .map((u) => creatorChip(u))
+      .filter((c): c is ListingCreatorChip => c !== null),
     id: row.id,
     serialId: row.serialId,
     slug: row.slug,
@@ -664,7 +687,46 @@ export async function getListingDetail(
   // a missing one (mirrors the AppBlock detail's red-only 404).
   if (!redCapable && isMatureContentRating(row.contentRating)) return null;
 
-  return projectListingDetail(row);
+  return projectListingDetail(row, await loadDisplayedCollaboratorChips(row.appBlockId));
+}
+
+/**
+ * Hydrate the PUBLIC collaborator byline for a listing: the ACCEPTED **and**
+ * `displayed` collaborators of its backing AppBlock, projected to the same
+ * `{id, username, image}` allowlist as the creator chip.
+ *
+ * 🔴 CONSENT + OPT-IN, both load-bearing (enforced in `listDisplayedCollaboratorUserIds`):
+ * a PENDING invitee must never appear publicly — otherwise anyone could attach a
+ * stranger's name to their listing simply by inviting them — and an accepted
+ * collaborator who opted out of the byline must not appear either.
+ *
+ * Returns `[]` for a listing with no backing AppBlock (a natively-created offsite
+ * listing), and `[]` when the manual-apply migration has not landed — so the public
+ * read is byte-identical to today until both the table and a seat exist.
+ */
+async function loadDisplayedCollaboratorChips(
+  appBlockId: string | null
+): Promise<Array<{ id: number; username: string | null; image: string | null }>> {
+  if (!appBlockId) return [];
+  const { listDisplayedCollaboratorUserIds } = await import(
+    '~/server/services/blocks/app-access.service'
+  );
+  const userIds = await listDisplayedCollaboratorUserIds(appBlockId);
+  if (userIds.length === 0) return [];
+  // 🔴 EXPLICIT ALLOWLIST at the SELECT, not only at the projection. Two independent
+  // narrowings: nothing but these three columns ever leaves the DB, and `creatorChip`
+  // re-shapes them. Widening either alone cannot leak.
+  const users = await dbRead.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true, username: true, image: true },
+  });
+  // Preserve the seat order (`createdAt asc`) rather than the DB's row order.
+  const byId = new Map(users.map((u: { id: number }) => [u.id, u]));
+  return userIds
+    .map((id) => byId.get(id))
+    .filter(
+      (u): u is { id: number; username: string | null; image: string | null } => u !== undefined
+    );
 }
 
 // ---------------------------------------------------------------------------

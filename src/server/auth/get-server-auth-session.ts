@@ -12,6 +12,7 @@ import { env } from '~/env/server';
 import { isPreview } from '~/env/other';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { getSessionFromBearerToken } from './bearer-token';
+import { observeLegacyDecode } from './session-metrics';
 import {
   getHubSession,
   maybeRollHubCookie,
@@ -103,6 +104,10 @@ export const getServerAuthSession = async ({
   // Upgrade-on-read: migrate this legacy user to a civ-token (+ de-crud the next-auth cookies) for next time.
   // Best-effort; this request is still served from the legacy decode above.
   if (legacy) {
+    // Counted BEFORE the upgrade attempt, and separately from it: an empty upgrade counter cannot
+    // distinguish "no legacy cookies remain" from "this code never runs", and that distinction decides
+    // whether the upgrade-on-read path still matters at all.
+    observeLegacyDecode();
     const legacyToken = req.cookies?.[legacySessionCookieName()];
     const device = req.cookies?.[deviceCookieName()];
     await maybeUpgradeLegacySession(legacyToken, device, res, req.headers.host).catch(() => {});

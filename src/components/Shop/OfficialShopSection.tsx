@@ -71,9 +71,9 @@ export function OfficialShopSection({
             key={shopItem.id}
             item={shopItem}
             sectionItemCreatedAt={createdAt}
-            alreadyOwned={ownedCosmeticIds.has(shopItem.cosmeticId)}
+            alreadyOwned={shopItem.cosmeticId != null && ownedCosmeticIds.has(shopItem.cosmeticId)}
             wishlisted={wishlistedIds.has(shopItem.id)}
-            creator={shopItem.cosmetic.creator}
+            creator={shopItem.cosmetic?.creator ?? shopItem.addedBy}
             viaShopUserId={CIVITAI_SHOP_ATTRIBUTION}
           />
         ))}

@@ -233,6 +233,16 @@ module.exports = {
         'local-rules/no-unloadable-image-fixture': 'error',
       },
     },
+    {
+      // A cursor fake that never returns a terminal cursor makes a reverted bound an
+      // infinite microtask loop, which `testTimeout` cannot interrupt — CI hangs instead
+      // of failing. Test files only: production paging code is bounded by the server,
+      // not by itself. Reasoning and the escape hatch are in eslint-local-rules.js.
+      files: ['**/*.test.ts', '**/*.test.tsx', '**/__tests__/**/*.ts', '**/__tests__/**/*.tsx'],
+      rules: {
+        'local-rules/no-unbounded-paging-fake': 'error',
+      },
+    },
   ],
 
   // No type-aware linting: `parserOptions.project` costs ~40s of program build plus

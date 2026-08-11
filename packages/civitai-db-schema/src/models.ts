@@ -70,7 +70,7 @@ export type MetricTimeframe = "Day" | "Week" | "Month" | "Year" | "AllTime";
 
 export type AssociationType = "Suggested";
 
-export type ReportReason = "TOSViolation" | "NSFW" | "Ownership" | "AdminAttention" | "Claim" | "CSAM" | "Automated" | "Spam";
+export type ReportReason = "TOSViolation" | "NSFW" | "Ownership" | "AdminAttention" | "Claim" | "CSAM" | "Automated" | "Spam" | "StickerPlacement";
 
 export type ReportStatus = "Pending" | "Processing" | "Actioned" | "Unactioned";
 
@@ -593,6 +593,7 @@ export interface User {
   addedCosmeticShopItems?: CosmeticShopItem[];
   purchasedCosmetics?: UserCosmeticShopPurchases[];
   wishlistedCosmeticShopItems?: UserCosmeticShopItemWishlist[];
+  resoldCosmeticShopItems?: UserCosmeticShopItemResale[];
   createdCosmetics?: Cosmetic[];
   donationGoals?: DonationGoal[];
   donations?: Donation[];
@@ -655,7 +656,17 @@ export interface User {
   appListingReportsReported?: AppListingReport[];
   appListingReportsResolved?: AppListingReport[];
   appListingModerationEvents?: AppListingModerationEvent[];
+  appCollaboratorSeats?: AppCollaborator[];
+  appCollaboratorInvitesSent?: AppCollaborator[];
+  appOwnershipEventsActed?: AppOwnershipEvent[];
+  appOwnershipEventsTargeted?: AppOwnershipEvent[];
+  appOwnershipTransfersFrom?: AppOwnershipTransfer[];
+  appOwnershipTransfersTo?: AppOwnershipTransfer[];
   targetedAnnouncements?: AnnouncementUser[];
+  placementSuspension?: PlacementSuspension | null;
+  placementsReceived?: Placement[];
+  placementsMade?: Placement[];
+  placementsSold?: Placement[];
 }
 
 export interface CustomerSubscription {
@@ -1419,6 +1430,7 @@ export interface Image {
   collections?: Collection[];
   connections?: ImageConnection[];
   UserProfile?: UserProfile[];
+  userProfileSfwCover?: UserProfile[];
   clubCover?: Club[];
   clubHeader?: Club[];
   clubAvatar?: Club[];
@@ -1873,6 +1885,9 @@ export interface AppBlock {
   userScopeGrants?: AppUserScopeGrant[];
   reviews?: AppBlockReview[];
   appListing?: AppListing | null;
+  collaborators?: AppCollaborator[];
+  ownershipEvents?: AppOwnershipEvent[];
+  ownershipTransfers?: AppOwnershipTransfer[];
 }
 
 export interface AppBlockReview {
@@ -1888,6 +1903,49 @@ export interface AppBlockReview {
   tosViolation: boolean;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface AppCollaborator {
+  appBlockId: string;
+  appBlock?: AppBlock;
+  userId: number;
+  user?: User;
+  role: string;
+  status: string;
+  displayed: boolean;
+  invitedBy: number;
+  inviter?: User;
+  lastNotifiedAt: Date | null;
+  createdAt: Date;
+  respondedAt: Date | null;
+}
+
+export interface AppOwnershipEvent {
+  id: string;
+  appBlockId: string | null;
+  appBlock?: AppBlock | null;
+  slug: string;
+  action: string;
+  actorUserId: number | null;
+  actor?: User | null;
+  targetUserId: number | null;
+  target?: User | null;
+  metadata: JsonValue | null;
+  createdAt: Date;
+}
+
+export interface AppOwnershipTransfer {
+  id: string;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  fromUserId: number;
+  fromUser?: User;
+  toUserId: number;
+  toUser?: User;
+  status: string;
+  expiresAt: Date;
+  createdAt: Date;
+  respondedAt: Date | null;
 }
 
 export interface AppBlockPublishRequest {
@@ -2625,7 +2683,9 @@ export interface Cosmetic {
   creator?: User | null;
   UserCosmetic?: UserCosmetic[];
   purchases?: UserCosmeticShopPurchases[];
+  purchaseComponents?: UserCosmeticShopPurchaseCosmetic[];
   cosmeticShopItems?: CosmeticShopItem[];
+  packMemberships?: CosmeticShopItemCosmetic[];
 }
 
 export interface UserCosmetic {
@@ -2660,8 +2720,8 @@ export interface CosmeticShopSection {
 
 export interface CosmeticShopItem {
   id: number;
-  cosmeticId: number;
-  cosmetic?: Cosmetic;
+  cosmeticId: number | null;
+  cosmetic?: Cosmetic | null;
   unitAmount: number;
   addedById: number | null;
   addedBy?: User | null;
@@ -2681,6 +2741,27 @@ export interface CosmeticShopItem {
   purchases?: UserCosmeticShopPurchases[];
   sections?: CosmeticShopSectionItem[];
   wishlists?: UserCosmeticShopItemWishlist[];
+  resales?: UserCosmeticShopItemResale[];
+  members?: CosmeticShopItemCosmetic[];
+}
+
+export interface UserCosmeticShopItemResale {
+  userId: number;
+  user?: User;
+  shopItemId: number;
+  shopItem?: CosmeticShopItem;
+  sellerShare: number;
+  index: number;
+  createdAt: Date;
+}
+
+export interface CosmeticShopItemCosmetic {
+  shopItemId: number;
+  shopItem?: CosmeticShopItem;
+  cosmeticId: number;
+  cosmetic?: Cosmetic;
+  index: number;
+  floorAmount: number;
 }
 
 export interface UserCosmeticShopItemWishlist {
@@ -2703,14 +2784,24 @@ export interface CosmeticShopSectionItem {
 export interface UserCosmeticShopPurchases {
   userId: number;
   user?: User;
-  cosmeticId: number;
-  cosmetic?: Cosmetic;
+  cosmeticId: number | null;
+  cosmetic?: Cosmetic | null;
   shopItemId: number;
   shopItem?: CosmeticShopItem;
   unitAmount: number;
   purchasedAt: Date;
   buzzTransactionId: string;
   refunded: boolean;
+  meta: JsonValue | null;
+  components?: UserCosmeticShopPurchaseCosmetic[];
+}
+
+export interface UserCosmeticShopPurchaseCosmetic {
+  buzzTransactionId: string;
+  purchase?: UserCosmeticShopPurchases;
+  cosmeticId: number;
+  cosmetic?: Cosmetic;
+  unitAmount: number;
   meta: JsonValue | null;
 }
 
@@ -4443,6 +4534,11 @@ export interface UserProfile {
   bio: string | null;
   message: string | null;
   messageAddedAt: Date | null;
+  sfwCoverImageId: number | null;
+  sfwCoverImage?: Image | null;
+  sfwBio: string | null;
+  sfwMessage: string | null;
+  sfwMessageAddedAt: Date | null;
   location: string | null;
   nsfw: boolean;
   privacySettings: JsonValue;
@@ -5133,6 +5229,64 @@ export interface Outbox {
   createdAt: Date | null;
   details: JsonValue | null;
   attempts: number | null;
+}
+
+export interface PlacementSpace {
+  id: number;
+  surface: string;
+  entityType: string;
+  entityId: number;
+  mode: string;
+  price: number | null;
+  settings: JsonValue;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Placement {
+  id: number;
+  surface: string;
+  targetType: string;
+  targetId: number;
+  ownerId: number;
+  owner?: User;
+  placerId: number;
+  placer?: User;
+  data: JsonValue;
+  status: string;
+  removedBy: string | null;
+  amount: number;
+  sellerId: number | null;
+  seller?: User | null;
+  feeWaived: boolean;
+  createdAt: Date;
+  expiresAt: Date | null;
+  resolvedAt: Date | null;
+  resolvedById: number | null;
+  takenDownAt: Date | null;
+  takenDownById: number | null;
+  transactions?: PlacementTransaction[];
+}
+
+export interface PlacementTransaction {
+  id: number;
+  placementId: number;
+  placement?: Placement;
+  kind: string;
+  transactionId: string | null;
+  amount: number;
+  attempts: number;
+  lastAttemptAt: Date | null;
+  lastError: string | null;
+  createdAt: Date;
+}
+
+export interface PlacementSuspension {
+  userId: number;
+  user?: User;
+  reason: string | null;
+  createdAt: Date;
+  createdById: number | null;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

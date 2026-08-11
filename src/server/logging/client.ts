@@ -5,13 +5,38 @@
 import { TRPCError } from '@trpc/server';
 import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { createAxiomLogger, safeError } from '@civitai/axiom/client';
+import { structuredLogSink } from '~/server/logging/structured-log-sink';
 import { env } from '~/env/server';
 
 // The build guard is a Next.js concern, so it lives here in the app shim — not in
 // the app-agnostic @civitai/axiom package. Skip the client during `next build`.
 const noopLog = async (_data: MixedObject, _datastream?: string) => {};
 
-export const logToAxiom = env.IS_BUILD ? noopLog : createAxiomLogger().logToAxiom;
+// 🔴 THIS MODULE IS IN THE **CLIENT** BUNDLE. It looks server-only and is not:
+// `src/pages/_app.tsx` → `~/server/services/system-cache` → `~/server/redis/fail-open-log`
+// reaches it, so anything imported here at module scope is bundled for the browser too.
+// A static `import { emitOtelLog } from '@civitai/telemetry/otel-logs'` here pulled
+// prom-client into the browser graph and broke `next build` with
+// `Can't resolve 'cluster' / 'fs' / 'v8'`. Nothing else catches that — typecheck, eslint
+// and both vitest projects all stayed green, because only the bundler walks this edge.
+//
+// So the OTel sink is REGISTERED, not imported: `src/instrumentation.node.ts` (server-only
+// by construction) calls `setStructuredLogSink(emitOtelLog)` at boot. (That import is
+// `~/server/logging/structured-log-sink`, which has no runtime imports of its own, so it
+// adds no edge to the client graph either.)
+//
+// 🔴 The sink object is NOT declared here, and must not be. The bundler emits THIS module
+// 14 times into one server build (measured; see the header of ./structured-log-sink), so a
+// module-scope `const sink = {}` here is 14 separate objects and the single boot-time
+// `setStructuredLogSink()` call reaches exactly one of them — which is precisely the bug
+// that made the OTel bridge deliver 1.3% of records. It is imported from the
+// globalThis-pinned singleton instead, which every copy shares by construction.
+//
+// The sink is read per call from that stable object, so registering it after the logger
+// is built still takes effect. Pinned by a test in @civitai/axiom.
+export const logToAxiom = env.IS_BUILD
+  ? noopLog
+  : createAxiomLogger({}, structuredLogSink).logToAxiom;
 export { safeError };
 
 /**

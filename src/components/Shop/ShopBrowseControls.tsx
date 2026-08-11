@@ -5,8 +5,8 @@ import type { ShopFilters } from '~/components/CosmeticShop/ShopFiltersDropdown'
 import { ShopFiltersDropdown } from '~/components/CosmeticShop/ShopFiltersDropdown';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { CosmeticShopSort } from '~/server/common/enums';
+import type { ShopFilterType } from '~/server/schema/creator-shop.schema';
 import { COSMETIC_SHOP_PAGE_SIZES } from '~/shared/constants/cosmetic-shop.constants';
-import type { CosmeticType } from '~/shared/utils/prisma/enums';
 
 const sortOptions = Object.values(CosmeticShopSort).map((value) => ({ label: value, value }));
 const pageSizeOptions = COSMETIC_SHOP_PAGE_SIZES.map((value) => ({
@@ -32,7 +32,7 @@ export function ShopBrowseControls({
   onPageSizeChange: (pageSize: number) => void;
   filters: ShopFilters;
   setFilters: Dispatch<SetStateAction<ShopFilters>>;
-  availableTypes?: CosmeticType[];
+  availableTypes?: ShopFilterType[];
 }) {
   return (
     <Group gap={8} justify="flex-end" wrap="nowrap">

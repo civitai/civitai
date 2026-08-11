@@ -536,7 +536,11 @@ const generatorSubmitSchema = z.object({
     // (civitai/civitai-orchestration#229 WorkflowTemplate.ExternalId) so
     // tampered clients get rejected at the trpc layer instead of bloating
     // the trackAction body before the orchestrator rejects.
-    externalId: z.string().max(128).regex(/^[A-Za-z0-9_-]+$/).optional(),
+    externalId: z
+      .string()
+      .max(128)
+      .regex(/^[A-Za-z0-9_-]+$/)
+      .optional(),
   }),
 });
 

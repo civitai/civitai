@@ -3,6 +3,7 @@ import { comicNotifications } from '~/server/notifications/comics.notifications'
 import { articleRatingReviewNotifications } from '~/server/notifications/article-rating-review.notifications';
 import { articleUnpublishNotifications } from '~/server/notifications/article-unpublish.notifications';
 import { appBlockNotifications } from '~/server/notifications/app-block.notifications';
+import { appCollaboratorNotifications } from '~/server/notifications/app-collaborator.notifications';
 import { appListingNotifications } from '~/server/notifications/app-listing.notifications';
 import { auctionNotifications } from '~/server/notifications/auction.notifications';
 import type { BareNotification } from '~/server/notifications/base.notifications';
@@ -13,6 +14,7 @@ import { challengeNotifications } from '~/server/notifications/challenge.notific
 import { collectionNotifications } from '~/server/notifications/collection.notifications';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
 import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop.notifications';
+import { placementNotifications } from '~/server/notifications/placement.notifications';
 import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
 import { featuredNotifications } from '~/server/notifications/featured.notifications';
 import { followNotifications } from '~/server/notifications/follow.notifications';
@@ -45,10 +47,12 @@ export const notificationProcessors = {
   ...articleUnpublishNotifications,
   ...appListingNotifications,
   ...appBlockNotifications,
+  ...appCollaboratorNotifications,
   ...articleRatingReviewNotifications,
   ...reportNotifications,
   ...featuredNotifications,
   ...bountyNotifications,
+  ...placementNotifications,
   ...buzzNotifications,
   ...collectionNotifications,
   ...imageNotifications,

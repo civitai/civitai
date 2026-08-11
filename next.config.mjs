@@ -73,6 +73,10 @@ export default defineNextConfig(
     // emits those warnings — an empty config just acknowledges we're on Turbopack
     // and silences Next's "webpack config with no turbopack config" build error.
     turbopack: {},
+    // Per-branch build dir. Turbopack's dev filesystem cache (~8GB) is invalidated
+    // wholesale by an in-place branch switch, so the dev daemon points each branch at
+    // its own dir and keeps them warm instead of purging. Unset -> stock `.next`.
+    distDir: process.env.NEXT_DIST_DIR || '.next',
     allowedDevOrigins: ['civitai-dev.green', 'civitai-dev.blue', 'civitai-dev.red'],
     // Retained for the `next build --webpack` fallback path; ignored under Turbopack.
     webpack: (config) => {
@@ -147,6 +151,7 @@ export default defineNextConfig(
       '@civitai/redis',
       '@civitai/clickhouse',
       '@civitai/axiom',
+      '@civitai/flipt',
       '@civitai/telemetry',
       '@civitai/auth',
       '@civitai/notifications',
@@ -156,6 +161,18 @@ export default defineNextConfig(
       'redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series',
       '@opentelemetry/sdk-node', '@opentelemetry/instrumentation', '@opentelemetry/instrumentation-http',
       '@opentelemetry/instrumentation-redis', '@prisma/instrumentation',
+      // Bundling this gives the app layer its own copy of the Prisma runtime while
+      // `dbRead`/`dbWrite` (reached through the transpiled `@civitai/db-schema`) hold a
+      // second one. `$queryRaw` identifies its template argument with `instanceof Sql`,
+      // so a `Prisma.join()` built by the other copy fails that check and is bound as a
+      // plain value -> `operator does not exist: integer = jsonb`.
+      '@prisma/client',
+      // NOTE: the logs-pipeline packages (@opentelemetry/api, /api-logs, /sdk-logs,
+      // /exporter-logs-otlp-proto) are deliberately NOT externalized here. Adding them
+      // fails the image build, so it needs to be its own change with a full build as its
+      // gate. The logs bridge does not depend on it: it binds to the Logs API lazily, so
+      // a second bundled module copy is survivable, and `no_provider` on its skip counter
+      // is the runtime signal if one ever appears.
       '@pyroscope/nodejs', '@datadog/pprof',
     ],
     // Several entry points read markdown from src/static-content at runtime via fs
@@ -203,7 +220,14 @@ export default defineNextConfig(
       // Trade: ~72% fewer emitted server chunks and roughly half the server chunk bytes,
       // in exchange for ~+8% CI build time and ~+33% peak builder RSS. Measurements live
       // in the PR rather than here, so they don't rot when Next's chunker changes.
-      turbopackServerSideNestedAsyncChunking: true,
+      //
+      // Off because the builder's memory ceiling is now enforced and that ~+33% peak RSS is
+      // what puts the release build over it. Re-enable only with a measured peak-RSS margin.
+      turbopackServerSideNestedAsyncChunking: false,
+      // Not the same as omitting it: Next 16.3.0 defaults this to true, and turbopack-build
+      // derives `dependencyTracking` from it, so the flag governs what turbo-tasks retains in
+      // memory and not just what lands on disk.
+      turbopackFileSystemCacheForBuild: false,
       optimizePackageImports: [
         '@civitai/client',
         './src/libs/form',

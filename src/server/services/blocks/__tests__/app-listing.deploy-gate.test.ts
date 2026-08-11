@@ -20,6 +20,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockDbRead } = vi.hoisted(() => ({
   mockDbRead: {
+    // App Listing COLLABORATORS: `getAppListingDetail` now hydrates the PUBLIC BYLINE
+    // (accepted + displayed collaborators) alongside the listing. Both reads go through
+    // `safeCollaboratorQuery`, which swallows ONLY the missing-TABLE error — so an
+    // absent mock surfaces as a TypeError instead of being silently absorbed. Empty
+    // here: these suites assert the pre-collaborator projection, which must be
+    // byte-identical when an app has no seats.
+    appCollaborator: { findFirst: vi.fn(async () => null), findMany: vi.fn(async () => []) },
+    user: { findMany: vi.fn(async () => []) },
     $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
     appListing: {
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),

@@ -15,26 +15,33 @@ import { isAdminPath, isAdminRequest } from '$lib/server/auth/admin';
 
 const routesDir = resolve(fileURLToPath(new URL('../../..', import.meta.url)), 'routes');
 
-function pageServerFiles(dir: string): string[] {
+function routeFiles(dir: string, basename: string): string[] {
   const found: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
       if (entry.name === 'node_modules' || entry.name === '__tests__') continue;
-      found.push(...pageServerFiles(full));
-    } else if (entry.name === '+page.server.ts') {
+      found.push(...routeFiles(full, basename));
+    } else if (entry.name === basename) {
       found.push(full);
     }
   }
   return found;
 }
 
+const routeId = (file: string) => `/${relative(routesDir, file).split(sep).slice(0, -1).join('/')}`;
+
 /** Route ids (`/admin/roles/[role]`) for every page that exports form actions. */
 function actionRouteIds(): string[] {
-  return pageServerFiles(routesDir)
+  return routeFiles(routesDir, '+page.server.ts')
     .filter((file) => /^export const actions\b/m.test(readFileSync(file, 'utf8')))
-    .map((file) => `/${relative(routesDir, file).split(sep).slice(0, -1).join('/')}`)
+    .map(routeId)
     .sort();
+}
+
+/** Route ids for every `+server.ts` endpoint, whether or not it is privileged. */
+function endpointRouteIds(): string[] {
+  return routeFiles(routesDir, '+server.ts').map(routeId).sort();
 }
 
 // Routes whose form actions are reachable without a hub-admin session BY DESIGN — they are the
@@ -48,6 +55,47 @@ const ADMIN_ACTION_ROUTES = [
   '/admin/roles',
   '/admin/roles/[role]',
   '/admin/spoke-domains',
+];
+
+/**
+ * Every `+server.ts` in the app. The form-action ledger above scans only `+page.server.ts`, so it cannot
+ * see endpoints at all — a new privileged one used to land with no signal whatsoever.
+ *
+ * The `/admin` gate in hooks.server.ts covers an endpoint only if it lives under `/admin`, and none do —
+ * each one below carries its own check instead. So this list is deliberately EVERY endpoint, not the
+ * privileged subset: which ones are privileged is the human judgement this ledger exists to force. Do not
+ * "tidy" it down to the sensitive-looking ones — that reintroduces the blind spot it closes.
+ */
+const ENDPOINT_ROUTES = [
+  '/.well-known/jwks.json',
+  '/.well-known/openid-configuration',
+  '/api/auth/accounts',
+  '/api/auth/dev/login',
+  '/api/auth/identity',
+  '/api/auth/impersonate',
+  '/api/auth/impersonate/exit',
+  '/api/auth/jwks',
+  '/api/auth/oauth/authorize',
+  '/api/auth/oauth/device',
+  '/api/auth/oauth/device-approve',
+  '/api/auth/oauth/device-info',
+  '/api/auth/oauth/device-token',
+  '/api/auth/oauth/legacy-exchange',
+  '/api/auth/oauth/revoke',
+  '/api/auth/oauth/session',
+  '/api/auth/oauth/token',
+  '/api/auth/oauth/userinfo',
+  '/api/auth/providers',
+  '/api/auth/refresh',
+  '/api/auth/switch',
+  '/api/health',
+  '/discord/link-role',
+  '/favicon.svg',
+  '/login/[provider]',
+  '/login/[provider]/callback',
+  '/login/email/verify',
+  '/logout',
+  '/metrics',
 ];
 
 describe('hub form-action route ledger', () => {
@@ -82,5 +130,32 @@ describe('hub form-action route ledger', () => {
     expect(isAdminPath('/administrators')).toBe(false);
     expect(isAdminPath('/login')).toBe(false);
     expect(isAdminPath('/')).toBe(false);
+  });
+});
+
+describe('hub +server.ts endpoint ledger', () => {
+  const discovered = endpointRouteIds();
+
+  // Positive control: a scanner that silently found nothing would make every assertion below vacuous.
+  it('discovers the endpoints on disk', () => {
+    expect(discovered.length).toBeGreaterThan(0);
+    expect(discovered).toContain('/api/auth/impersonate');
+  });
+
+  it('is the exact set of endpoints in the app', () => {
+    expect(discovered).toEqual([...ENDPOINT_ROUTES].sort());
+  });
+
+  it('routes any endpoint under /admin through the guard matcher', () => {
+    // The set is empty today, which would make the loop below vacuous — so prove the mechanism directly:
+    // an endpoint placed under /admin IS matched, by both arms, and one outside it is not.
+    expect(isAdminRequest('/admin/tools', null)).toBe(true);
+    expect(isAdminRequest('/', '/admin/tools')).toBe(true);
+    expect(isAdminRequest('/api/auth/impersonate', '/api/auth/impersonate')).toBe(false);
+
+    for (const id of discovered.filter((r) => r.startsWith('/admin'))) {
+      expect(isAdminRequest(id.replace(/\[[^\]]+\]/g, 'x'), null)).toBe(true);
+      expect(isAdminRequest('/', id)).toBe(true);
+    }
   });
 });

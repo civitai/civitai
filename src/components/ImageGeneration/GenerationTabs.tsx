@@ -13,7 +13,7 @@ import { Queue } from './Queue';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
-import React, { useDeferredValue, useEffect, useMemo } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/router';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { GeneratedRequestsProvider } from '~/components/ImageGeneration/GeneratedRequestsProvider';
@@ -62,8 +62,15 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
   const isImageFeedSeparate = isGeneratePage && !fullScreen;
 
   const view = useGenerationPanelStore((state) => state.view);
+  // In the separate-feed layout 'generate' has no tab of its own, so a tool that
+  // sets it has to be bounced back — to whichever panel the user was on, not 'queue'.
+  const lastPanelViewRef = useRef<Exclude<GenerationPanelView, 'generate'>>('queue');
   useEffect(() => {
-    if (isImageFeedSeparate && view === 'generate') generationGraphPanel.setView('queue');
+    if (view !== 'generate') {
+      lastPanelViewRef.current = view;
+      return;
+    }
+    if (isImageFeedSeparate) generationGraphPanel.setView(lastPanelViewRef.current);
   }, [isImageFeedSeparate, view]);
 
   // Perf experiment: defer the generation-tab-switch remount to fix mobile INP.
@@ -160,13 +167,7 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
               data={tabEntries.map(([key, { Icon, label }]) => ({
                 label: (
                   <>
-                    <Tooltip
-                      label={label}
-                      position="bottom"
-                      color="dark"
-                      openDelay={200}
-                      offset={10}
-                    >
+                    <Tooltip label={label} position="bottom" openDelay={200} offset={10}>
                       <div data-tour={`gen:${key}`} className="flex items-center justify-center">
                         <Icon size={16} />
                       </div>

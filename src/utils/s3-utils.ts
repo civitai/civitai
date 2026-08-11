@@ -513,15 +513,71 @@ export async function getUploadPartUrl({
   return { url };
 }
 
+/**
+ * Outcome of a single HeadObject probe against an explicit `bucket` + `key`.
+ *
+ * 🔴 THREE states, not two. `absent` means the bucket ANSWERED that the key is not
+ * there (404/NotFound); `unknown` means the bucket could not be consulted at all
+ * (missing/rotated credentials, a 403, a network blip, an abort). A caller that
+ * rejects on absence MUST treat `unknown` as "don't know" and fail open — collapsing
+ * it into `absent` turns an infrastructure hiccup into a user-facing rejection.
+ *
+ * `size` is the object's `ContentLength`, or `null` when the backend did not report
+ * one. `null` is "size unknown", NOT "size zero" — a size check must not fire on it.
+ */
+export type ObjectHeadResult =
+  | { status: 'present'; size: number | null }
+  | { status: 'absent' }
+  | { status: 'unknown' };
+
+/**
+ * HeadObject probe against an explicit bucket + key, returning the object's size as
+ * well as its presence.
+ *
+ * {@link objectExists} is the boolean view of this and delegates to it, so the
+ * not-found classification lives in exactly one place. Prefer this one when the
+ * caller cares whether the object has any bytes: presence alone cannot tell a
+ * finalized object from an empty one.
+ *
+ * 🔴 Never throws. Resolving the client is inside the try, so an unconfigured
+ * environment lands on `unknown` rather than propagating — a probe used to GUARD a
+ * working code path must not be able to fail that path by its own absence.
+ *
+ * 🔴 `abortSignal` is how a caller on a user-facing path bounds this. The client is
+ * built with SDK-default retries and no request timeout, so an unbounded probe
+ * against a degraded backend turns a guard into a hang. As documented on
+ * {@link checkFileExists}, the signal bounds each network attempt but is not a
+ * wall-clock cap: the SDK sleeps between retries on a non-abort-aware timer, so
+ * worst-case wall time is the budget plus one backoff. An abort surfaces as a plain
+ * `AbortError`, which is not a not-found shape, so it lands on `unknown` and the
+ * caller fails open like any other "could not consult the bucket" outcome.
+ */
+export async function headObject(
+  bucket: string,
+  key: string,
+  s3: S3Client | null = null,
+  { abortSignal }: { abortSignal?: AbortSignal } = {}
+): Promise<ObjectHeadResult> {
+  try {
+    if (!s3) s3 = getS3Client();
+    const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }), {
+      abortSignal,
+    });
+    return {
+      status: 'present',
+      size: typeof head?.ContentLength === 'number' ? head.ContentLength : null,
+    };
+  } catch (e) {
+    return isNotFoundError(e) ? { status: 'absent' } : { status: 'unknown' };
+  }
+}
+
 /** `null` when the bucket couldn't be consulted, so callers can tell that from a real miss. */
 export async function objectExists(bucket: string, key: string, s3: S3Client | null = null) {
-  if (!s3) s3 = getS3Client();
-  try {
-    await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
-    return true;
-  } catch (e) {
-    return isNotFoundError(e) ? false : null;
-  }
+  const head = await headObject(bucket, key, s3);
+  if (head.status === 'present') return true;
+  if (head.status === 'absent') return false;
+  return null;
 }
 
 export async function getMultipartPutUrl(
