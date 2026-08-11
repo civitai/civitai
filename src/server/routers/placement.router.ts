@@ -276,6 +276,10 @@ export const placementRouter = router({
       browsingLevel: viewerBrowsingLevel(ctx, input.browsingLevel),
       cursor: input.cursor,
       limit: input.limit,
+      // Carried through so hydration applies the viewer's blocks and hidden
+      // preferences — a gallery is other people's content on someone else's
+      // page, so it is exactly where a block should still bite.
+      user: ctx.user ?? undefined,
     })
   ),
 

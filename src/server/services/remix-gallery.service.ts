@@ -1,6 +1,10 @@
 import { Prisma } from '@prisma/client';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { ImageSort } from '~/server/common/enums';
+import type { SessionUser } from '~/types/session';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { getAllImages } from '~/server/services/image.service';
 import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
@@ -387,12 +391,22 @@ export async function setRemixGalleryPins({
   return { pinned: placementIds.length };
 }
 
+/**
+ * A gallery entry carries a whole feed-shaped image, not an id.
+ *
+ * The image-detail dialog browses a set it is handed and accepts only
+ * `ImageGetInfinite[number]`, so "clicking an entry browses the gallery" cannot
+ * be served by a thin projection — there is no lighter shape that works.
+ *
+ * `sortKey` is deliberately not on the entry. It exists to order and to page,
+ * and it travels in the cursor; putting it on the item invites a client to sort
+ * by it and quietly reimplement an ordering the server owns.
+ */
 export type RemixGalleryEntry = {
   placementId: number;
-  imageId: number;
   placerId: number;
   pinned: boolean;
-  sortKey: number;
+  image: AsyncReturnType<typeof getAllImages>['items'][number];
 };
 
 /**
@@ -408,6 +422,61 @@ type GalleryRow = {
   position: number | null;
   sortKey: number;
 };
+
+/**
+ * Feed-shaped images for an already-decided page, keyed by id.
+ *
+ * Goes through `getAllImages` rather than projecting by hand: that function is
+ * what defines `ImageGetInfinite`, and a second hand-rolled projection would
+ * drift from it silently — the dialog would then receive something that type-
+ * checks against a stale shape.
+ *
+ * **This does not decide which entries appear.** The ordering CTE has already
+ * applied every visibility predicate and the keyset; this only fills in rows it
+ * chose. `getAllImages` runs its own predicates too, and where the two disagree
+ * the stricter answer wins by dropping the row — logged rather than swallowed,
+ * because a persistent gap means the CTE is admitting something the feed would
+ * not, which is a correctness bug in the CTE and not a display quirk.
+ */
+async function hydrateGalleryImages({
+  imageIds,
+  browsingLevel,
+  user,
+}: {
+  imageIds: number[];
+  browsingLevel: number;
+  user?: SessionUser;
+}) {
+  if (!imageIds.length) return new Map<number, RemixGalleryEntry['image']>();
+
+  const { items } = await getAllImages({
+    ids: imageIds,
+    // The page is already chosen, so this bounds the hydration rather than the
+    // result — it must not be smaller than the page or rows go missing.
+    limit: imageIds.length,
+    browsingLevel,
+    user,
+    period: MetricTimeframe.AllTime,
+    periodMode: 'published',
+    sort: ImageSort.Newest,
+    withMeta: false,
+    include: ['cosmetics'],
+  });
+
+  const byId = new Map(items.map((image) => [image.id, image]));
+
+  if (byId.size !== imageIds.length)
+    logToAxiom({
+      name: 'remix-gallery',
+      type: 'warning',
+      message: 'gallery page lost rows between the ordering query and hydration',
+      requested: imageIds.length,
+      hydrated: byId.size,
+      missing: imageIds.filter((id) => !byId.has(id)),
+    }).catch(() => undefined);
+
+  return byId;
+}
 
 /**
  * One page of a gallery, pinned entries first and the rest in a seeded shuffle.
@@ -428,11 +497,14 @@ export async function getRemixGallery({
   browsingLevel,
   cursor,
   limit = REMIX_GALLERY_PAGE_SIZE,
+  user,
 }: {
   hostImageId: number;
   browsingLevel: number;
   cursor?: string | null;
   limit?: number;
+  /** The viewer, so the hydration applies their blocks and hidden preferences. */
+  user?: SessionUser;
 }) {
   const parsed = parseGalleryCursor(cursor);
   const seed = parsed?.seed ?? remixGalleryShuffleSeed();
@@ -483,14 +555,26 @@ export async function getRemixGallery({
   const page = hasMore ? rows.slice(0, limit) : rows;
   const last = page[page.length - 1];
 
+  const images = await hydrateGalleryImages({
+    imageIds: page.map((row) => row.imageId),
+    browsingLevel,
+    user,
+  });
+
   return {
-    items: page.map((row) => ({
-      placementId: row.placementId,
-      imageId: row.imageId,
-      placerId: row.placerId,
-      pinned: row.pinned === 1,
-      sortKey: row.sortKey,
-    })),
+    items: page
+      .map((row) => {
+        const image = images.get(row.imageId);
+        return image
+          ? {
+              placementId: row.placementId,
+              placerId: row.placerId,
+              pinned: row.pinned === 1,
+              image,
+            }
+          : null;
+      })
+      .filter((entry): entry is RemixGalleryEntry => entry !== null),
     nextCursor:
       hasMore && last
         ? `${seed}:${last.pinned === 1 ? 1 : 0}:${last.sortKey}:${last.placementId}`
@@ -520,6 +604,49 @@ function parseGalleryCursor(cursor?: string | null) {
  * then hide everything they sold. So an off gallery with live entries still
  * renders, and only an off *and* empty one goes away.
  */
+/**
+ * Whether this gallery has anything the viewer may see.
+ *
+ * Its own query rather than `getRemixGallery({ limit: 1 })`: that path now
+ * hydrates a whole feed-shaped image, and this runs on every image detail view
+ * including the overwhelming majority that have no gallery at all.
+ *
+ * The predicates are the ordering query's, minus the ordering — they must stay
+ * identical or an owner is shown a card for entries nobody else can see. The
+ * shuffle plays no part in whether something exists.
+ */
+async function galleryHasEntries({
+  hostImageId,
+  browsingLevel,
+}: {
+  hostImageId: number;
+  browsingLevel: number;
+}) {
+  const levels = onlySelectableLevels(browsingLevel);
+
+  const [row] = await dbRead.$queryRaw<{ exists: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM "Placement" pl
+      JOIN "Image" i ON i.id = (pl.data ->> 'imageId')::int
+      LEFT JOIN "Post" p ON p.id = i."postId"
+      WHERE pl.surface = ${SURFACE}
+        AND pl."targetType" = ${TARGET_TYPE}
+        AND pl."targetId" = ${hostImageId}
+        AND pl.status = 'approved'
+        AND p."publishedAt" IS NOT NULL
+        AND p."publishedAt" < now()
+        AND i.ingestion = 'Scanned'
+        AND i."needsReview" IS NULL
+        AND NOT i."tosViolation"
+        AND (i."nsfwLevel" & ${levels}) != 0
+        AND i."nsfwLevel" != 0
+    ) AS "exists"
+  `;
+
+  return row?.exists ?? false;
+}
+
 export async function getRemixGalleryVisibility({
   hostImageId,
   browsingLevel,
@@ -527,18 +654,15 @@ export async function getRemixGalleryVisibility({
   hostImageId: number;
   browsingLevel: number;
 }) {
-  const space = await resolvePlacementSpaceFor({
-    surface: SURFACE,
-    targetType: TARGET_TYPE,
-    targetId: hostImageId,
-  });
-
-  const { items } = await getRemixGallery({ hostImageId, browsingLevel, limit: 1 });
+  const [space, hasEntries] = await Promise.all([
+    resolvePlacementSpaceFor({ surface: SURFACE, targetType: TARGET_TYPE, targetId: hostImageId }),
+    galleryHasEntries({ hostImageId, browsingLevel }),
+  ]);
 
   return {
     open: space.mode !== 'off',
-    hasEntries: items.length > 0,
-    render: space.mode !== 'off' || items.length > 0,
+    hasEntries,
+    render: space.mode !== 'off' || hasEntries,
     price: space.price,
     ownerId: space.ownerId,
   };
