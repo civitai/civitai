@@ -365,6 +365,12 @@ export const constants = {
     expandsRepliesByDefault({ entityType }: { entityType: string }) {
       return entityType === 'article';
     },
+    /**
+     * Most replies a single page may open up front, shallowest first. Threads past it stay behind
+     * "show replies" — a 1k-comment article opening every thread is what made these pages
+     * unresponsive before pagination, and this is what keeps a page a page's worth of work.
+     */
+    autoExpandBudget: 40,
     replyPageSize: 5,
     maxLength: 50000, // 50k characters
   },

@@ -236,6 +236,10 @@ export function CommentsProvider({
     () => data?.pages.flatMap((page) => page?.replyThreads ?? []) ?? [],
     [data]
   );
+  const childlessCommentIds = useMemo(
+    () => data?.pages.flatMap((page) => page?.childlessCommentIds ?? []) ?? [],
+    [data]
+  );
 
   // Seed each nested thread's caches from the batch above and open it, so the whole
   // conversation renders at once rather than a thread at a time behind "show replies".
@@ -243,8 +247,6 @@ export function CommentsProvider({
     if (!replyThreads.length) return;
 
     const expandable: number[] = [];
-    const withReplies = new Set(replyThreads.map((thread) => thread.commentId));
-
     for (const thread of replyThreads) {
       utils.commentv2.getCount.setData(
         { entityId: thread.commentId, entityType: 'comment' },
@@ -270,6 +272,7 @@ export function CommentsProvider({
               nextCursor: thread.nextCursor,
               targetComment: null,
               replyThreads: [],
+              childlessCommentIds: [],
             },
           ],
           pageParams: [null],
@@ -283,22 +286,15 @@ export function CommentsProvider({
       }
     }
 
-    // A comment the batch reached but returned no thread for has no replies. Say so, rather
-    // than leaving every childless comment to ask for its own count. The deepest level is
-    // past what the batch looked at, so its counts are still unknown and must be fetched.
-    const childless = [
-      ...(data?.pages ?? []).flatMap((page) => page?.comments ?? []).map((c) => c.id),
-      ...replyThreads
-        .filter((thread) => thread.depth + 1 < maxDepth)
-        .flatMap((thread) => thread.comments.map((c) => c.id)),
-    ].filter((id) => !withReplies.has(id));
-
-    for (const id of childless) {
+    // Comments the batch confirmed have no replies at all, so they don't each ask for their own
+    // count. Only the levels it finished are listed — past those, "no thread" means "not looked
+    // at", and answering 0 there would hide a real "show replies" button.
+    for (const id of childlessCommentIds) {
       utils.commentv2.getCount.setData({ entityId: id, entityType: 'comment' }, 0);
     }
 
     setExpanded(expandable);
-  }, [data, replyThreads, maxDepth, replyPageSize, sort, setExpanded, utils]);
+  }, [replyThreads, childlessCommentIds, maxDepth, replyPageSize, sort, setExpanded, utils]);
 
   // Flatten pages, prepending the deep-link target (when present) and deduping by id so a
   // later cursor page that naturally contains the target doesn't render it twice.
