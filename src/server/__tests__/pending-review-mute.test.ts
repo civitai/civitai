@@ -234,8 +234,8 @@ function createRes() {
       state.body = body;
       return res;
     },
-    setHeader() {},
-    on() {},
+    setHeader: () => undefined,
+    on: () => undefined,
     state,
   };
   return res;
