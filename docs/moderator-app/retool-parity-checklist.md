@@ -228,12 +228,22 @@ Open, with the evidence each audit produced:
       `<p>` tags; the Search filter matched the tags too, making a search for "p" hit every row. A shared
       `plainText` helper now strips tags for both display and search. Deliberately not `{@html}` — this is
       hostile user input, and the safe thing is to stop treating it as markup.
-- [ ] **Notification bodies dropped** from the panel captioned "context for 'I was never warned'".
-- [ ] **`setRewardsEligibility` has no UI**, and as wired it cannot succeed (`callMainApp` sends query
-      params; the endpoint reads `req.body` and requires `modId`).
-- [ ] **Timed-mute presets** (6/12/24/48/72/168h) are a free-text hours box.
-- [ ] **Bulk Image Manager is a section of User Lookup's sidebar** in the live app; `sections.ts`
-      omitted it because nothing was ported behind it. That page now exists.
+**Four entries below were already built and are ticked on evidence (2026-08-11), not on new work** —
+each duplicated an item ticked in §1b, so the open list was over-reporting what is left. Verified in a
+browser as user 1290051, not by reading the code.
+
+- [x] **Notification bodies dropped** — `NotificationsPanel` has `notificationBody()`, walking
+      `message`/`details`/`content`/`reason`/`body` out of the raw payload. ⚠️ The only one of the four
+      **not** confirmed on screen: the notifications service is unreachable from local dev, so the panel
+      renders "Notifications service unavailable". Confirmed in code only — worth one look wherever that
+      service is reachable.
+- [x] **`setRewardsEligibility` has no UI** — the Admin section posts `?/setRewardsEligibility` and
+      renders Retool's three buttons (Add Buzz-Block / Remove Buzz-Block / Generator Buzz Earnings).
+      Duplicate of the ticked `UpdateBuzzEligible` entry in §1b.
+- [x] **Timed-mute presets** — the Timed mute toggle reveals `6h / 12h / 24h / 48h / 72h / 1 week`.
+      Duplicate of the ticked `presetMutes` entry in §1b.
+- [x] **Bulk Image Manager is a section of User Lookup's sidebar** — `sections.ts` carries it as a
+      cross-link (`Bulk Image Manager ↗`), and it renders in the sidebar.
 - [x] Balance **and lifetime** for Yellow/Blue/Green (fixed 2026-08-09).
 - [x] Moderator name on each activity row; per-transaction buzz colour; the shared-IP / alt-account
       view (`AddressesPanel`) — all already built. Listed so nobody rebuilds them from a screenshot.
