@@ -92,6 +92,7 @@ export type ChallengeDetails = {
   collectionId: number | null; // Collection for entries (null if not yet created)
   judgeId: number | null; // ChallengeJudge ID (null if no judge assigned)
   judgingPrompt: string | null;
+  judgingEngine: string;
   reviewPercentage: number;
   maxReviews: number | null;
   maxEntriesPerUser: number;
@@ -169,6 +170,7 @@ const challengeSelectFragment = Prisma.sql`
   c."collectionId",
   c."judgeId",
   c."judgingPrompt",
+  c."judgingEngine",
   c."reviewPercentage",
   c."maxReviews",
   c."maxEntriesPerUser",

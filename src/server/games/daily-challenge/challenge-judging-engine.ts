@@ -66,6 +66,14 @@ export interface ChallengeJudgingEngine {
   readonly ranksFullField: boolean;
 
   /**
+   * How many of the ranked leaders the engine's own winner selection looks at, or 0 if it has
+   * none. The recap must cover at least this many: the podium exists precisely so an entry the
+   * ladder placed outside the top N can still win, and a recap that never saw it would describe a
+   * challenge somebody else won.
+   */
+  readonly shortlistSize: number;
+
+  /**
    * Called once per entry as it is judged on submission, after the absolute pass. Runs inside the
    * review job's per-entry error boundary, so a throw costs this entry's placement and nothing
    * else — `rankField` places anything that was missed.
@@ -87,4 +95,16 @@ export interface ChallengeJudgingEngine {
     ranked: T[],
     places: number
   ): Promise<EngineWinner[] | null>;
+}
+
+/**
+ * The entries the recap is written from. Both prefixes of the same ranking, so the union is
+ * simply the longer one.
+ */
+export function recapField<T>(
+  rankedField: T[],
+  finalReviewAmount: number,
+  engine: Pick<ChallengeJudgingEngine, 'shortlistSize'>
+): T[] {
+  return rankedField.slice(0, Math.max(finalReviewAmount, engine.shortlistSize));
 }

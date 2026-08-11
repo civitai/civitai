@@ -31,6 +31,7 @@ import {
   buildJudgingEngineContext,
   resolveJudgingEngine,
 } from '~/server/games/daily-challenge/challenge-engine-registry';
+import { recapField } from '~/server/games/daily-challenge/challenge-judging-engine';
 import {
   dedupeWinnersForPayout,
   reconcileWinnerToPersisted,
@@ -1529,12 +1530,17 @@ export async function pickWinnersForChallenge(
         log('Sending entries for final judgment');
         const generated = await generateWinners({
           theme: currentChallenge.theme,
-          entries: rankedEntries.map((entry) => ({
-            creator: entry.username,
-            creatorId: entry.userId,
-            summary: entry.summary,
-            score: entry.score,
-          })),
+          // The recap must cover the podium shortlist, not just the top N: an entry ranked
+          // 11-15 winning the round-robin is the stated reason the podium exists, and a recap
+          // that never saw it would describe a challenge somebody else won.
+          entries: recapField(rankedField, config.finalReviewAmount, judgingEngine).map(
+            (entry) => ({
+              creator: entry.username,
+              creatorId: entry.userId,
+              summary: entry.summary,
+              score: entry.score,
+            })
+          ),
           config: judgingConfig,
         });
         process = generated.process;

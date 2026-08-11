@@ -151,6 +151,11 @@ import {
 } from '~/server/games/daily-challenge/generative-content';
 import { reviewTemplateSchema } from '~/server/games/daily-challenge/template-engine';
 import { getCoverOfModel, getJudgedEntries } from '~/server/jobs/daily-challenge-processing';
+import {
+  buildJudgingEngineContext,
+  resolveJudgingEngine,
+} from '~/server/games/daily-challenge/challenge-engine-registry';
+import { recapField } from '~/server/games/daily-challenge/challenge-judging-engine';
 import { collectionsSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { NotificationCategory } from '~/server/common/enums';
@@ -322,7 +327,11 @@ const challengeCardQuery = Prisma.sql`
 // of the two is shown as the author is a client concern (see getChallengeDisplayUser).
 async function mapChallengeRowsToCards(items: ChallengeCardRow[]): Promise<ChallengeListItem[]> {
   const userIds = [
-    ...new Set(items.flatMap((item) => [item.createdById, item.judgeUserId]).filter((id): id is number => id != null)),
+    ...new Set(
+      items
+        .flatMap((item) => [item.createdById, item.judgeUserId])
+        .filter((id): id is number => id != null)
+    ),
   ];
   const [profilePictures, cosmetics] = await Promise.all([
     getProfilePicturesForUsers(userIds),
@@ -447,7 +456,9 @@ export async function getMyChallenges({
            u.username AS "creatorUsername", u.image AS "creatorImage", u."deletedAt" AS "creatorDeletedAt",
            cj."userId" AS "judgeUserId", ju.username AS "judgeUsername", ju.image AS "judgeImage", ju."deletedAt" AS "judgeDeletedAt",
            cw."place" AS "myPlace",
-           (c."createdById" = ${userId} AND c.source = ${ChallengeSource.User}::"ChallengeSource") AS "isCreator",
+           (c."createdById" = ${userId} AND c.source = ${
+    ChallengeSource.User
+  }::"ChallengeSource") AS "isCreator",
            COALESCE(my."myEnteredAt", c."createdAt") AS "myActivityAt"
     FROM "Challenge" c
     LEFT JOIN my ON my."collectionId" = c."collectionId"
@@ -456,9 +467,17 @@ export async function getMyChallenges({
     LEFT JOIN "User" ju ON ju.id = cj."userId"
     LEFT JOIN "ChallengeWinner" cw ON cw."challengeId" = c.id AND cw."userId" = ${userId}
     WHERE (my."collectionId" IS NOT NULL
-           OR (c."createdById" = ${userId} AND c.source = ${ChallengeSource.User}::"ChallengeSource"))
-      AND c.status IN (${ChallengeStatus.Scheduled}::"ChallengeStatus", ${ChallengeStatus.Active}::"ChallengeStatus", ${ChallengeStatus.Completing}::"ChallengeStatus", ${ChallengeStatus.Completed}::"ChallengeStatus")
-      AND (c.source <> ${ChallengeSource.User}::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${userId})
+           OR (c."createdById" = ${userId} AND c.source = ${
+    ChallengeSource.User
+  }::"ChallengeSource"))
+      AND c.status IN (${ChallengeStatus.Scheduled}::"ChallengeStatus", ${
+    ChallengeStatus.Active
+  }::"ChallengeStatus", ${ChallengeStatus.Completing}::"ChallengeStatus", ${
+    ChallengeStatus.Completed
+  }::"ChallengeStatus")
+      AND (c.source <> ${
+        ChallengeSource.User
+      }::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${userId})
       ${blockSql ? Prisma.sql`AND ${blockSql}` : Prisma.empty}
       ${
         effectiveBrowsingLevel > 0
@@ -1093,7 +1112,11 @@ export async function getChallengeDetail(
   // direct-URL parity with the feed filter. Mod/creator exempt; skip the lookup entirely for trusted
   // System challenges. NSFW-on-green gating is handled client-side by <Gated> (MatureContentRedirect)
   // on the detail page, matching how model/image detail pages gate mature content on the safe site.
-  if (!canPreviewUnpublished && challenge.source === ChallengeSource.User && challenge.coverImageId) {
+  if (
+    !canPreviewUnpublished &&
+    challenge.source === ChallengeSource.User &&
+    challenge.coverImageId
+  ) {
     const cover = await dbRead.image.findUnique({
       where: { id: challenge.coverImageId },
       select: { poi: true, ingestion: true },
@@ -2560,16 +2583,19 @@ export async function endChallengeAndPickWinners(challengeId: number) {
       const userJudgingCategories = challengeJudgingCategoriesSchema.safeParse(
         challenge.judgingCategories
       );
-      const userCategories = userJudgingCategories.success
-        ? userJudgingCategories.data
-        : undefined;
+      const userCategories = userJudgingCategories.success ? userJudgingCategories.data : undefined;
 
+      // This is the SECOND completion path — a moderator ending a challenge early. It has to
+      // consult the same engine the cron path does, or the same challenge pays out different
+      // winners depending on who ended it, and every comparison it bought is discarded.
+      const judgingEngine = await resolveJudgingEngine(challenge.judgingEngine);
       const judgedEntries = await getJudgedEntries(
         challenge.collectionId,
         config,
         eventContext,
         challenge.source,
-        userCategories
+        userCategories,
+        judgingEngine.ranksFullField ? { limit: Infinity } : undefined
       );
       if (!judgedEntries.length) {
         // Zero-winner completion of a paid user challenge strands its entry fees + initial prize in
@@ -2591,11 +2617,26 @@ export async function endChallengeAndPickWinners(challengeId: number) {
         return { success: true, winnersCount: 0 };
       }
 
+      const engineContext = buildJudgingEngineContext({
+        challengeId,
+        collectionId: challenge.collectionId,
+        theme: challenge.theme ?? '',
+        themeElements: parseChallengeMetadata(challenge.metadata).themeElements,
+        categories: userCategories,
+      });
+      const rankedField = await judgingEngine.rankField(engineContext, judgedEntries);
+      const rankedEntries = rankedField.slice(0, config.finalReviewAmount);
+      const engineWinners = await judgingEngine.selectWinners(
+        engineContext,
+        rankedField,
+        challenge.prizes.length
+      );
+
       // Run LLM winner picking
       log('Sending entries for final judgment');
       const generated = await generateWinners({
         theme: challenge.theme || 'Creative Challenge',
-        entries: judgedEntries.map((entry) => ({
+        entries: recapField(rankedField, config.finalReviewAmount, judgingEngine).map((entry) => ({
           creator: entry.username,
           creatorId: entry.userId,
           summary: entry.summary,
@@ -2610,19 +2651,27 @@ export async function endChallengeAndPickWinners(challengeId: number) {
       // (user-controlled, spoofable) display name — matching on it let a second entrant who set their
       // name equal to another's hijack `find`'s first-match and steal the payout. judgedEntries is
       // deduped to one entry per userId, so creatorId alone disambiguates. (Parity with the cron path.)
-      winningEntries = generated.winners
-        .map((winner, i) => {
-          const entry = judgedEntries.find((e) => e.userId === winner.creatorId);
-          if (!entry) return null;
-          return {
-            userId: entry.userId,
-            imageId: entry.imageId,
+      winningEntries = engineWinners
+        ? engineWinners.map((winner, i) => ({
+            userId: winner.userId,
+            imageId: winner.imageId,
             position: i + 1,
             prize: challenge.prizes[i]?.buzz ?? 0,
             reason: winner.reason,
-          };
-        })
-        .filter(isDefined);
+          }))
+        : generated.winners
+            .map((winner, i) => {
+              const entry = rankedEntries.find((e) => e.userId === winner.creatorId);
+              if (!entry) return null;
+              return {
+                userId: entry.userId,
+                imageId: entry.imageId,
+                position: i + 1,
+                prize: challenge.prizes[i]?.buzz ?? 0,
+                reason: winner.reason,
+              };
+            })
+            .filter(isDefined);
 
       // Nothing above stops the LLM naming the same creator in two slots — "exactly 3 different
       // winners" is prompt text, and `find()` happily matches the same entry twice — which would put
@@ -3965,7 +4014,8 @@ export async function getCompletedChallengesWithWinners(
   const winnersByChallengeId = new Map<number, ChallengeWinnerSummary[]>();
   for (const w of winnerRows) {
     const list = winnersByChallengeId.get(w.challengeId) ?? [];
-    const hideThumb = (isGreen ?? false) && isImageHiddenFromGreenViewer(w.imageNsfwLevel, currentUserId);
+    const hideThumb =
+      (isGreen ?? false) && isImageHiddenFromGreenViewer(w.imageNsfwLevel, currentUserId);
     list.push({
       place: w.place,
       userId: w.userId,

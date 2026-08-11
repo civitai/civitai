@@ -523,10 +523,17 @@ describe('pairwise engine — picking the places', () => {
   it('still charges for the comparisons it made when the stage throws', async () => {
     // The provider bills a comparison the moment it returns, so a stage that dies half way
     // through has spent real money. Settling only on success made a mid-stage 429 look free.
+    //
+    // ONE call fails and every later one SUCCEEDS. The first version of this test made all
+    // subsequent calls throw too, so `buzz` could not grow after settle and the real defect —
+    // a pool that keeps dispatching behind an already-rejected promise, billing bouts nothing
+    // records — was invisible to it. That is the same blind-regime mistake as the seat race.
     fakeComparisonStore();
     let calls = 0;
     comparePair.mockImplementation(async ({ challenger, opponent, seat }) => {
-      if (++calls > 3) throw new Error('HTTP 429: rate limited');
+      const n = ++calls;
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      if (n === 4) throw new Error('HTTP 429: rate limited');
       return {
         imageIdA: challenger.imageId,
         imageIdB: opponent.imageId,
@@ -542,11 +549,43 @@ describe('pairwise engine — picking the places', () => {
       };
     });
 
-    await expect(
-      pairwiseLadderEngine.selectWinners(ctx, [entry(1), entry(2), entry(3), entry(4)], 3)
-    ).rejects.toThrow(/rate limited/);
+    const field = Array.from({ length: 8 }, (_, i) => entry(i + 1));
+    await expect(pairwiseLadderEngine.selectWinners(ctx, field, 3)).rejects.toThrow(/rate limited/);
 
-    expect(incrementOperationSpent).toHaveBeenCalledWith(424, 12);
+    // Every comparison that returned is accounted for, and none arrived after the accounting.
+    const billed = (calls - 1) * 4;
+    expect(incrementOperationSpent).toHaveBeenCalledTimes(1);
+    expect(incrementOperationSpent).toHaveBeenCalledWith(424, billed);
+  });
+
+  it('stops buying comparisons once a stage has failed', async () => {
+    // 28 pairs x 2 seats = 56 jobs. A pool that keeps dispatching after the failure would run
+    // essentially all of them; one that stops runs at most a lane's worth more.
+    fakeComparisonStore();
+    let calls = 0;
+    comparePair.mockImplementation(async ({ challenger, opponent, seat }) => {
+      const n = ++calls;
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      if (n === 4) throw new Error('HTTP 429: rate limited');
+      return {
+        imageIdA: challenger.imageId,
+        imageIdB: opponent.imageId,
+        firstSeatImageId: seat === 1 ? challenger.imageId : opponent.imageId,
+        winnerImageId: Math.min(challenger.imageId, opponent.imageId),
+        margin: 'clear',
+        perCategory: {},
+        reason: 'because',
+        model: 'test-judge',
+        rerouted: false,
+        usage: { promptTokens: 10, completionTokens: 1 },
+        buzzCost: 4,
+      };
+    });
+
+    const field = Array.from({ length: 8 }, (_, i) => entry(i + 1));
+    await expect(pairwiseLadderEngine.selectWinners(ctx, field, 3)).rejects.toThrow(/rate limited/);
+
+    expect(calls).toBeLessThan(20);
   });
 
   it('defers to the caller when there is nothing to compare', async () => {

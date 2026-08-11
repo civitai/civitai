@@ -220,6 +220,7 @@ const currentChallenge = {
 const engine = {
   key: 'pairwise-ladder' as const,
   ranksFullField: true,
+  shortlistSize: 15,
   recordEntry: mockRecordEntry,
   rankField: mockRankField,
   selectWinners: mockSelectWinners,
@@ -498,7 +499,11 @@ describe('pickWinnersForChallenge — who picks the places', () => {
   });
 
   it('keeps the historical cut for an engine that does not rank the field', async () => {
-    mockResolveJudgingEngine.mockResolvedValue({ ...engine, ranksFullField: false });
+    mockResolveJudgingEngine.mockResolvedValue({
+      ...engine,
+      ranksFullField: false,
+      shortlistSize: 0,
+    });
     mockJudgeRow('legacy-absolute');
     mockJudgedEntryRows(wideField(24));
     mockDbWriteQueryRaw.mockResolvedValueOnce([]);
@@ -508,11 +513,16 @@ describe('pickWinnersForChallenge — who picks the places', () => {
     await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
 
     expect((mockRankField.mock.calls[0][1] as unknown[]).length).toBe(FINAL_REVIEW_AMOUNT);
+    // A legacy engine has no shortlist, so the recap still gets exactly the historical cut.
+    expect((mockGenerateWinners.mock.calls[0][0].entries as unknown[]).length).toBe(
+      FINAL_REVIEW_AMOUNT
+    );
   });
 
-  it('gives the podium the full ranking but the recap only the top N', async () => {
+  it('gives the podium the full ranking and the recap at least the shortlist', async () => {
     // finalReviewAmount is 10 and the podium shortlists 15, so slicing before `selectWinners`
-    // would silently cap the round-robin below its own shortlist size.
+    // would silently cap the round-robin below its own shortlist size — and a recap fed only the
+    // top 10 could not describe a winner the podium promoted from rank 11-15.
     mockJudgeRow('pairwise-ladder');
     mockJudgedEntryRows(wideField(24));
     mockDbWriteQueryRaw.mockResolvedValueOnce([]);
@@ -522,9 +532,7 @@ describe('pickWinnersForChallenge — who picks the places', () => {
     await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
 
     expect((mockSelectWinners.mock.calls[0][1] as unknown[]).length).toBe(24);
-    expect((mockGenerateWinners.mock.calls[0][0].entries as unknown[]).length).toBe(
-      FINAL_REVIEW_AMOUNT
-    );
+    expect((mockGenerateWinners.mock.calls[0][0].entries as unknown[]).length).toBe(15);
   });
 
   it('lets a coverage failure abort the payout rather than paying a subset', async () => {

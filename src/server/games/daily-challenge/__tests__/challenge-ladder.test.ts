@@ -4,6 +4,7 @@ import {
   findSlot,
   reinsertAll,
   roundRobinPairs,
+  runPool,
   spliceAt,
   tallyPodium,
   type Bout,
@@ -91,6 +92,53 @@ describe('reinsertAll', () => {
     expect(order).toEqual([10, 20, 30, 40, 50]);
   });
 
+  it('searches concurrently — serially this outlives the completion claim', async () => {
+    // One LLM round-trip deep per bout, serially, is ~90 minutes for a 284-entry field. The
+    // completion claim is reclaimed after 10, so a second run starts a second podium and a
+    // second path to createChallengeWinner. Concurrency is what keeps the stage inside the claim.
+    let inFlight = 0;
+    let peak = 0;
+    const slowBout: Bout = async (challenger, opponent) => {
+      peak = Math.max(peak, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      inFlight--;
+      return challenger < opponent ? 'challenger' : 'opponent';
+    };
+
+    const { order } = await reinsertAll([80, 10, 60, 20, 70, 30, 50, 40], slowBout, 4);
+
+    expect(peak).toBeGreaterThan(1);
+    expect(order).toEqual([10, 20, 30, 40, 50, 60, 70, 80]);
+  });
+
+  it('converges from an arbitrary order, which is what a late opt-in hands it', async () => {
+    // rankField appends entries the arrival pass never placed. A challenge switched to this
+    // engine near its close has no arrival placements at all, so the starting order is whatever
+    // the query returned — and one pass over that improves it without finishing.
+    const { bout } = trueOrderBout();
+    const scrambled = [70, 30, 90, 10, 50, 20, 80, 40, 60];
+
+    const { order, passes } = await reinsertAll(scrambled, bout, 4);
+
+    expect(order).toEqual([10, 20, 30, 40, 50, 60, 70, 80, 90]);
+    expect(passes).toBeGreaterThan(1);
+  });
+
+  it('stops as soon as the order settles rather than always paying for every pass', async () => {
+    const { bout } = trueOrderBout();
+    const { passes } = await reinsertAll([10, 20, 30, 40, 50], bout, 4);
+    expect(passes).toBe(1);
+  });
+
+  it('resolves entries that searched to the same slot by comparing them, not by arrival order', async () => {
+    // Concurrent searches all read the same frozen list, so ties on the index are expected. The
+    // prototype broke them by arrival order, which is the misplacement this pass exists to fix.
+    const { bout } = trueOrderBout();
+    const { order } = await reinsertAll([10, 20, 30, 55, 54, 53], bout, 4);
+    expect(order.indexOf(53)).toBeLessThan(order.indexOf(54));
+    expect(order.indexOf(54)).toBeLessThan(order.indexOf(55));
+  });
+
   it('returns every entry it was given', async () => {
     const { bout } = trueOrderBout();
     const field = [5, 1, 4, 2, 3];
@@ -168,5 +216,87 @@ describe('roundRobinPairs', () => {
       [1, 3],
       [2, 3],
     ]);
+  });
+});
+
+describe('runPool', () => {
+  it('runs with real concurrency rather than one at a time', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    await runPool(
+      Array.from({ length: 24 }, (_, i) => i),
+      6,
+      async () => {
+        peak = Math.max(peak, ++inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 3));
+        inFlight--;
+      }
+    );
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(6);
+  });
+
+  it('stops dispatching after a failure instead of running the whole list', async () => {
+    // limitConcurrency rejects from its catch but its finally still calls run(), so the pool
+    // drains the entire job list behind an already-resumed caller. For bouts that cost money,
+    // that is spend arriving after the stage has settled its accounting.
+    const started: number[] = [];
+    await expect(
+      runPool(
+        Array.from({ length: 100 }, (_, i) => i),
+        4,
+        async (item) => {
+          started.push(item);
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          if (item === 3) throw new Error('boom');
+        }
+      )
+    ).rejects.toThrow('boom');
+
+    expect(started.length).toBeLessThan(20);
+  });
+
+  it('waits for work already in flight before throwing', async () => {
+    let finished = 0;
+    await expect(
+      runPool([0, 1, 2, 3], 4, async (item) => {
+        await new Promise((resolve) => setTimeout(resolve, item === 0 ? 1 : 20));
+        if (item === 0) throw new Error('boom');
+        finished++;
+      })
+    ).rejects.toThrow('boom');
+
+    // The three slow lanes were already running; none of them is still pending after the throw.
+    expect(finished).toBe(3);
+  });
+
+  it('reports the FIRST failure, not whichever landed last', async () => {
+    await expect(
+      runPool([0, 1], 2, async (item) => {
+        await new Promise((resolve) => setTimeout(resolve, item === 0 ? 1 : 10));
+        throw new Error(item === 0 ? 'first' : 'second');
+      })
+    ).rejects.toThrow('first');
+  });
+});
+
+describe('findSlot seating', () => {
+  it('does not open every search on the same seat', async () => {
+    // `step` restarts at 0 for each entry, so parity alone would seat every challenger first on
+    // its OPENING bout — the one comparison every search makes, and the highest-leverage one.
+    const openingSeats = new Set<Seat>();
+    for (const challenger of [10, 11, 12, 13]) {
+      const { bout, seats } = trueOrderBout();
+      await findSlot(challenger, [1, 2, 3, 4, 5, 6, 7], bout);
+      openingSeats.add(seats[0].seat);
+    }
+    expect(openingSeats).toEqual(new Set([1, 2]));
+  });
+
+  it('still alternates within a single search', async () => {
+    const { bout, seats } = trueOrderBout();
+    await findSlot(50, [1, 2, 3, 4, 5, 6, 7], bout);
+    const alternating = seats.every((s, i) => i === 0 || s.seat !== seats[i - 1].seat);
+    expect(alternating).toBe(true);
   });
 });

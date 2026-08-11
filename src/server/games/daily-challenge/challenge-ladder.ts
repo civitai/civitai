@@ -35,9 +35,12 @@ export async function findSlot(
   while (lo < hi) {
     if (step >= ceiling) throw new Error(`findSlot did not converge after ${step} bouts`);
     const mid = (lo + hi) >> 1;
-    // Seats alternate down the search so the second-seat advantage does not accumulate against
-    // whichever entry is always the challenger.
-    const result = await bout(challengerId, list[mid], step % 2 === 0 ? 1 : 2);
+    // Seats alternate down the search, and the parity is SEEDED from the challenger so that the
+    // opening bout — the highest-leverage comparison of a binary search, and the only one every
+    // search makes — is not always seat 1. `step` restarts at 0 for each entry, so parity alone
+    // would put every challenger in the first seat on its most consequential comparison.
+    const seat: Seat = (step + challengerId) % 2 === 0 ? 1 : 2;
+    const result = await bout(challengerId, list[mid], seat);
     if (result === 'challenger') hi = mid;
     else lo = mid + 1;
     step++;
@@ -53,27 +56,120 @@ export function spliceAt(list: readonly number[], challengerId: number, index: n
 }
 
 /**
+ * Bounded-concurrency map that STOPS on the first failure and then waits for the work already in
+ * flight before throwing.
+ *
+ * Not `limitConcurrency`: that one rejects its promise from the catch but still calls `run()` in
+ * the `finally`, so the pool keeps dispatching the entire remaining job list after the caller has
+ * already resumed. For a pool whose tasks cost money that is unbounded spend nothing is left to
+ * account for — measured at 11x under-counted on a 210-bout stage that failed at bout 20.
+ */
+export async function runPool<T, R>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  let failure: unknown;
+
+  const lane = async () => {
+    while (next < items.length && failure === undefined) {
+      const i = next++;
+      try {
+        out[i] = await worker(items[i], i);
+      } catch (error) {
+        failure ??= error;
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, lane));
+  if (failure !== undefined) throw failure;
+  return out;
+}
+
+/**
  * The second run: pull every entry out and re-insert it against the finished ladder. Measured on
  * the prototype this takes worst-case misplacement from 3 places to 1, which per-bout confirmation
  * does not buy. It is also the repair pass — an entry that never got placed on arrival is placed
  * here, which is what makes the coverage assertion at the call site meaningful.
+ *
+ * Every entry searches the SAME frozen order, concurrently. That is sound only because this pass
+ * does not mutate the list it searches — unlike arrival, where each insertion has to see the live
+ * standings. Serially it is one LLM round-trip deep per bout: ~90 minutes for a 284-entry field,
+ * which outlives the 10-minute completion claim and lets a second run start a second podium.
  */
 export async function reinsertAll(
   order: readonly number[],
-  bout: Bout
-): Promise<{ order: number[]; bouts: number }> {
-  // Each entry is re-inserted into the LIVE order rather than scored against the original and
-  // re-sorted at the end. The prototype did the latter and two entries that searched to the same
-  // index then kept their arrival order, which is the misplacement this pass exists to fix.
+  bout: Bout,
+  concurrency = 8,
+  maxPasses = 4
+): Promise<{ order: number[]; bouts: number; passes: number }> {
   let current = [...order];
   let bouts = 0;
-  for (const id of order) {
-    const others = current.filter((x) => x !== id);
-    const slot = await findSlot(id, others, bout);
-    bouts += slot.bouts;
-    current = spliceAt(others, id, slot.index);
+  let passes = 0;
+
+  // A binary search is only meaningful against a roughly-ordered list, and one concurrent pass
+  // over a badly-ordered one improves it without finishing the job — which matters because
+  // `rankField` appends entries the arrival pass never placed, and a challenge opted in near its
+  // close has a starting order that is arbitrary. Repeat until the order stops moving. Passes
+  // after the first are nearly free: every pair they ask for has already been answered and the
+  // caller's cache returns it without a comparison.
+  while (passes < maxPasses) {
+    const pass = await reinsertOnce(current, bout, concurrency);
+    passes++;
+    bouts += pass.bouts;
+    const settled =
+      pass.order.length === current.length && pass.order.every((id, i) => id === current[i]);
+    current = pass.order;
+    if (settled) break;
   }
-  return { order: current, bouts };
+
+  return { order: current, bouts, passes };
+}
+
+async function reinsertOnce(
+  order: readonly number[],
+  bout: Bout,
+  concurrency: number
+): Promise<{ order: number[]; bouts: number }> {
+  const frozen = [...order];
+  const placed = await runPool(frozen, concurrency, async (id) => {
+    const others = frozen.filter((x) => x !== id);
+    const slot = await findSlot(id, others, bout);
+    return { id, key: slot.index, bouts: slot.bouts };
+  });
+
+  // Searching a frozen list means two entries can land on the same index, and their order relative
+  // to each other is then genuinely unmeasured. The prototype resolved that by arrival order,
+  // which is the misplacement this pass exists to remove. They all belong between the same two
+  // neighbours, so ordering them among themselves — and only them — settles it. Groups are small
+  // and the extra bouts are few.
+  const groups = new Map<number, number[]>();
+  for (const row of placed) {
+    if (!groups.has(row.key)) groups.set(row.key, []);
+    groups.get(row.key)!.push(row.id);
+  }
+
+  let bouts = placed.reduce((sum, row) => sum + row.bouts, 0);
+  const result: number[] = [];
+  for (const key of [...groups.keys()].sort((a, b) => a - b)) {
+    const tied = groups.get(key)!;
+    if (tied.length === 1) {
+      result.push(tied[0]);
+      continue;
+    }
+    let settled: number[] = [];
+    for (const id of tied) {
+      const slot = await findSlot(id, settled, bout);
+      bouts += slot.bouts;
+      settled = spliceAt(settled, id, slot.index);
+    }
+    result.push(...settled);
+  }
+
+  return { order: result, bouts };
 }
 
 /**

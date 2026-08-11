@@ -14,6 +14,7 @@ import {
   findSlot,
   reinsertAll,
   roundRobinPairs,
+  runPool,
   tallyPodium,
   type Bout,
   type BoutResult,
@@ -27,7 +28,6 @@ import {
 } from '~/server/games/daily-challenge/challenge-pairwise';
 import * as store from '~/server/games/daily-challenge/challenge-pairwise-store';
 import { logToAxiom } from '~/server/logging/client';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 /** How many of the ladder's leaders play the round-robin that decides places. */
 export const PODIUM_SIZE = 15;
@@ -45,6 +45,7 @@ const PODIUM_CONCURRENCY = 8;
 export const pairwiseLadderEngine: ChallengeJudgingEngine = {
   key: JUDGING_ENGINES.PairwiseLadder,
   ranksFullField: true,
+  shortlistSize: PODIUM_SIZE,
 
   async recordEntry(ctx: JudgingEngineContext, entry: JudgedEntryRef): Promise<void> {
     const standings = await store.getStandings(ctx.challengeId);
@@ -120,12 +121,7 @@ export const pairwiseLadderEngine: ChallengeJudgingEngine = {
       ]
     );
     await session.run(() =>
-      limitConcurrency(
-        jobs.map((job) => async () => {
-          await session.bout(job.x, job.y, job.seat);
-        }),
-        PODIUM_CONCURRENCY
-      )
+      runPool(jobs, PODIUM_CONCURRENCY, (job) => session.bout(job.x, job.y, job.seat))
     );
 
     const ladderRank = new Map(contenders.map((entry, i) => [entry.imageId, i]));
@@ -181,7 +177,17 @@ function createSession(
   // Placement caches by PAIR — a binary search never wants the same two entries twice, whatever
   // the seating. The podium caches by pair AND seat, because playing both seats is the point of
   // that stage.
-  const results = new Map<string, number | null>();
+  //
+  // ⚠️ What keeps arrive/rerun inside the two-rows-per-pair ceiling of the unique index is THIS
+  // cache plus the fact that a placement search only ever compares the entry being placed against
+  // incumbents — never the same pair on both seats. Neither is enforced by the schema. If a future
+  // stage compares a pair on both seats during placement, the second row is dropped by ON CONFLICT
+  // DO NOTHING with no error, exactly as the podium's did.
+  //
+  // The cache holds the in-flight PROMISE, not the settled winner. Both close-time stages are
+  // concurrent now, so two lanes routinely ask for the same pair before either has answered; a
+  // cache of finished results misses both and pays twice for one comparison.
+  const results = new Map<string, Promise<number | null>>();
   const pairKey = (x: number, y: number) => (x < y ? `${x}:${y}` : `${y}:${x}`);
   const cacheKey = (x: number, y: number, firstSeatImageId: number) =>
     phase === 'podium' ? `${pairKey(x, y)}:${firstSeatImageId}` : pairKey(x, y);
@@ -193,28 +199,37 @@ function createSession(
   const bout: Bout = async (challengerId, opponentId, seat): Promise<BoutResult> => {
     const firstSeatImageId = seat === 1 ? challengerId : opponentId;
     const key = cacheKey(challengerId, opponentId, firstSeatImageId);
-    if (results.has(key)) return toResult(results.get(key) ?? null, challengerId);
 
-    const challenger = images.get(challengerId);
-    const opponent = images.get(opponentId);
-    if (!challenger || !opponent) {
-      throw new Error(`Missing image for comparison ${challengerId} vs ${opponentId}`);
+    let pending = results.get(key);
+    if (!pending) {
+      pending = (async () => {
+        const challenger = images.get(challengerId);
+        const opponent = images.get(opponentId);
+        if (!challenger || !opponent) {
+          throw new Error(`Missing image for comparison ${challengerId} vs ${opponentId}`);
+        }
+
+        const verdict = await comparePair({
+          systemPrompt,
+          categories: ctx.categories,
+          challenger,
+          opponent,
+          seat,
+        });
+        comparisons++;
+        buzz += verdict.buzzCost;
+        if (verdict.rerouted) reroutes++;
+
+        await store.recordComparison({ challengeId: ctx.challengeId, phase, verdict });
+        return verdict.winnerImageId;
+      })();
+      // A failed comparison must not be cached as a failure: the stage aborts anyway, and leaving
+      // it would poison a later retry of the same pair.
+      pending.catch(() => results.delete(key));
+      results.set(key, pending);
     }
 
-    const verdict = await comparePair({
-      systemPrompt,
-      categories: ctx.categories,
-      challenger,
-      opponent,
-      seat,
-    });
-    comparisons++;
-    buzz += verdict.buzzCost;
-    if (verdict.rerouted) reroutes++;
-
-    await store.recordComparison({ challengeId: ctx.challengeId, phase, verdict });
-    results.set(key, verdict.winnerImageId);
-    return toResult(verdict.winnerImageId, challengerId);
+    return toResult(await pending, challengerId);
   };
 
   async function settle() {
@@ -236,7 +251,10 @@ function createSession(
     /** Seed the cache from comparisons this challenge already paid for. */
     seed(stored: store.StoredComparison[]) {
       for (const row of stored) {
-        results.set(cacheKey(row.imageIdA, row.imageIdB, row.firstSeatImageId), row.winnerImageId);
+        results.set(
+          cacheKey(row.imageIdA, row.imageIdB, row.firstSeatImageId),
+          Promise.resolve(row.winnerImageId)
+        );
       }
     },
     /**

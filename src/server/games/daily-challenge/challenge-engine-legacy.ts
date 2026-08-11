@@ -15,6 +15,7 @@ import {
 export const legacyAbsoluteEngine: ChallengeJudgingEngine = {
   key: JUDGING_ENGINES.LegacyAbsolute,
   ranksFullField: false,
+  shortlistSize: 0,
 
   async recordEntry() {
     // The note write lives in the review job and is shared by every engine.

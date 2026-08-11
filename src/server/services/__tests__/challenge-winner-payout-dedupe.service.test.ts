@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // — the repo forbids inline `typeof import(...)` annotations.
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ChallengeFunding from '~/server/games/daily-challenge/challenge-funding';
+import type * as EngineRegistry from '~/server/games/daily-challenge/challenge-engine-registry';
 
 // The MODERATOR completion path — `endChallengeAndPickWinners`, reached from the tRPC router when a
 // mod ends a challenge by hand. It has its own `createChallengeWinner` +
@@ -29,6 +30,9 @@ const {
   mockGetExistingWinnersForRetry,
   mockWithRetries,
   mockBuildWinnerPayoutTransactions,
+  mockResolveJudgingEngine,
+  mockRankField,
+  mockSelectWinners,
 } = vi.hoisted(() => ({
   mockDbWrite: {
     $queryRaw: vi.fn().mockResolvedValue([]),
@@ -50,6 +54,9 @@ const {
   // A SPY that delegates to the real (pure) builder — the transaction ids stay genuine, but the
   // number of times the payout is BUILT becomes observable.
   mockBuildWinnerPayoutTransactions: vi.fn(),
+  mockResolveJudgingEngine: vi.fn(),
+  mockRankField: vi.fn(),
+  mockSelectWinners: vi.fn(),
 }));
 
 vi.mock('~/server/db/client', () => ({
@@ -185,6 +192,13 @@ vi.mock('~/utils/errorHandling', () => ({
 
 vi.mock('~/utils/logging', () => ({ createLogger: vi.fn(() => vi.fn()) }));
 
+// Only `resolveJudgingEngine` is doubled; `buildJudgingEngineContext` and `recapField` stay real so
+// the rubric and the recap slice are the ones production computes.
+vi.mock('~/server/games/daily-challenge/challenge-engine-registry', async (importOriginal) => ({
+  ...(await importOriginal<typeof EngineRegistry>()),
+  resolveJudgingEngine: mockResolveJudgingEngine,
+}));
+
 const { endChallengeAndPickWinners } = await import('~/server/services/challenge.service');
 const { ChallengeSource, ChallengeStatus } = await import('~/shared/utils/prisma/enums');
 const { __resetChallengeMetricsForTest } = await import('~/server/prom/challenge.metrics');
@@ -310,6 +324,18 @@ beforeEach(() => {
   mockDbWrite.challenge.findUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
   mockGetChallengeById.mockResolvedValue(challengeRow);
   mockGetExistingWinnersForRetry.mockResolvedValue([]);
+  // Legacy identity by default, so every pre-existing test in this file keeps the behaviour it
+  // was written against.
+  mockRankField.mockImplementation(async (_ctx: unknown, field: unknown[]) => field);
+  mockSelectWinners.mockResolvedValue(null);
+  mockResolveJudgingEngine.mockResolvedValue({
+    key: 'legacy-absolute',
+    ranksFullField: false,
+    shortlistSize: 0,
+    recordEntry: vi.fn(),
+    rankField: mockRankField,
+    selectWinners: mockSelectWinners,
+  });
   mockGetJudgedEntries.mockResolvedValue(JUDGED_ENTRIES);
   mockCreateBuzzTransactionMany.mockResolvedValue(undefined);
   // Default: the happy path, one invocation — same as real `withRetries` when nothing throws.
@@ -512,5 +538,99 @@ describe('endChallengeAndPickWinners — the payout is built ONCE, outside the r
 
     expect(mockCreateBuzzTransactionMany).toHaveBeenCalledTimes(1);
     expect(mockBuildWinnerPayoutTransactions).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The moderator path is a SECOND completion path. Until this block existed it called
+// getJudgedEntries and generateWinners directly, with no engine anywhere — so a pairwise challenge
+// ended early by a mod paid out on absolute scores and discarded every comparison it had bought.
+// Same challenge, same prize money, different winners depending on who ended it.
+describe('endChallengeAndPickWinners — routes through the judging engine', () => {
+  const pairwiseEngine = () => ({
+    key: 'pairwise-ladder' as const,
+    ranksFullField: true,
+    shortlistSize: 15,
+    recordEntry: vi.fn(),
+    rankField: mockRankField,
+    selectWinners: mockSelectWinners,
+  });
+
+  it("pays the engine's places, not the LLM's picks", async () => {
+    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine());
+    mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'pairwise-ladder' });
+    mockGetJudgedEntries.mockResolvedValue(JUDGED_ENTRIES);
+    mockSelectWinners.mockResolvedValue([
+      { userId: 300, imageId: 3, reason: 'won the round-robin' },
+      { userId: 100, imageId: 1, reason: 'second on win rate' },
+    ]);
+    llmWinners([
+      { creatorId: 200, creator: 'bob' },
+      { creatorId: 100, creator: 'alice' },
+    ]);
+
+    await endChallengeAndPickWinners(CHALLENGE_ID);
+
+    const places = mockCreateChallengeWinner.mock.calls.map((call) => call[0]);
+    expect(places.map((p: { userId: number }) => p.userId)).toEqual([300, 100]);
+    expect(places[0]).toMatchObject({ place: 1, reason: 'won the round-robin' });
+  });
+
+  it('asks the engine to rank the field before anyone is paid', async () => {
+    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine());
+    mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'pairwise-ladder' });
+    mockGetJudgedEntries.mockResolvedValue(JUDGED_ENTRIES);
+    llmWinners([{ creatorId: 100, creator: 'alice' }]);
+
+    await endChallengeAndPickWinners(CHALLENGE_ID);
+
+    expect(mockRankField).toHaveBeenCalledTimes(1);
+    expect(mockSelectWinners).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands a comparison engine the whole eligible field, not the absolute-score cut', async () => {
+    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine());
+    mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'pairwise-ladder' });
+    mockGetJudgedEntries.mockResolvedValue(JUDGED_ENTRIES);
+    llmWinners([{ creatorId: 100, creator: 'alice' }]);
+
+    await endChallengeAndPickWinners(CHALLENGE_ID);
+
+    expect(mockGetJudgedEntries.mock.calls[0][5]).toEqual({ limit: Infinity });
+  });
+
+  it('leaves a legacy challenge on the LLM pick, with the historical cut', async () => {
+    mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'legacy-absolute' });
+    mockGetJudgedEntries.mockResolvedValue(JUDGED_ENTRIES);
+    llmWinners([
+      { creatorId: 200, creator: 'bob' },
+      { creatorId: 100, creator: 'alice' },
+    ]);
+
+    await endChallengeAndPickWinners(CHALLENGE_ID);
+
+    const places = mockCreateChallengeWinner.mock.calls.map((call) => call[0]);
+    expect(places.map((p: { userId: number }) => p.userId)).toEqual([200, 100]);
+    expect(mockGetJudgedEntries.mock.calls[0][5]).toBeUndefined();
+  });
+
+  it('writes the recap from the podium shortlist, not just the top N', async () => {
+    // An entry the ladder placed 11-15 winning the round-robin is the stated reason the podium
+    // exists. A recap fed only the top 10 would describe a challenge somebody else won.
+    const wide = Array.from({ length: 24 }, (_, i) => ({
+      imageId: i + 1,
+      userId: (i + 1) * 100,
+      username: `u${i + 1}`,
+      summary: 's',
+      score: 1,
+    }));
+    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine());
+    mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'pairwise-ladder' });
+    mockGetJudgedEntries.mockResolvedValue(wide);
+    llmWinners([]);
+
+    await endChallengeAndPickWinners(CHALLENGE_ID);
+
+    // finalReviewAmount is 10, the shortlist is 15 — the recap gets the longer of the two.
+    expect(mockGenerateWinners.mock.calls[0][0].entries).toHaveLength(15);
   });
 });
