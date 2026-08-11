@@ -57,4 +57,108 @@ export const placementNotifications = createNotificationProcessor({
       FROM data
     `,
   },
+
+  /**
+   * Same trap as the sticker one, with a longer fuse: a gallery submission the
+   * owner never sees expires at 48 hours and refunds, so silence costs the
+   * submitter two days of held Buzz and tells the owner nothing.
+   *
+   * Links to the host image rather than to a queue: deciding whether a remix
+   * belongs next to your work means seeing your work.
+   */
+  'remix-gallery-pending': {
+    displayName: 'Remix awaiting your review',
+    category: NotificationCategory.Creator,
+    prepareMessage: ({ details }) => ({
+      message: `${details.placerUsername} wants to add a remix to your gallery for ${details.amount} Buzz`,
+      url: `/images/${details.imageId}`,
+    }),
+    prepareQuery: async ({ lastSent }) => `
+      WITH data AS (
+        SELECT
+          p."ownerId" "userId",
+          p.id "placementId",
+          jsonb_build_object(
+            'placementId', p.id,
+            'imageId', p."targetId",
+            'placerId', p."placerId",
+            'placerUsername', u.username,
+            'amount', p.amount
+          ) as "details"
+        FROM "Placement" p
+        JOIN "User" u ON u.id = p."placerId"
+        WHERE p.surface = 'remixGallery'
+          AND p."targetType" = 'image'
+          AND p.status = 'pending'
+          -- Stamped by holdPlacementEscrow. Its absence means the row exists but
+          -- the escrow has not been attempted, and a notification landing in that
+          -- gap sends someone to review a submission about to be unwound.
+          AND p."expiresAt" IS NOT NULL
+          AND p."createdAt" > '${lastSent}'
+      )
+      SELECT
+        CONCAT('remix-gallery-pending:',"placementId") "key",
+        "userId",
+        'remix-gallery-pending' "type",
+        details
+      FROM data
+    `,
+  },
+
+  /**
+   * The submitter's side of the same decision. They paid and then waited, and
+   * without this the only signal that anything happened is their Buzz balance.
+   *
+   * Approve and decline share one type so the two cannot disagree about what
+   * counts as resolved — the message branches on the stored status instead.
+   *
+   * Deliberately excludes `expired`: nobody decided anything, the refund is
+   * full, and telling someone their submission was rejected when the owner
+   * simply never looked is both wrong and worse.
+   */
+  'remix-gallery-resolved': {
+    displayName: 'Your remix submission was answered',
+    category: NotificationCategory.Creator,
+    prepareMessage: ({ details }) =>
+      details.status === 'approved'
+        ? {
+            message: `${details.ownerUsername} added your remix to their gallery`,
+            url: `/images/${details.imageId}`,
+          }
+        : {
+            message: `${details.ownerUsername} declined your remix submission`,
+            url: `/images/${details.imageId}`,
+          },
+    prepareQuery: async ({ lastSent }) => `
+      WITH data AS (
+        SELECT
+          p."placerId" "userId",
+          p.id "placementId",
+          jsonb_build_object(
+            'placementId', p.id,
+            'imageId', p."targetId",
+            'ownerId', p."ownerId",
+            'ownerUsername', u.username,
+            'status', p.status,
+            'amount', p.amount
+          ) as "details"
+        FROM "Placement" p
+        JOIN "User" u ON u.id = p."ownerId"
+        WHERE p.surface = 'remixGallery'
+          AND p."targetType" = 'image'
+          AND p.status IN ('approved', 'declined')
+          -- The moment the owner acted, not the moment the row was made. A
+          -- submission created before the last run and answered after it would
+          -- be missed entirely by a createdAt window.
+          AND p."resolvedAt" IS NOT NULL
+          AND p."resolvedAt" > '${lastSent}'
+      )
+      SELECT
+        CONCAT('remix-gallery-resolved:',"placementId") "key",
+        "userId",
+        'remix-gallery-resolved' "type",
+        details
+      FROM data
+    `,
+  },
 });

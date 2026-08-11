@@ -6,6 +6,7 @@ import {
   sweepUnpaidLegs,
   sweepUnplannedSettlements,
 } from '~/server/services/placement-escrow.service';
+import { sweepDeletedRemixGallerySubmissions } from '~/server/services/remix-gallery-sweep.service';
 
 const BATCH = 100;
 
@@ -116,8 +117,38 @@ export const sweepUnplannedPlacementSettlementsJob = createJob(
   { lockExpiration: 15 * 60 }
 );
 
+/**
+ * Gallery submissions whose image was deleted after it was sent. The ordinary
+ * expiry reaches them eventually; this releases the escrow without making the
+ * submitter wait out a window for a decision that can no longer be made.
+ *
+ * Drains, because a creator deleting a post takes every submission of every
+ * image in it with them, so the population arrives in bursts rather than
+ * steadily.
+ */
+export const sweepDeletedRemixGallerySubmissionsJob = createJob(
+  'remix-gallery-sweep-deleted',
+  '*/30 * * * *',
+  async (jobContext) => {
+    const { runs, hitCap } = await drain(
+      'remix-gallery-sweep-deleted',
+      jobContext,
+      () => sweepDeletedRemixGallerySubmissions({ limit: BATCH }),
+      (result) => result.considered
+    );
+
+    return {
+      considered: sum(runs, (run) => run.considered),
+      released: sum(runs, (run) => run.released),
+      hitCap,
+    };
+  },
+  { lockExpiration: 10 * 60 }
+);
+
 export const placementJobs = [
   expirePlacementsJob,
   sweepUnpaidPlacementLegsJob,
   sweepUnplannedPlacementSettlementsJob,
+  sweepDeletedRemixGallerySubmissionsJob,
 ];

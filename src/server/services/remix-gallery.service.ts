@@ -1,10 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import {
-  holdPlacementEscrow,
-  settlePlacement,
-} from '~/server/services/placement-escrow.service';
+import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
@@ -219,8 +216,7 @@ async function assertNotAlreadySubmitted({
     select: { id: true },
   });
 
-  if (existing)
-    throw throwBadRequestError('remix gallery: that image is already in this gallery');
+  if (existing) throw throwBadRequestError('remix gallery: that image is already in this gallery');
 }
 
 type OwnerAction = 'approve' | 'decline' | 'remove';
@@ -371,15 +367,16 @@ export async function setRemixGalleryPins({
   await dbWrite.$transaction(
     entries.map((entry) => {
       const index = placementIds.indexOf(entry.id);
-      const data = (isRemixGalleryPlacementData(entry.data) ? entry.data : {}) as
-        RemixGalleryPlacementData;
+      const data = (
+        isRemixGalleryPlacementData(entry.data) ? entry.data : {}
+      ) as RemixGalleryPlacementData;
 
       return dbWrite.placement.update({
         where: { id: entry.id },
         data: {
           data: {
             ...data,
-            pinnedAt: index === -1 ? null : (data.pinnedAt ?? pinnedAt),
+            pinnedAt: index === -1 ? null : data.pinnedAt ?? pinnedAt,
             position: index === -1 ? null : index,
           } satisfies RemixGalleryPlacementData,
         },
@@ -395,6 +392,20 @@ export type RemixGalleryEntry = {
   imageId: number;
   placerId: number;
   pinned: boolean;
+  sortKey: number;
+};
+
+/**
+ * The raw row, which is not the returned entry: Postgres has no boolean here
+ * because the pinned flag is derived with a `CASE` so it can also be ordered by,
+ * and `position` is only meaningful while sorting.
+ */
+type GalleryRow = {
+  placementId: number;
+  imageId: number;
+  placerId: number;
+  pinned: number;
+  position: number | null;
   sortKey: number;
 };
 
@@ -435,9 +446,7 @@ export async function getRemixGallery({
       )`
     : Prisma.empty;
 
-  const rows = await dbRead.$queryRaw<
-    (RemixGalleryEntry & { pinned: number; position: number | null })[]
-  >`
+  const rows = await dbRead.$queryRaw<GalleryRow[]>`
     WITH e AS (
       SELECT
         pl.id AS "placementId",
@@ -445,7 +454,10 @@ export async function getRemixGallery({
         pl."placerId",
         CASE WHEN pl.data ->> 'pinnedAt' IS NOT NULL THEN 1 ELSE 0 END AS pinned,
         (pl.data ->> 'position')::int AS position,
-        abs(mod(hashtext(concat(pl.id::text, ${seed.toString()})), 1000000000)) AS "sortKey"
+        -- The ::text is load-bearing. Prisma binds this as a parameter, and
+        -- concat() is variadic "any", so without a cast Postgres cannot infer
+        -- the type and rejects the statement at parse time — every call throws.
+        abs(mod(hashtext(concat(pl.id::text, ${seed.toString()}::text)), 1000000000)) AS "sortKey"
       FROM "Placement" pl
       JOIN "Image" i ON i.id = (pl.data ->> 'imageId')::int
       LEFT JOIN "Post" p ON p.id = i."postId"
