@@ -26,10 +26,10 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { PackCoverField } from '~/components/CreatorShop/Pack/PackCoverField';
 import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
 import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
+import { useCreatorShopFees } from '~/components/CreatorShop/useCreatorShopFees';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import {
-  CREATOR_SHOP_PACK_SUBMISSION_FEE,
   PACK_MAX_MEMBERS,
   PACK_MIN_MEMBERS,
   RIGHTS_AFFIRMATION_STATEMENT,
@@ -142,8 +142,12 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
   const tooFew = selected.length < PACK_MIN_MEMBERS;
   const tooMany = selected.length > PACK_MAX_MEMBERS;
   const priceTooLow = (price ?? 0) < floor;
+  // An unresolved fee blocks submit rather than quoting a default the server may
+  // disagree with — the pack fee is charged before review and is not refunded.
+  const packFee = useCreatorShopFees()?.pack;
   const canSubmit =
     !!name.trim() &&
+    (isEdit || packFee !== undefined) &&
     !tooFew &&
     !tooMany &&
     !priceTooLow &&
@@ -392,7 +396,7 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
             <BuzzTransactionButton
               disabled={!canSubmit}
               loading={submitPack.isPending}
-              buzzAmount={CREATOR_SHOP_PACK_SUBMISSION_FEE}
+              buzzAmount={packFee ?? 0}
               label="Submit pack"
               onPerformTransaction={handleSubmit}
             />

@@ -8,7 +8,6 @@ import type {
   UpdateCreatorShopPackInput,
 } from '~/server/schema/creator-shop.schema';
 import {
-  CREATOR_SHOP_PACK_SUBMISSION_FEE,
   RIGHTS_AFFIRMATION_STATEMENT,
   RIGHTS_AFFIRMATION_VERSION,
   computePackAmountDue,
@@ -19,6 +18,7 @@ import {
   type PackMemberPricing,
 } from '~/server/schema/creator-shop.schema';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
+import { getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
 import { getCosmeticArtworkUrl } from '~/server/services/cosmetic-phash.service';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
@@ -183,11 +183,12 @@ export const submitCreatorShopPack = async ({
         .join(', ')}`
     );
 
+  const submissionFee = (await getCreatorShopFees()).pack;
   const feeTx = await createBuzzTransaction({
     fromAccountId: userId,
     fromAccountType: buzzType as BuzzSpendType,
     toAccountId: 0,
-    amount: CREATOR_SHOP_PACK_SUBMISSION_FEE,
+    amount: submissionFee,
     type: TransactionType.Purchase,
     description: `Creator Shop pack submission fee - ${name}`,
     externalTransactionId: `creator-shop-pack-submit-${userId}-${Date.now()}`,
@@ -209,6 +210,7 @@ export const submitCreatorShopPack = async ({
           meta: {
             purchases: 0,
             submissionTxId: feeTxId,
+            submissionFee,
             // `null` clears, `undefined` leaves alone — without the distinction
             // the clear button emptied the form and saved nothing.
             ...(imageUrl === undefined ? {} : { coverUrl: imageUrl ?? undefined }),

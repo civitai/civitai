@@ -4,6 +4,7 @@ import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
 import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
 import { validateCosmeticImage } from '~/components/CreatorShop/creator-shop.validation';
+import { useCreatorShopFees } from '~/components/CreatorShop/useCreatorShopFees';
 import {
   buildData,
   editNotice,
@@ -24,7 +25,6 @@ import {
   STICKER_MIN_BUZZ_PER_USE,
   STICKER_MAX_USES,
   CREATOR_SHOP_CREATOR_SHARE,
-  CREATOR_SHOP_SUBMISSION_FEE,
   isCreatorCosmeticType,
   stickerPerUseFloor,
 } from '~/server/schema/creator-shop.schema';
@@ -215,14 +215,19 @@ export function useSubmitCreatorShopForm({
     ? 'taken'
     : 'available';
 
+  const fees = useCreatorShopFees();
   const { data: buzz } = useQueryBuzz(['yellow', 'green', 'blue']);
   const yellowBalance = buzz.accounts.find((a) => a.type === 'yellow')?.balance ?? 0;
   const greenBalance = buzz.accounts.find((a) => a.type === 'green')?.balance ?? 0;
   const blueBalance = buzz.accounts.find((a) => a.type === 'blue')?.balance ?? 0;
   const feeAccountBalance =
     buzzType === 'yellow' ? yellowBalance : buzzType === 'green' ? greenBalance : blueBalance;
-  // Only new submissions pay the fee; edits don't.
-  const canAffordFee = isEdit || feeAccountBalance >= CREATOR_SHOP_SUBMISSION_FEE;
+  // The fee the server will charge for this type, not a mirrored constant.
+  const submissionFee = fees?.submission[type];
+  // Only new submissions pay the fee; edits don't. An unresolved fee blocks submit
+  // rather than falling back to a default the server may disagree with.
+  const canAffordFee =
+    isEdit || (submissionFee !== undefined && feeAccountBalance >= submissionFee);
 
   const maxSize = constants.mediaUpload.maxImageFileSize;
   const uploading = !!files[0] && files[0].progress < 100;
@@ -457,6 +462,7 @@ export function useSubmitCreatorShopForm({
     maxSize,
     uploading,
     artOk,
+    submissionFee,
     canAffordFee,
     canSubmit,
     yellowBalance,

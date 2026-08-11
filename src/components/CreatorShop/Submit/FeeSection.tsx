@@ -1,6 +1,5 @@
 import { Alert, Group, SegmentedControl, Text } from '@mantine/core';
 import { IconWallet } from '@tabler/icons-react';
-import { CREATOR_SHOP_SUBMISSION_FEE } from '~/server/schema/creator-shop.schema';
 import { numberWithCommas } from '~/utils/number-helpers';
 
 // Fee-payment account picker (with live balances) and the submission-fee notice,
@@ -13,6 +12,7 @@ export function FeeSection({
   blueBalance,
   feeAccountBalance,
   canAffordFee,
+  submissionFee,
 }: {
   buzzType: 'yellow' | 'green' | 'blue';
   onBuzzTypeChange: (value: 'yellow' | 'green' | 'blue') => void;
@@ -21,6 +21,7 @@ export function FeeSection({
   blueBalance: number;
   feeAccountBalance: number;
   canAffordFee: boolean;
+  submissionFee: number | undefined;
 }) {
   return (
     <>
@@ -39,7 +40,7 @@ export function FeeSection({
       </Group>
       <Alert color={canAffordFee ? 'yellow' : 'red'} icon={<IconWallet size={18} />}>
         <Text size="sm" fw={600}>
-          {numberWithCommas(CREATOR_SHOP_SUBMISSION_FEE)} Buzz submission fee
+          {submissionFee === undefined ? '…' : numberWithCommas(submissionFee)} Buzz submission fee
         </Text>
         <Text size="xs" c="dimmed">
           Charged when you submit for review, and{' '}

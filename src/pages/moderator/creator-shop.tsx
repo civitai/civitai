@@ -63,13 +63,13 @@ import {
 } from '~/components/CreatorShop/Submit/submit.constants';
 import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useCreatorShopFees } from '~/components/CreatorShop/useCreatorShopFees';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import type { CosmeticOffsets } from '~/server/schema/creator-shop.schema';
+import type { CreatorCosmeticType } from '~/server/schema/creator-shop.schema';
 import {
   CREATOR_SHOP_CREATOR_SHARE,
-  CREATOR_SHOP_PACK_SUBMISSION_FEE,
-  CREATOR_SHOP_SUBMISSION_FEE,
   DECORATION_OFFSET_LIMIT,
 } from '~/server/schema/creator-shop.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -178,6 +178,7 @@ export const getServerSideProps = createServerSideProps({
 
 function CreatorShopReviewPage() {
   const currentUser = useCurrentUser();
+  const fees = useCreatorShopFees();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(
     CosmeticShopItemStatus.PendingReview
   );
@@ -230,6 +231,15 @@ function CreatorShopReviewPage() {
   const submitter = selected?.cosmetic?.creator ?? selected?.addedBy ?? null;
   const selectedMeta = (selected?.meta ?? {}) as CosmeticShopItemMeta;
   const checks = selectedMeta.autoChecks ?? [];
+  // Items submitted before the fee became operator-tunable have no recorded
+  // amount; today's configured fee is the best available answer for those.
+  const submissionFee =
+    selectedMeta.submissionFee ??
+    (isPack
+      ? fees?.pack
+      : selected?.cosmetic
+      ? fees?.submission[selected.cosmetic.type as CreatorCosmeticType]
+      : undefined);
   const dims = selectedMeta.imageMeta;
   const isAnimated = !!(selected?.cosmetic?.data as { animated?: boolean } | null)?.animated;
   const affirmation = selectedMeta.rightsAffirmation;
@@ -771,9 +781,11 @@ function CreatorShopReviewPage() {
                       />
                       <MoneyTile
                         label="Submission fee"
-                        value={`${numberWithCommas(
-                          isPack ? CREATOR_SHOP_PACK_SUBMISSION_FEE : CREATOR_SHOP_SUBMISSION_FEE
-                        )} · Paid`}
+                        value={
+                          submissionFee === undefined
+                            ? 'Paid'
+                            : `${numberWithCommas(submissionFee)} · Paid`
+                        }
                         icon={<IconCheck size={14} />}
                         iconColor="var(--mantine-color-blue-5)"
                       />

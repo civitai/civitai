@@ -24,6 +24,8 @@ vi.mock('~/server/db/client', () => ({
     cosmeticShopItem: { findUnique: mocks.shopItemFindUnique, findFirst: vi.fn() },
   },
   dbWrite: {
+    // The submission fee is read from KeyValue; unset means the compiled defaults.
+    keyValue: { findUnique: vi.fn() },
     cosmeticShopItem: { update: mocks.shopItemUpdate },
     $transaction: (cb: (tx: unknown) => unknown) =>
       cb({

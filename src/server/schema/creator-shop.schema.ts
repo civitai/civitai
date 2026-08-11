@@ -51,13 +51,6 @@ export const packItemFloor = (type: CosmeticType): number => {
 export const COSMETIC_PRICE_FLOOR_MIN = Math.min(
   ...Object.values(CosmeticType).map((type) => cosmeticPriceFloor(type))
 );
-export const CREATOR_SHOP_SUBMISSION_FEE = 10000;
-/**
- * Packs list for less. The fee prices the review a submission costs, and a pack
- * has no artwork to validate — every member was reviewed and paid for when it
- * was submitted.
- */
-export const CREATOR_SHOP_PACK_SUBMISSION_FEE = 1000;
 export const CREATOR_SHOP_MAX_FEATURED = 6;
 // Creator keeps this share of each sale; platform keeps the remainder.
 export const CREATOR_SHOP_CREATOR_SHARE = 0.7;
@@ -108,6 +101,67 @@ export const creatorCosmeticTypes = [
   CosmeticType.ProfileBackground,
   CosmeticType.Sticker,
 ] as const;
+
+const SUBMISSION_FEE_DEFAULT = 10000;
+/**
+ * Packs list for less. The fee prices the review a submission costs, and a pack
+ * has no artwork to validate — every member was reviewed and paid for when it
+ * was submitted.
+ */
+const PACK_SUBMISSION_FEE_DEFAULT = 1000;
+
+/** What a creator pays to submit this cosmetic type for review. */
+export const submissionFeeDefault = (type: CosmeticType): number => {
+  switch (type) {
+    case CosmeticType.Sticker:
+    case CosmeticType.Badge:
+    case CosmeticType.ProfileDecoration:
+    case CosmeticType.ProfileBackground:
+    case CosmeticType.ContentDecoration:
+    default:
+      return SUBMISSION_FEE_DEFAULT;
+  }
+};
+
+/**
+ * Operator-tunable submission fees. A pack carries one figure rather than a
+ * per-type map because it has no CosmeticType of its own.
+ */
+export type CreatorShopFees = {
+  submission: Record<CreatorCosmeticType, number>;
+  pack: number;
+};
+
+export const DEFAULT_CREATOR_SHOP_FEES: CreatorShopFees = {
+  submission: Object.fromEntries(
+    creatorCosmeticTypes.map((type) => [type, submissionFeeDefault(type)])
+  ) as Record<CreatorCosmeticType, number>,
+  pack: PACK_SUBMISSION_FEE_DEFAULT,
+};
+
+// Buzz is integral, and a fee is charged before anything is reviewed — a typo
+// that lands a fraction or a negative in the stored row must not reach the
+// money path, so each value falls back on its own rather than the row as a whole.
+const usableFee = (value: unknown, fallback: number): number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : fallback;
+
+/** Shared by the KeyValue read and the client fallback so both agree on a bad row. */
+export const normalizeCreatorShopFees = (value: unknown): CreatorShopFees => {
+  const row = (value ?? {}) as { submission?: unknown; pack?: unknown };
+  const submission = (row.submission ?? {}) as Record<string, unknown>;
+  return {
+    submission: Object.fromEntries(
+      creatorCosmeticTypes.map((type) => [
+        type,
+        usableFee(
+          typeof submission === 'object' && submission !== null ? submission[type] : undefined,
+          submissionFeeDefault(type)
+        ),
+      ])
+    ) as Record<CreatorCosmeticType, number>,
+    pack: usableFee(row.pack, PACK_SUBMISSION_FEE_DEFAULT),
+  };
+};
 
 // Consumables are priced per use, so a listing has to clear both floors.
 export const STICKER_MIN_BUZZ_PER_USE = 5;
