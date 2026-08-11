@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { StickerPlacementOverlay } from '~/components/Sticker/StickerPlacementOverlay';
 import { useStickerPlacementBatch } from '~/components/Sticker/StickerPlacementBatchProvider';
+import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStickerRevealStore } from '~/store/sticker-reveal.store';
 
@@ -75,6 +76,7 @@ const offsetWithin = (el: HTMLElement, stop: Element | null) => {
  */
 export function CardStickerOverlay({ imageId }: { imageId: number }) {
   const currentUser = useCurrentUser();
+  const treatment = useStickerTreatment();
   const revealed = useStickerRevealStore((state) => state.revealed);
   const batch = useStickerPlacementBatch(imageId);
   const ref = useRef<HTMLDivElement>(null);
@@ -141,6 +143,8 @@ export function CardStickerOverlay({ imageId }: { imageId: number }) {
             interactive={false}
             sticker={batch?.sticker}
             artworkWidth={CARD_ARTWORK_WIDTH}
+            treatment={treatment}
+            surface="card"
           />
         </div>
       )}

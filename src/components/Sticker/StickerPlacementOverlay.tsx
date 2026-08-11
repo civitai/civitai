@@ -5,6 +5,12 @@ import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import type { PlacedSticker } from '~/components/Sticker/placement.util';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
 import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
+import {
+  DEFAULT_STICKER_TREATMENT,
+  resolveTreatment,
+  type StickerSurface,
+  type StickerTreatmentKey,
+} from '~/components/Sticker/treatments/sticker-treatments';
 import { useMemo } from 'react';
 
 /**
@@ -26,6 +32,8 @@ export function StickerPlacementOverlay({
   interactive = true,
   sticker,
   artworkWidth = 512,
+  treatment = DEFAULT_STICKER_TREATMENT,
+  surface = 'detail',
 }: {
   placements: PlacedSticker[];
   viewerId?: number;
@@ -65,6 +73,20 @@ export function StickerPlacementOverlay({
    * free.
    */
   artworkWidth?: number;
+  /**
+   * How an approved sticker is separated from the artwork under it. Never
+   * applied to a pending placement — pending owns 60% opacity plus a dashed
+   * yellow outline, and a second always-on treatment on top of it would make
+   * "waiting on you" and "settled" look the same to the owner.
+   */
+  treatment?: StickerTreatmentKey;
+  /**
+   * Which surface is drawing, kept separate from `interactive` — that prop
+   * already carries pointer-events, the hover card and the moderator remove
+   * action, and a detail view that turned those off would still want the
+   * detail treatment.
+   */
+  surface?: StickerSurface;
 }) {
   const cosmeticIds = useMemo(
     () =>
@@ -90,6 +112,29 @@ export function StickerPlacementOverlay({
         // would be a filter where a refusal is needed.
         const isOwner = placement.ownerId === viewerId;
 
+        const dressed = resolveTreatment({
+          treatment,
+          surface,
+          isPending: placement.isPending,
+        });
+
+        const artworkImage = (
+          <EdgeImage
+            src={art.url}
+            alt={`:${art.slug}:`}
+            // A fixed request width rather than a measured one: a sticker has
+            // a natural size and the element scales it down in layout.
+            options={{ width: artworkWidth, anim: art.animated, optimized: true }}
+            className={clsx(placement.isPending && 'opacity-60')}
+            style={{
+              width: '100%',
+              height: 'auto',
+              display: 'block',
+              ...dressed.imageStyle?.[surface],
+            }}
+          />
+        );
+
         const body = (
           <div
             key={placement.id}
@@ -101,15 +146,22 @@ export function StickerPlacementOverlay({
               transform: `translate(-50%, -50%) rotate(${placement.data.rotation}deg)`,
             }}
           >
-            <EdgeImage
-              src={art.url}
-              alt={`:${art.slug}:`}
-              // A fixed request width rather than a measured one: a sticker has
-              // a natural size and the element scales it down in layout.
-              options={{ width: artworkWidth, anim: art.animated, optimized: true }}
-              className={clsx(placement.isPending && 'opacity-60')}
-              style={{ width: '100%', height: 'auto', display: 'block' }}
-            />
+            {/* The wrapper's own transform makes it a stacking context, so a
+                negative z-index here stays behind the sticker without reaching
+                behind the artwork the sticker sits on. */}
+            {dressed.behind && (
+              <span
+                aria-hidden
+                className={dressed.behind.className}
+                style={{ zIndex: -1, ...dressed.behind.style }}
+              />
+            )}
+
+            {dressed.animationClassName ? (
+              <div className={dressed.animationClassName}>{artworkImage}</div>
+            ) : (
+              artworkImage
+            )}
 
             {/* A dashed outline rather than opacity alone. Fading is invisible
                 over busy artwork and reads as a rendering fault over plain
