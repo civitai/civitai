@@ -309,8 +309,20 @@ function assertOwnerAssetEditable(
 export { nsfwLevelFromContentRating };
 
 /**
- * Load a listing and assert the caller owns it (or is a moderator). Throws
- * NOT_FOUND for a missing listing, FORBIDDEN for a non-owner non-mod.
+ * Load a listing and assert the caller may edit it. Throws NOT_FOUND for a missing
+ * listing, FORBIDDEN otherwise.
+ *
+ * PERMITTED: the listing owner, an ACCEPTED collaborator on the backing AppBlock, or a
+ * moderator. The mod bypass is UNCHANGED from before collaborators existed — this
+ * file's gate always had one, unlike `offsite-listing.service`'s
+ * `loadOwnedEditableListing`, which deliberately has none. That divergence is
+ * pre-existing and is recorded in `app-access.call-site-ledger.test.ts` rather than
+ * silently normalised here.
+ *
+ * The collaborator half routes through `resolveListingAccess`, which is SHADOW-AWARE:
+ * a shadow revision carries `appBlockId: null`, so the seat is resolved via its parent.
+ * Without that, an editor would lose access to their own in-flight revision the moment
+ * their first media edit minted it.
  */
 async function loadOwnedListing(
   listingId: string,
@@ -341,9 +353,27 @@ async function loadOwnedListing(
   });
   if (!listing) throw new TRPCError({ code: 'NOT_FOUND', message: 'Listing not found' });
   if (listing.userId !== user.id && !user.isModerator) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this listing' });
+    // Not the owner and not a mod — the last chance is an ACCEPTED collaborator seat.
+    // Resolved lazily so the common owner/mod path costs no extra query.
+    const editor = await isAcceptedListingEditor(listingId, user.id);
+    if (!editor) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this listing' });
+    }
   }
   return listing;
+}
+
+/**
+ * True when `userId` holds an ACCEPTED collaborator seat reachable from this listing.
+ *
+ * Extracted so every gate in this file asks the question the SAME way (`resolveAppAccess`
+ * is the single predicate; this is a thin `role === 'editor'` read of it) and so the
+ * seam has one name to mock in tests.
+ */
+async function isAcceptedListingEditor(listingId: string, userId: number): Promise<boolean> {
+  const { resolveListingAccess } = await import('~/server/services/blocks/app-access.service');
+  const access = await resolveListingAccess(listingId, userId);
+  return access?.role === 'editor';
 }
 
 // ---------------------------------------------------------------------------
@@ -1098,8 +1128,14 @@ async function resolveOwnerScreenshotTarget(
     shot = await dbWrite.appListingScreenshot.findUnique({ where: { id: screenshotId }, select });
   }
   if (!shot) throw new TRPCError({ code: 'NOT_FOUND', message: 'Screenshot not found' });
+  // Owner / mod / ACCEPTED collaborator (see `loadOwnedListing`). This is an EARLY
+  // check on the screenshot's own listing; `loadOwnedListing` below re-asserts it on
+  // the resolved listing row, so widening here does not weaken the second gate.
   if (shot.appListing.userId !== user.id && !user.isModerator) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this listing' });
+    const editor = await isAcceptedListingEditor(shot.appListingId, user.id);
+    if (!editor) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this listing' });
+    }
   }
   const sourceListing = await loadOwnedListing(shot.appListingId, user, db);
   const listing = await resolveOwnerAssetEditTarget(sourceListing, user);

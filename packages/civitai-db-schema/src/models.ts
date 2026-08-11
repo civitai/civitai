@@ -656,6 +656,12 @@ export interface User {
   appListingReportsReported?: AppListingReport[];
   appListingReportsResolved?: AppListingReport[];
   appListingModerationEvents?: AppListingModerationEvent[];
+  appCollaboratorSeats?: AppCollaborator[];
+  appCollaboratorInvitesSent?: AppCollaborator[];
+  appOwnershipEventsActed?: AppOwnershipEvent[];
+  appOwnershipEventsTargeted?: AppOwnershipEvent[];
+  appOwnershipTransfersFrom?: AppOwnershipTransfer[];
+  appOwnershipTransfersTo?: AppOwnershipTransfer[];
   targetedAnnouncements?: AnnouncementUser[];
   placementSuspension?: PlacementSuspension | null;
   placementsReceived?: Placement[];
@@ -1879,6 +1885,9 @@ export interface AppBlock {
   userScopeGrants?: AppUserScopeGrant[];
   reviews?: AppBlockReview[];
   appListing?: AppListing | null;
+  collaborators?: AppCollaborator[];
+  ownershipEvents?: AppOwnershipEvent[];
+  ownershipTransfers?: AppOwnershipTransfer[];
 }
 
 export interface AppBlockReview {
@@ -1894,6 +1903,49 @@ export interface AppBlockReview {
   tosViolation: boolean;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface AppCollaborator {
+  appBlockId: string;
+  appBlock?: AppBlock;
+  userId: number;
+  user?: User;
+  role: string;
+  status: string;
+  displayed: boolean;
+  invitedBy: number;
+  inviter?: User;
+  lastNotifiedAt: Date | null;
+  createdAt: Date;
+  respondedAt: Date | null;
+}
+
+export interface AppOwnershipEvent {
+  id: string;
+  appBlockId: string | null;
+  appBlock?: AppBlock | null;
+  slug: string;
+  action: string;
+  actorUserId: number | null;
+  actor?: User | null;
+  targetUserId: number | null;
+  target?: User | null;
+  metadata: JsonValue | null;
+  createdAt: Date;
+}
+
+export interface AppOwnershipTransfer {
+  id: string;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  fromUserId: number;
+  fromUser?: User;
+  toUserId: number;
+  toUser?: User;
+  status: string;
+  expiresAt: Date;
+  createdAt: Date;
+  respondedAt: Date | null;
 }
 
 export interface AppBlockPublishRequest {

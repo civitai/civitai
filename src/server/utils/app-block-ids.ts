@@ -133,3 +133,14 @@ export function newAppListingModerationEventId(): string {
 export function newAppReviewAgentReportId(): string {
   return `arar_${newUlid()}`;
 }
+
+// App Listing Collaborators — the append-only ownership audit trail + the
+// in-flight ownership transfer. (`AppCollaborator` itself has a COMPOSITE key
+// `(appBlockId, userId)` and needs no generated id.)
+export function newAppOwnershipEventId(): string {
+  return `aoe_${newUlid()}`;
+}
+
+export function newAppOwnershipTransferId(): string {
+  return `aot_${newUlid()}`;
+}
