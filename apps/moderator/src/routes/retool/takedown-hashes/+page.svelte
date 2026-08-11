@@ -49,7 +49,7 @@
       </p>
     {:else}
       <ul class="mt-3 space-y-1 text-sm">
-        {#each data.matches as m (m.sha256 + m.modelVersionId)}
+        {#each data.matches as m (m.id)}
           <li class="flex flex-wrap items-baseline gap-x-3">
             <span class="text-red-300">Previously taken down</span>
             <span class="text-xs text-dark-2">

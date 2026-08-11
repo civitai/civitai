@@ -1,6 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Chart, chartColor } from '@civitai/ui/components/ui/chart/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import type { ActionData, PageData } from './$types';
@@ -9,18 +10,29 @@
 
   const stats = $derived(data.stats);
 
-  // Inline SVG rather than a charting dependency: two series of ~200 points with no interaction is
-  // not worth a library, and the app has none today.
-  const path = (points: { count: number }[], width = 600, height = 80) => {
-    if (points.length < 2) return '';
-    const max = Math.max(...points.map((p) => p.count), 1);
-    const step = width / (points.length - 1);
-    return points
-      .map((p, i) => `${i === 0 ? 'M' : 'L'}${(i * step).toFixed(1)},${(height - (p.count / max) * height).toFixed(1)}`)
-      .join(' ');
-  };
-
   const peak = (points: { count: number }[]) => Math.max(...points.map((p) => p.count), 0);
+
+  // `@civitai/ui`'s themed Chart.js wrapper, as five creator-studio pages use. Category labels, not a
+  // time axis — the wrapper registers no date adapter, so the hour is pre-formatted here.
+  const hourLabel = (iso: string | Date) =>
+    new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric' });
+
+  const chartData = (points: { hour: string | Date; count: number }[], label: string) => ({
+    labels: points.map((p) => hourLabel(p.hour)),
+    datasets: [
+      {
+        label,
+        data: points.map((p) => p.count),
+        borderColor: chartColor(0),
+        backgroundColor: chartColor(0),
+        fill: false,
+        pointRadius: 0,
+      },
+    ],
+  });
+
+  // The x labels are dense at 200 points; Chart.js thins them itself, and the tooltip carries the value.
+  const chartOptions = { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } };
 
   const charts = $derived([
     { label: 'Images', points: stats.images },
@@ -64,25 +76,12 @@
       {#if chart.points.length < 2}
         <p class="text-sm text-dark-2">Not enough data to plot.</p>
       {:else}
-        <svg
-          viewBox="0 0 600 80"
-          class="h-20 w-full"
-          preserveAspectRatio="none"
-          role="img"
-          aria-label="{chart.label} uploaded per hour over the last {stats.hours} hours"
-        >
-          <path
-            d={path(chart.points)}
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.5"
-            class="text-blue-4"
-            vector-effect="non-scaling-stroke"
+        <div class="h-40">
+          <Chart
+            type="line"
+            data={chartData(chart.points, `${chart.label} per hour`)}
+            options={chartOptions}
           />
-        </svg>
-        <div class="flex justify-between text-xs text-dark-2">
-          <span>{dateTime(chart.points[0].hour)}</span>
-          <span>{dateTime(chart.points[chart.points.length - 1].hour)}</span>
         </div>
       {/if}
     </section>

@@ -72,24 +72,24 @@ export const actions: Actions = {
     if (!ids.length)
       return fail(400, { message: 'No post reports are already resolved by content.' });
 
-    // Sequential, and each one re-checked by `setReportStatus` — it treats zero affected rows as a
-    // failure, so a report someone else actioned in the meantime is skipped rather than double-logged.
+    // `setReportStatus` RETURNS its outcome rather than throwing: `ok:false` when the report is gone,
+    // and `ok:true, changed:false` when someone else already put it in this status. Counting the loop
+    // instead of the results reported "actioned N of N" for a run that changed nothing.
     let actioned = 0;
+    let skipped = 0;
     for (const id of ids) {
-      try {
-        await setReportStatus({
-          id,
-          status: ReportStatus.Actioned,
-          userId: locals.user.id,
-          ip: getClientAddress(),
-        });
-        actioned += 1;
-      } catch {
-        // Already actioned by someone else. Counted as skipped, not as a failure of the sweep.
-      }
+      const result = await setReportStatus({
+        id,
+        status: ReportStatus.Actioned,
+        userId: locals.user.id,
+        ip: getClientAddress(),
+      });
+      if (result.ok && result.changed) actioned += 1;
+      else skipped += 1;
     }
 
-    return { success: true, actioned, found: ids.length };
+    // The SELECT is capped, so a full batch means there are probably more behind it.
+    return { success: true, actioned, skipped, found: ids.length, more: ids.length === 500 };
   },
 
   saveNotes: async ({ request }) => {

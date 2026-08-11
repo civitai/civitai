@@ -138,7 +138,7 @@ export async function getSuspectImages(
         sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u."profilePictureId" = "Image"."id")`.as(
           'isProfilePicture'
         ),
-        sql<boolean>`EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."entityId" = "Image"."id")`.as(
+        sql<boolean>`EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."imageId" = "Image"."id")`.as(
           'hasConnection'
         ),
       ])

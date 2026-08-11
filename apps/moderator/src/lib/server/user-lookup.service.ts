@@ -169,7 +169,9 @@ export async function getUserLookup(userId: number): Promise<UserLookupResult | 
     // A different database, so it rides the same Promise.all rather than a second round trip. Failure
     // degrades to "no strikes shown": the moderator database being down must not blank a lookup.
     strikeCountsByUserIds([userId]).catch(() => new Map<number, number>()),
-    getModeratorContact(userId),
+    // Unbounded scan over ChatMessage; a slow or failing one must not blank the whole lookup, which
+    // is what moving it out of /api/user-signals would otherwise have cost.
+    getModeratorContact(userId).catch(() => ({ chats: 0, lastAt: null, chatIds: [] })),
   ]);
   return identity
     ? {

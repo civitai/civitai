@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { browser } from '$app/environment';
   import { enhance } from '$app/forms';
   import {
     Table,
@@ -11,12 +12,14 @@
   } from '@civitai/ui/components/ui/table/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { entityUrl } from '$lib/entity-url';
+  import { entityUrl, userLookupUrl } from '$lib/entity-url';
+  import { LINK_CLASS } from '$lib/format';
   import { sidebarCounts } from '$lib/sidebar-counts.svelte';
   import { queueSeverityClass } from '$lib/queue-thresholds';
-  import type { PageData } from './$types';
+  import { writeEnhancer } from '$lib/form-action';
+  import type { ActionData, PageData } from './$types';
 
-  let { data }: { data: PageData } = $props();
+  let { data, form }: { data: PageData; form: ActionData } = $props();
 
   const name = $derived(data.user?.username ?? 'moderator');
   const counts = sidebarCounts();
@@ -50,7 +53,17 @@
       muted: boolean | null;
     }[];
   };
-  let board = $state<Board | null>(null);
+  // Derived rather than fetched into $state, so `boardVersion` can refetch it: "Mark swept" changes
+  // data this endpoint owns, and `invalidateAll` would only refresh `load`, which the board never reads.
+  let boardVersion = $state(0);
+  const board = $derived.by(() => {
+    boardVersion;
+    if (!browser) return null;
+    return fetch('/api/moderation-board').then((r): Promise<Board> => {
+      if (!r.ok) throw new Error(`board ${r.status}`);
+      return r.json();
+    });
+  });
 
   onMount(async () => {
     try {
@@ -58,12 +71,6 @@
       reported = r.ok ? await r.json() : [];
     } catch {
       reported = [];
-    }
-    try {
-      const r = await fetch('/api/moderation-board');
-      if (r.ok) board = await r.json();
-    } catch {
-      // The board is context on top of counts that are already rendered; failing quietly is right.
     }
   });
 
@@ -97,11 +104,12 @@
     item.countKey ? queueSeverityClass(item.countKey, item.count) : null;
 
   // Oldest first: the queue nobody has touched is the one worth seeing, not the busiest.
-  const recentlyWorked = $derived(
-    Object.values(board?.activity ?? {}).sort(
-      (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime()
-    )
-  );
+  const recentlyWorked = (b: Board) =>
+    Object.values(b.activity).sort((a, c) => new Date(a.at).getTime() - new Date(c.at).getTime());
+
+  // Refetches the board rather than invalidating: the swept count lives behind /api/moderation-board,
+  // which `load` does not touch.
+  const onSweep = writeEnhancer({ onSuccess: () => (boardVersion += 1) });
 
   const ago = (iso: string) => {
     const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -219,18 +227,42 @@
   </div>
 {/if}
 
-{#if board}
+{#await board}
   <div class="mt-8 grid gap-3 lg:grid-cols-3">
+    {#each { length: 3 } as _, i (i)}
+      <div class="h-32 animate-pulse rounded-xl border border-dark-4 bg-dark-6"></div>
+    {/each}
+  </div>
+{:then loaded}
+  {@const board = loaded}
+  {@const worked = board ? recentlyWorked(board) : []}
+  {#if board}
+    {#if form?.error}
+      <div
+        class="mt-8 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
+        role="alert"
+      >
+        {form.error}
+      </div>
+    {:else if form && 'swept' in form && form.swept}
+      <div
+        class="mt-8 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200"
+        role="status"
+      >
+        Marked {form.swept} swept.
+      </div>
+    {/if}
+    <div class="mt-8 grid gap-3 lg:grid-cols-3">
     <!-- Retool's `RecentReports`, which fed the "last touched by <mod> N minutes ago" on every queue
          row. Its point is telling a queue nobody is working from one being actively drained — a count
          alone cannot. Listed rather than attached per row: the report-source labels and the sidebar's
          count keys are named independently, and three of them do not correspond. -->
-    {#if recentlyWorked.length}
+    {#if worked.length}
       <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
         <h2 class="mb-1 text-sm font-semibold text-white">Recently worked</h2>
         <p class="mb-3 text-xs text-dark-2">Last report resolved in each queue.</p>
         <ul class="space-y-1 text-sm">
-          {#each recentlyWorked as a (a.type)}
+          {#each worked as a (a.type)}
             <li class="flex flex-wrap items-baseline justify-between gap-x-3">
               <span class="text-dark-0">{a.type}</span>
               <span class="text-xs text-dark-2">
@@ -273,7 +305,7 @@
                 {s.since ? format(s.count) : 'never swept'}
               </span>
             </div>
-            <form method="POST" action="?/sweep" use:enhance class="mt-1">
+            <form method="POST" action="?/sweep" use:enhance={onSweep} class="mt-1">
               <input type="hidden" name="task" value={s.task} />
               <Button type="submit" variant="outline" size="sm">Mark swept</Button>
             </form>
@@ -295,7 +327,7 @@
         <ul class="space-y-1 text-sm">
           {#each board.autoBlocked.slice(0, 12) as u (u.id)}
             <li class="flex flex-wrap items-baseline justify-between gap-x-3">
-              <a href="/retool/user-lookup?q={u.userId}" class="text-blue-4 hover:underline">
+              <a href={userLookupUrl(u.userId)} class={LINK_CLASS}>
                 {u.username ?? `#${u.userId}`}
               </a>
               <span class="flex items-baseline gap-2 text-xs text-dark-2">
@@ -308,8 +340,15 @@
         </ul>
       </section>
     {/if}
-  </div>
-{/if}
+    </div>
+  {/if}
+{:catch}
+  <!-- Absence must not read as "every queue is clear": these panels hide themselves when empty, so a
+       failed fetch would otherwise be indistinguishable from a quiet day. -->
+  <p class="mt-8 text-sm text-red-300">
+    Could not load the queue board. The counts above are unaffected.
+  </p>
+{/await}
 
 <h2 class="mt-8 mb-1 text-base font-semibold text-white">Most reported</h2>
 <p class="mb-3 text-sm text-dark-2">

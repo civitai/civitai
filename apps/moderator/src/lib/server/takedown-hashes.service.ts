@@ -66,7 +66,7 @@ export async function recordTakedownHashes(): Promise<{ found: number; added: nu
   return { found: candidates.length, added: fresh.length };
 }
 
-export type HashMatch = { sha256: string; modelVersionId: number | null };
+export type HashMatch = { id: number; sha256: string; modelVersionId: number | null };
 
 /**
  * Retool's `FindMatchingHash` hardcoded a single hash, so the interactive use was ad-hoc. As an input
@@ -79,11 +79,17 @@ export async function findTakedownHash(sha256: string): Promise<HashMatch[]> {
 
   const rows = await getModeratorDb()
     .selectFrom('ModerationSHA')
-    .select(['SHA256', 'ModelVersionId'])
+    .select(['id', 'SHA256', 'ModelVersionId'])
     // The column's casing is Retool's; stored hashes are not consistently cased.
     .where(sql<boolean>`upper("SHA256") = upper(${value})`)
     .limit(50)
     .execute();
 
-  return rows.map((r) => ({ sha256: r.SHA256 ?? value, modelVersionId: r.ModelVersionId }));
+  // The ledger row id, because every match shares the same hash by construction and duplicate rows
+  // for one hash are exactly what this table accumulates — a composed key would collide.
+  return rows.map((r) => ({
+    id: r.id,
+    sha256: r.SHA256 ?? value,
+    modelVersionId: r.ModelVersionId,
+  }));
 }

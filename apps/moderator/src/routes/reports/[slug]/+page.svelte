@@ -39,9 +39,9 @@
     reportStatusBadgeClass,
     getReportItemUrl,
   } from '$lib/reports';
-  import type { PageData } from './$types';
+  import type { ActionData, PageData } from './$types';
 
-  let { data }: { data: PageData } = $props();
+  let { data, form }: { data: PageData; form: ActionData } = $props();
 
   let selectedId = $state<number | null>(null);
   let detailsOpen = $state(false);
@@ -100,6 +100,14 @@
       Pending reports whose post is entirely blocked already.
     </span>
   </form>
+  <!-- A bulk action that reports nothing is indistinguishable from one that did nothing. -->
+  {#if form && 'message' in form && form.message}
+    <p class="mb-4 text-sm text-amber-300" role="status">{form.message}</p>
+  {:else if form && 'actioned' in form && form.actioned != null}
+    <p class="mb-4 text-sm text-green-300" role="status">
+      Actioned {form.actioned} of {form.found}{form.skipped ? `, ${form.skipped} already handled` : ''}{form.more ? ' — more remain, run it again.' : ''}
+    </p>
+  {/if}
 {/if}
 
 <div class="mb-4 flex flex-wrap items-end gap-x-6 gap-y-3">

@@ -106,7 +106,10 @@ A queue/stat board rather than a lookup tool.
       (`userId = -1` official publishes) — review counts misfiled as jobs.
 - [x] **`AutoBlockedUsers`** — `ModActivity WHERE activity = 'autoMuteScam'`; the automatic-scam-mute
       audit trail. Nothing in the app mentions `autoMuteScam`.
-- [ ] **`FindSHA`/`LogSHA256`** — takedown-hash ledger into `ModerationSHA`. No counterpart.
+- [x] **`FindSHA`/`LogSHA256`** — built as `/retool/takedown-hashes`. Columns came from
+      `retool-db.mjs --describe`, since the export's BULK_INSERT changeset is empty. **Retool's finder
+      selected the MODEL id while the ledger column is `ModelVersionId`** — the port follows the column;
+      check the existing 30k rows before depending on them.
 - [x] **Report reason set** — decided 2026-08-10: badges count every reason and the queue page lands unfiltered to match. Original note: badges counted only `DEFAULT_REPORT_REASONS`, so pending
       **NSFW, CSAM and StickerPlacement** reports show nowhere. Retool excluded only `Automated`.
 
