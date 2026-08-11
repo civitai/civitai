@@ -86,7 +86,11 @@ export function PlacementSpaceSection() {
       // Without this the field keeps the value the server refused, and the page
       // states a price nobody is being charged.
       setMode(stored?.mode ?? DEFAULT_MODE);
-      setPrice(stored?.price ?? DEFAULT_PRICE ?? '');
+      // Same expression the load effect uses. A row with a null price is
+      // ordinary, and rolling it back to the platform default would leave the
+      // page asserting a price the creator never chose — which the next commit
+      // would then write into their row.
+      setPrice(stored ? stored.price ?? '' : DEFAULT_PRICE ?? '');
       showErrorNotification({ title: "Couldn't save that", error: new Error(error.message) });
     },
   });

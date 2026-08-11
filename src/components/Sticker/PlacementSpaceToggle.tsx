@@ -5,6 +5,7 @@ import {
   onPlacementPriceGrid,
   PLACEMENT_PRICE_STEP,
   placementPriceTrack,
+  placementPriceUsable,
   PLACEMENT_SURFACES,
 } from '~/shared/utils/placement';
 import { showErrorNotification } from '~/utils/notifications';
@@ -167,7 +168,10 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
               // Until the range loads, the ceiling is a guess, and a creator who
               // drags against the guess sets a price against a cap that is not
               // theirs.
-              disabled={!range}
+              // An unusably narrow cap is the other way this control asks a
+              // question with one answer: every position resolves to the same
+              // charge once the server clamps.
+              disabled={!range || !placementPriceUsable('sticker', cap)}
               min={sliderMin}
               max={sliderMax}
               step={PLACEMENT_PRICE_STEP}
