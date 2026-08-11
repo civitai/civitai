@@ -89,17 +89,22 @@ export type StoredImageHead =
  *
  * Same budget, and the same reasoning, as the post-completion probe in
  * `~/pages/api/upload/complete.ts`; taken from there rather than picked afresh so
- * the two probes against this store cannot drift apart. Per the AWS SDK's contract
- * this bounds each network ATTEMPT, not wall-clock — the retry sleep is not
- * abort-aware, so the worst case is this budget plus one backoff. An abort lands on
- * `unknown`, i.e. the check could not run.
+ * the two probes against this store cannot drift apart. `AbortSignal.timeout` is
+ * constructed ONCE per `send()` and shared across the SDK's retries, so this is a
+ * single WALL-CLOCK deadline for the whole operation, not a per-attempt budget —
+ * and an aborted attempt is not retried at all, because `AbortError` is absent from
+ * smithy's `TRANSIENT_ERROR_CODES`. The worst case is therefore this budget, not
+ * this budget plus a backoff. An abort lands on `unknown`, i.e. the check could not
+ * run.
  */
 export const STORED_IMAGE_HEAD_TIMEOUT_MS = 5_000;
 
 /**
  * Timeout budget for the ranged read in {@link probeStoredImage}.
  *
- * 🔴 THE SAME ARGUMENT AS ABOVE, AND IT APPLIES HARDER HERE. This read is on the
+ * 🔴 THE SAME BOUNDED-VS-UNBOUNDED ARGUMENT AS ABOVE, AND IT APPLIES HARDER HERE.
+ * (The wall-clock note above applies verbatim: one deadline for the whole
+ * operation, no retry multiplication.) This read is on the
  * same user-facing mutation, and unlike the head it TRANSFERS BYTES, so it has two
  * ways to stall rather than one: no response, or a response whose body stops
  * arriving. Unbounded, either one holds a persist request open for as long as the
@@ -108,8 +113,10 @@ export const STORED_IMAGE_HEAD_TIMEOUT_MS = 5_000;
  * 🔴 DELIBERATELY NOT {@link STORED_IMAGE_HEAD_TIMEOUT_MS}, and the difference is
  * the point rather than an oversight. 5s is a ROUND-TRIP budget for a request that
  * moves no bytes; this one moves up to `maxBytes + 1` — 4 MiB for listing media,
- * 40 MiB for block images — so the same number would abort a perfectly legitimate
- * large upload on a slow link, and `measureUploadedImage` surfaces an aborted read
+ * 40 MiB for block images. Note the transfer being bounded is SERVER→STORE, read
+ * back after the author's own upload has already completed; the author's link is
+ * not in this path, so what 5s would abort is a slow or distant STORE, not a slow
+ * uploader. `measureUploadedImage` surfaces an aborted read
  * as "We couldn't read that upload back to check it". A hardening change that
  * invents a new rejection for images that are fine is not a hardening change.
  *
