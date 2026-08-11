@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as RedisCaches from '~/server/redis/caches';
 
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
+const { mockDbRead, mockDbWrite, mockCountCacheRefresh } = vi.hoisted(() => ({
   mockDbRead: { $queryRaw: vi.fn() },
   mockDbWrite: {
     $queryRaw: vi.fn(),
@@ -9,10 +10,20 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
     collectionContributor: { updateMany: vi.fn() },
     collectionInvite: { findMany: vi.fn().mockResolvedValue([]) },
   },
+  mockCountCacheRefresh: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/search-index', () => ({ collectionsSearchIndex: { queueUpdate: vi.fn() } }));
+
+// `upsertCollection` refreshes the collection-count cache once the transaction commits, and that
+// talks to redis. Unmocked it resolves on a machine with a local redis and blocks to the suite
+// timeout on one without — so this passed for anyone running it by hand and failed only in CI,
+// as eight identical 60s timeouts carrying no assertion.
+vi.mock('~/server/redis/caches', async (importOriginal) => ({
+  ...(await importOriginal<typeof RedisCaches>()),
+  userCollectionCountCache: { refresh: mockCountCacheRefresh },
+}));
 
 const { upsertCollection } = await import('~/server/services/collection.service');
 
