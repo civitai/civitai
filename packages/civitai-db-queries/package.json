@@ -8,7 +8,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./model": "./src/model.db.ts",
-    "./tag": "./src/tag.db.ts"
+    "./tag": "./src/tag.db.ts",
+    "./test-harness": "./src/test/harness.ts"
   },
   "scripts": {
     "test": "vitest run",

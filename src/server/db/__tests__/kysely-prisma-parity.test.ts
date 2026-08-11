@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PrismaClient } from '@prisma/client';
+import type { Kysely } from 'kysely';
 import { createKyselyClients } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { listModelEngagements } from '@civitai/db-queries/model';
@@ -10,6 +11,7 @@ import {
   listImageTagVotesMany,
   listModelTagVotes,
 } from '@civitai/db-queries/tag';
+import { compileHarness } from '@civitai/db-queries/test-harness';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 /**
@@ -56,6 +58,40 @@ const sortRows = <T extends Record<string, unknown>>(rows: T[]): T[] =>
 const expectParity = <T extends Record<string, unknown>>(kysely: T[], prisma: T[]) => {
   expect(sortRows(kysely)).toEqual(sortRows(prisma));
 };
+
+// Every query this PR ported, with arguments that reach the statement (a bulk query's empty-array
+// guard short-circuits before compiling anything). The array-column seam guard below compiles each
+// one and reads the select list back off the SQL, so adding a port here is what extends the check —
+// there is no second list to keep in sync.
+const PORTED_QUERIES: Array<[name: string, run: (db: Kysely<DB>) => Promise<unknown>]> = [
+  ['listImageTagVotes', (db) => listImageTagVotes(db, { imageId: 1, userId: 1 })],
+  ['listImageTagVotesMany', (db) => listImageTagVotesMany(db, { imageIds: [1], userId: 1 })],
+  ['listModelTagVotes', (db) => listModelTagVotes(db, { modelId: 1, userId: 1 })],
+  ['listModelEngagements', (db) => listModelEngagements(db, { userId: 1, modelIds: [1] })],
+];
+
+/**
+ * The (table, column) pairs a compiled single-table SELECT reads.
+ *
+ * THROWS rather than returning [] on anything it does not fully understand — a join, an alias, an
+ * expression, a `select *`. An unparsed statement returning an empty set is indistinguishable from
+ * a statement that selects nothing dangerous, and that silent zero is precisely how the previous
+ * version of this guard came to be vacuous. If a port outgrows this shape, this has to be taught
+ * the new shape; it may not degrade quietly.
+ */
+function selectedColumns(name: string, sql: string): Array<[table: string, column: string]> {
+  const match = /^select (.+?) from "([^"]+)"(?: where | order by |$)/.exec(sql);
+  if (!match)
+    throw new Error(`selectedColumns(${name}): not a simple single-table select — ${sql}`);
+  const [, list, table] = match;
+  const items = list.split(',').map((item) => item.trim());
+  const unrecognised = items.filter((item) => !/^"[^"]+"$/.test(item));
+  if (unrecognised.length)
+    throw new Error(
+      `selectedColumns(${name}): unrecognised select item(s) [${unrecognised.join(', ')}] — ${sql}`
+    );
+  return items.map((item) => [table, item.slice(1, -1)]);
+}
 
 describe.skipIf(!parityUrl)('Kysely ports return exactly what Prisma returned', () => {
   const prisma = new PrismaClient({ datasourceUrl: parityUrl });
@@ -274,46 +310,71 @@ describe.skipIf(!parityUrl)('Kysely ports return exactly what Prisma returned', 
 
   // Seam guard. The Kysely-over-pg path has no parser for an ARRAY of a user-defined enum unless
   // registerEnumArrayTypeParsers has run, so such a column silently arrives as the raw Postgres
-  // literal `{a,b}` where the inferred type promises string[]. None of the columns selected above
-  // is an array type today, which is why these ports need no registration. This asserts that fact
-  // against the live catalog rather than against a reading of the schema: widening one of these
-  // selects to an enum-array column (Tag.target is the nearby example) fails here.
-  it('selects no array-typed column, so no enum-array parser is required', async () => {
-    const selected: Array<[table: string, column: string]> = [
-      ['TagsOnImageVote', 'tagId'],
-      ['TagsOnImageVote', 'vote'],
-      ['TagsOnModelsVote', 'tagId'],
-      ['TagsOnModelsVote', 'vote'],
-      ['ModelEngagement', 'modelId'],
-      ['ModelEngagement', 'type'],
-    ];
+  // literal `{a,b}` where the inferred type promises string[]. None of the columns these ports
+  // select is an array type today, which is why they need no registration.
+  //
+  // The column set is DERIVED FROM THE COMPILED SQL of the real query functions, so it tracks the
+  // query rather than a maintainer's memory: widening a select onto an enum-array column
+  // (`Tag.target` is the nearby example) puts that column into the set below without anyone
+  // editing this test. The predecessor of this guard was a hand-written literal list, which is
+  // exactly the shape that cannot fail — an audit widened `listModelEngagements` onto a real
+  // `"ModelEngagementType"[]` column and the guard passed.
+  //
+  // What it is checked against is the catalog of the FIXTURE database this suite creates from
+  // `fixtures/kysely-parity-schema.sql` — not the production catalog. The fixture mirrors the
+  // real column types for these three tables, so it answers the array-vs-scalar question; it is
+  // not evidence about any column the fixture does not declare.
+  it('no ported query selects an array-typed column, so no enum-array parser is required', async () => {
+    // Compiled offline against DummyDriver — the SQL is real, nothing executes.
+    const harness = compileHarness();
+    const selected: Array<[table: string, column: string]> = [];
+    for (const [name, run] of PORTED_QUERIES) {
+      harness.queries.length = 0;
+      await run(harness.db);
+      const compiled = harness.lastQuery();
+      if (!compiled) throw new Error(`${name} compiled no query — the derivation saw nothing`);
+      selected.push(...selectedColumns(name, compiled.sql));
+    }
 
-    const rows = await prisma.$queryRawUnsafe<Array<{ table: string; column: string }>>(
-      `SELECT c.relname AS "table", a.attname AS "column"
-         FROM pg_attribute a
-         JOIN pg_class c ON c.oid = a.attrelid
-         JOIN pg_type t ON t.oid = a.atttypid
-        WHERE t.typcategory = 'A'
-          AND a.attnum > 0
-          AND c.relname IN ('TagsOnImageVote', 'TagsOnModelsVote', 'ModelEngagement')`
-    );
+    // Positive control on the DERIVATION. A parse that silently yielded nothing would make every
+    // assertion below pass vacuously, which is the failure this guard replaced. 4 queries × 2
+    // columns today; widening a select only ever raises this.
+    expect(selected.length).toBeGreaterThanOrEqual(8);
 
-    const arrayColumns = new Set(rows.map((r) => `${r.table}.${r.column}`));
-    // Positive control: the query CAN see an array column when one exists.
+    const tables = [...new Set(selected.map(([table]) => table))];
+    const arrayColumnsIn = async (relnames: string[]) => {
+      const rows = await prisma.$queryRawUnsafe<Array<{ table: string; column: string }>>(
+        `SELECT c.relname AS "table", a.attname AS "column"
+           FROM pg_attribute a
+           JOIN pg_class c ON c.oid = a.attrelid
+           JOIN pg_type t ON t.oid = a.atttypid
+          WHERE t.typcategory = 'A'
+            AND a.attnum > 0
+            AND c.relname = ANY($1::text[])`,
+        relnames
+      );
+      return new Set(rows.map((r) => `${r.table}.${r.column}`));
+    };
+
+    // Positive control on the CATALOG QUERY, run through the same helper the assertion uses: it
+    // CAN see an enum-array column when one exists.
     await prisma.$executeRawUnsafe(
       `CREATE TABLE IF NOT EXISTS "_ParityArrayProbe" (x "ModelEngagementType"[])`
     );
-    const probe = await prisma.$queryRawUnsafe<Array<{ column: string }>>(
-      `SELECT a.attname AS "column"
-         FROM pg_attribute a
-         JOIN pg_class c ON c.oid = a.attrelid
-         JOIN pg_type t ON t.oid = a.atttypid
-        WHERE t.typcategory = 'A' AND a.attnum > 0 AND c.relname = '_ParityArrayProbe'`
-    );
-    expect(probe.map((r) => r.column)).toEqual(['x']);
+    expect([...(await arrayColumnsIn(['_ParityArrayProbe']))]).toEqual(['_ParityArrayProbe.x']);
 
-    for (const [table, column] of selected) {
-      expect(arrayColumns.has(`${table}.${column}`)).toBe(false);
-    }
+    const arrayColumns = await arrayColumnsIn(tables);
+    const offenders = selected
+      .map(([table, column]) => `${table}.${column}`)
+      .filter((qualified) => arrayColumns.has(qualified));
+
+    expect(
+      offenders,
+      `ported query selects ARRAY-typed column(s) [${offenders.join(
+        ', '
+      )}] — pg returns an array ` +
+        `of a user-defined enum as the raw '{a,b}' literal unless registerEnumArrayTypeParsers ` +
+        `has run, and none of these ports registers one`
+    ).toEqual([]);
   });
 });

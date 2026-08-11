@@ -107,9 +107,19 @@ import {
   addTags,
   deleteTags,
   disableTags,
+  getVotableImageTags,
   getVotableTags,
   removeTagVotes,
 } from '~/server/services/tag.service';
+// NOT mocked: the real client the service passes to the ported query functions. Asserting it with
+// `toBe` is what keeps these reads pinned to the read tier — see the read-tier describe at the
+// bottom of this file for why `toBe` and not a structural matcher.
+import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
+import type { SessionUser } from '~/types/session';
+
+const WRONG_TIER =
+  'ported read was handed a client other than kyselyRead (kyselyWrite / kyselyReadLong routes it ' +
+  'at the wrong tier); note kyselyRead and kyselyWrite are deep-equal, so only toBe catches this';
 
 const LOLI = 114467;
 const NUDE = 304;
@@ -210,15 +220,14 @@ describe('getVotableTags — model tags', () => {
       expect(aTags.find((t) => t.id === NUDE)?.vote).toBe(1);
       expect(bTags.find((t) => t.id === NUDE)?.vote).toBe(-1);
 
-      // The per-user vote read is scoped to that user + this model (uncached path).
-      expect(modelVotes).toHaveBeenNthCalledWith(1, expect.anything(), {
-        modelId: 1,
-        userId: 111,
-      });
-      expect(modelVotes).toHaveBeenNthCalledWith(2, expect.anything(), {
-        modelId: 1,
-        userId: 222,
-      });
+      // The per-user vote read is scoped to that user + this model (uncached path), and runs on
+      // the READ tier. The client is asserted with `toBe` — see the read-tier describe at the
+      // bottom of this file for why matcher choice is load-bearing here.
+      expect(modelVotes.mock.calls[0][0], WRONG_TIER).toBe(kyselyRead);
+      expect(modelVotes.mock.calls[0][1]).toEqual({ modelId: 1, userId: 111 });
+      expect(modelVotes.mock.calls[1][0], WRONG_TIER).toBe(kyselyRead);
+      expect(modelVotes.mock.calls[1][1]).toEqual({ modelId: 1, userId: 222 });
+      expect(modelVotes).toHaveBeenCalledTimes(2);
       // The vote read no longer touches the Prisma engine.
       expect(prismaModelVotes).not.toHaveBeenCalled();
     });
@@ -353,5 +362,65 @@ describe('getVotableTags — model votable-tags cache invalidation contract', ()
   it('a model vote does NOT bust the getTags listing cache (join-table only)', async () => {
     await addTagVotes({ userId: 111, type: 'model', id: 1, tags: [304], vote: 1 });
     expect(bustCacheTagSpy).not.toHaveBeenCalledWith('getTags');
+  });
+});
+
+/**
+ * Read-tier seam.
+ *
+ * Before the Kysely port these reads were `dbRead.tagsOn*Vote.findMany`, and the mock lived on
+ * `dbRead` SPECIFICALLY — so a read routed at the writer had no mock to hit and blew up. Mocking
+ * the query-function seam instead moves that property out of the suite unless the client argument
+ * is pinned: `expect.anything()` is satisfied by `kyselyWrite`, `kyselyReadLong` or anything else.
+ * That loss was measured, not assumed — routing every ported read at `kyselyWrite` failed 1 test
+ * on pre-port code and passed the whole suite after the port.
+ *
+ * 🔴 The matcher matters as much as the argument. `kyselyRead` and `kyselyWrite` are DISTINCT
+ * objects but they are `toEqual`-DEEP-EQUAL (same Kysely shape, and in a single-DB environment the
+ * same underlying pool), so `toHaveBeenCalledWith(kyselyRead, …)` — which compares structurally —
+ * still passes when the read is routed at the writer. Measured, again: the first cut of this fix
+ * used `toHaveBeenCalledWith` and the wrong-tier mutant survived it. Only `toBe` discriminates.
+ *
+ * These pin the tier for the two image-side ports; the model-side port is pinned inline in the
+ * per-user vote merge test above.
+ */
+describe('ported vote reads run on the kyselyRead tier, not the writer', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    imageVotes.mockResolvedValue([]);
+    modelVotes.mockResolvedValue([]);
+    imageTagsFetch.mockResolvedValue({ 1: { imageId: 1, tags: [] } });
+    primeModelCache(1, [modelTag(NUDE, 'nude')]);
+    tagCacheFetch.mockResolvedValue({ [NUDE]: { id: NUDE, name: 'nude' } });
+  });
+
+  it('getVotableTags(image) reads one image’s votes through kyselyRead', async () => {
+    await getVotableTags({ type: 'image', id: 1, userId: 111, isModerator: true });
+    expect(imageVotes).toHaveBeenCalledTimes(1);
+    expect(imageVotes.mock.calls[0][0], WRONG_TIER).toBe(kyselyRead);
+    expect(imageVotes.mock.calls[0][1]).toEqual({ imageId: 1, userId: 111 });
+  });
+
+  it('getVotableTags(model) reads one model’s votes through kyselyRead', async () => {
+    await getVotableTags({ type: 'model', id: 1, userId: 111, isModerator: true });
+    expect(modelVotes).toHaveBeenCalledTimes(1);
+    expect(modelVotes.mock.calls[0][0], WRONG_TIER).toBe(kyselyRead);
+    expect(modelVotes.mock.calls[0][1]).toEqual({ modelId: 1, userId: 111 });
+  });
+
+  it('getVotableImageTags reads the bulk vote overlay through kyselyRead', async () => {
+    await getVotableImageTags({ ids: [1], user: { id: 111 } as SessionUser });
+    expect(imageVotes).toHaveBeenCalledTimes(1);
+    expect(imageVotes.mock.calls[0][0], WRONG_TIER).toBe(kyselyRead);
+    expect(imageVotes.mock.calls[0][1]).toEqual({ imageIds: [1], userId: 111 });
+  });
+
+  // Negative control on the matcher above: `kyselyWrite` is a DIFFERENT object, so `toBe`
+  // separates the tiers — but it is deep-equal, so a structural matcher would not. This pins the
+  // reason `toBe` is used, and fails if the two clients ever become the same object (at which
+  // point the assertions above would be inert and this seam needs a different pin).
+  it('toBe separates the read and write clients even though toEqual does not', () => {
+    expect(kyselyRead).not.toBe(kyselyWrite);
+    expect(kyselyRead).toEqual(kyselyWrite);
   });
 });
