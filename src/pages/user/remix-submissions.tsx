@@ -104,7 +104,7 @@ export default function RemixSubmissions() {
                     <Button
                       variant="default"
                       size="compact-sm"
-                      loading={retract.isLoading}
+                      loading={retract.isPending}
                       onClick={() => retract.mutate({ placementId: row.id })}
                     >
                       Withdraw

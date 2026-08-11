@@ -129,7 +129,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                     <Button
                       size="compact-sm"
                       leftSection={<IconCheck size={14} />}
-                      loading={act.isLoading}
+                      loading={act.isPending}
                       onClick={() => act.mutate({ placementId: row.id, action: 'approve' })}
                     >
                       Approve
@@ -138,7 +138,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                       size="compact-sm"
                       variant="default"
                       leftSection={<IconX size={14} />}
-                      loading={act.isLoading}
+                      loading={act.isPending}
                       onClick={() => act.mutate({ placementId: row.id, action: 'decline' })}
                     >
                       Decline
@@ -231,7 +231,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                         size="sm"
                         variant="filled"
                         color="red"
-                        loading={act.isLoading}
+                        loading={act.isPending}
                         onClick={() =>
                           act.mutate({ placementId: item.placementId, action: 'remove' })
                         }
@@ -276,7 +276,7 @@ function SortablePin({ item, onUnpin }: { item: RemixGalleryItem; onUnpin: () =>
           className="absolute right-1 top-1"
           // The drag listeners sit on the wrapper, so a click here would also
           // start a drag without this.
-          onPointerDown={(event) => event.stopPropagation()}
+          onPointerDown={(event: React.PointerEvent) => event.stopPropagation()}
           onClick={onUnpin}
         >
           <IconPinnedOff size={14} />

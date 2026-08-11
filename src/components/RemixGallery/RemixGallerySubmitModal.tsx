@@ -100,7 +100,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
           </Button>
           <Button
             disabled={!selected || !visibility?.open}
-            loading={submit.isLoading}
+            loading={submit.isPending}
             onClick={() => selected && submit.mutate({ hostImageId, imageId: selected })}
           >
             <Group gap={4} wrap="nowrap">

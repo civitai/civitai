@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { ImageSort } from '~/server/common/enums';
 import type { SessionUser } from '~/types/session';
@@ -703,9 +704,19 @@ export async function getPendingRemixGallerySubmissions({
   if (!imageIds.length) return [];
 
   const images = await dbRead.$queryRaw<
-    { id: number; url: string; width: number | null; height: number | null; type: string }[]
+    {
+      id: number;
+      url: string;
+      width: number | null;
+      height: number | null;
+      type: MediaType;
+      // Carried because the review queue renders these through the shared image
+      // card, which needs it to size and decode the media.
+      metadata: MixedObject | null;
+      nsfwLevel: number;
+    }[]
   >`
-    SELECT i.id, i.url, i.width, i.height, i.type::text AS type
+    SELECT i.id, i.url, i.width, i.height, i.type, i.metadata, i."nsfwLevel"
     FROM "Image" i
     JOIN "Post" p ON p.id = i."postId"
     WHERE i.id IN (${Prisma.join(imageIds)})
