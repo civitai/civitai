@@ -269,7 +269,7 @@
       <!-- Removing either has consequences beyond the image: one blanks the account's avatar, the
            other pulls an entry out of a bounty. -->
       {#if img.isProfilePicture}<Badge variant="secondary">profile picture</Badge>{/if}
-      {#if img.hasConnection}<Badge variant="secondary">attached to a bounty</Badge>{/if}
+      {#if img.hasConnection}<Badge variant="secondary">attached to entity</Badge>{/if}
       <span>{dateTime(img.createdAt ?? null)}</span>
     </div>
     {#if img.prompt}

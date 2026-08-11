@@ -19,14 +19,16 @@ export const actions: Actions = {
     if (!canAccess(locals.user, '/retool/queue-stats'))
       return fail(403, { error: 'Not permitted.' });
 
-    const { at } = await splitFrontPageQueue();
+    const { at, forkId } = await splitFrontPageQueue();
 
     // The timers table has no room for who pressed it, so this is the only audit trail. Entity id 0:
     // the fork is a property of the queue, not of any one row.
     await recordModActivity({
       userId: locals.user.id,
       entityType: 'frontPageQueue',
-      entityId: 0,
+      // The fork row, not a constant: recordModActivity de-duplicates on (activity, entityType,
+      // entityId), so a constant would record the first split ever and drop every one after it.
+      entityId: forkId,
       activity: 'splitQueue',
     });
 

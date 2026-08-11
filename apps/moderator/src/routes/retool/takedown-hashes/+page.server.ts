@@ -33,7 +33,7 @@ export const actions: Actions = {
     if (!canAccess(locals.user, '/retool/takedown-hashes'))
       return fail(403, { error: 'Not permitted.' });
 
-    const { found, added, more } = await recordTakedownHashes();
+    const { found, added, more, lastId } = await recordTakedownHashes();
     if (added === 0)
       return fail(400, {
         error: `Nothing new — all ${found} candidate hashes are already recorded.`,
@@ -43,7 +43,8 @@ export const actions: Actions = {
     await recordModActivity({
       userId: locals.user.id,
       entityType: 'takedownHashes',
-      entityId: 0,
+      // A real ledger row, not a constant — see the service.
+      entityId: lastId,
       activity: 'recordHashes',
     });
 

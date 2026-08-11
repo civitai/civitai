@@ -35,20 +35,25 @@
   >
     {form.error}
   </div>
-{:else if form && 'warning' in form && form.warning}
-  <div
-    class="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200"
-    role="status"
-  >
-    {form.warning}
-  </div>
-{:else if form && 'filed' in form && form.filed != null}
-  <div
-    class="mb-4 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200"
-    role="status"
-  >
-    Filed a request covering {num(form.filed)} images.
-  </div>
+{:else}
+  <!-- Both, not either/or: a capped batch sets `filed` AND `warning`, and testing the warning first
+       hid the fact that a request was created at all. -->
+  {#if form && 'filed' in form && form.filed != null}
+    <div
+      class="mb-4 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200"
+      role="status"
+    >
+      Filed a request covering {num(form.filed)} images.
+    </div>
+  {/if}
+  {#if form && 'warning' in form && form.warning}
+    <div
+      class="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200"
+      role="status"
+    >
+      {form.warning}
+    </div>
+  {/if}
 {/if}
 
 <!-- Retool's three "file the current backlog" buttons. Without them this page only drains requests

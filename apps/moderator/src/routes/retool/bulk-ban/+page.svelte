@@ -168,18 +168,24 @@
   <div class="mb-4 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300" role="alert">
     {form.error}
   </div>
-{:else if form && 'warning' in form && form.warning}
-  <div class="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200" role="status">
-    {form.warning}
-  </div>
-{:else if form?.success}
-  <div class="mb-4 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200" role="status">
-    {#if 'noted' in form && typeof form.noted === 'number'}
-      Noted {num(form.noted)} accounts.
-    {:else if 'banned' in form && typeof form.banned === 'number'}
-      Banned {num(form.banned)} accounts.
-    {/if}
-  </div>
+{:else}
+  <!-- Success and warning render TOGETHER, not either/or. A partial run sets both, and testing the
+       warning first meant "180 banned" was never shown — only "20 could not be banned", on the action
+       where that line is the moderator's whole record of what happened. -->
+  {#if form?.success}
+    <div class="mb-4 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200" role="status">
+      {#if 'noted' in form && typeof form.noted === 'number'}
+        Noted {num(form.noted)} accounts.
+      {:else if 'banned' in form && typeof form.banned === 'number'}
+        Banned {num(form.banned)} accounts.
+      {/if}
+    </div>
+  {/if}
+  {#if form && 'warning' in form && form.warning}
+    <div class="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200" role="status">
+      {form.warning}
+    </div>
+  {/if}
 {/if}
 
 <!-- IP and domain expansion START a list, so they must render with no pasted ids at all. -->

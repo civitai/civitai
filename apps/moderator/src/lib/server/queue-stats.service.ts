@@ -119,15 +119,23 @@ export async function getSplitPoint(): Promise<Date | null> {
  * No attribution: `username` is the sentinel identifying the fork row, so the table has nowhere to
  * record who pressed it. The ModActivity row the caller writes is the audit trail.
  */
-export async function splitFrontPageQueue(): Promise<{ at: Date; catchupFrom: Date | null }> {
+export async function splitFrontPageQueue(): Promise<{
+  at: Date;
+  catchupFrom: Date | null;
+  /** The new fork row. `recordModActivity` de-duplicates on (activity, entityType, entityId), so a
+   *  constant id there records the FIRST split ever and silently drops every one after it. */
+  forkId: number;
+}> {
   const at = new Date(Date.now() - 3 * 60 * 60 * 1000);
   const db = getModeratorDb();
 
+  // NO username filter — Retool's `TagTimer` has none, and the sentinel row IS a position write for
+  // the current stream. Excluding it was only equivalent on the first split ever: on the second it
+  // resurrected a checkpoint the previous catch-up run had already worked, re-opening that window.
   const current = await db
     .selectFrom('FrontPageTimers')
     .select('lastCheckedAt')
     .where('nsfw', '=', '1')
-    .where('username', '!=', SPLIT_USERNAME)
     .orderBy('lastCheckedAt', 'desc')
     .limit(1)
     .executeTakeFirst();
@@ -138,11 +146,16 @@ export async function splitFrontPageQueue(): Promise<{ at: Date; catchupFrom: Da
   const base = { username: SPLIT_USERNAME, nsfw: '1', buttonPressedTime: at };
 
   // Both or neither: one table forked and the other not is a queue that silently skips a window.
+  let forkId = 0;
   await db.transaction().execute(async (trx) => {
     await trx
       .insertInto('FrontPageTimers')
       .values({ ...base, lastCheckedAt: at })
-      .execute();
+      .returning('id')
+      .executeTakeFirst()
+      .then((r) => {
+        forkId = r?.id ?? 0;
+      });
     await trx
       .insertInto('FrontPageTimers_catchup')
       // No prior checkpoint means no backlog to catch up on, so the catch-up stream starts at the fork.
@@ -150,5 +163,5 @@ export async function splitFrontPageQueue(): Promise<{ at: Date; catchupFrom: Da
       .execute();
   });
 
-  return { at, catchupFrom };
+  return { at, catchupFrom, forkId };
 }

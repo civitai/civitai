@@ -80,10 +80,16 @@
     {#if data.result?.curator.isCurator}<Badge variant="secondary">curator</Badge>{/if}
     <!-- The rest of Retool's persistent header: prior enforcement, what they pay, and how to reach
          them. Each was section-local, so judging an account meant visiting three tabs first. -->
-    {#if data.result?.strikeCount}
+    {#if data.result?.strikes.count}
       <Badge variant="destructive">
-        {data.result.strikeCount} strike{data.result.strikeCount > 1 ? 's' : ''}
+        {data.result.strikes.count} active strike{data.result.strikes.count > 1 ? 's' : ''}
+        ({data.result.strikes.points} pt{data.result.strikes.points > 1 ? 's' : ''})
       </Badge>
+    {/if}
+    <!-- Retool-era strikes are a DIFFERENT table that the live strike system never writes. Shown apart
+         so the two are not read as one number. -->
+    {#if data.result?.legacyStrikeCount}
+      <Badge variant="secondary">{data.result.legacyStrikeCount} legacy</Badge>
     {/if}
     {#if data.result?.subscription?.productName}
       <!-- Status is carried, not assumed: a cancelled subscription must not read as a paying one. -->

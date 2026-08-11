@@ -12,7 +12,9 @@
     prior-context warning, not a chat browser.
   </p>
 
-  {#if modContact.chats === 0}
+  {#if modContact.chats === null}
+    <p class="text-sm text-red-300">Could not check moderator contact — treat as unknown, not none.</p>
+  {:else if modContact.chats === 0}
     <p class="text-sm text-dark-2">No moderator contact on record.</p>
   {:else}
     <div class="rounded-md border border-blue-500/30 bg-blue-500/10 p-2 text-sm text-blue-200">

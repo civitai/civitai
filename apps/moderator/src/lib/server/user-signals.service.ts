@@ -360,7 +360,8 @@ export async function getRecentGenerations(userId: number): Promise<number> {
 // Including it made this banner fire for 133,081 users, i.e. essentially anyone who has ever been in a
 // DM, asserting moderator contact that never happened. Retool's hardcoded list did not contain -1, so
 // deriving the list is only an improvement once system accounts are excluded.
-export type ModeratorContact = { chats: number; lastAt: Date | null; chatIds: number[] };
+/** `chats: null` means the lookup FAILED — distinct from 0, which asserts no contact ever. */
+export type ModeratorContact = { chats: number | null; lastAt: Date | null; chatIds: number[] };
 
 export async function getModeratorContact(userId: number): Promise<ModeratorContact> {
   // Grouped rather than aggregated in one row: the ticket asked for the chat IDS as well as the

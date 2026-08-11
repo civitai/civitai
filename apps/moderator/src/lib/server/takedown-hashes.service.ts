@@ -24,7 +24,29 @@ export type HashCandidate = { modelVersionId: number; modelId: number; sha256: s
  *  — Retool was unbounded, and a silent cap here would read as "the ledger is up to date". */
 export const BATCH = 1000;
 
-export async function getTakedownHashCandidates(limit = BATCH): Promise<HashCandidate[]> {
+/** How far one press will page looking for unrecorded work before giving up and saying so. Bounded so
+ *  a press cannot walk all ~188k candidates in one request. */
+const PAGES_PER_PRESS = 10;
+
+/** Cheap probe: does this page contain anything the ledger does not already hold? */
+async function hasUnrecorded(page: HashCandidate[]): Promise<boolean> {
+  const rows = await getModeratorDb()
+    .selectFrom('ModerationSHA')
+    .select('SHA256')
+    .where(
+      sql<string>`upper("SHA256")`,
+      'in',
+      page.map((c) => c.sha256.toUpperCase())
+    )
+    .execute();
+  const known = new Set(rows.map((r) => (r.SHA256 ?? '').toUpperCase()));
+  return page.some((c) => !known.has(c.sha256.toUpperCase()));
+}
+
+export async function getTakedownHashCandidates(
+  limit = BATCH,
+  before?: number
+): Promise<HashCandidate[]> {
   const { rows } = await sql<{ modelVersionId: number; modelId: number; sha256: string }>`
     SELECT mv.id AS "modelVersionId", m.id AS "modelId",
            mf."rawScanResult" -> 'hashes' ->> 'SHA256' AS sha256
@@ -33,6 +55,7 @@ export async function getTakedownHashCandidates(limit = BATCH): Promise<HashCand
     JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id
     WHERE (m.status = 'UnpublishedViolation' OR m."deletedAt" IS NOT NULL)
       AND mf."rawScanResult" -> 'hashes' ->> 'SHA256' IS NOT NULL
+      ${before ? sql`AND mv.id < ${before}` : sql``}
     ORDER BY mv.id DESC
     LIMIT ${limit}
   `.execute(dbRead);
@@ -48,19 +71,40 @@ export async function recordTakedownHashes(): Promise<{
   found: number;
   added: number;
   more: boolean;
+  lastId: number;
 }> {
-  const candidates = await getTakedownHashCandidates(BATCH + 1);
-  const more = candidates.length > BATCH;
-  const batch = candidates.slice(0, BATCH);
-  if (!batch.length) return { found: 0, added: 0, more: false };
+  // WALKS. The ledger is in another database, so "not already recorded" cannot be a SQL predicate —
+  // which means a single newest-first page returns the same rows every press and the second press
+  // reports "nothing new" with ~187k candidates unrecorded. Each press pages backwards by
+  // `modelVersionId` until it has found real work or run out.
+  let cursor: number | undefined;
+  let batch: HashCandidate[] = [];
+  let more = false;
+
+  for (let page = 0; page < PAGES_PER_PRESS; page++) {
+    const rows = await getTakedownHashCandidates(BATCH + 1, cursor);
+    more = rows.length > BATCH;
+    const window = rows.slice(0, BATCH);
+    if (!window.length) break;
+
+    cursor = window[window.length - 1].modelVersionId;
+    batch = window;
+    // Stop on the first page that contains anything unrecorded; the dedupe below decides.
+    const anyNew = await hasUnrecorded(window);
+    if (anyNew || !more) break;
+  }
+
+  if (!batch.length) return { found: 0, added: 0, more: false, lastId: 0 };
 
   const existing = await getModeratorDb()
     .selectFrom('ModerationSHA')
     .select('SHA256')
+    // upper() on BOTH sides: an exact-match IN never returns a row stored in the other case, so the
+    // case-insensitive comparison below never saw it and the hash was re-inserted anyway.
     .where(
-      'SHA256',
+      sql<string>`upper("SHA256")`,
       'in',
-      batch.map((c) => c.sha256)
+      batch.map((c) => c.sha256.toUpperCase())
     )
     .execute();
 
@@ -77,14 +121,17 @@ export async function recordTakedownHashes(): Promise<{
     seen.add(key);
     return true;
   });
-  if (!fresh.length) return { found: batch.length, added: 0, more };
+  if (!fresh.length) return { found: batch.length, added: 0, more, lastId: 0 };
 
-  await getModeratorDb()
+  // `returning` so the caller can key its audit row on a real row: `recordModActivity` de-duplicates
+  // on (activity, entityType, entityId), and a constant id records only the first press ever.
+  const inserted = await getModeratorDb()
     .insertInto('ModerationSHA')
     .values(fresh.map((c) => ({ SHA256: c.sha256, ModelVersionId: c.modelVersionId })))
+    .returning('id')
     .execute();
 
-  return { found: batch.length, added: fresh.length, more };
+  return { found: batch.length, added: fresh.length, more, lastId: inserted.at(-1)?.id ?? 0 };
 }
 
 export type HashMatch = { id: number; sha256: string; modelVersionId: number | null };

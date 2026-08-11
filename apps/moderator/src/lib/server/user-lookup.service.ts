@@ -95,8 +95,12 @@ export type UserLookupResult = {
   subscription: UserSubscription | null;
   curator: CuratorStatus;
   ranks: LeaderboardRank[];
-  /** Header chip. Lives in the moderator database, so it cannot ride the identity query. */
-  strikeCount: number;
+  /** Retool-era strikes, from the moderator database. Historical: the main app's strike system does
+   *  NOT write here, so this alone reads 0 on an account carrying active strikes. */
+  legacyStrikeCount: number;
+  /** The number that means "how much rope is left": active, unexpired, unvoided main-app strikes and
+   *  their points. */
+  strikes: { count: number; points: number };
   /** Prior moderator contact. In the load rather than the signals endpoint because it is a header
    *  warning: acting on an account without knowing a mod already spoke to them is the failure. */
   modContact: ModeratorContact;
@@ -141,6 +145,26 @@ export async function resolveUsername(userId: number): Promise<{ username: strin
   return row ?? null;
 }
 
+/**
+ * The main app's own strikes (`UserStrike`), which are a different table from the moderator database's
+ * Retool-era `UserStrikes`. Nothing writes both, so counting only the legacy one showed 0 for every
+ * strike the live system has issued — on a header chip that exists to say how much rope is left.
+ */
+async function getActiveStrikes(userId: number): Promise<{ count: number; points: number }> {
+  const row = await dbRead
+    .selectFrom('UserStrike')
+    .select((eb) => [
+      eb.fn.countAll<string>().as('count'),
+      eb.fn.coalesce(eb.fn.sum<string>('points'), sql<string>`0`).as('points'),
+    ])
+    .where('userId', '=', userId)
+    .where('status', '=', 'Active')
+    .where('voidedAt', 'is', null)
+    .where('expiresAt', '>', sql<Date>`now()`)
+    .executeTakeFirst();
+  return { count: Number(row?.count ?? 0), points: Number(row?.points ?? 0) };
+}
+
 export async function getUserLookup(userId: number): Promise<UserLookupResult | null> {
   const [
     identity,
@@ -153,8 +177,9 @@ export async function getUserLookup(userId: number): Promise<UserLookupResult | 
     subscription,
     curator,
     ranks,
-    strikes,
+    legacyStrikes,
     modContact,
+    strikes,
   ] = await Promise.all([
     getIdentity(userId),
     getProfile(userId),
@@ -171,7 +196,8 @@ export async function getUserLookup(userId: number): Promise<UserLookupResult | 
     strikeCountsByUserIds([userId]).catch(() => new Map<number, number>()),
     // Unbounded scan over ChatMessage; a slow or failing one must not blank the whole lookup, which
     // is what moving it out of /api/user-signals would otherwise have cost.
-    getModeratorContact(userId).catch(() => ({ chats: 0, lastAt: null, chatIds: [] })),
+    getModeratorContact(userId).catch(() => ({ chats: null, lastAt: null, chatIds: [] })),
+    getActiveStrikes(userId),
   ]);
   return identity
     ? {
@@ -185,7 +211,8 @@ export async function getUserLookup(userId: number): Promise<UserLookupResult | 
         subscription,
         curator,
         ranks,
-        strikeCount: strikes.get(userId) ?? 0,
+        legacyStrikeCount: legacyStrikes.get(userId) ?? 0,
+        strikes,
         modContact,
       }
     : null;
