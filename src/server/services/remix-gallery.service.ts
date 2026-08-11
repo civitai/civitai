@@ -1,0 +1,615 @@
+import { Prisma } from '@prisma/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import {
+  holdPlacementEscrow,
+  settlePlacement,
+} from '~/server/services/placement-escrow.service';
+import { assertCanPlace } from '~/server/services/placement-moderation.service';
+import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
+import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
+import { onlySelectableLevels } from '~/shared/constants/browsingLevel.constants';
+import type { RemixGalleryPlacementData } from '~/shared/utils/remix-gallery';
+import {
+  isRemixGalleryPlacementData,
+  REMIX_GALLERY_MAX_PENDING_PER_OWNER,
+  REMIX_GALLERY_MAX_PINNED,
+  REMIX_GALLERY_PAGE_SIZE,
+  remixGalleryContentRule,
+  remixGalleryLevelAllowed,
+  remixGalleryShuffleSeed,
+} from '~/shared/utils/remix-gallery';
+
+const SURFACE = 'remixGallery' as const;
+const TARGET_TYPE = 'image' as const;
+
+type SubmissionImage = {
+  id: number;
+  userId: number;
+  nsfwLevel: number;
+  minor: boolean;
+  poi: boolean;
+  tosViolation: boolean;
+  ingestion: string;
+  needsReview: string | null;
+  publishedAt: Date | null;
+  remixOfId: number | null;
+};
+
+/**
+ * The submitted image, from the primary, with everything the refusals need.
+ *
+ * `dbWrite` rather than a replica for the same reason `assertCanPlace` uses it:
+ * these decide a mutation, and a rating raised or a takedown committed seconds
+ * ago must refuse rather than be filtered out one render later.
+ */
+async function loadSubmissionImage(imageId: number): Promise<SubmissionImage> {
+  const [row] = await dbWrite.$queryRaw<SubmissionImage[]>`
+    SELECT i.id, i."userId", i."nsfwLevel", i.minor, i.poi, i."tosViolation",
+           i.ingestion::text AS ingestion, i."needsReview",
+           p."publishedAt",
+           (i.meta -> 'extra' ->> 'remixOfId')::int AS "remixOfId"
+    FROM "Image" i
+    LEFT JOIN "Post" p ON p.id = i."postId"
+    WHERE i.id = ${imageId}
+  `;
+
+  if (!row) throw throwBadRequestError('remix gallery: that image no longer exists');
+  return row;
+}
+
+export type CreateRemixGallerySubmission = {
+  placerId: number;
+  /** The image whose gallery is being submitted to. */
+  hostImageId: number;
+  /** The image being submitted into it. */
+  imageId: number;
+};
+
+/**
+ * Submits an image into someone's remix gallery, charging the owner's price.
+ *
+ * Ordering matches `createStickerPlacement` and for the same reason: the row has
+ * to exist before the escrow can reference it, so anything that throws after the
+ * row exists expires it rather than deleting it — expiry refunds both holds
+ * through real refunds of real holds, and `holdPlacementEscrow` has already
+ * stamped a deadline, so the sweep reaches the row even if the compensating
+ * settle also fails.
+ *
+ * Nothing here consumes an inventory item; unlike a sticker, the thing being
+ * placed is content the submitter already owns.
+ */
+export async function createRemixGallerySubmission({
+  placerId,
+  hostImageId,
+  imageId,
+}: CreateRemixGallerySubmission) {
+  if (hostImageId === imageId)
+    throw throwBadRequestError('remix gallery: an image cannot be submitted to its own gallery');
+
+  const space = await resolvePlacementSpaceFor({
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetId: hostImageId,
+  });
+
+  if (space.mode === 'off')
+    throw throwBadRequestError('remix gallery: this creator is not accepting submissions here');
+  // `auto` is not offered for this surface and the space service refuses to
+  // store it, but a row written before that rule existed would still read back
+  // here. Refusing on the mutation is the guard; the settings picker is not.
+  if (space.mode !== 'review')
+    throw throwBadRequestError('remix gallery: submissions to this gallery need review');
+
+  if (space.ownerId === placerId)
+    throw throwBadRequestError('remix gallery: you cannot submit to your own gallery');
+
+  if (space.price == null)
+    throw throwBadRequestError('remix gallery: this creator has not set a price yet');
+
+  const submission = await loadSubmissionImage(imageId);
+  if (submission.userId !== placerId)
+    throw throwAuthorizationError('remix gallery: you can only submit your own images');
+  if (!submission.publishedAt)
+    throw throwBadRequestError('remix gallery: publish the image before submitting it');
+  if (submission.ingestion !== 'Scanned' || submission.needsReview)
+    throw throwBadRequestError('remix gallery: that image is still being reviewed');
+
+  // Not creator preferences, so they are refused under either content rule.
+  if (submission.tosViolation || submission.minor || submission.poi)
+    throw throwBadRequestError('remix gallery: that image cannot be submitted');
+
+  const [host] = await dbWrite.$queryRaw<{ nsfwLevel: number }[]>`
+    SELECT "nsfwLevel" FROM "Image" WHERE id = ${hostImageId}
+  `;
+  if (!host) throw throwBadRequestError('remix gallery: that image no longer exists');
+
+  const rule = remixGalleryContentRule(space.settings);
+  if (
+    !remixGalleryLevelAllowed({
+      rule,
+      submissionLevel: submission.nsfwLevel,
+      hostLevel: host.nsfwLevel,
+    })
+  )
+    throw throwBadRequestError(
+      rule === 'any'
+        ? 'remix gallery: that image has no rating yet'
+        : "remix gallery: this creator only accepts submissions rated at or below their image's rating"
+    );
+
+  await assertCanPlace({ ownerId: space.ownerId, placerId });
+
+  const pending = await dbWrite.placement.count({
+    where: { surface: SURFACE, ownerId: space.ownerId, placerId, status: 'pending' },
+  });
+  if (pending >= REMIX_GALLERY_MAX_PENDING_PER_OWNER)
+    throw throwBadRequestError(
+      'remix gallery: you already have the maximum submissions waiting with this creator'
+    );
+
+  await assertNotAlreadySubmitted({ hostImageId, imageId });
+
+  const placement = await dbWrite.placement.create({
+    data: {
+      surface: SURFACE,
+      targetType: TARGET_TYPE,
+      targetId: hostImageId,
+      ownerId: space.ownerId,
+      placerId,
+      // No seller: nobody sold the submitted image, so the surface's seller
+      // share is zero and the owner takes the remainder after the platform cut.
+      sellerId: null,
+      amount: space.price,
+      status: 'pending',
+      data: {
+        imageId,
+        remixOfId: submission.remixOfId,
+      } satisfies RemixGalleryPlacementData,
+    },
+    select: { id: true },
+  });
+
+  try {
+    await holdPlacementEscrow({
+      placementId: placement.id,
+      placerId,
+      surface: SURFACE,
+      amount: space.price,
+    });
+  } catch (error) {
+    await settlePlacement({ placementId: placement.id, action: 'expire' }).catch((settleError) =>
+      logToAxiom({
+        name: 'remix-gallery',
+        type: 'error',
+        message: 'compensating settle failed; escrow may be held for a rejected submission',
+        placementId: placement.id,
+        error: settleError instanceof Error ? settleError.message : String(settleError),
+      }).catch(() => undefined)
+    );
+    throw error;
+  }
+
+  return placement;
+}
+
+/**
+ * One image may sit in one gallery once, pending or live.
+ *
+ * Without this a submitter can pay repeatedly to occupy several slots of the
+ * same gallery with the same picture, which is the cheapest way to defeat the
+ * rotation — and, on decline, the cheapest way to hand the owner repeated fees
+ * for the same decision.
+ */
+async function assertNotAlreadySubmitted({
+  hostImageId,
+  imageId,
+}: {
+  hostImageId: number;
+  imageId: number;
+}) {
+  const existing = await dbWrite.placement.findFirst({
+    where: {
+      surface: SURFACE,
+      targetType: TARGET_TYPE,
+      targetId: hostImageId,
+      status: { in: ['pending', 'approved'] },
+      data: { path: ['imageId'], equals: imageId },
+    },
+    select: { id: true },
+  });
+
+  if (existing)
+    throw throwBadRequestError('remix gallery: that image is already in this gallery');
+}
+
+type OwnerAction = 'approve' | 'decline' | 'remove';
+
+export async function actOnRemixGallerySubmission({
+  placementId,
+  action,
+  userId,
+  isModerator = false,
+}: {
+  placementId: number;
+  action: OwnerAction;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  const placement = await dbWrite.placement.findUnique({
+    where: { id: placementId },
+    select: { id: true, ownerId: true, status: true, surface: true, data: true },
+  });
+
+  if (!placement || placement.surface !== SURFACE)
+    throw throwBadRequestError('remix gallery: that submission no longer exists');
+  if (placement.ownerId !== userId && !isModerator)
+    throw throwAuthorizationError('remix gallery: that submission is not on your content');
+
+  if (action === 'remove' && placement.status !== 'approved')
+    throw throwBadRequestError('remix gallery: only a live entry can be removed');
+  if (action !== 'remove' && placement.status !== 'pending')
+    throw throwBadRequestError('remix gallery: that submission has already been actioned');
+
+  // The rating can move between submission and approval, and approval is the
+  // moment it becomes public. Re-checked rather than trusted.
+  if (action === 'approve' && isRemixGalleryPlacementData(placement.data))
+    await assertStillAcceptable({
+      placementId: placement.id,
+      imageId: placement.data.imageId,
+    });
+
+  const settleAction =
+    action === 'approve' ? 'approve' : action === 'decline' ? 'decline' : 'removeByOwner';
+
+  const result = await settlePlacement({ placementId, action: settleAction, actorId: userId });
+
+  // `settlePlacement` claims its transition with `WHERE status = 'pending'`, so
+  // a race against the expiry sweep or a block moves no money and returns
+  // `settled: false`. Reported rather than swallowed: a moderator action that
+  // appeared to work and did not is what this cost us on chunk D.
+  if (!result.settled)
+    throw throwBadRequestError('remix gallery: that submission was already resolved elsewhere');
+
+  return result;
+}
+
+async function assertStillAcceptable({
+  placementId,
+  imageId,
+}: {
+  placementId: number;
+  imageId: number;
+}) {
+  const placement = await dbWrite.placement.findUnique({
+    where: { id: placementId },
+    select: { targetId: true },
+  });
+  if (!placement) throw throwBadRequestError('remix gallery: that submission no longer exists');
+
+  const submission = await loadSubmissionImage(imageId);
+  if (submission.tosViolation || submission.minor || submission.poi || submission.needsReview)
+    throw throwBadRequestError('remix gallery: that image can no longer be shown');
+}
+
+/**
+ * The submitter withdrawing before the owner has acted.
+ *
+ * Refunded in full and no decline fee: the fee is the price of the owner's
+ * attention and a withdrawn submission never had any. Same money path as
+ * expiry, which is why it reuses `expire` rather than growing a second one.
+ */
+export async function retractRemixGallerySubmission({
+  placementId,
+  placerId,
+}: {
+  placementId: number;
+  placerId: number;
+}) {
+  const placement = await dbWrite.placement.findUnique({
+    where: { id: placementId },
+    select: { id: true, placerId: true, status: true, surface: true },
+  });
+
+  if (!placement || placement.surface !== SURFACE)
+    throw throwBadRequestError('remix gallery: that submission no longer exists');
+  if (placement.placerId !== placerId)
+    throw throwAuthorizationError('remix gallery: that submission is not yours');
+  if (placement.status !== 'pending')
+    throw throwBadRequestError(
+      'remix gallery: that submission has already been reviewed and cannot be withdrawn'
+    );
+
+  const result = await settlePlacement({ placementId, action: 'expire', actorId: placerId });
+  if (!result.settled)
+    throw throwBadRequestError('remix gallery: that submission was already resolved elsewhere');
+
+  return result;
+}
+
+/**
+ * Sets which entries are pinned, and their order among themselves.
+ *
+ * Written as a whole set rather than a per-entry toggle: the cap and the
+ * ordering are properties of the set, and enforcing a cap one toggle at a time
+ * means two concurrent pins can both see room for one more.
+ */
+export async function setRemixGalleryPins({
+  hostImageId,
+  ownerId,
+  placementIds,
+}: {
+  hostImageId: number;
+  ownerId: number;
+  placementIds: number[];
+}) {
+  if (placementIds.length > REMIX_GALLERY_MAX_PINNED)
+    throw throwBadRequestError(
+      `remix gallery: you can pin up to ${REMIX_GALLERY_MAX_PINNED} entries`
+    );
+  if (new Set(placementIds).size !== placementIds.length)
+    throw throwBadRequestError('remix gallery: an entry cannot be pinned twice');
+
+  const entries = await dbWrite.placement.findMany({
+    where: {
+      surface: SURFACE,
+      targetType: TARGET_TYPE,
+      targetId: hostImageId,
+      ownerId,
+      status: 'approved',
+    },
+    select: { id: true, data: true },
+  });
+
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  const unknown = placementIds.filter((id) => !byId.has(id));
+  if (unknown.length)
+    throw throwBadRequestError('remix gallery: one of those entries is not in this gallery');
+
+  const pinnedAt = new Date().toISOString();
+
+  await dbWrite.$transaction(
+    entries.map((entry) => {
+      const index = placementIds.indexOf(entry.id);
+      const data = (isRemixGalleryPlacementData(entry.data) ? entry.data : {}) as
+        RemixGalleryPlacementData;
+
+      return dbWrite.placement.update({
+        where: { id: entry.id },
+        data: {
+          data: {
+            ...data,
+            pinnedAt: index === -1 ? null : (data.pinnedAt ?? pinnedAt),
+            position: index === -1 ? null : index,
+          } satisfies RemixGalleryPlacementData,
+        },
+      });
+    })
+  );
+
+  return { pinned: placementIds.length };
+}
+
+export type RemixGalleryEntry = {
+  placementId: number;
+  imageId: number;
+  placerId: number;
+  pinned: boolean;
+  sortKey: number;
+};
+
+/**
+ * One page of a gallery, pinned entries first and the rest in a seeded shuffle.
+ *
+ * The shuffle is the contest-collection scheme — a keyed hash permutation rather
+ * than `random()` — because the detail view browses this set, and an order that
+ * reshuffles between pages makes next/previous incoherent. The seed travels in
+ * the cursor so a paging session stays on one permutation across an hour
+ * boundary.
+ *
+ * The visibility predicates live **inside** the ordering CTE rather than outside
+ * it. The collection implementation filters after ordering, which forces it to
+ * sort the whole set on every page; filtering first lets the limit apply to rows
+ * that will actually be returned.
+ */
+export async function getRemixGallery({
+  hostImageId,
+  browsingLevel,
+  cursor,
+  limit = REMIX_GALLERY_PAGE_SIZE,
+}: {
+  hostImageId: number;
+  browsingLevel: number;
+  cursor?: string | null;
+  limit?: number;
+}) {
+  const parsed = parseGalleryCursor(cursor);
+  const seed = parsed?.seed ?? remixGalleryShuffleSeed();
+  const levels = onlySelectableLevels(browsingLevel);
+
+  const keyset = parsed
+    ? Prisma.sql`AND (
+        e.pinned < ${parsed.pinned}
+        OR (e.pinned = ${parsed.pinned} AND e."sortKey" < ${parsed.sortKey})
+        OR (e.pinned = ${parsed.pinned} AND e."sortKey" = ${parsed.sortKey} AND e."placementId" < ${parsed.placementId})
+      )`
+    : Prisma.empty;
+
+  const rows = await dbRead.$queryRaw<
+    (RemixGalleryEntry & { pinned: number; position: number | null })[]
+  >`
+    WITH e AS (
+      SELECT
+        pl.id AS "placementId",
+        i.id AS "imageId",
+        pl."placerId",
+        CASE WHEN pl.data ->> 'pinnedAt' IS NOT NULL THEN 1 ELSE 0 END AS pinned,
+        (pl.data ->> 'position')::int AS position,
+        abs(mod(hashtext(concat(pl.id::text, ${seed.toString()})), 1000000000)) AS "sortKey"
+      FROM "Placement" pl
+      JOIN "Image" i ON i.id = (pl.data ->> 'imageId')::int
+      LEFT JOIN "Post" p ON p.id = i."postId"
+      WHERE pl.surface = ${SURFACE}
+        AND pl."targetType" = ${TARGET_TYPE}
+        AND pl."targetId" = ${hostImageId}
+        AND pl.status = 'approved'
+        AND p."publishedAt" IS NOT NULL
+        AND p."publishedAt" < now()
+        AND i.ingestion = 'Scanned'
+        AND i."needsReview" IS NULL
+        AND NOT i."tosViolation"
+        AND (i."nsfwLevel" & ${levels}) != 0
+        AND i."nsfwLevel" != 0
+    )
+    SELECT * FROM e
+    WHERE TRUE ${keyset}
+    ORDER BY e.pinned DESC, e.position ASC NULLS LAST, e."sortKey" DESC, e."placementId" DESC
+    LIMIT ${limit + 1}
+  `;
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const last = page[page.length - 1];
+
+  return {
+    items: page.map((row) => ({
+      placementId: row.placementId,
+      imageId: row.imageId,
+      placerId: row.placerId,
+      pinned: row.pinned === 1,
+      sortKey: row.sortKey,
+    })),
+    nextCursor:
+      hasMore && last
+        ? `${seed}:${last.pinned === 1 ? 1 : 0}:${last.sortKey}:${last.placementId}`
+        : null,
+  };
+}
+
+function parseGalleryCursor(cursor?: string | null) {
+  if (!cursor) return null;
+  const parts = cursor.split(':');
+  if (parts.length !== 4) return null;
+
+  const [seed, pinned, sortKey, placementId] = parts.map(Number);
+  // A malformed cursor becomes a fresh first page rather than a NaN
+  // interpolated into the query, which would silently select a different but
+  // stable permutation.
+  if (![seed, pinned, sortKey, placementId].every(Number.isFinite)) return null;
+
+  return { seed, pinned, sortKey, placementId };
+}
+
+/**
+ * Whether a gallery should render at all.
+ *
+ * `off` means the owner is not accepting new submissions, not that what they
+ * already accepted disappears — otherwise a creator could take the Buzz and
+ * then hide everything they sold. So an off gallery with live entries still
+ * renders, and only an off *and* empty one goes away.
+ */
+export async function getRemixGalleryVisibility({
+  hostImageId,
+  browsingLevel,
+}: {
+  hostImageId: number;
+  browsingLevel: number;
+}) {
+  const space = await resolvePlacementSpaceFor({
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetId: hostImageId,
+  });
+
+  const { items } = await getRemixGallery({ hostImageId, browsingLevel, limit: 1 });
+
+  return {
+    open: space.mode !== 'off',
+    hasEntries: items.length > 0,
+    render: space.mode !== 'off' || items.length > 0,
+    price: space.price,
+    ownerId: space.ownerId,
+  };
+}
+
+/**
+ * The owner's review queue for this surface.
+ *
+ * Submissions whose image has since been deleted or unpublished are dropped: the
+ * owner cannot judge what they cannot see, and the escrow behind those is
+ * released by the expiry sweep rather than by an owner decision.
+ */
+export async function getPendingRemixGallerySubmissions({
+  ownerId,
+  limit = 50,
+}: {
+  ownerId: number;
+  limit?: number;
+}) {
+  const rows = await dbRead.placement.findMany({
+    where: { surface: SURFACE, ownerId, status: 'pending' },
+    select: {
+      id: true,
+      targetId: true,
+      placerId: true,
+      amount: true,
+      data: true,
+      createdAt: true,
+      expiresAt: true,
+      placer: { select: { id: true, username: true, image: true } },
+    },
+    orderBy: { createdAt: 'asc' },
+    take: limit,
+  });
+
+  const entries = rows.filter((row) => isRemixGalleryPlacementData(row.data));
+  const imageIds = entries.map((row) => (row.data as RemixGalleryPlacementData).imageId);
+  if (!imageIds.length) return [];
+
+  const images = await dbRead.$queryRaw<
+    { id: number; url: string; width: number | null; height: number | null; type: string }[]
+  >`
+    SELECT i.id, i.url, i.width, i.height, i.type::text AS type
+    FROM "Image" i
+    JOIN "Post" p ON p.id = i."postId"
+    WHERE i.id IN (${Prisma.join(imageIds)})
+      AND p."publishedAt" IS NOT NULL
+      AND i.ingestion = 'Scanned'
+      AND NOT i."tosViolation"
+  `;
+  const byId = new Map(images.map((image) => [image.id, image]));
+
+  return entries
+    .map((row) => ({
+      ...row,
+      data: row.data as RemixGalleryPlacementData,
+      image: byId.get((row.data as RemixGalleryPlacementData).imageId) ?? null,
+    }))
+    .filter((row) => row.image);
+}
+
+/** The submitter's own view, so they can find and withdraw what they sent. */
+export async function getMyRemixGallerySubmissions({
+  placerId,
+  limit = 50,
+}: {
+  placerId: number;
+  limit?: number;
+}) {
+  return dbRead.placement.findMany({
+    where: { surface: SURFACE, placerId, status: { in: ['pending', 'approved'] } },
+    select: {
+      id: true,
+      targetId: true,
+      ownerId: true,
+      status: true,
+      amount: true,
+      data: true,
+      createdAt: true,
+      expiresAt: true,
+      owner: { select: { id: true, username: true, image: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+  });
+}
