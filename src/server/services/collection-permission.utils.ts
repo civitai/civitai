@@ -48,8 +48,7 @@ export function hasElevatedPermission(
 ): boolean {
   return permissions.some(
     (p) =>
-      (p === CollectionContributorPermission.ADD ||
-        p === CollectionContributorPermission.MANAGE) &&
+      (p === CollectionContributorPermission.ADD || p === CollectionContributorPermission.MANAGE) &&
       !freeBaseline.has(p)
   );
 }

@@ -110,8 +110,7 @@ export const CollectionFollowAction = ({
             ),
             labels: { confirm: 'Leave collection', cancel: 'Stay' },
             confirmProps: { color: 'red' },
-            onConfirm: () =>
-              leaveCollection({ collectionId, targetUserId: currentUser.id }),
+            onConfirm: () => leaveCollection({ collectionId, targetUserId: currentUser.id }),
           });
         }}
       >

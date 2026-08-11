@@ -167,7 +167,10 @@ function CollectionCollaboratorsPanel({
                     const user = item as SearchIndexDataMap['users'][number];
                     setSelectedUser({ id: user.id, username: user.username ?? `User ${user.id}` });
                   }}
-                  filters={excludedUserIds.map((id) => `AND NOT id=${id}`).join(' ').slice(4)}
+                  filters={excludedUserIds
+                    .map((id) => `AND NOT id=${id}`)
+                    .join(' ')
+                    .slice(4)}
                 />
               )}
             </div>

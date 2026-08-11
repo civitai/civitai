@@ -95,8 +95,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
   const { map: permissionsMap, isLoading: permissionsLoading } =
     useCollectionsPermissionsMap(nonOwnedIds);
 
-  const { view, setView, sort, setSort, collapsed, toggleSection } =
-    useCollectionListPreferences();
+  const { view, setView, sort, setSort, collapsed, toggleSection } = useCollectionListPreferences();
 
   const sections = useMemo(() => {
     const filtered = collections.filter((c) => {
