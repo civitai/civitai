@@ -210,6 +210,34 @@ open a panel for a collection that has no roster to show, and a panel that branc
 `isLoading`/`data` renders an empty roster — indistinguishable from a collection that genuinely has
 no collaborators.
 
+## Outstanding
+
+Known gaps, roughly in the order they'd block a release.
+
+- **The migration has not been applied.**
+  `20260806120000_collaborative_collections` is committed for review only — we do not run
+  `prisma migrate deploy`. Someone has to run the SQL by hand in each environment before any of this
+  works there.
+- **The membership CTA has never run in a browser.** Both dev accounts are moderators, and
+  moderators bypass the membership gate by design, so the blocked states are covered by unit tests
+  and nothing else. Verifying it needs a non-moderator owner with no membership, plus a Manager on
+  that owner's collection to see the other half of the split copy.
+- **The Manager-facing `owner-membership` copy is an open question.** Telling a Manager that the
+  owner needs a membership discloses the owner's billing state to someone who is not the owner. It
+  is scoped to `manage` holders on purpose — the alternative, reusing the generic lapse string,
+  leaves the Manager with nothing to act on — but that trade has not been signed off. Tightening it
+  is one branch in `InviteBlockedNotice`.
+- **`collection-invite-received` points at the wrong place.** It links to `/collections/{id}`, which
+  an invitee to a `read: Private` collection cannot open — they have no permission until they
+  accept. It should route to the invitations inbox instead.
+- **`getMyInvites` truncates at 50 silently.** The cap bounds the per-invite roster reads, but
+  nothing tells a user with more than 50 pending invites that they are seeing a subset.
+- **Deferred from the designs**: the standalone "Manage collaborators" header button, and the
+  status chips ("Open to submissions" / "N awaiting review" / "N items"). The actions behind both
+  are reachable today, through the context menu and the roster popover.
+- **The new UI has no component tests.** `CollectionInvitesModal`, `CollectionInvitesButton` and the
+  roster popover are covered only by the service-level tests underneath them.
+
 ## Key files
 
 | Area | File |
