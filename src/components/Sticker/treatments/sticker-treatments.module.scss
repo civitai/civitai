@@ -1,0 +1,40 @@
+@keyframes stickerPop {
+  0% {
+    transform: scale(0.72);
+  }
+  62% {
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes stickerSway {
+  0%,
+  100% {
+    transform: rotate(-1.6deg);
+  }
+  50% {
+    transform: rotate(1.6deg);
+  }
+}
+
+/* The wrapper already carries the placement's own rotate(), so animating
+   transform here would overwrite it. Both keyframes drive an inner element that
+   exists only for this treatment. */
+.motion {
+  animation: stickerPop 420ms cubic-bezier(0.34, 1.56, 0.64, 1) both,
+    stickerSway 6s ease-in-out 420ms infinite;
+  transform-origin: 50% 85%;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .motion {
+    animation: stickerPop 1ms both;
+    // Otherwise every placed sticker keeps a compositor layer for the lifetime
+    // of the page, for an animation that is over in a millisecond.
+    will-change: auto;
+  }
+}

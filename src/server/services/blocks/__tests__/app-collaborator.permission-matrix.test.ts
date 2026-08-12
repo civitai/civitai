@@ -3,8 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AppBlockIds from '~/server/utils/app-block-ids';
 
 /**
- * 🔴 THE PERMISSION MATRIX — table-driven `role × entry-point × expected`, executed
- * against the REAL widened gates rather than against `resolveAppAccess` alone.
+ * 🔴 THE PERMISSION MATRIX — table-driven `KIND × role × entry-point × expected`,
+ * executed against the REAL widened gates rather than against `resolveListingAccess`
+ * alone.
  *
  * `app-access.service.test.ts` pins the predicate. This file pins that each gate
  * actually CONSULTS it: a structural check type-checks past a wrong argument, so every
@@ -14,6 +15,15 @@ import type * as AppBlockIds from '~/server/utils/app-block-ids';
  * moderator. The moderator column is where the pre-existing D1 divergence shows up and
  * is asserted AS IT IS, not as it "should" be — `app-listing-assets` bypasses for mods,
  * `offsite-listing` does not.
+ *
+ * 🔴 THE KIND AXIS is the new dimension, and running the SAME table twice is the point:
+ * every cell must come out identical for an OFF-SITE listing, because a seat confers the
+ * same CONTENT capabilities on both kinds. A config that is blind to a dimension passes
+ * every defect on that dimension vacuously, so the two kinds are enumerated rather than
+ * assumed equivalent. (The two capabilities that genuinely DIFFER by kind — earnings and
+ * submit-version — are absent from this table on purpose: they are not listing-content
+ * entry points, and their absence is pinned in
+ * `app-collaborator-earnings.service.test.ts` and `app-collaborator.service.test.ts`.)
  *
  * Also covers CONCURRENCY: two editors share ONE shadow revision per parent, via
  * `beginListingRevision`'s idempotent-reuse path.
@@ -37,7 +47,10 @@ const { mockDb } = vi.hoisted(() => {
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       create: vi.fn(async (args: { data: unknown }) => args.data),
     },
-    appCollaborator: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
+    appCollaborator: {
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    },
     oauthClient: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
     image: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
     $transaction: vi.fn(),
@@ -82,18 +95,29 @@ const SEATS = [
   { userId: REJECTED, status: 'rejected' },
 ];
 
+/** The two store kinds, run through the identical table. */
+const KINDS = ['onsite', 'offsite'] as const;
+type Kind = (typeof KINDS)[number];
+
+/** Currently-staged kind — the fixture builders read it. */
+let KIND: Kind = 'onsite';
+
 /** A DRAFT listing (freely editable, so the edit-lock never masks the access gate). */
 function draftListing(over: Record<string, unknown> = {}) {
   return {
     id: LIVE,
-    kind: 'onsite',
+    kind: KIND,
+    // 🔴 An OFF-SITE listing has NO backing AppBlock and DOES have an externalUrl. Both
+    // are what make it a different row rather than a relabelled onsite one.
+    ...(KIND === 'offsite'
+      ? { appBlockId: null, externalUrl: 'https://example.com/' }
+      : { appBlockId: APP, externalUrl: null }),
     slug: 'my-app',
     name: 'My App',
     tagline: null,
     description: null,
     category: null,
     contentRating: 'g',
-    externalUrl: null,
     connectClientId: null,
     connectRequestedScopes: null,
     connectScopeJustifications: null,
@@ -102,7 +126,6 @@ function draftListing(over: Record<string, unknown> = {}) {
     coverId: null,
     status: 'draft',
     revisionOfId: null,
-    appBlockId: APP,
     revisionOf: null,
     // `loadListingEditView` selects these relations off the SAME row; without them its
     // `screenshots.map` throws and every ALLOW cell would fail for a reason that has
@@ -129,11 +152,27 @@ beforeEach(() => {
   mockDb.appListing.findUnique.mockResolvedValue(draftListing());
   mockDb.appListing.findFirst.mockResolvedValue(null);
   mockDb.appCollaborator.findFirst.mockImplementation(async (args: unknown) => {
-    const w = (args as { where: { userId: number; status?: string } }).where;
+    const w = (args as { where: { appListingId?: string; userId: number; status?: string } }).where;
+    // 🔴 The seat lives on the LIVE parent listing. Honouring `appListingId` is what
+    // makes the shadow-hop assertions meaningful rather than incidental.
+    if (w.appListingId !== undefined && w.appListingId !== LIVE) return null;
     const hit = SEATS.find(
       (r) => r.userId === w.userId && (w.status === undefined || r.status === w.status)
     );
     return hit ? { userId: hit.userId } : null;
+  });
+  mockDb.appCollaborator.findMany.mockImplementation(async (args: unknown) => {
+    const w = (args as { where: { appListingId?: string; status?: string } }).where;
+    if (w.appListingId !== undefined && w.appListingId !== LIVE) return [];
+    return SEATS.filter((r) => w.status === undefined || r.status === w.status).map((r) => ({
+      userId: r.userId,
+      role: 'editor',
+      status: r.status,
+      displayed: true,
+      invitedBy: OWNER,
+      createdAt: new Date('2026-08-01T00:00:00Z'),
+      respondedAt: null,
+    }));
   });
 });
 
@@ -169,7 +208,27 @@ const MATRIX: Record<string, Record<string, boolean>> = {
     stranger: false,
     moderator: false,
   },
-  // offsite-listing: getMyListingForApp (NO mod bypass)
+  // app-collaborators: listCollaborators — the ROSTER read. A moderator DOES pass here
+  // (the service takes an explicit isModerator), unlike the two author-edit gates above.
+  'collaborators.list': {
+    owner: true,
+    'accepted editor': true,
+    'PENDING editor': false,
+    'REJECTED editor': false,
+    stranger: false,
+    moderator: true,
+  },
+};
+
+/**
+ * Entry points that exist for ONE kind only, and why — so their absence from the
+ * kind-crossed run reads as a decision rather than an oversight.
+ *
+ * `getMyListingForApp` is keyed on an `appBlockId`. An off-site listing does not have
+ * one, so the proc is not "denied" for offsite — it is UNCALLABLE, which is the same
+ * structural mechanism that makes `submitVersion: false` real.
+ */
+const ONSITE_ONLY: Record<string, Record<string, boolean>> = {
   'offsite.getMyListingForApp': {
     owner: true,
     'accepted editor': true,
@@ -184,15 +243,23 @@ const { getListingAssets } = await import('~/server/services/blocks/app-listing-
 const { getMyListingForApp, getMyListingForEdit, beginListingRevision } = await import(
   '~/server/services/blocks/offsite-listing.service'
 );
+const { listCollaborators } = await import('~/server/services/blocks/app-collaborator.service');
 
 const RUNNERS: Record<string, (s: Subject) => Promise<unknown>> = {
   'assets.getListingAssets': (s) =>
     getListingAssets({ listingId: LIVE }, { id: s.id, isModerator: s.isModerator } as never),
   'offsite.getMyListingForEdit': (s) => getMyListingForEdit({ listingId: LIVE, userId: s.id }),
   'offsite.getMyListingForApp': (s) => getMyListingForApp({ appBlockId: APP, userId: s.id }),
+  'collaborators.list': (s) =>
+    listCollaborators({ appListingId: LIVE, viewerUserId: s.id, isModerator: s.isModerator }),
 };
 
-describe('permission matrix — role × entry point', () => {
+describe.each(KINDS)('permission matrix — kind=%s × role × entry point', (kind) => {
+  beforeEach(() => {
+    KIND = kind;
+    mockDb.appListing.findUnique.mockResolvedValue(draftListing());
+  });
+
   for (const [entry, row] of Object.entries(MATRIX)) {
     for (const subject of SUBJECTS) {
       const allowed = row[subject.label];
@@ -203,6 +270,41 @@ describe('permission matrix — role × entry point', () => {
       });
     }
   }
+
+  it('🔴 the staged fixture really IS this kind (the axis is not a no-op)', async () => {
+    // A `describe.each` whose two runs stage the SAME row would double the test count
+    // and measure nothing. Assert the discriminator each run actually put on the table.
+    const row = (await mockDb.appListing.findUnique({ where: { id: LIVE } })) as {
+      kind: string;
+      appBlockId: string | null;
+    };
+    expect(row.kind).toBe(kind);
+    expect(row.appBlockId).toBe(kind === 'onsite' ? APP : null);
+  });
+});
+
+describe('ONSITE-ONLY entry points (block-keyed, so structurally absent for offsite)', () => {
+  beforeEach(() => {
+    KIND = 'onsite';
+    mockDb.appListing.findUnique.mockResolvedValue(draftListing());
+  });
+
+  for (const [entry, row] of Object.entries(ONSITE_ONLY)) {
+    for (const subject of SUBJECTS) {
+      const allowed = row[subject.label];
+      it(`${entry} · ${subject.label} → ${allowed ? 'ALLOW' : 'DENY'}`, async () => {
+        const call = RUNNERS[entry](subject);
+        if (allowed) await expect(call).resolves.toBeTruthy();
+        else await expect(call).rejects.toBeTruthy();
+      });
+    }
+  }
+});
+
+describe('matrix hygiene', () => {
+  beforeEach(() => {
+    KIND = 'onsite';
+  });
 
   it('POSITIVE CONTROL: the matrix has both ALLOW and DENY cells per entry point', () => {
     // An all-true (or all-false) row would make its whole column vacuous.

@@ -81,6 +81,11 @@ vi.mock('~/server/db/client', () => ({
     // missing-TABLE error, so an absent mock surfaces as a TypeError rather than
     // being silently absorbed — which is why this fixture must declare it.
     appCollaborator: { findFirst: vi.fn(async () => null), findMany: vi.fn(async () => []) },
+    // 🔴 …and since seats were re-keyed from app_blocks to app_listings, the non-owner
+    // path first hops AppBlock -> AppListing to find the id the seat would live under.
+    // Default null = "this block has no store listing", which is the fail-closed answer
+    // these owner-gate cases assert.
+    appListing: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
   },
   dbWrite: {},
 }));

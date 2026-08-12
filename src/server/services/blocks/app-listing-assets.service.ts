@@ -323,8 +323,10 @@ export { nsfwLevelFromContentRating };
  * Load a listing and assert the caller may edit it. Throws NOT_FOUND for a missing
  * listing, FORBIDDEN otherwise.
  *
- * PERMITTED: the listing owner, an ACCEPTED collaborator on the backing AppBlock, or a
- * moderator. The mod bypass is UNCHANGED from before collaborators existed — this
+ * PERMITTED: the listing owner, an ACCEPTED collaborator ON THE LISTING (seats are
+ * listing-keyed since the re-key — the backing AppBlock is not the seat key and an
+ * off-site listing has none), or a moderator. The mod bypass is UNCHANGED from before
+ * collaborators existed — this
  * file's gate always had one, unlike `offsite-listing.service`'s
  * `loadOwnedEditableListing`, which deliberately has none. That divergence is
  * pre-existing and is recorded in `app-access.call-site-ledger.test.ts` rather than

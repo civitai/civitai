@@ -43,11 +43,23 @@ import {
   setCollectionAiReviewInput,
 } from '~/server/schema/collection.schema';
 import {
+  inviteCollaboratorInput,
+  removeCollaboratorInput,
+  respondToInviteInput,
+} from '~/server/schema/collection-collaborator.schema';
+import {
   getCollectionAiReview,
   getCollectionAiReviewDefaultPrompt,
   getCollectionEntryCount,
   setCollectionAiReview,
 } from '~/server/services/collection.service';
+import {
+  getCollaborators,
+  getMyInvites,
+  inviteCollaborator,
+  removeCollaborator,
+  respondToInvite,
+} from '~/server/services/collection-collaborator.service';
 import {
   guardedProcedure,
   isFlagProtected,
@@ -101,10 +113,12 @@ export const collectionRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('collections'))
     .query(getCollectionByIdHandler),
+  // Authorized in `upsertCollection` rather than here: a Manager may edit name, description and
+  // cover, but the service strips `read`/`write`/`mode` for anyone who isn't the owner. An
+  // ownership middleware in front of it would refuse the whole edit instead.
   upsert: guardedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(upsertCollectionInput)
-    .use(isOwnerOrModerator)
     .mutation(upsertCollectionHandler),
   updateCoverImage: guardedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
@@ -213,4 +227,38 @@ export const collectionRouter = router({
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(getByIdSchema)
     .mutation(joinCollectionAsManagerHandler),
+  inviteCollaborator: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsWrite })
+    .input(inviteCollaboratorInput)
+    .mutation(({ input, ctx }) =>
+      inviteCollaborator({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+        isMember: !!ctx.user.tier && ctx.user.tier !== 'free',
+      })
+    ),
+  respondToInvite: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsWrite })
+    .input(respondToInviteInput)
+    .mutation(({ input, ctx }) => respondToInvite({ ...input, userId: ctx.user.id })),
+  removeCollaborator: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsWrite })
+    .input(removeCollaboratorInput)
+    .mutation(({ input, ctx }) =>
+      removeCollaborator({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+  getCollaborators: publicProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
+    .input(getByIdSchema)
+    .query(({ input, ctx }) =>
+      getCollaborators({
+        collectionId: input.id,
+        userId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+      })
+    ),
+  getMyInvites: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
+    .query(({ ctx }) => getMyInvites({ userId: ctx.user.id })),
 });

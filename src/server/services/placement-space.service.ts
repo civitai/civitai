@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { placementPriceRange } from '~/server/services/placement.service';
+import { getPlacementConfig, placementPriceRange } from '~/server/services/placement.service';
 import { throwBadRequestError, throwAuthorizationError } from '~/server/utils/errorHandling';
 import type {
   PlacementSpaceEntity,
@@ -11,6 +11,7 @@ import type {
 } from '~/shared/utils/placement';
 import {
   effectivePlacementPrice,
+  PLACEMENT_SURFACES,
   resolvePlacementSpace,
   surfaceAcceptsTarget,
 } from '~/shared/utils/placement';
@@ -25,21 +26,48 @@ import {
 async function resolveImageTarget(imageId: number) {
   const image = await dbWrite.image.findUnique({
     where: { id: imageId },
-    select: { id: true, userId: true, postId: true },
+    // The username rides along on the lookup that was already happening. It is
+    // shown to the placer, so the alternative — a second query keyed on the id
+    // this one just returned — would be a round trip for a string this row can
+    // reach in the same hop.
+    select: { id: true, userId: true, postId: true, user: { select: { username: true } } },
   });
   if (!image) throw throwBadRequestError('placement: that image no longer exists');
 
-  return { ownerId: image.userId, postId: image.postId };
+  return {
+    ownerId: image.userId,
+    postId: image.postId,
+    ownerUsername: image.user?.username ?? null,
+  };
 }
 
 export type ResolvedPlacementSpace = {
   ownerId: number;
+  /**
+   * Who the placer is paying, by name.
+   *
+   * Carried because "the creator" is ambiguous at the point it is read: the
+   * placer is looking at someone else's image with someone else's sticker on
+   * it, and both have a creator. `null` for a deleted or nameless account,
+   * where the caller falls back to the unnamed wording rather than showing a
+   * blank.
+   */
+  ownerUsername: string | null;
   mode: PlacementSpaceMode;
   /** What the owner asks. `null` when they have never set one. */
   setPrice: number | null;
   /** `min(setPrice, cap)`, computed here and never stored. `null` when unpriced. */
   price: number | null;
   cap: number;
+  /**
+   * The share of an approved payment the space owner keeps, 0-1.
+   *
+   * Carried so the placer can be told where their Buzz goes without the UI
+   * hardcoding it. The shares are operator-tunable at runtime, so a string
+   * compiled against today's split is a claim about money that can silently
+   * stop being true.
+   */
+  ownerShare: number;
   /** Surface-owned; this layer carries it without reading inside it. */
   settings: PlacementSpaceSettings;
 };
@@ -63,7 +91,7 @@ export async function resolvePlacementSpaceFor({
   if (!surfaceAcceptsTarget(surface, targetType))
     throw throwBadRequestError(`placement: ${surface} cannot be placed on a ${targetType}`);
 
-  const { ownerId, postId } = await resolveImageTarget(targetId);
+  const { ownerId, postId, ownerUsername } = await resolveImageTarget(targetId);
 
   const rows = await dbWrite.placementSpace.findMany({
     where: {
@@ -95,13 +123,16 @@ export async function resolvePlacementSpaceFor({
   });
 
   const { max: cap } = await placementPriceRange(ownerId, surface);
+  const shares = (await getPlacementConfig()).approvalShares(surface);
 
   return {
     ownerId,
+    ownerUsername,
     mode: resolved.mode,
     setPrice: resolved.price,
     price: effectivePlacementPrice(resolved.price, cap),
     cap,
+    ownerShare: 1 - shares.seller - shares.platform,
     settings: resolved.settings ?? {},
   };
 }
@@ -162,7 +193,29 @@ export async function setPlacementSpace({
   // would refuse every attempt while the owner's UI showed the space as open.
   // Requiring the price here makes that state unreachable rather than a puzzle
   // the placer discovers.
-  const resolvedPrice = price ?? (await inheritedPrice({ surface, entityType, entityId, userId }));
+  const [existing, inherited] = await Promise.all([
+    dbWrite.placementSpace.findUnique({
+      where: { surface_entityType_entityId: { surface, entityType, entityId } },
+      select: { price: true },
+    }),
+    inheritedPrice({ surface, entityType, entityId, userId }),
+  ]);
+
+  // `undefined` leaves this level's own price alone, so the guard has to read it
+  // rather than treating it as unset — otherwise it refuses a configuration the
+  // cascade resolves fine, which is the disagreement this guard exists to avoid.
+  const ownPrice = price === undefined ? existing?.price ?? null : price;
+  const resolvedPrice = ownPrice ?? inherited ?? PLACEMENT_SURFACES[surface].defaultPrice;
+
+  // No guard against clearing a stored price, and that is deliberate rather than
+  // an omission.
+  //
+  // It was guarded while the account price was a free-form number field, where
+  // "cleared" and "mid-edit" look identical: a creator charging 500 who blanks
+  // the box means "set my own price", not "take the platform default". Every
+  // control is now a slider that cannot emit an empty value, so the only route
+  // here is a labelled button that says what it does — and refusing a deliberate
+  // action because an accidental one used to be possible is the wrong trade.
   if (mode !== 'off' && resolvedPrice == null)
     throw throwBadRequestError('placement: set a price before opening this space');
 
