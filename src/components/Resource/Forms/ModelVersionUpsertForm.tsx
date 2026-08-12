@@ -494,25 +494,33 @@ export function ModelVersionUpsertForm({
       usageControl
     )
   );
-  // No moderator carve-out here: this form has no way to tell a moderator editing someone else's model
-  // from staff monetizing their own, and exempting on the role alone let every staff creator skip it.
-  // The server applies the real ownership-scoped rule and simply ignores a moderator's tick on a model
-  // they don't own.
   // Scoped to the current owner, as the server scopes it (resolveRightsAffirmation passes
   // `ownerId: model.userId`): an affirmation is a named person accepting liability, so it doesn't
   // transfer with the model. Unscoped, a model transferred after its affirmation was recorded read as
   // affirmed here, rendered no checkbox, and failed server-side with nothing on screen to tick.
-  const alreadyAffirmed = hasCurrentRightsAffirmation(version?.meta, model?.user?.id);
-  const requiresRightsAffirmation = !alreadyAffirmed && (currentLicensingFee > 0 || gateCharges);
+  const modelOwnerId = model?.user?.id;
+  const alreadyAffirmed = hasCurrentRightsAffirmation(version?.meta, modelOwnerId);
+  // The carve-out is ownership-scoped, not role-based — exempting on the role alone let every staff
+  // creator skip the affirmation on their OWN models. Requiring a known owner who isn't the current user
+  // is the same condition the server applies, and it discards a moderator's tick on someone else's model
+  // anyway, so without this the gate blocks a save the server would have accepted.
+  const moderatingSomeoneElsesModel =
+    !!currentUser?.isModerator && modelOwnerId != null && modelOwnerId !== currentUser.id;
+  const requiresRightsAffirmation =
+    !alreadyAffirmed && !moderatingSomeoneElsesModel && (currentLicensingFee > 0 || gateCharges);
   // Step 2 of the disclosure: asked as soon as the creator says they want to charge, so the pricing
   // controls never appear before the affirmation. Distinct from `requiresRightsAffirmation`, which is the
   // submit gate and stays keyed to an actual charge — toggling the switch and changing your mind must not
   // block a save.
-  const showRightsAffirmation = !alreadyAffirmed && chargeEnabled;
+  const showRightsAffirmation = !alreadyAffirmed && !moderatingSomeoneElsesModel && chargeEnabled;
   // Step 3: the pricing controls. A version already charging without an affirmation on record (predates
   // the requirement) keeps them visible, so it can still be edited or turned off.
+  // The carve-out has to reach the disclosure too, not just the submit gate: without it a moderator
+  // pricing someone else's model can only reveal these controls by ticking a statement that is false for
+  // them, to satisfy a gate that no longer asks for it.
   const showChargeSettings =
-    chargeEnabled && (alreadyAffirmed || rightsAffirmed || hasExistingCharge);
+    chargeEnabled &&
+    (alreadyAffirmed || rightsAffirmed || hasExistingCharge || moderatingSomeoneElsesModel);
   // Keyed to the VALUES, not to the switch: a stored charge can also be cleared with the section open (a
   // hand-typed 0, the inner paid-access switch) or with it unmounted entirely (a non-commercial base
   // model), and those lose exactly as much as closing the section does. Reading the switch position
@@ -1320,9 +1328,8 @@ export function ModelVersionUpsertForm({
                                     timeframe: EARLY_ACCESS_CONFIG.timeframeValues[0],
                                     accessPrice: 5000,
                                     generationPrice: undefined,
-                                    // Spelled out because the object is built before it is handed to
-                                    // `setValue`, so zod's defaults aren't applied to it here — and
-                                    // `generationModeOf` below reads `freeGeneration`.
+                                    // Required now that the literal is checked against the config type
+                                    // rather than inferred from `setValue`'s input type.
                                     freeGeneration: false,
                                     acceptsBlueBuzz: false,
                                     freePreviewGenerations: DEFAULT_GENERATION_TRIAL_LIMIT,
@@ -1857,8 +1864,9 @@ type Props = {
   id?: string;
   onSubmit: (version?: ModelVersionUpsertInput) => void;
   children: (data: { loading: boolean; canSave: boolean }) => React.ReactNode;
-  // `user` is the model's OWNER, needed to scope the rights affirmation the way the server does. Both
-  // wizards already pass a query result that carries it (model.getById / modelVersion.getByIdForEdit).
+  // `user` is the model's OWNER, needed to scope the rights affirmation the way the server does. The edit
+  // page and both wizards pass a query result carrying it; ModelWizard's template/bounty paths don't, but
+  // those carry no version `meta` either, so the check lands on asking rather than on a silent bypass.
   model?: Partial<ModelUpsertInput & { publishedAt: Date | null; user: { id: number } | null }>;
   // Base model of the model's most recent existing version; used to default the
   // picker when adding a brand-new version to an existing model.

@@ -43,8 +43,11 @@ const flags = vi.hoisted(() => ({
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => flags.current,
 }));
+const currentUser = vi.hoisted(() => ({
+  value: { id: 1, tier: 'free', isModerator: false, meta: {} } as Record<string, unknown>,
+}));
 vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, tier: 'free', isModerator: false, meta: {} }),
+  useCurrentUser: () => currentUser.value,
 }));
 vi.mock('~/components/Buzz/CreatorProgramV2/CreatorProgram.util', () => ({
   useCreatorProgramRequirements: () => ({ requirements: undefined }),
@@ -152,6 +155,7 @@ function renderChargingForm() {
 beforeEach(() => {
   mutateAsync.mockClear();
   flags.current = { licensingFee: true, earlyAccessModel: false };
+  currentUser.value = { id: 1, tier: 'free', isModerator: false, meta: {} };
 });
 
 describe('ModelVersionUpsertForm — monetization disclosure', () => {
@@ -265,9 +269,12 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
   });
 
   // The generation radio is local state over a config the toggle replaces wholesale, so a round-trip used
-  // to leave "Free for everyone" selected above a config that charges. Asserted on the SUBMITTED terms,
-  // not on the form config: the screen and the price have to agree about money, and it was reading the
-  // config instead of the payload that hid this in the first place.
+  // to leave "Free for everyone" selected above a config that charges.
+  //
+  // The radio read is what catches a revert: the SUBMITTED terms are identical either way, because the
+  // rebuilt config never carried the free grant — the bug was only ever that the screen lied about it. The
+  // payload assertions guard the opposite mistake, "fixing" this by making the config follow the stale
+  // radio, which would ship a free grant nobody chose.
   test('the generation choice and the submitted price agree after a toggle round-trip', async () => {
     // Stored price differs from the price a fresh config seeds, so the round-trip leaves the form
     // genuinely changed and the save runs the mutation instead of short-circuiting as pristine.
@@ -335,7 +342,47 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     expect((rightsCheckbox().element() as HTMLInputElement).checked).toBe(false);
   });
 
-  // The same record still counts for the owner it names, so nobody is asked twice.
+  // Scoping the check to the owner made a moderator editing someone else's transferred model face a
+  // checkbox the server discards, blocking a save it would have accepted. The carve-out mirrors the
+  // server's: a known owner who isn't the current user.
+  test("does not block a moderator editing someone else's transferred model", async () => {
+    currentUser.value = { id: 3, tier: 'free', isModerator: true, meta: {} };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={{ ...model, user: { id: 2 } } as typeof model}
+        version={chargingVersion}
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+  });
+
+  // The same carve-out has to reach the disclosure, or the only way to the pricing controls is ticking a
+  // statement that is false for the moderator — to satisfy a gate that no longer asks for it.
+  test('opens the pricing controls for a moderator without asking them to affirm', async () => {
+    currentUser.value = { id: 3, tier: 'free', isModerator: true, meta: {} };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={{ ...model, user: { id: 2 } } as typeof model}
+        version={version}
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    await userEvent.click(chargeSwitch());
+    // Straight to the ways to charge, with no affirmation in between.
+    await expect.element(feeSwitch()).toBeInTheDocument();
+    expect(rightsCheckbox().elements()).toHaveLength(0);
+  });
+
+  // A control, not a regression test: this passes unscoped too. It catches passing the WRONG id (the
+  // model id, or the current user) rather than the scoping being absent.
   test('does not ask again when the affirmation belongs to the current owner', async () => {
     renderChargingForm();
 
