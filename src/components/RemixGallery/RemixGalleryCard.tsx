@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Anchor,
   Button,
   Card,
   Center,
@@ -11,7 +12,13 @@ import {
   ThemeIcon,
   Tooltip,
 } from '@mantine/core';
-import { IconHierarchy, IconPlus, IconSettings, IconShieldCheck } from '@tabler/icons-react';
+import {
+  IconClock,
+  IconHierarchy,
+  IconPlus,
+  IconSettings,
+  IconShieldCheck,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import dynamic from 'next/dynamic';
 import { useState } from 'react';
@@ -21,6 +28,7 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { RemixGalleryManageModal } from '~/components/RemixGallery/RemixGalleryManageModal';
 import { RemixGallerySubmitModal } from '~/components/RemixGallery/RemixGallerySubmitModal';
+import { SubmissionThumb } from '~/components/RemixGallery/SubmissionThumb';
 import {
   dedupeGalleryItems,
   galleryDialogImages,
@@ -174,6 +182,8 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
   const isModerator = currentUser?.isModerator ?? false;
   // Server-side, and zero for anyone who is not the owner.
   const pendingCount = visibility.pendingCount ?? 0;
+  // Server-side, and empty for the owner and for signed-out viewers.
+  const viewerPending = visibility.viewerPending ?? [];
 
   return (
     <Card className="flex flex-col gap-3 rounded-xl">
@@ -329,6 +339,39 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
             )}
           </Stack>
         </Group>
+      )}
+
+      {/* Answers "did that work?". Submitting charged Buzz and changed nothing
+          on the image it was sent to, so the submitter's only evidence was the
+          notification they get when the owner eventually decides. Shown to the
+          submitter alone — the owner has the review queue, and everyone else has
+          no business seeing what is waiting. */}
+      {viewerPending.length > 0 && (
+        <Stack gap={6} className="rounded-md bg-gray-1 p-2 dark:bg-dark-6">
+          <Group gap={6} wrap="nowrap">
+            <IconClock size={14} className="shrink-0 text-yellow-6" />
+            <Text size="xs" fw={600}>
+              {viewerPending.length === 1
+                ? 'Your remix is pending review'
+                : `${viewerPending.length} of your remixes are pending review`}
+            </Text>
+          </Group>
+          <Group gap={6} wrap="nowrap" className="overflow-x-auto">
+            {viewerPending.map((pending) =>
+              pending.image ? (
+                <SubmissionThumb key={pending.placementId} image={pending.image} />
+              ) : null
+            )}
+          </Group>
+          <Text size="xs" c="dimmed">
+            {visibility.ownerUsername ? `@${visibility.ownerUsername}` : 'The creator'} decides
+            whether it appears here. You can{' '}
+            <Anchor href="/user/remix-submissions" size="xs">
+              withdraw it
+            </Anchor>{' '}
+            until they do.
+          </Text>
+        </Stack>
       )}
 
       {hasNextPage && (

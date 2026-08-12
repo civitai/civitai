@@ -37,7 +37,11 @@ import { dedupeGalleryItems } from '~/components/RemixGallery/remix-gallery.util
 import { SubmissionThumb } from '~/components/RemixGallery/SubmissionThumb';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Currency } from '~/shared/utils/prisma/enums';
-import { REMIX_GALLERY_MAX_PINNED, remixGalleryRemovableAt } from '~/shared/utils/remix-gallery';
+import {
+  REMIX_GALLERY_MAX_PINNED,
+  REMIX_GALLERY_QUEUE_LIMIT,
+  remixGalleryRemovableAt,
+} from '~/shared/utils/remix-gallery';
 import { daysFromNow, formatDateMin } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -251,6 +255,15 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                     </Group>
                   </Card>
                 ))}
+                {/* The queue does not page. Without this line a busy owner
+                    sees a full list that looks complete and never learns the
+                    rest exist — and the escrow behind those sits until it
+                    expires. */}
+                {(pending?.length ?? 0) >= REMIX_GALLERY_QUEUE_LIMIT && (
+                  <Text size="xs" c="dimmed">
+                    Showing the first {REMIX_GALLERY_QUEUE_LIMIT}. Answer some to see the rest.
+                  </Text>
+                )}
               </Stack>
             ) : (
               <Text size="sm" c="dimmed" mt="sm">

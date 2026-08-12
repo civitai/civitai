@@ -75,8 +75,12 @@ const {
   parseGalleryCursor,
 } = await import('~/server/services/remix-gallery.service');
 
-const { remixGalleryLevelAllowed, REMIX_GALLERY_MAX_PINNED, REMIX_GALLERY_REMOVAL_LOCK_HOURS } =
-  await import('~/shared/utils/remix-gallery');
+const {
+  remixGalleryLevelAllowed,
+  remixGalleryMaxSubmissionLevel,
+  REMIX_GALLERY_MAX_PINNED,
+  REMIX_GALLERY_REMOVAL_LOCK_HOURS,
+} = await import('~/shared/utils/remix-gallery');
 
 /** A submission that passes every check, so each test breaks exactly one thing. */
 const goodSubmission = {
@@ -109,12 +113,17 @@ const openSpace = {
 function primeQueries({
   submission = goodSubmission,
   hostLevel = NsfwLevel.PG,
-}: { submission?: typeof goodSubmission | null; hostLevel?: number | null } = {}) {
+  hostMinor = false,
+}: {
+  submission?: typeof goodSubmission | null;
+  hostLevel?: number | null;
+  hostMinor?: boolean;
+} = {}) {
   let call = 0;
   queryRaw.mockImplementation(async () => {
     call += 1;
     if (call === 1) return submission ? [submission] : [];
-    if (call === 2) return hostLevel == null ? [] : [{ nsfwLevel: hostLevel }];
+    if (call === 2) return hostLevel == null ? [] : [{ nsfwLevel: hostLevel, minor: hostMinor }];
     return [];
   });
 }
@@ -147,9 +156,14 @@ describe('content level rules', () => {
     // safe, and admitting it under `any` is how an unscanned image lands on
     // someone else's page.
     for (const rule of ['atOrBelow', 'any'] as const)
-      expect(remixGalleryLevelAllowed({ rule, submissionLevel: 0, hostLevel: NsfwLevel.XXX })).toBe(
-        false
-      );
+      expect(
+        remixGalleryLevelAllowed({
+          rule,
+          submissionLevel: 0,
+          hostLevel: NsfwLevel.XXX,
+          hostMinor: false,
+        })
+      ).toBe(false);
   });
 
   it('refuses a Blocked submission under both rules', () => {
@@ -159,6 +173,7 @@ describe('content level rules', () => {
           rule,
           submissionLevel: NsfwLevel.Blocked,
           hostLevel: NsfwLevel.XXX,
+          hostMinor: false,
         })
       ).toBe(false);
   });
@@ -169,6 +184,7 @@ describe('content level rules', () => {
         rule: 'atOrBelow',
         submissionLevel: NsfwLevel.R,
         hostLevel: NsfwLevel.X,
+        hostMinor: false,
       })
     ).toBe(true);
     expect(
@@ -176,6 +192,7 @@ describe('content level rules', () => {
         rule: 'atOrBelow',
         submissionLevel: NsfwLevel.X,
         hostLevel: NsfwLevel.R,
+        hostMinor: false,
       })
     ).toBe(false);
   });
@@ -186,6 +203,7 @@ describe('content level rules', () => {
         rule: 'atOrBelow',
         submissionLevel: NsfwLevel.PG,
         hostLevel: 0,
+        hostMinor: false,
       })
     ).toBe(false);
   });
@@ -209,6 +227,99 @@ describe('content level rules', () => {
       hostLevel: NsfwLevel.PG,
     });
     await expect(submit()).resolves.toEqual({ id: PLACEMENT });
+  });
+});
+
+describe('minor-flagged host ceiling', () => {
+  // The gap this closes: the submitted image's own `minor` flag was refused, the
+  // host's was never read. A remix can come from an external generation, so the
+  // generator's refusals are not in this path.
+  const ABOVE_PG13 = [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
+
+  it('refuses anything above PG-13 under BOTH content rules', () => {
+    for (const rule of ['atOrBelow', 'any'] as const)
+      for (const submissionLevel of ABOVE_PG13)
+        expect(
+          remixGalleryLevelAllowed({
+            rule,
+            submissionLevel,
+            // An XXX host is the case that matters: `atOrBelow` alone would
+            // admit every one of these.
+            hostLevel: NsfwLevel.XXX,
+            hostMinor: true,
+          })
+        ).toBe(false);
+  });
+
+  it('caps the ceiling the picker filters on, under both rules', () => {
+    // The picker and the mutation have to agree, or a submitter is offered an
+    // image they will then be refused for — after paying.
+    expect(
+      remixGalleryMaxSubmissionLevel({ rule: 'any', hostLevel: NsfwLevel.XXX, hostMinor: true })
+    ).toBe(NsfwLevel.PG13);
+    expect(
+      remixGalleryMaxSubmissionLevel({ rule: 'atOrBelow', hostLevel: NsfwLevel.X, hostMinor: true })
+    ).toBe(NsfwLevel.PG13);
+    expect(
+      remixGalleryMaxSubmissionLevel({ rule: 'any', hostLevel: NsfwLevel.PG, hostMinor: false })
+    ).toBe(NsfwLevel.XXX);
+    // Nothing is submittable to an unrated host under `atOrBelow`.
+    expect(
+      remixGalleryMaxSubmissionLevel({ rule: 'atOrBelow', hostLevel: 0, hostMinor: false })
+    ).toBe(0);
+  });
+
+  it('still allows PG and PG-13 into a minor-flagged host', () => {
+    for (const submissionLevel of [NsfwLevel.PG, NsfwLevel.PG13])
+      expect(
+        remixGalleryLevelAllowed({
+          rule: 'any',
+          submissionLevel,
+          hostLevel: NsfwLevel.PG13,
+          hostMinor: true,
+        })
+      ).toBe(true);
+  });
+
+  it('refuses through the mutation even when the owner opted into any rating', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, settings: { contentRule: 'any' } });
+    primeQueries({
+      submission: { ...goodSubmission, nsfwLevel: NsfwLevel.XXX },
+      hostLevel: NsfwLevel.XXX,
+      hostMinor: true,
+    });
+
+    await expect(submit()).rejects.toThrow(/PG-13 or below/i);
+    expect(placementCreate).not.toHaveBeenCalled();
+    expect(holdPlacementEscrow).not.toHaveBeenCalled();
+  });
+
+  it('refuses on approval when the host is flagged after the submission was sent', async () => {
+    // Approval is the moment the entry becomes public, and a host can be flagged
+    // between the two. Without the re-check the escrow settles and an XXX entry
+    // goes live on a minor-flagged image.
+    placementFindUnique
+      .mockResolvedValueOnce({
+        id: PLACEMENT,
+        ownerId: OWNER,
+        status: 'pending',
+        surface: 'remixGallery',
+        data: { imageId: REMIX_IMAGE },
+        resolvedAt: null,
+        createdAt: new Date('2026-01-01'),
+      })
+      .mockResolvedValueOnce({ targetId: HOST_IMAGE });
+    primeQueries({
+      submission: { ...goodSubmission, nsfwLevel: NsfwLevel.XXX },
+      hostLevel: NsfwLevel.XXX,
+      hostMinor: true,
+    });
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, settings: { contentRule: 'any' } });
+
+    await expect(
+      actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
+    ).rejects.toThrow(/PG-13 or below/i);
+    expect(settlePlacement).not.toHaveBeenCalled();
   });
 });
 

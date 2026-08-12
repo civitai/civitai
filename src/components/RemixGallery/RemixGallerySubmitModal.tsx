@@ -1,4 +1,4 @@
-import { Alert, Button, Divider, Group, Loader, Modal, Stack, Text } from '@mantine/core';
+import { Alert, Anchor, Button, Divider, Group, Loader, Modal, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
@@ -52,6 +52,16 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
 
   const price = visibility?.price ?? null;
 
+  // Filtered rather than shown-and-refused. Until the ceiling arrives nothing is
+  // offered: rendering the whole grid first and removing images a moment later
+  // invites a click on one that is about to disappear.
+  const maxLevel = visibility?.maxSubmissionLevel;
+  const eligible =
+    maxLevel == null
+      ? []
+      : images.filter((image) => !!image.nsfwLevel && image.nsfwLevel <= maxLevel);
+  const hidden = images.length - eligible.length;
+
   return (
     // `padding={0}` would strip the header's padding too, putting the title and
     // the close button against the edges. Only the body needs to lose it, so the
@@ -74,6 +84,30 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
             The creator reviews every submission and decides what belongs in their gallery.
           </Text>
 
+          {/* The picker lists published images because that is all the mutation
+              accepts, and a freshly generated image is not one. Said here rather
+              than only in the empty state: the case that confuses people is
+              having images in the grid and not the one they just made. */}
+          <Text size="xs" c="dimmed">
+            Only images you have posted appear below.{' '}
+            <Anchor href="/posts/create" target="_blank" rel="noreferrer" size="xs">
+              Post your remix first
+            </Anchor>{' '}
+            if you don&apos;t see it.
+          </Text>
+
+          {/* Says why the grid is short. Without it a submitter whose work is
+              mostly mature sees a picker missing their best images and no
+              reason, which reads as a bug rather than a rule. The reason is not
+              named: which rule bit is the host's business, not the
+              submitter's. */}
+          {hidden > 0 && (
+            <Text size="xs" c="dimmed">
+              {hidden === 1 ? '1 of your images is' : `${hidden} of your images are`} rated above
+              what this gallery accepts, so {hidden === 1 ? 'it is' : 'they are'} not shown.
+            </Text>
+          )}
+
           {visibility && !visibility.open && (
             <Alert color="yellow" icon={<IconAlertTriangle />}>
               This creator has stopped accepting submissions.
@@ -87,14 +121,17 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
             fires on viewport intersection, so it has to live inside here — it
             is reached by scrolling this box, not the page. */}
         <div className="flex-1 overflow-y-auto px-4 py-3">
-          {isLoading ? (
+          {/* Waits on the ceiling as well as the images: without it the picker
+              renders "you have nothing to submit" for a beat while the rule is
+              still in flight. */}
+          {isLoading || !visibility ? (
             <Group justify="center" py="xl">
               <Loader />
             </Group>
-          ) : images.length ? (
+          ) : eligible.length ? (
             <>
               <div className="grid grid-cols-4 gap-3">
-                {images.map((image) => (
+                {eligible.map((image) => (
                   <AspectRatioImageCard
                     key={image.id}
                     aspectRatio="square"
@@ -117,7 +154,13 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
               )}
             </>
           ) : (
-            <NoContent message="You don't have any published images to submit yet." />
+            <NoContent
+              message={
+                hidden > 0
+                  ? 'None of your posted images are rated low enough for this gallery.'
+                  : "You don't have any posted images to submit yet. Post your remix first, then submit it here."
+              }
+            />
           )}
         </div>
 

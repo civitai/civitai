@@ -27,6 +27,7 @@ import { Currency } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
 import { daysFromNow, formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { REMIX_GALLERY_QUEUE_LIMIT } from '~/shared/utils/remix-gallery';
 import { trpc } from '~/utils/trpc';
 
 const TABS = ['received', 'sent'] as const;
@@ -170,6 +171,14 @@ function ReceivedTab({ rows, isLoading }: { rows: ReceivedRow[]; isLoading: bool
 
   return (
     <Stack gap="md">
+      {/* Neither queue pages. A list that stops at the cap and says nothing
+          reads as complete. */}
+      {rows.length >= REMIX_GALLERY_QUEUE_LIMIT && (
+        <Text size="xs" c="dimmed">
+          Showing the first {REMIX_GALLERY_QUEUE_LIMIT}.
+        </Text>
+      )}
+
       {rows.map((row) => (
         <Card key={row.id} withBorder>
           <Group justify="space-between" wrap="nowrap" align="flex-start">
@@ -281,6 +290,14 @@ function SentTab({ rows, isLoading }: { rows: SentRow[]; isLoading: boolean }) {
         You can withdraw a submission any time before the creator reviews it and get your Buzz back
         in full. Once it has been accepted there is nothing to withdraw.
       </Text>
+
+      {/* Neither queue pages. A list that stops at the cap and says nothing
+          reads as complete. */}
+      {rows.length >= REMIX_GALLERY_QUEUE_LIMIT && (
+        <Text size="xs" c="dimmed">
+          Showing the first {REMIX_GALLERY_QUEUE_LIMIT}.
+        </Text>
+      )}
 
       {rows.map((row) => (
         <Card key={row.id} withBorder>
