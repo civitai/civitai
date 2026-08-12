@@ -376,8 +376,10 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     );
 
     await userEvent.click(chargeSwitch());
-    // Straight to the ways to charge, with no affirmation in between.
-    await expect.element(feeSwitch()).toBeInTheDocument();
+    // Straight to the ways to charge, with no affirmation in between. Anchored on the switch state and
+    // then read synchronously, so a regression fails in a second instead of waiting out the matcher.
+    await expect.element(chargeSwitch()).toBeChecked();
+    expect(feeSwitch().elements()).toHaveLength(1);
     expect(rightsCheckbox().elements()).toHaveLength(0);
   });
 
