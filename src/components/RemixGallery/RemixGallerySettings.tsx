@@ -1,5 +1,14 @@
-import { Alert, Anchor, Divider, Group, SegmentedControl, Stack, Text } from '@mantine/core';
-import { IconArrowRight } from '@tabler/icons-react';
+import {
+  Alert,
+  Anchor,
+  Badge,
+  Button,
+  Divider,
+  Group,
+  SegmentedControl,
+  Stack,
+  Text,
+} from '@mantine/core';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -32,6 +41,13 @@ export function RemixGallerySettings() {
     { surface: 'remixGallery' },
     { enabled }
   );
+  const { data: pending } = trpc.placement.getPendingRemixGallerySubmissions.useQuery(
+    {},
+    { enabled }
+  );
+  const { data: sent } = trpc.placement.getMyRemixGallerySubmissions.useQuery(undefined, {
+    enabled,
+  });
 
   const stored = spaces?.[0];
   // Seeded from the surface default, not from `'off'`. A creator with no row is
@@ -60,6 +76,10 @@ export function RemixGallerySettings() {
 
   const cap = range?.max ?? 0;
   const overCap = typeof price === 'number' && cap > 0 && price > cap;
+  // Waiting on the owner, and waiting on someone else. Only the first is a
+  // to-do, which is why it is the one badged in yellow.
+  const receivedCount = pending?.length ?? 0;
+  const sentCount = (sent ?? []).filter((row) => row.status === 'pending').length;
 
   const commit = (
     nextMode: string,
@@ -105,16 +125,27 @@ export function RemixGallerySettings() {
       />
 
       <Stack gap={4}>
-        <Group gap={4} wrap="nowrap">
-          <Text size="sm" fw={500}>
-            Price per submission
-          </Text>
-          <InfoPopover size="xs" iconProps={{ size: 14 }} width={300}>
-            <Text size="sm" maw={280} style={{ whiteSpace: 'normal' }}>
-              Your cap is {cap} Buzz, set by your creator score and membership tier. We store the
-              price you choose, so if the cap rises later your price takes effect on its own.
+        <Group justify="space-between" gap="xs" wrap="nowrap">
+          <Group gap={4} wrap="nowrap">
+            <Text size="sm" fw={500}>
+              Price per submission
             </Text>
-          </InfoPopover>
+            <InfoPopover size="xs" iconProps={{ size: 14 }} width={300}>
+              <Text size="sm" maw={280} style={{ whiteSpace: 'normal' }}>
+                Your cap is {cap} Buzz, set by your creator score and membership tier. We store the
+                price you choose, so if the cap rises later your price takes effect on its own.
+              </Text>
+            </InfoPopover>
+          </Group>
+          {/* The slider only emits numbers, so without this a creator who touches
+              it once can never get back to having no price of their own — and an
+              unset price is not a stored one: it follows the platform default
+              when that moves, where a stored value freezes today's. */}
+          {price !== '' && (
+            <Anchor component="button" type="button" size="xs" onClick={() => commit(mode, '')}>
+              Use the platform default
+            </Anchor>
+          )}
         </Group>
         {/* The shared control, so the two surfaces cannot drift on what the
             track means. It renders no caption — each site says something
@@ -130,9 +161,13 @@ export function RemixGallerySettings() {
             commit(mode, value);
           }}
         />
-        <Text size="xs" c="dimmed">
+        {/* Sits on the same line as the track's min/max marks rather than under
+            them — the slider reserves that row, so a caption below it leaves a
+            gap and reads as detached from the control it describes. Matches the
+            sticker section. */}
+        <Text size="xs" ta="center" mt={-22} c="dimmed">
           {price === ''
-            ? `Submitters pay ${PLACEMENT_SURFACES.remixGallery.defaultPrice} Buzz, the default, until you set your own.`
+            ? `Submitters pay ${PLACEMENT_SURFACES.remixGallery.defaultPrice} Buzz, the platform default.`
             : `Submitters pay ${price} Buzz.`}
         </Text>
       </Stack>
@@ -163,13 +198,41 @@ export function RemixGallerySettings() {
         />
       </Stack>
 
-      <Group gap={6} wrap="nowrap">
-        <Anchor component={Link} href="/user/remix-submissions" size="sm">
-          <Group gap={4} wrap="nowrap">
-            Remixes you&apos;ve submitted elsewhere
-            <IconArrowRight size={14} />
-          </Group>
-        </Anchor>
+      {/* Two directions, two buttons. A gallery owner both receives submissions
+          and makes them, and the counts need somewhere to live — a link with an
+          arrow gives a waiting count nowhere to sit, and the received one is the
+          number that needs acting on. */}
+      <Group gap="xs" wrap="nowrap">
+        <Button
+          component={Link}
+          href="/user/remix-submissions?tab=received"
+          variant="default"
+          size="compact-sm"
+          rightSection={
+            receivedCount > 0 ? (
+              <Badge size="sm" color="yellow" variant="light">
+                {receivedCount}
+              </Badge>
+            ) : undefined
+          }
+        >
+          Submitted to you
+        </Button>
+        <Button
+          component={Link}
+          href="/user/remix-submissions?tab=sent"
+          variant="default"
+          size="compact-sm"
+          rightSection={
+            sentCount > 0 ? (
+              <Badge size="sm" variant="light">
+                {sentCount}
+              </Badge>
+            ) : undefined
+          }
+        >
+          You&apos;ve submitted
+        </Button>
       </Group>
 
       {overCap && (

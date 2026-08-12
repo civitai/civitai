@@ -161,7 +161,7 @@ export function PlacementSpaceSection() {
         ]}
       />
 
-      <Stack gap={4} maw={320}>
+      <Stack gap={4}>
         <Group justify="space-between" gap="xs" wrap="nowrap">
           <Group gap={4} wrap="nowrap">
             <Text size="sm" fw={500}>
@@ -216,7 +216,6 @@ export function PlacementSpaceSection() {
           </InfoPopover>
         </Group>
         <Slider
-          maw={320}
           value={maxScale}
           onChange={setMaxScale}
           onChangeEnd={(value) => commit(mode, price, value)}

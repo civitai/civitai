@@ -1,4 +1,14 @@
-import { ActionIcon, Button, Card, Group, Skeleton, Text, Tooltip } from '@mantine/core';
+import {
+  ActionIcon,
+  Button,
+  Card,
+  Center,
+  Group,
+  Skeleton,
+  Text,
+  ThemeIcon,
+  Tooltip,
+} from '@mantine/core';
 import { IconHierarchy, IconPlus, IconSettings } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
@@ -125,16 +135,28 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
           ))}
         </div>
       ) : (
-        <Text size="sm" c="dimmed">
-          {/* The invitation is gated exactly as the submit button is. Gated on
-              `open` alone it told the owner to be the first to add theirs, next
-              to no button, since they are the one person who cannot. */}
-          No remixes here yet.{' '}
-          {visibility.open &&
-            (isOwner
-              ? 'Other creators can pay to feature their remixes here.'
-              : 'Be the first to add yours.')}
-        </Text>
+        // Built on a square the same size as a gallery entry, so a card that
+        // fills later does not resize under someone scrolling a feed of image
+        // pages — empty is now the common state, so this is the shape most
+        // people see. The pitch sits beside it because an empty grid explains
+        // nothing, and most readers have never seen a remix gallery.
+        <Group gap="sm" wrap="nowrap" align="center">
+          <Center className="aspect-square w-1/4 shrink-0 rounded-md bg-gray-1 dark:bg-dark-6">
+            <ThemeIcon size={38} radius="xl" variant="light">
+              <IconHierarchy size={20} />
+            </ThemeIcon>
+          </Center>
+          <Text size="sm" c="dimmed">
+            {/* Gated exactly as the submit button is. On `open` alone it told the
+                owner to be the first to add theirs, next to no button, since they
+                are the one person who cannot. */}
+            {isOwner
+              ? 'Remixes featured here are seen by everyone who views this image. Other creators can pay to have theirs appear.'
+              : visibility.open
+              ? 'Everyone who sees this image sees this gallery. Remix it into something of your own, then come back and submit it to be featured here.'
+              : 'This creator is not accepting remixes right now.'}
+          </Text>
+        </Group>
       )}
 
       {hasNextPage && (
