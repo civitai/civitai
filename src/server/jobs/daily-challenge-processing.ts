@@ -1122,9 +1122,12 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   // 🔴 Serialising it is what makes the drain BOUNDED WORK, so the tick has to bound it.
   // Placement cost grows with the ladder — ceil(log2(n+1)) serial bouts — so a burst against a
   // mature ladder is the expensive case, not a big burst against an empty one. The job lock is
-  // `createJob`'s 300s default (this job overrides nothing) against a 600s cron, so only the first
-  // 300s of a tick is protected and a run still going at 600s gets a concurrent sibling — which is
-  // the shared-snapshot race again, from the other direction.
+  // `REVIEW_JOB_LOCK_SECONDS` (540s) against a 600s cron, and `REVIEW_TICK_BUDGET_MS` is per
+  // CHALLENGE, measured from that challenge's own start — so the lock covers one challenge's
+  // budget, not the job's. `reviewEntries` fans out at `CHALLENGE_JOB_CONCURRENCY`, so a batch
+  // larger than that runs in waves and only the first wave is inside the lock; a later wave still
+  // going at 600s gets a concurrent sibling — the shared-snapshot race again, from the other
+  // direction.
   //
   // The budget is checked BETWEEN placements, never inside one: a placement is atomic, so the
   // overshoot is one placement rather than unbounded. At least one always runs, so a challenge
