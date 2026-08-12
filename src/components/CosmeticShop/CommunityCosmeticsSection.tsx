@@ -85,6 +85,7 @@ export function CommunityCosmeticsSection({
           </Center>
         ) : items.length ? (
           <>
+            <ShopBrowsePagination page={page} onChange={setPage} totalPages={totalPages} />
             <div className="relative">
               <LoadingOverlay visible={isFetching} zIndex={9} />
               <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">

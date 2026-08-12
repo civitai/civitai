@@ -69,6 +69,7 @@ export function ResoldSection({
       />
       {matched.length ? (
         <>
+          <ShopBrowsePagination page={page} onChange={setPage} totalPages={totalPages} />
           {/* viaShopUserId credits this shop owner with the reseller share on purchase. */}
           <ShopItemGrid
             items={filtered}

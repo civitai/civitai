@@ -83,7 +83,9 @@ export default function CosmeticShopMain() {
   const [pageSize, setPageSize] = useState<number>(COSMETIC_SHOP_DEFAULT_PAGE_SIZE);
   const [debouncedFilters] = useDebouncedValue({ cosmeticTypes: filters.cosmeticTypes }, 500);
   const { cosmeticShopSections, isLoading } = useQueryShop(debouncedFilters);
-  const { isFetching: loadingOwnedCosmetics } = useQueryUserCosmetics();
+  // Initial load only: a purchase invalidates `user.getCosmetics`, and gating on
+  // the refetch would unmount every section and lose each one's page.
+  const { isLoading: loadingOwnedCosmetics } = useQueryUserCosmetics();
   const ownedCosmeticIds = useOwnedCosmeticIds();
   const { wishlistedIds } = useQueryWishlistedShopItems();
   const features = useFeatureFlags();
