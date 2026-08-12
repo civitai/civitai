@@ -14,9 +14,11 @@ const PLACEMENT = 96;
 const PRICE = 700;
 
 const holdPlacementEscrow = vi.fn(async () => ({ fee: 210, principal: 490 }));
-const settlePlacement = vi.fn(async (_args?: { placementId: number; action: string }) => ({
-  settled: true,
-}));
+const settlePlacement = vi.fn(async () => ({ settled: true }));
+
+/** What the refund tests below read back off the last settle call. */
+type SettleArgs = { placementId: number; action: string };
+const lastSettleArgs = () => settlePlacement.mock.calls.at(-1)?.[0] as SettleArgs | undefined;
 const FEE_WAIVING_ACTIONS = ['declineByBlock', 'declineUnshowableHost'];
 vi.mock('~/server/services/placement-escrow.service', () => ({
   holdPlacementEscrow,
@@ -386,7 +388,7 @@ describe('declining on a host that cannot show a gallery', () => {
     // choice; "the submitter is not charged" is the thing that must hold, and an
     // assertion on the string would go green against any future action that
     // happens to be spelled the same and charges the fee.
-    const [call] = settlePlacement.mock.calls.at(-1) ?? [];
+    const call = lastSettleArgs();
     expect(FEE_WAIVING_ACTIONS).toContain(call?.action);
     expect(call?.placementId).toBe(PLACEMENT);
   });
@@ -394,8 +396,7 @@ describe('declining on a host that cannot show a gallery', () => {
   it('still charges the fee on a normal host', async () => {
     await declineWithHost(true);
 
-    const [call] = settlePlacement.mock.calls.at(-1) ?? [];
-    expect(FEE_WAIVING_ACTIONS).not.toContain(call?.action);
+    expect(FEE_WAIVING_ACTIONS).not.toContain(lastSettleArgs()?.action);
   });
 });
 
