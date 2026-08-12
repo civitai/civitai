@@ -980,6 +980,7 @@ describe('an approved submission counts toward the host image buzz counter', () 
   const pending = {
     id: PLACEMENT,
     ownerId: OWNER,
+    placerId: PLACER,
     status: 'pending',
     surface: 'remixGallery',
     data: { imageId: REMIX_IMAGE },
@@ -1001,6 +1002,8 @@ describe('an approved submission counts toward the host image buzz counter', () 
       entityId: HOST_IMAGE,
       metricType: 'Buzz',
       amount: PRICE,
+      // The submitter, not the host's owner: attribution follows who paid.
+      userId: PLACER,
     });
     // Exactly once, which the payload assertion above cannot see. The two
     // negative tests in this block would both pass against a full revert, so

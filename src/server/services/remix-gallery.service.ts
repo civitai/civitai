@@ -300,6 +300,7 @@ export async function actOnRemixGallerySubmission({
     select: {
       id: true,
       ownerId: true,
+      placerId: true,
       targetId: true,
       amount: true,
       status: true,
@@ -435,6 +436,7 @@ export async function actOnRemixGallerySubmission({
       surface: SURFACE,
       imageId: placement.targetId,
       amount: placement.amount,
+      placerId: placement.placerId,
     });
 
   return result;

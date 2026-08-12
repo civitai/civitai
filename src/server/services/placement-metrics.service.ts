@@ -61,11 +61,24 @@ export async function recordPlacementTip({
   surface,
   imageId,
   amount,
+  placerId,
 }: {
   /** For the log only — the counter does not distinguish them. */
   surface: PlacementSurface;
   imageId: number;
   amount: number;
+  /**
+   * Who paid, attributed the way a tip attributes its tipper.
+   *
+   * Not cosmetic: `userId` is part of the key the metric pipeline dedupes on
+   * — `(entityType, entityId, metricType, userId, createdAt)`, with no
+   * `metricValue` in it — so two placements landing on the same image, under
+   * the same attribution, in the same millisecond would replace one another
+   * and the second payment would vanish from the counter. A request-less
+   * `Tracker` attributes everything to 0, which is exactly the collision this
+   * avoids; a bulk approval loop is the shape that would hit it.
+   */
+  placerId: number;
 }) {
   if (amount <= 0) return;
 
@@ -75,6 +88,7 @@ export async function recordPlacementTip({
       entityId: imageId,
       metricType: 'Buzz',
       amount,
+      userId: placerId,
     });
   } catch (error) {
     await logToAxiom({

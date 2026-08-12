@@ -698,6 +698,7 @@ describe("a placement counts toward the image's Buzz counter", () => {
     placementFindUnique.mockResolvedValue({
       id: PLACEMENT,
       ownerId: OWNER,
+      placerId: PLACER,
       targetId: IMAGE,
       amount: PRICE,
       status: 'pending',
@@ -719,6 +720,9 @@ describe("a placement counts toward the image's Buzz counter", () => {
       metricType: 'Buzz',
       // `price`, not `setPrice`: the cap is what was actually charged.
       amount: PRICE,
+      // Attributed to the placer, the way a tip is attributed to its tipper —
+      // and load-bearing, because `userId` is part of the pipeline's dedupe key.
+      userId: PLACER,
     });
   });
 
@@ -745,7 +749,7 @@ describe("a placement counts toward the image's Buzz counter", () => {
     await actOnStickerPlacement({ placementId: PLACEMENT, action: 'approve', userId: OWNER });
 
     expect(updateEntityMetricDetached).toHaveBeenCalledWith(
-      expect.objectContaining({ entityId: IMAGE, amount: PRICE })
+      expect.objectContaining({ entityId: IMAGE, amount: PRICE, userId: PLACER })
     );
   });
 
@@ -772,6 +776,7 @@ describe('the owner cannot remove a sticker for a week after approving it', () =
     placementFindUnique.mockResolvedValue({
       id: PLACEMENT,
       ownerId: OWNER,
+      placerId: PLACER,
       targetId: IMAGE,
       amount: PRICE,
       status: 'approved',
@@ -856,6 +861,7 @@ describe('the note on a placement', () => {
     placementFindUnique.mockResolvedValue({
       id: PLACEMENT,
       ownerId: OWNER,
+      placerId: PLACER,
       targetId: IMAGE,
       amount: PRICE,
       status: 'pending',
@@ -924,6 +930,7 @@ describe('the note on a placement', () => {
     placementFindUnique.mockResolvedValue({
       id: PLACEMENT,
       ownerId: OWNER,
+      placerId: PLACER,
       targetId: IMAGE,
       amount: PRICE,
       status: 'pending',

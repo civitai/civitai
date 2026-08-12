@@ -82,11 +82,27 @@ export const updateEntityMetric = async ({
  * service drags it into that service's tests, where it is neither mocked nor
  * wanted. Loaded once by the module cache on first use.
  */
-export const updateEntityMetricDetached = async (
-  input: Omit<Parameters<typeof updateEntityMetric>[0], 'ctx'>
-) => {
+export const updateEntityMetricDetached = async ({
+  userId,
+  ...input
+}: Omit<Parameters<typeof updateEntityMetric>[0], 'ctx'> & {
+  /**
+   * Who caused it. Worth threading through rather than letting a request-less
+   * `Tracker` default to 0: `userId` is part of the dedupe key the metric
+   * pipeline replaces rows on, so several events attributed to the same
+   * non-user, on the same entity and metric, within the same millisecond
+   * collapse into one and silently undercount. A real id makes them distinct
+   * for the same reason a tip's does.
+   */
+  userId?: number;
+}) => {
   const { Tracker } = await import('~/server/clickhouse/client');
-  await updateEntityMetric({ ...input, ctx: { track: new Tracker() } });
+  const track = new Tracker(
+    undefined,
+    undefined,
+    userId ? ({ user: { id: userId } } as ConstructorParameters<typeof Tracker>[2]) : undefined
+  );
+  await updateEntityMetric({ ...input, ctx: { track } });
 };
 
 export const incrementEntityMetric = async ({

@@ -265,7 +265,8 @@ export async function createStickerPlacement({
     // line: `settlePlacement` returns `settled: false` when something else got
     // there first, and counting then would add the placement's Buzz to the image
     // twice for one payment.
-    if (settled) await recordPlacementTip({ surface: SURFACE, imageId, amount: space.price });
+    if (settled)
+      await recordPlacementTip({ surface: SURFACE, imageId, amount: space.price, placerId });
   }
 
   return { placementId: placement.id, status: space.mode === 'auto' ? 'approved' : 'pending' };
@@ -649,6 +650,7 @@ export async function actOnStickerPlacement({
     select: {
       id: true,
       ownerId: true,
+      placerId: true,
       targetId: true,
       amount: true,
       status: true,
@@ -690,6 +692,7 @@ export async function actOnStickerPlacement({
       surface: SURFACE,
       imageId: placement.targetId,
       amount: placement.amount,
+      placerId: placement.placerId,
     });
 
   return { settled };
