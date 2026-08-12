@@ -392,7 +392,9 @@ export async function actOnRemixGallerySubmission({
   // prices the owner's attention: a spammer costs them a review. When the host
   // cannot show a gallery the owner was never offered a choice — approve is
   // refused above — so there is no judgement to charge for, and the submitter is
-  // refunded in full through the same path expiry and retraction use.
+  // refunded in full — but recorded as a decline, because that is what happened.
+  // Settling it as an expiry would have written the same money and then told
+  // every later reader that the hold timed out with nobody acting.
   //
   // Without this, the fair outcome for the submitter was the one where the owner
   // ignored their queue: doing nothing expires the hold and returns everything,
@@ -402,7 +404,8 @@ export async function actOnRemixGallerySubmission({
 
   const result = await settlePlacement({
     placementId,
-    action: action === 'approve' ? 'approve' : declineRefundsInFull ? 'expire' : 'decline',
+    action:
+      action === 'approve' ? 'approve' : declineRefundsInFull ? 'declineUnshowableHost' : 'decline',
     actorId: userId,
   });
 

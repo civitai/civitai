@@ -377,7 +377,7 @@ describe('declining on a host that cannot show a gallery', () => {
     await declineWithHost(false);
 
     expect(settlePlacement).toHaveBeenCalledWith(
-      expect.objectContaining({ placementId: PLACEMENT, action: 'expire' })
+      expect.objectContaining({ placementId: PLACEMENT, action: 'declineUnshowableHost' })
     );
   });
 
