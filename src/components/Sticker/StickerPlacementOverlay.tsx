@@ -462,7 +462,11 @@ export function StickerPlacementOverlay({
                 >
                   <div>
                     {isOwner ? (
-                      <StickerPlacementActions placementIds={[placement.id]} compact />
+                      <StickerPlacementActions
+                        placementIds={[placement.id]}
+                        hasComment={placement.hasComment}
+                        compact
+                      />
                     ) : (
                       <span className="whitespace-nowrap rounded bg-yellow-6 px-2 py-0.5 text-[10px] font-semibold text-dark-9">
                         Awaiting review

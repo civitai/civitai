@@ -99,22 +99,26 @@ const reportedPlacementFilter = ({
   if (typeof placementId !== 'number' || !Number.isFinite(placementId))
     throw throwBadRequestError('report: a sticker placement report must name a placement');
 
-  // A note is reported separately from the sticker it hangs off, and folding the
-  // two together would hide one behind the other: a moderator who cleared the
-  // artwork would never see that someone also complained about the text.
+  // A note is reported separately from the sticker it hangs off, and the
+  // discrimination has to run in BOTH directions. Matching on the placement
+  // alone for one of them is not a weaker filter, it is a fold: report the note
+  // on placement 5, then report the artwork on placement 5, and the second
+  // report is appended to the first as "also reported by" — its reason text
+  // discarded, and a moderator shown a complaint about a note while the
+  // complaint about the artwork is invisible.
   //
-  // Only ever added for `comment`, never for `sticker`. Reports filed before
-  // this field existed carry no `target` key at all, and `equals: 'sticker'`
-  // does not match a missing one — so asserting the default here would stop
-  // every new sticker report deduping against the history it should dedupe
-  // against, which is the same fold this predicate exists to prevent.
-  const target = (details as { target?: string } | undefined)?.target;
-  if (target !== 'comment') return { details: { path: ['placementId'], equals: placementId } };
+  // The cost is that reports filed before this field existed carry no `target`
+  // key, and `equals: 'sticker'` does not match a missing one, so a new sticker
+  // report will not dedupe against that history. That is a duplicate in the
+  // queue, on a fixed and shrinking set of rows — strictly better than dropping
+  // a complaint, which is what the asymmetric version did.
+  const target =
+    (details as { target?: string } | undefined)?.target === 'comment' ? 'comment' : 'sticker';
 
   return {
     AND: [
       { details: { path: ['placementId'], equals: placementId } },
-      { details: { path: ['target'], equals: 'comment' } },
+      { details: { path: ['target'], equals: target } },
     ],
   };
 };

@@ -97,6 +97,7 @@ vi.mock('~/server/utils/metric-helpers', async (importOriginal) => ({
 
 const {
   actOnStickerPlacement,
+  setStickerCommentHidden,
   createStickerPlacement,
   getStickerPlacements,
   getPlacementSettlementStates,
@@ -137,6 +138,10 @@ beforeEach(() => {
   resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE });
   placementCount.mockResolvedValue(0);
   placementUpdateMany.mockResolvedValue({ count: 1 });
+  placementUpdate.mockImplementation(async () => {
+    calls.push('hideComment');
+    return {};
+  });
   holdPlacementEscrow.mockImplementation(async () => {
     calls.push('hold');
     return { fee: 210, principal: 490 };
@@ -903,6 +908,68 @@ describe('the note on a placement', () => {
     // The rest of the payload survives: refusing a note must not be a way to
     // move the sticker it was attached to.
     expect(write.data.data).toMatchObject({ cosmeticId: COSMETIC, x: 0.5, scale: 0.2 });
+    // "Before it goes live" is the property the name claims, and it is the one
+    // an assertion about the payload alone cannot see. Move the hide after the
+    // settle and only this line fails.
+    expect(calls).toEqual(['hideComment', 'settle:approve']);
+  });
+
+  /**
+   * The owner can refuse a note from the hover card while the placement is
+   * still pending. A plain Approve must leave that decision alone — treating
+   * "no opinion" as "show it" publishes text the owner explicitly refused, and
+   * publishing is the direction that cannot be taken back.
+   */
+  it('is left alone by a plain approve, rather than being un-hidden', async () => {
+    placementFindUnique.mockResolvedValue({
+      id: PLACEMENT,
+      ownerId: OWNER,
+      targetId: IMAGE,
+      amount: PRICE,
+      status: 'pending',
+      surface: 'sticker',
+      data: {
+        cosmeticId: COSMETIC,
+        x: 0.5,
+        y: 0.5,
+        scale: 0.2,
+        rotation: 0,
+        comment: 'nice hat',
+        commentHidden: true,
+      },
+      createdAt: new Date(0),
+      resolvedAt: null,
+    });
+
+    await actOnStickerPlacement({ placementId: PLACEMENT, action: 'approve', userId: OWNER });
+
+    expect(placementUpdate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The only thing stopping a stranger flipping the flag on someone else's
+   * placement. Delete the ownership check and this is what fails.
+   */
+  it('cannot be hidden by someone who does not own the content', async () => {
+    withComment('nice hat');
+
+    await expect(
+      setStickerCommentHidden({ placementId: PLACEMENT, hidden: true, userId: STRANGER })
+    ).rejects.toThrow(/not on your content/);
+    expect(placementUpdate).not.toHaveBeenCalled();
+  });
+
+  it('can be hidden by a moderator', async () => {
+    withComment('nice hat');
+
+    await setStickerCommentHidden({
+      placementId: PLACEMENT,
+      hidden: true,
+      userId: STRANGER,
+      isModerator: true,
+    });
+
+    expect(placementUpdate).toHaveBeenCalled();
   });
 
   /**
@@ -947,8 +1014,25 @@ describe('the note on a placement', () => {
       });
 
       expect(detail.comment).toBeNull();
-      // Still stated, so the placer is never told their note is live when it is
-      // not — and so the owner's control knows which way it points.
+      // Not merely textless. Saying a note was refused tells a stranger one
+      // existed and how the owner judged it — the fact withholding the text was
+      // protecting.
+      expect(detail.commentHidden).toBe(false);
+    });
+
+    it('tells the placer their note is not live, so they are not left guessing', async () => {
+      givenHidden();
+
+      const detail = await getStickerPlacementDetail({ placementId: PLACEMENT, viewerId: PLACER });
+
+      expect(detail.commentHidden).toBe(true);
+    });
+
+    it('tells the owner, whose control it labels', async () => {
+      givenHidden();
+
+      const detail = await getStickerPlacementDetail({ placementId: PLACEMENT, viewerId: OWNER });
+
       expect(detail.commentHidden).toBe(true);
     });
 
@@ -970,6 +1054,69 @@ describe('the note on a placement', () => {
       });
 
       expect(detail.comment).toBe('nice hat');
+    });
+  });
+
+  /**
+   * `getStickerPlacements` is a public procedure that runs for every image on a
+   * feed page. Stripping the text out of it is the entire control keeping notes
+   * — hidden ones above all — from being serialised to anonymous viewers, and
+   * the whole rest of this file stays green if that strip is removed.
+   */
+  describe('is never carried by the feed listing', () => {
+    const givenListed = (data: Record<string, unknown>) =>
+      placementFindMany.mockResolvedValueOnce([
+        {
+          id: PLACEMENT,
+          targetId: IMAGE,
+          placerId: PLACER,
+          ownerId: OWNER,
+          status: 'approved',
+          amount: PRICE,
+          data: { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.2, rotation: 0, ...data },
+        },
+      ]);
+
+    it('withholds the text even from the placer, who is allowed to read it', async () => {
+      givenListed({ comment: 'nice hat' });
+
+      const [placed] = await getStickerPlacements({ imageIds: [IMAGE], viewerId: PLACER });
+
+      expect(placed.data.comment).toBeUndefined();
+      // The flag has to travel, because the sticker needs a marker before
+      // anyone hovers it — but the flag is not the text.
+      expect(placed.hasComment).toBe(true);
+    });
+
+    it('does not even admit a hidden note exists, to a stranger', async () => {
+      givenListed({ comment: 'nice hat', commentHidden: true });
+
+      const [placed] = await getStickerPlacements({ imageIds: [IMAGE], viewerId: STRANGER });
+
+      expect(placed.data.comment).toBeUndefined();
+      expect(placed.data.commentHidden).toBeUndefined();
+      expect(placed.hasComment).toBe(false);
+    });
+
+    it('still marks a hidden note for the owner, who can act on it', async () => {
+      givenListed({ comment: 'nice hat', commentHidden: true });
+
+      const [placed] = await getStickerPlacements({ imageIds: [IMAGE], viewerId: OWNER });
+
+      expect(placed.hasComment).toBe(true);
+    });
+
+    /**
+     * `isStickerPlacementData` validates the geometry and stops there, which is
+     * right — a malformed note should not stop the sticker drawing. So the read
+     * is where the note has to prove it is a string.
+     */
+    it('treats a non-string note on the row as no note at all', async () => {
+      givenListed({ comment: 42 });
+
+      const [placed] = await getStickerPlacements({ imageIds: [IMAGE], viewerId: PLACER });
+
+      expect(placed.hasComment).toBe(false);
     });
   });
 

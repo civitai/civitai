@@ -57,22 +57,40 @@ const MAX_PENDING_PER_OWNER = 10;
  * The same event the tip button emits (`Image`/`Buzz`), so this arrives through
  * the metric pipeline everything else already reads rather than as a second
  * number the feed, the detail page and the search index each have to learn to
- * add. Failures are swallowed inside `updateEntityMetric`: a settlement that
- * moved real Buzz must not be reported as failed because a counter did not move.
+ * add.
  *
  * Detached from any request context on purpose — approval happens from the
  * review queue, from an auto-approving space and from a bulk action, and the
  * counter has to move the same way in all three.
+ *
+ * **Nothing here may throw.** It runs after the settle has already claimed the
+ * transition and paid the owner, so a throw would report a live, paid placement
+ * as failed — and in the bulk path would put its id in `failed`, inviting the
+ * owner to action it again. `updateEntityMetric` catches its own emission, but
+ * the module load, the tracker construction and the flag read sit outside that,
+ * so the whole call is wrapped rather than trusting where the boundary happens
+ * to fall today.
  */
 async function recordStickerTip({ imageId, amount }: { imageId: number; amount: number }) {
   if (amount <= 0) return;
 
-  await updateEntityMetricDetached({
-    entityType: 'Image',
-    entityId: imageId,
-    metricType: 'Buzz',
-    amount,
-  });
+  try {
+    await updateEntityMetricDetached({
+      entityType: 'Image',
+      entityId: imageId,
+      metricType: 'Buzz',
+      amount,
+    });
+  } catch (error) {
+    await logToAxiom({
+      name: 'sticker-placement',
+      type: 'error',
+      message: 'could not count an approved placement toward the image buzz counter',
+      imageId,
+      amount,
+      error: (error as Error).message,
+    }).catch(() => null);
+  }
 }
 
 /**
@@ -83,9 +101,18 @@ async function recordStickerTip({ imageId, amount }: { imageId: number; amount: 
  * acting on a report about it — and to nobody else. Hiding is the owner's
  * judgement about their own image, not a deletion: the text is what a report is
  * about, so a moderator opening one must be able to see what was said.
+ *
+ * Both fields are re-checked here rather than trusted from the payload.
+ * `isStickerPlacementData` validates the geometry and stops there, which is
+ * right — a row with a malformed note should still draw its sticker — so this
+ * is the boundary where the note has to prove it is a string. `commentHidden`
+ * is compared against `true` for the same reason: a hand-edited `"false"` is
+ * truthy, and would hide a note nobody refused.
  */
-const visibleStickerComment = (data: StickerPlacementData, isParty: boolean) =>
-  data.comment && (!data.commentHidden || isParty) ? data.comment : undefined;
+const visibleStickerComment = (data: StickerPlacementData, isParty: boolean) => {
+  if (typeof data.comment !== 'string' || !data.comment) return undefined;
+  return data.commentHidden === true && !isParty ? undefined : data.comment;
+};
 
 /** The lock's expiry, or `null` once it has already passed. */
 const nextRemovableAt = (approvedAt: Date) => {
@@ -441,8 +468,16 @@ export async function getStickerPlacementDetail({
      * page that has it will eventually compare it somewhere the server does not.
      */
     viewerIsOwner: !!viewerId && viewerId === placement.ownerId,
-    /** Whether the note is currently refused, so the owner's control can say so. */
-    commentHidden: !!data?.commentHidden,
+    /**
+     * Whether the note is currently refused — for the owner whose control it
+     * labels and the placer who would otherwise think their note was live.
+     *
+     * `false` for everyone else rather than the truth. A stranger has nothing to
+     * do with the answer, and a hover card that draws no text but says a note
+     * was refused tells them a note existed and how the owner judged it, which
+     * is the fact withholding the text was protecting.
+     */
+    commentHidden: isParty && !!data?.commentHidden,
     /**
      * When the owner may take this off, so the button can be disabled with a
      * date rather than refusing after the click. `null` once the lock has run
@@ -642,7 +677,7 @@ export async function actOnStickerPlacement({
   action,
   userId,
   isModerator = false,
-  hideComment = false,
+  hideComment,
 }: {
   placementId: number;
   action: OwnerAction;
@@ -652,6 +687,13 @@ export async function actOnStickerPlacement({
    * Partial approval: take the sticker, refuse the note (Justin's call in the
    * 2026-08-12 review). Carried on the approve rather than left to a second
    * call, so an owner who refuses a note never has a moment where it is live.
+   *
+   * **`undefined` means "don't touch it", and that is load-bearing.** An owner
+   * can already have hidden the note from the hover card while the placement
+   * sat pending; defaulting this to `false` would make the ordinary Approve
+   * button publish a note they had explicitly refused. Where the two readings
+   * disagree, the safe one is the note staying hidden — it is someone else's
+   * text on the owner's image, and the owner can put it back in one click.
    */
   hideComment?: boolean;
 }) {
@@ -682,11 +724,10 @@ export async function actOnStickerPlacement({
 
   if (action === 'remove') return removeApprovedSticker({ placement, userId, isModerator });
 
-  // Written with the approve's actual intent, not only when it is `true`. An
-  // approve that failed after hiding would otherwise leave the flag set, and a
-  // second, plain approve would silently keep refusing a note the owner just
-  // chose to accept.
-  if (action === 'approve') await hideStickerComment(placement, hideComment);
+  // Before the settle, so a refused note is never live for the window between
+  // the two writes.
+  if (action === 'approve' && hideComment !== undefined)
+    await hideStickerComment(placement, hideComment);
 
   const { settled } = await settlePlacement({
     placementId,
@@ -889,12 +930,13 @@ export async function actOnStickerPlacements({
   action,
   userId,
   isModerator = false,
-  hideComment = false,
+  hideComment,
 }: {
   placementIds: number[];
   action: OwnerAction;
   userId: number;
   isModerator?: boolean;
+  /** `undefined` leaves each note as it is — see `actOnStickerPlacement`. */
   hideComment?: boolean;
 }) {
   const failed: number[] = [];
