@@ -187,6 +187,29 @@ describe('selectAutoFeaturePicks', () => {
     expect(select([])).toEqual([]);
   });
 
+  // Nothing else here would notice the rotation re-offering a collection's best item on every
+  // pass: the run still returns `perRun` entries, and the duplicates only surface as an insert
+  // that quietly writes fewer rows than it reports.
+  //
+  // The per-creator caps are raised deliberately. At the defaults they dedupe the picks by
+  // accident — a repeat of the same image is also a repeat of its creator — so this passes with
+  // the cursor bookkeeping removed entirely and proves nothing. Only with the caps out of the
+  // way does the assertion actually rest on the cursor.
+  it('never picks the same image twice in one run', () => {
+    const cfg = config({ perRun: 4, maxPerCreatorPerRun: 5, maxPerCreatorInWindow: 5 });
+    const candidates = [
+      candidate({ collectionId: 1, reactions: 900 }),
+      candidate({ collectionId: 1, reactions: 100 }),
+      candidate({ collectionId: 2, reactions: 800 }),
+      candidate({ collectionId: 2, reactions: 200 }),
+    ];
+
+    const picks = select(candidates, cfg);
+
+    expect(picks).toHaveLength(4);
+    expect(new Set(picks.map((p) => p.imageId)).size).toBe(picks.length);
+  });
+
   it('lets one collection dominate under the global strategy', () => {
     // The measured behaviour the round-robin default exists to avoid. Pinned so that flipping
     // `strategy` back is a deliberate choice with a known consequence, not a surprise.

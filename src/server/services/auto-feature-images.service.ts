@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { AutoFeatureSchema, HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { autoFeatureSchema } from '~/server/schema/home-block.schema';
@@ -39,7 +40,13 @@ export function scoreCandidate(
   now: Date
 ) {
   const ageHours = Math.max(0, (now.getTime() - candidate.curatedAt.getTime()) / 3_600_000);
-  return candidate.reactions / Math.pow(ageHours + config.recencyOffsetHours, config.decayExponent);
+  // Floored because the schema allows recencyOffsetHours: 0, and a just-curated item with no
+  // reactions would otherwise score 0/0 = NaN and make the sort comparator's order undefined.
+  const decay = Math.max(
+    Math.pow(ageHours + config.recencyOffsetHours, config.decayExponent),
+    1e-9
+  );
+  return candidate.reactions / decay;
 }
 
 /**
@@ -133,6 +140,7 @@ async function getAutoFeatureConfig() {
   const block = await dbRead.homeBlock.findFirst({
     where: { userId: -1, type: HomeBlockType.FeaturedCollections },
     select: { id: true, metadata: true },
+    orderBy: { id: 'asc' },
   });
   if (!block) return null;
   const metadata = (block.metadata || {}) as HomeBlockMetaSchema;
@@ -176,7 +184,9 @@ async function fetchCandidates({
       WHERE ci."collectionId" = ANY(${collectionIds}::int[])
         AND ci.status = 'ACCEPTED'
         AND ci."imageId" IS NOT NULL
-        AND COALESCE(ci."reviewedAt", ci."createdAt") >= now() - make_interval(days => ${windowDays})
+        AND COALESCE(ci."reviewedAt", ci."createdAt") >= now() - make_interval(days => ${Prisma.raw(
+          String(windowDays)
+        )})
       ORDER BY ci."imageId", COALESCE(ci."reviewedAt", ci."createdAt") DESC
     )
     SELECT c."imageId", i."userId", c."collectionId", c."curatedAt",
@@ -219,7 +229,8 @@ async function fetchWindowCounts({
     WHERE ci."collectionId" = ${targetCollectionId}
       AND ci."addedById" = ${AUTO_FEATURE_USER_ID}
       AND ci.note LIKE ${`${AUTO_FEATURE_NOTE_PREFIX}:%`}
-      AND ci."createdAt" >= now() - make_interval(days => ${windowDays})
+      AND ci.status <> 'REJECTED'::"CollectionItemStatus"
+      AND ci."createdAt" >= now() - make_interval(days => ${Prisma.raw(String(windowDays))})
   `;
 
   const creatorCounts = new Map<number, number>();

@@ -774,7 +774,7 @@ export const saveItemInCollections = async ({
   ]);
   const existingItems = await dbRead.collectionItem.findMany({
     where: { collectionId: { in: touchedCollectionIds }, [itemKey]: input[itemKey] },
-    select: { id: true, collectionId: true, tagId: true, addedById: true },
+    select: { id: true, collectionId: true, tagId: true, addedById: true, note: true },
   });
   const existingItemsByCollection = new Map(existingItems.map((item) => [item.collectionId, item]));
 
@@ -965,12 +965,40 @@ export const saveItemInCollections = async ({
       })
       .filter(isDefined);
 
+    // Auto-featured rows are rejected, not deleted, here too — this is the "Save to collection"
+    // modal, the other door into removal, and a delete through it would let the job re-add the
+    // image the removal was meant to stop.
+    const autoFeaturedIds = removeAllowedCollectionItemIds.filter((id) => {
+      const item = existingItems.find((i) => i.id === id);
+      return (
+        item?.addedById === AUTO_FEATURE_USER_ID &&
+        !!item.note?.startsWith(`${AUTO_FEATURE_NOTE_PREFIX}:`)
+      );
+    });
+    const deletableIds = removeAllowedCollectionItemIds.filter(
+      (id) => !autoFeaturedIds.includes(id)
+    );
+
+    removedCount = removeAllowedCollectionItemIds.length;
+
+    if (autoFeaturedIds.length > 0) {
+      transactions.push(
+        dbWrite.collectionItem.updateMany({
+          where: { id: { in: autoFeaturedIds } },
+          data: {
+            status: CollectionItemStatus.REJECTED,
+            reviewedById: userId,
+            reviewedAt: new Date(),
+          },
+        })
+      );
+    }
+
     // if we have items to remove, add a deleteMany mutation to the transaction
-    if (removeAllowedCollectionItemIds.length > 0) {
-      removedCount = removeAllowedCollectionItemIds.length;
+    if (deletableIds.length > 0) {
       transactions.push(
         dbWrite.collectionItem.deleteMany({
-          where: { id: { in: removeAllowedCollectionItemIds } },
+          where: { id: { in: deletableIds } },
         })
       );
     }
@@ -3369,9 +3397,14 @@ export const removeCollectionItem = async ({
   `;
 
   if (!rejected) {
+    // The DELETE carries the same exclusion rather than trusting the UPDATE's row count: an
+    // already-REJECTED tombstone matches nothing above, and removing it a second time would
+    // hand the image straight back to the next job run.
     await dbWrite.$executeRaw`
       DELETE FROM "CollectionItem"
-      WHERE "collectionId" = ${collectionId} AND ${idColumn} = ${itemId}
+      WHERE "collectionId" = ${collectionId}
+        AND ${idColumn} = ${itemId}
+        AND NOT ("addedById" = ${AUTO_FEATURE_USER_ID} AND note LIKE ${`${AUTO_FEATURE_NOTE_PREFIX}:%`})
     `;
   }
 

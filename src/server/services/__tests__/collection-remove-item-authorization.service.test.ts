@@ -47,12 +47,15 @@ function arrangeCollection({
   mockDbWrite.$executeRaw.mockResolvedValue(0);
 }
 
+const sqlOf = (call: unknown[]) => (call[0] as unknown as string[]).join(' ').replace(/\s+/g, ' ');
+
 /** The leading keyword of each statement removal issued, in order. */
 function sqlVerbs() {
-  return mockDbWrite.$executeRaw.mock.calls.map(([strings]) =>
-    (strings as unknown as string[]).join(' ').trim().split(/\s+/)[0]
-  );
+  return mockDbWrite.$executeRaw.mock.calls.map((call) => sqlOf(call).trim().split(' ')[0]);
 }
+
+const statement = (verb: string) =>
+  sqlOf(mockDbWrite.$executeRaw.mock.calls.find((call) => sqlOf(call).trim().startsWith(verb))!);
 
 function remove({ userId, isModerator = false }: { userId: number; isModerator?: boolean }) {
   return removeCollectionItem({
@@ -135,5 +138,30 @@ describe('removeCollectionItem authorization', () => {
 
     await expect(remove({ userId: OUTSIDER_ID, isModerator: true })).resolves.toBeTruthy();
     expect(sqlVerbs()).toEqual(['UPDATE']);
+  });
+
+  // The row counts above are the test's own invention, so they prove which statement ran and
+  // nothing about which rows it would match. These read the SQL itself: drop the markers from
+  // the UPDATE's filter and every removal site-wide silently becomes a tombstone; drop the
+  // exclusion from the DELETE and removing an already-rejected item hands the image back.
+  it('scopes the tombstoning UPDATE to auto-featured rows', async () => {
+    arrangeCollection({ write: 'Review' });
+
+    await remove({ userId: OUTSIDER_ID, isModerator: true });
+
+    const update = statement('UPDATE');
+    expect(update).toContain('"addedById" = ');
+    expect(update).toContain('note LIKE ');
+    expect(update).toContain(`status <> 'REJECTED'`);
+  });
+
+  it('refuses to delete an auto-featured row even when the UPDATE matched nothing', async () => {
+    arrangeCollection({ write: 'Review' });
+
+    await remove({ userId: OUTSIDER_ID, isModerator: true });
+
+    const del = statement('DELETE');
+    expect(del).toContain('NOT ("addedById" = ');
+    expect(del).toContain('note LIKE ');
   });
 });
