@@ -81,9 +81,13 @@ export const homeBlockMetaSchema = z
     cosmeticShopSection: cosmeticShopSectionSchema,
     featuredCollections: z.object({
       collectionIds: z.array(z.number()).default([]),
-      limit: z.number().int().min(1).max(50).default(8),
+      // Fetch pool per rendered collection, ceilinged at getAllCollectionItemsSchema's max.
+      limit: z.number().int().min(1).max(100).default(100),
       rows: z.number().int().min(1).max(4).default(2),
       renderCount: z.number().int().min(1).max(10).default(3),
+      // Per-curator cap inside each rendered collection, same knob Collection blocks have.
+      // 0 opts a block out; unset falls back to FEATURED_COLLECTIONS_DEFAULTS.maxPerUser.
+      maxPerUser: z.number().int().min(0).max(50).optional(),
       maxStaleDays: z.number().int().min(1).max(365).optional(),
       minRecentItems: z.number().int().min(1).max(100).optional(),
       nameSnapshots: z.record(z.string(), z.string()).default({}),

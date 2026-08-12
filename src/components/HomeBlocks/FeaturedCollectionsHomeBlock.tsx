@@ -9,6 +9,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { FeaturedCollectionHeader } from '~/components/HomeBlocks/FeaturedCollectionHeader';
+import { ITEMS_PER_ROW, useCappedItems } from '~/components/HomeBlocks/homeBlockItems';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
@@ -16,8 +17,6 @@ import type { PickedFeaturedCollection } from '~/server/services/home-block.serv
 import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { shuffle } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
-
-const ITEMS_PER_ROW = 7;
 
 type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema };
 
@@ -58,13 +57,14 @@ export const FeaturedCollectionsHomeBlock = ({ homeBlockId }: Props) => {
 type SectionProps =
   | { pick: PickedFeaturedCollection; isLoading?: false }
   | {
-      pick: { collection: null; items: []; rows: number; limit: number };
+      pick: { collection: null; items: []; rows: number; limit: number; maxPerUser?: number };
       isLoading: true;
     };
 
 function FeaturedCollectionSection({ pick, isLoading }: SectionProps) {
   const { collection, items: rawItems } = pick;
   const rows = pick.rows;
+  const maxPerUser = pick.maxPerUser;
 
   const shuffled = useMemo(() => shuffle(rawItems ?? []), [rawItems]);
   const shuffledData = useMemo(() => shuffled.map((x: { data: unknown }) => x.data), [shuffled]);
@@ -76,7 +76,7 @@ function FeaturedCollectionSection({ pick, isLoading }: SectionProps) {
     data: shuffledData as any,
   });
 
-  const items = useMemo(() => filtered.slice(0, ITEMS_PER_ROW * rows), [filtered, rows]);
+  const items = useCappedItems(filtered as { user?: { id: number } | null }[], rows, maxPerUser);
 
   const title = collection?.name ?? 'Collection';
   const link = collection ? `/collections/${collection.id}` : '#';
