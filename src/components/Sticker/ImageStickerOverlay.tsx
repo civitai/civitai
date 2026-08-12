@@ -155,10 +155,6 @@ export function ImageStickerOverlay({
           // surface has to hold still, and reveal is off by default, so
           // pressing the plus is often what mounts this in the first place.
           paced={!isPlacing}
-          // The box these are drawn on, so the pending controls can convert a
-          // width-fraction into a height-percentage rather than treating the
-          // two as the same unit.
-          mediaAspect={width / height}
           step={historyStep}
         />
       )}

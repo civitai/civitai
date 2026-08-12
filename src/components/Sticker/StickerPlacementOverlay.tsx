@@ -14,7 +14,15 @@ import {
 } from '~/components/Sticker/treatments/sticker-treatments';
 import styles from '~/components/Sticker/placement-reveal.module.scss';
 import { useRevealMultiplier } from '~/store/sticker-reveal-speed.store';
-import { useEffect, useMemo, useState, type CSSProperties, type ReactElement } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactElement,
+} from 'react';
 
 /**
  * The pending controls' layer, above the stickers and above the draft.
@@ -24,19 +32,6 @@ import { useEffect, useMemo, useState, type CSSProperties, type ReactElement } f
  * bury the owner's only way to answer a pending placement.
  */
 const PENDING_CONTROL_Z = 1000;
-
-/**
- * The sticker's angle, adjusted so anything carrying text never ends up upside
- * down.
- *
- * Rotation is clamped to ±180, so following it faithfully would hand the owner
- * their approve/decline mirrored — worse than not rotating at all, which is the
- * failure Justin called out before asking for this. Past a quarter turn the
- * block is flipped back the other way: it still reads as belonging to a tilted
- * sticker, and the words stay the right way up.
- */
-const uprightRotation = (rotation: number) =>
-  Math.abs(rotation) > 90 ? rotation - Math.sign(rotation) * 180 : rotation;
 
 /**
  * Placed stickers, drawn over the content they were placed on.
@@ -67,7 +62,6 @@ export function StickerPlacementOverlay({
   stagger = false,
   armed = false,
   paced = true,
-  mediaAspect = 1,
   step = null,
 }: {
   placements: PlacedSticker[];
@@ -152,22 +146,6 @@ export function StickerPlacementOverlay({
    */
   paced?: boolean;
   /**
-   * Width ÷ height of the box these are drawn on.
-   *
-   * Only the pending controls need it, and they need it because a sticker's
-   * `scale` is a fraction of the box's WIDTH while the `top` that places them
-   * resolves against its HEIGHT. Without the ratio the two are treated as the
-   * same unit, which on a 768×1152 image put the owner's buttons half again as
-   * far below the sticker as they should be — the "gap on the tall side" the
-   * comment below has described since before anyone had seen it.
-   *
-   * Still an approximation: it assumes a square sticker, because the artwork's
-   * own aspect is only knowable by measuring it once loaded. Square is what
-   * sticker artwork mostly is, and being wrong by the artwork's aspect is much
-   * closer than being wrong by the image's.
-   */
-  mediaAspect?: number;
-  /**
    * Index of the last sticker to draw, for the history replay. `null` draws all
    * of them, which is every surface that is not being stepped through.
    */
@@ -198,6 +176,48 @@ export function StickerPlacementOverlay({
   // from then on. Without this, ending a replay hands every sticker its arrival
   // delay back — on elements that are already on screen with their animations
   // finished, which re-pins the sway mid-cycle and can re-run the pop.
+  // The rendered height of each pending sticker, in pixels, measured rather than
+  // derived. Two attempts to compute where the owner's controls go from `scale`
+  // were both wrong on real images, because `scale` is a fraction of the box's
+  // WIDTH and the artwork's own aspect is not in the payload at all — the number
+  // needed here is simply not knowable from the data. It IS knowable from the
+  // element, so it is read off the element.
+  //
+  // Only pending placements are measured; nothing else is positioned relative to
+  // a sticker's edge.
+  const [stickerHeights, setStickerHeights] = useState<Record<number, number>>({});
+  const observers = useRef(new Map<number, ResizeObserver>());
+  useEffect(() => {
+    const live = observers.current;
+    return () => {
+      live.forEach((observer) => observer.disconnect());
+      live.clear();
+    };
+  }, []);
+
+  const measureSticker = useCallback(
+    (placementId: number) => (node: HTMLDivElement | null) => {
+      const existing = observers.current.get(placementId);
+      if (existing) {
+        existing.disconnect();
+        observers.current.delete(placementId);
+      }
+      if (!node || typeof ResizeObserver === 'undefined') return;
+
+      const observer = new ResizeObserver(() => {
+        const height = node.offsetHeight;
+        // Guarded, because writing state from a ResizeObserver that the write
+        // then resizes is how a resize loop starts.
+        setStickerHeights((current) =>
+          current[placementId] === height ? current : { ...current, [placementId]: height }
+        );
+      });
+      observer.observe(node);
+      observers.current.set(placementId, observer);
+    },
+    []
+  );
+
   const [replayed, setReplayed] = useState(false);
   useEffect(() => {
     if (step != null) setReplayed(true);
@@ -279,6 +299,7 @@ export function StickerPlacementOverlay({
           const body = (
             <div
               key={placement.id}
+              ref={placement.isPending ? measureSticker(placement.id) : undefined}
               className={clsx('absolute', interactive && 'pointer-events-auto', revealClassName)}
               style={{
                 left: `${placement.data.x * 100}%`,
@@ -361,22 +382,22 @@ export function StickerPlacementOverlay({
                     buttons. Nothing done INSIDE the box can fix that; it needs
                     the badge kept outside the transform (what this does) or a
                     z-index on the pending wrapper itself. */}
-              {/* Two elements, and the split is what keeps it centred: the
-                  outer one only positions — `translateX(-50%)` against the
-                  sticker's own x — and the inner one only turns. With both on
-                  one element the rotation swings the box around its hinge and
-                  drags the centring with it, which reads as the block sitting
-                  off to one side. */}
               <div
                 className={clsx('pointer-events-auto absolute -translate-x-1/2', revealClassName)}
                 style={{
                   left: `${placement.data.x * 100}%`,
-                  // The sticker's half-height, corrected for the box's aspect,
-                  // plus a small constant so it clears the artwork instead of
-                  // touching it.
+                  // Measured half-height plus a gap, in pixels. No percentage
+                  // arithmetic: a percentage in `top` resolves against the box's
+                  // height while the sticker is sized from its width, and every
+                  // attempt to reconcile the two by calculation has been wrong on
+                  // some aspect ratio. Until the measurement lands the controls
+                  // are held off screen rather than parked at the sticker's
+                  // centre, where they would sit on top of the artwork for a
+                  // frame and then jump.
                   top: `calc(${placement.data.y * 100}% + ${
-                    placement.data.scale * 50 * mediaAspect
-                  }% + 4px)`,
+                    (stickerHeights[placement.id] ?? 0) / 2 + 8
+                  }px)`,
+                  visibility: stickerHeights[placement.id] ? 'visible' : 'hidden',
                   // Above every sticker, not just above the one it belongs to:
                   // the layer order means anything placed later covers this
                   // sticker, and it would cover the owner's only way to answer.
@@ -384,17 +405,7 @@ export function StickerPlacementOverlay({
                   ...delayStyle,
                 }}
               >
-                <div
-                  style={{
-                    // Tilted to match the sticker, hinged at the edge nearest
-                    // it, so the block reads as attached to a rotated sticker
-                    // rather than as a level bar under a crooked one. It turns
-                    // in place rather than orbiting the sticker's centre, which
-                    // would need the artwork's real rendered height.
-                    transform: `rotate(${uprightRotation(placement.data.rotation)}deg)`,
-                    transformOrigin: 'top center',
-                  }}
-                >
+                <div>
                   {isOwner ? (
                     <StickerPlacementActions placementIds={[placement.id]} compact />
                   ) : (
