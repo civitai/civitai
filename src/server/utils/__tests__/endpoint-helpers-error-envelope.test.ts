@@ -405,12 +405,24 @@ describe('handleEndpointError — TRPCError branch', () => {
     expect(mockLogToAxiom, '503 stays out of the error stream').not.toHaveBeenCalled();
   });
 
-  // ── Guard 11: the COUPLING invariant, over every 5xx status ───────────────
+  // ── Guard 11: BOTH halves pinned ABSOLUTELY, over every 5xx status ─────────
   // One predicate governs both logging and genericizing, so the property that
-  // matters is not "500 is generic" but "the text is dropped from the wire
-  // EXACTLY when it is preserved in the log". Asserted per status, in ONE test,
-  // so it cannot pass by only ever exercising the agreeing half.
-  it('INVARIANT: across every 5xx, genericized ⟺ logged (text is never destroyed)', () => {
+  // matters is "the text is dropped from the wire EXACTLY when it is preserved
+  // in the log". But pinning only that RELATIONSHIP (`genericized === logged`)
+  // is far too weak: NEITHER satisfies a biconditional exactly as well as BOTH.
+  // A narrowed `isRestServerFault` — e.g. `status === 500` — makes 501/502/504
+  // neither genericized nor logged, which simultaneously RE-OPENS the #3845
+  // disclosure on those statuses and silently stops logging those faults, while
+  // a biconditional stays green throughout. (Verified: that mutant left this
+  // suite at 30/30 before this guard was strengthened.)
+  //
+  // So each side is pinned to its expected VALUE per status instead. That
+  // SUBSUMES the coupling — both equal the same constant, therefore equal each
+  // other — and additionally fixes WHICH statuses are server faults, which the
+  // biconditional never constrained. 503 is the sole carve-out (see
+  // `isRestServerFault`): it alone passes through verbatim and stays out of the
+  // error stream. Every other 5xx must be both genericized and logged.
+  it('INVARIANT: every 5xx except 503 is BOTH genericized AND logged (each pinned absolutely)', () => {
     const cases = [
       { code: 'INTERNAL_SERVER_ERROR', status: 500 },
       { code: 'NOT_IMPLEMENTED', status: 501 },
@@ -431,11 +443,27 @@ describe('handleEndpointError — TRPCError branch', () => {
       const serialized = JSON.stringify(res._json());
       const genericized = !serialized.includes(marker);
       const logged = mockLogToAxiom.mock.calls.length > 0;
+
+      // 503 is the ONLY 5xx that is not a server fault.
+      const isServerFault = status !== 503;
+
       expect(
         genericized,
-        `${code} (${status}): dropped-from-the-wire (${genericized}) must equal ` +
-          `kept-in-the-log (${logged}) — otherwise the only copy of the message is destroyed`
-      ).toBe(logged);
+        isServerFault
+          ? `${code} (${status}): the message must be DROPPED from the wire — it was served ` +
+              `verbatim as ${serialized}, which is the #3845 disclosure re-opened on this status`
+          : `${code} (${status}): the retry hint must pass through VERBATIM — genericizing it ` +
+              `destroys the only copy, since 503 is deliberately excluded from the error stream`
+      ).toBe(isServerFault);
+
+      expect(
+        logged,
+        isServerFault
+          ? `${code} (${status}): the fault must be KEPT in the log — genericizing the response ` +
+              `without logging destroys the only copy of the message`
+          : `${code} (${status}): 503 must stay OUT of the error stream (high-volume transient ` +
+              `upstream waves) — it was logged instead`
+      ).toBe(isServerFault);
     }
   });
 
