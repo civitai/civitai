@@ -80,7 +80,14 @@ export function CollapsibleCard({
           <span>{title}</span>
         </Text>
         {open && (
-          <div onClick={(event) => event.stopPropagation()} className="flex items-center">
+          <div
+            onClick={(event) => event.stopPropagation()}
+            // Keys too, not just clicks. The row toggles on Enter and Space, so
+            // the first focusable control put in here would close the card out
+            // from under whoever was using it.
+            onKeyDown={(event) => event.stopPropagation()}
+            className="flex items-center"
+          >
             {actions}
           </div>
         )}

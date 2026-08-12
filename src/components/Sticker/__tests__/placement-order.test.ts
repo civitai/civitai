@@ -112,11 +112,22 @@ describe('placementRevealDelays', () => {
     expect(revealDurationForSpan(0)).toBe(revealDurationForSpan(HOUR));
   });
 
-  it('scales what the span decided by the viewer multiplier', () => {
+  it('treats the viewer setting as a SPEED, and bounds the result', () => {
     const span = 30 * 24 * HOUR;
 
-    expect(revealDurationForSpan(span, 2)).toBe(revealDurationForSpan(span) * 2);
-    expect(revealDurationForSpan(span, 0.5)).toBe(revealDurationForSpan(span) / 2);
+    // Faster means shorter. It multiplied before, under a menu labelled "reveal
+    // speed", so 4× ran four times slower than 1×.
+    expect(revealDurationForSpan(span, 2)).toBeLessThan(revealDurationForSpan(span));
+    expect(revealDurationForSpan(span, 0.5)).toBeGreaterThan(revealDurationForSpan(span));
+
+    // Bounded AFTER the speed applies. Clamping first and scaling afterwards is
+    // how the arrival reveal reached 48 seconds and a replay 128.
+    const year = 365 * 24 * HOUR;
+    for (const speed of [0.125, 0.5, 1, 4, 32]) {
+      const duration = revealDurationForSpan(year, speed);
+      expect(duration).toBeLessThanOrEqual(12_000);
+      expect(duration).toBeGreaterThanOrEqual(1_500);
+    }
   });
 
   it('fills the duration it is given, whatever the history looks like', () => {

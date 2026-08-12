@@ -58,13 +58,22 @@ const CAP_MS = 12_000;
 /** Where the cap is reached. A year of history is as old as the reveal shows. */
 const CAP_SPAN_DAYS = 365;
 
-export function revealDurationForSpan(spanMs: number, multiplier = 1): number {
+export function revealDurationForSpan(spanMs: number, speed = 1): number {
   const days = Math.max(0, spanMs) / DAY_MS;
   // Log-scaled, and flat below a day: within a single day the gaps are what
   // carry the pacing, and stretching an afternoon's worth of stickers past the
   // floor buys nothing.
   const aged = days <= 1 ? 0 : Math.min(1, Math.log10(days) / Math.log10(CAP_SPAN_DAYS));
-  return (FLOOR_MS + (CAP_MS - FLOOR_MS) * aged) * multiplier;
+  const base = FLOOR_MS + (CAP_MS - FLOOR_MS) * aged;
+
+  // `speed`, so 2× is twice as FAST — it divides. It multiplied before, under a
+  // menu labelled "reveal speed", which made 4× four times slower than 1×.
+  //
+  // Clamped AFTER the speed is applied, so the floor and the cap bound what
+  // actually runs. Applying the cap first and then multiplying is how the
+  // arrival reveal reached 48 seconds and a replay 128, against a comment
+  // promising a few seconds.
+  return Math.min(CAP_MS, Math.max(FLOOR_MS, base / (speed || 1)));
 }
 
 /**
@@ -93,11 +102,11 @@ export function revealDurationForSpan(spanMs: number, multiplier = 1): number {
 export function placementRevealDelays(
   placements: Ordered[],
   {
-    multiplier = 1,
+    speed = 1,
     totalMs,
   }: {
-    /** The viewer's speed setting, applied on top of the span-derived length. */
-    multiplier?: number;
+    /** The viewer's setting. Above 1 is faster, below 1 is slower. */
+    speed?: number;
     /** An explicit length, for a caller that has already decided one. */
     totalMs?: number;
   } = {}
@@ -105,7 +114,7 @@ export function placementRevealDelays(
   if (placements.length <= 1) return placements.map(() => 0);
 
   const span = time(placements[placements.length - 1].placedAt) - time(placements[0].placedAt);
-  const length = totalMs ?? revealDurationForSpan(span, multiplier);
+  const length = totalMs ?? revealDurationForSpan(span, speed);
 
   const delays: number[] = [0];
   for (let i = 1; i < placements.length; i++) {

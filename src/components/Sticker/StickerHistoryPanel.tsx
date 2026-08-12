@@ -22,9 +22,9 @@ import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import styles from '~/components/Sticker/placement-reveal.module.scss';
 import { useStickerHistoryStore } from '~/store/sticker-history.store';
 import {
-  REPLAY_MULTIPLIER,
-  REVEAL_MULTIPLIERS,
-  revealMultiplierLabel,
+  REPLAY_SPEED,
+  REVEAL_SPEEDS,
+  revealSpeedLabel,
   useStickerRevealSpeedStore,
 } from '~/store/sticker-reveal-speed.store';
 import { daysFromNow } from '~/utils/date-helpers';
@@ -138,12 +138,12 @@ function StickerHistoryList({
   );
   const { sticker: artwork } = useStickerCosmetics(cosmeticIds);
 
-  const multiplier = useStickerRevealSpeedStore((state) => state.multiplier);
-  const setMultiplier = useStickerRevealSpeedStore((state) => state.setMultiplier);
+  const speed = useStickerRevealSpeedStore((state) => state.speed);
+  const setSpeed = useStickerRevealSpeedStore((state) => state.setSpeed);
 
   const delays = useMemo(
-    () => placementRevealDelays(placements, { multiplier: multiplier * REPLAY_MULTIPLIER }),
-    [placements, multiplier]
+    () => placementRevealDelays(placements, { speed: speed * REPLAY_SPEED }),
+    [placements, speed]
   );
 
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -270,18 +270,17 @@ function StickerHistoryList({
                 <IconSettings size={14} />
               </LegacyActionIcon>
             </Menu.Target>
-            {/* In a portal, so opening it cannot resize the panel either. */}
             <Menu.Dropdown>
               <Menu.Label>Reveal speed</Menu.Label>
-              {REVEAL_MULTIPLIERS.map((option) => (
+              {REVEAL_SPEEDS.map((option) => (
                 <Menu.Item
                   key={option}
-                  onClick={() => setMultiplier(option)}
+                  onClick={() => setSpeed(option)}
                   leftSection={
-                    <IconCheck size={14} className={clsx(option !== multiplier && 'invisible')} />
+                    <IconCheck size={14} className={clsx(option !== speed && 'invisible')} />
                   }
                 >
-                  {revealMultiplierLabel(option)}
+                  {revealSpeedLabel(option)}
                 </Menu.Item>
               ))}
             </Menu.Dropdown>

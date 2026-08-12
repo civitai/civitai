@@ -13,7 +13,7 @@ import {
   type StickerTreatmentKey,
 } from '~/components/Sticker/treatments/sticker-treatments';
 import styles from '~/components/Sticker/placement-reveal.module.scss';
-import { useRevealMultiplier } from '~/store/sticker-reveal-speed.store';
+import { useRevealSpeed } from '~/store/sticker-reveal-speed.store';
 import {
   useCallback,
   useEffect,
@@ -175,10 +175,10 @@ export function StickerPlacementOverlay({
   const ordered = useMemo(() => orderPlacements(placements), [placements]);
   // Off the full history, not off the visible slice: stepping through a replay
   // must not re-pace the stickers already on screen.
-  const revealMultiplier = useRevealMultiplier();
+  const revealSpeed = useRevealSpeed();
   const delays = useMemo(
-    () => (stagger ? placementRevealDelays(ordered, { multiplier: revealMultiplier }) : null),
-    [ordered, stagger, revealMultiplier]
+    () => (stagger ? placementRevealDelays(ordered, { speed: revealSpeed }) : null),
+    [ordered, stagger, revealSpeed]
   );
 
   // The rendered height of each pending sticker, in pixels, measured rather than
@@ -203,14 +203,15 @@ export function StickerPlacementOverlay({
   const measureSticker = useCallback(
     (placement: PlacedSticker) => (node: HTMLDivElement | null) => {
       const placementId = placement.id;
+      const radians = (placement.data.rotation * Math.PI) / 180;
       const existing = observers.current.get(placementId);
       if (existing) {
         existing.disconnect();
         observers.current.delete(placementId);
       }
-      if (!node || typeof ResizeObserver === 'undefined') return;
+      if (!node) return;
 
-      const observer = new ResizeObserver(() => {
+      const read = () =>
         // `offsetHeight`/`offsetWidth`, deliberately: they are LAYOUT numbers and
         // ignore transforms. A bounding rect would be simpler and is wrong here,
         // because the artwork animates — it pops from 0.72 to 1.06 on arrival and
@@ -222,16 +223,27 @@ export function StickerPlacementOverlay({
         // height is h·|cos r| + w·|sin r|, and ignoring the second term is what
         // put the buttons over the artwork on anything more than slightly
         // turned.
-        const radians = (placement.data.rotation * Math.PI) / 180;
-        const height =
-          node.offsetHeight * Math.abs(Math.cos(radians)) +
-          node.offsetWidth * Math.abs(Math.sin(radians));
+        node.offsetHeight * Math.abs(Math.cos(radians)) +
+        node.offsetWidth * Math.abs(Math.sin(radians));
+
+      const record = () => {
+        const height = read();
         // Guarded, because writing state from a ResizeObserver that the write
         // then resizes is how a resize loop starts.
         setStickerHeights((current) =>
           current[placementId] === height ? current : { ...current, [placementId]: height }
         );
-      });
+      };
+
+      // No observer is not a reason to hide the owner's only control forever —
+      // the same call the sibling observer makes, and it was inverted here. One
+      // measurement now, and it simply does not follow later resizes.
+      if (typeof ResizeObserver === 'undefined') {
+        record();
+        return;
+      }
+
+      const observer = new ResizeObserver(record);
       observer.observe(node);
       observers.current.set(placementId, observer);
     },
@@ -242,6 +254,13 @@ export function StickerPlacementOverlay({
   useEffect(() => {
     if (step != null) setReplayed(true);
   }, [step]);
+  // Cleared when the surface leaves the screen, because arming repeats now: one
+  // replay used to unpace every later arrival for the lifetime of the mount, so
+  // coming back to a slide you had once stepped through revealed everything at
+  // once with no sequence.
+  useEffect(() => {
+    if (!armed) setReplayed(false);
+  }, [armed]);
 
   if (!placements.length) return null;
 
@@ -417,7 +436,6 @@ export function StickerPlacementOverlay({
                   top: `calc(${placement.data.y * 100}% + ${
                     (stickerHeights[placement.id] ?? 0) / 2 + CONTROL_GAP_PX
                   }px)`,
-                  visibility: stickerHeights[placement.id] ? 'visible' : 'hidden',
                   // Above every sticker, not just above the one it belongs to:
                   // the layer order means anything placed later covers this
                   // sticker, and it would cover the owner's only way to answer.

@@ -7,9 +7,18 @@
 @keyframes placementAppear {
   from {
     opacity: 0;
+    /* Animated alongside the fade, and load-bearing rather than decorative.
+       Opacity does not affect hit-testing, so a sticker waiting its turn was an
+       invisible target you could still hover — and for a pending placement,
+       whose approve/decline is in the same held state, an invisible button you
+       could still click. Visibility animates discretely: it holds `hidden`
+       through the delay and flips at the animation's first frame, which is the
+       one moment the sticker becomes visible. */
+    visibility: hidden;
   }
   to {
     opacity: 1;
+    visibility: visible;
   }
 }
 
@@ -30,6 +39,8 @@
    later `.appear` — nothing else removes it. */
 .hold {
   opacity: 0;
+  /* Not opacity alone: an unarmed sticker must not be clickable either. */
+  visibility: hidden;
 }
 
 @keyframes placementStepProgress {

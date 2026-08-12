@@ -96,11 +96,7 @@ export function SuspendPlacerMenuItem({ userId }: { userId: number }) {
   };
 
   return (
-    <Menu.Item
-      color="red"
-      leftSection={<IconBan size={14} stroke={1.5} />}
-      onClick={confirm}
-    >
+    <Menu.Item color="red" leftSection={<IconBan size={14} stroke={1.5} />} onClick={confirm}>
       Suspend sticker placement
     </Menu.Item>
   );
