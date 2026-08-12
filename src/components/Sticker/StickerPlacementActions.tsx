@@ -157,10 +157,19 @@ export function StickerPlacementActions({
 /**
  * The note, and the two ways to accept the sticker carrying it.
  *
- * The text is shown here because this is the only place the decision is made
- * with the words in front of you — on the image there is no indication a note
- * exists at all until the sticker is already live. Fetched on open rather than
- * carried by the listing, which runs for every image on a feed page.
+ * On the image there is nothing to say a note exists at all until the sticker
+ * is live, so this is where the owner first reads it. The queue renders it
+ * beside the row as well, which makes this a second copy there — worth it to
+ * keep one component asking one question in both places. Fetched on open rather
+ * than carried by the listing, which runs for every image on a feed page.
+ *
+ * **It also has to say what the owner already decided.** They can hide a note
+ * from the hover card while the placement is still pending, and the approve
+ * that follows is the only thing that can undo that. Showing two buttons with
+ * no mention of the earlier decision would make the primary one silently
+ * publish a note they had refused — which is the same defect this feature has
+ * now produced twice, once by defaulting the flag and once by removing the
+ * option to leave it alone.
  *
  * Closing the popover is the third answer and needs no button: it leaves the
  * placement pending, so Decline is still available.
@@ -181,6 +190,12 @@ function NoteDecision({
     { staleTime: 60_000 }
   );
 
+  // Read from the same query that supplies the text, rather than threaded down
+  // from a listing: `getPendingStickerPlacements` and the feed listing both
+  // report only whether a note exists, so a caller could not pass this even if
+  // it wanted to.
+  const alreadyHidden = !!data?.commentHidden;
+
   return (
     <>
       {/* A panel header, divider across the full width, styled like the sticker
@@ -196,7 +211,7 @@ function NoteDecision({
       >
         <IconMessage size={14} className="shrink-0 text-yellow-6" />
         <Text size="xs" c="dimmed" className="min-w-0 truncate">
-          They left a note with this sticker
+          {alreadyHidden ? 'You hid this note earlier' : 'They left a note with this sticker'}
         </Text>
       </Group>
 
@@ -214,21 +229,37 @@ function NoteDecision({
           </div>
         )}
 
+        {/* Order follows what the owner already chose, so the primary button is
+            never the one that reverses it. Publishing is the answer that cannot
+            be taken back, so it is never the default for a note they refused. */}
         <Stack gap={4}>
-          <Button size="compact-xs" color="green" loading={pending} onClick={onInclude}>
-            Approve with the note
-          </Button>
-          <Button size="compact-xs" variant="default" loading={pending} onClick={onOmit}>
-            Approve without it
-          </Button>
+          {alreadyHidden ? (
+            <>
+              <Button size="compact-xs" color="green" loading={pending} onClick={onOmit}>
+                Approve, keep it hidden
+              </Button>
+              <Button size="compact-xs" variant="default" loading={pending} onClick={onInclude}>
+                Approve and show it after all
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button size="compact-xs" color="green" loading={pending} onClick={onInclude}>
+                Approve with the note
+              </Button>
+              <Button size="compact-xs" variant="default" loading={pending} onClick={onOmit}>
+                Approve without it
+              </Button>
+            </>
+          )}
         </Stack>
 
         {/* Under the buttons, not above them. It explains what the second button
             does, and between the note and the choice it pushed the note far
             enough from the buttons to be skipped. */}
         <Text size="xs" c="dimmed">
-          Approving without it keeps the sticker and leaves the note private — only you, the person
-          who placed it, and moderators can read it.
+          A hidden note stays private — only you, the person who placed it, and moderators can read
+          it. You can change your mind from the sticker at any time.
         </Text>
       </Stack>
     </>

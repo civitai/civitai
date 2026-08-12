@@ -1002,6 +1002,11 @@ describe('an approved submission counts toward the host image buzz counter', () 
       metricType: 'Buzz',
       amount: PRICE,
     });
+    // Exactly once, which the payload assertion above cannot see. The two
+    // negative tests in this block would both pass against a full revert, so
+    // without this the whole commit rests on an assertion that a second,
+    // duplicate emission would satisfy just as happily.
+    expect(updateEntityMetricDetached).toHaveBeenCalledTimes(1);
   });
 
   /**

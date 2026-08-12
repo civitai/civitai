@@ -420,11 +420,17 @@ export async function actOnRemixGallerySubmission({
     throw throwBadRequestError('remix gallery: that submission was already resolved elsewhere');
 
   // A gallery entry is a paid placement on this image, so it counts toward the
-  // same Buzz counter a sticker does (Justin, 2026-08-12). Gated on `settled`
-  // rather than on the action asked for, so a double-submitted approve counts
-  // one payment once. A decline counts nothing even though its fee reaches the
-  // owner — see `recordPlacementTip` for why.
-  if (action === 'approve')
+  // same Buzz counter a sticker does (Justin, 2026-08-12). A decline counts
+  // nothing even though its fee reaches the owner — see `recordPlacementTip`.
+  //
+  // `result.settled` is re-checked even though the throw above already covers
+  // it, and not as belt and braces: it is the gate the sticker twin actually
+  // uses, so writing it here keeps the two surfaces the same shape. The throw
+  // is the kind of thing that gets softened into a returned value — the
+  // moderator removal path already made exactly that change — and whoever does
+  // that would otherwise be introducing a double count with nothing beside it
+  // to say so.
+  if (action === 'approve' && result.settled)
     await recordPlacementTip({
       surface: SURFACE,
       imageId: placement.targetId,
