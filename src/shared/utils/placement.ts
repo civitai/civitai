@@ -130,7 +130,14 @@ export const PLACEMENT_SURFACES = {
     minPrice: 50,
     defaultDeclineFeeRate: 0.3,
     defaultSellerShare: 0,
-    defaultPlatformShare: 0.3,
+    // Zero for launch: the whole payment reaches the creator. Unlike the sticker
+    // surface, no copy hardcodes that — the submit card reads `ownerShare` and
+    // says "all proceeds" only while this is 0, so raising it changes the
+    // wording rather than making it false.
+    //
+    // Tunable at runtime without a deploy, via the `placement:config` KeyValue
+    // row: `approvalShares.remixGallery.platform`.
+    defaultPlatformShare: 0,
     expiryHours: 48,
   },
 } as const satisfies Record<
