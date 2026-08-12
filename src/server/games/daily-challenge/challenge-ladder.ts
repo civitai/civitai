@@ -60,6 +60,92 @@ export const MEAN_BOUT_SECONDS = 12;
 export const TIE_STAGE_BOUT_DEPTH = 13;
 
 /**
+ * The `daily-challenge-process-entries` job lock, in seconds — `createJob`'s default
+ * `lockExpiration`, which that job does not override. Duplicated here rather than imported because
+ * the job module pulls in the whole processing graph; the guard test asserts the two agree.
+ *
+ * The lock is hard-capped at this: past it the refresh loop releases while the run is still going,
+ * so a run that outlives it is overlapped by the next tick — which is the shared-snapshot race
+ * again, from the other direction.
+ *
+ * 🔴 Raised from `createJob`'s 300s DEFAULT, which this job had simply inherited. 300s was chosen
+ * for nothing in particular and is too short for a serial drain: reserving one worst-case
+ * placement out of it leaves a budget that cannot clear the 8-entry burst already measured live.
+ * 540s sits under the 600s cron with room for the overshoot, so a tick still cannot meet itself.
+ */
+export const REVIEW_JOB_LOCK_SECONDS = 9 * 60;
+
+/** Ten minutes — the cron interval at which an overrunning run gets a concurrent sibling. */
+export const REVIEW_JOB_INTERVAL_SECONDS = 10 * 60;
+
+/**
+ * Wall clock of ONE arrival placement against a ladder of `ladderSize`. Serial by construction: a
+ * binary search cannot issue its next comparison until the last one answers.
+ *
+ * The number that matters is that this GROWS with the ladder. Sizing a per-tick cap as a fixed
+ * count of placements is wrong for exactly that reason — 20 placements is ~7 minutes against the
+ * 8-entry ladder it was measured on, and ~36 minutes against a 284-entry one.
+ */
+export function projectedPlacementSeconds(
+  ladderSize: number,
+  boutSeconds = MEAN_BOUT_SECONDS
+): number {
+  return Math.ceil(Math.log2(Math.max(1, ladderSize) + 1)) * boutSeconds;
+}
+
+/**
+ * Wall clock of a whole serial drain: `placements` arrivals into a ladder that STARTS at
+ * `startLadderSize` and grows by one each time.
+ *
+ * Validated against the live 8-entry run, which recorded per-entry comparison counts of
+ * 0,1,2,2,2,3,3,3 (16 bouts). This model predicts 0,1,2,2,3,3,3,3 (17) — the first placement is
+ * free because there is nothing to compare against, which is the shape that matters.
+ */
+export function projectedDrainSeconds(
+  startLadderSize: number,
+  placements: number,
+  boutSeconds = MEAN_BOUT_SECONDS
+): number {
+  let total = 0;
+  for (let i = 0; i < placements; i++) {
+    total += Math.ceil(Math.log2(startLadderSize + i + 1)) * boutSeconds;
+  }
+  return total;
+}
+
+/** How many arrivals a budget affords, given where the ladder starts. Always at least one. */
+export function placementsWithinBudget(
+  startLadderSize: number,
+  budgetSeconds: number,
+  boutSeconds = MEAN_BOUT_SECONDS
+): number {
+  let spent = 0;
+  let count = 0;
+  while (spent < budgetSeconds) {
+    spent += Math.ceil(Math.log2(startLadderSize + count + 1)) * boutSeconds;
+    if (spent > budgetSeconds) break;
+    count++;
+  }
+  return Math.max(1, count);
+}
+
+/**
+ * How long one tick of `reviewEntriesForChallenge` may spend before it stops placing arrivals and
+ * defers the rest. Sized so the budget PLUS one worst-case placement still fits inside the job
+ * lock: 420 + 108 = 528 < 540, and under the 600s cron too. The deadline is only ever checked
+ * between placements, because a placement is atomic — so the overshoot is bounded by one
+ * placement rather than unbounded.
+ */
+export const REVIEW_TICK_BUDGET_MS = 420_000;
+
+/**
+ * Secondary bound on placements per tick. Only binds on a SHALLOW ladder, where placements are
+ * cheap enough that the time budget would let hundreds through and the drain would still be the
+ * longest thing in the tick. The time budget is the real guard.
+ */
+export const MAX_PLACEMENTS_PER_TICK = 20;
+
+/**
  * Projected wall clock of the whole close-time stage. Exported so the arithmetic above is a thing
  * that can FAIL rather than a comment that can rot: the guard test drives this with the real
  * constants, and lowering the concurrency reds it.

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { freshPersistedWinner } from '~/server/games/daily-challenge/__tests__/persisted-winner.fixture';
 import type * as EngineRegistry from '~/server/games/daily-challenge/challenge-engine-registry';
 import type * as Flipt from '~/server/flipt/client';
+import type * as Logging from '~/server/logging/client';
 
 // Where the judging engine meets the job. Two things are load-bearing and neither is visible from
 // the engine's own unit tests: an entry the absolute pass disqualified must never reach the
@@ -34,7 +35,9 @@ const {
   mockRecordEntry,
   mockRankField,
   mockSelectWinners,
+  mockLogToAxiom,
 } = vi.hoisted(() => ({
+  mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
   mockDbReadQueryRaw: vi.fn(),
   mockDbReadChallengeFindUnique: vi.fn(),
   mockDbWriteQueryRaw: vi.fn(),
@@ -160,6 +163,11 @@ vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
 }));
 
 vi.mock('~/utils/logging', () => ({ createLogger: vi.fn(() => vi.fn()) }));
+
+vi.mock('~/server/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof Logging>()),
+  logToAxiom: mockLogToAxiom,
+}));
 
 const { pickWinnersForChallenge, reviewEntries } = await import(
   '~/server/jobs/daily-challenge-processing'
@@ -906,5 +914,162 @@ describe('pickWinnersForChallenge — the recap writer is told who actually won'
     for (const winner of call.decidedWinners as { creatorId: number }[]) {
       expect(known.has(winner.creatorId)).toBe(true);
     }
+  });
+});
+
+// Serialising placement made the drain correct and made it SLOW: a placement is log2(ladder)
+// serial bouts, so a burst against a mature ladder is the expensive case. The job lock is 540s
+// against a 600s cron, so a tick that outruns the lock gets a concurrent sibling at the next tick
+// — the shared-snapshot race again, from the other direction. These pin the bound, not the speed.
+describe('reviewEntries — the placement drain is bounded per tick', () => {
+  const BUDGET_MS = 420_000;
+
+  function mockBurst(count: number) {
+    const entries = Array.from({ length: count }, (_, i) => ({
+      imageId: 100 + i,
+      userId: 1000 + i,
+      username: `u${i}`,
+      url: `uuid-${i}`,
+      nsfwLevel: 1,
+    }));
+
+    mockGetActiveChallenges.mockResolvedValue([currentChallenge]);
+    mockDbReadQueryRaw.mockResolvedValue([
+      {
+        allowedNsfwLevel: 1,
+        judgeId: null,
+        judgingPrompt: null,
+        prizeMode: 'Fixed',
+        prizePool: 0,
+        basePrizePool: 0,
+        buzzPerAction: 0,
+        poolTrigger: null,
+        maxPrizePool: null,
+        prizeDistribution: null,
+        metadata: null,
+        // A paid user challenge judges EVERY entry, bypassing the 6-12 random sample — otherwise
+        // the selection cap, not the drain bound, would decide how many entries appear.
+        source: ChallengeSource.User,
+        judgingCategories: null,
+        entryFee: 100,
+        judgingEngine: 'pairwise-ladder',
+      },
+    ]);
+    mockDbReadChallengeFindUnique.mockResolvedValue({ reviewCostType: 'None', reviewCost: 0 });
+    mockDbWriteQueryRaw.mockImplementation(async (strings: unknown) => {
+      const sql = (strings as string[]).join(' ');
+      if (sql.includes('SELECT EXISTS')) return [{ exists: false }];
+      if (sql.includes('ci."tagId" IS NULL')) return entries;
+      return [];
+    });
+    mockGenerateReview.mockResolvedValue({
+      score: { theme: 8, aesthetic: 8, humor: 8, wittiness: 8 },
+      summary: 'summary',
+      comment: 'nice',
+      reaction: 'Like',
+    });
+
+    return entries;
+  }
+
+  /**
+   * A controllable clock. `tickStartedAt` is read at the top of the run, so a test can burn budget
+   * in the absolute pass (`absolutePassMs`, charged once) before the drain is reached.
+   */
+  function clockAdvancingPerPlacement(msPerPlacement: number, absolutePassMs = 0) {
+    let now = 1_000_000;
+    let charged = false;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    mockGenerateReview.mockImplementation(async () => {
+      if (!charged) {
+        charged = true;
+        now += absolutePassMs;
+      }
+      return {
+        score: { theme: 8, aesthetic: 8, humor: 8, wittiness: 8 },
+        summary: 'summary',
+        comment: 'nice',
+        reaction: 'Like',
+      };
+    });
+    mockRecordEntry.mockImplementation(async () => {
+      now += msPerPlacement;
+    });
+  }
+
+  function deferralLog() {
+    return mockLogToAxiom.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((entry) => entry?.name === 'challenge-arrival-placement-deferred');
+  }
+
+  it('stops at the time budget and defers the rest', async () => {
+    mockBurst(10);
+    // 200s each: the 1st runs unconditionally, the 2nd at 200s, the 3rd at 400s, and the 4th is
+    // refused at 600s. Three placed, seven deferred.
+    clockAdvancingPerPlacement(200_000);
+
+    await reviewEntries();
+
+    expect(mockRecordEntry).toHaveBeenCalledTimes(3);
+    expect(deferralLog()).toMatchObject({ placed: 3, deferred: 7, bound: 'budget' });
+  });
+
+  it('stops at the count cap when placements are too cheap for the budget to bind', async () => {
+    mockBurst(25);
+    clockAdvancingPerPlacement(0);
+
+    await reviewEntries();
+
+    expect(mockRecordEntry).toHaveBeenCalledTimes(20);
+    expect(deferralLog()).toMatchObject({ placed: 20, deferred: 5, bound: 'count' });
+  });
+
+  it('places at least one even when the absolute pass already spent the budget', async () => {
+    mockBurst(6);
+    // The tick is over budget before the drain begins. Starving the ladder entirely would mean a
+    // slow challenge never places anything and silently falls back to the unbounded close rerun.
+    clockAdvancingPerPlacement(0, BUDGET_MS + 60_000);
+
+    await reviewEntries();
+
+    expect(mockRecordEntry).toHaveBeenCalledTimes(1);
+    expect(deferralLog()).toMatchObject({ placed: 1, deferred: 5 });
+  });
+
+  it('says nothing when the whole tick drained — a warning that always fires is noise', async () => {
+    mockBurst(4);
+    clockAdvancingPerPlacement(1_000);
+
+    await reviewEntries();
+
+    expect(mockRecordEntry).toHaveBeenCalledTimes(4);
+    expect(deferralLog()).toBeUndefined();
+  });
+
+  it('control: the same six entries all place when the budget was NOT already spent', async () => {
+    // Pins that the at-least-one test above is measuring the burnt budget and not some other
+    // ceiling that would have stopped at one regardless.
+    mockBurst(6);
+    clockAdvancingPerPlacement(0, 0);
+
+    await reviewEntries();
+
+    expect(mockRecordEntry).toHaveBeenCalledTimes(6);
+  });
+
+  it('counts a placement that THREW against the bound, so a failing engine cannot spin the tick', async () => {
+    mockBurst(10);
+    let now = 1_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    mockRecordEntry.mockImplementation(async () => {
+      now += 200_000;
+      throw new Error('placement exploded');
+    });
+
+    await reviewEntries();
+
+    expect(mockRecordEntry).toHaveBeenCalledTimes(3);
+    expect(deferralLog()).toMatchObject({ placed: 3, deferred: 7 });
   });
 });

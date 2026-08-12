@@ -37,6 +37,11 @@ import {
   type JudgedEntryRef,
 } from '~/server/games/daily-challenge/challenge-judging-engine';
 import {
+  MAX_PLACEMENTS_PER_TICK,
+  REVIEW_JOB_LOCK_SECONDS,
+  REVIEW_TICK_BUDGET_MS,
+} from '~/server/games/daily-challenge/challenge-ladder';
+import {
   dedupeWinnersForPayout,
   reconcileWinnerToPersisted,
 } from '~/server/games/daily-challenge/challenge-winner-reconcile';
@@ -497,7 +502,11 @@ const dailyChallengeSetupJob = createJob('daily-challenge-setup', '0 22 * * *', 
 const processDailyChallengeEntriesJob = createJob(
   'daily-challenge-process-entries',
   '*/10 * * * *',
-  reviewEntries
+  reviewEntries,
+  // Overrides createJob's 300s default, which this job had only inherited. Arrival placement is
+  // serial, so a tick's work is bounded but not small; 300s could not hold a burst this job had
+  // already been measured handling. Stays under the 600s cron so a tick cannot overlap itself.
+  { lockExpiration: REVIEW_JOB_LOCK_SECONDS }
 );
 
 export const dailyChallengeJobs = [dailyChallengeSetupJob, processDailyChallengeEntriesJob];
@@ -642,6 +651,9 @@ export async function reviewEntries() {
  */
 async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails) {
   log('Processing entries for challenge:', currentChallenge.challengeId);
+  // Start of the tick's budget. Measured across the WHOLE function, not just the placement drain:
+  // the job lock does not care which phase spent the time.
+  const tickStartedAt = Date.now();
   const config = await getChallengeConfig();
 
   // Update pending entries
@@ -1106,12 +1118,34 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   // Placement is ordered by submission so a run is reproducible rather than depending on which LLM
   // call happened to return first. Same per-entry error boundary as before — a throw costs this
   // entry's rung and nothing else, and `rankField` places whatever was missed.
+  //
+  // 🔴 Serialising it is what makes the drain BOUNDED WORK, so the tick has to bound it.
+  // Placement cost grows with the ladder — ceil(log2(n+1)) serial bouts — so a burst against a
+  // mature ladder is the expensive case, not a big burst against an empty one. The job lock is
+  // `createJob`'s 300s default (this job overrides nothing) against a 600s cron, so only the first
+  // 300s of a tick is protected and a run still going at 600s gets a concurrent sibling — which is
+  // the shared-snapshot race again, from the other direction.
+  //
+  // The budget is checked BETWEEN placements, never inside one: a placement is atomic, so the
+  // overshoot is one placement rather than unbounded. At least one always runs, so a challenge
+  // whose absolute pass already ate the budget still makes progress instead of starving.
+  //
+  // Deferred entries are NOT lost and NOT retried next tick — the absolute pass has already tagged
+  // them judged, so the recent-entries query will not offer them again. They are placed by
+  // `rankField` at close, on exactly the path that already covers a placement that threw. That is
+  // correct but not free: enough deferrals and the engine's `arrivalUsable` guard flips and the
+  // close-time rerun runs unbounded. The log below is how that becomes visible before it bites.
   awaitingPlacement.sort((a, b) => a.order - b.order);
+  const placementDeadline = tickStartedAt + REVIEW_TICK_BUDGET_MS;
+  let placed = 0;
   for (const { entry } of awaitingPlacement) {
+    if (placed > 0 && (Date.now() >= placementDeadline || placed >= MAX_PLACEMENTS_PER_TICK)) break;
     try {
       await judgingEngine.recordEntry(engineContext, entry);
+      placed++;
       log('Engine recorded entry', judgingEngine.key, entry.imageId);
     } catch (error) {
+      placed++;
       const err = error as Error;
       logToAxiom({
         type: 'error',
@@ -1122,6 +1156,27 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         engine: judgingEngine.key,
       });
     }
+  }
+
+  const deferred = awaitingPlacement.length - placed;
+  if (deferred > 0) {
+    logToAxiom({
+      type: 'warning',
+      name: 'challenge-arrival-placement-deferred',
+      message:
+        'Arrival placement hit the per-tick bound; the rest are placed by the close-time rerun',
+      challengeId: currentChallenge.challengeId,
+      engine: judgingEngine.key,
+      placed,
+      deferred,
+      elapsedMs: Date.now() - tickStartedAt,
+      // Which bound stopped it. `count` on a shallow ladder, `budget` on a deep one — they call for
+      // different responses, and the difference is invisible from the totals alone.
+      bound: placed >= MAX_PLACEMENTS_PER_TICK ? 'count' : 'budget',
+      budgetMs: REVIEW_TICK_BUDGET_MS,
+      lockSeconds: REVIEW_JOB_LOCK_SECONDS,
+    }).catch(() => undefined);
+    log('Deferred arrival placements', { placed, deferred });
   }
 
   // Reward entry prizes

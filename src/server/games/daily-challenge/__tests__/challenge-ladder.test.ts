@@ -7,6 +7,13 @@ import {
   LADDER_CONCURRENCY,
   CLAIM_WINDOW_MINUTES,
   projectedCloseMinutes,
+  projectedDrainSeconds,
+  projectedPlacementSeconds,
+  placementsWithinBudget,
+  MAX_PLACEMENTS_PER_TICK,
+  REVIEW_JOB_INTERVAL_SECONDS,
+  REVIEW_JOB_LOCK_SECONDS,
+  REVIEW_TICK_BUDGET_MS,
   MAX_TIE_GROUP,
   roundRobinPairs,
   runPool,
@@ -342,6 +349,60 @@ describe('findSlot seating', () => {
     await findSlot(50, [1, 2, 3, 4, 5, 6, 7], bout);
     const alternating = seats.every((s, i) => i === 0 || s.seat !== seats[i - 1].seat);
     expect(alternating).toBe(true);
+  });
+});
+
+describe('the per-tick placement budget fits the job lock', () => {
+  // The bound this exists for is the JOB lock, which is not the completion claim and is not the
+  // cron interval. Getting the three confused is how a cap gets sized against the wrong number.
+  it('is the lock the job actually asks for, not createJob’s default', async () => {
+    const { createJob } = await import('~/server/jobs/job');
+    const inherited = createJob('probe', '*/10 * * * *', async () => undefined);
+    const { dailyChallengeJobs } = await import('~/server/jobs/daily-challenge-processing');
+    const job = dailyChallengeJobs.find((j) => j.name === 'daily-challenge-process-entries')!;
+
+    expect(job.options.lockExpiration).toBe(REVIEW_JOB_LOCK_SECONDS);
+    // The point of the override: the inherited default is too short to hold a drain.
+    expect(REVIEW_JOB_LOCK_SECONDS).toBeGreaterThan(inherited.options.lockExpiration);
+    // Still shorter than the interval, so a tick can never overlap itself.
+    expect(REVIEW_JOB_LOCK_SECONDS).toBeLessThan(REVIEW_JOB_INTERVAL_SECONDS);
+  });
+
+  it('leaves room for one worst-case placement inside the lock', () => {
+    // The deadline is only checked BETWEEN placements, so a tick can overshoot by one whole
+    // placement. Against the largest field we plan for, that one placement is the expensive one.
+    const worst = projectedPlacementSeconds(285);
+
+    expect(REVIEW_TICK_BUDGET_MS / 1000 + worst).toBeLessThan(REVIEW_JOB_LOCK_SECONDS);
+  });
+
+  it('reproduces the live 8-entry drain, so the model is not just arithmetic', () => {
+    // Measured on the lifecycle re-run: comparison counts 0,1,2,2,2,3,3,3 = 16 bouts. The model
+    // says 17 — the extra bout is one entry that searched shallower than the worst case.
+    expect(projectedDrainSeconds(0, 8, 1)).toBe(17);
+  });
+
+  it('grows the per-placement cost with the ladder — which is why a fixed count is the wrong bound', () => {
+    // 20 placements was proposed from that 8-entry measurement. Against a mature ladder the same
+    // count runs minutes past the lock, so the count cannot be the primary guard.
+    expect(projectedPlacementSeconds(8)).toBeLessThan(projectedPlacementSeconds(285));
+    expect(projectedDrainSeconds(285, MAX_PLACEMENTS_PER_TICK)).toBeGreaterThan(
+      REVIEW_JOB_LOCK_SECONDS
+    );
+    // The time budget is what actually stops that: at depth it affords far fewer than the count.
+    expect(placementsWithinBudget(285, REVIEW_TICK_BUDGET_MS / 1000)).toBeLessThan(
+      MAX_PLACEMENTS_PER_TICK
+    );
+  });
+
+  it('still drains a whole ordinary tick from a shallow ladder', () => {
+    // A bound that only ever admitted one or two placements would hand the field to the close-time
+    // rerun and quietly undo the serialisation fix. The live burst was 8; the budget must clear it.
+    expect(placementsWithinBudget(0, REVIEW_TICK_BUDGET_MS / 1000)).toBeGreaterThanOrEqual(8);
+  });
+
+  it('never returns zero, so a challenge cannot be starved of placement entirely', () => {
+    expect(placementsWithinBudget(10_000, 1)).toBe(1);
   });
 });
 
