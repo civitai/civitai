@@ -43,6 +43,19 @@ import type { PlacementSurface } from '~/shared/utils/placement';
  * the module load, the tracker construction and the flag read sit outside that,
  * so the whole call is wrapped rather than trusting where that boundary happens
  * to fall today.
+ *
+ * **The consequence, stated rather than left implied: this counter is
+ * best-effort and permanently lossy.** The emission is a separate step after a
+ * committed settle, outside any transaction, and nothing reconciles it. A
+ * failure loses that placement's Buzz from the number for good, and a pod
+ * killed between the two loses it without even the log line above. There is no
+ * backfill, and a lost emit is indistinguishable from a placement that was
+ * never approved.
+ *
+ * That is the right trade — a counter must not be able to fail a payment — but
+ * it means the number is a display total and not a ledger. Anything that has to
+ * be *right* about money reads `PlacementTransaction`, which is the record that
+ * is written in the same transaction as the status.
  */
 export async function recordPlacementTip({
   surface,
