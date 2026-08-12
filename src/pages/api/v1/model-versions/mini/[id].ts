@@ -24,7 +24,7 @@ import type {
   ModelHashType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
-import { Availability } from '~/shared/utils/prisma/enums';
+import { Availability, ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
@@ -191,9 +191,23 @@ export default MixedAuthEndpoint(async function handler(
   `;
 
   const { modelFileId } = results.data;
+
+  // Visibility gate, mirroring `getFileForModelVersion` (the download route this
+  // endpoint's `downloadUrl` points at): owners and moderators see every file of
+  // the version, everyone else only Public ones. The raw query above does NOT
+  // filter visibility, so without this the endpoint could advertise a non-public
+  // file's hash/name/size — and now that the url names that exact file, the
+  // download route would answer 404 for it.
+  const isOwner = !!user?.id && user.id === modelVersion.modelUserId;
+  const isMod = !!user?.isModerator;
+  const visibleFiles =
+    isOwner || isMod ? files : files.filter((f) => f.visibility === ModelFileVisibility.Public);
+
   // Caller-specified file overrides the version's primary file. Falls back to
   // primary when modelFileId is omitted, preserving legacy behavior.
-  const targetFile = modelFileId ? files.find((f) => f.id === modelFileId) : getPrimaryFile(files);
+  const targetFile = modelFileId
+    ? visibleFiles.find((f) => f.id === modelFileId)
+    : getPrimaryFile(visibleFiles);
   if (!targetFile) {
     return res.status(404).json({
       error: modelFileId
@@ -238,10 +252,16 @@ export default MixedAuthEndpoint(async function handler(
     // if (targetFile.type !== 'Model') return res.status(404).json({ error: 'File is not a model' });
 
     air = stringifyAIR({ ...modelVersion, fileId: modelFileId, fileType: targetFile.type });
+    // Pin the url to the file this response actually describes. Emitting
+    // `primary=true` instead delegates the choice to
+    // /api/download/models/[modelVersionId], which re-runs `getPrimaryFile` over
+    // a different population (visibility-filtered) with different preferences
+    // (the requesting user's `filePreferences`) — so on a multi-file version the
+    // url could serve a file other than the one whose hash/size/name is returned
+    // here, and any consumer verifying the hash fails.
     downloadUrl = `${baseUrl}${createModelFileDownloadUrl({
       versionId: modelVersion.id,
-      fileId: modelFileId,
-      primary: !modelFileId,
+      fileId: targetFile.id,
     })}`;
   }
 
