@@ -1,7 +1,7 @@
 // import { generateJSON } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { renderToReactElement } from '@tiptap/static-renderer';
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef } from 'react';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import { TextStyleKit } from '@tiptap/extension-text-style';
 import ImageExtension from '@tiptap/extension-image';
@@ -18,6 +18,7 @@ import { StrawPollNode } from '~/components/TipTap/StrawPollNode';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 import { TimestampNode } from '~/shared/tiptap/timestamp.node';
 import { LocalTimestamp } from '~/components/LocalTimestamp/LocalTimestamp';
+import { MentionHoverCard } from '~/components/UserAvatar/MentionHoverCard';
 
 const extensions = [
   StarterKit.configure({ heading: false }),
@@ -40,6 +41,7 @@ export function RenderRichText({
   fallbackHtml?: string;
 }) {
   const { allowed } = useThirdPartyConsent();
+  const contentRef = useRef<HTMLDivElement>(null);
   const memoized = useMemo(() => {
     try {
       const el = renderToReactElement({
@@ -77,7 +79,8 @@ export function RenderRichText({
 
   return (
     <TypographyStylesWrapper className={classes.htmlRenderer}>
-      <div>{memoized.el}</div>
+      <div ref={contentRef}>{memoized.el}</div>
+      <MentionHoverCard containerRef={contentRef} />
     </TypographyStylesWrapper>
   );
 }
