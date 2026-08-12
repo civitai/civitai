@@ -247,7 +247,7 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
           </div>
           {/* Two levels: what this is, then what to do about it. One flat
               paragraph made the pitch read as fine print. */}
-          <Stack gap={2}>
+          <Stack gap={4}>
             <Text size="sm" fw={600}>
               {isOwner
                 ? 'Your gallery is open'
@@ -255,16 +255,34 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
                 ? 'Get your remix seen here'
                 : 'Not accepting remixes'}
             </Text>
-            <Text size="xs" c="dimmed">
-              {/* Gated exactly as the submit button is. On `open` alone it told
-                  the owner to be the first to add theirs, next to no button,
-                  since they are the one person who cannot. */}
-              {isOwner
-                ? 'Other creators can pay to feature their remixes on this image, and everyone who views it sees them. You approve each one.'
-                : visibility.open
-                ? 'Everyone who sees this image sees this gallery. Remix it into something of your own, then come back and submit it.'
-                : 'This creator has closed their gallery for now.'}
-            </Text>
+            {/* Gated exactly as the submit button is. On `open` alone it told
+                the owner to be the first to add theirs, next to no button,
+                since they are the one person who cannot. */}
+            {isOwner ? (
+              <Text size="xs" c="dimmed">
+                Other creators can pay to feature their remixes on this image, and everyone who
+                views it sees them. You approve each one.
+              </Text>
+            ) : visibility.open ? (
+              // Says what a remix *is* before asking for one. Most readers have
+              // never seen a gallery, and "submit yours" means nothing if you do
+              // not know what would count — the examples are the spark, and the
+              // first line is the reason to bother.
+              <>
+                <Text size="xs" c="dimmed">
+                  Everyone who views this image sees this gallery. Make it yours and get seen
+                  alongside it.
+                </Text>
+                <Text size="xs" c="dimmed">
+                  Iterate on it, restyle it, edit it into something new, or turn it into a video —
+                  then submit yours.
+                </Text>
+              </>
+            ) : (
+              <Text size="xs" c="dimmed">
+                This creator has closed their gallery for now.
+              </Text>
+            )}
           </Stack>
         </Group>
       )}
