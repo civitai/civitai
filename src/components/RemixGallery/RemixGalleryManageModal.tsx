@@ -16,12 +16,14 @@ import {
   Text,
   Tooltip,
 } from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconCheck,
   IconInbox,
   IconPin,
   IconPinnedOff,
   IconRotate,
+  IconShieldCheck,
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
@@ -68,6 +70,23 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
   const utils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const isModerator = currentUser?.isModerator ?? false;
+
+  // The card has already run this, so react-query serves it from cache.
+  const { data: visibility } = trpc.placement.getRemixGalleryVisibility.useQuery({ imageId });
+  const isOwner = !!currentUser && currentUser.id === visibility?.ownerId;
+
+  /**
+   * A moderator on someone else's gallery, which is a different modal.
+   *
+   * Two of the three sections are not merely disallowed for them, they are
+   * unusable: `getPendingRemixGallerySubmissions` scopes to `ownerId = caller`,
+   * so the review queue comes back empty and would render "Nothing waiting."
+   * over a gallery that has two waiting; and `setRemixGalleryPins` scopes its
+   * lookup the same way, so every drag would throw "not in this gallery".
+   * Hiding them is honesty about reach, not a permission check — the server is
+   * the permission check.
+   */
+  const moderating = isModerator && !isOwner;
 
   // Scoped server-side. Filtering the account-wide list here meant its limit
   // truncated before the filter ran, so a busy owner saw "nothing waiting" on
@@ -142,115 +161,140 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
   };
 
   return (
-    <Modal {...dialog} title="Manage your remix gallery" size="lg">
+    <Modal
+      {...dialog}
+      title={moderating ? 'Moderate this remix gallery' : 'Manage your remix gallery'}
+      size="lg"
+    >
       <Stack gap="md">
-        <div>
-          <SectionDivider
-            icon={IconInbox}
-            label="Waiting for review"
-            badge={
-              forThisImage.length ? (
-                <Badge size="sm" variant="light" color="yellow">
-                  {forThisImage.length}
-                </Badge>
-              ) : null
-            }
-          />
-          {pendingLoading ? (
-            <Group justify="center" py="md">
-              <Loader size="sm" />
-            </Group>
-          ) : forThisImage.length ? (
-            <Stack gap="xs" mt="sm">
-              {forThisImage.map((row) => (
-                <Card key={row.id} withBorder p="xs" radius="md">
-                  <Group justify="space-between" wrap="nowrap" align="center">
-                    <Group gap="sm" wrap="nowrap" className="min-w-0">
-                      {row.image && <SubmissionThumb image={row.image} />}
-                      <Stack gap={2} className="min-w-0">
-                        <Text size="sm" fw={500} className="truncate">
-                          {row.placer?.username ?? 'Someone'}
-                        </Text>
-                        <Group gap={4} wrap="nowrap">
-                          <CurrencyIcon currency={Currency.BUZZ} size={12} />
-                          <Text size="xs" c="dimmed">
-                            {row.amount}
+        {moderating && (
+          // Not decoration. The same button in an owner's hands returns the
+          // submitter's Buzz and in a moderator's keeps it, and the row records
+          // which happened. Someone holding both roles should not have to
+          // remember which gallery they are looking at.
+          <Alert color="red" icon={<IconShieldCheck size={18} />} p="xs">
+            <Text size="sm" fw={600}>
+              You are moderating {visibility?.ownerUsername ?? 'another creator'}&apos;s gallery
+            </Text>
+            <Text size="xs" mt={2}>
+              You can take entries down. Removing one here is a moderator takedown — the submitter
+              is not refunded, and the removal is recorded against you rather than the creator.
+              Approving, declining and pinning stay with the creator.
+            </Text>
+          </Alert>
+        )}
+
+        {!moderating && (
+          <div>
+            <SectionDivider
+              icon={IconInbox}
+              label="Waiting for review"
+              badge={
+                forThisImage.length ? (
+                  <Badge size="sm" variant="light" color="yellow">
+                    {forThisImage.length}
+                  </Badge>
+                ) : null
+              }
+            />
+            {pendingLoading ? (
+              <Group justify="center" py="md">
+                <Loader size="sm" />
+              </Group>
+            ) : forThisImage.length ? (
+              <Stack gap="xs" mt="sm">
+                {forThisImage.map((row) => (
+                  <Card key={row.id} withBorder p="xs" radius="md">
+                    <Group justify="space-between" wrap="nowrap" align="center">
+                      <Group gap="sm" wrap="nowrap" className="min-w-0">
+                        {row.image && <SubmissionThumb image={row.image} />}
+                        <Stack gap={2} className="min-w-0">
+                          <Text size="sm" fw={500} className="truncate">
+                            {row.placer?.username ?? 'Someone'}
                           </Text>
-                        </Group>
-                        <Text size="xs" c="dimmed">
-                          Sent {sentLabel(row.createdAt)}
-                        </Text>
-                      </Stack>
-                    </Group>
-                    {/* Stacked, and the same width, so the pair reads as one
+                          <Group gap={4} wrap="nowrap">
+                            <CurrencyIcon currency={Currency.BUZZ} size={12} />
+                            <Text size="xs" c="dimmed">
+                              {row.amount}
+                            </Text>
+                          </Group>
+                          <Text size="xs" c="dimmed">
+                            Sent {sentLabel(row.createdAt)}
+                          </Text>
+                        </Stack>
+                      </Group>
+                      {/* Stacked, and the same width, so the pair reads as one
                         decision with two answers rather than a row of buttons.
                         Keyed to the row and the action — bare `act.isPending`
                         spun every button in the queue on any one click. */}
-                    <Stack gap={6} className="w-28 shrink-0">
-                      <Button
-                        size="compact-sm"
-                        fullWidth
-                        leftSection={<IconCheck size={14} />}
-                        loading={actingOn(row.id, 'approve')}
-                        onClick={() => act.mutate({ placementId: row.id, action: 'approve' })}
-                      >
-                        Approve
-                      </Button>
-                      <Button
-                        size="compact-sm"
-                        fullWidth
-                        variant="default"
-                        leftSection={<IconX size={14} />}
-                        loading={actingOn(row.id, 'decline')}
-                        onClick={() => act.mutate({ placementId: row.id, action: 'decline' })}
-                      >
-                        Decline
-                      </Button>
-                    </Stack>
-                  </Group>
-                </Card>
-              ))}
-            </Stack>
-          ) : (
-            <Text size="sm" c="dimmed" mt="sm">
-              Nothing waiting.
-            </Text>
-          )}
-        </div>
-
-        <div>
-          <SectionDivider
-            icon={IconPin}
-            label="Pinned"
-            badge={
-              <Badge size="sm" variant="light">
-                {pinnedIds.length}/{REMIX_GALLERY_MAX_PINNED}
-              </Badge>
-            }
-          />
-          <Text size="xs" c="dimmed" mt="sm">
-            Pinned remixes always show first, in the order you set here. Everything else rotates.
-          </Text>
-
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-            <SortableContext items={pinnedIds} strategy={rectSortingStrategy}>
-              <div className="mt-2 grid grid-cols-4 gap-3">
-                {pinnedItems.map((item) => (
-                  <SortablePin
-                    key={item.placementId}
-                    item={item}
-                    onUnpin={() => commitPins(pinnedIds.filter((id) => id !== item.placementId))}
-                  />
+                      <Stack gap={6} className="w-28 shrink-0">
+                        <Button
+                          size="compact-sm"
+                          fullWidth
+                          leftSection={<IconCheck size={14} />}
+                          loading={actingOn(row.id, 'approve')}
+                          onClick={() => act.mutate({ placementId: row.id, action: 'approve' })}
+                        >
+                          Approve
+                        </Button>
+                        <Button
+                          size="compact-sm"
+                          fullWidth
+                          variant="default"
+                          leftSection={<IconX size={14} />}
+                          loading={actingOn(row.id, 'decline')}
+                          onClick={() => act.mutate({ placementId: row.id, action: 'decline' })}
+                        >
+                          Decline
+                        </Button>
+                      </Stack>
+                    </Group>
+                  </Card>
                 ))}
-              </div>
-            </SortableContext>
-          </DndContext>
-          {!pinnedItems.length && (
-            <Text size="sm" c="dimmed" mt="xs">
-              Nothing pinned.
+              </Stack>
+            ) : (
+              <Text size="sm" c="dimmed" mt="sm">
+                Nothing waiting.
+              </Text>
+            )}
+          </div>
+        )}
+
+        {!moderating && (
+          <div>
+            <SectionDivider
+              icon={IconPin}
+              label="Pinned"
+              badge={
+                <Badge size="sm" variant="light">
+                  {pinnedIds.length}/{REMIX_GALLERY_MAX_PINNED}
+                </Badge>
+              }
+            />
+            <Text size="xs" c="dimmed" mt="sm">
+              Pinned remixes always show first, in the order you set here. Everything else rotates.
             </Text>
-          )}
-        </div>
+
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+              <SortableContext items={pinnedIds} strategy={rectSortingStrategy}>
+                <div className="mt-2 grid grid-cols-4 gap-3">
+                  {pinnedItems.map((item) => (
+                    <SortablePin
+                      key={item.placementId}
+                      item={item}
+                      onUnpin={() => commitPins(pinnedIds.filter((id) => id !== item.placementId))}
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
+            {!pinnedItems.length && (
+              <Text size="sm" c="dimmed" mt="xs">
+                Nothing pinned.
+              </Text>
+            )}
+          </div>
+        )}
 
         <div>
           <SectionDivider icon={IconRotate} label="In the rotation" />
@@ -272,30 +316,56 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                 <div key={item.placementId} className="relative">
                   <AspectRatioImageCard aspectRatio="square" image={item.image} />
                   <Group gap={4} className="absolute right-1 top-1">
-                    <Tooltip
-                      label={
-                        atPinCap
-                          ? `Unpin one first — the limit is ${REMIX_GALLERY_MAX_PINNED}`
-                          : 'Pin to the top'
-                      }
-                    >
-                      <ActionIcon
-                        size="sm"
-                        variant="filled"
-                        color="dark"
-                        disabled={atPinCap}
-                        onClick={() => commitPins([...pinnedIds, item.placementId])}
+                    {/* Pinning is the creator's curation, and `setRemixGalleryPins`
+                        scopes its lookup to the caller as owner — a moderator
+                        pressing this would get "not in this gallery" on every
+                        press. */}
+                    {!moderating && (
+                      <Tooltip
+                        label={
+                          atPinCap
+                            ? `Unpin one first — the limit is ${REMIX_GALLERY_MAX_PINNED}`
+                            : 'Pin to the top'
+                        }
                       >
-                        <IconPin size={14} />
-                      </ActionIcon>
-                    </Tooltip>
+                        <ActionIcon
+                          size="sm"
+                          variant="filled"
+                          color="dark"
+                          disabled={atPinCap}
+                          onClick={() => commitPins([...pinnedIds, item.placementId])}
+                        >
+                          <IconPin size={14} />
+                        </ActionIcon>
+                      </Tooltip>
+                    )}
                     <RemoveEntryButton
                       item={item}
                       isModerator={isModerator}
                       pending={actingOn(item.placementId, 'remove')}
-                      onRemove={() =>
-                        act.mutate({ placementId: item.placementId, action: 'remove' })
-                      }
+                      onRemove={() => {
+                        const remove = () =>
+                          act.mutate({ placementId: item.placementId, action: 'remove' });
+                        // Confirmed for a moderator and not for an owner, because
+                        // the two are different acts: an owner removal returns the
+                        // submitter's Buzz, a moderator takedown keeps it. Nothing
+                        // undoes that, and the row records who did it.
+                        if (!moderating) return remove();
+                        openConfirmModal({
+                          title: 'Take this entry down',
+                          children: (
+                            <Text size="sm">
+                              This removes the remix from{' '}
+                              {visibility?.ownerUsername ?? 'the creator'}&apos;s gallery for
+                              everyone. The submitter is not refunded, and the takedown is recorded
+                              against you.
+                            </Text>
+                          ),
+                          labels: { confirm: 'Take down', cancel: 'Cancel' },
+                          confirmProps: { color: 'red' },
+                          onConfirm: remove,
+                        });
+                      }}
                     />
                   </Group>
                 </div>

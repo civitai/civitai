@@ -11,7 +11,7 @@ import {
   ThemeIcon,
   Tooltip,
 } from '@mantine/core';
-import { IconHierarchy, IconPlus, IconSettings } from '@tabler/icons-react';
+import { IconHierarchy, IconPlus, IconSettings, IconShieldCheck } from '@tabler/icons-react';
 import clsx from 'clsx';
 import dynamic from 'next/dynamic';
 import { useState } from 'react';
@@ -171,6 +171,7 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
   // the owner was paid for permanently unreachable.
   const shown = hasNextPage ? trimToWholeRows(items) : items;
   const isOwner = currentUser?.id === visibility.ownerId;
+  const isModerator = currentUser?.isModerator ?? false;
   // Server-side, and zero for anyone who is not the owner.
   const pendingCount = visibility.pendingCount ?? 0;
 
@@ -188,6 +189,23 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
             </Text>
           </InfoPopover>
         </Text>
+        {/* A moderator gets in on any image so they can take an entry down.
+            Not the same button: `pendingCount` is computed owner-only, so a
+            count here would read "0 waiting" over a gallery with two, and the
+            queue behind it is owner-scoped anyway. Theirs says what it is. */}
+        {!isOwner && isModerator && (
+          <Tooltip label="Moderate this gallery">
+            <ActionIcon
+              variant="subtle"
+              color="red"
+              onClick={() =>
+                dialogStore.trigger({ component: RemixGalleryManageModal, props: { imageId } })
+              }
+            >
+              <IconShieldCheck size={18} />
+            </ActionIcon>
+          </Tooltip>
+        )}
         {isOwner &&
           (pendingCount > 0 ? (
             // A gear icon does not say "two people are waiting on you". The
