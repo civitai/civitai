@@ -97,7 +97,7 @@ export function ImageDetailProvider({
   );
 
   const usingQueryImages = initialImages.length === 0;
-  const images = usingQueryImages ? queryImages : initialImages;
+  const baseImages = usingQueryImages ? queryImages : initialImages;
 
   // Seeded from a feed card, `images` is a fixed window the feed handed us — only
   // the query we own here can grow.
@@ -107,17 +107,28 @@ export function ImageDetailProvider({
   };
 
   const shouldFetchImage =
-    !imagesLoading && (images.length === 0 || !images.find((x) => x.id === imageId));
+    !imagesLoading && (baseImages.length === 0 || !baseImages.find((x) => x.id === imageId));
   // TODO - this needs to return the data as `ImagesInfiniteModel`
   // alternatively, we always query multiple images, with the cursor starting at `imageId`
-  const { data: prefetchedImage, isInitialLoading: imageLoading } = trpc.image.get.useQuery(
+  const { data: prefetchedImage, isInitialLoading: imageQueryLoading } = trpc.image.get.useQuery(
     { id: imageId, withoutPost },
     { enabled: shouldFetchImage }
   );
+  // A disabled observer still reports `isInitialLoading` while *another* observer
+  // fetches the same key. `/images/[imageId]` renders this provider too and reads
+  // its id from the same router store, so opening a routed image dialog over it
+  // puts two providers on one id: the page owns the fetch, and the dialog — which
+  // already has the image — showed a full-page loader over content that never
+  // went away. Only report loading for a fetch we asked for.
+  const imageLoading = shouldFetchImage && imageQueryLoading;
 
-  if (prefetchedImage && shouldFetchImage) {
-    images.unshift(prefetchedImage as any);
-  }
+  // Prepended, not `unshift`ed: a routed dialog's props come from the immer-backed
+  // dialog store, which deep-freezes them, and react-query freezes cached data in
+  // dev — so mutating this in render threw `Cannot add property N, object is not
+  // extensible`. Element identity is preserved because `updateImage` writes
+  // through `images[index]` by reference.
+  const images =
+    prefetchedImage && shouldFetchImage ? [prefetchedImage as any, ...baseImages] : baseImages;
 
   function findCurrentImageIndex() {
     const index = images.findIndex((x) => x.id === imageId);

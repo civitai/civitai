@@ -1,4 +1,4 @@
-import { Alert, Button, Group, Loader, Modal, Stack, Text } from '@mantine/core';
+import { Alert, Button, Divider, Group, Loader, Modal, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
@@ -53,48 +53,75 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
   const price = visibility?.price ?? null;
 
   return (
-    <Modal {...dialog} title="Submit your remix" size="lg">
-      <Stack gap="md">
-        <Text size="sm" c="dimmed">
-          The creator reviews every submission and decides what belongs in their gallery. If they
-          decline yours, they keep part of what you paid and the rest is returned.
-        </Text>
+    // `padding={0}` would strip the header's padding too, putting the title and
+    // the close button against the edges. Only the body needs to lose it, so the
+    // scroll container can run edge to edge and own its own insets.
+    <Modal
+      {...dialog}
+      title="Submit your remix"
+      size="lg"
+      classNames={{ body: 'p-0', header: 'pb-2' }}
+    >
+      {/* Three bands: the explanation and the actions stay put, only the picker
+          scrolls. The fee warning is money copy, so it must not be the thing
+          that scrolls out of sight while someone hunts for an image. */}
+      <div className="flex max-h-[70vh] flex-col">
+        <Stack gap="xs" className="shrink-0 px-4 pb-3 pt-0">
+          <Text size="sm" c="dimmed">
+            The creator reviews every submission and decides what belongs in their gallery. If they
+            decline yours, they keep part of what you paid and the rest is returned.
+          </Text>
 
-        {visibility && !visibility.open && (
-          <Alert color="yellow" icon={<IconAlertTriangle />}>
-            This creator has stopped accepting submissions.
-          </Alert>
-        )}
+          {visibility && !visibility.open && (
+            <Alert color="yellow" icon={<IconAlertTriangle />}>
+              This creator has stopped accepting submissions.
+            </Alert>
+          )}
+        </Stack>
 
-        {isLoading ? (
-          <Group justify="center" py="xl">
-            <Loader />
-          </Group>
-        ) : images.length ? (
-          <div className="grid grid-cols-4 gap-3">
-            {images.map((image) => (
-              <AspectRatioImageCard
-                key={image.id}
-                aspectRatio="square"
-                image={image}
-                onClick={() => setSelected(image.id)}
-                className={clsx('cursor-pointer', selected === image.id && 'ring-2 ring-blue-5')}
-              />
-            ))}
-          </div>
-        ) : (
-          <NoContent message="You don't have any published images to submit yet." />
-        )}
+        <Divider />
 
-        {hasNextPage && (
-          <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
-            <Group justify="center" py="md">
-              <Loader size="sm" />
+        {/* The scroll container, and the only thing that pages. `InViewLoader`
+            fires on viewport intersection, so it has to live inside here — it
+            is reached by scrolling this box, not the page. */}
+        <div className="flex-1 overflow-y-auto px-4 py-3">
+          {isLoading ? (
+            <Group justify="center" py="xl">
+              <Loader />
             </Group>
-          </InViewLoader>
-        )}
+          ) : images.length ? (
+            <>
+              <div className="grid grid-cols-4 gap-3">
+                {images.map((image) => (
+                  <AspectRatioImageCard
+                    key={image.id}
+                    aspectRatio="square"
+                    image={image}
+                    onClick={() => setSelected(image.id)}
+                    className={clsx(
+                      'cursor-pointer',
+                      selected === image.id && 'ring-2 ring-blue-5'
+                    )}
+                  />
+                ))}
+              </div>
 
-        <Group justify="flex-end">
+              {hasNextPage && (
+                <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
+                  <Group justify="center" py="md">
+                    <Loader size="sm" />
+                  </Group>
+                </InViewLoader>
+              )}
+            </>
+          ) : (
+            <NoContent message="You don't have any published images to submit yet." />
+          )}
+        </div>
+
+        <Divider />
+
+        <Group justify="flex-end" className="shrink-0 px-4 py-3">
           <Button variant="default" onClick={dialog.onClose}>
             Cancel
           </Button>
@@ -122,7 +149,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
             }
           />
         </Group>
-      </Stack>
+      </div>
     </Modal>
   );
 }

@@ -1,4 +1,4 @@
-import { ActionIcon, Button, Card, Group, Loader, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Button, Card, Group, Skeleton, Text, Tooltip } from '@mantine/core';
 import { IconHierarchy, IconPlus, IconSettings } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
@@ -17,6 +17,7 @@ import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLe
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
+import { REMIX_GALLERY_ROW_WIDTH } from '~/shared/utils/remix-gallery';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -94,9 +95,15 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
       </Group>
 
       {isLoading ? (
-        <Group justify="center" py="md">
-          <Loader size="sm" />
-        </Group>
+        // A skeleton row rather than a spinner: it occupies the shape the
+        // entries will take, so the card does not resize under the reader when
+        // they arrive. One row, because the common gallery is small and two
+        // would overstate what is usually coming.
+        <div className="grid grid-cols-4 gap-3">
+          {Array.from({ length: REMIX_GALLERY_ROW_WIDTH }).map((_, index) => (
+            <Skeleton key={index} className="aspect-square w-full rounded-md" />
+          ))}
+        </div>
       ) : shown.length ? (
         <div className="grid grid-cols-4 gap-3">
           {shown.map((item) => (
