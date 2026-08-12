@@ -282,18 +282,28 @@ describe('getChildlessCommentIds', () => {
 });
 
 describe('constants.comments thread settings', () => {
-  it('gives articles room for deeper threads than the narrow image surface', () => {
-    expect(constants.comments.getMaxDepth({ entityType: 'article' })).toBeGreaterThan(
-      constants.comments.getMaxDepth({ entityType: 'image' })
-    );
-    expect(constants.comments.getMaxDepth({ entityType: 'image' })).toBe(3);
-    expect(constants.comments.getMaxDepth({ entityType: 'bountyEntry' })).toBe(3);
+  const wide = ['article', 'bounty', 'challenge'];
+  const narrow = ['image', 'bountyEntry'];
+
+  it('gives full-width surfaces room for deeper threads than the narrow ones', () => {
+    for (const entityType of wide) expect(constants.comments.getMaxDepth({ entityType })).toBe(10);
+    for (const entityType of narrow) expect(constants.comments.getMaxDepth({ entityType })).toBe(3);
     expect(constants.comments.getMaxDepth({ entityType: 'post' })).toBe(5);
   });
 
   it('only opens every reply tree on surfaces wide enough for it', () => {
-    expect(constants.comments.expandsRepliesByDefault({ entityType: 'article' })).toBe(true);
-    expect(constants.comments.expandsRepliesByDefault({ entityType: 'image' })).toBe(false);
-    expect(constants.comments.expandsRepliesByDefault({ entityType: 'comment' })).toBe(false);
+    for (const entityType of wide)
+      expect(constants.comments.expandsRepliesByDefault({ entityType })).toBe(true);
+    for (const entityType of [...narrow, 'comment', 'post'])
+      expect(constants.comments.expandsRepliesByDefault({ entityType })).toBe(false);
+  });
+
+  it('keeps both settings on one set of surfaces', () => {
+    const deep = constants.comments.getMaxDepth({ entityType: 'article' });
+    for (const entityType of [...wide, ...narrow, 'comment', 'post', 'model', 'comicChapter']) {
+      expect(constants.comments.expandsRepliesByDefault({ entityType })).toBe(
+        constants.comments.getMaxDepth({ entityType }) === deep
+      );
+    }
   });
 });
