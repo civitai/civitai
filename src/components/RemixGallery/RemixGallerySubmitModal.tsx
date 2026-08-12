@@ -67,7 +67,10 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
     maxLevel == null
       ? 0
       : images.filter((image) => !!image.nsfwLevel && image.nsfwLevel > maxLevel).length;
-  const unrated = images.filter((image) => !image.nsfwLevel).length;
+  // Gated on the ceiling like the other two, so a closed gallery — where
+  // nothing is submittable for a reason that has nothing to do with the user's
+  // library — does not explain itself by naming some of their images.
+  const unrated = maxLevel == null ? 0 : images.filter((image) => !image.nsfwLevel).length;
 
   return (
     // `padding={0}` would strip the header's padding too, putting the title and
@@ -145,10 +148,12 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
           {/* Waits on the ceiling as well as the images: without it the picker
               renders "you have nothing to submit" for a beat while the rule is
               still in flight. */}
-          {visibilityFailed ? (
+          {visibilityFailed && !visibility ? (
             // An errored query settles with no data and isLoading false, so
             // waiting on `visibility` alone spins here forever with nothing to
-            // read and nothing to press.
+            // read and nothing to press. Gated on `!visibility` as well, because
+            // React Query keeps the previous data through a failed refetch — the
+            // error alone would replace a working, already-populated picker.
             <Alert color="red" icon={<IconAlertTriangle />}>
               Couldn&apos;t load this gallery. Close this and try again.
             </Alert>
@@ -184,8 +189,14 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
           ) : (
             <NoContent
               message={
-                maxLevel === 0
+                maxLevel == null
+                  ? 'This gallery is not open for submissions.'
+                  : maxLevel === 0
                   ? 'This image has no rating yet, so nothing can be submitted to it.'
+                  : unrated > 0 && !overRated
+                  ? // Sending them to post images they have already posted is the
+                    // one wrong answer here; they are waiting on a rating.
+                    'Your posted images are still being rated. Try again once they have finished.'
                   : overRated > 0
                   ? 'None of your posted images are rated low enough for this gallery.'
                   : "You don't have any posted images to submit yet. Post your remix first, then submit it here."

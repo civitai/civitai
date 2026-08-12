@@ -28,6 +28,10 @@ vi.mock('~/server/services/placement-space.service', () => ({ resolvePlacementSp
 
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
 
+vi.mock('~/server/services/placement.service', () => ({
+  getPlacementConfig: async () => ({ declineFeeRate: () => 0.3 }),
+}));
+
 /**
  * The mutation's ordering is its design — the row must exist before the escrow
  * can reference it — and that cannot be read off assertions about final state.
@@ -63,7 +67,12 @@ vi.mock('~/server/db/client', () => ({
   },
   dbRead: {
     $queryRaw: (...args: unknown[]) => queryRaw(...args),
-    placement: { findMany: placementFindMany, findUnique: placementFindUnique },
+    placement: {
+      findMany: placementFindMany,
+      findUnique: placementFindUnique,
+      count: placementCount,
+    },
+    user: { findUnique: async () => ({ username: 'someone' }) },
   },
 }));
 
@@ -74,6 +83,7 @@ const {
   setRemixGalleryPins,
   parseGalleryCursor,
   getRemixGallery,
+  getRemixGalleryVisibility,
 } = await import('~/server/services/remix-gallery.service');
 
 const {
@@ -115,16 +125,21 @@ function primeQueries({
   submission = goodSubmission,
   hostLevel = NsfwLevel.PG,
   hostMinor = false,
+  hostShowable = true,
 }: {
   submission?: typeof goodSubmission | null;
   hostLevel?: number | null;
   hostMinor?: boolean;
+  hostShowable?: boolean;
 } = {}) {
   let call = 0;
   queryRaw.mockImplementation(async () => {
     call += 1;
     if (call === 1) return submission ? [submission] : [];
-    if (call === 2) return hostLevel == null ? [] : [{ nsfwLevel: hostLevel, minor: hostMinor }];
+    if (call === 2)
+      return hostLevel == null
+        ? []
+        : [{ nsfwLevel: hostLevel, minor: hostMinor, showable: hostShowable }];
     return [];
   });
 }
@@ -324,34 +339,67 @@ describe('minor-flagged host ceiling', () => {
   });
 });
 
+it('refuses a submission to a host that cannot show a gallery', async () => {
+  // The host was never checked for anything but its rating. A blocked or
+  // unscanned host is hidden from everyone but its owner, so this took Buzz for
+  // a placement that could never render.
+  primeQueries({ hostShowable: false });
+
+  await expect(submit()).rejects.toThrow(/cannot show a gallery/i);
+  expect(placementCreate).not.toHaveBeenCalled();
+  expect(holdPlacementEscrow).not.toHaveBeenCalled();
+});
+
 describe('the ceiling is applied on read, not only on the mutation', () => {
   // Without this the display-side half is a silent revert: delete the predicate
-  // from the gallery query and every other test in this file still passes,
-  // while entries approved before a host was flagged keep rendering — and the
-  // owner cannot take them down for a week.
-  it('carries the minor-host predicate in the gallery read', async () => {
-    queryRaw.mockImplementation(async () => []);
+  // from a read query and every other test in this file still passes, while
+  // entries approved before a host was flagged keep rendering — and the owner
+  // cannot take them down for a week.
+  //
+  // Nested `Prisma.sql` fragments arrive as VALUES rather than as part of the
+  // template's string array, so flattening them is what makes this see the
+  // predicate at all.
+  const flatten = (value: unknown): string => {
+    if (Array.isArray(value)) return value.map(flatten).join(' ');
+    if (value && typeof value === 'object' && 'strings' in value)
+      return [
+        flatten((value as { strings: unknown }).strings),
+        flatten((value as { values?: unknown }).values ?? []),
+      ].join(' ');
+    return typeof value === 'string' ? value : '';
+  };
 
-    await getRemixGallery({ hostImageId: HOST_IMAGE, browsingLevel: 1 });
+  const sqlFrom = () => queryRaw.mock.calls.map(flatten).join(' ');
 
-    // Nested `Prisma.sql` fragments arrive as VALUES, not as part of the
-    // template's string array, so flattening them is what makes this test see
-    // the predicate at all.
-    const flatten = (value: unknown): string => {
-      if (Array.isArray(value)) return value.map(flatten).join(' ');
-      if (value && typeof value === 'object' && 'strings' in value)
-        return [
-          flatten((value as { strings: unknown }).strings),
-          flatten((value as { values?: unknown }).values ?? []),
-        ].join(' ');
-      return typeof value === 'string' ? value : '';
-    };
-
-    const sql = queryRaw.mock.calls.map(flatten).join(' ');
-
-    for (const column of ['minor', 'acceptableMinor', 'needsReview']) expect(sql).toContain(column);
-    // The bound itself, so widening the ceiling silently is also caught.
+  /**
+   * Asserted on rather than `minor` or `needsReview`, both of which the gallery
+   * CTE already contains as filters on the *entry* — so asserting those would
+   * hold with the host ceiling deleted entirely. These two strings appear only
+   * inside `minorHostCeiling`.
+   */
+  const expectCeiling = (sql: string) => {
+    expect(sql).toContain('acceptableMinor');
+    expect(sql).toContain('NOT EXISTS');
     expect(sql).toMatch(/nsfwLevel"\s*<=/);
+  };
+
+  beforeEach(() => {
+    queryRaw.mockImplementation(async () => []);
+  });
+
+  it('carries it in the gallery read', async () => {
+    await getRemixGallery({ hostImageId: HOST_IMAGE, browsingLevel: 1 });
+    expectCeiling(sqlFrom());
+  });
+
+  // Its own case, because the two readers are separate queries and the earlier
+  // version of this test only reached the first. Deleting the predicate from
+  // `galleryHasEntries` alone left the owner shown a card for entries the
+  // gallery query will not return.
+  it('carries it in the has-entries read', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue(openSpace);
+    await getRemixGalleryVisibility({ hostImageId: HOST_IMAGE, browsingLevel: 1 });
+    expectCeiling(sqlFrom());
   });
 });
 

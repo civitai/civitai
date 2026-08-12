@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
-import { ImageSort } from '~/server/common/enums';
+import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import type { SessionUser } from '~/types/session';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -82,13 +82,32 @@ const MINOR_HOST_REFUSAL =
  * can decide a rating without it — `remixGalleryLevelAllowed` requires it.
  */
 async function loadHostImage(hostImageId: number) {
-  const [row] = await dbWrite.$queryRaw<{ nsfwLevel: number; minor: boolean }[]>`
-    SELECT "nsfwLevel", ${HOST_IS_MINOR} AS minor FROM "Image" WHERE id = ${hostImageId}
+  const [row] = await dbWrite.$queryRaw<{ nsfwLevel: number; minor: boolean; showable: boolean }[]>`
+    SELECT "nsfwLevel", ${HOST_IS_MINOR} AS minor, ${HOST_IS_SHOWABLE} AS showable
+    FROM "Image" WHERE id = ${hostImageId}
   `;
 
   if (!row) throw throwBadRequestError('remix gallery: that image no longer exists');
   return row;
 }
+
+/**
+ * Whether the host can display a gallery at all.
+ *
+ * Every check on this surface asked what the *submission* was, and none asked
+ * whether the host could show it. A blocked or unscanned host is hidden from
+ * everyone but its owner, yet nothing required the submitter to be able to see
+ * it — so Buzz went into escrow for a placement that could never render, and
+ * the submitter's only ways out were withdrawing or being charged the decline
+ * fee. Not a safety hole, since display is gated either way; it is money taken
+ * for something structurally unshowable.
+ */
+const HOST_IS_SHOWABLE = Prisma.sql`(
+  ingestion = 'Scanned'
+  AND "needsReview" IS NULL
+  AND NOT "tosViolation"
+  AND "nsfwLevel" != ${NsfwLevel.Blocked}
+)`;
 
 export type CreateRemixGallerySubmission = {
   placerId: number;
@@ -172,6 +191,8 @@ export async function createRemixGallerySubmission({
     throw throwBadRequestError('remix gallery: that image cannot be submitted');
 
   const host = await loadHostImage(hostImageId);
+  if (!host.showable)
+    throw throwBadRequestError('remix gallery: this image cannot show a gallery right now');
 
   const rule = remixGalleryContentRule(space.settings);
   if (
@@ -433,6 +454,11 @@ async function assertStillAcceptable({
   });
 
   const host = await loadHostImage(placement.targetId);
+  // Refused rather than approved into a gallery that cannot render. The escrow
+  // is released by expiry, which refunds in full, so waiting costs the submitter
+  // nothing — approving costs them everything.
+  if (!host.showable)
+    throw throwBadRequestError('remix gallery: this image cannot show a gallery right now');
 
   if (
     !remixGalleryLevelAllowed({
@@ -819,8 +845,9 @@ const HOST_IS_MINOR_H = Prisma.sql`(h.minor OR h."acceptableMinor" OR h."needsRe
  * cost of that window is a picker offering an image that is then declined.
  */
 async function readHostImage(hostImageId: number) {
-  const [row] = await dbRead.$queryRaw<{ nsfwLevel: number; minor: boolean }[]>`
-    SELECT "nsfwLevel", ${HOST_IS_MINOR} AS minor FROM "Image" WHERE id = ${hostImageId}
+  const [row] = await dbRead.$queryRaw<{ nsfwLevel: number; minor: boolean; showable: boolean }[]>`
+    SELECT "nsfwLevel", ${HOST_IS_MINOR} AS minor, ${HOST_IS_SHOWABLE} AS showable
+    FROM "Image" WHERE id = ${hostImageId}
   `;
   return row ?? null;
 }
@@ -1020,7 +1047,8 @@ export async function getRemixGalleryVisibility({
   // for exactly that reason; this would have shipped the same fact as a number.
   // Signed in, gallery open, not your own: the case the picker needs and nothing
   // wider.
-  const canSubmitHere = !!viewerId && space.mode !== 'off' && viewerId !== space.ownerId;
+  const canSubmitHere =
+    !!viewerId && space.mode !== 'off' && viewerId !== space.ownerId && !!host?.showable;
   const maxSubmissionLevel = canSubmitHere
     ? remixGalleryMaxSubmissionLevel({
         rule: remixGalleryContentRule(space.settings),
