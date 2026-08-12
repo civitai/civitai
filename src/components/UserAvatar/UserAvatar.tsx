@@ -34,6 +34,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { decorationFrameStyle } from '~/components/UserAvatar/decoration-frame.util';
+import { UserHoverCard } from '~/components/UserAvatar/UserHoverCard';
 import { isBlobUrl } from '~/utils/type-guards';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
@@ -98,6 +99,7 @@ export function UserAvatar({
   badgeSize,
   withDecorations = true,
   withOverlay = false,
+  withHoverCard = true,
   className,
 }: Props) {
   const theme = useMantineTheme();
@@ -159,7 +161,7 @@ export function UserAvatar({
           ?.cosmetic as Omit<ContentDecorationCosmetic, 'description' | 'obtainedAt' | 'name'>)
       : undefined;
 
-  return (
+  const content = (
     <Group
       className={className}
       align="center"
@@ -273,6 +275,10 @@ export function UserAvatar({
       ) : null}
     </Group>
   );
+
+  if (!withHoverCard) return content;
+
+  return <UserHoverCard user={avatarUser}>{content}</UserHoverCard>;
 }
 
 type Props = {
@@ -296,6 +302,7 @@ type Props = {
   badgeSize?: number;
   withDecorations?: boolean;
   withOverlay?: boolean;
+  withHoverCard?: boolean;
   className?: string;
 };
 
