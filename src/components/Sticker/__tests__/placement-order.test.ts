@@ -120,13 +120,41 @@ describe('placementRevealDelays', () => {
     expect(revealDurationForSpan(span, 2)).toBeLessThan(revealDurationForSpan(span));
     expect(revealDurationForSpan(span, 0.5)).toBeGreaterThan(revealDurationForSpan(span));
 
-    // Bounded AFTER the speed applies. Clamping first and scaling afterwards is
-    // how the arrival reveal reached 48 seconds and a replay 128.
+    // Bounded, but not by the span's own floor and cap — those bound what the
+    // history earns, and reusing them here made the setting inert: on an image
+    // stickered in one session the span gives exactly the floor, so every speed
+    // above 1 divided straight back into it and Normal, 2× and 4× all played
+    // identically.
+    const burst = HOUR;
+    expect(revealDurationForSpan(burst, 4)).toBeLessThan(revealDurationForSpan(burst, 2));
+    expect(revealDurationForSpan(burst, 2)).toBeLessThan(revealDurationForSpan(burst, 1));
+
     const year = 365 * 24 * HOUR;
-    for (const speed of [0.125, 0.5, 1, 4, 32]) {
+    expect(revealDurationForSpan(year, 0.5)).toBeGreaterThan(revealDurationForSpan(year, 1));
+
+    // A replay is derived by running slower, and must never come out FASTER
+    // than the arrival at any setting — the previous clamp collapsed the two at
+    // both extremes AND at the default on old images.
+    const REPLAY = 3 / 8;
+    for (const speed of [0.5, 1, 2, 4]) {
+      for (const span of [HOUR, 30 * 24 * HOUR, year]) {
+        expect(revealDurationForSpan(span, speed * REPLAY)).toBeGreaterThanOrEqual(
+          revealDurationForSpan(span, speed)
+        );
+      }
+    }
+
+    // Strictly slower at the default, which is the case that matters and the one
+    // that was broken. They converge only where both hit the outer bound — the
+    // slowest setting on the oldest history — and a 20s replay that is not also
+    // 64s is the right end of that trade.
+    expect(revealDurationForSpan(year, 1 * REPLAY)).toBeGreaterThan(revealDurationForSpan(year, 1));
+
+    // And nothing runs away: an absurd setting is still bounded.
+    for (const speed of [0.01, 100]) {
       const duration = revealDurationForSpan(year, speed);
-      expect(duration).toBeLessThanOrEqual(12_000);
-      expect(duration).toBeGreaterThanOrEqual(1_500);
+      expect(duration).toBeLessThanOrEqual(20_000);
+      expect(duration).toBeGreaterThanOrEqual(300);
     }
   });
 

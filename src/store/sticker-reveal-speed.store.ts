@@ -20,9 +20,11 @@ export const revealSpeedLabel = (speed: number) => (speed === 1 ? 'Normal' : `${
 /**
  * The replay is watched deliberately, so it runs SLOWER than an arrival anyone
  * might be reading past — a speed below 1. Derived rather than a second setting:
- * two numbers to keep in step is two numbers to get out of step. The result is
- * clamped to the same cap, so no combination of settings produces a replay
- * nobody would sit through.
+ * two numbers to keep in step is two numbers to get out of step.
+ *
+ * The product is bounded, so at the slowest setting on the oldest history the
+ * two converge on the outer limit rather than the replay running past a minute.
+ * Everywhere else, including the default, the replay is genuinely longer.
  */
 export const REPLAY_SPEED = 3 / 8;
 

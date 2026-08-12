@@ -55,6 +55,17 @@ const DAY_MS = 24 * HOUR_MS;
  */
 const FLOOR_MS = 1_500;
 const CAP_MS = 12_000;
+/**
+ * Outer bounds on what actually runs, after the viewer's speed applies.
+ *
+ * Deliberately far outside the span-derived range. The floor and cap above
+ * bound what the HISTORY earns; these bound what the SETTING can do with it.
+ * Reusing the first pair for both made the setting inert: on an image stickered
+ * in one session — the commonest case — the span gives the floor exactly, so
+ * Normal, 2× and 4× all divided down into it and produced the same reveal.
+ */
+const FASTEST_MS = 300;
+const SLOWEST_MS = 20_000;
 /** Where the cap is reached. A year of history is as old as the reveal shows. */
 const CAP_SPAN_DAYS = 365;
 
@@ -69,11 +80,12 @@ export function revealDurationForSpan(spanMs: number, speed = 1): number {
   // `speed`, so 2× is twice as FAST — it divides. It multiplied before, under a
   // menu labelled "reveal speed", which made 4× four times slower than 1×.
   //
-  // Clamped AFTER the speed is applied, so the floor and the cap bound what
-  // actually runs. Applying the cap first and then multiplying is how the
-  // arrival reveal reached 48 seconds and a replay 128, against a comment
-  // promising a few seconds.
-  return Math.min(CAP_MS, Math.max(FLOOR_MS, base / (speed || 1)));
+  // `base` is already inside [FLOOR_MS, CAP_MS] by construction — that pair
+  // bounds what the span earns. The speed then scales it, and a much wider pair
+  // catches the runaway that scaling used to produce unbounded (48s arrivals,
+  // 128s replays). Clamping to the span's own bounds after dividing is what made
+  // three of the four menu options identical.
+  return Math.min(SLOWEST_MS, Math.max(FASTEST_MS, base / (speed || 1)));
 }
 
 /**

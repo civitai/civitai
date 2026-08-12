@@ -191,11 +191,13 @@ export function StickerPlacementOverlay({
   // Only pending placements are measured; nothing else is positioned relative to
   // a sticker's edge.
   const [stickerHeights, setStickerHeights] = useState<Record<number, number>>({});
-  const observers = useRef(new Map<number, ResizeObserver>());
+  // Disposers rather than observers, because the no-`ResizeObserver` path has
+  // its own thing to unhook.
+  const disposers = useRef(new Map<number, () => void>());
   useEffect(() => {
-    const live = observers.current;
+    const live = disposers.current;
     return () => {
-      live.forEach((observer) => observer.disconnect());
+      live.forEach((dispose) => dispose());
       live.clear();
     };
   }, []);
@@ -204,10 +206,10 @@ export function StickerPlacementOverlay({
     (placement: PlacedSticker) => (node: HTMLDivElement | null) => {
       const placementId = placement.id;
       const radians = (placement.data.rotation * Math.PI) / 180;
-      const existing = observers.current.get(placementId);
+      const existing = disposers.current.get(placementId);
       if (existing) {
-        existing.disconnect();
-        observers.current.delete(placementId);
+        existing();
+        disposers.current.delete(placementId);
       }
       if (!node) return;
 
@@ -236,16 +238,21 @@ export function StickerPlacementOverlay({
       };
 
       // No observer is not a reason to hide the owner's only control forever —
-      // the same call the sibling observer makes, and it was inverted here. One
-      // measurement now, and it simply does not follow later resizes.
+      // the same call the sibling observer makes, and it was inverted here.
+      // Measured now and again when the artwork lands, because before the image
+      // loads the box is zero-height and the controls would sit on the sticker's
+      // centre until something re-measured. `load` does not bubble, so the
+      // listener captures.
       if (typeof ResizeObserver === 'undefined') {
         record();
+        node.addEventListener('load', record, true);
+        disposers.current.set(placementId, () => node.removeEventListener('load', record, true));
         return;
       }
 
       const observer = new ResizeObserver(record);
       observer.observe(node);
-      observers.current.set(placementId, observer);
+      disposers.current.set(placementId, () => observer.disconnect());
     },
     []
   );
@@ -392,7 +399,12 @@ export function StickerPlacementOverlay({
           // get the hover card — the owner needs to know who is asking before
           // answering, and the placer gets the same detail they would once it goes
           // live. Only the owner gets the buttons.
-          if (stickerHeights[placement.id] != null)
+          // `> 0`, not merely present. Before the artwork loads the box is
+          // zero-height, and at rotation 0 the measurement is exactly 0 — a real
+          // number that says nothing about where the sticker's edge is. Treating
+          // it as valid put the controls 14px below the sticker's CENTRE, on top
+          // of the artwork, until the image landed and moved them.
+          if (stickerHeights[placement.id] > 0)
             pendingControls.push(
               <div key={placement.id}>
                 {/* ⚠️ Known wrong, and left wrong deliberately.
