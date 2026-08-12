@@ -273,6 +273,8 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     expect(
       page.getByRole('button', { name: 'Restore the stored settings' }).elements()
     ).toHaveLength(0);
+    // The reason replaces it, rather than the line simply vanishing.
+    expect(page.getByText(/A private model can't have paid access/).elements()).toHaveLength(1);
   });
 
   // A grandfathered version — priced before the affirmation existed — has to tick the box to save at all.
