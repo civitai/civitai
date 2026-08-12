@@ -63,6 +63,7 @@
         identity={result.identity}
         profile={result.profile}
         curator={result.curator}
+        subscription={result.subscription}
         canAct={data.canAct}
         {form}
         civitaiUrl={data.civitaiUrl}

@@ -16,11 +16,13 @@
   type Identity = NonNullable<LayoutData['result']>['identity'];
   type Profile = NonNullable<LayoutData['result']>['profile'];
   type Curator = NonNullable<LayoutData['result']>['curator'];
+  type Subscription = NonNullable<LayoutData['result']>['subscription'];
 
   let {
     identity,
     profile,
     curator,
+    subscription,
     canAct,
     form,
     civitaiUrl,
@@ -28,6 +30,7 @@
     identity: Identity;
     profile: Profile;
     curator: Curator;
+    subscription: Subscription;
     canAct: boolean;
     form: FormResult;
     civitaiUrl: string;
@@ -86,6 +89,20 @@
   const profileUrl = $derived(
     identity.username ? userUrl(civitaiUrl, identity.username) : null
   );
+
+  // `status` is the provider's, and a cancelled-but-not-yet-expired plan still reads `active` there —
+  // so a lapsed member and a paying one must not render the same. Anything other than `active` is shown
+  // as-is rather than collapsed to "free": "past_due" is the state a support question is usually about.
+  const membership = $derived.by(() => {
+    if (!subscription) return { label: 'Free', paying: false };
+    const plan = subscription.productName ?? 'Member';
+    if (subscription.status !== 'active')
+      return { label: `${plan} (${subscription.status})`, paying: false };
+    return {
+      label: subscription.cancelAtPeriodEnd ? `${plan} (ending)` : plan,
+      paying: true,
+    };
+  });
 
   const fields = $derived<[string, string][]>([
     ['Email', identity.email ?? '—'],
@@ -153,6 +170,10 @@
         curator ({curator.collectionIds.join(', ')})
       </Badge>
     {/if}
+    <!-- Whether they pay is a fact about the account, and it decided how several enforcement calls get
+         made — it lived only under Buzz, three clicks from the page a moderator opens first. The full
+         subscription record stays there; this is the one line of it that belongs with the identity. -->
+    <Badge variant={membership.paying ? 'secondary' : 'outline'}>{membership.label}</Badge>
   </div>
 
   <dl class="mt-4 grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
