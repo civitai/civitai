@@ -107,15 +107,23 @@ import {
 } from '~/server/services/strike.service';
 import { StrikeReason, StrikeStatus } from '~/shared/utils/prisma/enums';
 
-// Helper: mock evaluateStrikeEscalation's transaction
+// Helper: mock evaluateStrikeEscalation's transaction. The returned mocks are the transaction
+// client's, so a test asserting on `userUpdate` is asserting the write happened INSIDE the
+// transaction — which is the whole point of taking the lock.
 function mockTransactionForEscalation(pointsSum: number | null, user: any) {
+  const queryRaw = vi.fn().mockResolvedValue([{ sum: pointsSum }]);
+  const userUpdate = vi.fn().mockResolvedValue(user);
   mockDbWrite.$transaction.mockImplementation(async (fn: any) =>
     fn({
-      $queryRaw: vi.fn().mockResolvedValue([{ sum: pointsSum }]),
-      user: { findUnique: vi.fn().mockResolvedValue(user) },
+      $queryRaw: queryRaw,
+      user: { findUnique: vi.fn().mockResolvedValue(user), update: userUpdate },
     })
   );
+  return { queryRaw, userUpdate };
 }
+
+// Prisma tagged templates hand the raw SQL over as a TemplateStringsArray.
+const sqlOf = (call: any[]) => (call[0] as string[]).join(' ');
 
 describe('strike.service', () => {
   beforeEach(() => {
@@ -510,7 +518,7 @@ describe('strike.service', () => {
   // ==========================================================================
   describe('evaluateStrikeEscalation', () => {
     it('3+ points: mutes, flags for review, invalidates session', async () => {
-      mockTransactionForEscalation(3, {
+      const { userUpdate } = mockTransactionForEscalation(3, {
         muted: false,
         muteExpiresAt: null,
         meta: {},
@@ -519,9 +527,9 @@ describe('strike.service', () => {
       const result = await evaluateStrikeEscalation(1);
 
       expect(result).toEqual({ totalPoints: 3, action: 'muted-and-flagged' });
-      expect(mockUpdateUserById).toHaveBeenCalledWith(
+      expect(userUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
-          id: 1,
+          where: { id: 1 },
           data: expect.objectContaining({
             muted: true,
             muteExpiresAt: null,
@@ -529,6 +537,9 @@ describe('strike.service', () => {
           }),
         })
       );
+      // Through the transaction client, never a post-commit updateUserById — outside the
+      // transaction the FOR UPDATE lock is already released and the decision is unguarded.
+      expect(mockUpdateUserById).not.toHaveBeenCalled();
       expect(mockInvalidateSession).toHaveBeenCalledWith(1, 'strike');
       expect(mockCreateNotification).toHaveBeenCalledWith(
         expect.objectContaining({ type: 'strike-escalation-muted' })
@@ -536,7 +547,7 @@ describe('strike.service', () => {
     });
 
     it('3+ points, already flagged: updates user but skips duplicate notification', async () => {
-      mockTransactionForEscalation(4, {
+      const { userUpdate } = mockTransactionForEscalation(4, {
         muted: true,
         muteExpiresAt: null,
         meta: { strikeFlaggedForReview: true },
@@ -545,12 +556,12 @@ describe('strike.service', () => {
       const result = await evaluateStrikeEscalation(1);
 
       expect(result.action).toBe('muted-and-flagged');
-      expect(mockUpdateUserById).toHaveBeenCalled();
+      expect(userUpdate).toHaveBeenCalled();
       expect(mockCreateNotification).not.toHaveBeenCalled();
     });
 
     it('2 points: 3-day mute, invalidates session', async () => {
-      mockTransactionForEscalation(2, {
+      const { userUpdate } = mockTransactionForEscalation(2, {
         muted: false,
         muteExpiresAt: null,
         meta: {},
@@ -559,9 +570,9 @@ describe('strike.service', () => {
       const result = await evaluateStrikeEscalation(1);
 
       expect(result).toEqual({ totalPoints: 2, action: 'muted' });
-      expect(mockUpdateUserById).toHaveBeenCalledWith(
+      expect(userUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
-          id: 1,
+          where: { id: 1 },
           data: expect.objectContaining({
             muted: true,
             muteExpiresAt: expect.any(Date),
@@ -578,7 +589,7 @@ describe('strike.service', () => {
     });
 
     it('2 points, already timed-muted: updates user but skips duplicate notification', async () => {
-      mockTransactionForEscalation(2, {
+      const { userUpdate } = mockTransactionForEscalation(2, {
         muted: true,
         muteExpiresAt: new Date('2099-01-01'),
         meta: {},
@@ -587,12 +598,12 @@ describe('strike.service', () => {
       const result = await evaluateStrikeEscalation(1);
 
       expect(result.action).toBe('muted');
-      expect(mockUpdateUserById).toHaveBeenCalled();
+      expect(userUpdate).toHaveBeenCalled();
       expect(mockCreateNotification).not.toHaveBeenCalled();
     });
 
     it('2 points with existing flag: clears strikeFlaggedForReview', async () => {
-      mockTransactionForEscalation(2, {
+      const { userUpdate } = mockTransactionForEscalation(2, {
         muted: true,
         muteExpiresAt: null,
         meta: { strikeFlaggedForReview: true },
@@ -601,7 +612,7 @@ describe('strike.service', () => {
       const result = await evaluateStrikeEscalation(1);
 
       expect(result.action).toBe('muted');
-      expect(mockUpdateUserById).toHaveBeenCalledWith(
+      expect(userUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             meta: expect.objectContaining({ strikeFlaggedForReview: false }),
@@ -611,7 +622,7 @@ describe('strike.service', () => {
     });
 
     it('<2 points, user not muted: no action', async () => {
-      mockTransactionForEscalation(1, {
+      const { userUpdate } = mockTransactionForEscalation(1, {
         muted: false,
         muteExpiresAt: null,
         meta: {},
@@ -620,12 +631,12 @@ describe('strike.service', () => {
       const result = await evaluateStrikeEscalation(1);
 
       expect(result).toEqual({ totalPoints: 1, action: 'none' });
-      expect(mockUpdateUserById).not.toHaveBeenCalled();
+      expect(userUpdate).not.toHaveBeenCalled();
       expect(mockCreateNotification).not.toHaveBeenCalled();
     });
 
     it('<2 points, user strike-muted (has muteExpiresAt): unmutes and sends notification', async () => {
-      mockTransactionForEscalation(1, {
+      const { userUpdate } = mockTransactionForEscalation(1, {
         muted: true,
         muteExpiresAt: new Date('2099-01-01'),
         meta: {},
@@ -634,13 +645,13 @@ describe('strike.service', () => {
       const result = await evaluateStrikeEscalation(1);
 
       expect(result).toEqual({ totalPoints: 1, action: 'unmuted' });
-      expect(mockUpdateUserById).toHaveBeenCalledWith(
+      expect(userUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
+          where: { id: 1 },
           data: expect.objectContaining({
             muted: false,
             muteExpiresAt: null,
           }),
-          updateSource: 'strike-de-escalation',
         })
       );
       expect(mockCreateNotification).toHaveBeenCalledWith(
@@ -650,7 +661,7 @@ describe('strike.service', () => {
     });
 
     it('<2 points, user flagged (has strikeFlaggedForReview): unmutes and clears flag', async () => {
-      mockTransactionForEscalation(0, {
+      const { userUpdate } = mockTransactionForEscalation(0, {
         muted: true,
         muteExpiresAt: null,
         meta: { strikeFlaggedForReview: true },
@@ -659,7 +670,7 @@ describe('strike.service', () => {
       const result = await evaluateStrikeEscalation(1);
 
       expect(result).toEqual({ totalPoints: 0, action: 'unmuted' });
-      expect(mockUpdateUserById).toHaveBeenCalledWith(
+      expect(userUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             muted: false,
@@ -671,7 +682,7 @@ describe('strike.service', () => {
     });
 
     it('<2 points, user manually muted (no muteExpiresAt, no flag): does NOT unmute', async () => {
-      mockTransactionForEscalation(0, {
+      const { userUpdate } = mockTransactionForEscalation(0, {
         muted: true,
         muteExpiresAt: null,
         meta: {},
@@ -680,20 +691,20 @@ describe('strike.service', () => {
       const result = await evaluateStrikeEscalation(1);
 
       expect(result).toEqual({ totalPoints: 0, action: 'none' });
-      expect(mockUpdateUserById).not.toHaveBeenCalled();
+      expect(userUpdate).not.toHaveBeenCalled();
     });
 
     it('user not found: returns none', async () => {
-      mockTransactionForEscalation(3, null);
+      const { userUpdate } = mockTransactionForEscalation(3, null);
 
       const result = await evaluateStrikeEscalation(999);
 
       expect(result).toEqual({ totalPoints: 3, action: 'none' });
-      expect(mockUpdateUserById).not.toHaveBeenCalled();
+      expect(userUpdate).not.toHaveBeenCalled();
     });
 
-    it('uses dbWrite.$transaction with FOR UPDATE for race condition safety', async () => {
-      mockTransactionForEscalation(1, {
+    it('locks the strike rows at a query level below the SUM', async () => {
+      const { queryRaw } = mockTransactionForEscalation(1, {
         muted: false,
         muteExpiresAt: null,
         meta: {},
@@ -702,7 +713,17 @@ describe('strike.service', () => {
       await evaluateStrikeEscalation(1);
 
       expect(mockDbWrite.$transaction).toHaveBeenCalledTimes(1);
-      expect(mockDbWrite.$transaction).toHaveBeenCalledWith(expect.any(Function));
+      // Postgres rejects `FOR UPDATE` on an aggregate query (0A000, "not allowed with aggregate
+      // functions"), so the lock has to stay one query level below the SUM — which it only does
+      // while the CTE is materialized. Collapsing the levels throws on every call, and that is what
+      // left the whole strike system dead in production for five months.
+      const [sql] = queryRaw.mock.calls.map(sqlOf);
+      expect(sql).toMatch(/FOR UPDATE/);
+      expect(sql).toMatch(/AS MATERIALIZED/);
+      expect(
+        sql.indexOf('FOR UPDATE') < sql.indexOf('SUM('),
+        'FOR UPDATE must be inside the CTE, i.e. before the SUM that reads it'
+      ).toBe(true);
     });
   });
 
@@ -921,7 +942,7 @@ describe('strike.service', () => {
     it('re-evaluates escalation after voiding', async () => {
       mockDbWrite.userStrike.updateMany.mockResolvedValue({ count: 1 });
       mockDbRead.userStrike.findUniqueOrThrow.mockResolvedValue(mockVoidedStrike);
-      mockTransactionForEscalation(0, {
+      const { userUpdate } = mockTransactionForEscalation(0, {
         muted: true,
         muteExpiresAt: new Date('2099-01-01'),
         meta: {},
@@ -931,9 +952,9 @@ describe('strike.service', () => {
 
       // evaluateStrikeEscalation should have been called via transaction
       expect(mockDbWrite.$transaction).toHaveBeenCalled();
-      expect(mockUpdateUserById).toHaveBeenCalledWith(
+      expect(userUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
-          id: 100,
+          where: { id: 100 },
           data: expect.objectContaining({ muted: false }),
         })
       );
