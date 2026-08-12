@@ -76,12 +76,13 @@ export function ImageStickerOverlay({
       ([entry]) => {
         if (entry.isIntersecting) setArmed(true);
       },
-      // Any exposure at all, because the unarmed state is now blank rather than
-      // wrong: arming a moment early costs a reveal that starts while the slide
-      // is still sliding in, while arming late is a visibly empty image. The
-      // carousel viewport is `overflow-hidden`, so a neighbour still reports
-      // nothing until it starts to come in.
-      { threshold: 0 }
+      // Barely any exposure, because the unarmed state is blank rather than
+      // wrong: arming early costs a reveal that starts while the slide is still
+      // coming in, and arming late is a visibly empty image. Not 0 — a drag
+      // nudged a few percent and released arms the neighbour permanently, and
+      // its reveal then plays out while it snaps back off screen, so by the
+      // time you navigate there is nothing left to play.
+      { threshold: 0.05 }
     );
     observer.observe(surfaceEl);
     return () => observer.disconnect();
@@ -119,20 +120,28 @@ export function ImageStickerOverlay({
           placements={placements}
           viewerId={currentUser?.id}
           treatment={treatment}
-          // Every time they become visible, not once per image (Justin,
-          // 2026-08-12) — hence `armed`, which is first intersection rather
-          // than mount, because the carousel mounts a slide long before anyone
-          // looks at it.
+          // Every time they arrive on screen (Justin, 2026-08-12) — hence
+          // `armed`, which is first intersection rather than mount, because the
+          // carousel mounts a slide long before anyone looks at it. It does not
+          // disarm, so coming back to a slide you have already seen draws them
+          // straight away; nothing remounts on the way back, so there is no
+          // arrival to play.
           //
-          // Not while placing. Watching the existing stickers replay under the
-          // sticker you are dragging is movement in the one moment the surface
-          // has to hold still.
-          // `stagger` is what this surface does and is true from the first
-          // render; `armed` is whether it has been seen yet. Held apart on
-          // purpose — collapsing them into one flag paints an un-staggered
-          // frame before the reveal can start, which reads as a blink.
-          stagger={!isPlacing}
+          // `stagger` is what this surface does and never changes while it is
+          // mounted; `armed` is whether it has been seen. Held apart because
+          // collapsing them paints an un-staggered frame before the reveal can
+          // start, which reads as a blink. For the same reason this is not
+          // `!isPlacing`: flipping it off and back on as a placement session
+          // starts and ends re-adds the animation to stickers already on screen
+          // and replays the whole reveal under the sticker being dragged.
+          stagger
           armed={armed}
+          // The sequence is what has to stop while a placement is in progress,
+          // not the reveal itself — three seconds of stickers arriving one by
+          // one under the sticker being positioned is movement where the
+          // surface has to hold still, and reveal is off by default, so
+          // pressing the plus is often what mounts this in the first place.
+          paced={!isPlacing}
           step={historyStep}
         />
       )}

@@ -52,6 +52,7 @@ export function StickerPlacementOverlay({
   surface = 'detail',
   stagger = false,
   armed = false,
+  paced = true,
   step = null,
 }: {
   placements: PlacedSticker[];
@@ -126,6 +127,16 @@ export function StickerPlacementOverlay({
    */
   armed?: boolean;
   /**
+   * Whether to space the reveal out. Off reveals everything together, in one
+   * short fade — still no un-staggered frame, just no sequence.
+   *
+   * Separate from `stagger` because `stagger` must not change while mounted:
+   * removing it and putting it back re-adds the animation to elements already
+   * on screen, which replays the whole reveal. Anything that wants the reveal
+   * to stop being a sequence has to say so without touching that flag.
+   */
+  paced?: boolean;
+  /**
    * Index of the last sticker to draw, for the history replay. `null` draws all
    * of them, which is every surface that is not being stepped through.
    */
@@ -195,7 +206,7 @@ export function StickerPlacementOverlay({
           // a sticker silently sliding under the one it was placed over is the
           // one failure this layer exists to prevent.
           const layer = index + 1;
-          const delay = armed && step == null && !replayed ? delays?.[index] ?? 0 : 0;
+          const delay = paced && armed && step == null && !replayed ? delays?.[index] ?? 0 : 0;
           const delayStyle = delay ? ({ '--sticker-delay': `${delay}ms` } as CSSProperties) : {};
 
           // Pending rows only ever reach a viewer who is party to them — the

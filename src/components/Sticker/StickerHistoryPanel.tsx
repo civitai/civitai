@@ -158,9 +158,14 @@ function StickerHistoryList({
   // is the run stamp the store checks rather than this cleanup.
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
-  // Anything that ends the replay from outside this component — dismissing the
-  // popover, a slide change, the reveal toggle — bumps `runId`. Dropping the
-  // timers on the spot stops them queueing behind a run nobody is watching.
+  // Dismissing the popover and changing slide both end the replay through the
+  // store, which bumps `runId`. Dropping the timers on the spot stops them
+  // queueing behind a run nobody is watching.
+  //
+  // The reveal toggle is deliberately NOT one of them: a replay keeps running
+  // and stays drawn with the reveal off, because the overlay draws whenever a
+  // step is set — someone stepping through a history has already asked to see
+  // it.
   const runId = useStickerHistoryStore((state) => state.runId);
   useEffect(() => {
     if (run.current !== null && run.current !== runId) stop();
