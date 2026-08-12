@@ -10,6 +10,30 @@
 
 import { stdin } from 'process';
 
+// `prettier --write <targets>`: the incident was a repo-WIDE rewrite, not formatting a directory
+// this change owns. Read the targets instead of matching `--write`, so a scoped path just runs.
+function prettierWriteTargets(command) {
+  return command
+    .split(/[;&|]+/)
+    .filter((seg) => /\bprettier\b/.test(seg) && /--write/.test(seg))
+    .flatMap((seg) =>
+      seg
+        .slice(seg.indexOf('--write') + '--write'.length)
+        .split(/\s+/)
+        .map((t) => t.replace(/^['"]|['"]$/g, ''))
+        .filter((t) => t && !t.startsWith('-'))
+    );
+}
+
+// Reaches the whole repo: the root, a bare glob, or a glob rooted at a top-level dir.
+function isUnscoped(target) {
+  const t = target.replace(/\\/g, '/').replace(/\/+$/, '');
+  if (t === '' || t === '.' || t === '*' || t.startsWith('**')) return true;
+  if (!t.includes('*')) return false;
+  const fixed = t.split('*')[0].replace(/\/+$/, '');
+  return fixed.split('/').filter(Boolean).length < 2;
+}
+
 // Patterns that would kill Claude Code or critical processes - BLOCK OUTRIGHT
 const DANGEROUS_PATTERNS = [
   { pattern: /taskkill\s+\/\/F\s+\/\/IM\s+node\.exe/i, reason: 'This would kill all Node.js processes including Claude Code itself' },
@@ -24,7 +48,7 @@ const DANGEROUS_PATTERNS = [
       'Ad-hoc prettier with prettier-plugin-svelte EMPTIES .svelte files to zero bytes while reporting success (28 components lost, 2026-08-07). Use `pnpm run prettier:write`.',
   },
   {
-    pattern: /prettier[^;&|]*--write[^;&|]*\*\*/i,
+    check: (command) => prettierWriteTargets(command).some((t) => t === '*' || t.replace(/\\/g, '/').startsWith('**')),
     reason:
       'A repo-wide `prettier --write` rewrites ~1000 committed files (the repo is not prettier-2-clean) and reformats other people\'s uncommitted work in place. Use `pnpm run prettier:write`, which scopes to dirty files.',
   },
@@ -38,7 +62,11 @@ const GUARDED_PATTERNS = [
       '`svelte-kit sync` regenerates ~690 files under .svelte-kit/, which the Vite dev server watches — the collision that froze this window repeatedly. Use `pnpm run typecheck` unless the route tree changed.',
   },
   {
-    pattern: /prettier[^;&|]*--write/i,
+    // Only the unscoped shapes ask. `prettier --write src/components/Sticker/` runs.
+    check: (command) => {
+      const targets = prettierWriteTargets(command);
+      return targets.length === 0 ? false : targets.some(isUnscoped);
+    },
     reason:
       'Formatting outside `pnpm run prettier:write` can reach files this change does not own. Confirm the target is scoped.',
   },
@@ -61,15 +89,15 @@ stdin.on('end', () => {
       .replace(/-m\s+(['"])[\s\S]*?\1/g, ' ');
 
     // Check for dangerous commands that should be blocked outright (no confirmation possible)
-    for (const { pattern, reason } of DANGEROUS_PATTERNS) {
-      if (pattern.test(command)) {
+    for (const { pattern, check, reason } of DANGEROUS_PATTERNS) {
+      if (check ? check(command) : pattern.test(command)) {
         console.error(`BLOCKED: ${reason}\nCommand: ${rawCommand}`);
         process.exit(2); // Exit code 2 blocks the command immediately
       }
     }
 
-    for (const { pattern, reason } of GUARDED_PATTERNS) {
-      if (pattern.test(command)) {
+    for (const { pattern, check, reason } of GUARDED_PATTERNS) {
+      if (check ? check(command) : pattern.test(command)) {
         console.log(JSON.stringify({
           hookSpecificOutput: {
             hookEventName: 'PreToolUse',

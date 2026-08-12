@@ -223,11 +223,26 @@ export function DraftSticker({
 
       // Selection follows the gesture rather than the press. Pressing an
       // unselected sticker both selects it and starts the drag — one gesture,
-      // not two — but a press that is REFUSED because another finger already
+      // not two — but a press that is REFUSED because another pointer already
       // holds a drag must not move the selection either, or the highlight and
       // the z-order land on a sticker nobody is dragging.
+      //
+      // Capturing the pointer is what lets the layer trust the id alone: the up
+      // or cancel is then delivered to this element wherever the pointer goes,
+      // including outside the window, so a drag cannot be stranded by an event
+      // that never arrives. Touch pointers are captured implicitly already; this
+      // is what brings mouse and pen up to the same guarantee. It can throw if
+      // the pointer is no longer active by the time we get here, which is not a
+      // reason to abandon a gesture that is otherwise fine.
+      const target = event.currentTarget;
       const take = (gesture: Gesture) => {
-        if (onGesture(gesture)) select(draft.id);
+        if (!onGesture(gesture)) return;
+        select(draft.id);
+        try {
+          target.setPointerCapture(gesture.pointerId);
+        } catch {
+          // Pointer already gone; the layer's own up/cancel handling still ends it.
+        }
       };
 
       if (mode === 'move') {
@@ -236,7 +251,6 @@ export function DraftSticker({
         take({
           draftId: draft.id,
           pointerId: event.pointerId,
-          isPrimary: event.isPrimary,
           mode: 'move',
           offsetX: draft.x - point.x,
           offsetY: draft.y - point.y,
@@ -257,7 +271,6 @@ export function DraftSticker({
         take({
           draftId: draft.id,
           pointerId: event.pointerId,
-          isPrimary: event.isPrimary,
           mode: 'resize',
           anchorX: draft.x * bounds.width + anchor.x,
           anchorY: draft.y * bounds.height + anchor.y,
@@ -269,7 +282,6 @@ export function DraftSticker({
         take({
           draftId: draft.id,
           pointerId: event.pointerId,
-          isPrimary: event.isPrimary,
           mode: 'rotate',
         });
       }

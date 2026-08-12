@@ -86,6 +86,23 @@ describe('sticker placement draft store', () => {
       expect(state().selectedDraftId).toBe(third.id);
     });
 
+    // `interaction` mirrors whether the layer holds a live gesture, and only the
+    // layer may write it — the tray reads it to decide whether a pickup is
+    // allowed. Clearing it here said "nothing is being dragged" while a finger
+    // still was, which let a pickup through that the layer then refused to arm:
+    // the new sticker landed on the image and never followed the pointer.
+    // Reachable with two fingers — drag one sticker, tap another's remove badge.
+    it('does not report the drag as over when a different draft is removed', () => {
+      withDrafts(2);
+      const [first, second] = state().drafts;
+      useStickerPlacementDraftStore.setState({ interaction: 'move' });
+
+      state().cancelDraft(second.id);
+
+      expect(state().interaction, 'removing a draft ended a drag it does not own').toBe('move');
+      expect(state().drafts.map((draft) => draft.id)).toEqual([first.id]);
+    });
+
     it('moves the draft it is given rather than whichever is selected', () => {
       withDrafts(2);
       const [first, second] = state().drafts;

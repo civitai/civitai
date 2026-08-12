@@ -62,17 +62,11 @@ export function DraftStickerLayer() {
   // dragging a different one — the sticker under your finger dropped beneath
   // the one that was not.
   //
-  // A *primary* pointer always takes over, and that is the important half. A
-  // flat "refuse while a gesture exists" makes a lost pointerup permanent:
-  // nothing else clears the ref, so pressing the button, alt-tabbing and
-  // releasing in another window — which delivers neither pointerup nor
-  // pointercancel — would refuse every drag, resize, rotate and tray pickup for
-  // the rest of the session, recoverable only by removing every draft. A second
-  // finger is never primary while the first is down, so refusing only
-  // non-primary keeps that closed while letting a mouse or a fresh first touch
-  // heal a stranded gesture on the next press.
+  // Refused outright while one is live, which is only safe because the owning
+  // pointer is captured: its up or cancel is guaranteed to arrive, so a gesture
+  // cannot be stranded and this cannot become a permanent refusal.
   const onGesture = useCallback((next: Gesture) => {
-    if (gesture.current && !next.isPrimary) return false;
+    if (gesture.current) return false;
     gesture.current = next;
     useStickerPlacementDraftStore.getState().setInteraction(next.mode);
     return true;
@@ -138,13 +132,13 @@ export function DraftStickerLayer() {
       });
     };
 
-    // Ends for the pointer that owns it, or for any primary pointer — an
-    // unconditional clear let a second finger lifting anywhere kill a live drag,
-    // but an owner-only clear would strand the gesture forever if its own
-    // pointerup never arrives.
+    // The owning pointer and nothing else. Any other pointer lifting used to end
+    // a live drag; letting a primary one end it did the same thing for a thumb
+    // resting on a tablet. Capture is what makes strict ownership safe — the
+    // owner's up or cancel always arrives, and `lostpointercapture` covers the
+    // case where the browser takes capture away instead.
     const onUp = (event: PointerEvent) => {
-      if (gesture.current && event.pointerId !== gesture.current.pointerId && !event.isPrimary)
-        return;
+      if (!gesture.current || event.pointerId !== gesture.current.pointerId) return;
       gesture.current = null;
       setInteraction(null);
     };
@@ -152,10 +146,17 @@ export function DraftStickerLayer() {
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
+    window.addEventListener('lostpointercapture', onUp);
     return () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
+      window.removeEventListener('lostpointercapture', onUp);
+      // Nothing can be dragging once this layer is gone, and `interaction` is
+      // what the tray reads to decide whether a pickup is allowed. Leaving it
+      // set would refuse the next pickup with no drag to justify it.
+      gesture.current = null;
+      setInteraction(null);
     };
   }, [move, setInteraction]);
 
@@ -170,9 +171,6 @@ export function DraftStickerLayer() {
     gesture.current = {
       draftId: selectedDraftId,
       pointerId: trayPointerId,
-      // The tray refuses a pickup while any gesture is live, so the pointer that
-      // got here is the one that owns the drag.
-      isPrimary: true,
       mode: 'move',
       offsetX: 0,
       offsetY: 0,

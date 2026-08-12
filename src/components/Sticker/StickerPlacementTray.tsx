@@ -119,6 +119,17 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
     setDragging(cosmeticId);
     const { pointerId } = event;
 
+    // Captured here, on the tray button, for the same reason the sticker
+    // captures its own: this drag ends up owned by the layer's gesture, which is
+    // refused outright while another is live, so a pointerup that never arrives
+    // would strand it and refuse everything after. Capture makes that delivery
+    // guaranteed. Released implicitly on the up that ends the drag.
+    try {
+      event.currentTarget.setPointerCapture(pointerId);
+    } catch {
+      // Pointer already gone; teardown below still runs on up/cancel.
+    }
+
     const onMove = (move: PointerEvent) => {
       if (move.pointerId !== pointerId) return;
       const at = pointerOverSurface(move.clientX, move.clientY);

@@ -18,8 +18,18 @@
  * finger anywhere would overwrite the gesture — the first finger would start
  * dragging the second finger's sticker — and lifting the second finger would
  * end the first finger's drag while it was still down.
+ *
+ * The pointer is *captured* for the life of the gesture, which is what makes the
+ * id sufficient. Three heuristics were tried before that and each answered a
+ * different question than the one being asked, which is "is the pointer that
+ * owns this gesture still down?": refusing whenever a gesture existed turned a
+ * lost pointerup into a permanent lock, and `isPrimary` means "first active
+ * pointer of its type", so a mouse is primary during a touch drag and a resting
+ * thumb makes the dragging finger non-primary. Capture answers it directly —
+ * the up or cancel is guaranteed to arrive, and `lostpointercapture` says so
+ * explicitly when the browser takes it away.
  */
-export type Gesture = { draftId: string; pointerId: number; isPrimary: boolean } & (
+export type Gesture = { draftId: string; pointerId: number } & (
   | { mode: 'move'; offsetX: number; offsetY: number }
   | { mode: 'rotate' }
   | { mode: 'resize'; anchorX: number; anchorY: number; sx: number; sy: number; aspect: number }

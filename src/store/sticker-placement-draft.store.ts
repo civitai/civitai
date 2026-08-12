@@ -194,12 +194,14 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
           state.selectedDraftId === target
             ? drafts[drafts.length - 1]?.id ?? null
             : state.selectedDraftId,
-        // Cleared as a pair, always. It is inert on this path today, but "these
-        // two move together" is only an invariant if nothing breaks it, and a
-        // later reader of `interactionPointerId` alone would inherit a stale
-        // pointer from a draft that no longer exists.
-        interaction: null,
-        interactionPointerId: null,
+        // `interaction` is deliberately NOT cleared here. It mirrors whether the
+        // layer holds a live gesture, and only the layer may write it — the tray
+        // reads it to decide whether a pickup is allowed. Clearing it from here
+        // said "no drag in progress" while a finger was still dragging something
+        // else, which let a pickup through that the layer then refused to arm:
+        // the new sticker landed on the image and never followed the pointer.
+        // Removing a draft mid-drag is harmless without this — `move` already
+        // ignores an id that is gone, and the gesture ends on its own pointerup.
       };
     }),
 
