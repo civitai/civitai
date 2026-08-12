@@ -14,6 +14,7 @@ import {
 } from '~/components/Sticker/place-button-position';
 import { useCreateStickerPlacement } from '~/components/Sticker/placement.util';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
+import type { StickerTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { PLACEMENT_SPEND_TYPES } from '~/shared/constants/placement.constants';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 import {
@@ -69,24 +70,30 @@ const CORNERS = [
 /**
  * One sticker being positioned, drawn in the image's own media box.
  *
- * Its controls — the handles, the rotate knob, the remove badge and the buy
- * button — belong to the selected draft only. Several drafts can be on the image
- * at once, and N sets of handles is unreadable; more concretely, the buy button
- * knows how to avoid the tray and the clipping viewport but has no idea another
- * buy button exists, so a second one on screen would be a geometry problem with
- * no owner. One selection keeps that problem from existing.
+ * Every draft carries its own controls, so any of them can be adjusted or bought
+ * without being selected first — placing is one click, not two.
+ *
+ * ⚠️ The buy buttons do not avoid each other. Each one knows about the tray and
+ * the clipping viewport and nothing else, so two stickers close together get
+ * overlapping buttons. Teaching them to avoid each other is the obvious fix and
+ * the wrong one: A flips to clear B, which moves B's obstacle, which flips B,
+ * and the pair never settles. Selection raises z-order so the one last touched
+ * is on top and reachable; beyond that, moving the stickers apart is the fix.
  */
 export function DraftSticker({
   draft,
   art,
   selected,
+  dressed,
   price,
   ownerShare,
   onGesture,
 }: {
   draft: StickerDraft;
   art: ResolvedSticker;
+  /** Only decides what is on top. Every draft carries its own controls. */
   selected: boolean;
+  dressed: StickerTreatment;
   price: number;
   ownerShare: number | undefined;
   onGesture: (gesture: Gesture) => void;
@@ -196,7 +203,10 @@ export function DraftSticker({
       observer.disconnect();
       window.removeEventListener('resize', remeasure);
     };
-  }, [remeasure, trayElement, selected]);
+    // No `selected` here: it decides z-order and nothing this measures. The
+    // component only exists while its draft does, so the element is committed
+    // before this first runs.
+  }, [remeasure, trayElement]);
 
   // The cheap half, and the only one a gesture reaches: rect and offset reads,
   // no style recalc. Which ancestor clips is a property of the tree, not of the
@@ -254,6 +264,22 @@ export function DraftSticker({
       }
     };
 
+  const artworkImage = (
+    <EdgeImage
+      src={art.url}
+      alt={`:${art.slug}:`}
+      options={{ width: 512, anim: art.animated, optimized: true }}
+      style={{
+        width: '100%',
+        height: 'auto',
+        display: 'block',
+        pointerEvents: 'none',
+        ...dressed.imageStyle?.detail,
+      }}
+      draggable={false}
+    />
+  );
+
   return (
     <div
       ref={rootRef}
@@ -264,59 +290,65 @@ export function DraftSticker({
         width: `${draft.scale * 100}%`,
         transform: `translate(-50%, -50%) rotate(${draft.rotation}deg)`,
         touchAction: 'none',
+        // The one thing selection still decides. Two drafts close together have
+        // overlapping buy buttons, and the one just touched should be the one
+        // the next click reaches.
+        zIndex: selected ? 1 : undefined,
       }}
       onPointerDown={begin('move')}
     >
-      <EdgeImage
-        src={art.url}
-        alt={`:${art.slug}:`}
-        options={{ width: 512, anim: art.animated, optimized: true }}
-        style={{ width: '100%', height: 'auto', display: 'block', pointerEvents: 'none' }}
-        draggable={false}
-      />
-
-      {/* Solid on the unselected ones rather than nothing at all: they are still
-          unbought, and an undecorated draft is indistinguishable from a sticker
-          that is already on the image. */}
-      <span
-        className={clsx(
-          'pointer-events-none absolute inset-0 border-2 border-blue-5',
-          selected ? 'border-dashed' : 'opacity-50'
-        )}
-      />
-
-      {selected && (
-        <>
-          {CORNERS.map((corner) => (
-            <span
-              key={corner.className}
-              onPointerDown={begin('resize', corner)}
-              className={`absolute size-3 rounded-full border-2 border-white bg-blue-5 ${corner.className}`}
-            />
-          ))}
-
-          <span
-            onPointerDown={begin('rotate')}
-            className="absolute left-1/2 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-white bg-blue-5"
-            style={{ top: `-${KNOB_OFFSET * 100}%` }}
-          />
-
-          {/* Offset diagonally out past the corner handle rather than replacing
-              it — all four corners resize, and losing one to a destructive
-              action on the only corner a right-hander reaches first is worse
-              than the crowding. Dark rather than the handles' blue: it is the
-              one control here that throws work away. */}
-          <button
-            type="button"
-            aria-label="Remove this sticker"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => cancelDraft(draft.id)}
-            className="absolute -right-7 -top-7 flex size-5 cursor-pointer items-center justify-center rounded-full border-2 border-white bg-dark-7 text-white"
-          >
-            <IconX size={10} stroke={3} />
-          </button>
-        </>
+      {/* The wrapper's own transform makes it a stacking context, so a negative
+          z-index here stays behind the sticker without reaching behind the
+          artwork the sticker sits on. */}
+      {dressed.behind && (
+        <span
+          aria-hidden
+          className={dressed.behind.className}
+          style={{ zIndex: -1, ...dressed.behind.style }}
+        />
       )}
+
+      {/* Dressed exactly as it will be once bought. A draft drawn bare is a
+          preview of something else: the treatment changes the silhouette — a
+          die-cut edge and a plate both grow the sticker's apparent bounds — so
+          positioning against the undressed version means moving it again after
+          paying. */}
+      {dressed.animationClassName ? (
+        <div className={dressed.animationClassName}>{artworkImage}</div>
+      ) : (
+        artworkImage
+      )}
+
+      <span className="pointer-events-none absolute inset-0 border-2 border-dashed border-blue-5" />
+
+      {CORNERS.map((corner) => (
+        <span
+          key={corner.className}
+          onPointerDown={begin('resize', corner)}
+          className={`absolute size-3 rounded-full border-2 border-white bg-blue-5 ${corner.className}`}
+        />
+      ))}
+
+      <span
+        onPointerDown={begin('rotate')}
+        className="absolute left-1/2 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-white bg-blue-5"
+        style={{ top: `-${KNOB_OFFSET * 100}%` }}
+      />
+
+      {/* Offset diagonally out past the corner handle rather than replacing it —
+          all four corners resize, and losing one to a destructive action on the
+          only corner a right-hander reaches first is worse than the crowding.
+          Dark rather than the handles' blue: it is the one control here that
+          throws work away. */}
+      <button
+        type="button"
+        aria-label="Remove this sticker"
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={() => cancelDraft(draft.id)}
+        className="absolute -right-7 -top-7 flex size-5 cursor-pointer items-center justify-center rounded-full border-2 border-white bg-dark-7 text-white"
+      >
+        <IconX size={10} stroke={3} />
+      </button>
 
       <div
         ref={buttonRef}
@@ -328,16 +360,12 @@ export function DraftSticker({
         // `items-center` rather than text alignment: the caption can be wider
         // than the button, and a `w-max` box sized by whichever is longer leaves
         // the other one off-centre.
-        //
-        // Rendered even when unselected, with nothing in it: it is what the
-        // ResizeObserver measures, and an element that appears only on selection
-        // would have no measured height until the frame after the first click.
         className={clsx(
           'absolute left-1/2 flex w-max -translate-x-1/2 cursor-auto flex-col items-center gap-1 whitespace-nowrap',
           flipped ? 'bottom-full' : 'top-full mt-2'
         )}
         style={{
-          minWidth: selected ? BUY_BUTTON_MIN_WIDTH : undefined,
+          minWidth: BUY_BUTTON_MIN_WIDTH,
           // Scales with the sticker because the knob it has to clear does.
           ...(flipped ? { marginBottom: flippedOffset } : null),
         }}
@@ -345,45 +373,41 @@ export function DraftSticker({
         // on it would also start a move and the click would land mid-drag.
         onPointerDown={(event) => event.stopPropagation()}
       >
-        {selected && (
-          <>
-            <BuzzTransactionButton
-              size="sm"
-              style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-              buzzAmount={price}
-              // Yellow and Green only, matching what the escrow will actually
-              // draw. The mutation refuses Blue regardless; this keeps the button
-              // from promising a payment that would then be refused.
-              accountTypes={PLACEMENT_SPEND_TYPES}
-              label="Place"
-              loading={place.isPending}
-              onPerformTransaction={() =>
-                place.mutate({
-                  imageId: draft.imageId,
-                  data: {
-                    cosmeticId: draft.cosmeticId,
-                    x: draft.x,
-                    y: draft.y,
-                    scale: draft.scale,
-                    rotation: draft.rotation,
-                  },
-                })
-              }
-            />
-            {/* On its own dark chip rather than over the artwork: this sits on
+        <BuzzTransactionButton
+          size="sm"
+          style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+          buzzAmount={price}
+          // Yellow and Green only, matching what the escrow will actually
+          // draw. The mutation refuses Blue regardless; this keeps the button
+          // from promising a payment that would then be refused.
+          accountTypes={PLACEMENT_SPEND_TYPES}
+          label="Place"
+          loading={place.isPending}
+          onPerformTransaction={() =>
+            place.mutate({
+              imageId: draft.imageId,
+              data: {
+                cosmeticId: draft.cosmeticId,
+                x: draft.x,
+                y: draft.y,
+                scale: draft.scale,
+                rotation: draft.rotation,
+              },
+            })
+          }
+        />
+        {/* On its own dark chip rather than over the artwork: this sits on
                 whatever the creator uploaded, and yellow on light work is as
                 unreadable as dimmed was on dark. */}
-            {payoutCopy(ownerShare) && (
-              <Text
-                size="xs"
-                fw={500}
-                c="yellow.4"
-                className="rounded-full bg-black/80 px-2 py-0.5 leading-tight"
-              >
-                {payoutCopy(ownerShare)}
-              </Text>
-            )}
-          </>
+        {payoutCopy(ownerShare) && (
+          <Text
+            size="xs"
+            fw={500}
+            c="yellow.4"
+            className="rounded-full bg-black/80 px-2 py-0.5 leading-tight"
+          >
+            {payoutCopy(ownerShare)}
+          </Text>
         )}
       </div>
     </div>

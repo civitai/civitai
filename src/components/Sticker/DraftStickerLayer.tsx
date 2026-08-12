@@ -4,6 +4,8 @@ import { rotate } from '~/components/Sticker/draft-gesture';
 import { DraftSticker } from '~/components/Sticker/DraftSticker';
 import { useImagePlacementSpace } from '~/components/Sticker/placement.util';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
+import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
+import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
 import { STICKER_PLACEMENT_MIN_SCALE, stickerMaxScale } from '~/shared/utils/sticker-placement';
 import {
   pointerToSurfaceFraction,
@@ -32,6 +34,13 @@ export function DraftStickerLayer() {
   const setInteraction = useStickerPlacementDraftStore((state) => state.setInteraction);
   const { sticker } = useOwnedSticker();
   const { space } = useImagePlacementSpace(targetImageId ?? undefined);
+  // Resolved once for the layer rather than per draft: `useStickerTreatment`
+  // reads the user's settings and the router, so a subscription per sticker is
+  // N context consumers re-rendering on every routed dialog. `isPending` is
+  // false because a draft is not a placement yet — it carries its own dashed
+  // outline, and dressing it as pending would claim a decision is waiting.
+  const treatment = useStickerTreatment();
+  const dressed = resolveTreatment({ treatment, surface: 'detail', isPending: false });
   // The creator's ceiling, so a resize handle stops where the mutation would
   // refuse. The refusal is still on the server — this only means nobody has to
   // discover it by being told no after a drag.
@@ -142,6 +151,7 @@ export function DraftStickerLayer() {
             draft={draft}
             art={art}
             selected={draft.id === selectedDraftId}
+            dressed={dressed}
             price={space?.price ?? 0}
             ownerShare={space?.ownerShare}
             onGesture={onGesture}
