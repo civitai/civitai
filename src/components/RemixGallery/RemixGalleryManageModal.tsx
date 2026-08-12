@@ -84,6 +84,9 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
       showErrorNotification({ title: "Couldn't do that", error: new Error(error.message) }),
   });
 
+  const actingOn = (placementId: number, action: 'approve' | 'decline' | 'remove') =>
+    act.isPending && act.variables?.placementId === placementId && act.variables?.action === action;
+
   const setPins = trpc.placement.setRemixGalleryPins.useMutation({
     onSuccess: () => utils.placement.invalidate(),
     onError: (error) => {
@@ -143,10 +146,13 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                     </Stack>
                   </Group>
                   <Group gap="xs" wrap="nowrap">
+                    {/* Keyed to the row and the action. Bare `act.isPending`
+                        spun every button in the queue on any one click, which
+                        reads as "all of these are happening". */}
                     <Button
                       size="compact-sm"
                       leftSection={<IconCheck size={14} />}
-                      loading={act.isPending}
+                      loading={actingOn(row.id, 'approve')}
                       onClick={() => act.mutate({ placementId: row.id, action: 'approve' })}
                     >
                       Approve
@@ -155,7 +161,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                       size="compact-sm"
                       variant="default"
                       leftSection={<IconX size={14} />}
-                      loading={act.isPending}
+                      loading={actingOn(row.id, 'decline')}
                       onClick={() => act.mutate({ placementId: row.id, action: 'decline' })}
                     >
                       Decline
@@ -246,7 +252,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                     <RemoveEntryButton
                       item={item}
                       isModerator={isModerator}
-                      pending={act.isPending && act.variables?.placementId === item.placementId}
+                      pending={actingOn(item.placementId, 'remove')}
                       onRemove={() =>
                         act.mutate({ placementId: item.placementId, action: 'remove' })
                       }
