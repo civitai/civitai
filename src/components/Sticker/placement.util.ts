@@ -176,9 +176,10 @@ export function useImagePlacementSpace(imageId?: number) {
  * One hook rather than the mutation inline, so the tray and the sticker's own
  * buy button cannot drift into two versions of what happens on success.
  */
-export function useCreateStickerPlacement() {
+export function useCreateStickerPlacement(draftId?: string) {
   const utils = trpc.useUtils();
   const close = useStickerPlacementDraftStore((state) => state.close);
+  const cancelDraft = useStickerPlacementDraftStore((state) => state.cancelDraft);
 
   return trpc.placement.createSticker.useMutation({
     onSuccess: async (result) => {
@@ -190,7 +191,13 @@ export function useCreateStickerPlacement() {
             : 'It is live on the image now.',
       });
       await utils.placement.invalidate();
-      close();
+      // Only the one that was bought. The others are still being arranged, and
+      // ending the session would take them with it — which is the bug this
+      // whole flow exists to avoid, arrived at from the other direction. The
+      // draft has to go either way: it is now a real placement, and leaving it
+      // would draw the same sticker twice with one of them uncommitted.
+      if (draftId) cancelDraft(draftId);
+      else close();
     },
     onError: (error) =>
       showErrorNotification({

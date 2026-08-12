@@ -46,7 +46,7 @@ export function StickerPlacementTray() {
 
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
   const trayOpen = useStickerPlacementDraftStore((state) => state.trayOpen);
-  const draft = useStickerPlacementDraftStore((state) => state.draft);
+  const drafts = useStickerPlacementDraftStore((state) => state.drafts);
   const begin = useStickerPlacementDraftStore((state) => state.begin);
   const closeTray = useStickerPlacementDraftStore((state) => state.closeTray);
   const setInteraction = useStickerPlacementDraftStore((state) => state.setInteraction);
@@ -73,8 +73,16 @@ export function StickerPlacementTray() {
 
   // `null` is unlimited and `undefined` is not loaded yet. Collapsing them
   // flashes "unlimited" on every open.
-  const balanceFor = (cosmeticId: number) =>
-    balances?.find((balance) => balance.cosmeticId === cosmeticId)?.remaining;
+  //
+  // Drafts already on the image are subtracted, because each one will spend a
+  // use when it is bought. Without this you could lay out three with one use
+  // left and only find out at the third purchase, having arranged all of them.
+  const balanceFor = (cosmeticId: number) => {
+    const remaining = balances?.find((balance) => balance.cosmeticId === cosmeticId)?.remaining;
+    if (remaining == null) return remaining;
+    const drafted = drafts.filter((draft) => draft.cosmeticId === cosmeticId).length;
+    return Math.max(remaining - drafted, 0);
+  };
 
   const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
 
@@ -119,10 +127,11 @@ export function StickerPlacementTray() {
   };
 
   const price = space?.price ?? 0;
-  // Says the panel can be got out of the way only once there is something that
-  // would survive it. Before that it is an instruction about nothing.
-  const instruction = draft
-    ? 'Drag it where you want it, then buy it under the sticker. Closing this panel leaves it on the image.'
+  // Says the panel can be got out of the way, and that more than one is allowed,
+  // only once there is something that would survive it. Before that both are
+  // instructions about nothing.
+  const instruction = drafts.length
+    ? 'Drag out as many as you like, then buy the ones you want. Closing this panel leaves them on the image.'
     : 'Drag a sticker onto the image.';
 
   return (
@@ -144,7 +153,7 @@ export function StickerPlacementTray() {
           </div>
           <CloseButton
             onClick={closeTray}
-            aria-label={draft ? 'Close the sticker panel' : 'Stop placing a sticker'}
+            aria-label={drafts.length ? 'Close the sticker panel' : 'Stop placing a sticker'}
           />
         </div>
 
@@ -182,7 +191,8 @@ export function StickerPlacementTray() {
                     onPointerDown={exhausted ? () => setTopUp(option) : grab(option.id)}
                     className={clsx(
                       'flex shrink-0 cursor-grab flex-col items-center gap-1 rounded border p-2',
-                      draft?.cosmeticId === option.id || dragging === option.id
+                      drafts.some((draft) => draft.cosmeticId === option.id) ||
+                        dragging === option.id
                         ? 'border-blue-5'
                         : 'border-transparent',
                       exhausted && 'opacity-40'

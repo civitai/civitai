@@ -9,6 +9,12 @@ import {
 export type StickerInteraction = 'move' | 'resize' | 'rotate';
 
 export type StickerDraft = {
+  /**
+   * Client-side identity. Not the cosmetic: the same sticker can be laid down
+   * several times, so `cosmeticId` cannot tell two drafts apart, and index would
+   * shift under every removal while a gesture holds a reference to one.
+   */
+  id: string;
   imageId: number;
   cosmeticId: number;
   /** Fractions of the rendered media box, same as a stored placement. */
@@ -32,7 +38,20 @@ export type StickerDraft = {
  * every subsequent drag.
  */
 interface StickerPlacementDraftStore {
-  draft: StickerDraft | null;
+  /**
+   * Every sticker laid down but not yet bought, in the order they were laid.
+   * Several at once because arranging a few and then deciding which to keep is
+   * the way people actually use this — and because dragging a second one out
+   * used to silently delete the first.
+   */
+  drafts: StickerDraft[];
+  /**
+   * Which one the handles, the rotate knob, the remove badge and the buy button
+   * belong to. Exactly one, and never zero while any draft exists: N sets of
+   * handles is unreadable, and N buy buttons would need to avoid each other —
+   * a geometry problem that does not exist while only one is on screen.
+   */
+  selectedDraftId: string | null;
   /**
    * The image this placement session belongs to — NOT whether the tray is
    * showing. The two were one field, and it meant the panel could not be got out
@@ -59,39 +78,52 @@ interface StickerPlacementDraftStore {
   interaction: StickerInteraction | null;
 
   open: (imageId: number) => void;
-  /** End the session outright — the draft, the panel and the target. */
+  /** End the session outright — every draft, the panel and the target. */
   close: () => void;
-  /** Put the panel away and leave the draft on the image. */
+  /** Put the panel away and leave the drafts on the image. */
   closeTray: () => void;
-  /** Discard the draft and leave the panel as it is. */
-  cancelDraft: () => void;
+  /** Discard one draft, defaulting to the selected one. */
+  cancelDraft: (id?: string) => void;
+  select: (id: string) => void;
   setSurface: (element: HTMLElement | null) => void;
   setTray: (element: HTMLElement | null) => void;
   begin: (cosmeticId: number, at?: { x: number; y: number }, maxScale?: number) => void;
   setInteraction: (interaction: StickerInteraction | null) => void;
-  move: (next: Partial<Omit<StickerDraft, 'imageId' | 'cosmeticId'>>) => void;
+  /**
+   * Moves one draft by id rather than "the current one". A gesture outlives the
+   * selection — a press selects and then drags — so resolving the target at
+   * every pointer move would let a selection change mid-drag redirect it.
+   */
+  move: (id: string, next: Partial<Omit<StickerDraft, 'id' | 'imageId' | 'cosmeticId'>>) => void;
 }
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
-const ENDED = { targetImageId: null, trayOpen: false, draft: null, interaction: null };
+const ENDED = {
+  targetImageId: null,
+  trayOpen: false,
+  drafts: [] as StickerDraft[],
+  selectedDraftId: null,
+  interaction: null,
+};
 
 export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>((set) => ({
-  draft: null,
+  drafts: [],
+  selectedDraftId: null,
   targetImageId: null,
   trayOpen: false,
   surface: null,
   tray: null,
   interaction: null,
 
-  // Reopening on the image you are already placing on keeps the draft — that is
-  // the way back to the panel after putting it away, so taking the sticker would
-  // punish using it. A different image is a different session.
+  // Reopening on the image you are already placing on keeps the drafts — that is
+  // the way back to the panel after putting it away, so taking them would punish
+  // using it. A different image is a different session.
   open: (imageId) =>
     set((state) =>
-      state.draft?.imageId === imageId
+      state.targetImageId === imageId
         ? { targetImageId: imageId, trayOpen: true }
-        : { targetImageId: imageId, trayOpen: true, draft: null, interaction: null }
+        : { ...ENDED, targetImageId: imageId, trayOpen: true }
     ),
 
   close: () => set(ENDED),
@@ -100,59 +132,91 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
   // leaving `targetImageId` set would keep this image in placement mode — still
   // revealing pending placements, still holding the surface — with nothing on
   // screen to say so or to end it.
-  closeTray: () => set((state) => (state.draft ? { trayOpen: false } : ENDED)),
-  cancelDraft: () => set((state) => (state.trayOpen ? { draft: null, interaction: null } : ENDED)),
+  closeTray: () => set((state) => (state.drafts.length ? { trayOpen: false } : ENDED)),
+
+  cancelDraft: (id) =>
+    set((state) => {
+      const target = id ?? state.selectedDraftId;
+      const drafts = state.drafts.filter((draft) => draft.id !== target);
+      if (drafts.length === state.drafts.length) return state;
+      if (!drafts.length && !state.trayOpen) return ENDED;
+
+      return {
+        drafts,
+        // Selection follows the removal rather than emptying: the controls have
+        // to land on something while any draft is left, or the remaining ones
+        // are unreachable and there is no way to remove the next.
+        selectedDraftId:
+          state.selectedDraftId === target
+            ? drafts[drafts.length - 1]?.id ?? null
+            : state.selectedDraftId,
+        interaction: null,
+      };
+    }),
+
+  select: (id) => set({ selectedDraftId: id }),
 
   setInteraction: (interaction) => set({ interaction }),
   setSurface: (element) => set({ surface: element }),
   setTray: (element) => set({ tray: element }),
 
   begin: (cosmeticId, at, maxScale) =>
-    set((state) =>
-      state.targetImageId == null
-        ? state
-        : {
-            draft: {
-              imageId: state.targetImageId,
-              cosmeticId,
-              x: at?.x ?? 0.5,
-              y: at?.y ?? 0.5,
-              // The creator's ceiling, not just the global one. A creator below
-              // the 18% default is a third of the slider's range, and their
-              // space refused the very first gesture with no hint why.
-              scale: Math.min(
-                STICKER_PLACEMENT_DEFAULT_SCALE,
-                maxScale ?? STICKER_PLACEMENT_MAX_SCALE
-              ),
-              rotation: 0,
-            },
-          }
-    ),
+    set((state) => {
+      if (state.targetImageId == null) return state;
 
-  move: (next) =>
-    set((state) =>
-      !state.draft
-        ? state
-        : {
-            draft: {
-              ...state.draft,
-              ...next,
-              x: clamp(next.x ?? state.draft.x, 0, 1),
-              y: clamp(next.y ?? state.draft.y, 0, 1),
-              scale: clamp(
-                next.scale ?? state.draft.scale,
-                STICKER_PLACEMENT_MIN_SCALE,
-                STICKER_PLACEMENT_MAX_SCALE
-              ),
-              rotation: clamp(
-                next.rotation ?? state.draft.rotation,
-                -STICKER_PLACEMENT_MAX_ROTATION,
-                STICKER_PLACEMENT_MAX_ROTATION
-              ),
-            },
-          }
-    ),
+      const draft: StickerDraft = {
+        id: crypto.randomUUID(),
+        imageId: state.targetImageId,
+        cosmeticId,
+        x: at?.x ?? 0.5,
+        y: at?.y ?? 0.5,
+        // The creator's ceiling, not just the global one. A creator below the
+        // 18% default is a third of the slider's range, and their space refused
+        // the very first gesture with no hint why.
+        scale: Math.min(STICKER_PLACEMENT_DEFAULT_SCALE, maxScale ?? STICKER_PLACEMENT_MAX_SCALE),
+        rotation: 0,
+      };
+
+      // Appended and selected: the one just dragged out is the one being placed,
+      // and the drag that created it is already in flight against it.
+      return { drafts: [...state.drafts, draft], selectedDraftId: draft.id };
+    }),
+
+  move: (id, next) =>
+    set((state) => {
+      const index = state.drafts.findIndex((draft) => draft.id === id);
+      if (index < 0) return state;
+
+      const current = state.drafts[index];
+      const moved: StickerDraft = {
+        ...current,
+        ...next,
+        x: clamp(next.x ?? current.x, 0, 1),
+        y: clamp(next.y ?? current.y, 0, 1),
+        scale: clamp(
+          next.scale ?? current.scale,
+          STICKER_PLACEMENT_MIN_SCALE,
+          STICKER_PLACEMENT_MAX_SCALE
+        ),
+        rotation: clamp(
+          next.rotation ?? current.rotation,
+          -STICKER_PLACEMENT_MAX_ROTATION,
+          STICKER_PLACEMENT_MAX_ROTATION
+        ),
+      };
+
+      // Replaced in place rather than moved to the end: order is what the drafts
+      // are drawn in, and reordering on move would make a sticker jump over its
+      // neighbours mid-drag.
+      const drafts = [...state.drafts];
+      drafts[index] = moved;
+      return { drafts };
+    }),
 }));
+
+/** The one carrying the handles and the buy button, if any. */
+export const selectedDraft = (state: { drafts: StickerDraft[]; selectedDraftId: string | null }) =>
+  state.drafts.find((draft) => draft.id === state.selectedDraftId) ?? null;
 
 /**
  * Pointer position as a fraction of the media box.

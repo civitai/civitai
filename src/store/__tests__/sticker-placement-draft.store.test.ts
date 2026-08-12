@@ -1,23 +1,28 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
+import {
+  selectedDraft,
+  useStickerPlacementDraftStore,
+} from '~/store/sticker-placement-draft.store';
 
 const IMAGE = 101;
 const OTHER_IMAGE = 202;
 const COSMETIC = 7;
+const OTHER_COSMETIC = 8;
 
 const state = () => useStickerPlacementDraftStore.getState();
 
-/** Open the panel and get a sticker onto the image, which is the interesting state. */
-const withDraft = (imageId = IMAGE) => {
-  state().open(imageId);
-  state().begin(COSMETIC);
-  expect(state().draft, 'setup failed to produce a draft').not.toBeNull();
+/** Open the panel and lay `count` stickers down, which is the interesting state. */
+const withDrafts = (count = 1, cosmeticId = COSMETIC) => {
+  state().open(IMAGE);
+  for (let i = 0; i < count; i++) state().begin(cosmeticId);
+  expect(state().drafts, 'setup did not produce the drafts it meant to').toHaveLength(count);
 };
 
 describe('sticker placement draft store', () => {
   beforeEach(() => {
     useStickerPlacementDraftStore.setState({
-      draft: null,
+      drafts: [],
+      selectedDraftId: null,
       targetImageId: null,
       trayOpen: false,
       surface: null,
@@ -26,94 +31,187 @@ describe('sticker placement draft store', () => {
     });
   });
 
-  // The panel is fixed to the bottom of the viewport, so it covers the part of
-  // the image a sticker aimed low has to land on. Putting it away has to be
-  // possible without losing the sticker, which is the whole point of separating
-  // `trayOpen` from `targetImageId`.
-  it('keeps the draft when the panel is put away', () => {
-    withDraft();
+  describe('several at once', () => {
+    // Dragging a second sticker out used to delete the first, which made
+    // arranging a few and then choosing between them impossible.
+    it('keeps the earlier stickers when another is dragged out', () => {
+      withDrafts(3);
 
-    state().closeTray();
+      expect(state().drafts).toHaveLength(3);
+    });
 
-    expect(state().draft).toMatchObject({ imageId: IMAGE, cosmeticId: COSMETIC });
-    expect(state().trayOpen).toBe(false);
-    // The layer that draws the draft and the surface every drag is measured
-    // against are both gated on this. Losing it unmounts the sticker as surely
-    // as clearing the draft would.
-    expect(state().targetImageId).toBe(IMAGE);
-  });
+    it('gives each draft its own identity, so the same sticker can be laid twice', () => {
+      withDrafts(2);
 
-  it('ends the session when the panel is put away with nothing placed', () => {
-    state().open(IMAGE);
+      const [first, second] = state().drafts;
+      expect(first.cosmeticId).toBe(second.cosmeticId);
+      expect(first.id).not.toBe(second.id);
+    });
 
-    state().closeTray();
+    it('selects the one just dragged out, which is the one the drag is moving', () => {
+      withDrafts(2);
 
-    expect(state().targetImageId).toBeNull();
-    expect(state().trayOpen).toBe(false);
-  });
+      expect(state().selectedDraftId).toBe(state().drafts[1].id);
+    });
 
-  it('gets back to the panel without losing the sticker', () => {
-    withDraft();
-    state().closeTray();
+    // The handles, the knob, the remove badge and the buy button all belong to
+    // the selection. Leaving it empty while drafts remain strands them: nothing
+    // to drag, and no way to remove the next one.
+    it('never leaves the selection empty while any draft remains', () => {
+      withDrafts(3);
+      const [first, , third] = state().drafts;
 
-    state().open(IMAGE);
+      state().cancelDraft(third.id);
+      expect(selectedDraft(state())).not.toBeNull();
 
-    expect(state().trayOpen).toBe(true);
-    expect(state().draft).toMatchObject({ cosmeticId: COSMETIC });
-  });
+      state().cancelDraft(state().selectedDraftId!);
+      expect(selectedDraft(state())?.id).toBe(first.id);
+    });
 
-  it('does not carry a draft onto a different image', () => {
-    withDraft();
+    it('leaves the selection alone when some other draft is removed', () => {
+      withDrafts(3);
+      const [first, , third] = state().drafts;
+      state().select(third.id);
 
-    state().open(OTHER_IMAGE);
+      state().cancelDraft(first.id);
 
-    expect(state().draft).toBeNull();
-    expect(state().targetImageId).toBe(OTHER_IMAGE);
-  });
+      expect(state().selectedDraftId).toBe(third.id);
+    });
 
-  it('discards the draft but keeps the panel, so another sticker can be chosen', () => {
-    withDraft();
+    it('moves the draft it is given rather than whichever is selected', () => {
+      withDrafts(2);
+      const [first, second] = state().drafts;
 
-    state().cancelDraft();
+      state().move(first.id, { x: 0.1 });
 
-    expect(state().draft).toBeNull();
-    expect(state().trayOpen).toBe(true);
-    expect(state().targetImageId).toBe(IMAGE);
-  });
+      expect(state().drafts.find((draft) => draft.id === first.id)?.x).toBe(0.1);
+      expect(state().drafts.find((draft) => draft.id === second.id)?.x).toBe(0.5);
+    });
 
-  // Cancelling from the sticker's own badge with the panel already away leaves
-  // nothing on screen. Holding the session open there would keep the image in
-  // placement mode — still revealing pending placements, still holding the
-  // surface — with no visible control that would end it.
-  it('ends the session when the draft is discarded with the panel already away', () => {
-    withDraft();
-    state().closeTray();
+    // Order is draw order. Reordering on move would make a sticker jump over its
+    // neighbours mid-drag.
+    it('keeps draft order across a move', () => {
+      withDrafts(3);
+      const ids = state().drafts.map((draft) => draft.id);
 
-    state().cancelDraft();
+      state().move(ids[0], { x: 0.2 });
 
-    expect(state()).toMatchObject({ draft: null, targetImageId: null, trayOpen: false });
-  });
+      expect(state().drafts.map((draft) => draft.id)).toEqual(ids);
+    });
 
-  // `useCreateStickerPlacement` calls this on a successful purchase. If it only
-  // put the panel away, the draft would stay on the image on top of the real
-  // placement it just became — the same sticker drawn twice, one of them
-  // uncommitted.
-  it('ends everything on close, which is what a completed purchase calls', () => {
-    withDraft();
+    it('ignores a move for a draft that is already gone', () => {
+      withDrafts(1);
+      const [only] = state().drafts;
+      state().cancelDraft(only.id);
 
-    state().close();
-
-    expect(state()).toMatchObject({
-      draft: null,
-      targetImageId: null,
-      trayOpen: false,
-      interaction: null,
+      expect(() => state().move(only.id, { x: 0.9 })).not.toThrow();
     });
   });
 
-  it('will not start a draft with no image targeted', () => {
-    state().begin(COSMETIC);
+  describe('the panel and the session', () => {
+    // The panel is fixed to the bottom of the viewport, so it covers the part of
+    // the image a sticker aimed low has to land on. Putting it away has to be
+    // possible without losing the stickers.
+    it('keeps the drafts when the panel is put away', () => {
+      withDrafts(2);
 
-    expect(state().draft).toBeNull();
+      state().closeTray();
+
+      expect(state().drafts).toHaveLength(2);
+      expect(state().trayOpen).toBe(false);
+      // The layer that draws the drafts and the surface every drag is measured
+      // against are both gated on this. Losing it unmounts them as surely as
+      // clearing the drafts would.
+      expect(state().targetImageId).toBe(IMAGE);
+    });
+
+    it('ends the session when the panel is put away with nothing placed', () => {
+      state().open(IMAGE);
+
+      state().closeTray();
+
+      expect(state().targetImageId).toBeNull();
+      expect(state().trayOpen).toBe(false);
+    });
+
+    it('gets back to the panel without losing the stickers', () => {
+      withDrafts(2);
+      state().closeTray();
+
+      state().open(IMAGE);
+
+      expect(state().trayOpen).toBe(true);
+      expect(state().drafts).toHaveLength(2);
+    });
+
+    it('does not carry drafts onto a different image', () => {
+      withDrafts(2);
+
+      state().open(OTHER_IMAGE);
+
+      expect(state().drafts).toHaveLength(0);
+      expect(state().targetImageId).toBe(OTHER_IMAGE);
+    });
+
+    it('discards one draft but keeps the panel, so another sticker can be chosen', () => {
+      withDrafts(1);
+
+      state().cancelDraft(state().drafts[0].id);
+
+      expect(state().drafts).toHaveLength(0);
+      expect(state().trayOpen).toBe(true);
+      expect(state().targetImageId).toBe(IMAGE);
+    });
+
+    // Cancelling from the sticker's own badge with the panel already away leaves
+    // nothing on screen. Holding the session open there would keep the image in
+    // placement mode — still revealing pending placements, still holding the
+    // surface — with no visible control that would end it.
+    it('ends the session when the last draft goes with the panel already away', () => {
+      withDrafts(2);
+      state().closeTray();
+
+      state().cancelDraft(state().drafts[0].id);
+      expect(state().targetImageId, 'ended while a draft was still on the image').toBe(IMAGE);
+
+      state().cancelDraft(state().drafts[0].id);
+      expect(state()).toMatchObject({ targetImageId: null, trayOpen: false, drafts: [] });
+    });
+
+    it('ends everything on close', () => {
+      withDrafts(2);
+
+      state().close();
+
+      expect(state()).toMatchObject({
+        drafts: [],
+        selectedDraftId: null,
+        targetImageId: null,
+        trayOpen: false,
+        interaction: null,
+      });
+    });
+
+    it('will not start a draft with no image targeted', () => {
+      state().begin(COSMETIC);
+
+      expect(state().drafts).toHaveLength(0);
+    });
+  });
+
+  // `useCreateStickerPlacement` removes the bought draft rather than ending the
+  // session. Ending it would take the drafts still being arranged with it; and
+  // leaving the bought one would draw the same sticker twice, once as the real
+  // placement and once as an uncommitted draft on top of it.
+  it('leaves the other drafts alone when one is bought', () => {
+    withDrafts(2);
+    state().begin(OTHER_COSMETIC);
+    const bought = state().drafts[1];
+
+    state().cancelDraft(bought.id);
+
+    expect(state().drafts).toHaveLength(2);
+    expect(state().drafts.map((draft) => draft.id)).not.toContain(bought.id);
+    expect(state().targetImageId).toBe(IMAGE);
   });
 });
