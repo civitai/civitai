@@ -26,6 +26,19 @@ import { useEffect, useMemo, useState, type CSSProperties, type ReactElement } f
 const PENDING_CONTROL_Z = 1000;
 
 /**
+ * The sticker's angle, adjusted so anything carrying text never ends up upside
+ * down.
+ *
+ * Rotation is clamped to ±180, so following it faithfully would hand the owner
+ * their approve/decline mirrored — worse than not rotating at all, which is the
+ * failure Justin called out before asking for this. Past a quarter turn the
+ * block is flipped back the other way: it still reads as belonging to a tilted
+ * sticker, and the words stay the right way up.
+ */
+const uprightRotation = (rotation: number) =>
+  Math.abs(rotation) > 90 ? rotation - Math.sign(rotation) * 180 : rotation;
+
+/**
  * Placed stickers, drawn over the content they were placed on.
  *
  * Oldest at the bottom, newest on top. Covering another sticker is a feature —
@@ -332,10 +345,26 @@ export function StickerPlacementOverlay({
                     the badge kept outside the transform (what this does) or a
                     z-index on the pending wrapper itself. */}
               <div
-                className={clsx('pointer-events-auto absolute -translate-x-1/2', revealClassName)}
+                className={clsx('pointer-events-auto absolute', revealClassName)}
                 style={{
                   left: `${placement.data.x * 100}%`,
                   top: `calc(${placement.data.y * 100}% + ${placement.data.scale * 50}%)`,
+                  // Tilted to match the sticker, hinged at the edge nearest it,
+                  // so the block reads as attached to a rotated sticker rather
+                  // than as a level bar under a crooked one.
+                  //
+                  // It does NOT orbit the sticker's centre — it stays where it
+                  // was and only turns. Orbiting needs the sticker's rendered
+                  // HEIGHT, and the anchor above is already approximate for
+                  // exactly that reason: `scale` is a fraction of the width
+                  // while `top` resolves against the height, so the true offset
+                  // needs the sticker's own aspect ratio, which is only knowable
+                  // by measuring the loaded artwork. Turning in place needs none
+                  // of that and carries most of the effect.
+                  transform: `translateX(-50%) rotate(${uprightRotation(
+                    placement.data.rotation
+                  )}deg)`,
+                  transformOrigin: 'top center',
                   // Above every sticker, not just above the one it belongs to:
                   // the layer order means anything placed later covers this
                   // sticker, and it would cover the owner's only way to answer.
