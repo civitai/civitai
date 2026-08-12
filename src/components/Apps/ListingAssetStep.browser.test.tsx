@@ -1104,6 +1104,66 @@ describe('ListingAssetStep — EXIF orientation: the axes only agree for some co
     );
   });
 
+  test('the WEBP skip is NARROW — the orientation-invariant icon MAXIMUM still refuses before upload', async () => {
+    renderStep();
+
+    // The icon's own maximum is `Math.max(width, height)` — invariant under a
+    // quarter turn, so it stays on for WebP like the minimum above.
+    //
+    // 🔴 It needs its own case because it is NOT covered by the ceiling guard two
+    // tests up: 4096 is HALF the 8192 kind-agnostic ceiling, so a fixture that trips
+    // the icon maximum is comfortably under the ceiling and reaches this bound with
+    // nothing having fired earlier. Widening the skip to cover it therefore changes
+    // real behaviour — a 4097px icon that used to be refused at the picker would be
+    // uploaded and refused by the server — while leaving every other test green.
+    //
+    // The strip shape is deliberate: its aspect (20.49) is far outside the icon
+    // band, which for a WebP is exactly the bound that is skipped, so what remains
+    // to refuse it is the maximum and nothing else. `expectRefused` matches the
+    // WHOLE message, so a run where the aspect band fired instead would fail here
+    // rather than pass for the wrong reason.
+    const over = LISTING_ICON_MAX_PX + 1;
+    expect(over).toBeLessThan(LISTING_ASSET_MAX_DIMENSION_PX);
+    await expectRefused(
+      'icon',
+      await makeExifOrientedFile({
+        name: 'over-max-rotated.webp',
+        mime: 'image/webp',
+        width: over,
+        height: 200,
+        orientation: 6,
+        expectClient: { width: over, height: 200 },
+      }),
+      `icon must be at most ${LISTING_ICON_MAX_PX}px on its longer side (got ${over}px)`
+    );
+  });
+
+  test('the WEBP skip is NARROW — the screenshot MINIMUM shorter side still refuses before upload', async () => {
+    renderStep();
+
+    // The third kind's invariant bound, and the last of the four kept ones without a
+    // case of its own. `Math.min(width, height)` cannot be changed by a quarter turn,
+    // so a WebP screenshot under it is refused at the picker exactly as a PNG one is.
+    //
+    // Square on purpose: aspect 1.00 sits inside the screenshot band (0.4–2.6), so
+    // this fixture would be accepted by every bound EXCEPT the minimum — the test
+    // does not lean on the aspect skip in either direction, and a run in which the
+    // minimum stopped applying has nothing else left to refuse it.
+    const under = LISTING_SCREENSHOT_MIN_PX - 20;
+    await expectRefused(
+      'screenshots',
+      await makeExifOrientedFile({
+        name: 'small-rotated.webp',
+        mime: 'image/webp',
+        width: under,
+        height: under,
+        orientation: 6,
+        expectClient: { width: under, height: under },
+      }),
+      `screenshot must be at least ${LISTING_SCREENSHOT_MIN_PX}px on its shorter side`
+    );
+  });
+
   test('🔴 the skipped set is not just the ASPECT bands — the cover minimum WIDTH names an axis too', async () => {
     renderStep();
 

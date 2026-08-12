@@ -18,11 +18,21 @@ import {
  * it reproduced the bug, and nothing would have shown that the server ever saw an
  * orientation at all. That is the failure this file exists to make impossible.
  *
- * What is asserted is the two INPUTS `probeStoredImage` consumes —
- * `sharp().metadata()`'s stored dimensions and its `orientation` — plus the rule
- * that function states over them (orientations 5–8 are quarter turns, so the
- * displayed pair is the stored one transposed). Runs in the `unit` project, which
- * keeps the real `sharp`.
+ * Scope is deliberately ONE claim: that these fixtures' BYTES carry a readable
+ * EXIF orientation, i.e. the two INPUTS `probeStoredImage` consumes —
+ * `sharp().metadata()`'s stored dimensions and its `orientation`.
+ *
+ * 🔴 It stops there on purpose. An earlier revision also asserted what the server
+ * MAKES of those inputs, using a local helper that re-stated `probeStoredImage`'s
+ * orientation-5–8 transposition — a vendored copy of a rule, which is the exact
+ * anti-pattern this PR exists to remove (civitai/cli#270): it agrees with itself
+ * whatever the real function does, so it could not detect the two diverging. The
+ * rule is now EXECUTED instead, by `persistListingAssetImage` running end to end
+ * against the real `probeStoredImage` in
+ * `src/server/services/blocks/__tests__/offsite-listing.service.test.ts`
+ * ("reports a quarter-turned JPEG/WEBP the way a renderer shows it").
+ *
+ * Runs in the `unit` project, which keeps the real `sharp`.
  */
 
 /** A solid raster of a known STORED size, in the container under test. */
@@ -30,14 +40,6 @@ async function raster(format: 'webp' | 'jpeg', width: number, height: number) {
   const img = sharp({ create: { width, height, channels: 3, background: '#4488cc' } });
   const buf = format === 'webp' ? await img.webp().toBuffer() : await img.jpeg().toBuffer();
   return new Uint8Array(buf);
-}
-
-/** Exactly the transposition rule `probeStoredImage` applies. */
-function displayed(m: { width?: number; height?: number; orientation?: number }) {
-  const quarterTurned = m.orientation != null && m.orientation >= 5 && m.orientation <= 8;
-  return quarterTurned
-    ? { width: m.height, height: m.width }
-    : { width: m.width, height: m.height };
 }
 
 describe('EXIF fixture builders are faithful to the server-side reader', () => {
@@ -54,10 +56,10 @@ describe('EXIF fixture builders are faithful to the server-side reader', () => {
     // leave this undefined, and the browser-side WebP test would then be asserting
     // nothing about a disagreement.
     expect(meta.orientation).toBe(6);
-    // …so the server measures a LANDSCAPE 1280×640 (cover aspect 2.00) from bytes
-    // Chromium reports as a portrait 640×1280 (aspect 0.50). That inversion is the
-    // entire regression the client-side sniff exists to avoid.
-    expect(displayed(meta)).toEqual({ width: 1280, height: 640 });
+    // …which is what makes the server measure a LANDSCAPE 1280×640 (cover aspect
+    // 2.00) from bytes Chromium reports as a portrait 640×1280 (aspect 0.50). That
+    // inversion is the entire regression the client-side sniff exists to avoid, and
+    // the consequence is asserted where the real transposition RUNS — see the header.
   });
 
   test('jpegWithExifOrientation produces a JPEG sharp reads as quarter-turned', async () => {
@@ -68,10 +70,9 @@ describe('EXIF fixture builders are faithful to the server-side reader', () => {
     expect(meta.format).toBe('jpeg');
     expect({ width: meta.width, height: meta.height }).toEqual({ width: 640, height: 1280 });
     expect(meta.orientation).toBe(6);
-    // Same server-side reading as the WebP above — which is what makes the JPEG the
-    // CONTROL: the browser agrees here and disagrees there, so the two fixtures
-    // differ in exactly one variable, the container.
-    expect(displayed(meta)).toEqual({ width: 1280, height: 640 });
+    // Same stored pair and same orientation as the WebP above — which is what makes
+    // the JPEG the CONTROL: the browser agrees here and disagrees there, so the two
+    // fixtures differ in exactly one variable, the container.
   });
 
   test('an untouched raster carries no orientation (the builders are what add it)', async () => {
@@ -81,7 +82,7 @@ describe('EXIF fixture builders are faithful to the server-side reader', () => {
     for (const format of ['webp', 'jpeg'] as const) {
       const meta = await sharp(Buffer.from(await raster(format, 640, 1280))).metadata();
       expect(meta.orientation).toBeUndefined();
-      expect(displayed(meta)).toEqual({ width: 640, height: 1280 });
+      expect({ width: meta.width, height: meta.height }).toEqual({ width: 640, height: 1280 });
     }
   });
 });

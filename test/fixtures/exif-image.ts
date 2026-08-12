@@ -12,9 +12,9 @@
  * Both are pure byte surgery over an already-encoded image, so the same helper
  * serves the browser suite (raster from `canvas.toBlob`) and the node suite
  * (raster from `sharp`) — which is what lets ONE fixture be proven faithful to
- * BOTH readers: `stored-image-probe-exif-fixture.test.ts` asserts sharp reads
- * these exact containers the way the server's probe needs, and the browser suite
- * asserts what Chromium makes of them.
+ * BOTH readers: `src/server/utils/__tests__/listing-asset-exif-fixture.test.ts`
+ * asserts sharp reads these exact containers the way the server's probe needs, and
+ * the browser suite asserts what Chromium makes of them.
  */
 
 function u32le(n: number): number[] {
