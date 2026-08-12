@@ -208,6 +208,12 @@ export function StickerPlacementOverlay({
           const layer = index + 1;
           const delay = paced && armed && step == null && !replayed ? delays?.[index] ?? 0 : 0;
           const delayStyle = delay ? ({ '--sticker-delay': `${delay}ms` } as CSSProperties) : {};
+          // Worn by everything belonging to this placement, not just the
+          // artwork. The owner's approve/decline is drawn in a separate layer,
+          // and without this it appeared instantly over a sticker still waiting
+          // its turn — buttons hovering over nothing, asking about a sticker
+          // that had not arrived yet.
+          const revealClassName = stagger && (armed ? styles.appear : styles.hold);
 
           // Pending rows only ever reach a viewer who is party to them — the
           // server scopes them to the placer and the owner — so this decides how
@@ -241,11 +247,7 @@ export function StickerPlacementOverlay({
           const body = (
             <div
               key={placement.id}
-              className={clsx(
-                'absolute',
-                interactive && 'pointer-events-auto',
-                stagger && (armed ? styles.appear : styles.hold)
-              )}
+              className={clsx('absolute', interactive && 'pointer-events-auto', revealClassName)}
               style={{
                 left: `${placement.data.x * 100}%`,
                 top: `${placement.data.y * 100}%`,
@@ -328,7 +330,7 @@ export function StickerPlacementOverlay({
                     the badge kept outside the transform (what this does) or a
                     z-index on the pending wrapper itself. */}
               <div
-                className="pointer-events-auto absolute -translate-x-1/2"
+                className={clsx('pointer-events-auto absolute -translate-x-1/2', revealClassName)}
                 style={{
                   left: `${placement.data.x * 100}%`,
                   top: `calc(${placement.data.y * 100}% + ${placement.data.scale * 50}%)`,
@@ -336,6 +338,7 @@ export function StickerPlacementOverlay({
                   // the layer order means anything placed later covers this
                   // sticker, and it would cover the owner's only way to answer.
                   zIndex: layer,
+                  ...delayStyle,
                 }}
               >
                 {isOwner ? (
