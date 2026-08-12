@@ -337,14 +337,10 @@ export function ModelVersionUpsertForm({
 
   const MAX_EARLY_ACCCESS = 30;
 
-  // A NEW version seeds the type-based suggested licensing fee (non-checkpoints = 1 ⚡ per 10 images), but only
-  // when the fee editor is actually shown — never seed a fee the creator can't see. Existing versions keep their
-  // stored value (0 = off).
-  const initialLicensingFee = version?.id
-    ? Number(version.licensingFee ?? 0)
-    : features.licensingFee
-    ? suggestedFee({ modelType: model?.type, baseModel: initialBaseModel })
-    : 0;
+  // The form never LOADS with a fee: the type-based suggestion (non-checkpoints = 1 ⚡ per 10 images) is
+  // applied when the creator opens the fee editor, not before — a fee seeded behind a closed editor is a
+  // charge nobody asked for, and it tripped the rights affirmation at submit (CU 868kq69rv).
+  const initialLicensingFee = Number(version?.licensingFee ?? 0);
 
   const defaultValues: Schema = {
     ...version,
@@ -414,6 +410,11 @@ export function ModelVersionUpsertForm({
   const currentLicensingFee = form.watch('licensingFee') ?? 0;
   const existingSettlementCurrency = version?.licensingFeeSettlementCurrency ?? null;
   const hasExistingLicensingFee = Number(version?.licensingFee ?? 0) > 0;
+  // A version that already charges opens with the monetization section expanded; everything else starts
+  // collapsed behind the master switch below.
+  const hasExistingCharge = !!version?.paidAccess || hasExistingLicensingFee;
+  const [chargeEnabled, setChargeEnabled] = useState(hasExistingCharge);
+  const rightsAffirmed = form.watch('rightsAffirmed') ?? false;
   // The fee is edited as a whole-number "buzz per N images" ratio; the stored `licensingFee` stays per-image.
   const [feeRatio, setFeeRatio] = useState(() => feeToRatio(initialLicensingFee));
   const applyFeeRatio = (next: { buzz: number; images: number }) => {
@@ -493,8 +494,17 @@ export function ModelVersionUpsertForm({
   // from staff monetizing their own, and exempting on the role alone let every staff creator skip it.
   // The server applies the real ownership-scoped rule and simply ignores a moderator's tick on a model
   // they don't own.
-  const requiresRightsAffirmation =
-    !hasCurrentRightsAffirmation(version?.meta) && (currentLicensingFee > 0 || gateCharges);
+  const alreadyAffirmed = hasCurrentRightsAffirmation(version?.meta);
+  const requiresRightsAffirmation = !alreadyAffirmed && (currentLicensingFee > 0 || gateCharges);
+  // Step 2 of the disclosure: asked as soon as the creator says they want to charge, so the pricing
+  // controls never appear before the affirmation. Distinct from `requiresRightsAffirmation`, which is the
+  // submit gate and stays keyed to an actual charge — toggling the switch and changing your mind must not
+  // block a save.
+  const showRightsAffirmation = !alreadyAffirmed && chargeEnabled;
+  // Step 3: the pricing controls. A version already charging without an affirmation on record (predates
+  // the requirement) keeps them visible, so it can still be edited or turned off.
+  const showChargeSettings =
+    chargeEnabled && (alreadyAffirmed || rightsAffirmed || hasExistingCharge);
 
   const licensingSourceVersionId = form.watch('licensingSourceVersionId') ?? null;
   const { data: licensingRootsData } = trpc.modelVersion.getLicensingRoots.useQuery(
@@ -552,6 +562,47 @@ export function ModelVersionUpsertForm({
     }
   }, [baseModel]);
 
+  // Nothing may survive behind a collapsed section: `shouldUnregister` is false, so a hidden value is
+  // still submitted, and a fee the creator can no longer see is both a charge they didn't make and (via
+  // `requiresRightsAffirmation`) a submit blocked by a control that isn't on screen.
+  //
+  // An ended Early Access window is exempt: that config is locked, and clearing it here would let the
+  // master switch remove what the disabled paid-access switch refuses to.
+  const feeSeededRef = useRef(false);
+  const clearCharges = () => {
+    if ((form.getValues('licensingFee') ?? 0) > 0) {
+      form.setValue('licensingFee', 0, { shouldDirty: true });
+      setFeeRatio((r) => ({ buzz: 0, images: r.images }));
+    }
+    if (!isEarlyAccessOver && form.getValues('paidAccessConfig')) {
+      form.setValue('paidAccessConfig', null, { shouldDirty: true });
+      setGenMode(generationModeOf(null));
+    }
+    if (form.getValues('rightsAffirmed')) form.setValue('rightsAffirmed', false);
+    feeSeededRef.current = false;
+  };
+
+  // Unticking the affirmation withdraws the permission the pricing controls depend on, so it clears them
+  // too — leaving a fee behind a hidden editor is the bug this whole change is about. A version that was
+  // already charging is left alone: it has a stored price the creator didn't touch.
+  const prevRightsAffirmedRef = useRef(rightsAffirmed);
+  useEffect(() => {
+    const withdrawn = prevRightsAffirmedRef.current && !rightsAffirmed;
+    prevRightsAffirmedRef.current = rightsAffirmed;
+    if (withdrawn && !hasExistingCharge && !alreadyAffirmed) clearCharges();
+  }, [rightsAffirmed]);
+
+  // The suggested fee lands when the editor opens, not when the form loads. Re-armed by `clearCharges`,
+  // so re-opening the section suggests again — but a 0 the creator typed while the editor was open is
+  // theirs to keep.
+  useEffect(() => {
+    if (!showChargeSettings || !showLicensingFeeBlock || feeSeededRef.current) return;
+    feeSeededRef.current = true;
+    if (hasExistingCharge || (form.getValues('licensingFee') ?? 0) > 0) return;
+    const suggestion = suggestedFee({ modelType: model?.type, baseModel });
+    if (suggestion > 0) applyFeeRatio(feeToRatio(suggestion));
+  }, [showChargeSettings, showLicensingFeeBlock]);
+
   // Non-commercial base models can't be monetized. The monetization controls are
   // hidden (shouldUnregister is false, so their values would otherwise persist and
   // be re-submitted, then rejected server-side with a confusing error). Clear them
@@ -565,6 +616,9 @@ export function ModelVersionUpsertForm({
     if (form.getValues('monetization')) form.setValue('monetization', null);
     if (form.getValues('paidAccessConfig')) form.setValue('paidAccessConfig', null);
     if (form.getValues('useMonetization')) form.setValue('useMonetization', false);
+    if (form.getValues('rightsAffirmed')) form.setValue('rightsAffirmed', false);
+    setChargeEnabled(false);
+    feeSeededRef.current = false;
   }, [isNonCommercial]);
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
@@ -702,6 +756,10 @@ export function ModelVersionUpsertForm({
       setGenMode(
         generationModeOf(toFormPaidAccessConfig(version.paidAccess, version.donationGoal))
       );
+      // And for the master switch, for the same reason: `reset` restores the stored fee/gate, so the
+      // switch has to follow what was actually restored rather than its mount-time value.
+      setChargeEnabled(!!version.paidAccess || Number(version.licensingFee ?? 0) > 0);
+      feeSeededRef.current = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [acceptsTrainedWords, isTextualInversion, model?.id, version]);
@@ -1101,9 +1159,29 @@ export function ModelVersionUpsertForm({
                 <Text fw={600} mb="sm">
                   Monetization
                 </Text>
-                {showPaidAccessInput && (
+                {(showPaidAccessInput || showLicensingFeeBlock) && (
+                  <Switch
+                    label="I want to charge for this version"
+                    description="Sell access to the version, charge a fee per generation, or both."
+                    checked={chargeEnabled}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setChargeEnabled(checked);
+                      if (!checked) clearCharges();
+                    }}
+                    disabled={isEarlyAccessOver && !!version?.paidAccess}
+                  />
+                )}
+                {(showRightsAffirmation || requiresRightsAffirmation) && (
+                  <InputCheckbox
+                    name="rightsAffirmed"
+                    label={MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT}
+                    mt="sm"
+                  />
+                )}
+                {showChargeSettings && showPaidAccessInput && (
                   <Stack gap={0}>
-                    <Divider label="Paid Access Set Up" mb="md" />
+                    <Divider label="Paid Access Set Up" mb="md" mt="md" />
 
                     <DismissibleAlert
                       id="ea-info"
@@ -1175,7 +1253,7 @@ export function ModelVersionUpsertForm({
                     </Alert>
                     <Switch
                       my="sm"
-                      label="I want to charge for access to this version"
+                      label="Charge for access to this version"
                       checked={paidAccessConfig !== null}
                       onChange={(e) =>
                         form.setValue(
@@ -1509,11 +1587,11 @@ export function ModelVersionUpsertForm({
                         before removing early access.
                       </Text>
                     )}
-                    {(showLicensingFeeBlock || requiresRightsAffirmation) && <Divider my="md" />}
+                    {showLicensingFeeBlock && <Divider my="md" />}
                   </Stack>
                 )}
-                {showLicensingFeeBlock && (
-                  <Stack gap="xs">
+                {showChargeSettings && showLicensingFeeBlock && (
+                  <Stack gap="xs" mt={showPaidAccessInput ? undefined : 'md'}>
                     <Input.Wrapper
                       label="License Fee"
                       description={`Charge for generations using this version, as Buzz per number of generations. If this is a derivative of a base model that already charges a licensing fee, your fee is added on top of it. Set 0 to disable. Your membership allows up to ${licensingFeeCap} Buzz per generation for this model type.`}
@@ -1615,14 +1693,7 @@ export function ModelVersionUpsertForm({
                         </Text>
                       </Group>
                     )}
-                    {requiresRightsAffirmation && <Divider my="md" />}
                   </Stack>
-                )}
-                {requiresRightsAffirmation && (
-                  <InputCheckbox
-                    name="rightsAffirmed"
-                    label={MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT}
-                  />
                 )}
               </Stack>
             </Card>
