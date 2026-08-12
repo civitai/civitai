@@ -1,4 +1,8 @@
 import { Prisma } from '@prisma/client';
+import {
+  AUTO_FEATURE_NOTE_PREFIX,
+  AUTO_FEATURE_USER_ID,
+} from '~/server/common/auto-feature.constants';
 import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
@@ -3346,12 +3350,30 @@ export const removeCollectionItem = async ({
     );
   }
 
-  await dbWrite.$queryRaw`
-    DELETE FROM "CollectionItem"
-    WHERE "collectionId" = ${collectionId} AND "${Prisma.raw(
-    `${tableKey.toLowerCase()}Id`
-  )}" = ${itemId}
+  const idColumn = Prisma.raw(`"${tableKey.toLowerCase()}Id"`);
+
+  // An automatically featured item is rejected rather than deleted. Deleting it would let the
+  // next job run re-add the same image, since the job's dedupe is "is there already a row" —
+  // so for these rows the tombstone IS the removal. REJECTED is invisible to the render path,
+  // which defaults to ACCEPTED only.
+  const rejected = await dbWrite.$executeRaw`
+    UPDATE "CollectionItem"
+    SET status = 'REJECTED'::"CollectionItemStatus",
+        "reviewedById" = ${userId},
+        "reviewedAt" = now()
+    WHERE "collectionId" = ${collectionId}
+      AND ${idColumn} = ${itemId}
+      AND "addedById" = ${AUTO_FEATURE_USER_ID}
+      AND note LIKE ${`${AUTO_FEATURE_NOTE_PREFIX}:%`}
+      AND status <> 'REJECTED'::"CollectionItemStatus"
   `;
+
+  if (!rejected) {
+    await dbWrite.$executeRaw`
+      DELETE FROM "CollectionItem"
+      WHERE "collectionId" = ${collectionId} AND ${idColumn} = ${itemId}
+    `;
+  }
 
   return {
     collectionId,

@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
   mockDbRead: { $queryRaw: vi.fn() },
-  mockDbWrite: { $queryRaw: vi.fn() },
+  mockDbWrite: { $queryRaw: vi.fn(), $executeRaw: vi.fn() },
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
@@ -29,7 +29,7 @@ function arrangeCollection({
   contributorPermissions?: string[] | null;
 }) {
   mockDbRead.$queryRaw.mockReset();
-  mockDbWrite.$queryRaw.mockReset();
+  mockDbWrite.$executeRaw.mockReset();
   mockDbRead.$queryRaw
     .mockResolvedValueOnce([
       {
@@ -43,7 +43,15 @@ function arrangeCollection({
       },
     ])
     .mockResolvedValueOnce([{ userId: ITEM_AUTHOR_ID }]);
-  mockDbWrite.$queryRaw.mockResolvedValue(undefined);
+  // 0 rows rejected: the item is a curator's, so removal falls through to the DELETE.
+  mockDbWrite.$executeRaw.mockResolvedValue(0);
+}
+
+/** The leading keyword of each statement removal issued, in order. */
+function sqlVerbs() {
+  return mockDbWrite.$executeRaw.mock.calls.map(([strings]) =>
+    (strings as unknown as string[]).join(' ').trim().split(/\s+/)[0]
+  );
 }
 
 function remove({ userId, isModerator = false }: { userId: number; isModerator?: boolean }) {
@@ -64,28 +72,28 @@ describe('removeCollectionItem authorization', () => {
     arrangeCollection({ write: 'Review' });
 
     await expect(remove({ userId: OUTSIDER_ID })).rejects.toThrow(/permission/i);
-    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('rejects an outsider on a write:Public collection', async () => {
     arrangeCollection({ write: 'Public' });
 
     await expect(remove({ userId: OUTSIDER_ID })).rejects.toThrow(/permission/i);
-    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('rejects a contributor holding only ADD on a write:Public collection', async () => {
     arrangeCollection({ write: 'Public', contributorPermissions: ['ADD'] });
 
     await expect(remove({ userId: OUTSIDER_ID })).rejects.toThrow(/permission/i);
-    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('rejects an outsider on a write:Private collection', async () => {
     arrangeCollection({ write: 'Private' });
 
     await expect(remove({ userId: OUTSIDER_ID })).rejects.toThrow(/permission/i);
-    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('allows the item author to remove their own entry', async () => {
@@ -95,27 +103,37 @@ describe('removeCollectionItem authorization', () => {
       collectionId: COLLECTION_ID,
       itemId: 55,
     });
-    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(sqlVerbs()).toEqual(['UPDATE', 'DELETE']);
   });
 
   it('allows the collection owner to remove any entry', async () => {
     arrangeCollection({ write: 'Review' });
 
     await expect(remove({ userId: COLLECTION_OWNER_ID })).resolves.toBeTruthy();
-    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(sqlVerbs()).toEqual(['UPDATE', 'DELETE']);
   });
 
   it('allows a moderator to remove any entry', async () => {
     arrangeCollection({ write: 'Review' });
 
     await expect(remove({ userId: OUTSIDER_ID, isModerator: true })).resolves.toBeTruthy();
-    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(sqlVerbs()).toEqual(['UPDATE', 'DELETE']);
   });
 
   it('allows a contributor holding MANAGE to remove any entry', async () => {
     arrangeCollection({ write: 'Review', contributorPermissions: ['MANAGE'] });
 
     await expect(remove({ userId: OUTSIDER_ID })).resolves.toBeTruthy();
-    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(sqlVerbs()).toEqual(['UPDATE', 'DELETE']);
+  });
+
+  // An auto-featured item is rejected, never deleted: the job's dedupe is "does a row exist",
+  // so deleting the row would let the next run put the same image straight back.
+  it('leaves an auto-featured item rejected rather than deleting it', async () => {
+    arrangeCollection({ write: 'Review' });
+    mockDbWrite.$executeRaw.mockResolvedValue(1);
+
+    await expect(remove({ userId: OUTSIDER_ID, isModerator: true })).resolves.toBeTruthy();
+    expect(sqlVerbs()).toEqual(['UPDATE']);
   });
 });
