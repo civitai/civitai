@@ -33,10 +33,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     }),
   },
 }));
+const flags = vi.hoisted(() => ({
+  // earlyAccessModel off keeps the Paid Access sub-section out of the way for the disclosure tests; the
+  // removal test turns it on, because that section is what holds the irreversible warning.
+  current: { licensingFee: true, earlyAccessModel: false } as Record<string, boolean>,
+}));
+
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
-  // earlyAccessModel off keeps the Paid Access sub-section out of the way; this test is about the
-  // licensing fee, which is the control that used to render unasked.
-  useFeatureFlags: () => ({ licensingFee: true, earlyAccessModel: false }),
+  useFeatureFlags: () => flags.current,
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ id: 1, tier: 'free', isModerator: false, meta: {} }),
@@ -108,8 +112,32 @@ const chargeSwitch = () => page.getByRole('switch', { name: /I want to charge fo
 const rightsCheckbox = () => page.getByRole('checkbox', { name: /I hold the rights to monetize/ });
 const feeInput = () => page.getByLabelText('Licensing fee (Buzz)');
 
+// A version that already charges, with an affirmation on record — so the disclosure opens straight onto
+// the pricing controls, which is how a creator who already priced this version meets the form.
+const chargingVersion = {
+  ...(version as object),
+  licensingFee: 2,
+  meta: {
+    rightsAffirmation: {
+      userId: 1,
+      affirmedAt: '2026-08-01T00:00:00.000Z',
+      version: 1,
+      statement: 'x',
+    },
+  },
+} as unknown as React.ComponentProps<typeof ModelVersionUpsertForm>['version'];
+
+function renderChargingForm() {
+  renderWithProviders(
+    <ModelVersionUpsertForm model={model} version={chargingVersion} onSubmit={vi.fn()}>
+      {() => <button type="submit">Save</button>}
+    </ModelVersionUpsertForm>
+  );
+}
+
 beforeEach(() => {
   mutateAsync.mockClear();
+  flags.current = { licensingFee: true, earlyAccessModel: false };
 });
 
 describe('ModelVersionUpsertForm — monetization disclosure', () => {
@@ -157,6 +185,24 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     await userEvent.click(page.getByRole('button', { name: 'Save' }));
     await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(mutateAsync.mock.calls[0][0]).toMatchObject({ licensingFee: 0 });
+  });
+
+  // Closing the section on a version that already charges is a removal, and it happens with the priced
+  // controls off screen — so both the warning and the undo have to live outside them.
+  test('warns before removing an existing charge, and puts it back when reopened', async () => {
+    renderChargingForm();
+
+    await expect.element(chargeSwitch()).toBeChecked();
+    const stored = (feeInput().element() as HTMLInputElement).value;
+    expect(Number(stored)).toBeGreaterThan(0);
+
+    await userEvent.click(chargeSwitch());
+    expect(feeInput().elements()).toHaveLength(0);
+    await expect.element(page.getByText(/Saving now removes this version/)).toBeInTheDocument();
+
+    await userEvent.click(chargeSwitch());
+    await expect.element(feeInput()).toBeInTheDocument();
+    expect((feeInput().element() as HTMLInputElement).value).toBe(stored);
   });
 
   // A pristine edit short-circuits the mutation, so the observable is the form's own onSubmit: it fires

@@ -505,6 +505,9 @@ export function ModelVersionUpsertForm({
   // the requirement) keeps them visible, so it can still be edited or turned off.
   const showChargeSettings =
     chargeEnabled && (alreadyAffirmed || rightsAffirmed || hasExistingCharge);
+  // Closing the section on a version that already charges IS the removal, and it happens without the
+  // creator seeing the priced controls at all — so the consequence has to be stated outside them.
+  const removingStoredCharge = hasExistingCharge && !showChargeSettings;
 
   const licensingSourceVersionId = form.watch('licensingSourceVersionId') ?? null;
   const { data: licensingRootsData } = trpc.modelVersion.getLicensingRoots.useQuery(
@@ -565,21 +568,35 @@ export function ModelVersionUpsertForm({
   // Nothing may survive behind a collapsed section: `shouldUnregister` is false, so a hidden value is
   // still submitted, and a fee the creator can no longer see is both a charge they didn't make and (via
   // `requiresRightsAffirmation`) a submit blocked by a control that isn't on screen.
-  //
-  // An ended Early Access window is exempt: that config is locked, and clearing it here would let the
-  // master switch remove what the disabled paid-access switch refuses to.
   const feeSeededRef = useRef(false);
   const clearCharges = () => {
     if ((form.getValues('licensingFee') ?? 0) > 0) {
       form.setValue('licensingFee', 0, { shouldDirty: true });
       setFeeRatio((r) => ({ buzz: 0, images: r.images }));
     }
-    if (!isEarlyAccessOver && form.getValues('paidAccessConfig')) {
+    if (form.getValues('paidAccessConfig')) {
       form.setValue('paidAccessConfig', null, { shouldDirty: true });
       setGenMode(generationModeOf(null));
     }
+    if (form.getValues('licensingFeeSettlementCurrency'))
+      form.setValue('licensingFeeSettlementCurrency', null, { shouldDirty: true });
     if (form.getValues('rightsAffirmed')) form.setValue('rightsAffirmed', false);
-    feeSeededRef.current = false;
+  };
+
+  // Closing the section on a version that already charges is a removal, and it must be undoable from the
+  // UI — nothing else on screen holds the stored price, so without this a stray click on the switch loses
+  // it with no way back short of reloading the page.
+  const restoreStoredCharges = () => {
+    if (hasExistingLicensingFee) applyFeeRatio(feeToRatio(Number(version?.licensingFee ?? 0)));
+    if (version?.paidAccess) {
+      const stored = toFormPaidAccessConfig(version.paidAccess, version.donationGoal);
+      form.setValue('paidAccessConfig', stored, { shouldDirty: true });
+      setGenMode(generationModeOf(stored));
+    }
+    if (version?.licensingFeeSettlementCurrency)
+      form.setValue('licensingFeeSettlementCurrency', version.licensingFeeSettlementCurrency, {
+        shouldDirty: true,
+      });
   };
 
   // Unticking the affirmation withdraws the permission the pricing controls depend on, so it clears them
@@ -592,9 +609,9 @@ export function ModelVersionUpsertForm({
     if (withdrawn && !hasExistingCharge && !alreadyAffirmed) clearCharges();
   }, [rightsAffirmed]);
 
-  // The suggested fee lands when the editor opens, not when the form loads. Re-armed by `clearCharges`,
-  // so re-opening the section suggests again — but a 0 the creator typed while the editor was open is
-  // theirs to keep.
+  // The suggested fee lands when the editor first opens, not when the form loads, and once per version:
+  // re-suggesting on a second visit would re-price a creator who had already set the fee to 0 and closed
+  // the section.
   useEffect(() => {
     if (!showChargeSettings || !showLicensingFeeBlock || feeSeededRef.current) return;
     feeSeededRef.current = true;
@@ -616,9 +633,9 @@ export function ModelVersionUpsertForm({
     if (form.getValues('monetization')) form.setValue('monetization', null);
     if (form.getValues('paidAccessConfig')) form.setValue('paidAccessConfig', null);
     if (form.getValues('useMonetization')) form.setValue('useMonetization', false);
-    if (form.getValues('rightsAffirmed')) form.setValue('rightsAffirmed', false);
-    setChargeEnabled(false);
-    feeSeededRef.current = false;
+    // `chargeEnabled` is deliberately left alone. A non-commercial base model hides the whole section
+    // anyway, and turning the switch off here would mean switching back to a commercial base model shows
+    // a collapsed section with no sign that the version's charges were just cleared.
   }, [isNonCommercial]);
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
@@ -1168,9 +1185,29 @@ export function ModelVersionUpsertForm({
                       const checked = e.target.checked;
                       setChargeEnabled(checked);
                       if (!checked) clearCharges();
+                      else if (hasExistingCharge) restoreStoredCharges();
                     }}
                     disabled={isEarlyAccessOver && !!version?.paidAccess}
                   />
+                )}
+                {removingStoredCharge && (
+                  <Stack gap={4} mt="sm">
+                    <Text size="xs" c="red">
+                      Saving now removes this version&apos;s{' '}
+                      {hasExistingLicensingFee && version?.paidAccess
+                        ? 'license fee and paid access'
+                        : hasExistingLicensingFee
+                        ? 'license fee'
+                        : 'paid access'}
+                      . Switch it back on to keep the stored settings.
+                    </Text>
+                    {!!version?.paidAccess && (
+                      <Text size="xs" c="red">
+                        You will not be able to add this model to early access again after removing
+                        it. Also, your payment for early access will be lost.
+                      </Text>
+                    )}
+                  </Stack>
                 )}
                 {(showRightsAffirmation || requiresRightsAffirmation) && (
                   <InputCheckbox
