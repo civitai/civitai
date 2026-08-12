@@ -1,9 +1,8 @@
 import { Text } from '@mantine/core';
 import clsx from 'clsx';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
-import type { Box } from '~/components/Sticker/place-button-position';
 import {
   candidateDistance,
   flippedButtonOffset,
@@ -47,14 +46,19 @@ const BUY_BUTTON_MIN_WIDTH = 132;
 const BUY_BUTTON_GAP = 8;
 
 /**
- * The nearest ancestor that clips, as a box — the carousel's viewport on the
- * image detail page, whose bottom edge is the bottom of the media box.
+ * The nearest ancestor that clips — the carousel's viewport on the image detail
+ * page, whose bottom edge is the bottom of the media box.
+ *
+ * Returns the element rather than its box: which ancestor clips is a property of
+ * the tree and changes only when the tree does, but where it *is* changes on
+ * every scroll. Caching the node and reading its rect per measure keeps the rect
+ * live while keeping this walk — a `getComputedStyle` per ancestor, each forcing
+ * a style recalc — off the pointermove path.
  */
-function nearestClipBox(element: HTMLElement): Box | null {
+function nearestClipElement(element: HTMLElement): HTMLElement | null {
   for (let node = element.parentElement; node; node = node.parentElement) {
     const style = getComputedStyle(node);
-    if (style.overflowX !== 'visible' || style.overflowY !== 'visible')
-      return node.getBoundingClientRect();
+    if (style.overflowX !== 'visible' || style.overflowY !== 'visible') return node;
   }
   return null;
 }
@@ -189,72 +193,117 @@ export function DraftStickerLayer() {
   const buttonRef = useRef<HTMLDivElement>(null);
 
   const rotation = draft?.rotation ?? 0;
-  useLayoutEffect(() => {
+  const trayElement = useStickerPlacementDraftStore((state) => state.tray);
+  const art = sticker.find((option) => option.id === draft?.cosmeticId);
+  // The element the observer needs does not exist until there is something to
+  // draw, and neither `draft` nor the sticker list alone is enough to say so.
+  const drawn = !!draft && !!art;
+
+  // `measure` is what the ResizeObserver and the window listener are bound to,
+  // so it has to keep its identity across a drag — otherwise re-binding them is
+  // back on the pointermove path, which is the whole problem. It reads the two
+  // values it needs through a ref instead of closing over them.
+  const frame = useRef({ flipped, rotation });
+  frame.current = { flipped, rotation };
+
+  const clip = useRef<HTMLElement | null>(null);
+
+  const measure = useCallback(() => {
     const element = rootRef.current;
     const button = buttonRef.current;
     if (!element || !button) return;
 
-    const measure = () => {
-      const tray = useStickerPlacementDraftStore.getState().tray;
-      const height = element.offsetHeight;
-      const offset = flippedButtonOffset({
+    const { flipped, rotation } = frame.current;
+    const tray = useStickerPlacementDraftStore.getState().tray;
+    const height = element.offsetHeight;
+    const offset = flippedButtonOffset({
+      stickerHeight: height,
+      knobOffset: KNOB_OFFSET,
+      gap: BUY_BUTTON_GAP,
+    });
+    // From the button's own measured rect, both times: the pair that comes out
+    // is the same whichever side the button is currently on, which is what stops
+    // a flip from removing its own cause and oscillating.
+    const { below, above } = placeButtonBoxes({
+      current: button.getBoundingClientRect(),
+      flipped,
+      rotationDeg: rotation,
+      distance: candidateDistance({
         stickerHeight: height,
-        knobOffset: KNOB_OFFSET,
-        gap: BUY_BUTTON_GAP,
-      });
-      const { below, above } = placeButtonBoxes({
-        current: button.getBoundingClientRect(),
-        flipped,
-        rotationDeg: rotation,
-        distance: candidateDistance({
-          stickerHeight: height,
-          buttonHeight: button.offsetHeight,
-          flippedOffset: offset,
-          gap: BUY_BUTTON_GAP,
-        }),
-      });
-
-      const next = {
-        flipped: shouldFlipPlaceButton({
-          below,
-          above,
-          tray: tray?.getBoundingClientRect() ?? null,
-          clip: nearestClipBox(element),
-        }),
+        buttonHeight: button.offsetHeight,
         flippedOffset: offset,
-      };
+        gap: BUY_BUTTON_GAP,
+      }),
+    });
 
-      // Every pointer move re-measures, so bail on an unchanged result rather
-      // than handing React a new object to re-render for.
-      setPosition((current) =>
-        current.flipped === next.flipped && current.flippedOffset === next.flippedOffset
-          ? current
-          : next
-      );
+    const next = {
+      flipped: shouldFlipPlaceButton({
+        below,
+        above,
+        tray: tray?.getBoundingClientRect() ?? null,
+        clip: clip.current?.getBoundingClientRect() ?? null,
+      }),
+      flippedOffset: offset,
     };
 
+    // Every pointer move re-measures, so bail on an unchanged result rather
+    // than handing React a new object to re-render for.
+    setPosition((current) =>
+      current.flipped === next.flipped && current.flippedOffset === next.flippedOffset
+        ? current
+        : next
+    );
+  }, []);
+
+  const remeasure = useCallback(() => {
+    clip.current = rootRef.current ? nearestClipElement(rootRef.current) : null;
     measure();
-    // The tray grows when its price line wraps, when the balances land, and when
-    // the top-up panel opens — each of those moves the band under an existing
-    // draft, with no pointer event to notice it by.
-    //
-    // The sticker is watched for a different reason: its image has no intrinsic
-    // size until it loads, so the first measure on a cold start runs against a
-    // near-zero height. Swapping to a taller sticker is the same problem, and
-    // the effect's deps cannot see it — `begin()` resets x, y, scale and
-    // rotation to the same defaults, so choosing a different sticker produces an
-    // identical dep tuple. Both leave a clearance sized for the wrong sticker,
-    // which is the covered rotate knob all over again.
-    const tray = useStickerPlacementDraftStore.getState().tray;
-    const observer = new ResizeObserver(measure);
+  }, [measure]);
+
+  // The tray grows when its price line wraps, when the balances land, and when
+  // the top-up panel opens — each of those moves the band under an existing
+  // draft, with no pointer event to notice it by.
+  //
+  // The sticker is watched for a different reason: its image has no intrinsic
+  // size until it loads, so the first measure on a cold start runs against a
+  // near-zero height. Swapping to a taller sticker is the same problem, and the
+  // deps cannot see it — `begin()` resets x, y, scale and rotation to the same
+  // defaults, so choosing a different sticker produces an identical dep tuple.
+  // Both leave a clearance sized for the wrong sticker, which is the covered
+  // rotate knob all over again.
+  //
+  // The button is watched for the third reason: `buttonHeight` feeds the
+  // distance between the two positions, and the payout caption under it arrives
+  // with a query rather than with the first paint. The decision would otherwise
+  // be made against a one-line button and never revisited until the next drag —
+  // which is the case `place-button-position.test.ts` covers arithmetically and
+  // nothing was re-running. Safe to observe: a flip moves the button, it does
+  // not resize it, so this cannot feed itself.
+  //
+  // None of this is a function of where the sticker currently is, so it is bound
+  // once rather than on the pointermove path.
+  useLayoutEffect(() => {
+    const element = rootRef.current;
+    if (!element) return;
+
+    const observer = new ResizeObserver(remeasure);
     observer.observe(element);
-    if (tray) observer.observe(tray);
-    window.addEventListener('resize', measure);
+    if (buttonRef.current) observer.observe(buttonRef.current);
+    if (trayElement) observer.observe(trayElement);
+    window.addEventListener('resize', remeasure);
+    remeasure();
     return () => {
       observer.disconnect();
-      window.removeEventListener('resize', measure);
+      window.removeEventListener('resize', remeasure);
     };
-  }, [draft?.x, draft?.y, draft?.scale, rotation, flipped]);
+  }, [remeasure, trayElement, drawn]);
+
+  // The cheap half, and the only one a gesture reaches: rect and offset reads,
+  // no style recalc. Which ancestor clips is a property of the tree, not of the
+  // sticker's own transform, so none of these deps can change it.
+  useLayoutEffect(() => {
+    measure();
+  }, [measure, draft?.x, draft?.y, draft?.scale, rotation, flipped]);
 
   // Picking a sticker up from the tray starts a move with no offset — the press
   // happened outside the image, so there is no grab point to preserve.
@@ -264,10 +313,7 @@ export function DraftStickerLayer() {
       gesture.current = { mode: 'move', offsetX: 0, offsetY: 0 };
   }, [trayInteraction]);
 
-  if (!draft) return null;
-
-  const art = sticker.find((option) => option.id === draft.cosmeticId);
-  if (!art) return null;
+  if (!draft || !art) return null;
 
   const begin =
     (mode: StickerInteraction, corner?: { sx: number; sy: number }) =>

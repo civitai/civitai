@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  CARD_TREATMENT_FALLBACK,
   resolveTreatment,
   STICKER_TREATMENT_KEYS,
   STICKER_TREATMENTS,
@@ -77,21 +76,19 @@ describe('sticker treatments', () => {
 
   it('drops an animating treatment to the static fallback on a card', () => {
     expect(resolveTreatment({ treatment: 'motion', surface: 'card', isPending: false })).toBe(
-      STICKER_TREATMENTS[CARD_TREATMENT_FALLBACK]
+      STICKER_TREATMENTS[STILL_STICKER_TREATMENT]
     );
     expect(resolveTreatment({ treatment: 'motion', surface: 'detail', isPending: false })).toBe(
       STICKER_TREATMENTS.motion
     );
   });
 
-  // `CARD_TREATMENT_FALLBACK` and `STILL_STICKER_TREATMENT` are one constant, so
-  // the card fallback and the motion opt-out land in the same place. Asserting
-  // `resolveTreatment` against that constant is self-referential — it holds even
+  // One constant carries both the card fallback and the motion opt-out.
+  // Asserting `resolveTreatment` against it is self-referential — it holds even
   // if the constant is `motion`, which would make the opt-out a no-op AND animate
   // every card in a feed. Pin the literal, and pin that it does not animate.
   it('falls back to a treatment that is still, not to another animating one', () => {
     expect(STILL_STICKER_TREATMENT).toBe('lift');
-    expect(CARD_TREATMENT_FALLBACK).toBe('lift');
     expect(STICKER_TREATMENTS[STILL_STICKER_TREATMENT].animationClassName).toBeUndefined();
   });
 

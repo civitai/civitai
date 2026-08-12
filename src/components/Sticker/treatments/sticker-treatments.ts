@@ -124,17 +124,6 @@ export const DEFAULT_STICKER_TREATMENT: StickerTreatmentKey = 'motion';
  */
 export const STILL_STICKER_TREATMENT: StickerTreatmentKey = 'lift';
 
-/**
- * What a card renders for a treatment that animates.
- *
- * A card is a link the reader is aiming at, and movement under the cursor is a
- * target that moves. Animations also tick whether or not they are on screen,
- * so their cost grows with the length of the feed while a filter's does not —
- * but any multiplier is a function of how many cards you chose to measure, so
- * there is deliberately no number here.
- */
-export const CARD_TREATMENT_FALLBACK: StickerTreatmentKey = STILL_STICKER_TREATMENT;
-
 export const isStickerTreatmentKey = (value: unknown): value is StickerTreatmentKey =>
   typeof value === 'string' && (STICKER_TREATMENT_KEYS as readonly string[]).includes(value);
 
@@ -157,8 +146,13 @@ export function resolveTreatment({
   if (isPending) return STICKER_TREATMENTS.none;
 
   const chosen = STICKER_TREATMENTS[treatment];
+  // A card is a link the reader is aiming at, and movement under the cursor is
+  // a target that moves. Animations also tick whether or not they are on
+  // screen, so their cost grows with the length of the feed while a filter's
+  // does not — but any multiplier is a function of how many cards you chose to
+  // measure, so there is deliberately no number here.
   if (surface === 'card' && chosen.animationClassName)
-    return STICKER_TREATMENTS[CARD_TREATMENT_FALLBACK];
+    return STICKER_TREATMENTS[STILL_STICKER_TREATMENT];
 
   return chosen;
 }
