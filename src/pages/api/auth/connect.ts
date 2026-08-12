@@ -37,6 +37,6 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   // `roles=true` opts into the provider's incremental scope (Discord Linked Roles) — only the /discord/link-role
   // flow passes it; a plain "Connect <provider>" never does, so normal linking can't trip the Linked-Roles scope.
   const linkRoles = req.query.roles === 'true';
-  setLinkSyncCookie(res, crypto.randomUUID());
+  setLinkSyncCookie(req, res, crypto.randomUUID());
   res.redirect(302, hubLoginUrl(HUB, { provider, link: true, linkRoles, returnUrl }));
 }

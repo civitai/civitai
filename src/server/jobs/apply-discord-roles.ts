@@ -86,10 +86,28 @@ const applyDiscordActivityRoles = createJob(
   }
 );
 
-// Nobody sheds half the leaderboard overnight, so a revoke list that size means our view of who is ranked
-// collapsed. UserRank is rebuilt by TRUNCATE + INSERT, and updateLeaderboardRank({ leaderboardIds }) — the
-// hourly event path — legitimately leaves it holding only that event's users until the next nightly rebuild.
-// Before this job ran unguarded that could not reach us; now it can, and it would strip the roles for real.
+// UserRank is rebuilt from every public board, but updateLeaderboardRank({ leaderboardIds }) — the hourly event
+// path — truncates it and refills it from that event's boards alone. Both leave a populated table, so row count
+// can't tell them apart; the spread of boards can (31 in prod today, 1 for an event). isLeaderboardPopulated
+// used to keep this job away from that state by accident, since it also gated the rebuild.
+const MIN_RANK_BOARDS = 3;
+
+const userRankIsNarrowed = async () => {
+  const [{ boards }] = await dbWrite.$queryRaw<{ boards: number }[]>`
+    SELECT count(DISTINCT "leaderboardId")::int AS boards FROM "UserRank"`;
+  if (boards >= MIN_RANK_BOARDS) return false;
+
+  logToAxiom({
+    type: 'error',
+    name: 'discord-role-sync-aborted',
+    error: { reason: 'UserRank covers too few boards to diff against', boards },
+  });
+  return true;
+};
+
+// Second line, for a collapse that still spans boards. Deliberately loose: the real cleanup this ships with
+// revokes 33 of 83 Top 10 holders (40%), and `leaderboardRank` is the best position across all 31 boards, so
+// the ranked-under-10 population is ~196 users — not 10.
 const REVOKE_SHARE_LIMIT = 0.5;
 const REVOKE_FLOOR = 10;
 
@@ -98,8 +116,8 @@ const withinBlastRadius = (role: DiscordRole, revoking: string[], holders: strin
   if (revoking.length <= holders.length * REVOKE_SHARE_LIMIT) return true;
 
   logToAxiom({
-    type: 'discord-role-sync-aborted',
-    name: 'apply-discord-leaderboard-roles',
+    type: 'error',
+    name: 'discord-role-sync-aborted',
     error: {
       reason: 'revoke list too large — refusing to strip the role in bulk',
       role: role.name,
@@ -117,8 +135,8 @@ const getLeaderboardRoles = async () => {
   const top100Role = discordRoles.find((r) => r.name === 'Top 100');
   if (!top100Role || !top10Role) {
     logToAxiom({
-      type: 'discord-role-sync-aborted',
-      name: 'apply-discord-leaderboard-roles',
+      type: 'error',
+      name: 'discord-role-sync-aborted',
       error: {
         reason: 'leaderboard roles not found in guild',
         missing: [!top10Role && 'Top 10', !top100Role && 'Top 100'].filter(Boolean),
@@ -133,6 +151,7 @@ const getLeaderboardRoles = async () => {
 export const applyDiscordLeaderboardRoles = async () => {
   const roles = await getLeaderboardRoles();
   if (!roles) return;
+  if (await userRankIsNarrowed()) return;
   const { top10Role, top100Role } = roles;
 
   const existingTop100 = await getAccountsInRole(top100Role);
@@ -170,8 +189,8 @@ export const applyDiscordLeaderboardRoles = async () => {
   // Continuing would read that as "everyone left the top 100" and strip the roles from every holder.
   if (!top100.length) {
     logToAxiom({
-      type: 'discord-role-sync-aborted',
-      name: 'apply-discord-leaderboard-roles',
+      type: 'error',
+      name: 'discord-role-sync-aborted',
       error: {
         reason: 'no ranked users with a linked discord account',
         holders: existingTop100.length,
@@ -336,8 +355,8 @@ const applyToDiscord = async (
 
   if (notInGuild || errors.length) {
     logToAxiom({
-      type: 'discord-role-sync',
-      name: 'apply-discord-roles',
+      type: 'warn',
+      name: 'discord-role-sync',
       // civitai-prod is at its column cap, so `error` is the only top-level container new fields can go in.
       error: {
         role: role.name,

@@ -75,6 +75,38 @@ describe('/api/auth/connect', () => {
     expect(returned.searchParams.get('returnUrl')).toBe('/');
   });
 
+  // The other half of the one-shot protocol /api/auth/linked gates on. Asserted here by NAME and PATH, because
+  // the linked-endpoint test supplies its own cookie fixture — without this, deleting the call below leaves
+  // every test in both files green while the post-link sync is dead in production.
+  it('sets the one-shot link cookie that /api/auth/linked consumes', async () => {
+    const handler = (await import('~/pages/api/auth/connect')).default;
+    const { req, res } = mockReqRes({ provider: 'discord', returnUrl: '/user/account' });
+    handler(req, res as unknown as NextApiResponse);
+
+    const cookies = res.headers['Set-Cookie'] as string[];
+    const cookie = cookies.find((c) => c.startsWith('civ-link-sync='));
+    expect(cookie).toBeDefined();
+    expect(cookie).toContain('Path=/api/auth/linked');
+    expect(cookie).toContain('HttpOnly');
+  });
+
+  // Plain http in tests means the dev branch: None-without-Secure is browser-rejected, so it has to be Lax.
+  // On https the cookie rides a cross-registrable-domain return (civitai.red → hub → civitai.red), where Lax
+  // and host-only scoping are both known to drop it — see the bridge cookie this mirrors.
+  it('scopes the cookie for the cross-site return when the request is https', async () => {
+    const handler = (await import('~/pages/api/auth/connect')).default;
+    const { req, res } = mockReqRes({ provider: 'discord', returnUrl: '/' }, 'www.civitai.red');
+    (req.headers as Record<string, string>)['x-forwarded-proto'] = 'https';
+    handler(req, res as unknown as NextApiResponse);
+
+    const cookie = (res.headers['Set-Cookie'] as string[]).find((c) =>
+      c.startsWith('civ-link-sync=')
+    ) as string;
+    expect(cookie).toContain('SameSite=None');
+    expect(cookie).toContain('Secure');
+    expect(cookie).toContain('Domain=civitai.red');
+  });
+
   it('400 when provider is missing', async () => {
     const handler = (await import('~/pages/api/auth/connect')).default;
     const { req, res } = mockReqRes({});

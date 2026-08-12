@@ -35,7 +35,7 @@ function mockReqRes(query: Record<string, string>, cookies: Record<string, strin
       return this;
     },
   };
-  const req = { query, cookies } as unknown as NextApiRequest;
+  const req = { query, cookies, headers: { host: 'civitai.com' } } as unknown as NextApiRequest;
   return { req, res };
 }
 

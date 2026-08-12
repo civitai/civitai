@@ -239,8 +239,8 @@ const updateUserDiscordLeaderboardRoles = createJob(
     const unpopulated = await getUnpopulatedLeaderboards();
     if (unpopulated.length)
       logToAxiom({
-        type: 'leaderboard-partially-populated',
-        name: 'update-user-discord-leaderboard-roles',
+        type: 'warn',
+        name: 'leaderboard-partially-populated',
         // civitai-prod is at its column cap, so `error` is the only top-level container new fields can go in.
         error: { unpopulated },
       });

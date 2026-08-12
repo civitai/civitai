@@ -70,8 +70,9 @@ beforeEach(() => {
   mockDiscord.getAllRoles.mockResolvedValue([TOP_10, TOP_100]);
   mockDiscord.addRoleToUser.mockResolvedValue(true);
   mockDiscord.removeRoleFromUser.mockResolvedValue(true);
-  // getAccountsInRole: Top 100 first, then Top 10.
+  // $queryRaw order: the UserRank board-spread check, then getAccountsInRole for Top 100 and Top 10.
   mockDbWrite.$queryRaw.mockResolvedValue([]);
+  mockDbWrite.$queryRaw.mockResolvedValueOnce([{ boards: 31 }]);
   mockDbWrite.user.findMany.mockResolvedValue([]);
 });
 
@@ -181,6 +182,37 @@ describe('applyDiscordLeaderboardRoles — Top 10 removal', () => {
   });
 });
 
+describe('applyDiscordLeaderboardRoles — UserRank has to be diffable', () => {
+  // updateLeaderboardRank({ leaderboardIds }) truncates UserRank and refills it from one event's boards. The
+  // table is populated and the rows are real, so only the spread of boards separates that from a full rebuild.
+  it('aborts when UserRank covers only one board', async () => {
+    mockDbWrite.$queryRaw.mockReset();
+    mockDbWrite.$queryRaw.mockResolvedValue([]);
+    mockDbWrite.$queryRaw.mockResolvedValueOnce([{ boards: 1 }]);
+    mockDbWrite.user.findMany.mockResolvedValue([topUser(5, '111')]);
+
+    await applyDiscordLeaderboardRoles();
+
+    expect(mockDbWrite.user.findMany).not.toHaveBeenCalled();
+    expect(mockDiscord.removeRoleFromUser).not.toHaveBeenCalled();
+    expect(mockDiscord.addRoleToUser).not.toHaveBeenCalled();
+  });
+
+  // The guards above all assert a negative, so this pins that an ordinary revoke still gets through them —
+  // a guard that blocks everything would satisfy every other test in this file.
+  it('still revokes an ordinary share of holders', async () => {
+    const holders = Array.from({ length: 20 }, (_, i) => ({ providerAccountId: `${100 + i}` }));
+    mockDbWrite.user.findMany.mockResolvedValue(
+      holders.slice(0, 15).map((h, i) => topUser(50 + i, h.providerAccountId))
+    );
+    mockDbWrite.$queryRaw.mockResolvedValueOnce(holders).mockResolvedValueOnce([]);
+
+    await applyDiscordLeaderboardRoles();
+
+    expect(idsWritten('revoke', 'Top 100').sort()).toEqual(['115', '116', '117', '118', '119']);
+  });
+});
+
 describe('syncUserDiscordLeaderboardRoles', () => {
   it('grants both roles to a top-10 user without revoking anything', async () => {
     mockDbWrite.user.findUnique.mockResolvedValue({
@@ -193,6 +225,40 @@ describe('syncUserDiscordLeaderboardRoles', () => {
     expect(idsWritten('grant', 'Top 100')).toEqual(['111']);
     expect(idsWritten('grant', 'Top 10')).toEqual(['111']);
     expect(mockDiscord.removeRoleFromUser).not.toHaveBeenCalled();
+  });
+
+  it('grants only Top 100 to a user ranked outside the top 10', async () => {
+    mockDbWrite.user.findUnique.mockResolvedValue({
+      rank: { leaderboardRank: 50 },
+      accounts: [{ providerAccountId: '111' }],
+    });
+
+    await syncUserDiscordLeaderboardRoles(1);
+
+    expect(idsWritten('grant', 'Top 100')).toEqual(['111']);
+    expect(idsWritten('grant', 'Top 10')).toEqual([]);
+  });
+
+  it('touches nothing for a user ranked outside the top 100', async () => {
+    mockDbWrite.user.findUnique.mockResolvedValue({
+      rank: { leaderboardRank: 101 },
+      accounts: [{ providerAccountId: '111' }],
+    });
+
+    await syncUserDiscordLeaderboardRoles(1);
+
+    expect(mockDiscord.addRoleToUser).not.toHaveBeenCalled();
+  });
+
+  it('touches nothing for a user with no linked Discord account', async () => {
+    mockDbWrite.user.findUnique.mockResolvedValue({
+      rank: { leaderboardRank: 3 },
+      accounts: [],
+    });
+
+    await syncUserDiscordLeaderboardRoles(1);
+
+    expect(mockDiscord.addRoleToUser).not.toHaveBeenCalled();
   });
 
   it('touches nothing for an unranked user', async () => {
