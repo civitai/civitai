@@ -371,6 +371,24 @@ describe('close-time concurrency is load-bearing', () => {
     expect(slow).toBeLessThan(CLAIM_WINDOW_MINUTES);
   });
 
+  // Ranking the whole field instead of one entry per user is a change to the SEARCH DEPTH and
+  // nothing else: the rerun is bounded at K, the podium is 15, and arrival already ran per entry.
+  // log2(285) = 9 against log2(64) = 6, so ~3 extra bouts per re-inserted entry.
+  it('still fits once the full field is ranked rather than one entry per user', () => {
+    const FULL_FIELD = 285;
+    const DEDUPED_FIELD = 64;
+
+    expect(projectedCloseMinutes({ entries: FULL_FIELD })).toBeLessThan(CLAIM_WINDOW_MINUTES);
+    // Still fits at the slow route's latency, which is the number that matters on a bad day.
+    expect(projectedCloseMinutes({ entries: FULL_FIELD, boutSeconds: 12.4 })).toBeLessThan(
+      CLAIM_WINDOW_MINUTES
+    );
+    // And it is not free — if the two projections were equal this test would be pinning nothing.
+    expect(projectedCloseMinutes({ entries: FULL_FIELD })).toBeGreaterThan(
+      projectedCloseMinutes({ entries: DEDUPED_FIELD })
+    );
+  });
+
   it('would not fit if the rerun were unbounded', () => {
     // The design change this PR made, as arithmetic: bounding the rerun is what buys the window,
     // not the concurrency alone.

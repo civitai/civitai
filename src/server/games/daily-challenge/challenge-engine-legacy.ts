@@ -15,6 +15,8 @@ import {
 export const legacyAbsoluteEngine: ChallengeJudgingEngine = {
   key: JUDGING_ENGINES.LegacyAbsolute,
   ranksFullField: false,
+  // Unchanged: legacy dedupes to one entry per user BEFORE ranking, by absolute score, as it always has.
+  dedupesAfterRanking: false,
   shortlistSize: 0,
 
   async recordEntry() {

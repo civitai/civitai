@@ -31,7 +31,10 @@ import {
   buildJudgingEngineContext,
   resolveJudgingEngine,
 } from '~/server/games/daily-challenge/challenge-engine-registry';
-import { recapField } from '~/server/games/daily-challenge/challenge-judging-engine';
+import {
+  bestPerUserInRankOrder,
+  recapField,
+} from '~/server/games/daily-challenge/challenge-judging-engine';
 import {
   dedupeWinnersForPayout,
   reconcileWinnerToPersisted,
@@ -1422,7 +1425,9 @@ export async function pickWinnersForChallenge(
         eventContext,
         challengeJudgeRow?.source ?? ChallengeSource.System,
         userCategories,
-        judgingEngine.ranksFullField ? { limit: Infinity } : undefined
+        judgingEngine.ranksFullField
+          ? { limit: Infinity, perUserBest: !judgingEngine.dedupesAfterRanking }
+          : undefined
       );
       if (!judgedEntries.length) {
         log('No judged entries for challenge:', currentChallenge.challengeId);
@@ -1473,7 +1478,14 @@ export async function pickWinnersForChallenge(
         themeElements: parseChallengeMetadata(challengeJudgeRow?.metadata).themeElements,
         categories: userCategories,
       });
-      const rankedField = await judgingEngine.rankField(engineContext, judgedEntries);
+      const ranked = await judgingEngine.rankField(engineContext, judgedEntries);
+      // One entry per user, chosen by the RANKING rather than by the absolute score that the
+      // ranking exists to replace. Applied after rankField so the engine's coverage assertion still
+      // compares against the field it was given. A no-op for legacy, which was handed one entry per
+      // user in the first place.
+      const rankedField = judgingEngine.dedupesAfterRanking
+        ? bestPerUserInRankOrder(ranked)
+        : ranked;
       // Cut to finalReviewAmount AFTER ranking, not before: the engine ranks the whole field, and
       // only then is it meaningful to say which entries are the top N. Legacy was already handed
       // the cut, so this slice is a no-op for it. The full ranking still goes to `selectWinners`,
@@ -1930,7 +1942,11 @@ export async function getJudgedEntries(
   // Defaults to the historical cut at config.finalReviewAmount. An engine that ranks by
   // comparison passes Infinity so the absolute score (and its random tiebreak) does not decide
   // which entries are eligible to be ranked.
-  options?: { limit?: number }
+  //
+  // `perUserBest: false` additionally keeps EVERY entry rather than one per user, for an engine
+  // that picks each user's representative from its own ranking instead. Both default to the
+  // historical behaviour; legacy passes neither.
+  options?: { limit?: number; perUserBest?: boolean }
 ) {
   // A challenge with no usable stored rubric (only a malformed value now that every challenge is
   // seeded) is ranked by the same fixed split the judge scored it against.
@@ -2027,17 +2043,21 @@ export async function getJudgedEntries(
     })
     .filter((e): e is typeof e & { weightedRating: number } => e.weightedRating !== null);
 
-  const bestPerUser = new Map<number, (typeof ranked)[number]>();
-  for (const entry of ranked) {
-    const current = bestPerUser.get(entry.userId);
-    if (!current || entry.weightedRating > current.weightedRating) {
-      bestPerUser.set(entry.userId, entry);
+  let candidates = ranked;
+  if (options?.perUserBest !== false) {
+    const bestPerUser = new Map<number, (typeof ranked)[number]>();
+    for (const entry of ranked) {
+      const current = bestPerUser.get(entry.userId);
+      if (!current || entry.weightedRating > current.weightedRating) {
+        bestPerUser.set(entry.userId, entry);
+      }
     }
+    candidates = [...bestPerUser.values()];
   }
 
   // Ties are shuffled rather than resolved by query order — entries scored 0-10 on a handful of
   // categories tie often, and the tied set is what gets cut at finalReviewAmount.
-  return [...bestPerUser.values()]
+  return candidates
     .sort((a, b) => b.weightedRating - a.weightedRating || Math.random() - 0.5)
     .slice(0, options?.limit ?? config.finalReviewAmount);
 }

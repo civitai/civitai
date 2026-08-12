@@ -86,6 +86,18 @@ export interface ChallengeJudgingEngine {
   readonly ranksFullField: boolean;
 
   /**
+   * Whether the caller must hand this engine EVERY eligible entry — several per user — and take
+   * one entry per user from the engine's own ranking afterwards, instead of pre-deduping.
+   *
+   * The default pre-dedupe picks a user's representative by absolute weighted score with a
+   * `Math.random()` tiebreak. For an engine that ranks by comparison that puts the coin flip back
+   * one level: the ranking would be honest about the 64 representatives, and the choice of WHICH
+   * 285 entries those 64 are would still be the mechanism this replaces. Arrival placement already
+   * ran on every entry, so the comparisons this needs are ones already paid for and then discarded.
+   */
+  readonly dedupesAfterRanking: boolean;
+
+  /**
    * How many of the ranked leaders the engine's own winner selection looks at, or 0 if it has
    * none. The recap must cover at least this many: the podium exists precisely so an entry the
    * ladder placed outside the top N can still win, and a recap that never saw it would describe a
@@ -115,6 +127,23 @@ export interface ChallengeJudgingEngine {
     ranked: T[],
     places: number
   ): Promise<EngineWinner[] | null>;
+}
+
+/**
+ * One entry per user, keeping whichever the RANKING put first. Order-preserving, so the result is
+ * still the engine's ranking — just thinned.
+ *
+ * Only meaningful on an already-ranked list: applied to an arbitrary order it picks arbitrarily.
+ */
+export function bestPerUserInRankOrder<T extends { userId: number }>(ranked: T[]): T[] {
+  const seen = new Set<number>();
+  const out: T[] = [];
+  for (const entry of ranked) {
+    if (seen.has(entry.userId)) continue;
+    seen.add(entry.userId);
+    out.push(entry);
+  }
+  return out;
 }
 
 /**

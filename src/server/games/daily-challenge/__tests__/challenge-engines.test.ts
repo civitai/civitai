@@ -207,6 +207,14 @@ describe('legacy absolute engine', () => {
     await expect(legacyAbsoluteEngine.selectWinners(ctx, [entry(1)], 3)).resolves.toBeNull();
   });
 
+  // Both flags decide what the CALLER does before the engine is ever invoked, so nothing inside
+  // this engine's own methods can catch them being flipped. Pinned here, and pinned as a pair:
+  // legacy keeps taking the absolute-score cut, one entry per user, chosen before ranking.
+  it('declares the legacy contract — pre-deduped, pre-cut field', () => {
+    expect(legacyAbsoluteEngine.ranksFullField).toBe(false);
+    expect(legacyAbsoluteEngine.dedupesAfterRanking).toBe(false);
+  });
+
   it('spends nothing and writes nothing when an entry is recorded', async () => {
     await legacyAbsoluteEngine.recordEntry(ctx, {
       imageId: 1,
@@ -245,6 +253,13 @@ describe('engine registry', () => {
   it('does not ask Flipt at all for a legacy challenge', async () => {
     await resolveJudgingEngine(null);
     expect(isFliptMock).not.toHaveBeenCalled();
+  });
+
+  // The pairwise counterpart of the legacy pin above. Dropping either flag puts the Math.random()
+  // tiebreak back in charge of which entries get ranked and which one represents each user.
+  it('declares the pairwise contract — whole field in, one per user taken from the ranking', () => {
+    expect(pairwiseLadderEngine.ranksFullField).toBe(true);
+    expect(pairwiseLadderEngine.dedupesAfterRanking).toBe(true);
   });
 
   it('falls back to the fixed rubric when the challenge defines no categories', () => {

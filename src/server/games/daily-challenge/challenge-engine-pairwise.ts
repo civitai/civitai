@@ -62,6 +62,7 @@ const UNPLACED_BOUND_LIMIT = 0.5;
 export const pairwiseLadderEngine: ChallengeJudgingEngine = {
   key: JUDGING_ENGINES.PairwiseLadder,
   ranksFullField: true,
+  dedupesAfterRanking: true,
   shortlistSize: PODIUM_SIZE,
 
   async recordEntry(ctx: JudgingEngineContext, entry: JudgedEntryRef): Promise<void> {

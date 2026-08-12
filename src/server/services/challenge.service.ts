@@ -160,6 +160,7 @@ import {
   resolveJudgingEngine,
 } from '~/server/games/daily-challenge/challenge-engine-registry';
 import {
+  bestPerUserInRankOrder,
   JUDGING_ENGINES,
   recapField,
 } from '~/server/games/daily-challenge/challenge-judging-engine';
@@ -2640,7 +2641,9 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
         eventContext,
         challenge.source,
         userCategories,
-        judgingEngine.ranksFullField ? { limit: Infinity } : undefined
+        judgingEngine.ranksFullField
+          ? { limit: Infinity, perUserBest: !judgingEngine.dedupesAfterRanking }
+          : undefined
       );
       if (!judgedEntries.length) {
         // Zero-winner completion of a paid user challenge strands its entry fees + initial prize in
@@ -2669,7 +2672,12 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
         themeElements: parseChallengeMetadata(challenge.metadata).themeElements,
         categories: userCategories,
       });
-      const rankedField = await judgingEngine.rankField(engineContext, judgedEntries);
+      const ranked = await judgingEngine.rankField(engineContext, judgedEntries);
+      // One entry per user, chosen by the RANKING rather than by the absolute score it replaces.
+      // See the same step in daily-challenge-processing.ts; a no-op for legacy.
+      const rankedField = judgingEngine.dedupesAfterRanking
+        ? bestPerUserInRankOrder(ranked)
+        : ranked;
       const rankedEntries = rankedField.slice(0, config.finalReviewAmount);
       const engineWinners = await judgingEngine.selectWinners(
         engineContext,

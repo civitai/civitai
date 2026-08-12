@@ -175,3 +175,37 @@ describe('runLadderDryRun — the answer', () => {
     expect(result.reroutes).toBe(result.comparisons);
   });
 });
+
+// A dry run has no arrival placement by construction, so production's `arrivalUsable` guard would
+// run this field's rerun UNBOUNDED. Any bounded dry run is therefore partly the legacy order it
+// exists to evaluate against — and it said nothing about that. Measured on challenge 424 at
+// topK=6: ranks 7-64 were never compared, two of five entries tied at 8.85 reached the
+// re-inserted set on a Math.random() tiebreak, and no warning was emitted.
+describe('runLadderDryRun — says when its answer is partly the legacy order', () => {
+  it('warns, and marks the rows it never measured', async () => {
+    const result = await run(field(20), { topK: 6, includePodium: false });
+
+    expect(result.measured).toBe(6);
+    expect(result.unmeasured).toBe(14);
+    expect(result.warnings.join('\n')).toMatch(/PARTIAL RANKING/);
+    expect(result.warnings.join('\n')).toMatch(/Math\.random/);
+
+    expect(result.standings.filter((s) => s.compared)).toHaveLength(6);
+    expect(result.standings.filter((s) => !s.compared)).toHaveLength(14);
+  });
+
+  it('flags a podium drawn from entries that were never re-inserted', async () => {
+    const result = await run(field(20), { topK: 6 });
+
+    expect(result.warnings.join('\n')).toMatch(/PODIUM DRAWN FROM UNRANKED ENTRIES/);
+  });
+
+  it('stays quiet when the whole field was measured — a warning that always fires is noise', async () => {
+    const result = await run(field(6), { topK: 6 });
+
+    expect(result.measured).toBe(6);
+    expect(result.unmeasured).toBe(0);
+    expect(result.warnings).toEqual([]);
+    expect(result.standings.every((s) => s.compared)).toBe(true);
+  });
+});

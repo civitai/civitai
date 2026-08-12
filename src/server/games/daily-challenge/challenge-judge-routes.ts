@@ -31,10 +31,48 @@ const REFUSAL_PATTERN =
   /data_inspection_failed|inappropriate[_ ]content|content[_ ]policy|content[_ ]filter|flagged by/i;
 
 /**
- * A provider declining to look at the images, as opposed to any other failure. Matched on the
- * message because the refusal arrives as an HTTP error body, not a typed field.
+ * Everywhere a refusal can hide on one thrown error, joined.
+ *
+ * 🔴 `.message` alone is NOT enough, and testing it against a hand-written `new Error(...)` is how
+ * that went unnoticed. An `@openrouter/sdk` `ChatError` builds its message from `error.message`,
+ * which for a refused pair is the entirely generic "Provider returned error"; the actual
+ * `data_inspection_failed` sits in the raw HTTP body on `.body` (and the identical `.data$.body$`).
+ * A fixture that puts the token in the message matches a regex the live provider never satisfies.
+ *
+ * The whole-object stringify at the end is the backstop for a provider that nests it somewhere
+ * else again. It can only ever cost a needless reroute to a judge that would have answered anyway.
  */
+function serializeError(error: unknown): string {
+  if (error == null) return '';
+  if (typeof error !== 'object') return String(error);
+
+  const e = error as { message?: unknown; body?: unknown; data$?: { body$?: unknown } };
+  return [e.message, e.body, e.data$?.body$, safeStringify(error)]
+    .filter((part): part is string => typeof part === 'string' && part.length > 0)
+    .join('\n');
+}
+
+// Error's own fields are non-enumerable (hence `.message` being listed separately above), and
+// rawResponse/request$/response$ are both cyclic and useless here.
+function safeStringify(value: unknown): string {
+  const seen = new WeakSet<object>();
+  try {
+    return (
+      JSON.stringify(value, (_key, item) => {
+        if (typeof item !== 'object' || item === null) return item;
+        if (seen.has(item)) return undefined;
+        seen.add(item);
+        const name = item.constructor?.name;
+        if (name === 'Request' || name === 'Response' || name === 'Headers') return undefined;
+        return item;
+      }) ?? ''
+    );
+  } catch {
+    return '';
+  }
+}
+
+/** A provider declining to look at the images, as opposed to any other failure. */
 export function isContentRefusal(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error ?? '');
-  return REFUSAL_PATTERN.test(message);
+  return REFUSAL_PATTERN.test(serializeError(error));
 }

@@ -23,11 +23,26 @@ import {
 export type PlaygroundEntry = { imageId: number; userId: number; username: string };
 
 export type PlaygroundLadderResult = {
-  standings: { rank: number; imageId: number; userId: number; username: string }[];
+  standings: {
+    rank: number;
+    imageId: number;
+    userId: number;
+    username: string;
+    /**
+     * Whether this entry was re-inserted, i.e. whether its position was MEASURED. False rows kept
+     * their input index and were never compared against each other — read their relative order as
+     * the legacy absolute score, not as a pairwise result.
+     */
+    compared: boolean;
+  }[];
   podium: { rank: number; imageId: number; username: string; winRate: number; games: number }[];
   comparisons: number;
   buzz: number;
   topK: number;
+  measured: number;
+  unmeasured: number;
+  /** Non-empty means part of this answer is the thing the dry run exists to evaluate against. */
+  warnings: string[];
   unresolvedGroups: number;
   nearBoundary: number[];
   reroutes: number;
@@ -110,16 +125,47 @@ export async function runLadderDryRun(input: {
     return winner === null ? 'tie' : winner === challengerId ? 'challenger' : 'opponent';
   };
 
+  const inputOrder = entries.map((entry) => entry.imageId);
   const topK = input.topK ?? RERUN_TOP_K;
-  const rerun = await reinsertTop(
-    entries.map((entry) => entry.imageId),
-    bout,
-    topK
-  );
+  // reinsertTop takes its contenders as the first topK of the order it is handed, so the measured
+  // set is knowable before the run.
+  const contenderIds = new Set(inputOrder.slice(0, Math.min(topK, inputOrder.length)));
+  const measured = contenderIds.size;
+  const unmeasured = inputOrder.length - measured;
+
+  // 🔴 The engine refuses to bound a rerun over an order arrival did not produce (`arrivalUsable`
+  // in challenge-engine-pairwise.ts). A dry run has NO arrival placement by construction, so
+  // production's answer for this field would be the unbounded rerun — and any bounded dry run is
+  // therefore partly the legacy order it exists to evaluate against, not a preview of production.
+  //
+  // The bound is kept rather than removed because playgroundRunLadderSchema caps topK at 60 on
+  // purpose: an unbounded default is a several-thousand-comparison run of real, billed LLM calls
+  // started from a form field. So the cost stays capped and the compromise is stated instead of
+  // hidden. Measured on challenge 424 at topK=6: ranks 7-64 were never compared, and two of five
+  // entries tied at 8.85 reached the re-inserted set on a Math.random() tiebreak.
+  const warnings: string[] = [];
+  if (unmeasured > 0) {
+    warnings.push(
+      `PARTIAL RANKING: topK=${topK} measured only the first ${measured} of ${inputOrder.length} entries. ` +
+        `The other ${unmeasured} kept their input order — the legacy absolute score with its Math.random() ` +
+        `tiebreak — and were never compared against each other. Production would not bound this field: ` +
+        `a dry run has no arrival placement, so the engine's arrivalUsable guard runs the rerun unbounded.`
+    );
+  }
+
+  const rerun = await reinsertTop(inputOrder, bout, topK);
 
   let podium: PlaygroundLadderResult['podium'] = [];
   if (input.includePodium !== false && rerun.order.length >= 2) {
     const contenders = rerun.order.slice(0, PODIUM_SIZE);
+    const unmeasuredOnPodium = contenders.filter((id) => !contenderIds.has(id)).length;
+    if (unmeasuredOnPodium > 0) {
+      warnings.push(
+        `PODIUM DRAWN FROM UNRANKED ENTRIES: ${unmeasuredOnPodium} of the ${contenders.length} ` +
+          `round-robin contenders were never re-inserted, so they reached the podium on the legacy ` +
+          `order alone. Raise topK to at least ${PODIUM_SIZE} for a podium worth reading.`
+      );
+    }
     const verdicts: { imageIdA: number; imageIdB: number; winnerImageId: number | null }[] = [];
     const jobs = roundRobinPairs(contenders).flatMap(
       ([x, y]): { x: number; y: number; seat: Seat }[] => [
@@ -156,11 +202,15 @@ export async function runLadderDryRun(input: {
       imageId,
       userId: byImageId.get(imageId)?.userId ?? 0,
       username: byImageId.get(imageId)?.username ?? 'unknown',
+      compared: contenderIds.has(imageId),
     })),
     podium,
     comparisons,
     buzz,
     topK,
+    measured,
+    unmeasured,
+    warnings,
     unresolvedGroups: rerun.unresolvedGroups,
     nearBoundary: rerun.nearBoundary,
     reroutes,

@@ -220,6 +220,7 @@ const currentChallenge = {
 const engine = {
   key: 'pairwise-ladder' as const,
   ranksFullField: true,
+  dedupesAfterRanking: true,
   shortlistSize: 15,
   recordEntry: mockRecordEntry,
   rankField: mockRankField,
@@ -546,5 +547,137 @@ describe('pickWinnersForChallenge — who picks the places', () => {
     );
     expect(mockCreateChallengeWinner).not.toHaveBeenCalled();
     expect(mockUpdateChallengeStatus).not.toHaveBeenCalled();
+  });
+});
+
+// The property Justin asked for: a user's representative must be chosen by the measure we are
+// actually ranking with. Before this, `getJudgedEntries` picked it by absolute weighted score with
+// a Math.random() tiebreak and handed the engine 64 representatives out of 285 — so the coin flip
+// this engine exists to remove still ran, one level upstream, and pairwise never saw the other 221.
+//
+// EVERY entry here belongs to a user who has another one. A fixture with one entry per user makes
+// the dedupe a no-op and would pass whichever measure picked the representative.
+describe('pickWinnersForChallenge — a user’s representative comes from the ladder, not the score', () => {
+  function mockJudgeRow(judgingEngine: string) {
+    mockDbReadQueryRaw.mockResolvedValueOnce([
+      {
+        judgeId: null,
+        judgingPrompt: null,
+        eventId: null,
+        source: ChallengeSource.System,
+        judgingCategories: null,
+        judgingEngine,
+        metadata: null,
+      },
+    ]);
+  }
+
+  function recapOnly() {
+    mockGenerateWinners.mockResolvedValue({
+      process: 'llm',
+      outcome: 'llm',
+      model: 'test-model',
+      usage: { promptTokens: 0, completionTokens: 0 },
+      winners: [],
+    });
+  }
+
+  /** `aesthetic` is the only score that moves, so the absolute order is exactly its descending order. */
+  function mockScoredRows(
+    rows: { imageId: number; userId: number; username: string; aesthetic: number }[]
+  ) {
+    mockDbReadQueryRaw.mockResolvedValueOnce(
+      rows.map(({ aesthetic, ...row }) => ({
+        ...row,
+        note: JSON.stringify({
+          score: { theme: 10, aesthetic, humor: 8, wittiness: 8 },
+          summary: `entry by ${row.username}`,
+        }),
+      }))
+    );
+  }
+
+  // alice's absolute-best is image 1; bob's is image 2. The ladder disagrees about both.
+  const FIELD = [
+    { imageId: 1, userId: 100, username: 'alice', aesthetic: 10 },
+    { imageId: 4, userId: 100, username: 'alice', aesthetic: 2 },
+    { imageId: 2, userId: 200, username: 'bob', aesthetic: 9 },
+    { imageId: 5, userId: 200, username: 'bob', aesthetic: 3 },
+  ];
+
+  /** Ladder order, deliberately the reverse of the absolute order within each user. */
+  function rankAs(order: number[]) {
+    mockRankField.mockImplementation(async (_ctx: unknown, field: { imageId: number }[]) =>
+      order.map((id) => field.find((entry) => entry.imageId === id)!)
+    );
+  }
+
+  function imageIdsOf(value: unknown) {
+    return (value as { imageId: number }[]).map((entry) => entry.imageId);
+  }
+
+  it('hands the engine every entry, including the second one from the same user', async () => {
+    mockJudgeRow('pairwise-ladder');
+    mockScoredRows(FIELD);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    mockSelectWinners.mockResolvedValue(null);
+    recapOnly();
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    expect(imageIdsOf(mockRankField.mock.calls[0][1]).sort()).toEqual([1, 2, 4, 5]);
+  });
+
+  it('takes each user’s BEST BY LADDER RANK, not their best by absolute score', async () => {
+    mockJudgeRow('pairwise-ladder');
+    mockScoredRows(FIELD);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    // Both users' weaker absolute entry wins on the ladder.
+    rankAs([4, 5, 1, 2]);
+    mockSelectWinners.mockResolvedValue([{ userId: 100, imageId: 4, reason: 'ladder' }]);
+    recapOnly();
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    // 4 and 5 are the ladder-best; 1 and 2 are the absolute-best. Picking by score gives [1, 2].
+    expect(imageIdsOf(mockSelectWinners.mock.calls[0][1])).toEqual([4, 5]);
+  });
+
+  it('keeps one entry per user — the podium must not play a user against themselves', async () => {
+    mockJudgeRow('pairwise-ladder');
+    mockScoredRows(FIELD);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    rankAs([4, 1, 5, 2]);
+    mockSelectWinners.mockResolvedValue(null);
+    recapOnly();
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    // 4 then 1 are both alice's; the ladder-first one survives and the recap sees no duplicate.
+    expect(imageIdsOf(mockSelectWinners.mock.calls[0][1])).toEqual([4, 5]);
+    const recapCreators = (
+      mockGenerateWinners.mock.calls[0][0].entries as { creatorId: number }[]
+    ).map((entry) => entry.creatorId);
+    expect(recapCreators).toEqual([...new Set(recapCreators)]);
+  });
+
+  it('leaves legacy deduping before the ranking, by absolute score, exactly as it was', async () => {
+    mockResolveJudgingEngine.mockResolvedValue({
+      ...engine,
+      key: 'legacy-absolute',
+      ranksFullField: false,
+      dedupesAfterRanking: false,
+      shortlistSize: 0,
+    });
+    mockJudgeRow('legacy-absolute');
+    mockScoredRows(FIELD);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    mockSelectWinners.mockResolvedValue(null);
+    recapOnly();
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    // Pre-deduped to the absolute-best per user, before the engine ever sees the field.
+    expect(imageIdsOf(mockRankField.mock.calls[0][1]).sort()).toEqual([1, 2]);
   });
 });
