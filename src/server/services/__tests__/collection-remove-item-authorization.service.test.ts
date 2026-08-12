@@ -115,7 +115,7 @@ describe('removeCollectionItem authorization', () => {
       itemId: 55,
     });
     expect(mockDbWrite.collectionItem.deleteMany).toHaveBeenCalledWith({
-      where: { id: ITEM_ROW_ID },
+      where: { id: { in: [ITEM_ROW_ID] } },
     });
   });
 
@@ -124,7 +124,7 @@ describe('removeCollectionItem authorization', () => {
 
     await expect(remove({ userId: COLLECTION_OWNER_ID })).resolves.toBeTruthy();
     expect(mockDbWrite.collectionItem.deleteMany).toHaveBeenCalledWith({
-      where: { id: ITEM_ROW_ID },
+      where: { id: { in: [ITEM_ROW_ID] } },
     });
   });
 
@@ -133,7 +133,7 @@ describe('removeCollectionItem authorization', () => {
 
     await expect(remove({ userId: OUTSIDER_ID, isModerator: true })).resolves.toBeTruthy();
     expect(mockDbWrite.collectionItem.deleteMany).toHaveBeenCalledWith({
-      where: { id: ITEM_ROW_ID },
+      where: { id: { in: [ITEM_ROW_ID] } },
     });
   });
 
@@ -142,7 +142,7 @@ describe('removeCollectionItem authorization', () => {
 
     await expect(remove({ userId: OUTSIDER_ID })).resolves.toBeTruthy();
     expect(mockDbWrite.collectionItem.deleteMany).toHaveBeenCalledWith({
-      where: { id: ITEM_ROW_ID },
+      where: { id: { in: [ITEM_ROW_ID] } },
     });
   });
 
@@ -161,7 +161,7 @@ describe('removeCollectionItem authorization', () => {
     await expect(remove({ userId: OUTSIDER_ID, isModerator: true })).resolves.toBeTruthy();
     expect(mockDbWrite.collectionItem.deleteMany).not.toHaveBeenCalled();
     expect(mockDbWrite.collectionItem.updateMany).toHaveBeenCalledWith({
-      where: { id: ITEM_ROW_ID },
+      where: { id: { in: [ITEM_ROW_ID] } },
       data: expect.objectContaining({
         status: CollectionItemStatus.REJECTED,
         reviewedById: OUTSIDER_ID,
@@ -178,7 +178,7 @@ describe('removeCollectionItem authorization', () => {
 
     await expect(remove({ userId: COLLECTION_OWNER_ID })).resolves.toBeTruthy();
     expect(mockDbWrite.collectionItem.deleteMany).toHaveBeenCalledWith({
-      where: { id: ITEM_ROW_ID },
+      where: { id: { in: [ITEM_ROW_ID] } },
     });
     expect(mockDbWrite.collectionItem.updateMany).not.toHaveBeenCalled();
   });
@@ -193,7 +193,7 @@ describe('removeCollectionItem authorization', () => {
 
     await expect(remove({ userId: COLLECTION_OWNER_ID })).resolves.toBeTruthy();
     expect(mockDbWrite.collectionItem.deleteMany).toHaveBeenCalledWith({
-      where: { id: ITEM_ROW_ID },
+      where: { id: { in: [ITEM_ROW_ID] } },
     });
     expect(mockDbWrite.collectionItem.updateMany).not.toHaveBeenCalled();
   });

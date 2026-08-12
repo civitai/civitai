@@ -3385,35 +3385,42 @@ export const removeCollectionItem = async ({
   // not TRUE — whenever `note` is NULL, which is the normal case: that silently matched zero
   // rows and reported success. Same shape as saveItemInCollections' check, so the two removal
   // doors agree about the same row.
-  const [existing] = await dbWrite.$queryRaw<
+  // Unbounded, and both statements below act on every id it returns. Prod has a partial unique
+  // index per entity type, so this is one row there — but those indexes exist in no migration,
+  // and the statement this replaced deleted every matching row regardless.
+  const existing = await dbWrite.$queryRaw<
     { id: number; addedById: number | null; note: string | null }[]
   >`
     SELECT id, "addedById", note
     FROM "CollectionItem"
     WHERE "collectionId" = ${collectionId} AND ${idColumn} = ${itemId}
-    LIMIT 1
   `;
 
-  if (existing) {
+  if (existing.length) {
     // An automatically featured item is rejected rather than deleted. Deleting it would let the
     // next job run re-add the same image, since the job's dedupe is "is there already a row" —
     // so for these rows the tombstone IS the removal. REJECTED is invisible to the render path,
     // which defaults to ACCEPTED only.
-    const isAutoFeatured =
-      existing.addedById === AUTO_FEATURE_USER_ID &&
-      !!existing.note?.startsWith(`${AUTO_FEATURE_NOTE_PREFIX}:`);
+    const isAutoFeatured = (row: (typeof existing)[number]) =>
+      row.addedById === AUTO_FEATURE_USER_ID &&
+      !!row.note?.startsWith(`${AUTO_FEATURE_NOTE_PREFIX}:`);
 
-    if (isAutoFeatured) {
+    const tombstoneIds = existing.filter(isAutoFeatured).map((row) => row.id);
+    const deletableIds = existing.filter((row) => !isAutoFeatured(row)).map((row) => row.id);
+
+    if (tombstoneIds.length) {
       await dbWrite.collectionItem.updateMany({
-        where: { id: existing.id },
+        where: { id: { in: tombstoneIds } },
         data: {
           status: CollectionItemStatus.REJECTED,
           reviewedById: userId,
           reviewedAt: new Date(),
         },
       });
-    } else {
-      await dbWrite.collectionItem.deleteMany({ where: { id: existing.id } });
+    }
+
+    if (deletableIds.length) {
+      await dbWrite.collectionItem.deleteMany({ where: { id: { in: deletableIds } } });
     }
   }
 
