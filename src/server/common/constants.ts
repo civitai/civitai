@@ -628,7 +628,7 @@ const baseLicenses: Record<string, LicenseDetails> = {
     name: 'Illustrious License',
   },
   'ltxv license': {
-    url: 'https://huggingface.co/Lightricks/LTX-Video/blob/main/License.txt',
+    url: 'https://huggingface.co/Lightricks/LTX-Video/blob/main/LTX-Video-Open-Weights-License-0.X.txt',
     name: 'LTX Video License',
   },
   'cogvideox license': {
@@ -664,8 +664,10 @@ const baseLicenses: Record<string, LicenseDetails> = {
     name: 'Pony',
   },
   ltxv2: {
-    url: 'https://github.com/Lightricks/LTX-2/blob/main/LICENSE',
-    name: 'LTXV2',
+    // Not github.com/Lightricks/LTX-2 — that tracks the latest revision, which since
+    // Aug 2026 is scoped to 2.5+ and does not govern these weights.
+    url: 'https://huggingface.co/Lightricks/LTX-2.3/blob/main/LICENSE',
+    name: 'LTX-2 Community License Agreement',
   },
   anima: {
     url: 'https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md',

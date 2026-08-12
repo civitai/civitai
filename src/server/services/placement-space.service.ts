@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { placementPriceRange } from '~/server/services/placement.service';
+import { getPlacementConfig, placementPriceRange } from '~/server/services/placement.service';
 import { throwBadRequestError, throwAuthorizationError } from '~/server/utils/errorHandling';
 import type {
   PlacementSpaceEntity,
@@ -41,6 +41,15 @@ export type ResolvedPlacementSpace = {
   /** `min(setPrice, cap)`, computed here and never stored. `null` when unpriced. */
   price: number | null;
   cap: number;
+  /**
+   * The share of an approved payment the space owner keeps, 0-1.
+   *
+   * Carried so the placer can be told where their Buzz goes without the UI
+   * hardcoding it. The shares are operator-tunable at runtime, so a string
+   * compiled against today's split is a claim about money that can silently
+   * stop being true.
+   */
+  ownerShare: number;
   /** Surface-owned; this layer carries it without reading inside it. */
   settings: PlacementSpaceSettings;
 };
@@ -96,19 +105,15 @@ export async function resolvePlacementSpaceFor({
   });
 
   const { max: cap } = await placementPriceRange(ownerId, surface);
-
-  // `setPrice` stays null when the creator has chosen nothing — the settings UI
-  // needs to know they have not, so it can show the default rather than claim
-  // they picked it. Only the charged price falls back, and it is capped like any
-  // other, so a surface default cannot exceed what their score and tier allow.
-  const charged = resolved.price ?? PLACEMENT_SURFACES[surface].fallbackPrice;
+  const shares = (await getPlacementConfig()).approvalShares(surface);
 
   return {
     ownerId,
     mode: resolved.mode,
     setPrice: resolved.price,
-    price: effectivePlacementPrice(charged, cap),
+    price: effectivePlacementPrice(resolved.price, cap),
     cap,
+    ownerShare: 1 - shares.seller - shares.platform,
     settings: resolved.settings ?? {},
   };
 }
@@ -169,15 +174,29 @@ export async function setPlacementSpace({
   // would refuse every attempt while the owner's UI showed the space as open.
   // Requiring the price here makes that state unreachable rather than a puzzle
   // the placer discovers.
+  const [existing, inherited] = await Promise.all([
+    dbWrite.placementSpace.findUnique({
+      where: { surface_entityType_entityId: { surface, entityType, entityId } },
+      select: { price: true },
+    }),
+    inheritedPrice({ surface, entityType, entityId, userId }),
+  ]);
+
+  // `undefined` leaves this level's own price alone, so the guard has to read it
+  // rather than treating it as unset — otherwise it refuses a configuration the
+  // cascade resolves fine, which is the disagreement this guard exists to avoid.
+  const ownPrice = price === undefined ? existing?.price ?? null : price;
+  const resolvedPrice = ownPrice ?? inherited ?? PLACEMENT_SURFACES[surface].defaultPrice;
+
+  // No guard against clearing a stored price, and that is deliberate rather than
+  // an omission.
   //
-  // A surface with a `fallbackPrice` has no such state — there is always a price
-  // to charge — so this must not refuse there, or a creator turning their gallery
-  // back on after opting out would be told to set a price the surface already
-  // has. It still refuses for surfaces that stay opt-in.
-  const resolvedPrice =
-    price ??
-    (await inheritedPrice({ surface, entityType, entityId, userId })) ??
-    PLACEMENT_SURFACES[surface].fallbackPrice;
+  // It was guarded while the account price was a free-form number field, where
+  // "cleared" and "mid-edit" look identical: a creator charging 500 who blanks
+  // the box means "set my own price", not "take the platform default". Every
+  // control is now a slider that cannot emit an empty value, so the only route
+  // here is a labelled button that says what it does — and refusing a deliberate
+  // action because an accidental one used to be possible is the wrong trade.
   if (mode !== 'off' && resolvedPrice == null)
     throw throwBadRequestError('placement: set a price before opening this space');
 

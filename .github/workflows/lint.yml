@@ -304,9 +304,12 @@ jobs:
     # tests with no browser, no database and no Next module graph — ~15s locally.
     #
     # DB-backed tiers self-skip: `@civitai/db-queries` sources DATABASE_URL from the root
-    # `.env`, which does not exist on a runner, so its 4 DB-backed tests across two files
-    # (3 in tag.db.explain, 1 in enum-array-parsers.explain) report as skipped. They are
-    # visible as skips in the summary rather than as a silent absence.
+    # `.env`, which does not exist on a runner, so its 8 DB-backed tests across three files
+    # (6 in tag.db.explain, 1 in model.db.explain, 1 in enum-array-parsers.explain) report
+    # as skipped. They are visible as skips in the summary rather than as a silent absence.
+    # Those EXPLAIN checks therefore have NEVER run in CI — they are laptop-only evidence.
+    # The same is true of the 16-case Kysely/Prisma parity suite, which lives in the app's
+    # `unit` project and self-skips without KYSELY_PARITY_DATABASE_URL.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4

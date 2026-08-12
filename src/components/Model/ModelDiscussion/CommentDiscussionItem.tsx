@@ -48,10 +48,7 @@ export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
           reaction,
           user: {
             id: currentUser.id,
-            deletedAt: null,
             username: currentUser.username ?? '',
-            image: currentUser.image ?? '',
-            profilePicture: null,
           },
         };
         const reacted = previousReactions.find(

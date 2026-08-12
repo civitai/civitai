@@ -11,6 +11,7 @@ import {
   Text,
   ThemeIcon,
   Modal,
+  Tooltip,
 } from '@mantine/core';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import {
@@ -41,6 +42,7 @@ import {
   collectionReadPrivacyData,
   collectionTypeData,
   collectionWritePrivacyData,
+  useCollectionsPermissionsMap,
 } from './collection.utils';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -100,10 +102,16 @@ type SelectedCollection = {
   read: CollectionReadConfiguration;
 };
 
+// Collections closed to new entries render disabled here rather than being filtered out — an
+// option that silently vanishes from the picker reads as deleted, not paused.
+const COLLABORATION_CLOSED_TOOLTIP = "This collection isn't accepting new entries right now.";
+
 // Reusable collection checkbox item component
 function CollectionCheckboxItem({
   collection,
   selectedItem,
+  disabled,
+  disabledReason,
   onToggle,
   onTagChange,
 }: {
@@ -114,6 +122,10 @@ function CollectionCheckboxItem({
     tags?: Array<{ id: number; name: string; filterableOnly?: boolean }>;
   };
   selectedItem?: SelectedCollection;
+  // disabled also covers "not yet known" (still loading) so nothing is briefly clickable;
+  // disabledReason is true only once we know it's actually closed, for the tooltip.
+  disabled?: boolean;
+  disabledReason?: boolean;
   onToggle: (selected: boolean) => void;
   onTagChange: (tagId: number | null) => void;
 }) {
@@ -124,23 +136,26 @@ function CollectionCheckboxItem({
 
   return (
     <Stack className={classes.contentWrap} gap={0}>
-      <Checkbox
-        classNames={classes}
-        checked={!!selectedItem}
-        onChange={() => {
-          onToggle(!!selectedItem);
-        }}
-        label={
-          <Group gap="sm" justify="space-between" w="100%" wrap="nowrap">
-            <Text lineClamp={1} inherit className={classes.collectionName}>
-              {collection.name}
-            </Text>
-            <ThemeIcon size={20} variant="light" color="gray" className={classes.privacyIcon}>
-              <Icon size={14} />
-            </ThemeIcon>
-          </Group>
-        }
-      />
+      <Tooltip label={COLLABORATION_CLOSED_TOOLTIP} disabled={!disabledReason} position="top-start">
+        <Checkbox
+          classNames={classes}
+          checked={!!selectedItem}
+          disabled={disabled}
+          onChange={() => {
+            onToggle(!!selectedItem);
+          }}
+          label={
+            <Group gap="sm" justify="space-between" w="100%" wrap="nowrap">
+              <Text lineClamp={1} inherit className={classes.collectionName}>
+                {collection.name}
+              </Text>
+              <ThemeIcon size={20} variant="light" color="gray" className={classes.privacyIcon}>
+                <Icon size={14} />
+              </ThemeIcon>
+            </Group>
+          }
+        />
+      </Tooltip>
       {selectedItem && availableTags.length > 0 && (
         <Select
           withAsterisk
@@ -214,6 +229,22 @@ function CollectionListForm({
       !collection.isOwner && !(includeActiveContests && collection.mode === CollectionMode.Contest)
   );
   const features = useFeatureFlags();
+  const { map: permissionsByCollectionId, isLoading: loadingPermissions } =
+    useCollectionsPermissionsMap(collections.map((c) => c.id));
+  // While permission data for a collection is unknown, treat it as closed rather than open —
+  // it must never be briefly selectable before flipping to disabled once data arrives. A lapse
+  // keeps write for the owner and for elevated collaborators, so it only closes the picker for
+  // people who actually lost it — otherwise a lapsed owner finds their OWN collection greyed
+  // out with the visitor copy.
+  const getCollaborationState = (collectionId: number) => {
+    const permissions = permissionsByCollectionId.get(collectionId);
+    const collaborationDisabled =
+      !!permissions?.collaborationDisabled && !permissions?.write && !permissions?.writeReview;
+    return {
+      disabled: loadingPermissions || collaborationDisabled,
+      disabledReason: !loadingPermissions && collaborationDisabled,
+    };
+  };
 
   const addCollectionItemMutation = trpc.collection.saveItem.useMutation();
   const handleSubmit = () => {
@@ -333,6 +364,7 @@ function CollectionListForm({
                           key={collection.id}
                           collection={collection}
                           selectedItem={selectedItem}
+                          {...getCollaborationState(collection.id)}
                           onToggle={(isSelected) => {
                             if (isSelected) {
                               setSelectedCollections((curr) =>
@@ -386,6 +418,7 @@ function CollectionListForm({
                             key={collection.id}
                             collection={collection}
                             selectedItem={selectedItem}
+                            {...getCollaborationState(collection.id)}
                             onToggle={(isSelected) => {
                               if (isSelected) {
                                 setSelectedCollections((curr) =>
@@ -439,6 +472,7 @@ function CollectionListForm({
                             key={collection.id}
                             collection={collection}
                             selectedItem={selectedItem}
+                            {...getCollaborationState(collection.id)}
                             onToggle={(isSelected) => {
                               if (isSelected) {
                                 setSelectedCollections((curr) =>
@@ -496,6 +530,7 @@ function NewCollectionForm({
   ...props
 }: Props & { onSubmit: VoidFunction; onBack: VoidFunction }) {
   const currentUser = useCurrentUser();
+  const isMember = !!currentUser?.tier && currentUser.tier !== 'free';
   const form = useForm({
     schema: upsertCollectionInput,
     defaultValues: {
@@ -598,13 +633,16 @@ function NewCollectionForm({
               return <SelectItem {...data} {...item} />;
             }}
           />
+          {(isMember || currentUser?.isModerator) && (
+            <InputSelect
+              name="write"
+              label="Who can add to this collection"
+              data={Object.values(collectionWritePrivacyData)}
+            />
+          )}
+
           {currentUser?.isModerator && (
             <>
-              <InputSelect
-                name="write"
-                label="Add permissions"
-                data={Object.values(collectionWritePrivacyData)}
-              />
               <InputSelect
                 name="mode"
                 label="Mode"

@@ -174,6 +174,9 @@ export const ECO = {
   LTXV: 42,
   LTXV2: 58,
   LTXV23: 63,
+  // 2.5 ships its own 22B weights, so a 2.3 LoRA is not guaranteed to load on
+  // it — separate ecosystem, bridgeable later with a crossEcosystemRule.
+  LTXV25: 81,
   Sora2: 43,
   Veo3: 44,
   SVD: 45,
@@ -731,6 +734,13 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'LTX Video 2.3',
     familyId: 16,
     sortOrder: 207,
+  },
+  {
+    id: ECO.LTXV25,
+    key: 'LTXV25',
+    displayName: 'LTX Video 2.5',
+    familyId: 16,
+    sortOrder: 208,
   },
   { id: ECO.Lumina, key: 'Lumina', displayName: 'Lumina', sortOrder: 208 },
   {
@@ -1994,6 +2004,7 @@ export const BM = {
   LTXV: 15,
   LTXV2: 72,
   LTXV23: 80,
+  LTXV25: 100,
   Lumina: 16,
   Mochi: 17,
   NanoBanana: 18,
@@ -2748,7 +2759,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: "Lightricks' next-generation video generation model",
     type: 'video',
     ecosystemId: ECO.LTXV2,
-    licenseId: 16,
+    licenseId: 35,
   },
   {
     id: BM.LTXV23,
@@ -2756,6 +2767,14 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: "Lightricks' LTX Video 2.3 generation model",
     type: 'video',
     ecosystemId: ECO.LTXV23,
+    licenseId: 35,
+  },
+  {
+    id: BM.LTXV25,
+    name: 'LTXV 2.5',
+    description: "Lightricks' LTX Video 2.5 generation model",
+    type: 'video',
+    ecosystemId: ECO.LTXV25,
     licenseId: 35,
   },
 
@@ -4050,7 +4069,7 @@ export const ecosystemGroups: EcosystemGroup[] = [
   {
     id: 'LTXV',
     displayName: 'LTX Video',
-    ecosystemIds: [ECO.LTXV, ECO.LTXV2, ECO.LTXV23],
+    ecosystemIds: [ECO.LTXV, ECO.LTXV2, ECO.LTXV23, ECO.LTXV25],
     defaultEcosystemId: ECO.LTXV23,
     sortOrder: 205,
   },

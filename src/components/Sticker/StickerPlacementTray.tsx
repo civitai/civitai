@@ -38,6 +38,7 @@ export function StickerPlacementTray() {
   // stretch, since nothing is drawn on the image until the pointer arrives.
   const [dragging, setDragging] = useState<number | null>(null);
   const endGrab = useRef<(() => void) | null>(null);
+  const trayRef = useRef<HTMLDivElement>(null);
 
   // A gesture in flight when the tray closes would leave window listeners behind
   // and could drop a sticker onto an image nobody is looking at any more.
@@ -48,6 +49,15 @@ export function StickerPlacementTray() {
   const begin = useStickerPlacementDraftStore((state) => state.begin);
   const close = useStickerPlacementDraftStore((state) => state.close);
   const setInteraction = useStickerPlacementDraftStore((state) => state.setInteraction);
+  const setTray = useStickerPlacementDraftStore((state) => state.setTray);
+
+  // Registered after the early return below has been passed, so the element in
+  // the store is always one that is actually on screen.
+  useEffect(() => {
+    if (targetImageId == null) return;
+    setTray(trayRef.current);
+    return () => setTray(null);
+  }, [targetImageId, setTray]);
 
   const { space } = useImagePlacementSpace(targetImageId ?? undefined);
   const { data: balances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
@@ -109,7 +119,10 @@ export function StickerPlacementTray() {
     : 'Drag a sticker onto the image.';
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-30 flex justify-center p-3">
+    // Measured as the obstacle the buy button avoids, and deliberately measured
+    // at full width rather than at the visible panel's `max-w-xl`: this root
+    // spans the viewport and takes the clicks across all of it.
+    <div ref={trayRef} className="fixed inset-x-0 bottom-0 z-30 flex justify-center p-3">
       <div className="w-full max-w-xl overflow-hidden rounded-lg border border-gray-3 bg-white shadow-lg dark:border-dark-4 dark:bg-dark-7">
         <div className="flex items-start gap-2 border-b border-gray-3 px-3 py-2 dark:border-dark-4">
           <div className="flex-1">

@@ -501,6 +501,8 @@ model User {
   collectionItems            CollectionItem[]
   reviewedCollectionItems    CollectionItem[]               @relation("reviewedBy")
   contributingCollections    CollectionContributor[]
+  collectionInvitesReceived CollectionInvite[] @relation("collectionInviteRecipient")
+  collectionInvitesSent     CollectionInvite[] @relation("collectionInviteSender")
   homeBlocks                 HomeBlock[]
   bounties                   Bounty[]
   bountyEntries              BountyEntry[]
@@ -4525,9 +4527,11 @@ model Collection {
   metadata     Json                         @default("{}")
   availability Availability                 @default(Public)
   nsfwLevel    Int                          @default(0)
+  collaborationDisabledAt DateTime?
 
   items        CollectionItem[]
   contributors CollectionContributor[]
+  invites      CollectionInvite[]
   tags         TagsOnCollection[]
   post         Post[]
   reports      CollectionReport[]
@@ -4611,6 +4615,34 @@ model CollectionContributor {
 
   @@id([userId, collectionId])
   @@index([userId], type: Hash)
+}
+
+enum CollectionCollaboratorRole {
+  Contributor
+  Manager
+}
+
+enum CollectionInviteStatus {
+  Pending
+  Accepted
+  Declined
+}
+
+model CollectionInvite {
+  id           Int                        @id @default(autoincrement())
+  collectionId Int
+  collection   Collection                 @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  userId       Int
+  user         User                       @relation("collectionInviteRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  invitedById  Int
+  invitedBy    User                       @relation("collectionInviteSender", fields: [invitedById], references: [id], onDelete: Cascade)
+  role         CollectionCollaboratorRole
+  status       CollectionInviteStatus     @default(Pending)
+  createdAt    DateTime                   @default(now())
+  respondedAt  DateTime?
+
+  @@unique([collectionId, userId])
+  @@index([userId, status])
 }
 
 model TagsOnCollection {

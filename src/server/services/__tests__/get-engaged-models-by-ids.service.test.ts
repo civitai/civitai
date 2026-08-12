@@ -10,9 +10,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * These tests pin that the new path returns ONLY the intersection of (user's engagements ∩ input
  * modelIds), keyed by engagement type, so the response is bounded by |modelIds| × (#types).
  *
- * `~/server/db/client` is mocked with an in-memory fixture whose `findMany` applies the real
- * `where` clause — so the tests exercise the service's shaping AND that it passes the correct,
- * bounded filters down to Prisma (including through the reused `getResourceReviewsByUserId`).
+ * Both reads are mocked over one in-memory fixture that applies the real filters, so the tests
+ * exercise the service's shaping AND that it passes the correct, bounded filters down. They sit at
+ * two different seams because the two reads now take different paths: the engagement read goes
+ * through `@civitai/db-queries` (Kysely over the app's own pg pool, off the Prisma query engine),
+ * while `getResourceReviewsByUserId` is still Prisma via `~/server/db/client`.
  */
 
 // Model id fixtures (kept in sync with the hoisted mock below — plain numbers, safe to duplicate).
@@ -26,7 +28,7 @@ const E = 105; // Recommended only (outside input)
 const F = 106; // resource review but recommended:false (must never appear)
 const Z = 999; // in input but user has NO engagement
 
-const { mockDb } = vi.hoisted(() => {
+const { mockDb, listModelEngagementsMock } = vi.hoisted(() => {
   const U = 1;
   const OU = 2;
   type EngRow = { userId: number; modelId: number; type: string };
@@ -51,18 +53,21 @@ const { mockDb } = vi.hoisted(() => {
   const inArr = (where: any, field: string) => where?.[field]?.in as number[] | undefined;
 
   return {
+    // The engagement read is served by the Kysely query function, not Prisma. Same in-memory
+    // fixture and same filtering, applied to the ported signature `(db, { userId, modelIds })`.
+    listModelEngagementsMock: vi.fn(
+      async (_db: unknown, { userId, modelIds }: { userId: number; modelIds: number[] }) => {
+        if (!modelIds.length) return [];
+        return engagementRows
+          .filter((r) => r.userId === userId && modelIds.includes(r.modelId))
+          .map((r) => ({ modelId: r.modelId, type: r.type }));
+      }
+    ),
     mockDb: {
+      // Kept only to prove the engagement read NO LONGER goes through Prisma.
       modelEngagement: {
-        findMany: vi.fn(async ({ where }: any) => {
-          const ids = inArr(where, 'modelId');
-          return engagementRows
-            .filter(
-              (r) =>
-                r.userId === where.userId &&
-                (where.type === undefined || r.type === where.type) &&
-                (!ids || ids.includes(r.modelId))
-            )
-            .map((r) => ({ modelId: r.modelId, type: r.type }));
+        findMany: vi.fn(async () => {
+          throw new Error('modelEngagement.findMany must not be called — ported to Kysely');
         }),
       },
       resourceReview: {
@@ -83,6 +88,10 @@ const { mockDb } = vi.hoisted(() => {
 });
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
+// The engagement read runs through @civitai/db-queries over the app's own pg pool, bypassing the
+// Prisma query engine. Mocked at that seam so these tests keep exercising the service's shaping
+// and the bounded filters it passes down.
+vi.mock('@civitai/db-queries/model', () => ({ listModelEngagements: listModelEngagementsMock }));
 // user.service reaches into user-preferences.service at import time; stub the surface
 // (matches the proven recipe in engagement-toggle.idempotent.service.test.ts).
 vi.mock('~/server/services/user-preferences.service', () => ({
@@ -99,6 +108,19 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 
 import { getUserEngagedModelsByIds } from '~/server/services/user.service';
 import { getResourceReviewsByUserId } from '~/server/services/resourceReview.service';
+// NOT mocked: the real client the service passes to the ported query function. Before the port the
+// engagement read was `dbRead.modelEngagement.findMany`, so the mock's location pinned the tier and
+// a wrong-tier read blew up. Mocking the query-function seam moves that property out of the suite
+// unless the client argument is pinned with `toBe` — `expect.anything()` is satisfied by
+// `kyselyWrite` just as happily, and so is `toHaveBeenCalledWith(kyselyRead, …)`, because the two
+// clients are distinct objects that compare DEEP-EQUAL. Measured twice: routing every ported read
+// at `kyselyWrite` failed 1 test on pre-port code and passed the whole suite after the port; and
+// the first cut of this fix used `toHaveBeenCalledWith` and that same mutant survived it.
+import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
+
+const WRONG_TIER =
+  'ported read was handed a client other than kyselyRead (kyselyWrite / kyselyReadLong routes it ' +
+  'at the wrong tier); note kyselyRead and kyselyWrite are deep-equal, so only toBe catches this';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -134,16 +156,37 @@ describe('getUserEngagedModelsByIds — membership is scoped to (engagements ∩
     expect(allIds).not.toContain(Z);
   });
 
-  it('passes the bounded modelId filter down to Prisma (both tables)', async () => {
+  it('passes the bounded modelId filter down to both reads (Kysely + Prisma)', async () => {
     await getUserEngagedModelsByIds({ id: USER, modelIds: [A, B, Z] });
-    expect(mockDb.modelEngagement.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { userId: USER, modelId: { in: [A, B, Z] } } })
-    );
+    // The client is pinned with `toBe`, not `expect.anything()` and not
+    // `toHaveBeenCalledWith(kyselyRead, …)`: the client argument is the only thing left pinning
+    // this read to the read tier, and a STRUCTURAL matcher cannot pin it — `kyselyRead` and
+    // `kyselyWrite` are distinct objects that compare deep-equal, so the wrong-tier mutant
+    // survives `toHaveBeenCalledWith`. Measured; see the negative control below.
+    expect(listModelEngagementsMock).toHaveBeenCalledTimes(1);
+    expect(listModelEngagementsMock.mock.calls[0][0], WRONG_TIER).toBe(kyselyRead);
+    expect(listModelEngagementsMock.mock.calls[0][1]).toEqual({
+      userId: USER,
+      modelIds: [A, B, Z],
+    });
+    // The engagement read no longer touches the Prisma engine.
+    expect(mockDb.modelEngagement.findMany).not.toHaveBeenCalled();
     expect(mockDb.resourceReview.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { userId: USER, recommended: true, modelId: { in: [A, B, Z] } },
       })
     );
+  });
+});
+
+describe('getUserEngagedModelsByIds — read-tier seam', () => {
+  // Negative control on the matcher used above: `kyselyWrite` is a DIFFERENT object, so `toBe`
+  // separates the tiers — but the two are deep-equal, so a structural matcher would not. This
+  // fails if they ever become the same object, at which point the pin above is inert and this
+  // seam needs a different one.
+  it('toBe separates the read and write clients even though toEqual does not', () => {
+    expect(kyselyRead).not.toBe(kyselyWrite);
+    expect(kyselyRead).toEqual(kyselyWrite);
   });
 });
 
@@ -218,10 +261,10 @@ describe('getUserEngagedModelsByIds — freeze-safety bound', () => {
     const bigEng = modelIds.flatMap((modelId) => types.map((type) => ({ modelId, type })));
     const bigRev = modelIds.map((modelId, i) => ({ modelId, modelVersionId: 9000 + i }));
 
-    mockDb.modelEngagement.findMany.mockImplementationOnce(async ({ where }: any) => {
-      const ids = where.modelId.in as number[];
-      return bigEng.filter((r) => ids.includes(r.modelId));
-    });
+    listModelEngagementsMock.mockImplementationOnce(
+      async (_db: unknown, { modelIds: ids }: { userId: number; modelIds: number[] }) =>
+        bigEng.filter((r) => ids.includes(r.modelId))
+    );
     mockDb.resourceReview.findMany.mockImplementationOnce(async ({ where }: any) => {
       const ids = where.modelId.in as number[];
       return bigRev.filter((r) => ids.includes(r.modelId));

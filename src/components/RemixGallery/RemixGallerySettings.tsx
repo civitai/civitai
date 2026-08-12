@@ -1,21 +1,12 @@
-import {
-  Alert,
-  Anchor,
-  Divider,
-  Group,
-  NumberInput,
-  SegmentedControl,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { Alert, Anchor, Divider, Group, SegmentedControl, Stack, Text } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { PlacementPriceSlider } from '~/components/Placement/PlacementPriceSlider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { Currency } from '~/shared/utils/prisma/enums';
+import { PLACEMENT_MIN_PRICE, PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import type { RemixGalleryContentRule } from '~/shared/utils/remix-gallery';
 import { remixGalleryContentRule } from '~/shared/utils/remix-gallery';
 import { showErrorNotification } from '~/utils/notifications';
@@ -108,25 +99,38 @@ export function RemixGallerySettings() {
         ]}
       />
 
-      <NumberInput
-        label={
-          <Group gap={4} wrap="nowrap">
+      <Stack gap={4}>
+        <Group gap={4} wrap="nowrap">
+          <Text size="sm" fw={500}>
             Price per submission
-            <InfoPopover size="xs" iconProps={{ size: 14 }} width={300}>
-              <Text size="sm" maw={280} style={{ whiteSpace: 'normal' }}>
-                Your cap is {cap} Buzz, set by your creator score and membership tier. We store the
-                price you choose, so if the cap rises later your price takes effect on its own.
-              </Text>
-            </InfoPopover>
-          </Group>
-        }
-        leftSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
-        value={price}
-        min={0}
-        onChange={(value) => setPrice(typeof value === 'number' ? value : '')}
-        onBlur={() => commit(mode, price)}
-        maw={220}
-      />
+          </Text>
+          <InfoPopover size="xs" iconProps={{ size: 14 }} width={300}>
+            <Text size="sm" maw={280} style={{ whiteSpace: 'normal' }}>
+              Your cap is {cap} Buzz, set by your creator score and membership tier. We store the
+              price you choose, so if the cap rises later your price takes effect on its own.
+            </Text>
+          </InfoPopover>
+        </Group>
+        {/* The shared control, so the two surfaces cannot drift on what the
+            track means. It renders no caption — each site says something
+            different about a price it cannot show — so the copy below is ours. */}
+        <PlacementPriceSlider
+          surface="remixGallery"
+          cap={range?.max ?? null}
+          value={price}
+          fallback={PLACEMENT_SURFACES.remixGallery.defaultPrice ?? PLACEMENT_MIN_PRICE}
+          onChange={setPrice}
+          onCommit={(value) => {
+            setPrice(value);
+            commit(mode, value);
+          }}
+        />
+        <Text size="xs" c="dimmed">
+          {price === ''
+            ? `Submitters pay ${PLACEMENT_SURFACES.remixGallery.defaultPrice} Buzz, the default, until you set your own.`
+            : `Submitters pay ${price} Buzz.`}
+        </Text>
+      </Stack>
 
       <Stack gap={4}>
         <Group gap={4} wrap="nowrap">
@@ -172,11 +176,9 @@ export function RemixGallerySettings() {
         </Alert>
       )}
 
-      {mode !== 'off' && price === '' && (
-        <Alert color="red" p="xs">
-          <Text size="xs">Set a price before opening your gallery, or nobody can submit.</Text>
-        </Alert>
-      )}
+      {/* No "set a price first" warning: the surface carries a default, so an
+          unset price is a normal state rather than a broken one. Saying
+          otherwise would tell a creator to fix something that is working. */}
     </>
   );
 }

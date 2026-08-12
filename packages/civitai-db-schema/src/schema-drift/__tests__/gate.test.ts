@@ -605,6 +605,9 @@ async function gate(args: string[]): Promise<Run> {
 // Set here rather than in the package's vitest.config.ts on purpose: the config is a shared
 // file and a concurrent change to it is already in flight for the sibling cli.test.ts, which
 // has the same shape and the same problem.
+const pendingCount = (stdout: string): number =>
+  Number(/NEW, pending migration \(warn\)\s+: (\d+)/.exec(stdout)?.[1] ?? NaN);
+
 describe('drift-gate CLI', { timeout: 60_000 }, () => {
   let dir: string;
   let driftedSchema: string;
@@ -658,9 +661,18 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
   });
 
   it('exits 0 but warns when the change only adds drift awaiting a migration', async () => {
+    // Counted against what the committed schema already reports, never as a literal: any field
+    // that has landed ahead of its migration contributes a pending finding of its own, so a
+    // pinned total reds this suite for schema work that has nothing to do with the gate. The
+    // sibling --update-baseline assertion below carries the same note for the same reason.
+    const control = await gate([]);
+    const before = pendingCount(control.stdout);
+    // Without this the delta below is NaN-vs-NaN and passes no matter what the gate printed.
+    expect(before).not.toBeNaN();
+
     const result = await gate(['--schema', pendingSchema]);
     expect(result.code).toBe(0);
-    expect(result.stdout).toMatch(/NEW, pending migration \(warn\)\s+: 1/);
+    expect(pendingCount(result.stdout)).toBe(before + 1);
     expect(result.stdout).toMatch(/missing-column\s+Model\.gateProbeNewColumn/);
   });
 
@@ -815,6 +827,11 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
 
     it('is byte-idempotent — a no-op refresh rewrites the same file', async () => {
       const path = freshCopy(committed.entries);
+      // Refresh once to reach the state a refresh produces, and compare the SECOND write to
+      // the first. Comparing against the committed entries instead asserts that the schema
+      // currently has no drift beyond the baseline, which is a fact about whatever else is in
+      // flight rather than about the writer being idempotent.
+      await gate(['--update-baseline', '--baseline', path]);
       const before = readFileSync(path, 'utf8');
       await gate(['--update-baseline', '--baseline', path]);
       expect(readFileSync(path, 'utf8')).toBe(before);

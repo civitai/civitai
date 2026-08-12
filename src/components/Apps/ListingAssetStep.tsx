@@ -1,4 +1,15 @@
-import { Alert, Badge, Button, Card, FileInput, Group, Image, Loader, Stack, Text } from '@mantine/core';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  FileInput,
+  Group,
+  Image,
+  Loader,
+  Stack,
+  Text,
+} from '@mantine/core';
 import {
   IconAlertTriangle,
   IconCheck,
@@ -27,6 +38,7 @@ import {
   type ScreenshotSlot,
 } from '~/components/Apps/screenshotSlots';
 import type { EditAsset, EditScreenshot } from '~/components/Apps/offsiteEditConfig';
+import { listingAssetTooLargeReason } from '~/server/schema/blocks/app-listing.schema';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -155,7 +167,12 @@ export function ListingAssetStep({
   const [screenshots, setScreenshots] = useState<ScreenshotSlot[]>(() =>
     (initial?.screenshots ?? [])
       .filter((s) => s.imageId != null)
-      .map((s) => ({ id: `pre_${s.id}`, status: 'attached' as const, imageId: s.imageId, message: null }))
+      .map((s) => ({
+        id: `pre_${s.id}`,
+        status: 'attached' as const,
+        imageId: s.imageId,
+        message: null,
+      }))
   );
   const screenshotIdRef = useRef(0);
   // Slot id → { rowId (AppListingScreenshot.id, for removal), previewUrl }. Kept
@@ -292,6 +309,26 @@ export function ListingAssetStep({
 
   async function uploadAndPersist(file: File): Promise<number> {
     const { width, height } = await readImageDimensions(file);
+    // Fail fast, BEFORE a byte leaves the browser. The dimensions are already in
+    // hand here and the server applies this same predicate to `persistAssetImage`
+    // — but only after the upload to the object store has completed, so without
+    // this mirror the author waits out a full upload to be told something that was
+    // knowable from the file picker.
+    //
+    // 🔴 This is a UX mirror, NOT the enforcement point. The server re-derives the
+    // pair from the STORED BYTES (`measureListingAssetUpload`) and re-applies the
+    // bound there; anything decided here is a client claim. Deleting this check
+    // costs a wasted upload, never a bypass.
+    //
+    // The predicate is IMPORTED, never restated: a vendored copy of the bound is
+    // exactly what goes stale and starts refusing valid input (civitai/cli#270).
+    // It is also safe to evaluate on the browser's reading of the file even though
+    // the server reads EXIF orientation and the browser does not — the bound is
+    // over `Math.max(width, height)`, which a quarter-turn cannot change, so the
+    // two readings cannot disagree about this verdict. The subject string matches
+    // the server's so the author sees ONE message wherever the rejection lands.
+    const tooLarge = listingAssetTooLargeReason('That image', width, height);
+    if (tooLarge) throw new Error(`${tooLarge}.`);
     const result = await uploadToCF(file);
     const { imageId } = await persistMutation.mutateAsync({
       url: result.id,
@@ -357,7 +394,10 @@ export function ListingAssetStep({
       // Promote a captured row id into screenshotMeta so the Remove button appears.
       const rowId = rowIdRef.current.get(key);
       if (rowId) {
-        setScreenshotMeta((prev) => ({ ...prev, [key]: { rowId, previewUrl: prev[key]?.previewUrl ?? null } }));
+        setScreenshotMeta((prev) => ({
+          ...prev,
+          [key]: { rowId, previewUrl: prev[key]?.previewUrl ?? null },
+        }));
       }
       onAssetMutated?.();
       // Kick off the scan-status poll only while the scan is still in-flight. Updates
@@ -719,7 +759,9 @@ export function ListingAssetStep({
                             // A scanning-but-committed row (has a server row) must be
                             // removed on the server; a not-yet-committed (working) row is
                             // a local-only cancel.
-                            onClick={() => (hasRow ? void removeScreenshot(s.id) : cancelScreenshot(s.id))}
+                            onClick={() =>
+                              hasRow ? void removeScreenshot(s.id) : cancelScreenshot(s.id)
+                            }
                             data-testid={`apps-offsite-screenshot-cancel-${i}`}
                           >
                             Cancel
