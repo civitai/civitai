@@ -11,6 +11,7 @@ import { renderWithProviders } from '../../../../test/component-setup';
  */
 
 import type * as TrpcModule from '~/utils/trpc';
+import type { ModelVersionTerms } from '@civitai/buzz';
 
 const mutateAsync = vi.hoisted(() =>
   vi.fn(async (input: unknown) => ({ id: 456, ...(input as object) }))
@@ -261,6 +262,85 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     await userEvent.click(page.getByRole('button', { name: 'Save' }));
     await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(mutateAsync.mock.calls[0][0]).toMatchObject({ licensingFee: 0 });
+  });
+
+  // The generation radio is local state over a config the toggle replaces wholesale, so a round-trip used
+  // to leave "Free for everyone" selected above a config that charges. Asserted on the SUBMITTED terms,
+  // not on the form config: the screen and the price have to agree about money, and it was reading the
+  // config instead of the payload that hid this in the first place.
+  test('the generation choice and the submitted price agree after a toggle round-trip', async () => {
+    // Stored price differs from the price a fresh config seeds, so the round-trip leaves the form
+    // genuinely changed and the save runs the mutation instead of short-circuiting as pristine.
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={model}
+        version={
+          {
+            ...(chargingVersion as object),
+            paidAccess: { endsAt: null, timeframeDays: null, terms: { download: { price: 7000 } } },
+          } as React.ComponentProps<typeof ModelVersionUpsertForm>['version']
+        }
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    const freeRadio = page.getByRole('radio', { name: 'Free for everyone' });
+    await userEvent.click(freeRadio);
+    expect((freeRadio.element() as HTMLInputElement).checked).toBe(true);
+
+    await userEvent.click(accessSwitch());
+    await userEvent.click(accessSwitch());
+
+    // Read synchronously behind the switch state: the radio either followed the config on this render
+    // or it did not, so polling would only stretch a one-second failure into a fifteen-second one.
+    await expect.element(accessSwitch()).toBeChecked();
+    expect(
+      (page.getByRole('radio', { name: 'Free for everyone' }).element() as HTMLInputElement).checked
+    ).toBe(false);
+    expect(
+      (page.getByRole('radio', { name: 'Same as the access price' }).element() as HTMLInputElement)
+        .checked
+    ).toBe(true);
+
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const terms = (mutateAsync.mock.calls[0][0] as { paidAccess?: { terms?: ModelVersionTerms } })
+      .paidAccess?.terms;
+    // What the save actually sends: a paid generation grant, never `{ free: true }`.
+    expect(terms?.generation).not.toMatchObject({ free: true });
+    expect(terms?.download?.price).toBeGreaterThan(0);
+  });
+
+  // An affirmation is a named person accepting liability, so it doesn't survive a transfer. Unscoped, the
+  // client read the previous owner's record as current, rendered no checkbox, and the save failed
+  // server-side with nothing on screen to tick.
+  test('asks the new owner to affirm again after the model changed hands', async () => {
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        // The affirmation on the version belongs to user 1; this model now belongs to user 2.
+        model={{ ...model, user: { id: 2 } } as typeof model}
+        version={chargingVersion}
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    // Present at first render, so anchor on the switch and then read synchronously.
+    await expect.element(chargeSwitch()).toBeChecked();
+    expect(rightsCheckbox().elements()).toHaveLength(1);
+    expect((rightsCheckbox().element() as HTMLInputElement).checked).toBe(false);
+  });
+
+  // The same record still counts for the owner it names, so nobody is asked twice.
+  test('does not ask again when the affirmation belongs to the current owner', async () => {
+    renderChargingForm();
+
+    await expect.element(chargeSwitch()).toBeChecked();
+    expect(rightsCheckbox().elements()).toHaveLength(0);
   });
 
   // A private model drops its gate on save (handleSubmit substitutes null), while the form's config still

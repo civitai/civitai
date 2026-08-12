@@ -498,7 +498,11 @@ export function ModelVersionUpsertForm({
   // from staff monetizing their own, and exempting on the role alone let every staff creator skip it.
   // The server applies the real ownership-scoped rule and simply ignores a moderator's tick on a model
   // they don't own.
-  const alreadyAffirmed = hasCurrentRightsAffirmation(version?.meta);
+  // Scoped to the current owner, as the server scopes it (resolveRightsAffirmation passes
+  // `ownerId: model.userId`): an affirmation is a named person accepting liability, so it doesn't
+  // transfer with the model. Unscoped, a model transferred after its affirmation was recorded read as
+  // affirmed here, rendered no checkbox, and failed server-side with nothing on screen to tick.
+  const alreadyAffirmed = hasCurrentRightsAffirmation(version?.meta, model?.user?.id);
   const requiresRightsAffirmation = !alreadyAffirmed && (currentLicensingFee > 0 || gateCharges);
   // Step 2 of the disclosure: asked as soon as the creator says they want to charge, so the pricing
   // controls never appear before the affirmation. Distinct from `requiresRightsAffirmation`, which is the
@@ -1309,22 +1313,30 @@ export function ModelVersionUpsertForm({
                           <Switch
                             aria-label="Charge for access to this version"
                             checked={paidAccessConfig !== null}
-                            onChange={(e) =>
-                              form.setValue(
-                                'paidAccessConfig',
-                                e.target.checked
-                                  ? {
-                                      permanent: !canChooseTimed,
-                                      timeframe: EARLY_ACCESS_CONFIG.timeframeValues[0],
-                                      accessPrice: 5000,
-                                      generationPrice: undefined,
-                                      freePreviewGenerations: DEFAULT_GENERATION_TRIAL_LIMIT,
-                                      donationGoalEnabled: false,
-                                      donationGoal: undefined,
-                                    }
-                                  : null
-                              )
-                            }
+                            onChange={(e) => {
+                              const next = e.target.checked
+                                ? {
+                                    permanent: !canChooseTimed,
+                                    timeframe: EARLY_ACCESS_CONFIG.timeframeValues[0],
+                                    accessPrice: 5000,
+                                    generationPrice: undefined,
+                                    // Spelled out because the object is built before it is handed to
+                                    // `setValue`, so zod's defaults aren't applied to it here — and
+                                    // `generationModeOf` below reads `freeGeneration`.
+                                    freeGeneration: false,
+                                    acceptsBlueBuzz: false,
+                                    freePreviewGenerations: DEFAULT_GENERATION_TRIAL_LIMIT,
+                                    donationGoalEnabled: false,
+                                    donationGoal: undefined,
+                                  }
+                                : null;
+                              form.setValue('paidAccessConfig', next);
+                              // The radio is local state, so it has to follow the config it describes.
+                              // Left alone, a creator who picked "Free for everyone" and then toggled this
+                              // switch off and on again kept a radio reading free over a config that
+                              // charges — the screen and the saved price disagreeing about money.
+                              setGenMode(generationModeOf(next));
+                            }}
                             disabled={
                               isEarlyAccessOver ||
                               (atEarlyAccessModelCap && paidAccessConfig === null)
@@ -1845,7 +1857,9 @@ type Props = {
   id?: string;
   onSubmit: (version?: ModelVersionUpsertInput) => void;
   children: (data: { loading: boolean; canSave: boolean }) => React.ReactNode;
-  model?: Partial<ModelUpsertInput & { publishedAt: Date | null }>;
+  // `user` is the model's OWNER, needed to scope the rights affirmation the way the server does. Both
+  // wizards already pass a query result that carries it (model.getById / modelVersion.getByIdForEdit).
+  model?: Partial<ModelUpsertInput & { publishedAt: Date | null; user: { id: number } | null }>;
   // Base model of the model's most recent existing version; used to default the
   // picker when adding a brand-new version to an existing model.
   previousBaseModel?: string | null;
