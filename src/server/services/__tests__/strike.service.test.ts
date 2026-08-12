@@ -579,6 +579,12 @@ describe('strike.service', () => {
           }),
         })
       );
+      // Pin the window itself, not just the number quoted in the notification — the literal 3 here is
+      // deliberate, so the test still fails if TIMED_MUTE_DAYS is changed without meaning to.
+      const { muteExpiresAt } = userUpdate.mock.calls[0][0].data;
+      const days = (muteExpiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+      expect(days).toBeGreaterThan(2.99);
+      expect(days).toBeLessThan(3.01);
       expect(mockInvalidateSession).toHaveBeenCalledWith(1, 'strike');
       expect(mockCreateNotification).toHaveBeenCalledWith(
         expect.objectContaining({
