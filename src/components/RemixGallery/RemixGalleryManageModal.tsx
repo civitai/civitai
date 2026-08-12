@@ -41,6 +41,21 @@ import { daysFromNow, formatDateMin } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
+const A_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * "2 hours ago" while it is still news, the stamp once it is history.
+ *
+ * A queue turns on how long something has been sitting in it, and
+ * `formatDateMin` renders anything from today as a bare "9:10pm" — which is the
+ * one case where the age is the thing you want and the label does not say it.
+ * Same split, and the same reasoning, as the sticker hover card's `placedLabel`.
+ */
+const sentLabel = (sentAt: Date | string) => {
+  const value = new Date(sentAt);
+  return Date.now() - value.getTime() < A_DAY_MS ? daysFromNow(value) : formatDateMin(value);
+};
+
 /**
  * The owner's control over one gallery: review what is waiting, and pin or
  * remove what is live.
@@ -164,7 +179,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                           </Text>
                         </Group>
                         <Text size="xs" c="dimmed">
-                          Sent {formatDateMin(new Date(row.createdAt))}
+                          Sent {sentLabel(row.createdAt)}
                         </Text>
                       </Stack>
                     </Group>
