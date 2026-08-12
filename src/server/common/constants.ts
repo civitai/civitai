@@ -32,6 +32,31 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor i
  */
 const wideCommentSurfaces = new Set(['article', 'bounty', 'challenge']);
 
+function getCommentMaxDepth(entityType: string) {
+  if (wideCommentSurfaces.has(entityType)) return 10;
+  switch (entityType) {
+    case 'image':
+    case 'bountyEntry':
+      return 3;
+    default:
+      return 5;
+  }
+}
+
+/**
+ * Surfaces that open fewer reply levels than they can hold, because something below the section
+ * has to stay reachable. A challenge puts its entry gallery *underneath* the discussion, and
+ * opening every thread put that gallery 7.5 screens down (measured, 131-comment challenge);
+ * one level costs 4.2. Bounty and article have nothing below their discussion to scroll to.
+ */
+const autoExpandDepthOverrides: Record<string, number> = { challenge: 1 };
+
+function getCommentAutoExpandDepth(entityType: string) {
+  if (!wideCommentSurfaces.has(entityType)) return 0;
+  const ceiling = getCommentMaxDepth(entityType) - 1;
+  return Math.min(autoExpandDepthOverrides[entityType] ?? ceiling, ceiling);
+}
+
 export const constants = {
   modelFilterDefaults: {
     sort: ModelSort.HighestRated,
@@ -361,18 +386,11 @@ export const constants = {
      * the nested `comment` type every reply thread carries.
      */
     getMaxDepth({ entityType }: { entityType: string }) {
-      if (wideCommentSurfaces.has(entityType)) return 10;
-      switch (entityType) {
-        case 'image':
-        case 'bountyEntry':
-          return 3;
-        default:
-          return 5;
-      }
+      return getCommentMaxDepth(entityType);
     },
-    /** Surfaces wide enough to render every reply tree open at once. */
-    expandsRepliesByDefault({ entityType }: { entityType: string }) {
-      return wideCommentSurfaces.has(entityType);
+    /** How many reply levels a surface opens up front. 0 leaves every thread behind its button. */
+    getAutoExpandDepth({ entityType }: { entityType: string }) {
+      return getCommentAutoExpandDepth(entityType);
     },
     /**
      * Most replies a single page may open up front, shallowest first. Threads past it stay behind

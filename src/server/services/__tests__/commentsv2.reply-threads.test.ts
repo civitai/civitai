@@ -291,18 +291,23 @@ describe('constants.comments thread settings', () => {
     expect(constants.comments.getMaxDepth({ entityType: 'post' })).toBe(5);
   });
 
-  it('only opens every reply tree on surfaces wide enough for it', () => {
+  it('only opens reply trees up front on surfaces wide enough for it', () => {
     for (const entityType of wide)
-      expect(constants.comments.expandsRepliesByDefault({ entityType })).toBe(true);
+      expect(constants.comments.getAutoExpandDepth({ entityType })).toBeGreaterThan(0);
     for (const entityType of [...narrow, 'comment', 'post'])
-      expect(constants.comments.expandsRepliesByDefault({ entityType })).toBe(false);
+      expect(constants.comments.getAutoExpandDepth({ entityType })).toBe(0);
   });
 
-  it('keeps both settings on one set of surfaces', () => {
-    const deep = constants.comments.getMaxDepth({ entityType: 'article' });
+  it('opens only one reply level on challenge, which renders above its entry gallery', () => {
+    expect(constants.comments.getAutoExpandDepth({ entityType: 'challenge' })).toBe(1);
+    for (const entityType of ['article', 'bounty'])
+      expect(constants.comments.getAutoExpandDepth({ entityType })).toBe(9);
+  });
+
+  it('never opens a level the surface would re-root at', () => {
     for (const entityType of [...wide, ...narrow, 'comment', 'post', 'model', 'comicChapter']) {
-      expect(constants.comments.expandsRepliesByDefault({ entityType })).toBe(
-        constants.comments.getMaxDepth({ entityType }) === deep
+      expect(constants.comments.getAutoExpandDepth({ entityType })).toBeLessThan(
+        constants.comments.getMaxDepth({ entityType })
       );
     }
   });

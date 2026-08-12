@@ -231,14 +231,11 @@ export function CommentsProvider({
   const highlighted = parseNumericString(router.query.highlight);
 
   const maxDepth = constants.comments.getMaxDepth({ entityType: rootEntityType });
-  // Reply trees ride along with the page that owns them, so a surface that shows every thread
-  // open costs one request per page instead of one per comment per level.
-  const repliesDepth =
-    level === 1 &&
-    !hidden &&
-    constants.comments.expandsRepliesByDefault({ entityType: rootEntityType })
-      ? maxDepth - 1
-      : undefined;
+  // Reply trees ride along with the page that owns them, so a surface that shows threads open
+  // costs one request per page instead of one per comment per level. Levels past this stay
+  // collapsed on their own: nothing seeds them, and an unseeded thread renders closed.
+  const autoExpandDepth = constants.comments.getAutoExpandDepth({ entityType: rootEntityType });
+  const repliesDepth = level === 1 && !hidden && autoExpandDepth > 0 ? autoExpandDepth : undefined;
   const replyPageSize = constants.comments.replyPageSize;
 
   const { data, isLoading, isRefetching, fetchNextPage, hasNextPage, isFetchingNextPage } =
