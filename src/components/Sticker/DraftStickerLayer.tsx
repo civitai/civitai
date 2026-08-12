@@ -143,21 +143,44 @@ export function DraftStickerLayer() {
       setInteraction(null);
     };
 
+    // The backstop for the one case capture does not cover: capture lives on an
+    // element, and an element can be removed mid-gesture — the tray button a
+    // pickup captured, if the panel is closed while the drag is still running.
+    // The browser then releases capture and fires `lostpointercapture` at the
+    // detached node, which has no path to window, so this listener never hears
+    // it and the drag silently reverts to needing a volunteered pointerup.
+    // Refusal is unconditional, so losing that up would lock every later
+    // gesture. Leaving the window is how an up goes missing in practice, and
+    // ending a drag you have navigated away from is the right outcome anyway.
+    const onBlur = () => {
+      if (!gesture.current) return;
+      gesture.current = null;
+      setInteraction(null);
+    };
+
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
     window.addEventListener('lostpointercapture', onUp);
+    window.addEventListener('blur', onBlur);
     return () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
       window.removeEventListener('lostpointercapture', onUp);
+      window.removeEventListener('blur', onBlur);
       // Nothing can be dragging once this layer is gone, and `interaction` is
       // what the tray reads to decide whether a pickup is allowed. Leaving it
       // set would refuse the next pickup with no drag to justify it.
       gesture.current = null;
       setInteraction(null);
     };
+    // ⚠️ Both deps are zustand actions with permanently stable identity, and
+    // this cleanup now writes shared state — it is the only thing that unlocks
+    // a gesture when the layer goes away. Adding a dep that actually changes
+    // (`maxScale`, `drafts`, `targetImageId`) turns the cleanup into a
+    // per-render `gesture.current = null`, which kills any drag in progress the
+    // moment anything re-renders. Read values through refs instead.
   }, [move, setInteraction]);
 
   // Picking a sticker up from the tray starts a move with no offset — the press

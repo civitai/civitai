@@ -158,15 +158,18 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
   // them and the panel back. Do not add a confirmation here without asking;
   // this looked like a silent-data-loss bug in review and is not one.
   //
-  // `interaction` is cleared on both branches. It is otherwise only cleared by
-  // the layer's pointerup listener, so a pointerup that lands while the layer is
-  // unmounted — the overlay stops rendering at zero width, which a resize
-  // mid-drag can do — strands it at 'move'. Reopening then re-arms a drag on the
-  // selected sticker with no button held, and it follows the bare cursor.
+  // Neither branch writes `interaction`. It mirrors whether the layer holds a
+  // live gesture and only the layer may write it — the different-image branch
+  // goes through ENDED, which nulls `targetImageId` and so unmounts the layer,
+  // whose cleanup clears it. The same-image branch leaves the layer mounted, so
+  // clearing here said "nothing is being dragged" while a finger still was:
+  // press `+` with a second finger mid-drag and the tray would then allow a
+  // pickup the layer refused to arm, leaving a sticker on the image that
+  // followed nothing.
   open: (imageId) =>
     set((state) =>
       state.targetImageId === imageId
-        ? { targetImageId: imageId, trayOpen: true, interaction: null, interactionPointerId: null }
+        ? { targetImageId: imageId, trayOpen: true }
         : { ...ENDED, targetImageId: imageId, trayOpen: true }
     ),
 

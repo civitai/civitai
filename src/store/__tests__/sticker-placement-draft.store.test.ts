@@ -164,26 +164,18 @@ describe('sticker placement draft store', () => {
       expect(state().trayOpen).toBe(false);
     });
 
-    // A tray pickup hands the drag to the layer through `interaction` plus the
-    // pointer holding it. If the layer unmounts between that handoff and the
-    // pointerup — the overlay stops rendering at zero width, which a resize can
-    // do — nothing clears the pair, and the layer arms a phantom drag on the
-    // selected sticker the moment it remounts: it follows the bare cursor with
-    // no button held.
-    //
-    // The tray shape specifically, which is why the fixture sets a pointer id.
-    // An on-image drag strands as `{'move', null}`, and the layer's arming
-    // effect already refuses that for want of a pointer id — so this is the
-    // shape the clear is actually needed for.
-    it('clears a stranded interaction when the panel is reopened', () => {
+    // The mirror of the `cancelDraft` rule above, through the other writer that
+    // leaves the layer mounted. Reopening the panel on the image already being
+    // placed on must not claim the drag is over: press `+` with a second finger
+    // mid-drag and the tray would allow a pickup the layer then refuses to arm,
+    // leaving a sticker on the image that follows nothing.
+    it('does not report the drag as over when the panel is reopened', () => {
       withDrafts(1);
-      state().closeTray();
-      useStickerPlacementDraftStore.setState({ interaction: 'move', interactionPointerId: 3 });
+      useStickerPlacementDraftStore.setState({ interaction: 'move' });
 
       state().open(IMAGE);
 
-      expect(state().interaction).toBeNull();
-      expect(state().interactionPointerId).toBeNull();
+      expect(state().interaction, 'reopening the panel ended a live drag').toBe('move');
       expect(state().drafts, 'reopening the same image dropped the drafts').toHaveLength(1);
     });
 
@@ -254,11 +246,20 @@ describe('sticker placement draft store', () => {
 
   // ⚠️ What is NOT covered here, stated so a green run is not over-read.
   //
-  // `useCreateStickerPlacement`'s `onSuccess` — which decides that a purchase
-  // removes one draft instead of ending the session, and which invalidates the
-  // sticker-use balance — is a React hook with one caller, `DraftSticker`, and
-  // neither has a test. Reverting either of those decisions fails nothing in
-  // this file: these tests drive the store directly, and the store is not where
-  // that choice lives. An earlier version of this file claimed otherwise in a
-  // comment; the comment was the only thing connecting them.
+  // 1. `useCreateStickerPlacement`'s `onSuccess` — which decides that a purchase
+  //    removes one draft instead of ending the session, and which invalidates
+  //    the sticker-use balance — is a React hook with one caller,
+  //    `DraftSticker`, and neither has a test. Reverting either of those
+  //    decisions fails nothing in this file: these tests drive the store
+  //    directly, and the store is not where that choice lives. An earlier
+  //    version of this file claimed otherwise in a comment; the comment was the
+  //    only thing connecting them.
+  //
+  // 2. Every rule about `interaction` that these tests pin is a rule about what
+  //    the store must NOT do. What it MUST do — set it when a gesture is taken,
+  //    clear it on the owning pointer's up, and clear it when the layer
+  //    unmounts — lives entirely in `DraftStickerLayer`'s effect, which has no
+  //    test. The pointer arbitration around it (capture, owner-only clearing,
+  //    the blur backstop) is likewise untested; four review rounds found bugs
+  //    in it and none of them would have been caught here.
 });
