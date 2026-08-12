@@ -321,6 +321,20 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
           </Group>
         </Button>
       )}
+
+      {/* Derived from the owner's actual share rather than asserting one. The
+          split is operator-tunable at runtime, so "all proceeds" compiled into
+          a string is a claim about money that can stop being true without
+          anyone touching this file. It says "all" only when it is all. */}
+      {visibility.open && !isOwner && visibility.ownerUsername && (
+        <Text size="xs" ta="center" c="dimmed" mt={-4}>
+          {visibility.ownerShare >= 1
+            ? `All proceeds go to @${visibility.ownerUsername}`
+            : `${Math.round(visibility.ownerShare * 100)}% of what you pay goes to @${
+                visibility.ownerUsername
+              }`}
+        </Text>
+      )}
     </Card>
   );
 }

@@ -8,9 +8,11 @@ import { logToAxiom } from '~/server/logging/client';
 import { getAllImages } from '~/server/services/image.service';
 import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
+import { getPlacementConfig } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { onlySelectableLevels } from '~/shared/constants/browsingLevel.constants';
+import { declineFeeAmount } from '~/shared/utils/placement';
 import type { RemixGalleryPlacementData } from '~/shared/utils/remix-gallery';
 import {
   isRemixGalleryPlacementData,
@@ -832,12 +834,32 @@ export async function getRemixGalleryVisibility({
         })
       : 0;
 
+  // The owner's name and cut, so the submit button can say where the money goes
+  // without the copy asserting it. The shares are operator-tunable at runtime,
+  // so a string compiled against today's split is a claim about money that can
+  // quietly stop being true — the same reason `ResolvedPlacementSpace` carries
+  // `ownerShare` at all.
+  const owner = await dbRead.user.findUnique({
+    where: { id: space.ownerId },
+    select: { username: true },
+  });
+
+  // The actual Buzz a decline would cost, not a percentage the reader has to
+  // apply themselves. Computed with the same helper the refund uses, from the
+  // same operator-set rate, so the number quoted before paying is the number
+  // charged — a hardcoded 30% would be a promise this layer cannot keep.
+  const declineFeeRate = (await getPlacementConfig()).declineFeeRate(SURFACE);
+  const declineFee = space.price == null ? null : declineFeeAmount(space.price, declineFeeRate);
+
   return {
     open: space.mode !== 'off',
     hasEntries,
     render: space.mode !== 'off' || hasEntries,
     price: space.price,
     ownerId: space.ownerId,
+    ownerUsername: owner?.username ?? null,
+    ownerShare: space.ownerShare,
+    declineFee,
     pendingCount,
   };
 }
