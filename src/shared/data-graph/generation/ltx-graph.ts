@@ -41,6 +41,7 @@ import {
   createCheckpointGraph,
 } from './common';
 import { isWorkflowOrVariant } from './config/workflows';
+import { ltxVersionIds } from './version-ids';
 
 // =============================================================================
 // Constants
@@ -51,7 +52,7 @@ const LTXV2_DEV_ID = 2578325;
 const LTXV2_DISTILLED_ID = 2600562;
 
 /** LTXV23 model version IDs */
-const LTXV23_DEV_ID = 2749908;
+const LTXV23_DEV_ID = ltxVersionIds.v23Dev;
 const LTXV23_DISTILLED_ID = 2749948;
 
 /** LTXV25 model version IDs */
