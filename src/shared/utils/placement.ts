@@ -101,10 +101,7 @@ export const PLACEMENT_SURFACES = {
     defaultMode: 'review',
     defaultPrice: 100,
     trackMinPrice: 50,
-    // Zero, which is what the global floor already was for this surface. The
-    // slider starts at 50, but a sticker price stored below it stays chargeable
-    // — raising this would refuse prices creators have already set.
-    serverMinPrice: 0,
+    serverMinPrice: 50,
     defaultDeclineFeeRate: 0.3,
     defaultSellerShare: 0,
     // The whole payment reaches the space owner, and the place button says so.
