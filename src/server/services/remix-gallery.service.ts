@@ -305,7 +305,6 @@ export async function actOnRemixGallerySubmission({
       amount: true,
       status: true,
       surface: true,
-      targetId: true,
       data: true,
       resolvedAt: true,
       createdAt: true,

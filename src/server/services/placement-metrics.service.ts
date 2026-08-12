@@ -16,12 +16,13 @@ import type { PlacementSurface } from '~/shared/utils/placement';
  * number would then mean something different depending on which surface you
  * asked — the one property a single counter cannot afford to lose.
  *
- * **Accepted placements only** (Justin, 2026-08-12). A declined placement pays
- * the owner a non-refundable fee and still counts nothing, which is deliberate
- * and is the one place this number is not "Buzz the creator received": counting
- * declines would grow the counter fastest for a creator who refuses everything.
- * What it means instead is *what people paid to be on this image*, which is also
- * what makes it legible next to the content it labels.
+ * **Accepted placements only** (Justin, 2026-08-12). A decline counts nothing
+ * whatever it pays: most leave a non-refundable fee with the owner, some waive
+ * it entirely, and neither moves this number. That is the one place the counter
+ * is not "Buzz the creator received", and it is deliberate — counting declines
+ * would grow it fastest for a creator who refuses everything. What it means
+ * instead is *what people paid to be on this image*, which is also what makes
+ * it legible next to the content it labels.
  *
  * **Never reversed.** Every path that takes a live placement down — owner
  * removal past its lock, a moderator takedown, a cosmetic takedown — moves no
