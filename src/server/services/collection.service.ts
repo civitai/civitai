@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-feature';
 import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
@@ -770,7 +771,7 @@ export const saveItemInCollections = async ({
   ]);
   const existingItems = await dbRead.collectionItem.findMany({
     where: { collectionId: { in: touchedCollectionIds }, [itemKey]: input[itemKey] },
-    select: { id: true, collectionId: true, tagId: true, addedById: true },
+    select: { id: true, collectionId: true, tagId: true, addedById: true, note: true },
   });
   const existingItemsByCollection = new Map(existingItems.map((item) => [item.collectionId, item]));
 
@@ -961,12 +962,37 @@ export const saveItemInCollections = async ({
       })
       .filter(isDefined);
 
+    // The "Save to collection" modal is the other door into removal, and a delete through it
+    // would let the job re-add the image the removal was meant to stop.
+    const autoFeatureUserId = await getAutoFeatureUserId();
+    const autoFeaturedIds = removeAllowedCollectionItemIds.filter((id) => {
+      const item = existingItems.find((i) => i.id === id);
+      return !!item && isAutoFeaturedRow(item, autoFeatureUserId);
+    });
+    const deletableIds = removeAllowedCollectionItemIds.filter(
+      (id) => !autoFeaturedIds.includes(id)
+    );
+
+    removedCount = removeAllowedCollectionItemIds.length;
+
+    if (autoFeaturedIds.length > 0) {
+      transactions.push(
+        dbWrite.collectionItem.updateMany({
+          where: { id: { in: autoFeaturedIds } },
+          data: {
+            status: CollectionItemStatus.REJECTED,
+            reviewedById: userId,
+            reviewedAt: new Date(),
+          },
+        })
+      );
+    }
+
     // if we have items to remove, add a deleteMany mutation to the transaction
-    if (removeAllowedCollectionItemIds.length > 0) {
-      removedCount = removeAllowedCollectionItemIds.length;
+    if (deletableIds.length > 0) {
       transactions.push(
         dbWrite.collectionItem.deleteMany({
-          where: { id: { in: removeAllowedCollectionItemIds } },
+          where: { id: { in: deletableIds } },
         })
       );
     }
@@ -3346,12 +3372,47 @@ export const removeCollectionItem = async ({
     );
   }
 
-  await dbWrite.$queryRaw`
-    DELETE FROM "CollectionItem"
-    WHERE "collectionId" = ${collectionId} AND "${Prisma.raw(
-    `${tableKey.toLowerCase()}Id`
-  )}" = ${itemId}
+  const idColumn = Prisma.raw(`"${tableKey.toLowerCase()}Id"`);
+
+  // Decided here rather than as a SQL predicate: both columns are nullable, and
+  // `NOT (addedById = X AND note LIKE Y)` is NULL — not TRUE — whenever `note` is NULL, so the
+  // statement silently matched nothing and still reported success.
+  // Unbounded: prod has a partial unique index per entity type, but those indexes exist in no
+  // migration, and the statement this replaced deleted every matching row regardless.
+  const existing = await dbWrite.$queryRaw<
+    { id: number; addedById: number | null; note: string | null }[]
+  >`
+    SELECT id, "addedById", note
+    FROM "CollectionItem"
+    WHERE "collectionId" = ${collectionId} AND ${idColumn} = ${itemId}
   `;
+
+  if (existing.length) {
+    // An automatically featured item is rejected rather than deleted. Deleting it would let the
+    // next job run re-add the same image, since the job's dedupe is "is there already a row" —
+    // so for these rows the tombstone IS the removal. REJECTED is invisible to the render path,
+    // which defaults to ACCEPTED only.
+    const autoFeatureUserId = await getAutoFeatureUserId();
+    const isAuto = (row: (typeof existing)[number]) => isAutoFeaturedRow(row, autoFeatureUserId);
+
+    const tombstoneIds = existing.filter(isAuto).map((row) => row.id);
+    const deletableIds = existing.filter((row) => !isAuto(row)).map((row) => row.id);
+
+    if (tombstoneIds.length) {
+      await dbWrite.collectionItem.updateMany({
+        where: { id: { in: tombstoneIds } },
+        data: {
+          status: CollectionItemStatus.REJECTED,
+          reviewedById: userId,
+          reviewedAt: new Date(),
+        },
+      });
+    }
+
+    if (deletableIds.length) {
+      await dbWrite.collectionItem.deleteMany({ where: { id: { in: deletableIds } } });
+    }
+  }
 
   return {
     collectionId,
