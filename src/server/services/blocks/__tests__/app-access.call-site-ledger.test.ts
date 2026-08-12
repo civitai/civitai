@@ -25,6 +25,17 @@ import { describe, expect, it } from 'vitest';
  * Test files are OUT of scope on purpose: a test may legitimately compare a userId for
  * any reason.
  *
+ * ## 🔴 THE SECOND POPULATION, added with the block→listing re-key
+ *
+ * A gate answering "may this caller act?" is now only half the question. Since seats are
+ * keyed to `AppListing`, an OFF-SITE listing can hold them — and what a seat UNLOCKS is
+ * DERIVED from the listing's `kind` (`capabilitiesForKind`). That derivation is a second
+ * decayable set: a new site that hard-codes "editors get earnings" instead of consulting
+ * the table would hand an off-site editor a capability the schema cannot support, and no
+ * gate ledger would notice, because no gate would have changed. So {@link
+ * KIND_CAPABILITY_LEDGER} enumerates every consumer of the capability table with the
+ * same fails-on-GROWTH-and-SHRINK property.
+ *
  * ## The disagreements this ledger records rather than normalises
  *
  * Consolidating these predicates surfaced four genuine inconsistencies between sites
@@ -80,7 +91,10 @@ const GATE_LEDGER: Record<string, string> = {
   'src/server/services/blocks/app-analytics.service.ts':
     'getOwnedAppBlocks resolves the permitted-id SET (owned + seated) instead of ' +
     '`app: { userId }`. Safe to widen HERE because every downstream aggregate filters ' +
-    'appBlockId IN thatSet — unlike the appOwnerUserId-keyed earnings reads.',
+    'appBlockId IN thatSet — unlike the appOwnerUserId-keyed earnings reads. Since the ' +
+    'listing re-key an OFF-SITE seat contributes no block id to that set (it has no ' +
+    'block), so this read is unchanged for offsite: analytics for an offsite listing is ' +
+    'AppListingMetric, a different surface, not this block-scoped one.',
   'src/server/services/appBlockReview.service.ts':
     'The self-review exclusion is widened to the INSIDER set (owner + accepted ' +
     'collaborators, regardless of `displayed`) so a collaborator cannot 5-star the app ' +
@@ -89,10 +103,22 @@ const GATE_LEDGER: Record<string, string> = {
     'loadOwnedListingInTx (unpublish/republish own listing) and ' +
     'listMyListingModerationEvents are NOT widened: unpublishing a live listing and ' +
     'reading its moderation history are OWNER-scoped lifecycle actions, not content ' +
-    'editing. Kept strictly owner-only, no mod bypass (D1).',
+    'editing. Kept strictly owner-only, no mod bypass (D1). 🔴 claimListing ALSO lives ' +
+    'here and writes AppListing.userId for offsite — the same column acceptTransfer now ' +
+    'moves. They are reconciled, not merged: claim is a MOD remedy gated on ' +
+    'status IN (approved,removed); the transfer is owner-initiated + recipient-consented ' +
+    'and its offsite write is guarded on userId = the snapshotted fromUserId, so a claim ' +
+    'landing in the window makes the accept fail closed instead of undoing the remedy.',
   'src/server/services/blocks/app-access.service.ts':
     'THE predicate itself — resolveAppAccess / resolveListingAccess / ' +
-    'resolveAccessibleAppBlockIds. Every other site delegates here.',
+    'resolveAccessibleAppBlockIds — plus capabilitiesForKind, the derived per-KIND ' +
+    'capability table. Every other site delegates here. Seats are keyed to AppListing ' +
+    'so an offsite listing can hold collaborators. 🔴 BOTH resolvers report the CANONICAL ' +
+    'owner (`appBlock.app.userId ?? listing.userId`), never the denormalized ' +
+    'AppListing.userId alone: acceptTransfer’s onsite step 3 is unguarded and treats a ' +
+    '0-count as an accepted desync, so the copy can be stale — and a stale copy inverts ' +
+    'every gate that delegates here, refusing the real owner while admitting the name ' +
+    'the row happens to carry.',
   'src/server/services/blocks/app-collaborator.service.ts':
     'assertOwner — seat management is OWNER-ONLY by product decision (an editor is a ' +
     'co-owner in every respect EXCEPT managing collaborators and initiating a ' +
@@ -102,15 +128,19 @@ const GATE_LEDGER: Record<string, string> = {
     'holder opted OUT of the public byline, plus invitedBy and timestamps, so it is not ' +
     'a public read. A pending invitee reads their own invite via listMyPendingInvites.',
   'src/server/services/blocks/app-ownership-transfer.service.ts':
-    'loadOwnedApp — initiating a transfer is OWNER-ONLY, same reasoning as seat ' +
+    'loadOwnedListing — initiating a transfer is OWNER-ONLY, same reasoning as seat ' +
     'management. Accept is gated on being the transfer’s ADDRESSEE, not on any role, ' +
     'and re-reads bannedAt in-tx on the primary. getPendingTransfer resolves the caller ' +
     'and returns the row only to the OWNER or the ADDRESSEE — null (never FORBIDDEN) to ' +
     'anyone else, so the read cannot become an existence oracle. Editors are excluded: ' +
-    'disposing of the app is the one capability a seat never carries.',
+    'disposing of the listing is the one capability a seat never carries. 🔴 KIND-AWARE: ' +
+    'onsite moves OauthClient.userId + AppListing.userId; offsite moves the listing ' +
+    'column ONLY and is REFUSED outright when the listing carries a connectClientId.',
   'src/server/services/blocks/app-collaborator-earnings.service.ts':
     'The app-scoped money read: resolves the role FIRST and filters by appBlockId + the ' +
-    'CURRENT owner. Never appOwnerUserId alone — that is the portfolio leak.',
+    'CURRENT owner. Never appOwnerUserId alone — that is the portfolio leak. 🔴 Also the ' +
+    'KIND gate: earnings are block-scoped, so an offsite listing is refused with an ' +
+    'explicit unsupportedKind rather than a zeroed summary.',
   'src/server/services/blocks/app-listing-mapper.ts':
     'Reads ab.app.userId to STAMP the listing’s denormalized owner at creation. Not an ' +
     'access gate — no caller identity is involved — but listed so the ownership-write ' +
@@ -147,6 +177,62 @@ const GATE_LEDGER: Record<string, string> = {
     'opened to non-mod authors it becomes a slug-hijack vector and needs an explicit ' +
     'owner (or collaborator) check.',
 };
+
+/**
+ * 🔴 THE KIND-CAPABILITY POPULATION — every production site that decides what a seat
+ * unlocks by consulting the derived table, mapped to WHICH capability it reads.
+ *
+ * Why a second ledger rather than more rows in the first: these are not access gates.
+ * They answer "can a listing of this KIND do X at all?", which is a question about the
+ * schema, not about the caller — and it is a question that did not exist before off-site
+ * listings could hold seats. A new consumer that hard-codes the answer instead of asking
+ * would be invisible to `GATE_LEDGER`, because it would open no new gate.
+ */
+const KIND_CAPABILITY_LEDGER: Record<string, string> = {
+  'src/server/services/blocks/app-access.service.ts':
+    'DEFINES the table (CAPABILITIES_BY_KIND / capabilitiesForKind / ' +
+    'listingKindSupports) and resolves each listing’s kind + appBlockId. The two false ' +
+    'cells — earnings and submitVersion on offsite — are STRUCTURAL: BlockBuzzAttribution ' +
+    'is keyed on appBlockId, and an offsite listing has no bundle and no Forgejo repo. An ' +
+    'unknown kind falls back to the NARROWER (offsite) row, i.e. fail closed.',
+  'src/server/services/blocks/app-collaborator-earnings.service.ts':
+    'CONSUMES `earnings`. Refuses an offsite listing with an explicit unsupportedKind ' +
+    'before running any aggregate — never a zeroed summary, which would be ' +
+    'indistinguishable from "this app earned nothing". The kind clause and the ' +
+    'appBlockId clause are OR-ed and each refuses alone: they disagree on an offsite ' +
+    'listing that HAS a block, and on an onsite listing that has none. Collaborators: ' +
+    'an accepted editor sees the same refusal as the owner — it is the KIND, not the seat.',
+  'src/server/services/blocks/app-collaborator.service.ts':
+    'CONSUMES `submitVersion` via `hasWritableRepo`, the ONE predicate behind the ' +
+    'Forgejo grant (accept) and both revokes (remove / leave). Gated on KIND rather ' +
+    'than on `blockSlug != null`, because `mapAppBlockToListing` can mint an OFFSITE ' +
+    'listing that carries a backing AppBlock and therefore a repo slug — a slug-only ' +
+    'gate would mint repo write for a collaborator on a listing whose kind declares no ' +
+    'version surface at all. Collaborators: an off-site seat decision never reaches ' +
+    'Forgejo, in either direction.',
+  'src/server/services/blocks/app-ownership-transfer.service.ts':
+    'CONSUMES `submitVersion` for acceptTransfer’s post-commit repo swap, so that gate ' +
+    'uses the SAME predicate as step (2)’s ownership write. They used to differ ' +
+    '(kind vs blockSlug nullness) and disagreed on an offsite-with-a-block listing, ' +
+    'where the function left the OauthClient alone while swapping Forgejo write. ' +
+    'Collaborators: seats are untouched by a transfer — the listing keeps its editors.',
+};
+
+/**
+ * The other half of `submitVersion: false` is enforced STRUCTURALLY rather than by a
+ * runtime branch, and that is worth writing down because it looks like a missing entry:
+ * the version/manifest/repo procs (`getMyAppRepo`, `getMyAppManifest`, `updateManifest`,
+ * `getMyForgejoCloneInfo`) are keyed on an `appBlockId`, which an off-site listing does
+ * not have. There is no id with which to call them.
+ *
+ * 🔴 The seat-lifecycle service's Forgejo grant/revoke is a RUNTIME branch, and it now
+ * appears in the ledger above because it asks `listingKindSupports(kind,'submitVersion')`
+ * rather than "is there a backing AppBlock". Those are not the same predicate — an
+ * OFFSITE listing can carry a block — and the difference is pinned behaviourally in
+ * `app-collaborator.service.test.ts` ("an OFF-SITE listing that HAS a repo slug still
+ * reaches Forgejo NEVER") and in `app-ownership-transfer.service.test.ts` for the accept
+ * path's repo swap.
+ */
 
 /**
  * The ownership predicates, in every spelling that appears in production.
@@ -306,6 +392,124 @@ describe('app-ownership gate ledger', () => {
       // The seat-lifecycle service reads its OWN rows (roster + inbox + cap), which is
       // management, not an access decision — it must NOT filter on accepted.
       'src/server/services/blocks/app-collaborator.service.ts',
+      // 🔴 The MOD claim remedy reads every seat on the claimed listing in order to
+      // DELETE them all and audit each by user id. Deliberately UNFILTERED by status: a
+      // pending invite is as much of the impersonator's residue as an accepted seat, and
+      // leaving it would let them re-enter by having their invitee accept afterwards.
+      // This is the one legitimate seat read that must NOT carry the consent filter.
+      'src/server/services/blocks/offsite-moderation.service.ts',
     ]);
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 THE RE-KEY, pinned structurally.
+  // -------------------------------------------------------------------------
+
+  describe('🔴 seats are keyed to the LISTING, everywhere', () => {
+    /** Every `appCollaborator.<op>(` occurrence in production, with its call text. */
+    const SEAT_CALLS: Array<[string, string]> = [];
+    for (const [file, src] of CODE) {
+      const re = /appCollaborator\.\w+\(/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(src))) SEAT_CALLS.push([file, src.slice(m.index, m.index + 300)]);
+    }
+
+    it('POSITIVE CONTROL: the scan found the seat calls at all', () => {
+      // A regex nobody has watched match is a claim, not a guard — and a zero here would
+      // make every assertion below vacuously true.
+      expect(SEAT_CALLS.length).toBeGreaterThan(8);
+      // THREE files now: the predicate, the seat lifecycle, and the mod claim remedy
+      // (which deletes an impersonator's seats in the same tx as the reassign).
+      expect(new Set(SEAT_CALLS.map(([f]) => f)).size).toBe(3);
+    });
+
+    it('every seat query/write names `appListingId`', () => {
+      // The one-line regression this change could suffer: a call left keyed on
+      // `appBlockId` would compile (both are strings) and would silently match NOTHING —
+      // demoting every editor to no-access with no error anywhere.
+      for (const [file, call] of SEAT_CALLS) {
+        expect(call, `${file}: a seat call must be keyed on appListingId`).toMatch(
+          /appListingId/
+        );
+      }
+    });
+
+    it('the OLD composite seat key `appBlockId_userId` is gone from the seat files', () => {
+      // The Prisma selector for the pre-re-key primary key `(appBlockId, userId)`.
+      //
+      // 🔴 SCOPED TO THE SEAT FILES ON PURPOSE, and the reason is a genuine collision:
+      // `AppBlockReview` carries its OWN `@@unique([appBlockId, userId])`, which Prisma
+      // ALSO names `appBlockId_userId`. A repo-wide ban on the string would fail on
+      // `appBlockReview.service.ts` for a completely unrelated (and correct) selector —
+      // an assertion that looks like a re-key regression and is not one.
+      const seatFiles = [...new Set(SEAT_CALLS.map(([f]) => f))];
+      expect(seatFiles.length).toBe(3);
+      for (const file of seatFiles) {
+        expect(
+          CODE.get(file)!,
+          `${file} still uses the pre-re-key composite seat key`
+        ).not.toContain('appBlockId_userId');
+      }
+    });
+
+    it('NEGATIVE CONTROL: the composite-key probe CAN match', () => {
+      // Proves the assertion above is testing a string that would be found if present.
+      expect('where: { appBlockId_userId: { appBlockId, userId } }').toContain(
+        'appBlockId_userId'
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 THE KIND-CAPABILITY POPULATION.
+  // -------------------------------------------------------------------------
+
+  describe('🔴 kind-derived capabilities — the second closed population', () => {
+    const CAP_RE = /listingKindSupports|capabilitiesForKind|CAPABILITIES_BY_KIND/;
+    const CAP_SITES = FILES.filter((f) => CAP_RE.test(CODE.get(f)!)).sort();
+
+    it('POSITIVE CONTROL: CAP_RE matches every spelling that appears in production', () => {
+      const SHAPES: Array<[string, string]> = [
+        ['the predicate', "if (!listingKindSupports(access.kind, 'earnings')) return x;"],
+        ['the whole row', 'const caps = capabilitiesForKind(listing.kind);'],
+        ['the table itself', 'CAPABILITIES_BY_KIND[kind] ?? CAPABILITIES_BY_KIND.offsite'],
+      ];
+      for (const [label, sample] of SHAPES) {
+        expect(CAP_RE.test(sample), `CAP_RE must recognise: ${label}`).toBe(true);
+      }
+      expect(CAP_SITES.length).toBeGreaterThan(0);
+    });
+
+    it('NEGATIVE CONTROL: an unrelated kind comparison is not a capability site', () => {
+      // `kind === 'offsite'` appears all over the listing services for reasons that have
+      // nothing to do with what a SEAT unlocks; sweeping those in would make the ledger
+      // unmaintainable noise.
+      expect(CAP_RE.test("if (row.kind === 'onsite' && row.appBlock == null) return null;")).toBe(
+        false
+      );
+    });
+
+    it('the set of capability consumers EXACTLY equals the ledger (GROWTH and SHRINK)', () => {
+      // A new site that hard-codes "editors get earnings" instead of asking the table
+      // would hand an off-site editor a capability the schema cannot support — and would
+      // open no gate, so GATE_LEDGER would stay green through it.
+      expect(CAP_SITES).toEqual(Object.keys(KIND_CAPABILITY_LEDGER).sort());
+    });
+
+    it('every capability-ledger entry names the capability it reads', () => {
+      for (const [file, rationale] of Object.entries(KIND_CAPABILITY_LEDGER)) {
+        expect(rationale.length, `${file} rationale is too terse`).toBeGreaterThan(80);
+        expect(
+          /earnings|submitVersion|analytics|listingContent|submitForReview/.test(rationale),
+          `${file} must name which capability it consumes`
+        ).toBe(true);
+      }
+    });
+
+    it('every capability-ledger entry names an actual file in the scanned population', () => {
+      for (const file of Object.keys(KIND_CAPABILITY_LEDGER)) {
+        expect(CODE.get(file), `${file} is not in the scanned population`).toBeDefined();
+      }
+    });
   });
 });

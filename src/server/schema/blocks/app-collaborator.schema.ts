@@ -12,46 +12,52 @@ import { z } from 'zod';
  * changing an INPUT SCHEMA breaks them. `app-collaborator.cli-contract.test.ts`
  * asserts every `listingMediaCliScope`-annotated proc's schema shape is unchanged.
  *
- * `appBlockId` bounds mirror the rest of the App Blocks surface (`min(1).max(64)`) so
+ * 🔴 THE KEY CHANGED FROM `appBlockId` TO `appListingId`, and that is only safe because
+ * every proc in `appCollaborators.*` is NEW AND UNCONSUMED — no released CLI version
+ * and no shipped client calls any of them. The pre-existing listing/media/submit
+ * schemas are NOT touched by this change; the cli-contract test is what proves the
+ * distinction rather than asserting it.
+ *
+ * `appListingId` bounds mirror the rest of the App Blocks surface (`min(1).max(64)`) so
  * a request-size guard is consistent across routers.
  */
 
-const appBlockId = z.string().min(1).max(64);
+const appListingId = z.string().min(1).max(64);
 /** A civitai `User.id`. Positive int — the FK would reject anything else anyway. */
 const userId = z.number().int().positive();
 
 export const inviteAppCollaboratorSchema = z.object({
-  appBlockId,
+  appListingId,
   targetUserId: userId,
 });
 export type InviteAppCollaboratorInput = z.infer<typeof inviteAppCollaboratorSchema>;
 
 export const respondToAppInviteSchema = z.object({
-  appBlockId,
+  appListingId,
   accept: z.boolean(),
 });
 export type RespondToAppInviteInput = z.infer<typeof respondToAppInviteSchema>;
 
 export const removeAppCollaboratorSchema = z.object({
-  appBlockId,
+  appListingId,
   targetUserId: userId,
 });
 export type RemoveAppCollaboratorInput = z.infer<typeof removeAppCollaboratorSchema>;
 
-export const leaveAppSchema = z.object({ appBlockId });
+export const leaveAppSchema = z.object({ appListingId });
 export type LeaveAppInput = z.infer<typeof leaveAppSchema>;
 
 export const setCollaboratorDisplayedSchema = z.object({
-  appBlockId,
+  appListingId,
   displayed: z.boolean(),
 });
 export type SetCollaboratorDisplayedInput = z.infer<typeof setCollaboratorDisplayedSchema>;
 
-export const listAppCollaboratorsSchema = z.object({ appBlockId });
+export const listAppCollaboratorsSchema = z.object({ appListingId });
 export type ListAppCollaboratorsInput = z.infer<typeof listAppCollaboratorsSchema>;
 
 export const initiateAppTransferSchema = z.object({
-  appBlockId,
+  appListingId,
   toUserId: userId,
 });
 export type InitiateAppTransferInput = z.infer<typeof initiateAppTransferSchema>;
@@ -61,11 +67,11 @@ export const transferIdSchema = z.object({
 });
 export type TransferIdInput = z.infer<typeof transferIdSchema>;
 
-export const getPendingAppTransferSchema = z.object({ appBlockId });
+export const getPendingAppTransferSchema = z.object({ appListingId });
 export type GetPendingAppTransferInput = z.infer<typeof getPendingAppTransferSchema>;
 
 export const getAppEarningsSchema = z.object({
-  appBlockId,
+  appListingId,
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
 });

@@ -28,6 +28,10 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
       create: vi.fn(async (args: { data: unknown }) => args.data),
       update: vi.fn(async (args: { data: unknown }) => args.data),
     },
+    // 🔴 SEATS ARE LISTING-KEYED, so EVERY non-owner path now consults this table —
+    // there is no longer an "this listing has no AppBlock" short-circuit to skip it.
+    // Default: no seat, i.e. exactly the owner-only behaviour these cases assert.
+    appCollaborator: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
     appListingScreenshot: {
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
       createMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
