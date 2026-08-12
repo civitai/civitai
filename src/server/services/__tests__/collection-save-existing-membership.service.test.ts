@@ -1,10 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as SearchIndex from '~/server/search-index';
 import type * as HomeBlockCache from '~/server/services/home-block-cache.service';
-import {
-  AUTO_FEATURE_NOTE_PREFIX,
-  AUTO_FEATURE_USER_ID,
-} from '~/server/common/auto-feature.constants';
+import { AUTO_FEATURE_NOTE_PREFIX } from '~/server/common/auto-feature';
 
 // Saving an item to a collection sends the item's whole desired membership, so collections it is ALREADY
 // in ride along in the payload. Those are no-op upserts — re-running the contest gates on them fails the
@@ -17,7 +14,7 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
     collection: { findMany: vi.fn() },
     collectionItem: { findMany: vi.fn(), count: vi.fn() },
     challenge: { findFirst: vi.fn() },
-    user: { findUnique: vi.fn() },
+    user: { findUnique: vi.fn(), findFirst: vi.fn() },
     model: { findMany: vi.fn() },
     modelVersion: { findMany: vi.fn() },
     $queryRaw: vi.fn(),
@@ -115,6 +112,9 @@ const save = () =>
 
 // The remove path reads the same item lookup and permission batch as the add path. Its authorization rule
 // (only the item's author, the collection owner, or a manager may remove) has to survive that sharing.
+// Whatever id the attribution account happens to have in this database.
+const AUTO_FEATURE_USER_ID = 987_654;
+
 const removeFrom = ({
   addedById,
   note = null,
@@ -125,6 +125,7 @@ const removeFrom = ({
   collectionOwnerId?: number;
 }) => {
   mockDbRead.collection.findMany.mockResolvedValue([]);
+  mockDbRead.user.findFirst.mockResolvedValue({ id: AUTO_FEATURE_USER_ID });
   mockDbRead.collectionItem.findMany.mockResolvedValue([
     { id: 555, collectionId: OWN_COLLECTION_ID, tagId: null, addedById, note },
   ]);

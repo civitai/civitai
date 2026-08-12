@@ -1,8 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import {
-  AUTO_FEATURE_NOTE_PREFIX,
-  AUTO_FEATURE_USER_ID,
-} from '~/server/common/auto-feature.constants';
+import { AUTO_FEATURE_NOTE_PREFIX } from '~/server/common/auto-feature';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 
 // `permissions.writeReview` is granted to every authenticated user on a `write: Review`
@@ -11,7 +8,7 @@ import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 // delete somebody else's.
 
 const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
-  mockDbRead: { $queryRaw: vi.fn() },
+  mockDbRead: { $queryRaw: vi.fn(), user: { findFirst: vi.fn() } },
   mockDbWrite: {
     $queryRaw: vi.fn(),
     collectionItem: { updateMany: vi.fn(), deleteMany: vi.fn() },
@@ -28,6 +25,9 @@ const ITEM_AUTHOR_ID = 777;
 const OUTSIDER_ID = 12_345;
 const ITEM_ROW_ID = 4242;
 const ITEM_ID = 55;
+// Whatever id the attribution account happens to have in this database — the point of resolving
+// it by username is that the code never assumes a particular number.
+const AUTO_FEATURE_USER_ID = 987_654;
 
 // First $queryRaw is the permission row (getUserCollectionPermissionsByIds), second is the
 // item-owner lookup.
@@ -43,6 +43,7 @@ function arrangeCollection({
   item?: { id: number; addedById: number | null; note: string | null };
 }) {
   mockDbRead.$queryRaw.mockReset();
+  mockDbRead.user.findFirst.mockResolvedValue({ id: AUTO_FEATURE_USER_ID });
   mockDbWrite.$queryRaw.mockReset();
   mockDbWrite.collectionItem.updateMany.mockReset();
   mockDbWrite.collectionItem.deleteMany.mockReset();
@@ -218,6 +219,27 @@ describe('removeCollectionItem authorization', () => {
       where: { id: { in: [ITEM_ROW_ID] } },
     });
     expect(mockDbWrite.collectionItem.updateMany).not.toHaveBeenCalled();
+  });
+
+  // Resolving by username means the account can be absent — a fresh dev database has no
+  // CivitaiOfficial. Removal then behaves exactly as it did before this feature rather than
+  // tombstoning rows nothing will ever re-approve.
+  it('deletes an auto-shaped row when the attribution account does not exist', async () => {
+    arrangeCollection({
+      write: 'Review',
+      item: {
+        id: ITEM_ROW_ID,
+        addedById: AUTO_FEATURE_USER_ID,
+        note: `${AUTO_FEATURE_NOTE_PREFIX}:1234`,
+      },
+    });
+    mockDbRead.user.findFirst.mockResolvedValue(null);
+
+    await expect(remove({ userId: COLLECTION_OWNER_ID })).resolves.toBeTruthy();
+    expect(mockDbWrite.collectionItem.updateMany).not.toHaveBeenCalled();
+    expect(mockDbWrite.collectionItem.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: [ITEM_ROW_ID] } },
+    });
   });
 
   it('does nothing when the item is not in the collection', async () => {

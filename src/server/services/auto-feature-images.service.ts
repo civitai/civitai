@@ -9,9 +9,9 @@ import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 
 import {
   AUTO_FEATURE_NOTE_PREFIX,
-  AUTO_FEATURE_USER_ID,
   autoFeatureNote,
-} from '~/server/common/auto-feature.constants';
+  getAutoFeatureUserId,
+} from '~/server/common/auto-feature';
 
 export type AutoFeatureCandidate = {
   imageId: number;
@@ -49,11 +49,7 @@ export function scoreCandidate(
   return candidate.reactions / decay;
 }
 
-/**
- * Rank candidates and take this run's picks.
- *
- * Pure: every count it needs is passed in, so the caps are testable without a database.
- */
+/** Rank candidates and take this run's picks. */
 export function selectAutoFeaturePicks({
   candidates,
   config,
@@ -111,9 +107,8 @@ export function selectAutoFeaturePicks({
   if (collectionIds.length === 0) return picks;
 
   const cursors = new Map(collectionIds.map((id) => [id, 0]));
-  // Sweep the collections in rotation, taking at most one each per pass. Cursors persist across
-  // passes and only ever advance, so a sweep that takes nothing means nothing is left to take —
-  // which is the loop's only other exit, and the reason it can't spin.
+  // Cursors persist across passes and only ever advance, so a sweep that takes nothing means
+  // nothing is left to take — the loop's only exit besides `perRun`, and why it can't spin.
   while (picks.length < config.perRun) {
     let tookAny = false;
     for (let i = 0; i < collectionIds.length && picks.length < config.perRun; i++) {
@@ -144,8 +139,8 @@ async function getAutoFeatureConfig() {
   });
   if (!block) return null;
   const metadata = (block.metadata || {}) as HomeBlockMetaSchema;
-  // Parsed rather than cast: this is hand-edited JSON, and every default the job relies on
-  // (perRun, the decay constants, dryRun) only exists if the schema fills it in.
+  // Parsed rather than cast: hand-edited JSON, and every default the job relies on — perRun,
+  // the decay constants, dryRun — exists only if the schema fills it in.
   const config = autoFeatureSchema.safeParse(metadata.featuredCollections?.autoFeature);
   if (!config.success) return null;
   return {
@@ -218,16 +213,18 @@ async function fetchCandidates({
 async function fetchWindowCounts({
   targetCollectionId,
   windowDays,
+  autoFeatureUserId,
 }: {
   targetCollectionId: number;
   windowDays: number;
+  autoFeatureUserId: number;
 }) {
   const rows = await dbRead.$queryRaw<{ userId: number; source: string | null }[]>`
     SELECT i."userId", split_part(ci.note, ':', 2) AS source
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     WHERE ci."collectionId" = ${targetCollectionId}
-      AND ci."addedById" = ${AUTO_FEATURE_USER_ID}
+      AND ci."addedById" = ${autoFeatureUserId}
       AND ci.note LIKE ${`${AUTO_FEATURE_NOTE_PREFIX}:%`}
       AND ci.status <> 'REJECTED'::"CollectionItemStatus"
       AND ci."createdAt" >= now() - make_interval(days => ${Prisma.raw(String(windowDays))})
@@ -255,6 +252,9 @@ export async function runAutoFeatureImages({
   if (lastRun && Date.now() - lastRun.getTime() < config.intervalHours * 3_600_000)
     return { reason: 'interval-not-elapsed' as const };
 
+  const autoFeatureUserId = await getAutoFeatureUserId();
+  if (autoFeatureUserId === null) return { reason: 'no-attribution-account' as const };
+
   const eligible = await getEligibleCollectionIds(pool);
   if (eligible === null) return { reason: 'eligibility-state-missing' as const };
   if (eligible.length === 0) return { reason: 'no-eligible-collections' as const };
@@ -268,6 +268,7 @@ export async function runAutoFeatureImages({
     fetchWindowCounts({
       targetCollectionId: config.collectionId,
       windowDays: config.windowDays,
+      autoFeatureUserId,
     }),
   ]);
 
@@ -305,7 +306,7 @@ export async function runAutoFeatureImages({
     data: picks.map((p) => ({
       collectionId: config.collectionId,
       imageId: p.imageId,
-      addedById: AUTO_FEATURE_USER_ID,
+      addedById: autoFeatureUserId,
       note: autoFeatureNote(p.collectionId),
       status: CollectionItemStatus.ACCEPTED,
     })),

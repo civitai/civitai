@@ -1,8 +1,5 @@
 import { Prisma } from '@prisma/client';
-import {
-  AUTO_FEATURE_NOTE_PREFIX,
-  AUTO_FEATURE_USER_ID,
-} from '~/server/common/auto-feature.constants';
+import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-feature';
 import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
@@ -965,15 +962,12 @@ export const saveItemInCollections = async ({
       })
       .filter(isDefined);
 
-    // Auto-featured rows are rejected, not deleted, here too — this is the "Save to collection"
-    // modal, the other door into removal, and a delete through it would let the job re-add the
-    // image the removal was meant to stop.
+    // The "Save to collection" modal is the other door into removal, and a delete through it
+    // would let the job re-add the image the removal was meant to stop.
+    const autoFeatureUserId = await getAutoFeatureUserId();
     const autoFeaturedIds = removeAllowedCollectionItemIds.filter((id) => {
       const item = existingItems.find((i) => i.id === id);
-      return (
-        item?.addedById === AUTO_FEATURE_USER_ID &&
-        !!item.note?.startsWith(`${AUTO_FEATURE_NOTE_PREFIX}:`)
-      );
+      return !!item && isAutoFeaturedRow(item, autoFeatureUserId);
     });
     const deletableIds = removeAllowedCollectionItemIds.filter(
       (id) => !autoFeaturedIds.includes(id)
@@ -3380,14 +3374,11 @@ export const removeCollectionItem = async ({
 
   const idColumn = Prisma.raw(`"${tableKey.toLowerCase()}Id"`);
 
-  // Read the row and decide here rather than expressing "is this an auto-featured row" as a SQL
-  // predicate. Both columns are nullable, and `NOT (addedById = X AND note LIKE Y)` is NULL —
-  // not TRUE — whenever `note` is NULL, which is the normal case: that silently matched zero
-  // rows and reported success. Same shape as saveItemInCollections' check, so the two removal
-  // doors agree about the same row.
-  // Unbounded, and both statements below act on every id it returns. Prod has a partial unique
-  // index per entity type, so this is one row there — but those indexes exist in no migration,
-  // and the statement this replaced deleted every matching row regardless.
+  // Decided here rather than as a SQL predicate: both columns are nullable, and
+  // `NOT (addedById = X AND note LIKE Y)` is NULL — not TRUE — whenever `note` is NULL, so the
+  // statement silently matched nothing and still reported success.
+  // Unbounded: prod has a partial unique index per entity type, but those indexes exist in no
+  // migration, and the statement this replaced deleted every matching row regardless.
   const existing = await dbWrite.$queryRaw<
     { id: number; addedById: number | null; note: string | null }[]
   >`
@@ -3401,12 +3392,11 @@ export const removeCollectionItem = async ({
     // next job run re-add the same image, since the job's dedupe is "is there already a row" —
     // so for these rows the tombstone IS the removal. REJECTED is invisible to the render path,
     // which defaults to ACCEPTED only.
-    const isAutoFeatured = (row: (typeof existing)[number]) =>
-      row.addedById === AUTO_FEATURE_USER_ID &&
-      !!row.note?.startsWith(`${AUTO_FEATURE_NOTE_PREFIX}:`);
+    const autoFeatureUserId = await getAutoFeatureUserId();
+    const isAuto = (row: (typeof existing)[number]) => isAutoFeaturedRow(row, autoFeatureUserId);
 
-    const tombstoneIds = existing.filter(isAutoFeatured).map((row) => row.id);
-    const deletableIds = existing.filter((row) => !isAutoFeatured(row)).map((row) => row.id);
+    const tombstoneIds = existing.filter(isAuto).map((row) => row.id);
+    const deletableIds = existing.filter((row) => !isAuto(row)).map((row) => row.id);
 
     if (tombstoneIds.length) {
       await dbWrite.collectionItem.updateMany({
