@@ -11,6 +11,7 @@ import { renderWithProviders } from '../../../../test/component-setup';
  */
 
 import type * as TrpcModule from '~/utils/trpc';
+import type * as IsClientModule from '~/providers/IsClientProvider';
 
 const mutateAsync = vi.hoisted(() =>
   vi.fn(async (input: unknown) => ({ id: 456, ...(input as object) }))
@@ -53,8 +54,12 @@ vi.mock('~/components/UserSettings/hooks', () => ({
   useMutateUserSettings: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 // The paid-access section opens with a DismissibleAlert, whose `useIsClient()` throws rather than
-// defaulting when the provider isn't mounted — unmocked it takes the whole render down.
-vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
+// defaulting when the provider isn't mounted — unmocked it takes the whole render down. Spread the real
+// module so the provider export stays intact if anything in the graph starts using it.
+vi.mock('~/providers/IsClientProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof IsClientModule>()),
+  useIsClient: () => true,
+}));
 // The description field mounts the whole rich-text editor (tiptap + sticker cosmetics queries), none
 // of which this test drives.
 vi.mock('~/components/RichTextEditor/RichTextEditorComponent', () => ({
@@ -112,6 +117,7 @@ function renderNewVersionForm(onSubmit: (v?: unknown) => void = vi.fn()) {
 }
 
 const chargeSwitch = () => page.getByRole('switch', { name: /I want to charge for this version/ });
+const accessSwitch = () => page.getByRole('switch', { name: /Charge for access to this version/ });
 const rightsCheckbox = () => page.getByRole('checkbox', { name: /I hold the rights to monetize/ });
 const feeInput = () => page.getByLabelText('Licensing fee (Buzz)');
 
@@ -221,6 +227,10 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     await expect.element(chargeSwitch()).toBeChecked();
     await expect.element(feeInput()).toBeInTheDocument();
     expect((feeInput().element() as HTMLInputElement).value).toBe(stored);
+    // The gate half of the restore, which the fee assertions above can't see.
+    await expect.element(accessSwitch()).toBeChecked();
+    const price = page.getByLabelText('Price for access').element() as HTMLInputElement;
+    expect(price.value.replace(/\D/g, '')).toBe('5000');
   });
 
   // The alarm is keyed to the values, not the switch: clearing the fee with the section OPEN loses just as
@@ -235,6 +245,25 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     expect(page.getByText(/Saving now removes this version/).elements()).toHaveLength(1);
     // Still open — this is an edit in a labelled field, not a collapse.
     await expect.element(chargeSwitch()).toBeChecked();
+  });
+
+  // A private model drops its gate on save (handleSubmit substitutes null), while the form's config still
+  // reads non-null — so a warning keyed to the raw config is silent on the one save that removes it.
+  test('warns that a private model is about to lose its stored gate', async () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={{ ...model, availability: 'Private' } as typeof model}
+        version={chargingVersion}
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    await expect
+      .element(page.getByText(/Saving now removes this version's paid access/))
+      .toBeInTheDocument();
   });
 
   // A grandfathered version — priced before the affirmation existed — has to tick the box to save at all.
@@ -260,7 +289,10 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
 
     await userEvent.click(chargeSwitch());
     await userEvent.click(chargeSwitch());
-    await expect.element(rightsCheckbox()).toBeChecked();
+    // Synchronous: the tick is absorbing once the section is back, so polling would only stretch a
+    // one-second failure into a fifteen-second one.
+    await expect.element(rightsCheckbox()).toBeInTheDocument();
+    expect((rightsCheckbox().element() as HTMLInputElement).checked).toBe(true);
   });
 
   // A pristine edit short-circuits the mutation, so the observable is the form's own onSubmit: it fires

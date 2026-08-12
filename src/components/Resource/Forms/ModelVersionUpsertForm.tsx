@@ -511,7 +511,10 @@ export function ModelVersionUpsertForm({
   // instead reduces to `!chargeEnabled` — `hasExistingCharge` forces the `showChargeSettings` OR-arm
   // true — and misses every one of them.
   const removingStoredFee = hasExistingLicensingFee && (currentLicensingFee ?? 0) <= 0;
-  const removingStoredGate = !!version?.paidAccess && !paidAccessConfig;
+  // Read through `gateCharges` — what the submit actually sends — for the same reason it exists: the raw
+  // config survives behind a hidden editor, so a version that went private, or whose usage control can no
+  // longer be gated, drops its gate on save while the config still reads non-null.
+  const removingStoredGate = !!version?.paidAccess && !gateCharges;
   const removingStoredCharge = removingStoredFee || removingStoredGate;
 
   const licensingSourceVersionId = form.watch('licensingSourceVersionId') ?? null;
@@ -1202,7 +1205,9 @@ export function ModelVersionUpsertForm({
                 )}
                 {removingStoredCharge && (
                   <Stack gap={4} mt="sm" align="flex-start">
-                    <Text size="xs" c="red">
+                    {/* Red only when the priced controls are off screen — that's the case the creator
+                        can't see. With them open this is a note about an edit they just made. */}
+                    <Text size="xs" c={showChargeSettings ? 'yellow.5' : 'red'}>
                       Saving now removes this version&apos;s{' '}
                       {removingStoredFee && removingStoredGate
                         ? 'license fee and paid access'
