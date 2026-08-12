@@ -37,6 +37,8 @@ export type UserIdentity = {
   openReportCount: number;
   /** The avatar behind `profilePictureId`. `image` above is the legacy URL and is not the same thing. */
   browsingLevel: number | null;
+  /** Comma-separated moderator usernames who filed an OPEN report on this account, or null. */
+  openReportModerators: string | null;
   profilePictureUrl: string | null;
   profilePictureType: string | null;
   profilePictureNsfwLevel: number | null;
@@ -337,6 +339,18 @@ async function getIdentity(userId: number): Promise<UserIdentity | null> {
         JOIN "Report" r ON r.id = urp."reportId"
         WHERE urp."userId" = u.id AND r.status IN ('Pending', 'Processing')
       )`.as('openReportCount'),
+      // Retool's `UserReport by <mod>` chip. An open report is a different fact when a MODERATOR filed
+      // it: that is a colleague already working the account, and the anti-overlap case the ticket asks
+      // for. The count alone cannot say so.
+      sql<string | null>`(
+        SELECT string_agg(DISTINCT ru.username, ', ')
+        FROM "UserReport" urp
+        JOIN "Report" r ON r.id = urp."reportId"
+        JOIN "User" ru ON ru.id = r."userId"
+        WHERE urp."userId" = u.id
+          AND r.status IN ('Pending', 'Processing')
+          AND ru."isModerator" IS TRUE
+      )`.as('openReportModerators'),
       // Retool's "Look at PFP". `u.image` is the legacy avatar URL and is NOT this — the modern
       // avatar is an Image row behind `profilePictureId`, which carries the nsfwLevel a moderator is
       // actually checking against.

@@ -340,8 +340,11 @@ browser as user 1290051, not by reading the code.
       replaces Retool, so the useful half is ported: Copy profile URL, and Copy lookup URL — `?q=` is the
       whole address of a lookup, which is what gets pasted into a ticket or a thread. Verified: clicking
       it puts `…/retool/user-lookup/basic?q=1290051` on the clipboard.
-- [ ] Header chip still missing: **UserReport by \<mod\>** — an open report becomes a different fact
-      when a *moderator* filed it, and the header currently shows only the count.
+- [x] **UserReport by \<mod\>** (2026-08-12). Rendered into the existing open-report banner rather than
+      as a separate chip: an open report filed by a **moderator** means a colleague is already working
+      the account — the anti-overlap case the ticket asks for (§1.1) — and a bare count cannot say so.
+      Verified in a browser: `5 open reports against this account. Filed by moderator civitai — someone
+      is already on this.`
 
 ## 2. Bulk Image Manager
 

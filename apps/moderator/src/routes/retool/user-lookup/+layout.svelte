@@ -177,7 +177,9 @@
     >
       <span>
         {identity.openReportCount} open report{identity.openReportCount > 1 ? 's' : ''} against this
-        account.
+        account.{identity.openReportModerators
+          ? ` Filed by moderator ${identity.openReportModerators} — someone is already on this.`
+          : ''}
       </span>
       <a href="/reports/user?status=Pending&status=Processing" class={LINK_CLASS}>
         Triage in the report queue
