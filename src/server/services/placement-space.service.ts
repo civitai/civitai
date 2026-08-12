@@ -219,6 +219,21 @@ export async function setPlacementSpace({
   if (mode !== 'off' && resolvedPrice == null)
     throw throwBadRequestError('placement: set a price before opening this space');
 
+  // Nothing verifies that a remix-gallery submission is genuinely a remix, so
+  // the price is the only spam gate the surface has and a creator who sets 1⚡
+  // is the hole. The slider's floor is a courtesy; this is what makes it true.
+  //
+  // Compared against the stored price rather than applied outright, because the
+  // settings page sends `price` on every save — a creator whose row predates the
+  // floor would be unable to change their mode, or turn the surface off at all,
+  // until they first raised a price they set legitimately. Refuses a move below
+  // the floor; lets an existing one be carried.
+  const floor = PLACEMENT_SURFACES[surface].serverMinPrice;
+  if (price != null && price < floor && price !== existing?.price)
+    throw throwBadRequestError(
+      `placement: the lowest you can charge is ${floor} Buzz`
+    );
+
   await dbWrite.placementSpace.upsert({
     where: { surface_entityType_entityId: { surface, entityType, entityId } },
     create: {

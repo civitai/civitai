@@ -70,4 +70,70 @@ describe('resolveLocationChangeState', () => {
       expect(result.state).toEqual({});
     });
   });
+
+  // Closing a routed dialog back onto `/images/[imageId]` is a pop Next does not
+  // handle (`RoutedDialogProvider.beforePopState` returns false), so `router.query`
+  // never re-interpolates the path param and this is the only thing that runs.
+  // Without the route pattern the page saw no `imageId` and rendered a 404.
+  describe('dynamic route params', () => {
+    const imagePage = { pathname: '/images/135356251', search: '' };
+
+    it('recovers a path param that appears in no query string', () => {
+      const eventState = { as: '/images/135356251', url: '/images/135356251', state: {} };
+      const result = resolveLocationChangeState(
+        eventState,
+        eventState,
+        imagePage,
+        '/images/[imageId]'
+      );
+      expect(result.query.imageId).toBe(135356251);
+    });
+
+    it('types the param like the rest of the query rather than as a string', () => {
+      // Consumers hand `imageId` straight to tRPC inputs typed as numbers.
+      const eventState = { as: '/images/135356251', url: '/images/135356251', state: {} };
+      const result = resolveLocationChangeState(
+        eventState,
+        eventState,
+        imagePage,
+        '/images/[imageId]'
+      );
+      expect(typeof result.query.imageId).toBe('number');
+    });
+
+    it('lets an explicit query string win over the path param', () => {
+      const eventState = {
+        as: '/images/135356251',
+        url: '/images/[imageId]?imageId=999&dialog=imageDetail',
+        state: {},
+      };
+      const result = resolveLocationChangeState(
+        eventState,
+        eventState,
+        imagePage,
+        '/images/[imageId]'
+      );
+      expect(result.query.imageId).toBe(999);
+      expect(result.query.dialog).toBe('imageDetail');
+    });
+
+    it('contributes nothing when the pattern does not match the path', () => {
+      // A pop to a different route: Next owns that one and repopulates the query
+      // on routeChangeComplete, so we must not inject stale params here.
+      const eventState = { as: '/models?sort=Newest', url: '/models?sort=Newest', state: {} };
+      const result = resolveLocationChangeState(
+        eventState,
+        eventState,
+        location,
+        '/images/[imageId]'
+      );
+      expect(result.query).toEqual({ sort: 'Newest' });
+    });
+
+    it('is a no-op for a static route pattern', () => {
+      const eventState = { as: '/images', url: '/images', state: {} };
+      const result = resolveLocationChangeState(eventState, eventState, location, '/images');
+      expect(result.query).toEqual({});
+    });
+  });
 });

@@ -6,6 +6,7 @@ import {
   sweepUnpaidLegs,
   sweepUnplannedSettlements,
 } from '~/server/services/placement-escrow.service';
+import { sweepDeletedRemixGallerySubmissions } from '~/server/services/remix-gallery-sweep.service';
 
 const BATCH = 100;
 
@@ -116,8 +117,44 @@ export const sweepUnplannedPlacementSettlementsJob = createJob(
   { lockExpiration: 15 * 60 }
 );
 
+/**
+ * Gallery submissions whose image was deleted after it was sent. The ordinary
+ * expiry reaches them eventually; this releases the escrow without making the
+ * submitter wait out a window for a decision that can no longer be made.
+ *
+ * Drains, because a creator deleting a post takes every submission of every
+ * image in it with them, so the population arrives in bursts rather than
+ * steadily.
+ *
+ * **Drains on `released`, not on `considered`.** Rows leave this set only by
+ * settling, and a failed settle is caught and stepped over — so draining on
+ * what was *selected* re-selects the same rows every pass when settlement is
+ * down, burning the whole cap without ever reaching row 101. Same trap the
+ * unplanned-settlements sweep above refuses to drain at all for.
+ */
+export const sweepDeletedRemixGallerySubmissionsJob = createJob(
+  'remix-gallery-sweep-deleted',
+  '*/30 * * * *',
+  async (jobContext) => {
+    const { runs, hitCap } = await drain(
+      'remix-gallery-sweep-deleted',
+      jobContext,
+      () => sweepDeletedRemixGallerySubmissions({ limit: BATCH }),
+      (result) => result.released
+    );
+
+    return {
+      considered: sum(runs, (run) => run.considered),
+      released: sum(runs, (run) => run.released),
+      hitCap,
+    };
+  },
+  { lockExpiration: 10 * 60 }
+);
+
 export const placementJobs = [
   expirePlacementsJob,
   sweepUnpaidPlacementLegsJob,
   sweepUnplannedPlacementSettlementsJob,
+  sweepDeletedRemixGallerySubmissionsJob,
 ];

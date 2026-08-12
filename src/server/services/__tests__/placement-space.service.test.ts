@@ -78,11 +78,23 @@ describe('setPlacementSpace — the price guard', () => {
   // The whole point of the item: mode and price are one decision. A surface
   // with no default price must still refuse to open unpriced.
   it('still refuses to open a surface that has no default price', async () => {
-    await expect(
-      setPlacementSpace({ ...base, surface: 'remixGallery', mode: 'review' })
-    ).rejects.toThrow(/set a price/);
+    // Every surface in the table now carries a default, so this path is
+    // currently unreachable through real data — `remixGallery` used to be the
+    // example and stopped being one when galleries went default-on. The guard
+    // still has to work for whatever surface is added next, so the absence is
+    // staged here rather than the test being deleted along with the protection.
+    const original = PLACEMENT_SURFACES.remixGallery.defaultPrice;
+    (PLACEMENT_SURFACES.remixGallery as { defaultPrice: number | null }).defaultPrice = null;
 
-    expect(spaceUpsert).not.toHaveBeenCalled();
+    try {
+      await expect(
+        setPlacementSpace({ ...base, surface: 'remixGallery', mode: 'review' })
+      ).rejects.toThrow(/set a price/);
+
+      expect(spaceUpsert).not.toHaveBeenCalled();
+    } finally {
+      (PLACEMENT_SURFACES.remixGallery as { defaultPrice: number | null }).defaultPrice = original;
+    }
   });
 
   // Clearing an account price is a deliberate act now that no control can emit
@@ -177,7 +189,26 @@ describe('setPlacementSpace — the price guard', () => {
 
   it('agrees with the cascade: a surface default rescues an unpriced open space', () => {
     // Stated as an assertion rather than a comment so it moves with the table.
+    //
+    // Both surfaces carry a default now. Galleries went default-on, and mode and
+    // price are one decision — an open surface with no default price puts an
+    // inviting space on every image and refuses every placement into it.
     expect(PLACEMENT_SURFACES.sticker.defaultPrice).not.toBeNull();
-    expect(PLACEMENT_SURFACES.remixGallery.defaultPrice).toBeNull();
+    expect(PLACEMENT_SURFACES.remixGallery.defaultPrice).not.toBeNull();
+  });
+
+  it('opens a remix gallery without a price, because the surface has a default', () => {
+    // The pairing that makes default-on coherent: a creator who has never
+    // touched their settings is open at the surface default, and the guard that
+    // refuses an unpriced open space must not fire on them.
+    expect(PLACEMENT_SURFACES.remixGallery.defaultMode).toBe('review');
+    expect(PLACEMENT_SURFACES.remixGallery.defaultPrice).not.toBeNull();
+    // At or above the floor, not equal to it. The floor is the spam gate; the
+    // default is what a slot is worth. A default below the floor would be a
+    // price the mutation refuses, which is the unreachable state this pairing
+    // exists to prevent.
+    expect(PLACEMENT_SURFACES.remixGallery.defaultPrice!).toBeGreaterThanOrEqual(
+      PLACEMENT_SURFACES.remixGallery.serverMinPrice
+    );
   });
 });

@@ -68,7 +68,9 @@ type TagWithModelCount = { id: number; name: string; unfeatured: boolean; count:
 // exotic-Unicode case pairs could land in separate keys that each independently resolve
 // to the same tag — correct output, marginally weaker dedup.)
 const getTagWithModelCountCacheKey = (name: string) =>
-  `${REDIS_KEYS.CACHES.TAG_WITH_MODEL_COUNT}:${name.toLowerCase()}` as `${typeof REDIS_KEYS.CACHES.TAG_WITH_MODEL_COUNT}:${string}`;
+  `${
+    REDIS_KEYS.CACHES.TAG_WITH_MODEL_COUNT
+  }:${name.toLowerCase()}` as `${typeof REDIS_KEYS.CACHES.TAG_WITH_MODEL_COUNT}:${string}`;
 
 const queryTagWithModelCount = ({ name }: { name: string }) =>
   // No longer include count since we just have too many now...

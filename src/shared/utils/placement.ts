@@ -101,6 +101,7 @@ export const PLACEMENT_SURFACES = {
     defaultMode: 'review',
     defaultPrice: 100,
     trackMinPrice: 50,
+    serverMinPrice: 50,
     defaultDeclineFeeRate: 0.3,
     defaultSellerShare: 0,
     // The whole payment reaches the space owner, and the place button says so.
@@ -111,12 +112,34 @@ export const PLACEMENT_SURFACES = {
   remixGallery: {
     label: 'remix galleries',
     targets: ['image'],
-    defaultMode: 'off',
-    defaultPrice: null,
+    // On for everyone at launch. Turning a gallery off is an opt-OUT, done
+    // through the same three-level space settings, rather than something a
+    // creator has to find and enable first.
+    //
+    // Review, never `auto`: a gallery places arbitrary user-uploaded media on
+    // someone else's page, so every entry passes its owner. `allowedModes`
+    // refuses `auto` for this surface where the value is stored.
+    defaultMode: 'review',
+    // Same decision as the mode, per the note above — a default mode without a
+    // default price would put an inviting gallery on every image and refuse
+    // every submission to it, because submission refuses an unpriced space.
+    //
+    // Deliberately above `serverMinPrice`: the floor is the spam gate and the
+    // default is what the platform thinks a gallery slot is worth. A creator can
+    // price down to 50, but nobody lands there by doing nothing.
+    defaultPrice: 100,
     trackMinPrice: 50,
+    serverMinPrice: 50,
     defaultDeclineFeeRate: 0.3,
     defaultSellerShare: 0,
-    defaultPlatformShare: 0.3,
+    // Zero for launch: the whole payment reaches the creator. Unlike the sticker
+    // surface, no copy hardcodes that — the submit card reads `ownerShare` and
+    // says "all proceeds" only while this is 0, so raising it changes the
+    // wording rather than making it false.
+    //
+    // Tunable at runtime without a deploy, via the `placement:config` KeyValue
+    // row: `approvalShares.remixGallery.platform`.
+    defaultPlatformShare: 0,
     expiryHours: 48,
   },
 } as const satisfies Record<
@@ -126,8 +149,19 @@ export const PLACEMENT_SURFACES = {
     targets: readonly PlacementSpaceEntity[];
     defaultMode: PlacementSpaceMode;
     defaultPrice: number | null;
-    /** The bottom of the price slider's track. The server floor is `PLACEMENT_MIN_PRICE`. */
+    /** The bottom of the price slider's track. Presentation only. */
     trackMinPrice: number;
+    /**
+     * The lowest price the server will accept a creator moving to. A real
+     * refusal, not the bottom of a control — for `remixGallery` nothing verifies
+     * a submission is genuinely a remix, so the price is the only spam gate the
+     * surface has and a gallery set to 1 Buzz is the hole.
+     *
+     * Separate from `trackMinPrice` because the two answer different questions
+     * and stickers already answer them differently: its slider starts at 50
+     * while prices below that remain chargeable.
+     */
+    serverMinPrice: number;
     defaultDeclineFeeRate: number;
     defaultSellerShare: number;
     defaultPlatformShare: number;
@@ -226,7 +260,12 @@ export const PLACEMENT_PRICE_CAP_TIERS: PlacementPriceTier[] = [
   { minScore: 100_000, caps: { free: 1_000, bronze: 2_000, silver: 3_000, gold: 5_000 } },
 ];
 
-/** The server's floor on what may be charged. The slider's is `trackMinPrice`. */
+/**
+ * The absolute lower bound on a charge, below which a price is nonsense rather
+ * than cheap. A surface's own floor is `serverMinPrice`, which is the one that
+ * refuses a creator's price — this only stops the effective price going
+ * negative when a cap is misconfigured.
+ */
 export const PLACEMENT_MIN_PRICE = 0;
 
 /**
@@ -271,24 +310,31 @@ export const PLACEMENT_PRICE_STEP = 10;
 export function placementPriceCaption(
   surface: PlacementSurface,
   price: number,
-  cap: number | null
+  cap: number | null,
+  /**
+   * Who pays, in the caller's words. Stickers are placed and galleries are
+   * submitted to, and a caption that calls a remix submitter a "placer" reads
+   * as another feature's copy leaking in. Parameterised rather than derived
+   * from `label`, which names the surface and not the person.
+   */
+  payer = 'Placers'
 ): { text: string; warning: boolean } | null {
   if (cap == null) return null;
 
   if (price > cap)
     return {
-      text: `Placers pay ${cap} Buzz — your current cap — until your score or membership raises it`,
+      text: `${payer} pay ${cap} Buzz — your current cap — until your score or membership raises it`,
       warning: true,
     };
 
   const track = placementPriceTrack(surface, cap);
   if (!onPlacementPriceGrid(price, track))
     return {
-      text: `Placers pay ${price} Buzz. The slider moves in ${PLACEMENT_PRICE_STEP}s from ${track.min}, so using it will change this price`,
+      text: `${payer} pay ${price} Buzz. The slider moves in ${PLACEMENT_PRICE_STEP}s from ${track.min}, so using it will change this price`,
       warning: true,
     };
 
-  return { text: `Placers pay ${price} Buzz`, warning: false };
+  return { text: `${payer} pay ${price} Buzz`, warning: false };
 }
 
 export function placementPriceTrack(surface: PlacementSurface, cap: number | null) {

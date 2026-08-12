@@ -113,9 +113,7 @@ export type CosmeticGetById = Exclude<RouterOutput['cosmetic']['getById'], null>
 export type CosmeticShopItemGetById = RouterOutput['cosmeticShop']['getShopItemById'];
 export type CosmeticShopSectionGetById = RouterOutput['cosmeticShop']['getSectionById'];
 
-export type ModelVersionDonationGoal = NonNullable<
-  RouterOutput['modelVersion']['donationGoal']
->;
+export type ModelVersionDonationGoal = NonNullable<RouterOutput['modelVersion']['donationGoal']>;
 export type PostContestCollectionItem =
   RouterOutput['post']['getContestCollectionDetails']['items'][number];
 

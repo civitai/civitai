@@ -21,6 +21,7 @@ import {
 import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { PlacementSpaceSection } from '~/components/Account/PlacementSpaceSection';
+import { RemixGallerySettings } from '~/components/RemixGallery/RemixGallerySettings';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -33,9 +34,9 @@ import { syncAccount } from '~/utils/sync-account';
  * user holds a valid Creator Program membership (enforced read-side); non/lapsed
  * members see an upsell and disabled toggles.
  *
- * Sticker placement sits above that gate and is NOT a membership benefit — anyone
- * may rent out space on their own images. The alert says "below this point" for
- * that reason; it is a boundary in the card, not a description of the card.
+ * Renting out space on your own images — stickers, and remix galleries — sits
+ * above that gate and is NOT a membership benefit. The alert says "below this
+ * point" for that reason; it is a boundary in the card, not a description of it.
  */
 export function CreatorControlsCard() {
   const user = useCurrentUser();
@@ -49,7 +50,7 @@ export function CreatorControlsCard() {
   if (!user) return null;
   // Renting out your own images is not a Creator Program benefit, so the two
   // halves are gated apart. With neither, the card would be a bare heading.
-  if (!flags.creatorControls && !flags.stickerPlacement) return null;
+  if (!flags.creatorControls && !flags.stickerPlacement && !flags.remixGallery) return null;
 
   const isActiveMember = !!requirements?.validMembership;
   const membershipLapsed = !!requirements?.membershipLapsed;
@@ -61,6 +62,8 @@ export function CreatorControlsCard() {
         <Title order={2}>Creator Controls</Title>
 
         <PlacementSpaceSection />
+
+        <RemixGallerySettings />
 
         {/* The Creator Program half. Gated apart from the sticker section
             above, which anyone may use on their own images. */}
