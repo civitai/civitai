@@ -4,15 +4,19 @@ import {
   Badge,
   Button,
   Card,
+  Center,
   Container,
   Group,
   Loader,
+  Skeleton,
   Stack,
   Tabs,
   Text,
   Title,
+  Tooltip,
 } from '@mantine/core';
-import { IconCheck, IconExternalLink, IconX } from '@tabler/icons-react';
+import { openConfirmModal } from '@mantine/modals';
+import { IconCheck, IconExternalLink, IconPhotoOff, IconX } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -280,45 +284,83 @@ function SentTab({ rows, isLoading }: { rows: SentRow[]; isLoading: boolean }) {
 
       {rows.map((row) => (
         <Card key={row.id} withBorder>
-          <Group justify="space-between" wrap="nowrap">
-            <Stack gap={4}>
-              <Group gap="xs">
-                <Badge
-                  size="sm"
-                  variant="light"
-                  color={row.status === 'approved' ? 'green' : 'yellow'}
-                >
-                  {row.status === 'approved' ? 'Live' : 'Awaiting review'}
-                </Badge>
-                <Group gap={4}>
-                  <CurrencyIcon currency={Currency.BUZZ} size={12} />
-                  <Text size="xs" c="dimmed">
-                    {row.amount}
-                  </Text>
+          <Group justify="space-between" wrap="nowrap" align="flex-start">
+            <Group gap="sm" wrap="nowrap" align="flex-start">
+              {row.image ? (
+                <SubmissionThumb image={row.image} />
+              ) : (
+                // The row is kept even when its image will not resolve —
+                // unpublished, deleted, flagged — because the withdraw beside it
+                // is the only route back to the escrow. A placeholder says the
+                // preview is gone without implying the submission is.
+                <Tooltip label="This image is no longer available to preview" withArrow>
+                  <div className="relative w-20 shrink-0">
+                    <Skeleton animate={false} className="aspect-square w-full rounded-md" />
+                    <Center className="absolute inset-0">
+                      <IconPhotoOff size={20} className="text-dimmed" />
+                    </Center>
+                  </div>
+                </Tooltip>
+              )}
+              <Stack gap={4}>
+                <Group gap="xs">
+                  <Badge
+                    size="sm"
+                    variant="light"
+                    color={row.status === 'approved' ? 'green' : 'yellow'}
+                  >
+                    {row.status === 'approved' ? 'Live' : 'Awaiting review'}
+                  </Badge>
+                  <Group gap={4}>
+                    <CurrencyIcon currency={Currency.BUZZ} size={12} />
+                    <Text size="xs" c="dimmed">
+                      {row.amount}
+                    </Text>
+                  </Group>
                 </Group>
-              </Group>
-              <Text size="sm">On {row.owner?.username ?? 'a creator'}&apos;s image</Text>
-              <Text size="xs" c="dimmed">
-                Submitted {agedLabel(row.createdAt)}
-                {row.status === 'pending' && row.expiresAt
-                  ? ` — expires ${formatDate(row.expiresAt)}`
-                  : ''}
-              </Text>
-              <Anchor component={Link} href={`/images/${row.targetId}`} size="xs">
-                <Group gap={4} wrap="nowrap">
-                  <IconExternalLink size={12} />
-                  See the gallery
-                </Group>
-              </Anchor>
-            </Stack>
+                <Text size="sm">On {row.owner?.username ?? 'a creator'}&apos;s image</Text>
+                <Text size="xs" c="dimmed">
+                  Submitted {agedLabel(row.createdAt)}
+                  {row.status === 'pending' && row.expiresAt
+                    ? ` — expires ${formatDate(row.expiresAt)}`
+                    : ''}
+                </Text>
+                <Anchor component={Link} href={`/images/${row.targetId}`} size="xs">
+                  <Group gap={4} wrap="nowrap">
+                    <IconExternalLink size={12} />
+                    See the gallery
+                  </Group>
+                </Anchor>
+              </Stack>
+            </Group>
 
             {row.status === 'pending' && (
               <Button
-                variant="default"
+                // Red, and lighter than the moderator takedown in the manage
+                // modal — that one is a filled icon acting on someone else's
+                // content, this is a text button undoing your own. Both can be
+                // on screen in one session and they must not read alike.
+                color="red"
+                variant="light"
                 size="compact-sm"
+                className="w-28 shrink-0"
                 loading={retract.isPending && retract.variables?.placementId === row.id}
                 disabled={retract.isPending}
-                onClick={() => retract.mutate({ placementId: row.id })}
+                onClick={() =>
+                  openConfirmModal({
+                    title: 'Withdraw this submission',
+                    children: (
+                      <Text size="sm">
+                        It comes out of {row.owner?.username ?? 'the creator'}&apos;s review queue
+                        and your {row.amount} Buzz starts on its way back. You can submit it again
+                        later.
+                      </Text>
+                    ),
+                    labels: { confirm: 'Withdraw', cancel: 'Keep it' },
+                    confirmProps: { color: 'red' },
+                    onConfirm: () => retract.mutate({ placementId: row.id }),
+                  })
+                }
               >
                 Withdraw
               </Button>

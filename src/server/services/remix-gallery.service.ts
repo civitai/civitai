@@ -944,7 +944,23 @@ export async function getPendingRemixGallerySubmissions({
     .filter((row) => row.image);
 }
 
-/** The submitter's own view, so they can find and withdraw what they sent. */
+/**
+ * The submitter's own view, so they can find and withdraw what they sent.
+ *
+ * Carries the submitted image so the list can show what was sent rather than
+ * only its price and status.
+ *
+ * 🔴 **Every row is returned whether or not its image resolves.** The owner's
+ * queue above filters to published/scanned/unflagged content and drops what
+ * fails, because it is showing someone else's media to a stranger. Doing that
+ * here would hide a submitter's own pending row the moment their image was
+ * unpublished or flagged — and with it the only route to the withdraw that
+ * returns their escrow. Their money must not become unreachable because their
+ * image did. `image` is null on those rows and the page renders a placeholder.
+ *
+ * No visibility predicates for the same reason: this is a person's own upload
+ * shown back to them, not a feed.
+ */
 export async function getMyRemixGallerySubmissions({
   placerId,
   limit = 50,
@@ -952,7 +968,7 @@ export async function getMyRemixGallerySubmissions({
   placerId: number;
   limit?: number;
 }) {
-  return dbRead.placement.findMany({
+  const rows = await dbRead.placement.findMany({
     where: { surface: SURFACE, placerId, status: { in: ['pending', 'approved'] } },
     select: {
       id: true,
@@ -968,4 +984,34 @@ export async function getMyRemixGallerySubmissions({
     orderBy: { createdAt: 'desc' },
     take: limit,
   });
+
+  const imageIds = rows
+    .filter((row) => isRemixGalleryPlacementData(row.data))
+    .map((row) => (row.data as RemixGalleryPlacementData).imageId);
+
+  const images = imageIds.length
+    ? await dbRead.$queryRaw<
+        {
+          id: number;
+          url: string;
+          width: number | null;
+          height: number | null;
+          type: MediaType;
+          metadata: MixedObject | null;
+          nsfwLevel: number;
+        }[]
+      >`
+        SELECT i.id, i.url, i.width, i.height, i.type, i.metadata, i."nsfwLevel"
+        FROM "Image" i
+        WHERE i.id IN (${Prisma.join(imageIds)})
+      `
+    : [];
+  const byId = new Map(images.map((image) => [image.id, image]));
+
+  return rows.map((row) => ({
+    ...row,
+    image: isRemixGalleryPlacementData(row.data)
+      ? byId.get((row.data as RemixGalleryPlacementData).imageId) ?? null
+      : null,
+  }));
 }
