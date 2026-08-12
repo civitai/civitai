@@ -59,18 +59,13 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
     maxLevel == null
       ? []
       : images.filter((image) => !!image.nsfwLevel && image.nsfwLevel <= maxLevel);
-  // Counted apart, because they are hidden for different reasons and only one of
-  // them is about the gallery's ceiling. An unrated image is not "too spicy for
-  // this gallery", it has no rating yet — telling someone otherwise sends them
-  // looking for a rating that is not there.
+  // The picker's query backfills `browsingLevel`, which forces the
+  // `nsfwLevel != 0` branch server-side, so an unrated image never arrives here
+  // and every hidden one is genuinely over the ceiling.
   const overRated =
     maxLevel == null
       ? 0
       : images.filter((image) => !!image.nsfwLevel && image.nsfwLevel > maxLevel).length;
-  // Gated on the ceiling like the other two, so a closed gallery — where
-  // nothing is submittable for a reason that has nothing to do with the user's
-  // library — does not explain itself by naming some of their images.
-  const unrated = maxLevel == null ? 0 : images.filter((image) => !image.nsfwLevel).length;
 
   return (
     // `padding={0}` would strip the header's padding too, putting the title and
@@ -123,13 +118,6 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                 shown.
               </Text>
             )
-          )}
-
-          {unrated > 0 && (
-            <Text size="xs" c="dimmed">
-              {unrated === 1 ? '1 of your images is' : `${unrated} of your images are`} still being
-              rated and cannot be submitted yet.
-            </Text>
           )}
 
           {visibility && !visibility.open && (
@@ -208,10 +196,6 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                     // rather than an active one: nothing is fetching now, the
                     // button below is the action.
                     'Nothing so far in the images loaded.'
-                  : unrated > 0 && !overRated
-                  ? // Sending them to post images they have already posted is the
-                    // one wrong answer here; they are waiting on a rating.
-                    'Your posted images are still being rated. Try again once they have finished.'
                   : overRated > 0
                   ? 'None of your posted images are rated low enough for this gallery.'
                   : "You don't have any posted images to submit yet. Post your remix first, then submit it here."
