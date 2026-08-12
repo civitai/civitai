@@ -95,6 +95,9 @@ export const PLACEMENT_SURFACES = {
     label: 'stickers',
     targets: ['image'],
     defaultMode: 'off',
+    // Stickers stay opt-in and refuse an unpriced space. Setting a fallback here
+    // would switch on paid sticker placement for every creator at once.
+    fallbackPrice: null,
     defaultDeclineFeeRate: 0.3,
     defaultSellerShare: 0,
     defaultPlatformShare: 0.3,
@@ -103,7 +106,16 @@ export const PLACEMENT_SURFACES = {
   remixGallery: {
     label: 'remix galleries',
     targets: ['image'],
-    defaultMode: 'off',
+    // On for everyone at launch, with review. Turning it off is an opt-OUT, and
+    // the three-level space settings are what a creator uses to do that.
+    //
+    // This only means anything alongside `fallbackPrice`: submission refuses an
+    // unpriced space, so a default mode with no default price would put an
+    // inviting gallery on every image and refuse every submission to it.
+    defaultMode: 'review',
+    // What a creator charges before they have chosen anything. Capped at read
+    // like any set price, so it cannot exceed what their score and tier allow.
+    fallbackPrice: 50,
     defaultDeclineFeeRate: 0.3,
     defaultSellerShare: 0,
     defaultPlatformShare: 0.3,
@@ -115,6 +127,8 @@ export const PLACEMENT_SURFACES = {
     label: string;
     targets: readonly PlacementSpaceEntity[];
     defaultMode: PlacementSpaceMode;
+    /** Charged when the creator has set no price. `null` keeps the surface opt-in. */
+    fallbackPrice: number | null;
     defaultDeclineFeeRate: number;
     defaultSellerShare: number;
     defaultPlatformShare: number;

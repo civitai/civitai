@@ -11,6 +11,7 @@ import type {
 } from '~/shared/utils/placement';
 import {
   effectivePlacementPrice,
+  PLACEMENT_SURFACES,
   resolvePlacementSpace,
   surfaceAcceptsTarget,
 } from '~/shared/utils/placement';
@@ -96,11 +97,17 @@ export async function resolvePlacementSpaceFor({
 
   const { max: cap } = await placementPriceRange(ownerId, surface);
 
+  // `setPrice` stays null when the creator has chosen nothing — the settings UI
+  // needs to know they have not, so it can show the default rather than claim
+  // they picked it. Only the charged price falls back, and it is capped like any
+  // other, so a surface default cannot exceed what their score and tier allow.
+  const charged = resolved.price ?? PLACEMENT_SURFACES[surface].fallbackPrice;
+
   return {
     ownerId,
     mode: resolved.mode,
     setPrice: resolved.price,
-    price: effectivePlacementPrice(resolved.price, cap),
+    price: effectivePlacementPrice(charged, cap),
     cap,
     settings: resolved.settings ?? {},
   };
@@ -162,7 +169,15 @@ export async function setPlacementSpace({
   // would refuse every attempt while the owner's UI showed the space as open.
   // Requiring the price here makes that state unreachable rather than a puzzle
   // the placer discovers.
-  const resolvedPrice = price ?? (await inheritedPrice({ surface, entityType, entityId, userId }));
+  //
+  // A surface with a `fallbackPrice` has no such state — there is always a price
+  // to charge — so this must not refuse there, or a creator turning their gallery
+  // back on after opting out would be told to set a price the surface already
+  // has. It still refuses for surfaces that stay opt-in.
+  const resolvedPrice =
+    price ??
+    (await inheritedPrice({ surface, entityType, entityId, userId })) ??
+    PLACEMENT_SURFACES[surface].fallbackPrice;
   if (mode !== 'off' && resolvedPrice == null)
     throw throwBadRequestError('placement: set a price before opening this space');
 
