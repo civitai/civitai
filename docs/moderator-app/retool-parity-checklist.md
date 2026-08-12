@@ -362,8 +362,10 @@ browser as user 1290051, not by reading the code.
       of them and none reaches the DOM. (The *sub-permission* that should guard it is a backlog item.)
 - [x] **Admin actions**: Make/Remove Moderator, Add/Remove **Buzz-Block**, Generator Buzz Earnings
       (2026-08-09 — all three on the Admin section; see 1a).
-- [ ] **Notifications**: a **Delete Notification** action and a **Link** field on the send form; ours is
-      message-only with no delete.
+- [x] **Notifications: Link field** (2026-08-12 — see the `notificationLink` entry above; the send form
+      posts `url` and it is validated to relative paths and civitai URLs). The **Delete** half of this
+      entry is the same item as the BLOCKED one above — it needs an endpoint on `apps/notifications`
+      before anything here can call it, and is tracked there rather than duplicated.
 - [x] **Browsing level shown** (2026-08-11 — a `Viewing: <label>` header chip off `User.browsingLevel`,
       labelled with the shared `getBrowsingLevelLabel` so it matches the rest of the site).
 - [ ] **Comment Spammer alert** in Quick Info — **parked 2026-08-12: nobody is sure what it should
