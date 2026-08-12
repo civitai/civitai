@@ -67,9 +67,21 @@
 -- the file that created the block-keyed tables and every statement in it is
 -- `IF NOT EXISTS`, so re-running it restores the pre-STEP-A schema exactly. Nothing is
 -- lost, because the guard below refuses to run at all unless the tables are EMPTY.
--- Undoing the whole re-key = roll back the code deploy, then re-apply
--- `20260810140000_app_listing_collaborators`, then drop the STEP B tables (STEP B's own
--- file documents that direction).
+-- 🔴 Undoing the WHOLE re-key — THE ORDER IS LOAD-BEARING, and it is the reverse of the
+-- intuitive one. Do it in exactly this order:
+--   1. DROP the STEP B (listing-keyed) tables. Both code versions now see 42P01, which
+--      `safeCollaboratorQuery` swallows — inert for old AND new code.
+--   2. Roll back the code deploy.
+--   3. Re-apply `20260810140000_app_listing_collaborators` to restore the block-keyed
+--      tables.
+-- Rolling the CODE back first (step 2 before step 1) re-opens the exact window this
+-- split exists to eliminate: block-keyed code against STEP B's `app_listing_id` column
+-- raises 42703, which `isMissingTableError` deliberately refuses, so the public
+-- listing-detail read 500s.
+-- 🔴 And it does NOT self-correct: every statement in `20260810140000` is
+-- `IF NOT EXISTS`, so re-applying it over STEP B's tables emits "already exists,
+-- skipping" and leaves the key column as `app_listing_id`. The DROP in step 1 is what
+-- makes step 3 do anything at all.
 --
 -- Idempotent: the guard tolerates already-absent tables and every DROP is IF EXISTS, so
 -- a re-run on an already-dropped schema is a no-op.
@@ -90,6 +102,16 @@
 --
 -- `to_regclass` + EXECUTE so a table that is already gone is skipped rather than being
 -- a parse-time failure.
+--
+-- 🔴 THE `BEGIN;`/`COMMIT;` WRAPPER BELOW IS LOAD-BEARING — DO NOT REMOVE IT.
+-- psql's default is `ON_ERROR_STOP` **off**. Without the wrapper, the guard raises, psql
+-- PRINTS the error, and then runs the DROPs anyway — destroying the very rows the guard
+-- exists to protect, with its message scrolled off the top. Measured on PostgreSQL 18
+-- (2026-08-11): seeded one row, ran the file as a plain `psql -f`, and the table was
+-- gone. Inside a transaction the failed statement aborts the whole block and all three
+-- tables survive. Both controls were re-run after adding the wrapper.
+BEGIN;
+
 DO $$
 DECLARE
   t     text;
@@ -123,3 +145,5 @@ END $$;
 DROP TABLE IF EXISTS "app_ownership_transfers";
 DROP TABLE IF EXISTS "app_ownership_events";
 DROP TABLE IF EXISTS "app_collaborators";
+
+COMMIT;

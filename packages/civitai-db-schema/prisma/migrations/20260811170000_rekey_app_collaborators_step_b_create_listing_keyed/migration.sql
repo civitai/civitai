@@ -33,8 +33,21 @@
 -- long as no invite has been sent. Once a seat exists, dropping destroys it; take a dump
 -- of the three tables first. Dropping them returns the deployed code to the 42P01 path,
 -- i.e. inert-and-owner-only, NOT broken — so this rollback does not require a code
--- rollback. To go all the way back to the block-keyed world, roll the code back and
--- re-apply `20260810140000_app_listing_collaborators`.
+-- rollback.
+--
+-- 🔴 To go all the way back to the block-keyed world, THE ORDER IS LOAD-BEARING and is
+-- the reverse of the intuitive one:
+--   1. DROP these listing-keyed tables (the statement above). Both code versions then
+--      see 42P01, which `safeCollaboratorQuery` swallows — inert for old AND new code.
+--   2. Roll the code deploy back.
+--   3. Re-apply `20260810140000_app_listing_collaborators`.
+-- Rolling the CODE back FIRST re-opens the window this split exists to eliminate:
+-- block-keyed code against the `app_listing_id` column raises 42703, which
+-- `isMissingTableError` deliberately refuses, so the public listing-detail read 500s.
+-- 🔴 It also does not self-correct — every statement in `20260810140000` is
+-- `IF NOT EXISTS`, so re-applying it while these tables still exist emits "already
+-- exists, skipping" and leaves the key column as `app_listing_id`. Step 1 is what makes
+-- step 3 do anything at all.
 --
 -- Idempotent: every CREATE is IF NOT EXISTS, so a re-run on an already-re-keyed schema
 -- is a no-op.

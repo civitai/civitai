@@ -176,6 +176,29 @@ describe('🔴 STEP A refuses to run against non-empty tables — in SQL, not in
     );
   });
 
+  /**
+   * 🔴 The guard is only load-bearing INSIDE a transaction.
+   *
+   * psql defaults to `ON_ERROR_STOP` OFF. Measured on PostgreSQL 18 (2026-08-11): with a
+   * row seeded and the file run as a plain `psql -f`, the guard RAISEd, psql printed the
+   * error, and then executed the DROPs anyway — the populated table was destroyed and the
+   * message scrolled away. Wrapped in BEGIN/COMMIT the failed statement aborts the whole
+   * transaction and all three tables survive.
+   *
+   * So this asserts the wrapper, not just the guard: without it the guard reports a
+   * refusal it does not enforce, which is worse than no guard because it reads as safe.
+   */
+  it('🔴 the guard runs inside a transaction, so the DROPs cannot outlive its refusal', () => {
+    expect(CODE_A).toMatch(/^\s*BEGIN;/m);
+    expect(CODE_A).toMatch(/^\s*COMMIT;/m);
+    // BEGIN must open before the guard, and COMMIT must close after the last DROP —
+    // a wrapper that starts after the guard, or ends before the drops, protects nothing.
+    expect(CODE_A.indexOf('BEGIN;')).toBeLessThan(CODE_A.indexOf('DO $$'));
+    expect(CODE_A.lastIndexOf('COMMIT;')).toBeGreaterThan(
+      CODE_A.indexOf('DROP TABLE IF EXISTS "app_collaborators"')
+    );
+  });
+
   it('🔴 it counts ALL THREE tables, not just the one that is easy to name', () => {
     // A guard that only checked `app_collaborators` would let the DROP destroy a
     // populated `app_ownership_events` — the append-only audit trail — in silence.
