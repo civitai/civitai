@@ -122,7 +122,11 @@ export const PLACEMENT_SURFACES = {
     // Same decision as the mode, per the note above — a default mode without a
     // default price would put an inviting gallery on every image and refuse
     // every submission to it, because submission refuses an unpriced space.
-    defaultPrice: 50,
+    //
+    // Deliberately above `minPrice`: the floor is the spam gate and the default
+    // is what the platform thinks a gallery slot is worth. A creator can price
+    // down to 50, but nobody lands there by doing nothing.
+    defaultPrice: 100,
     minPrice: 50,
     defaultDeclineFeeRate: 0.3,
     defaultSellerShare: 0,

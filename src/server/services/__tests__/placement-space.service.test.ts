@@ -202,7 +202,12 @@ describe('setPlacementSpace — the price guard', () => {
     // touched their settings is open at the surface default, and the guard that
     // refuses an unpriced open space must not fire on them.
     expect(PLACEMENT_SURFACES.remixGallery.defaultMode).toBe('review');
-    expect(PLACEMENT_SURFACES.remixGallery.defaultPrice).toBe(
+    expect(PLACEMENT_SURFACES.remixGallery.defaultPrice).not.toBeNull();
+    // At or above the floor, not equal to it. The floor is the spam gate; the
+    // default is what a slot is worth. A default below the floor would be a
+    // price the mutation refuses, which is the unreachable state this pairing
+    // exists to prevent.
+    expect(PLACEMENT_SURFACES.remixGallery.defaultPrice!).toBeGreaterThanOrEqual(
       PLACEMENT_SURFACES.remixGallery.minPrice
     );
   });
