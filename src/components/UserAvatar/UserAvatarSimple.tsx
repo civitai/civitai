@@ -31,6 +31,7 @@ export function UserAvatarSimple({
   deletedAt,
   cosmetics,
   autoplayAnimations,
+  withHoverCard = true,
 }: {
   id: number;
   profilePicture?: ProfileImage | null;
@@ -38,6 +39,7 @@ export function UserAvatarSimple({
   deletedAt?: Date | null;
   cosmetics?: UserWithCosmetics['cosmetics'] | null;
   autoplayAnimations?: boolean;
+  withHoverCard?: boolean;
 }) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
@@ -63,7 +65,7 @@ export function UserAvatarSimple({
   const anim = !autoplayGifs || autoplayAnimations === false ? false : undefined;
 
   return (
-    <UserHoverCard user={{ id, deletedAt }}>
+    <UserHoverCard user={{ id, deletedAt }} disabled={!withHoverCard}>
       <UnstyledButton
         onClick={() => router.push(username ? `/user/${username}` : `/user?id=${id}`)}
         className="flex w-fit items-center gap-2"

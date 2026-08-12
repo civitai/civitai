@@ -1,7 +1,8 @@
-import { HoverCard, Skeleton, Stack } from '@mantine/core';
+import type { Popover } from '@mantine/core';
+import { HoverCard, Skeleton, Stack, Text } from '@mantine/core';
 import dynamic from 'next/dynamic';
-import type { ReactElement } from 'react';
-import { createContext, useContext } from 'react';
+import type { ReactElement, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { trpc } from '~/utils/trpc';
 
@@ -14,33 +15,68 @@ const SmartCreatorCard = dynamic(() =>
 
 /**
  * Wide enough that the creator card's top row never wraps — rank badge, up to
- * three stat badges and the cosmetic badge need about 385px. Matches the width
- * the sticker placement hover card settled on.
+ * three stat badges and the cosmetic badge need about 385px.
  */
 export const HOVER_CARD_WIDTH = 400;
 
 export const HOVER_DELAY_MS = 500;
+export const HOVER_CLOSE_DELAY_MS = 150;
+
+/**
+ * Above Mantine's default popover layer. A hover card is frequently rendered
+ * inside another popover's target — the collection collaborator stack, for one
+ * — and at equal z-index the portal mounted first loses, which put the creator
+ * card behind the popover it was opened from.
+ */
+export const HOVER_CARD_Z_INDEX = 305;
+
+/** Lets a scroll handler tell scrolling inside the card from scrolling the page. */
+export const CREATOR_HOVER_DROPDOWN_CLASS = 'creator-hover-dropdown';
 
 const NestedContext = createContext(false);
+
+/** Suppresses hover cards inside a hover card. Read by `UserHoverCard`. */
+export const useNestedHoverCard = () => useContext(NestedContext);
+
+/**
+ * Hover cards are for pointers that hover. A touch tap synthesises `mouseover`
+ * with no reliable `mouseout`, so on a phone the card opens on a tap meant for
+ * the link underneath and then has no gesture that dismisses it.
+ */
+export function useHoverCapable() {
+  const [capable, setCapable] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia('(hover: hover) and (pointer: fine)');
+    setCapable(query.matches);
+    const onChange = (e: MediaQueryListEvent) => setCapable(e.matches);
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
+  return capable;
+}
 
 /**
  * Peek at a creator without leaving the page.
  *
- * The dropdown suppresses hover cards rendered inside it, because the creator
- * card renders a `UserAvatar` of its own and would otherwise offer to open the
- * same card again on top of itself.
+ * `withRoles` is off because the target is frequently a plain div, and even
+ * where it is a button the dialog it would announce cannot be opened from the
+ * keyboard — a hover card has no focus trigger.
  */
 export function UserHoverCard({
   user,
+  disabled,
   children,
 }: {
   user: Pick<Partial<UserWithCosmetics>, 'id' | 'deletedAt'>;
+  disabled?: boolean;
   children: ReactElement;
 }) {
-  const nested = useContext(NestedContext);
+  const nested = useNestedHoverCard();
+  const hoverCapable = useHoverCapable();
   const userId = user.id;
 
-  if (nested || !userId || userId < 1 || !!user.deletedAt) return children;
+  if (disabled || nested || !hoverCapable || !userId || userId < 1 || !!user.deletedAt)
+    return children;
 
   return (
     <HoverCard
@@ -48,21 +84,49 @@ export function UserHoverCard({
       shadow="sm"
       withArrow
       withinPortal
+      withRoles={false}
+      zIndex={HOVER_CARD_Z_INDEX}
       openDelay={HOVER_DELAY_MS}
-      closeDelay={100}
+      closeDelay={HOVER_CLOSE_DELAY_MS}
       position="bottom-start"
       offset={4}
     >
       <HoverCard.Target>{children}</HoverCard.Target>
-      {/* The creator card carries its own padding and fills the dropdown edge to
-          edge. Its border is dropped rather than the dropdown's, so there is one
-          outline instead of two nested ones a pixel apart. */}
-      <HoverCard.Dropdown p={0} className="overflow-hidden">
-        <NestedContext.Provider value={true}>
-          <HoverCreatorCard userId={userId} />
-        </NestedContext.Provider>
-      </HoverCard.Dropdown>
+      <CreatorHoverDropdown component={HoverCard.Dropdown}>
+        <HoverCreatorCard userId={userId} />
+      </CreatorHoverDropdown>
     </HoverCard>
+  );
+}
+
+/**
+ * The dropdown shared by the avatar and mention hover cards, so the two can't
+ * drift on chrome or on nesting.
+ *
+ * The creator card carries its own padding and fills the dropdown edge to edge.
+ * Its border is dropped rather than the dropdown's, so there is one outline
+ * instead of two nested ones a pixel apart.
+ */
+export function CreatorHoverDropdown({
+  component: Dropdown,
+  children,
+  onMouseEnter,
+  onMouseLeave,
+}: {
+  component: typeof HoverCard.Dropdown | typeof Popover.Dropdown;
+  children: ReactNode;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
+}) {
+  return (
+    <Dropdown
+      p={0}
+      className={`${CREATOR_HOVER_DROPDOWN_CLASS} max-w-[calc(100vw-2rem)] overflow-hidden`}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
+      <NestedContext.Provider value={true}>{children}</NestedContext.Provider>
+    </Dropdown>
   );
 }
 
@@ -71,8 +135,8 @@ export function UserHoverCard({
  *
  * Given only an id it renders zeroed stats and a `[deleted]` name until its own
  * `getCreator` query lands — fine on a page, wrong in a dropdown that opens
- * already populated. This runs the same query first (so the card's is a cache
- * hit) and shows the card only once there is something to show.
+ * already populated. This runs the same query first (same key, so the card's is
+ * a cache hit) and shows the card only once there is something to show.
  *
  * A username-only mention costs the id lookup here too.
  */
@@ -83,10 +147,19 @@ export function HoverCreatorCard({
   userId?: number | null;
   username?: string | null;
 }) {
-  const { data, isLoading } = trpc.user.getCreator.useQuery(
+  const { data, isLoading, isError } = trpc.user.getCreator.useQuery(
     userId ? { id: userId } : { username: username as string },
     { enabled: !!userId || !!username, staleTime: 5 * 60_000 }
   );
+
+  // Falling through on failure would show the zeroed `[deleted]` card the
+  // skeleton exists to hide, which reads as an answer rather than a failure.
+  if (isError || (!isLoading && !userId && !data))
+    return (
+      <Text size="sm" c="dimmed" p="md">
+        Couldn&apos;t load this creator.
+      </Text>
+    );
 
   const id = userId ?? data?.id;
   if (isLoading || !id) return <CreatorCardSkeleton />;
