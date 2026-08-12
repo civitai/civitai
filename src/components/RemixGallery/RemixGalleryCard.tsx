@@ -26,6 +26,7 @@ import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImag
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { RemixGalleryExplainer } from '~/components/RemixGallery/RemixGalleryExplainer';
 import { RemixGalleryManageModal } from '~/components/RemixGallery/RemixGalleryManageModal';
 import { RemixGallerySubmitModal } from '~/components/RemixGallery/RemixGallerySubmitModal';
 import { SubmissionThumb } from '~/components/RemixGallery/SubmissionThumb';
@@ -245,6 +246,8 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
             </Tooltip>
           ))}
       </Group>
+
+      <RemixGalleryExplainer />
 
       {isLoading ? (
         // A skeleton row rather than a spinner: it occupies the shape the
