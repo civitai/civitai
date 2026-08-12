@@ -2,7 +2,7 @@ import { Card, Text, UnstyledButton } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import clsx from 'clsx';
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 /**
  * A titled section of the image detail sidebar that can be folded away.
@@ -12,9 +12,11 @@ import type { ReactNode } from 'react';
  * is per section and remembered, so someone who never reads the prompt stops
  * scrolling past it on every image.
  *
- * A collapsed section renders no children at all rather than hiding them: the
- * expensive ones here are expensive because they query, and a hidden panel that
- * still fetches costs the same as an open one.
+ * Children are not rendered until the section is first open — the expensive ones
+ * here are expensive because they query, and a hidden panel that still fetches
+ * costs the same as an open one. After that first open they stay mounted and are
+ * hidden with CSS: unmounting on collapse would throw away anything the reader
+ * has typed into them, and Discussion contains the comment box.
  */
 export function CollapsibleCard({
   title,
@@ -40,6 +42,13 @@ export function CollapsibleCard({
     key: `image-detail-section:${storageKey}`,
     defaultValue: defaultOpen,
   });
+
+  // Sticky once true: a section that has been opened stays mounted for the rest
+  // of the page's life, so collapsing it costs the reader nothing they typed.
+  const [mounted, setMounted] = useState(open);
+  useEffect(() => {
+    if (open) setMounted(true);
+  }, [open]);
 
   const Chevron = open ? IconChevronUp : IconChevronDown;
 
@@ -70,7 +79,7 @@ export function CollapsibleCard({
           <Chevron size={18} className="shrink-0 opacity-60" />
         </UnstyledButton>
       </div>
-      {open && children}
+      {mounted && <div className={clsx('flex flex-col gap-3', !open && 'hidden')}>{children}</div>}
     </Card>
   );
 }

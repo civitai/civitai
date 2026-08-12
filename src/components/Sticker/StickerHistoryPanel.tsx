@@ -1,4 +1,4 @@
-import { Button, Popover, ScrollArea, Text, Tooltip } from '@mantine/core';
+import { Button, Popover, ScrollArea, Skeleton, Text, Tooltip } from '@mantine/core';
 import type { ButtonProps } from '@mantine/core';
 import {
   IconChevronLeft,
@@ -48,7 +48,7 @@ export function StickerHistoryButton({
   // Only the approved ones and the viewer's own pending, same as the overlay —
   // this reads the same query, so the list cannot show a sticker the image does
   // not draw.
-  const { byImage } = useStickerPlacements([imageId], opened);
+  const { byImage, isLoading } = useStickerPlacements([imageId], opened);
   const placements = useMemo(() => orderPlacements(byImage.get(imageId) ?? []), [byImage, imageId]);
 
   // Closing ends the replay. Leaving a step set would hold the image at a point
@@ -56,6 +56,17 @@ export function StickerHistoryButton({
   useEffect(() => {
     if (!opened) close();
   }, [opened, close]);
+
+  // The bar is mounted once and handed a new `imageId` as the carousel moves —
+  // it does not remount — so without this, arrowing to the next image leaves the
+  // popover open, the store pointing at the previous image, and any running
+  // replay writing that image's steps from timers that closed over its id. The
+  // previous slide stays mounted beside the new one, so it sits there clipped to
+  // a step nobody can see the controls for.
+  useEffect(() => {
+    setOpened(false);
+    close();
+  }, [imageId, close]);
 
   // The same unmount, on the way out of the page or a slide change. The store
   // is global and outlives this component.
@@ -91,7 +102,7 @@ export function StickerHistoryButton({
       </Popover.Target>
 
       <Popover.Dropdown p={0}>
-        <StickerHistoryList imageId={imageId} placements={placements} />
+        <StickerHistoryList imageId={imageId} placements={placements} isLoading={isLoading} />
       </Popover.Dropdown>
     </Popover>
   );
@@ -100,9 +111,11 @@ export function StickerHistoryButton({
 function StickerHistoryList({
   imageId,
   placements,
+  isLoading,
 }: {
   imageId: number;
   placements: PlacedSticker[];
+  isLoading: boolean;
 }) {
   const step = useStickerHistoryStore((state) => (state.imageId === imageId ? state.step : null));
   const setStep = useStickerHistoryStore((state) => state.setStep);
@@ -156,6 +169,17 @@ function StickerHistoryList({
     stop();
     setStep(imageId, Math.max(0, Math.min(placements.length - 1, next)));
   };
+
+  // Empty and not-yet-known are different answers to the same question, and this
+  // panel is the one place they are easy to confuse: a signed-out viewer with
+  // the reveal off has nothing primed in the cache, so the empty state would be
+  // the first thing they read — the same sentence a genuinely bare image shows.
+  if (isLoading)
+    return (
+      <div className="p-3">
+        <Skeleton height={64} radius="md" />
+      </div>
+    );
 
   if (!placements.length)
     return (

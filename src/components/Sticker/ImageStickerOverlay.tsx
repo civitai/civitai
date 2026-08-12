@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DraftStickerLayer } from '~/components/Sticker/DraftStickerLayer';
 import { StickerPlacementOverlay } from '~/components/Sticker/StickerPlacementOverlay';
 import { useStickerPlacements } from '~/components/Sticker/placement.util';
@@ -35,7 +35,15 @@ export function ImageStickerOverlay({
   const historyStep = useStickerHistoryStep(imageId);
 
   const isPlacing = targetImageId === imageId;
-  const surfaceRef = useRef<HTMLDivElement>(null);
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  // The element as state as well as a ref: the overlay renders nothing until it
+  // has placements, so the node arrives on a later render than the first, and an
+  // effect reading only the ref would observe `null` and never look again.
+  const [surfaceEl, setSurfaceEl] = useState<HTMLDivElement | null>(null);
+  const attachSurface = useCallback((node: HTMLDivElement | null) => {
+    surfaceRef.current = node;
+    setSurfaceEl(node);
+  }, []);
 
   // Registered while this image is the placement target, and cleared on the way
   // out: a stale surface would have the next drag measured against a box that is
@@ -45,6 +53,29 @@ export function ImageStickerOverlay({
     setSurface(surfaceRef.current);
     return () => setSurface(null);
   }, [isPlacing, setSurface]);
+
+  // The reveal is a mount-time CSS animation, and mounting is not the same event
+  // as being looked at: the carousel keeps both neighbouring slides mounted, so
+  // an overlay two slides away plays its whole reveal off-screen and is already
+  // settled by the time anyone swipes to it. Arming on first intersection is
+  // what makes "every time they become visible" true for every slide rather
+  // than only for the one the page opened on.
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!surfaceEl || armed || typeof IntersectionObserver === 'undefined') return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) setArmed(true);
+      },
+      // A slide is either the one on screen or entirely off it, so anything
+      // above zero separates them. Not 0: the carousel holds neighbours
+      // adjacent, and a hairline overlap during a drag is not arrival.
+      { threshold: 0.25 }
+    );
+    observer.observe(surfaceEl);
+    return () => observer.disconnect();
+  }, [armed, surfaceEl]);
 
   const imageIds = useMemo(() => [imageId], [imageId]);
   // Signed-in viewers always fetch, because a pending placement is something
@@ -69,7 +100,7 @@ export function ImageStickerOverlay({
 
   return (
     <div
-      ref={surfaceRef}
+      ref={attachSurface}
       className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
       style={{ width, height }}
     >
@@ -79,14 +110,14 @@ export function ImageStickerOverlay({
           viewerId={currentUser?.id}
           treatment={treatment}
           // Every time they become visible, not once per image (Justin,
-          // 2026-08-12): opening the detail view, changing slide and flipping
-          // the reveal on all remount this, and each of those is someone
-          // arriving at the image for the first time as far as they know.
+          // 2026-08-12) — hence `armed`, which is first intersection rather
+          // than mount, because the carousel mounts a slide long before anyone
+          // looks at it.
           //
           // Not while placing. Watching the existing stickers replay under the
           // sticker you are dragging is movement in the one moment the surface
           // has to hold still.
-          stagger={!isPlacing}
+          stagger={armed && !isPlacing}
           step={historyStep}
         />
       )}

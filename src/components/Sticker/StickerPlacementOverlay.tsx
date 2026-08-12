@@ -13,14 +13,14 @@ import {
   type StickerTreatmentKey,
 } from '~/components/Sticker/treatments/sticker-treatments';
 import styles from '~/components/Sticker/placement-reveal.module.scss';
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties, type ReactElement } from 'react';
 
 /**
- * Below every pending placement's controls, and above every sticker.
+ * The pending controls' layer, above the stickers and above the draft.
  *
- * The owner's approve/decline sits outside its sticker's transform so it can
- * out-rank a sticker placed later — which is the point of the layer order, and
- * would otherwise bury the buttons under the sticker covering them.
+ * Only has to clear the draft sticker's own z-index, which is 1 — the number is
+ * this far clear of it so a later hand-written z-index nearby does not silently
+ * bury the owner's only way to answer a pending placement.
  */
 const PENDING_CONTROL_Z = 1000;
 
@@ -152,117 +152,132 @@ export function StickerPlacementOverlay({
 
   const visible = step == null ? ordered : ordered.slice(0, step + 1);
 
+  // The owner's approve/decline for each pending placement, collected here and
+  // drawn in their own layer below. They cannot live in the isolated layer: they
+  // have to out-rank the draft sticker as well as every placed one, and the
+  // isolation that keeps the layer order from leaking would trap them under it.
+  const pendingControls: ReactElement[] = [];
+
   return (
-    <div className={clsx('pointer-events-none absolute inset-0 overflow-hidden', className)}>
-      {visible.map((placement, index) => {
-        const art = artwork.get(placement.data.cosmeticId);
-        if (!art) return null;
+    <>
+      {/* `isolate` is load-bearing. Without it these z-indexes are hoisted into
+          whatever context the surface provides and compete with everything else
+          in it: on the detail view the draft being dragged (which is a sibling
+          with z-index 1 at most, so every sticker above the first would cover
+          it, along with its buy button and its hit area), and on a feed card the
+          header and footer, which are absolutely positioned with no z-index of
+          their own and rely on DOM order — AspectRatioImageCard states "under
+          the header and footer" as a contract. Contained, the whole layer keeps
+          the z-index it had before this change, and the ordering inside it is
+          purely internal. */}
+      <div
+        className={clsx('pointer-events-none absolute inset-0 isolate overflow-hidden', className)}
+      >
+        {visible.map((placement, index) => {
+          const art = artwork.get(placement.data.cosmeticId);
+          if (!art) return null;
 
-        // Explicit, rather than left to paint order. Paint order gives the same
-        // answer today, and stops giving it the moment anything here becomes a
-        // portal, gains a transform, or is reordered by a keyed re-render — and
-        // a sticker silently sliding under the one it was placed over is the
-        // one failure this layer exists to prevent.
-        const layer = index + 1;
-        const delay = step == null && !replayed ? delays?.[index] ?? 0 : 0;
-        const delayStyle = delay ? ({ '--sticker-delay': `${delay}ms` } as CSSProperties) : {};
+          // Explicit, rather than left to paint order. Paint order gives the same
+          // answer today, and stops giving it the moment anything here becomes a
+          // portal, gains a transform, or is reordered by a keyed re-render — and
+          // a sticker silently sliding under the one it was placed over is the
+          // one failure this layer exists to prevent.
+          const layer = index + 1;
+          const delay = step == null && !replayed ? delays?.[index] ?? 0 : 0;
+          const delayStyle = delay ? ({ '--sticker-delay': `${delay}ms` } as CSSProperties) : {};
 
-        // Pending rows only ever reach a viewer who is party to them — the
-        // server scopes them to the placer and the owner — so this decides how
-        // to present it, not whether to show it. A client-side visibility rule
-        // would be a filter where a refusal is needed.
-        const isOwner = placement.ownerId === viewerId;
+          // Pending rows only ever reach a viewer who is party to them — the
+          // server scopes them to the placer and the owner — so this decides how
+          // to present it, not whether to show it. A client-side visibility rule
+          // would be a filter where a refusal is needed.
+          const isOwner = placement.ownerId === viewerId;
 
-        const dressed = resolveTreatment({
-          treatment,
-          surface,
-          isPending: placement.isPending,
-        });
+          const dressed = resolveTreatment({
+            treatment,
+            surface,
+            isPending: placement.isPending,
+          });
 
-        const artworkImage = (
-          <EdgeImage
-            src={art.url}
-            alt={`:${art.slug}:`}
-            // A fixed request width rather than a measured one: a sticker has
-            // a natural size and the element scales it down in layout.
-            options={{ width: artworkWidth, anim: art.animated, optimized: true }}
-            className={clsx(placement.isPending && 'opacity-60')}
-            style={{
-              width: '100%',
-              height: 'auto',
-              display: 'block',
-              ...dressed.imageStyle?.[surface],
-            }}
-          />
-        );
+          const artworkImage = (
+            <EdgeImage
+              src={art.url}
+              alt={`:${art.slug}:`}
+              // A fixed request width rather than a measured one: a sticker has
+              // a natural size and the element scales it down in layout.
+              options={{ width: artworkWidth, anim: art.animated, optimized: true }}
+              className={clsx(placement.isPending && 'opacity-60')}
+              style={{
+                width: '100%',
+                height: 'auto',
+                display: 'block',
+                ...dressed.imageStyle?.[surface],
+              }}
+            />
+          );
 
-        const body = (
-          <div
-            key={placement.id}
-            className={clsx(
-              'absolute',
-              interactive && 'pointer-events-auto',
-              stagger && styles.appear
-            )}
-            style={{
-              left: `${placement.data.x * 100}%`,
-              top: `${placement.data.y * 100}%`,
-              width: `${placement.data.scale * 100}%`,
-              transform: `translate(-50%, -50%) rotate(${placement.data.rotation}deg)`,
-              zIndex: layer,
-              ...delayStyle,
-            }}
-          >
-            {/* The wrapper's own transform makes it a stacking context, so a
+          const body = (
+            <div
+              key={placement.id}
+              className={clsx(
+                'absolute',
+                interactive && 'pointer-events-auto',
+                stagger && styles.appear
+              )}
+              style={{
+                left: `${placement.data.x * 100}%`,
+                top: `${placement.data.y * 100}%`,
+                width: `${placement.data.scale * 100}%`,
+                transform: `translate(-50%, -50%) rotate(${placement.data.rotation}deg)`,
+                zIndex: layer,
+                ...delayStyle,
+              }}
+            >
+              {/* The wrapper's own transform makes it a stacking context, so a
                 negative z-index here stays behind the sticker without reaching
                 behind the artwork the sticker sits on. */}
-            {dressed.behind && (
-              <span
-                aria-hidden
-                className={dressed.behind.className}
-                style={{ zIndex: -1, ...dressed.behind.style }}
-              />
-            )}
+              {dressed.behind && (
+                <span
+                  aria-hidden
+                  className={dressed.behind.className}
+                  style={{ zIndex: -1, ...dressed.behind.style }}
+                />
+              )}
 
-            {dressed.animationClassName ? (
-              <div className={dressed.animationClassName}>{artworkImage}</div>
-            ) : (
-              artworkImage
-            )}
+              {dressed.animationClassName ? (
+                <div className={dressed.animationClassName}>{artworkImage}</div>
+              ) : (
+                artworkImage
+              )}
 
-            {/* A dashed outline rather than opacity alone. Fading is invisible
+              {/* A dashed outline rather than opacity alone. Fading is invisible
                 over busy artwork and reads as a rendering fault over plain
                 artwork, whereas a border is a deliberate mark at any size and
                 against any background. The mild fade stays as a second cue. */}
-            {placement.isPending && (
-              <span className="pointer-events-none absolute -inset-1 rounded border-2 border-dashed border-yellow-6" />
-            )}
-          </div>
-        );
-
-        // A hover card needs something to hover, so a non-interactive layer gets
-        // the sticker alone. The detail view is one click away and carries all
-        // of it.
-        if (!interactive) return body;
-
-        if (!placement.isPending)
-          return (
-            <StickerPlacementHoverCard key={placement.id} placementId={placement.id}>
-              {body}
-            </StickerPlacementHoverCard>
+              {placement.isPending && (
+                <span className="pointer-events-none absolute -inset-1 rounded border-2 border-dashed border-yellow-6" />
+              )}
+            </div>
           );
 
-        // Pending, and the viewer is one of the two people who can see it. Both
-        // get the hover card — the owner needs to know who is asking before
-        // answering, and the placer gets the same detail they would once it goes
-        // live. Only the owner gets the buttons.
-        return (
-          <div key={placement.id} className="pointer-events-none">
-            <StickerPlacementHoverCard placementId={placement.id} pending>
-              {body}
-            </StickerPlacementHoverCard>
+          // A hover card needs something to hover, so a non-interactive layer gets
+          // the sticker alone. The detail view is one click away and carries all
+          // of it.
+          if (!interactive) return body;
 
-            {/* ⚠️ Known wrong, and left wrong deliberately.
+          if (!placement.isPending)
+            return (
+              <StickerPlacementHoverCard key={placement.id} placementId={placement.id}>
+                {body}
+              </StickerPlacementHoverCard>
+            );
+
+          // Pending, and the viewer is one of the two people who can see it. Both
+          // get the hover card — the owner needs to know who is asking before
+          // answering, and the placer gets the same detail they would once it goes
+          // live. Only the owner gets the buttons.
+          pendingControls.push(
+            <div key={placement.id}>
+              {/* ⚠️ Known wrong, and left wrong deliberately.
 
                 `scale` is a fraction of the media box's WIDTH while a `top`
                 percentage resolves against its HEIGHT, so this is the sticker's
@@ -289,28 +304,48 @@ export function StickerPlacementOverlay({
                     buttons. Nothing done INSIDE the box can fix that; it needs
                     the badge kept outside the transform (what this does) or a
                     z-index on the pending wrapper itself. */}
-            <div
-              className="pointer-events-auto absolute -translate-x-1/2"
-              style={{
-                left: `${placement.data.x * 100}%`,
-                top: `calc(${placement.data.y * 100}% + ${placement.data.scale * 50}%)`,
-                // Above every sticker, not just above the one it belongs to:
-                // the layer order means anything placed later covers this
-                // sticker, and it would cover the owner's only way to answer.
-                zIndex: PENDING_CONTROL_Z + layer,
-              }}
-            >
-              {isOwner ? (
-                <StickerPlacementActions placementIds={[placement.id]} compact />
-              ) : (
-                <span className="whitespace-nowrap rounded bg-yellow-6 px-2 py-0.5 text-[10px] font-semibold text-dark-9">
-                  Awaiting review
-                </span>
-              )}
+              <div
+                className="pointer-events-auto absolute -translate-x-1/2"
+                style={{
+                  left: `${placement.data.x * 100}%`,
+                  top: `calc(${placement.data.y * 100}% + ${placement.data.scale * 50}%)`,
+                  // Above every sticker, not just above the one it belongs to:
+                  // the layer order means anything placed later covers this
+                  // sticker, and it would cover the owner's only way to answer.
+                  zIndex: layer,
+                }}
+              >
+                {isOwner ? (
+                  <StickerPlacementActions placementIds={[placement.id]} compact />
+                ) : (
+                  <span className="whitespace-nowrap rounded bg-yellow-6 px-2 py-0.5 text-[10px] font-semibold text-dark-9">
+                    Awaiting review
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
-        );
-      })}
-    </div>
+          );
+
+          return (
+            <StickerPlacementHoverCard key={placement.id} placementId={placement.id} pending>
+              {body}
+            </StickerPlacementHoverCard>
+          );
+        })}
+      </div>
+
+      {/* Outside the isolated layer, and above the draft: an owner arranging
+          their own sticker must not lose the buttons that answer someone
+          else's. Deliberately NOT inside the layer above — isolation would trap
+          these under the draft along with everything else. */}
+      {pendingControls.length > 0 && (
+        <div
+          className="pointer-events-none absolute inset-0 overflow-hidden"
+          style={{ zIndex: PENDING_CONTROL_Z }}
+        >
+          {pendingControls}
+        </div>
+      )}
+    </>
   );
 }
