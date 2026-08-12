@@ -5,6 +5,7 @@ import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   ACCEPTED,
+  listingKindSupports,
   resolveListingAccess,
   type ListingKind,
 } from '~/server/services/blocks/app-access.service';
@@ -48,10 +49,16 @@ import { newAppOwnershipEventId } from '~/server/utils/app-block-ids';
  * ## Forgejo is ON-SITE ONLY
  *
  * The repo grant/revoke that rides along with accept / remove / leave fires ONLY when
- * the listing has a backing AppBlock. An off-site listing has no bundle and no repo —
- * the `submitVersion: false` capability cell — so there is nothing to grant, and
- * calling Forgejo with a store slug that names no repo would be a guaranteed 404 on
- * every off-site seat decision.
+ * the listing's KIND supports `submitVersion` AND a repo slug exists. An off-site
+ * listing has no bundle and no repo — the `submitVersion: false` capability cell — so
+ * there is nothing to grant, and calling Forgejo with a store slug that names no repo
+ * would be a guaranteed 404 on every off-site seat decision.
+ *
+ * 🔴 THE KIND IS THE AUTHORITY AND THE SLUG IS ONLY THE PHYSICAL CHECK — see
+ * {@link hasWritableRepo}. Gating on the slug ALONE looks equivalent and is not: an
+ * `offsite` listing CAN carry a backing AppBlock (and therefore a `blockId` slug), so a
+ * slug-only gate would mint repo write on a listing whose kind declares it has no
+ * version surface at all.
  */
 
 export type AppCollaboratorErrorCode =
@@ -212,6 +219,26 @@ function toSeatListing(row: RawSeatListing, wasShadow: boolean): SeatListing {
     ownerUserId: row.appBlock?.app?.userId ?? row.userId,
     wasShadow,
   };
+}
+
+/**
+ * 🔴 THE ONE PREDICATE for "may a Forgejo repo call fire for this listing?", written
+ * once so the grant (accept) and the two revokes (remove / leave) cannot drift apart.
+ *
+ * BOTH clauses are load-bearing and they are NOT redundant:
+ *   - `listingKindSupports(kind, 'submitVersion')` is the DECLARED capability, and it is
+ *     the authority. `CAPABILITIES_BY_KIND` fails closed on an unrecognised kind, so a
+ *     kind this code does not know is refused rather than granted.
+ *   - `blockSlug != null` is the PHYSICAL check — there must be a repo name to call.
+ *
+ * They disagree on exactly one shape, and it is reachable: `mapAppBlockToListing` mints
+ * `kind:'offsite'` with a non-null `appBlockId` whenever the source AppBlock has an
+ * `externalUrl`, so such a listing HAS a `blockId` slug while declaring
+ * `submitVersion: false`. A slug-only gate would hand that listing's collaborator
+ * Forgejo `write`.
+ */
+function hasWritableRepo(listing: { kind: string; blockSlug: string | null }): boolean {
+  return listingKindSupports(listing.kind, 'submitVersion') && listing.blockSlug != null;
 }
 
 /**
@@ -476,8 +503,10 @@ export async function respondToInvite(opts: {
     });
   });
 
-  if (opts.accept && listing.blockSlug) {
-    await grantAppRepoWrite({ slug: listing.blockSlug, userId: opts.userId });
+  // 🔴 KIND-GATED, not slug-gated — see {@link hasWritableRepo}. The non-null assertion
+  // is safe: `hasWritableRepo` is precisely the null check.
+  if (opts.accept && hasWritableRepo(listing)) {
+    await grantAppRepoWrite({ slug: listing.blockSlug!, userId: opts.userId });
   }
 
   return { appListingId: listing.appListingId, userId: opts.userId, status: nextStatus };
@@ -517,8 +546,8 @@ export async function removeCollaborator(opts: {
     return true;
   });
 
-  if (removed && listing.blockSlug) {
-    await revokeAppRepoWrite({ slug: listing.blockSlug, userId: opts.targetUserId });
+  if (removed && hasWritableRepo(listing)) {
+    await revokeAppRepoWrite({ slug: listing.blockSlug!, userId: opts.targetUserId });
   }
   return { appListingId: listing.appListingId, userId: opts.targetUserId, removed };
 }
@@ -548,8 +577,8 @@ export async function leaveApp(opts: {
     return true;
   });
 
-  if (removed && listing.blockSlug) {
-    await revokeAppRepoWrite({ slug: listing.blockSlug, userId: opts.userId });
+  if (removed && hasWritableRepo(listing)) {
+    await revokeAppRepoWrite({ slug: listing.blockSlug!, userId: opts.userId });
   }
   return { appListingId: listing.appListingId, userId: opts.userId, removed };
 }

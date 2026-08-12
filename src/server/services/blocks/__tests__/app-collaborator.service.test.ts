@@ -78,9 +78,27 @@ const OFFSITE = 'apl_offsite';
 const OFFSITE_SLUG = 'cool-offsite';
 /** A shadow revision of the on-site parent. No seat may EVER live here. */
 const SHADOW = 'apl_shadow';
+/**
+ * 🔴 An OFF-SITE listing that DOES carry a backing AppBlock — the shape where "offsite"
+ * and "has no repo slug" disagree. `mapAppBlockToListing` mints exactly this for an
+ * AppBlock with an `externalUrl` (`kind: 'offsite'` + `appBlockId: ab.id`), reachable via
+ * the mod proc `backfillAppListings`. Every Forgejo gate that keys on the SLUG alone
+ * would fire on it.
+ */
+const OFFSITE_WITH_REPO = 'apl_offsite_with_repo';
+const OFFSITE_REPO_SLUG = 'offsite-repo';
+/**
+ * 🔴 An ON-SITE listing whose denormalized `AppListing.userId` DISAGREES with its
+ * canonical `OauthClient.userId`. `acceptTransfer` step 3 is deliberately unguarded for
+ * onsite and treats a 0-count as an accepted desync, so this state is one the feature's
+ * own code can produce.
+ */
+const DRIFTED = 'apl_drifted';
 const OWNER = 10;
 const TARGET = 20;
 const STRANGER = 50;
+/** The name left behind in a stale denormalized `AppListing.userId`. */
+const STALE_OWNER = 77;
 const NOW = new Date('2026-08-10T12:00:00Z');
 
 /**
@@ -122,6 +140,32 @@ function listingTable(): Record<string, Record<string, unknown>> {
       revisionOfId: LISTING,
       revisionOf: { id: LISTING, kind: 'onsite', appBlockId: APP },
       appBlock: null,
+    },
+    // 🔴 offsite, but WITH a block and therefore WITH a repo slug.
+    [OFFSITE_WITH_REPO]: {
+      id: OFFSITE_WITH_REPO,
+      slug: 'offsite-store-slug',
+      kind: 'offsite',
+      userId: OWNER,
+      appBlockId: 'ab_offsiteBlock',
+      revisionOfId: null,
+      revisionOf: null,
+      appBlock: {
+        appId: 'oc_offsite',
+        blockId: OFFSITE_REPO_SLUG,
+        app: { userId: OWNER },
+      },
+    },
+    // 🔴 onsite, with the canonical owner and the denormalized column DISAGREEING.
+    [DRIFTED]: {
+      id: DRIFTED,
+      slug: 'drifted-slug',
+      kind: 'onsite',
+      userId: STALE_OWNER,
+      appBlockId: 'ab_drifted',
+      revisionOfId: null,
+      revisionOf: null,
+      appBlock: { appId: 'oc_drifted', blockId: 'drifted-repo', app: { userId: OWNER } },
     },
   };
 }
@@ -653,6 +697,58 @@ describe('🔴 Forgejo is ON-SITE ONLY — the `submitVersion: false` capability
     expect(mockRepo.grantAppRepoWrite).toHaveBeenCalledWith({ slug: SLUG, userId: TARGET });
     await removeCollaborator({ appListingId: LISTING, targetUserId: TARGET, actorUserId: OWNER });
     expect(mockRepo.revokeAppRepoWrite).toHaveBeenCalledWith({ slug: SLUG, userId: TARGET });
+  });
+
+  /**
+   * 🔴 THE GATE IS THE **KIND**, NOT THE PRESENCE OF A SLUG.
+   *
+   * `hasWritableRepo` ANDs two predicates that agree on every ordinary row, so a fixture
+   * built only from ordinary rows can be satisfied by either one alone. These three
+   * cases put a REAL repo slug on an OFF-SITE listing, so `blockSlug != null` is TRUE and
+   * only `listingKindSupports(kind,'submitVersion')` can refuse — which makes them the
+   * only cases that can kill a slug-only mutant.
+   */
+  describe('🔴 an OFF-SITE listing that HAS a repo slug still reaches Forgejo NEVER', () => {
+    it('accept grants nothing, even though a slug is available', async () => {
+      const res = await respondToInvite({
+        appListingId: OFFSITE_WITH_REPO,
+        userId: TARGET,
+        accept: true,
+        now: NOW,
+      });
+      expect(res.status).toBe('accepted');
+      expect(mockRepo.grantAppRepoWrite).not.toHaveBeenCalled();
+    });
+
+    it('remove revokes nothing, even though a slug is available', async () => {
+      await removeCollaborator({
+        appListingId: OFFSITE_WITH_REPO,
+        targetUserId: TARGET,
+        actorUserId: OWNER,
+      });
+      expect(mockRepo.revokeAppRepoWrite).not.toHaveBeenCalled();
+    });
+
+    it('leave revokes nothing, even though a slug is available', async () => {
+      await leaveApp({ appListingId: OFFSITE_WITH_REPO, userId: TARGET });
+      expect(mockRepo.revokeAppRepoWrite).not.toHaveBeenCalled();
+    });
+
+    it('🔴 POSITIVE CONTROL: THAT EXACT SLUG does reach Forgejo once the kind is onsite', async () => {
+      // Without this, "not called" is indistinguishable from a fixture whose slug was
+      // never reachable — the same zero, two causes. Only `kind` changes here.
+      LISTINGS[OFFSITE_WITH_REPO] = { ...LISTINGS[OFFSITE_WITH_REPO], kind: 'onsite' };
+      await respondToInvite({
+        appListingId: OFFSITE_WITH_REPO,
+        userId: TARGET,
+        accept: true,
+        now: NOW,
+      });
+      expect(mockRepo.grantAppRepoWrite).toHaveBeenCalledWith({
+        slug: OFFSITE_REPO_SLUG,
+        userId: TARGET,
+      });
+    });
   });
 
   it('🔴 the repo slug is the BLOCK slug, not the store slug', async () => {
@@ -1217,6 +1313,46 @@ describe('listCollaborators — 🔴 the caller must hold a REAL role', () => {
     expect(mockDb.appCollaborator.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { appListingId: LISTING } })
     );
+  });
+
+  /**
+   * 🔴 THE ROSTER GATE MUST USE THE **CANONICAL** OWNER.
+   *
+   * `listCollaborators` routes through `resolveListingAccess`. On `origin/main` this
+   * gate went through `resolveAppAccess`, whose owner is the canonical
+   * `AppBlock.app.userId`; the re-key moved it to the listing resolver, and while that
+   * resolver read `AppListing.userId` the gate silently changed authority to a
+   * DENORMALIZED COPY the feature's own transfer path can leave stale.
+   *
+   * Both directions are pinned, because the regression inverts the gate rather than
+   * merely loosening it: the REAL owner is refused NOT_OWNER on their own roster, and
+   * whoever the stale row names reads the full roster — including `displayed:false`
+   * seats, `invitedBy` and the invite/response timestamps.
+   */
+  describe('🔴 the owner gate is CANONICAL, not the denormalized AppListing.userId', () => {
+    it('POSITIVE CONTROL: the DRIFTED fixture really does disagree with itself', async () => {
+      const row = (await mockDb.appListing.findUnique({ where: { id: DRIFTED } })) as {
+        userId: number;
+        appBlock: { app: { userId: number } };
+      };
+      expect(row.userId).toBe(STALE_OWNER);
+      expect(row.appBlock.app.userId).toBe(OWNER);
+      expect(row.userId).not.toBe(row.appBlock.app.userId);
+    });
+
+    it('🔴 the REAL owner reads their own roster on a drifted listing', async () => {
+      await expect(
+        listCollaborators({ appListingId: DRIFTED, viewerUserId: OWNER, isModerator: false })
+      ).resolves.toHaveLength(1);
+    });
+
+    it('🔴 the STALE user is refused NOT_OWNER — and the rows are never loaded', async () => {
+      await expect(
+        listCollaborators({ appListingId: DRIFTED, viewerUserId: STALE_OWNER, isModerator: false })
+      ).rejects.toMatchObject({ code: 'NOT_OWNER' });
+      // Fail BEFORE the read: the opted-out seats must not even be fetched.
+      expect(mockDb.appCollaborator.findMany).not.toHaveBeenCalled();
+    });
   });
 
   it('POSITIVE CONTROL: the roster fixture really carries an opted-OUT seat', async () => {

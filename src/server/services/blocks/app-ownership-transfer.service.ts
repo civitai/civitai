@@ -1,6 +1,6 @@
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
-import type { ListingKind } from '~/server/services/blocks/app-access.service';
+import { listingKindSupports, type ListingKind } from '~/server/services/blocks/app-access.service';
 import {
   AppCollaboratorError,
   recordOwnershipEvent,
@@ -87,6 +87,13 @@ import { newAppOwnershipTransferId } from '~/server/utils/app-block-ids';
  * On accept of an ON-SITE listing: revoke the OLD owner's repo write, grant the NEW
  * owner's. An OFF-SITE listing has no repo, so neither call fires. Collaborator seats
  * are untouched by a transfer — the listing keeps its editors.
+ *
+ * 🔴 THAT GATE READS `kind`, THE SAME PREDICATE STEP (2) USES — not `blockSlug != null`.
+ * The two look interchangeable and are not: an `offsite` listing CAN carry a backing
+ * AppBlock (`mapAppBlockToListing` mints `kind:'offsite'` with `appBlockId: ab.id` for any
+ * AppBlock with an `externalUrl`), and on such a row a slug-only gate made this one
+ * function disagree with itself — leaving the OauthClient alone, per its kind, while
+ * swapping repo write on the app's Forgejo repo.
  */
 
 export type TransferView = {
@@ -400,7 +407,23 @@ export async function acceptTransfer(opts: {
       where: { id: opts.userId },
       select: { bannedAt: true },
     })) as { bannedAt: Date | null } | null;
-    if (recipient?.bannedAt) {
+    // 🔴 A MISSING RECIPIENT ROW PASSES, AND THAT IS A DECISION, not an artefact of the
+    // `?.` — it is written out here because "no row ⇒ not banned ⇒ proceed" is exactly
+    // the shape that usually IS an accident. Three reasons it is deliberate:
+    //   1. This guard asks ONE question — "is the recipient BANNED?" — and `null` is not
+    //      an answer of "yes". Refusing here would fail the transfer for a reason this
+    //      read cannot establish.
+    //   2. The case is UNREACHABLE by construction: `app_ownership_transfers.to_user_id`
+    //      is `REFERENCES "User"("id") ON DELETE CASCADE`, so a deleted recipient takes
+    //      the transfer row with them and step (1) above would already have thrown
+    //      NOT_FOUND. A null here means the row was deleted between two statements of
+    //      the SAME transaction, which a snapshot cannot show.
+    //   3. Recipient EXISTENCE is not otherwise this function's business — `toUserId` was
+    //      validated against a real `User` at initiate.
+    // `app-ownership-transfer.service.test.ts` pins this direction, so a later drift into
+    // `if (!recipient) throw` is a visible change of decision rather than a tidy-up.
+    const recipientBannedAt = recipient?.bannedAt ?? null;
+    if (recipientBannedAt) {
       throw new AppCollaboratorError('BANNED', 'That account cannot receive app ownership');
     }
 
@@ -482,15 +505,23 @@ export async function acceptTransfer(opts: {
       fromUserId: transfer.fromUserId,
       toUserId: transfer.toUserId,
       slug: transfer.appListing.slug,
+      kind: transfer.appListing.kind,
       appBlockId: transfer.appListing.appBlockId,
       blockSlug: transfer.appListing.appBlock?.blockId ?? null,
     };
   });
 
   // POST-COMMIT external effects. Swap the repo grants: the old owner loses write, the
-  // new owner gains it. ON-SITE ONLY — an off-site listing has no repo. Collaborator
-  // seats are unaffected either way: the listing keeps its editors.
-  if (result.blockSlug) {
+  // new owner gains it. Collaborator seats are unaffected either way: the listing keeps
+  // its editors.
+  //
+  // 🔴 GATED ON **KIND**, matching step (2) above — this used to branch on `blockSlug`
+  // nullness alone while step (2) branched on `kind`, so the one function disagreed with
+  // itself about what "on-site" means. An `offsite` listing CAN carry a backing AppBlock
+  // (`mapAppBlockToListing` mints exactly that shape for an AppBlock with an
+  // `externalUrl`), and on such a row the slug-only gate would swap Forgejo write on a
+  // listing whose ownership chain step (2) had deliberately left alone.
+  if (listingKindSupports(result.kind, 'submitVersion') && result.blockSlug) {
     await revokeAppRepoWrite({ slug: result.blockSlug, userId: result.fromUserId });
     await grantAppRepoWrite({ slug: result.blockSlug, userId: result.toUserId });
   }

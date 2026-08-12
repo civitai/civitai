@@ -1,60 +1,43 @@
 -- ============================================================
--- App Listing COLLABORATORS — RE-KEY from app_blocks to app_listings
+-- App Listing COLLABORATORS — RE-KEY, **STEP B of 2**: CREATE the listing-keyed tables.
 -- ============================================================
--- SUPERSEDES 20260810140000_app_listing_collaborators. That migration created the
--- same three tables keyed on `app_blocks(id)`:
---   1. app_collaborators        — the consent-gated editor seat (+ byline opt-in)
---   2. app_ownership_events     — append-only audit trail of every seat/ownership action
---   3. app_ownership_transfers  — an in-flight owner→recipient ownership transfer
+-- 🔴 RUN THIS **AFTER** THE CODE DEPLOY. Its partner, STEP A
+-- (`20260811160000_rekey_app_collaborators_step_a_drop_block_keyed`), runs **BEFORE**.
 --
--- WHY RE-KEY. `app_blocks` is the ON-SITE runtime record. An OFF-SITE listing
--- (external-link / OAuth-connect) has NO backing AppBlock at all — every off-site row
--- in production carries `app_listings.app_block_id IS NULL` — so a block-keyed seat is
--- structurally unable to exist for one of the store's two kinds. `app_listings` is the
--- store-facing parent of BOTH kinds, so keying the seat there is what makes
--- collaborators reach off-site listings. It also removes a hop: every gate in this
--- feature is a listing-shaped question that previously had to walk back to the block.
+-- THE SEQUENCE, in full (STEP A's banner carries the reasoning):
+--     1. apply STEP A  → the block-keyed tables are dropped; the CURRENTLY DEPLOYED code
+--                        sees PG 42P01 and degrades to owner-only (swallowed by
+--                        `safeCollaboratorQuery`). Nothing surfaces.
+--     2. deploy        → the new listing-keyed code goes out. Still no tables, still
+--                        42P01, still swallowed. The feature is INERT, not broken.
+--     3. apply STEP B  → this file. The tables appear and the feature turns on.
 --
--- ⚠️ THIS IS A DROP + CREATE, NOT A DATA MIGRATION — and that is SAFE for exactly one
--- reason: all three tables are EMPTY in every environment (verified 2026-08-11: prod
--- 0/0/0, dev clone 0/0/0). The predecessor migration is applied but the feature has
--- never been exercised, so there is nothing to preserve and nothing to back-fill. If a
--- row ever appears before this is applied, STOP — this file would destroy it, and the
--- correct shape is then an ALTER + backfill, not this.
+-- 🔴 APPLYING THIS FILE **BEFORE** THE DEPLOY RE-OPENS THE WINDOW THE SPLIT CLOSED, in
+-- mirror image: the OLD deployed code would then read `app_block_id` off a table that
+-- only has `app_listing_id` → PG 42703 `column ... does not exist` → `isMissingTableError`
+-- refuses column errors on purpose → the error propagates and the public listing-detail
+-- read 500s. Order is not a nicety here; it is the entire reason there are two files.
 --
--- ⚠️ MANUAL APPLY — per datapacket-talos CLAUDE.md DB rule #8 the main civitai
--- CNPG nvme0 DB does NOT auto-apply migrations (there is no `prisma migrate
--- deploy` in any deploy path). This file is committed for HISTORY ONLY; a HUMAN
--- applies the SQL below per environment (psql / retool). CI and deploy do NOT
--- run it. Apply to BOTH:
+-- ⚠️ MANUAL APPLY — per datapacket-talos CLAUDE.md DB rule #8 the main civitai CNPG
+-- nvme0 DB does NOT auto-apply migrations (there is no `prisma migrate deploy` in any
+-- deploy path). This file is committed for HISTORY ONLY; a HUMAN applies the SQL below
+-- per environment (psql / retool). CI and deploy do NOT run it. Apply to BOTH:
 --   1. prod nvme0   (the live civitai DB)
 --   2. the dev clone (cnpg-cluster-dev, ns cnpg-database-dev, db civitai)
 --
--- 🔴 THE FEATURE IS INERT UNTIL THIS IS APPLIED, BY CONSTRUCTION. Every read of
--- these tables is wrapped in `safeCollaboratorQuery` (app-access.service.ts),
--- which catches the Postgres "relation does not exist" error (Prisma P2021 /
--- PG 42P01) and degrades to "no collaborators" — i.e. exactly today's
--- owner-only behaviour. The WRITE paths (invite / transfer) surface a friendly
--- error instead. 🔴 NOTE THE WINDOW THIS MIGRATION OPENS THAT THE PREDECESSOR DID
--- NOT: between deploying this code and applying this SQL, the OLD (block-keyed)
--- tables still exist, so a read does NOT hit 42P01 — it hits `column
--- "app_listing_id" does not exist` (42703), which `isMissingTableError`
--- deliberately does NOT swallow (a column error is a HALF-APPLIED schema and must
--- surface). Apply this migration in the SAME maintenance step as the deploy.
+-- ------------------------------------------------------------
+-- 🔴 ROLLBACK DIRECTION
+-- ------------------------------------------------------------
+-- To undo STEP B: `DROP TABLE IF EXISTS "app_ownership_transfers", "app_ownership_events",
+-- "app_collaborators";` — safe ONLY while they are still empty, which is the case for as
+-- long as no invite has been sent. Once a seat exists, dropping destroys it; take a dump
+-- of the three tables first. Dropping them returns the deployed code to the 42P01 path,
+-- i.e. inert-and-owner-only, NOT broken — so this rollback does not require a code
+-- rollback. To go all the way back to the block-keyed world, roll the code back and
+-- re-apply `20260810140000_app_listing_collaborators`.
 --
--- Idempotent: the DROPs are IF EXISTS and every CREATE is IF NOT EXISTS, so a manual
--- re-run is a no-op on an already-re-keyed schema.
-
--- ------------------------------------------------------------
--- 0. Drop the block-keyed predecessors.
--- ------------------------------------------------------------
--- Order is irrelevant (no FK points at these three), but they are dropped together so
--- a partial apply cannot leave a block-keyed table beside a listing-keyed one. CASCADE
--- is deliberately NOT used: nothing should depend on these, and if something does, the
--- apply must fail loudly rather than silently drop it.
-DROP TABLE IF EXISTS "app_ownership_transfers";
-DROP TABLE IF EXISTS "app_ownership_events";
-DROP TABLE IF EXISTS "app_collaborators";
+-- Idempotent: every CREATE is IF NOT EXISTS, so a re-run on an already-re-keyed schema
+-- is a no-op.
 
 -- ------------------------------------------------------------
 -- 1. app_collaborators

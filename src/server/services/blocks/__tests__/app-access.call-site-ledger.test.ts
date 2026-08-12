@@ -113,7 +113,12 @@ const GATE_LEDGER: Record<string, string> = {
     'THE predicate itself — resolveAppAccess / resolveListingAccess / ' +
     'resolveAccessibleAppBlockIds — plus capabilitiesForKind, the derived per-KIND ' +
     'capability table. Every other site delegates here. Seats are keyed to AppListing ' +
-    'so an offsite listing can hold collaborators.',
+    'so an offsite listing can hold collaborators. 🔴 BOTH resolvers report the CANONICAL ' +
+    'owner (`appBlock.app.userId ?? listing.userId`), never the denormalized ' +
+    'AppListing.userId alone: acceptTransfer’s onsite step 3 is unguarded and treats a ' +
+    '0-count as an accepted desync, so the copy can be stale — and a stale copy inverts ' +
+    'every gate that delegates here, refusing the real owner while admitting the name ' +
+    'the row happens to carry.',
   'src/server/services/blocks/app-collaborator.service.ts':
     'assertOwner — seat management is OWNER-ONLY by product decision (an editor is a ' +
     'co-owner in every respect EXCEPT managing collaborators and initiating a ' +
@@ -193,7 +198,24 @@ const KIND_CAPABILITY_LEDGER: Record<string, string> = {
   'src/server/services/blocks/app-collaborator-earnings.service.ts':
     'CONSUMES `earnings`. Refuses an offsite listing with an explicit unsupportedKind ' +
     'before running any aggregate — never a zeroed summary, which would be ' +
-    'indistinguishable from "this app earned nothing".',
+    'indistinguishable from "this app earned nothing". The kind clause and the ' +
+    'appBlockId clause are OR-ed and each refuses alone: they disagree on an offsite ' +
+    'listing that HAS a block, and on an onsite listing that has none. Collaborators: ' +
+    'an accepted editor sees the same refusal as the owner — it is the KIND, not the seat.',
+  'src/server/services/blocks/app-collaborator.service.ts':
+    'CONSUMES `submitVersion` via `hasWritableRepo`, the ONE predicate behind the ' +
+    'Forgejo grant (accept) and both revokes (remove / leave). Gated on KIND rather ' +
+    'than on `blockSlug != null`, because `mapAppBlockToListing` can mint an OFFSITE ' +
+    'listing that carries a backing AppBlock and therefore a repo slug — a slug-only ' +
+    'gate would mint repo write for a collaborator on a listing whose kind declares no ' +
+    'version surface at all. Collaborators: an off-site seat decision never reaches ' +
+    'Forgejo, in either direction.',
+  'src/server/services/blocks/app-ownership-transfer.service.ts':
+    'CONSUMES `submitVersion` for acceptTransfer’s post-commit repo swap, so that gate ' +
+    'uses the SAME predicate as step (2)’s ownership write. They used to differ ' +
+    '(kind vs blockSlug nullness) and disagreed on an offsite-with-a-block listing, ' +
+    'where the function left the OauthClient alone while swapping Forgejo write. ' +
+    'Collaborators: seats are untouched by a transfer — the listing keeps its editors.',
 };
 
 /**
@@ -201,10 +223,15 @@ const KIND_CAPABILITY_LEDGER: Record<string, string> = {
  * runtime branch, and that is worth writing down because it looks like a missing entry:
  * the version/manifest/repo procs (`getMyAppRepo`, `getMyAppManifest`, `updateManifest`,
  * `getMyForgejoCloneInfo`) are keyed on an `appBlockId`, which an off-site listing does
- * not have. There is no id with which to call them. The seat-lifecycle service's Forgejo
- * grant/revoke is conditioned on the listing having a backing AppBlock for the same
- * reason, and that condition is pinned behaviourally in
- * `app-collaborator.service.test.ts` ("Forgejo is ON-SITE ONLY").
+ * not have. There is no id with which to call them.
+ *
+ * 🔴 The seat-lifecycle service's Forgejo grant/revoke is a RUNTIME branch, and it now
+ * appears in the ledger above because it asks `listingKindSupports(kind,'submitVersion')`
+ * rather than "is there a backing AppBlock". Those are not the same predicate — an
+ * OFFSITE listing can carry a block — and the difference is pinned behaviourally in
+ * `app-collaborator.service.test.ts` ("an OFF-SITE listing that HAS a repo slug still
+ * reaches Forgejo NEVER") and in `app-ownership-transfer.service.test.ts` for the accept
+ * path's repo swap.
  */
 
 /**
@@ -365,6 +392,12 @@ describe('app-ownership gate ledger', () => {
       // The seat-lifecycle service reads its OWN rows (roster + inbox + cap), which is
       // management, not an access decision — it must NOT filter on accepted.
       'src/server/services/blocks/app-collaborator.service.ts',
+      // 🔴 The MOD claim remedy reads every seat on the claimed listing in order to
+      // DELETE them all and audit each by user id. Deliberately UNFILTERED by status: a
+      // pending invite is as much of the impersonator's residue as an accepted seat, and
+      // leaving it would let them re-enter by having their invitee accept afterwards.
+      // This is the one legitimate seat read that must NOT carry the consent filter.
+      'src/server/services/blocks/offsite-moderation.service.ts',
     ]);
   });
 
@@ -385,7 +418,9 @@ describe('app-ownership gate ledger', () => {
       // A regex nobody has watched match is a claim, not a guard — and a zero here would
       // make every assertion below vacuously true.
       expect(SEAT_CALLS.length).toBeGreaterThan(8);
-      expect(new Set(SEAT_CALLS.map(([f]) => f)).size).toBe(2);
+      // THREE files now: the predicate, the seat lifecycle, and the mod claim remedy
+      // (which deletes an impersonator's seats in the same tx as the reassign).
+      expect(new Set(SEAT_CALLS.map(([f]) => f)).size).toBe(3);
     });
 
     it('every seat query/write names `appListingId`', () => {
@@ -408,7 +443,7 @@ describe('app-ownership gate ledger', () => {
       // `appBlockReview.service.ts` for a completely unrelated (and correct) selector —
       // an assertion that looks like a re-key regression and is not one.
       const seatFiles = [...new Set(SEAT_CALLS.map(([f]) => f))];
-      expect(seatFiles.length).toBe(2);
+      expect(seatFiles.length).toBe(3);
       for (const file of seatFiles) {
         expect(
           CODE.get(file)!,

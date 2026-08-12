@@ -58,22 +58,33 @@ import { dbRead } from '~/server/db/client';
  *   - `inviteCollaborator` REFUSES to create a seat on a shadow.
  * `app-collaborator.shadow-hazard.test.ts` pins both directions.
  *
- * ## INERT UNTIL THE MIGRATION IS APPLIED
+ * ## INERT WHILE THE COLLABORATOR TABLES ARE ABSENT — AND THE MIGRATION IS SPLIT IN TWO
+ *   SO THAT "ABSENT" IS THE ONLY STATE THE DEPLOY WINDOW CAN BE IN
  *
- * 🔴 The `app_collaborators` table is MANUAL-APPLY (datapacket-talos DB rule #8) — no
- * deploy path runs `prisma migrate deploy`. Every read of it therefore goes through
- * {@link safeCollaboratorQuery}, which catches "relation does not exist" and degrades
- * to "no collaborators". With the table absent, `resolveAppAccess` returns exactly
- * `owner`/`null` — byte-identical to the pre-change owner-only behaviour — instead of
- * 500ing every app page. The WRITE paths do not swallow it (an invite that silently
- * did nothing would be worse than an error).
+ * 🔴 THE SAFETY NET IS KEYED TO **42P01 ONLY**, so it is a claim about a MISSING TABLE
+ * and NOT about a mismatched one. {@link safeCollaboratorQuery} degrades to "no
+ * collaborators" when the table does not exist (P2021 / 42P01); {@link
+ * isMissingTableError} deliberately REFUSES a column error (42703), because a
+ * half-applied schema must surface rather than become a permanent silent zero. A 42703
+ * therefore PROPAGATES — through `getListingDetail` → `loadDisplayedCollaboratorChips`,
+ * which has no try/catch above it — and 500s the public listing-detail read.
  *
- * 🔴 THE RE-KEY NARROWS THAT SAFETY NET, DELIBERATELY. Between deploying this code and
- * applying `20260811160000_rekey_app_collaborators_to_listings`, the OLD block-keyed
- * tables still EXIST, so a read fails with `column "app_listing_id" does not exist`
- * (42703), NOT 42P01 — and {@link isMissingTableError} refuses column errors on
- * purpose (a half-applied schema must surface, not degrade to a permanent silent
- * zero). Apply the migration in the same maintenance step as the deploy.
+ * 🔴 SO THE RE-KEY IS APPLIED AS TWO MIGRATIONS, AND THE ORDER IS LOAD-BEARING:
+ *
+ *   1. `20260811160000_rekey_app_collaborators_step_a_drop_block_keyed` — apply BEFORE
+ *      the deploy. Drops the block-keyed tables. The code that is live at that moment
+ *      then reads a table that is GONE → 42P01 → swallowed → owner-only. No error.
+ *   2. the code deploy — this code, still with no tables → 42P01 → swallowed. Inert.
+ *   3. `20260811170000_rekey_app_collaborators_step_b_create_listing_keyed` — apply
+ *      AFTER the deploy. Creates the listing-keyed tables; the feature turns on.
+ *
+ * Every intermediate state is a MISSING-TABLE state, which is the state this module's
+ * fallback actually covers. There is no instant at which any deployed code reads a
+ * table whose KEY COLUMN it disagrees about, which is the 42703 case — the one the
+ * single DROP+CREATE migration created, in BOTH orderings.
+ *
+ * The WRITE paths do not swallow the missing table at all (an invite that silently did
+ * nothing would be worse than an error).
  */
 
 /** The two capability roles. `null` (no access) is modelled as the absence of one. */
@@ -105,7 +116,21 @@ export type ListingAccess = {
    * seat is ever read or written under.
    */
   seatListingId: string;
-  /** The listing's owner column (canonical for offsite, denormalized for onsite). */
+  /**
+   * 🔴 THE CANONICAL OWNER, resolved KIND-AWARE — **not** `AppListing.userId`.
+   *
+   * For an ON-SITE listing ownership lives on `OauthClient.userId`, reached as
+   * `AppListing.appBlock.app.userId`; `AppListing.userId` is a DENORMALIZED COPY that
+   * this feature's own code can leave stale (`acceptTransfer` step 3 is deliberately
+   * unguarded for onsite and treats a 0-count as an accepted desync). Reading the copy
+   * would hand the roster — including `displayed:false` seats, `invitedBy` and the
+   * timestamps — to whoever the stale row names, while refusing the REAL owner
+   * `NOT_OWNER` on their own app. For an OFF-SITE listing there is no OauthClient in
+   * the ownership chain, so the column IS the owner and the fallback is exact.
+   *
+   * This matches `toSeatListing` / `loadOwnedListing`, which already resolve it this
+   * way; `app-access.call-site-ledger.test.ts` pins that every consumer agrees.
+   */
   ownerUserId: number;
   /** The PARENT's kind — what the caller may do is derived from it, never from a seat. */
   kind: ListingKind;
@@ -347,27 +372,45 @@ export async function resolveListingAccess(
       kind: true,
       appBlockId: true,
       revisionOfId: true,
-      revisionOf: { select: { id: true, kind: true, appBlockId: true } },
+      // 🔴 The CANONICAL onsite owner. See {@link ListingAccess.ownerUserId}: the
+      // listing's own `userId` is a denormalized copy for onsite and must not be the
+      // authority here.
+      appBlock: { select: { app: { select: { userId: true } } } },
+      revisionOf: {
+        select: {
+          id: true,
+          kind: true,
+          appBlockId: true,
+          appBlock: { select: { app: { select: { userId: true } } } },
+        },
+      },
     },
   });
   if (!listing) return null;
-  // A shadow's seat lives on its PARENT (see the note above), and so do the kind and
-  // the backing block. `revisionOfId` is the authoritative "am I a shadow" signal; the
-  // `revisionOf` relation may be absent from a narrow fixture, so fall back to the
-  // id — never to the shadow's own (always-null) appBlockId.
+  // A shadow's seat lives on its PARENT (see the note above), and so do the kind, the
+  // backing block and the canonical owner. `revisionOfId` is the authoritative "am I a
+  // shadow" signal; the `revisionOf` relation may be absent from a narrow fixture, so
+  // fall back to the id — never to the shadow's own (always-null) appBlockId.
   const parent = listing.revisionOfId ? listing.revisionOf : null;
   const seatListingId = listing.revisionOfId ?? listing.id;
   const kind = ((listing.revisionOfId ? parent?.kind : listing.kind) ?? listing.kind) as ListingKind;
   const appBlockId = (listing.revisionOfId ? parent?.appBlockId : listing.appBlockId) ?? null;
+  // 🔴 `AppBlock.app.userId` FIRST, the column only as the fallback — which is exact for
+  // offsite (no OauthClient in the chain) and covers an onsite block with a dangling
+  // `app_id`. Identical resolution to `toSeatListing` and `loadOwnedListing`, so the
+  // read side and the write side cannot disagree about who the owner is.
+  const ownerUserId =
+    (listing.revisionOfId ? parent?.appBlock?.app?.userId : listing.appBlock?.app?.userId) ??
+    listing.userId;
   const base = {
     appListingId: listing.id,
     seatListingId,
-    ownerUserId: listing.userId,
+    ownerUserId,
     kind,
     appBlockId,
   };
   if (typeof userId !== 'number') return { ...base, role: null };
-  if (listing.userId === userId) return { ...base, role: 'owner' };
+  if (ownerUserId === userId) return { ...base, role: 'owner' };
   const editor = await hasAcceptedSeat(seatListingId, userId, db);
   return { ...base, role: editor ? 'editor' : null };
 }
@@ -449,12 +492,21 @@ export type AccessibleAppBlocks = {
  * `app-collaborator-earnings.service.test.ts`, which fixtures an owner with 2 apps and
  * an editor on 1 and asserts the second never appears.
  *
- * 🔴 SEATS ARE LISTING-KEYED, SO OFF-SITE SEATS DROP OUT HERE — BY DESIGN, NOT BY
- * ACCIDENT. An off-site listing has no `appBlockId`, so it contributes nothing to a
- * BLOCK-id set. That is precisely the `earnings: false` cell of
- * {@link CAPABILITIES_BY_KIND} expressed as data: there is no attribution row that
- * could ever belong to an off-site listing, so an off-site seat must not widen a
- * block-keyed money query by even one id.
+ * 🔴 SEATS ARE LISTING-KEYED, SO OFF-SITE SEATS DROP OUT HERE — AND THE DISCRIMINATOR IS
+ * `kind`, NEVER `appBlockId IS NULL`. Those two are not the same predicate:
+ * `mapAppBlockToListing` mints `kind:'offsite'` WITH a non-null `appBlockId` whenever the
+ * source AppBlock carries an `externalUrl` (reachable through the mod proc
+ * `backfillAppListings`), and `schema.full.prisma` says in as many words to discriminate
+ * on `kind` and never on `appBlockId` nullness. Filtering on nullness alone would let
+ * such a row's seat contribute a REAL block id to this set — and this set is the input to
+ * `getMyAppsEarnings`, which has no kind gate of its own, so a seat-only holder would be
+ * handed real `lifetimeShareCents` on a listing whose kind declares `earnings: false`.
+ * The count of such rows is 0 in production today (measured 2026-08-11: offsite 5 rows,
+ * 0 with a block), so this gate is PREVENTION — but it guards a money read, which is not
+ * where a latent hazard is worth leaving open.
+ *
+ * The `earnings: false` cell of {@link CAPABILITIES_BY_KIND} is the declared form of the
+ * same rule; this is it expressed as a query predicate.
  */
 export async function resolveAccessibleAppBlockIds(userId: number): Promise<AccessibleAppBlocks> {
   const [owned, seats] = await Promise.all([
@@ -471,13 +523,14 @@ export async function resolveAccessibleAppBlockIds(userId: number): Promise<Acce
   const ownedIds = owned.map((b: { id: string }) => b.id);
   const ownedSet = new Set(ownedIds);
 
-  // Seated LISTINGS → their backing blocks. `appBlockId: { not: null }` drops every
-  // off-site seat (see the note above); it is a filter on the DATA, so a listing that
-  // later gains a block is picked up automatically.
+  // Seated LISTINGS → their backing blocks. BOTH predicates, and they are not
+  // redundant (see the note above): `kind: 'onsite'` is the authoritative capability
+  // discriminator, `appBlockId: { not: null }` is the physical one. An OFFSITE row that
+  // carries a block is exactly the case where they disagree, and it must drop out.
   const seatListingIds = seats.map((s: { appListingId: string }) => s.appListingId);
   const seatBlocks = seatListingIds.length
     ? await dbRead.appListing.findMany({
-        where: { id: { in: seatListingIds }, appBlockId: { not: null } },
+        where: { id: { in: seatListingIds }, kind: 'onsite', appBlockId: { not: null } },
         select: { appBlockId: true },
       })
     : [];

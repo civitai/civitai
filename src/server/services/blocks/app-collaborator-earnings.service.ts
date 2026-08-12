@@ -119,9 +119,21 @@ export async function getAppEarnings(opts: {
   const access = await resolveListingAccess(opts.appListingId, opts.userId);
   if (!access) return { ok: false, appListingId: opts.appListingId, reason: 'notFound' };
   if (!access.role) return { ok: false, appListingId: opts.appListingId, reason: 'notPermitted' };
-  // 🔴 KIND GATE, and it is asserted TWO ways so neither alone is load-bearing: the
-  // declared capability table says off-site has no earnings, and the resolved
-  // `appBlockId` is the physical reason it cannot. If they ever disagree, refuse.
+  // 🔴 KIND GATE. TWO INDEPENDENT clauses, OR-ed so that EITHER ONE refuses on its own:
+  // the declared capability table says off-site has no earnings, and the resolved
+  // `appBlockId` is the physical reason it cannot. They agree on the common shapes and
+  // DISAGREE on two that are both reachable, which is why neither clause may be dropped:
+  //
+  //   - kind 'offsite' WITH a block — `mapAppBlockToListing` mints this for any AppBlock
+  //     carrying an `externalUrl` (reachable via the mod proc `backfillAppListings`).
+  //     Only the KIND clause refuses it, and dropping it would return REAL money figures
+  //     for a listing whose kind declares `earnings: false`.
+  //   - kind 'onsite' WITHOUT a block — a listing whose backing AppBlock row is missing
+  //     or not yet linked. Only the BLOCK clause refuses it; dropping it would run the
+  //     aggregate with `appBlockId: null`.
+  //
+  // `app-collaborator-earnings.service.test.ts` fixtures BOTH shapes, so the `||`→`&&`
+  // mutant (which requires both clauses to fire before refusing) dies on each of them.
   if (!listingKindSupports(access.kind, 'earnings') || !access.appBlockId) {
     return { ok: false, appListingId: opts.appListingId, reason: 'unsupportedKind' };
   }

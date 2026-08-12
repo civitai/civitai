@@ -327,9 +327,13 @@ export type AppCollaborator = {
   app_listing_id: string;
   user_id: number;
   /**
-   * Capability role. 'editor' today (content + media + submit + app-scoped
-   * analytics/earnings). Owner-only actions (managing collaborators, initiating a
-   * transfer) are NOT a role — they are reserved to the OauthClient owner.
+   * Capability role. 'editor' today. WHAT an editor may do is derived from the
+   * LISTING'S KIND, never stored here (`capabilitiesForKind`): content + media +
+   * submit-for-review + analytics for both kinds, plus earnings + submit-version for
+   * ONSITE only — an off-site listing has no AppBlock, so neither can exist for it.
+   * Owner-only actions (managing collaborators, initiating a transfer) are NOT a role —
+   * they are reserved to the listing OWNER, which is `AppBlock.app.userId` (the
+   * OauthClient) for an ONSITE listing and `app_listings.user_id` for an OFFSITE one.
    */
   role: Generated<string>;
   /**

@@ -52,6 +52,26 @@ const LISTING_A = 'apl_listingA';
 const LISTING_B = 'apl_listingB';
 /** 🔴 An OFF-SITE listing the editor is ALSO seated on. It has no block, so no earnings. */
 const LISTING_OFF = 'apl_offsite';
+/**
+ * 🔴 THE TWO SHAPES WHERE THE KIND GATE'S TWO CLAUSES DISAGREE.
+ *
+ * `getAppEarnings` refuses on `!listingKindSupports(kind,'earnings') || !appBlockId`. On
+ * every ordinary row the two clauses agree (onsite⇒block, offsite⇒no block), so a
+ * fixture built only from ordinary rows leaves the SECOND clause dead — and the
+ * `||`→`&&` mutant SURVIVES the whole suite, which is exactly what a mutation sweep
+ * found. These two rows are what make each clause independently load-bearing:
+ *
+ *   - OFFSITE **with** a block. Not hypothetical: `mapAppBlockToListing` sets
+ *     `kind: 'offsite'` while assigning `appBlockId: ab.id` unconditionally whenever the
+ *     source AppBlock has an `externalUrl` (reachable via the mod proc
+ *     `backfillAppListings`), and `schema.full.prisma` says to discriminate on `kind`,
+ *     never on `appBlockId` nullness. Only the KIND clause refuses it — and it is
+ *     pointed at APP_B, the lucrative app, so under the mutant the leak is a number.
+ *   - ONSITE **without** a block — a listing whose backing AppBlock is missing or not
+ *     yet linked. Only the BLOCK clause refuses it.
+ */
+const LISTING_OFF_WITH_BLOCK = 'apl_offsite_with_block';
+const LISTING_ON_NO_BLOCK = 'apl_onsite_no_block';
 const OWNER = 100;
 const EDITOR = 200;
 const STRANGER = 300;
@@ -84,6 +104,24 @@ const LISTINGS: Record<string, Record<string, unknown>> = {
     id: LISTING_OFF,
     userId: OWNER,
     kind: 'offsite',
+    appBlockId: null,
+    revisionOfId: null,
+    revisionOf: null,
+  },
+  // 🔴 offsite BUT carrying APP_B — the 999,999-cent app. Only the KIND clause refuses.
+  [LISTING_OFF_WITH_BLOCK]: {
+    id: LISTING_OFF_WITH_BLOCK,
+    userId: OWNER,
+    kind: 'offsite',
+    appBlockId: APP_B,
+    revisionOfId: null,
+    revisionOf: null,
+  },
+  // 🔴 onsite BUT with no block. Only the BLOCK clause refuses.
+  [LISTING_ON_NO_BLOCK]: {
+    id: LISTING_ON_NO_BLOCK,
+    userId: OWNER,
+    kind: 'onsite',
     appBlockId: null,
     revisionOfId: null,
     revisionOf: null,
@@ -195,25 +233,35 @@ function wireAccess() {
     const id = (args as { where: { id: string } }).where.id;
     return LISTINGS[id] ?? null;
   });
-  // The seated-LISTINGS → backing-BLOCKS hop, honouring the `appBlockId: { not: null }`
-  // filter that drops off-site seats from a block-id set.
+  // The seated-LISTINGS → backing-BLOCKS hop, honouring BOTH filters the service sends:
+  // `kind` and `appBlockId: { not: null }`.
+  //
+  // 🔴 The two are applied INDEPENDENTLY here on purpose. Collapsing them (e.g. treating
+  // "offsite" as implying "no block") would make LISTING_OFF_WITH_BLOCK unrepresentable
+  // through this fake, and the kind gate would then be certified by a fixture that
+  // cannot express the case it exists for.
   mockDb.appListing.findMany.mockImplementation(async (args: unknown) => {
-    const w = (args as { where: { id: { in: string[] }; appBlockId?: unknown } }).where;
+    const w = (args as { where: { id: { in: string[] }; kind?: string; appBlockId?: unknown } })
+      .where;
     return Object.values(LISTINGS)
       .filter((l) => w.id.in.includes(l.id as string))
+      .filter((l) => (w.kind === undefined ? true : l.kind === w.kind))
       .filter((l) => (w.appBlockId === undefined ? true : l.appBlockId != null))
       .map((l) => ({ appBlockId: l.appBlockId }));
   });
-  // 🔴 The editor is seated on the on-site LISTING_A *and* on the off-site LISTING_OFF.
+  // 🔴 The editor holds THREE accepted seats: the on-site LISTING_A, the off-site
+  // LISTING_OFF, and the off-site-WITH-A-BLOCK LISTING_OFF_WITH_BLOCK. The third is the
+  // one that can leak a block id — and therefore money — into a block-keyed query.
+  const SEATED = new Set([LISTING_A, LISTING_OFF, LISTING_OFF_WITH_BLOCK]);
   mockDb.appCollaborator.findFirst.mockImplementation(async (args: unknown) => {
     const w = (args as { where: { appListingId: string; userId: number; status?: string } }).where;
-    const seated = w.appListingId === LISTING_A || w.appListingId === LISTING_OFF;
+    const seated = SEATED.has(w.appListingId);
     return seated && w.userId === EDITOR && w.status === 'accepted' ? { userId: EDITOR } : null;
   });
   mockDb.appCollaborator.findMany.mockImplementation(async (args: unknown) => {
     const w = (args as { where: { userId?: number; status?: string } }).where;
     return w.userId === EDITOR && w.status === 'accepted'
-      ? [{ appListingId: LISTING_A }, { appListingId: LISTING_OFF }]
+      ? [...SEATED].map((appListingId) => ({ appListingId }))
       : [];
   });
 }
@@ -406,6 +454,71 @@ describe('getAppEarnings — per-listing, fail-closed', () => {
       expect(res.ok).toBe(true);
       expect(mockDb.blockBuzzAttribution.aggregate).toHaveBeenCalled();
     });
+
+    /**
+     * 🔴 THE TWO CLAUSES OF THE KIND GATE, MADE INDEPENDENTLY LOAD-BEARING.
+     *
+     * The guard is `!listingKindSupports(kind,'earnings') || !appBlockId`. Every fixture
+     * above satisfies BOTH clauses at once (offsite AND blockless), so each one alone is
+     * sufficient there — and the `||`→`&&` mutant, which only refuses when both fire,
+     * behaves identically on every one of them. It survived the full suite for exactly
+     * that reason: the second clause was never observed, and the comment claiming it was
+     * "asserted TWO ways" described an intention, not a fixture.
+     *
+     * Each test below satisfies EXACTLY ONE clause, so it is red under `&&` and green
+     * under `||` — and neither can be satisfied by the other clause's guard, which is
+     * what makes the kill attributable rather than a neighbour's.
+     */
+    describe('🔴 the `||` is not decorative — one clause fires per case', () => {
+      it('CLAUSE 1 ONLY (kind): an OFF-SITE listing that HAS a block is refused', async () => {
+        // `appBlockId` is APP_B (truthy), so `!access.appBlockId` is FALSE here — the
+        // kind clause is the only thing that can refuse.
+        const res = await getAppEarnings({ appListingId: LISTING_OFF_WITH_BLOCK, userId: OWNER });
+        expect(res).toEqual({
+          ok: false,
+          appListingId: LISTING_OFF_WITH_BLOCK,
+          reason: 'unsupportedKind',
+        });
+        // BEHAVIOURAL, not just the label: under `&&` this call reaches the aggregate and
+        // returns APP_B's 999,999 cents on a listing whose kind says it cannot earn.
+        expect(mockDb.blockBuzzAttribution.aggregate).not.toHaveBeenCalled();
+      });
+
+      it('CLAUSE 2 ONLY (block): an ON-SITE listing with NO block is refused', async () => {
+        // `listingKindSupports('onsite','earnings')` is TRUE here, so the kind clause is
+        // FALSE — the block clause is the only thing that can refuse.
+        const res = await getAppEarnings({ appListingId: LISTING_ON_NO_BLOCK, userId: OWNER });
+        expect(res).toEqual({
+          ok: false,
+          appListingId: LISTING_ON_NO_BLOCK,
+          reason: 'unsupportedKind',
+        });
+        // Under `&&` this would run four aggregates with `appBlockId: null`.
+        expect(mockDb.blockBuzzAttribution.aggregate).not.toHaveBeenCalled();
+      });
+
+      it('🔴 POSITIVE CONTROL: the fixture rows really do have the disagreeing shapes', async () => {
+        // The instrument, not the code: if the LISTINGS table did not actually hold an
+        // offsite-with-block and an onsite-without-block row, both tests above would be
+        // green for the wrong reason (an ordinary offsite/blockless row refuses under
+        // `&&` too).
+        const off = (await mockDb.appListing.findUnique({
+          where: { id: LISTING_OFF_WITH_BLOCK },
+        })) as { kind: string; appBlockId: string | null };
+        expect(off.kind).toBe('offsite');
+        expect(off.appBlockId).toBe(APP_B);
+        const on = (await mockDb.appListing.findUnique({
+          where: { id: LISTING_ON_NO_BLOCK },
+        })) as { kind: string; appBlockId: string | null };
+        expect(on.kind).toBe('onsite');
+        expect(on.appBlockId).toBeNull();
+      });
+
+      it('a SEATED editor on the offsite-with-block listing is refused too — kind, not seat', async () => {
+        const res = await getAppEarnings({ appListingId: LISTING_OFF_WITH_BLOCK, userId: EDITOR });
+        expect(res).toMatchObject({ reason: 'unsupportedKind' });
+      });
+    });
   });
 
   describe('🔴 getMyAppsEarnings drops the off-site seat entirely', () => {
@@ -417,11 +530,40 @@ describe('getAppEarnings — per-listing, fail-closed', () => {
       expect(rows.map((r) => r.appBlockId)).toEqual([APP_A]);
     });
 
-    it('POSITIVE CONTROL: the fixture really does give the editor two accepted seats', async () => {
+    it('POSITIVE CONTROL: the fixture really does give the editor THREE accepted seats', async () => {
       const seats = (await mockDb.appCollaborator.findMany({
         where: { userId: EDITOR, status: 'accepted' },
       })) as Array<{ appListingId: string }>;
-      expect(seats.map((s) => s.appListingId).sort()).toEqual([LISTING_A, LISTING_OFF].sort());
+      expect(seats.map((s) => s.appListingId).sort()).toEqual(
+        [LISTING_A, LISTING_OFF, LISTING_OFF_WITH_BLOCK].sort()
+      );
+    });
+
+    /**
+     * 🔴 THE MONEY READ, on the shape where "offsite" and "has no block" disagree.
+     *
+     * `getMyAppsEarnings` has NO kind gate of its own — it trusts the id set
+     * `resolveAccessibleAppBlockIds` hands it. So an off-site listing that carries a
+     * block is the one input that can put a real, earning block id in front of a
+     * seat-only holder on a listing whose kind declares `earnings: false`.
+     */
+    it('🔴 an OFF-SITE seat on a listing that HAS a block yields NO row and NO money', async () => {
+      const rows = await getMyAppsEarnings({ userId: EDITOR });
+      expect(rows.map((r) => r.appBlockId)).toEqual([APP_A]);
+      expect(rows.map((r) => r.appBlockId)).not.toContain(APP_B);
+      // The number, not just the id list: APP_B is the 999,999-cent app, so a leak here
+      // is a money figure and the assertion should say so.
+      expect(rows.reduce((s, r) => s + r.lifetimeShareCents, 0)).toBe(750);
+    });
+
+    it('🔴 STRUCTURAL: the groupBy never even ASKS for the off-site listing’s block', async () => {
+      // The output-only assertion above can be satisfied by the final `allIds.map`
+      // barrier while the QUERY still fetched the row. Pin the WHERE too.
+      await getMyAppsEarnings({ userId: EDITOR });
+      const args = mockDb.blockBuzzAttribution.groupBy.mock.calls[0][0] as {
+        where: { appBlockId?: { in: string[] } };
+      };
+      expect(args.where.appBlockId!.in).toEqual([APP_A]);
     });
   });
 });

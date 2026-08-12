@@ -434,16 +434,163 @@ describe('resolveListingAccess — role × KIND', () => {
   });
 });
 
+/**
+ * 🔴 THE OWNER AXIS — `resolveListingAccess.ownerUserId` must be the CANONICAL owner.
+ *
+ * For an ON-SITE listing the owner is `OauthClient.userId`, reached as
+ * `AppListing.appBlock.app.userId`. `AppListing.userId` is a DENORMALIZED COPY, and this
+ * feature's own code can leave it stale on purpose: `acceptTransfer` step 3 is unguarded
+ * for onsite and treats a 0-count as an accepted desync
+ * (`app-ownership-transfer.service.ts`), so a listing whose OauthClient moved but whose
+ * column did not is a state the code can produce itself.
+ *
+ * Reading the copy inverts the gate in BOTH directions at once, which is why the fixture
+ * below pins both: the REAL owner is refused on their own listing, and the STALE user is
+ * admitted as owner — with the roster (including `displayed:false` seats, `invitedBy` and
+ * the timestamps) and the pending-transfer read behind that gate.
+ */
+describe('🔴 resolveListingAccess — ownerUserId is CANONICAL, not the denormalized column', () => {
+  /** The real owner (OauthClient.userId) and the stale name left in the column. */
+  const REAL_OWNER = 111;
+  const STALE_OWNER = 222;
+
+  /** An onsite listing whose denormalized `userId` DISAGREES with its OauthClient. */
+  function driftedOnsite(over: Record<string, unknown> = {}) {
+    return {
+      id: LISTING,
+      userId: STALE_OWNER,
+      kind: 'onsite',
+      appBlockId: APP,
+      revisionOfId: null,
+      revisionOf: null,
+      appBlock: { app: { userId: REAL_OWNER } },
+      ...over,
+    };
+  }
+
+  it('POSITIVE CONTROL: with no drift, both sources agree and the owner resolves', async () => {
+    // If this failed, every assertion below would be about a broken fixture rather than
+    // about the resolution rule.
+    mockDb.appListing.findUnique.mockResolvedValue({
+      ...driftedOnsite(),
+      userId: REAL_OWNER,
+    });
+    const res = await resolveListingAccess(LISTING, REAL_OWNER);
+    expect(res?.ownerUserId).toBe(REAL_OWNER);
+    expect(res?.role).toBe('owner');
+  });
+
+  it('🔴 the REAL owner is `owner` even though the column names someone else', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue(driftedOnsite());
+    const res = await resolveListingAccess(LISTING, REAL_OWNER);
+    expect(res?.ownerUserId).toBe(REAL_OWNER);
+    expect(res?.role).toBe('owner');
+  });
+
+  it('🔴 the STALE user named by the column is NOT the owner', async () => {
+    // The other half, and the one that matters for the roster leak: whoever the stale
+    // row names must not be handed owner-level reads on someone else's listing.
+    mockDb.appListing.findUnique.mockResolvedValue(driftedOnsite());
+    const res = await resolveListingAccess(LISTING, STALE_OWNER);
+    expect(res?.ownerUserId).toBe(REAL_OWNER);
+    expect(res?.role).toBeNull();
+  });
+
+  it('an OFFSITE listing keeps using the column — there is no OauthClient in the chain', async () => {
+    // The fallback is not a lenience; for offsite the column IS the owner, so this pins
+    // that the fix did not quietly break the kind it does not apply to.
+    mockDb.appListing.findUnique.mockResolvedValue({ ...offsiteListing(), appBlock: null });
+    const res = await resolveListingAccess(OFFSITE, OWNER);
+    expect(res?.ownerUserId).toBe(OWNER);
+    expect(res?.role).toBe('owner');
+  });
+
+  it('an onsite block with a DANGLING app_id falls back to the column', async () => {
+    // `appBlock.app` is null when `app_id` points at nothing. Falling through to the
+    // column is the only owner signal left; the alternative (null) would lock the
+    // listing's real owner out of it entirely.
+    mockDb.appListing.findUnique.mockResolvedValue(driftedOnsite({ appBlock: { app: null } }));
+    const res = await resolveListingAccess(LISTING, STALE_OWNER);
+    expect(res?.ownerUserId).toBe(STALE_OWNER);
+    expect(res?.role).toBe('owner');
+  });
+
+  it('🔴 a SHADOW resolves the owner from its PARENT’s block, not from its own row', async () => {
+    // A shadow carries `appBlockId: null` by construction, so reading the block off the
+    // shadow would silently fall back to the column for every in-flight revision — i.e.
+    // re-introduce the whole defect on exactly the rows an editor is working on.
+    mockDb.appListing.findUnique.mockResolvedValue({
+      id: SHADOW,
+      userId: STALE_OWNER,
+      kind: 'onsite',
+      appBlockId: null,
+      revisionOfId: LISTING,
+      appBlock: null,
+      revisionOf: {
+        id: LISTING,
+        kind: 'onsite',
+        appBlockId: APP,
+        appBlock: { app: { userId: REAL_OWNER } },
+      },
+    });
+    const res = await resolveListingAccess(SHADOW, REAL_OWNER);
+    expect(res?.seatListingId).toBe(LISTING);
+    expect(res?.ownerUserId).toBe(REAL_OWNER);
+    expect(res?.role).toBe('owner');
+    expect((await resolveListingAccess(SHADOW, STALE_OWNER))?.role).toBeNull();
+  });
+
+  it('🔴 STRUCTURAL: the listing query SELECTS the canonical owner on both the row and its parent', async () => {
+    // A behavioural assertion alone cannot tell "resolved from the block" from "the fake
+    // happened to return the same number"; this pins that the column is actually asked
+    // for, on both sides of the shadow hop.
+    mockDb.appListing.findUnique.mockResolvedValue(driftedOnsite());
+    await resolveListingAccess(LISTING, REAL_OWNER);
+    const args = mockDb.appListing.findUnique.mock.calls[0][0] as {
+      select: {
+        appBlock?: { select: { app: { select: { userId: boolean } } } };
+        revisionOf?: {
+          select: { appBlock?: { select: { app: { select: { userId: boolean } } } } };
+        };
+      };
+    };
+    expect(args.select.appBlock?.select.app.select.userId).toBe(true);
+    expect(args.select.revisionOf?.select.appBlock?.select.app.select.userId).toBe(true);
+  });
+});
+
 describe('resolveAccessibleAppBlockIds', () => {
   const OTHER = 'ab_app2';
   const OTHER_LISTING = 'apl_other';
+  /**
+   * 🔴 THE SHAPE WHERE "offsite" AND "has no block" DISAGREE — an OFF-SITE listing that
+   * DOES carry a backing AppBlock. It is not hypothetical: `mapAppBlockToListing` mints
+   * exactly this whenever the source AppBlock has an `externalUrl`
+   * (`kind: isOffsite ? 'offsite' : 'onsite'` with `appBlockId: ab.id` unconditionally),
+   * and the mod proc `backfillAppListings` reaches it. `schema.full.prisma` says in as
+   * many words to discriminate on `kind`, never on `appBlockId` nullness.
+   *
+   * Production count today is 0 (measured 2026-08-11: offsite 5 rows, 0 with a block),
+   * so every assertion using this fixture is PREVENTION — but it guards the input to a
+   * money read, so a fixture that cannot express the shape cannot certify the gate.
+   */
+  const OFFSITE_WITH_BLOCK = 'apl_offsite_with_block';
+  const OFFSITE_BLOCK = 'ab_offsiteBlock';
 
-  /** Resolve seated LISTING ids → their backing blocks, honouring the not-null filter. */
-  function wireSeatListings(rows: Array<{ id: string; appBlockId: string | null }>) {
+  /**
+   * Resolve seated LISTING ids → their backing blocks, honouring BOTH filters the
+   * service sends: `kind` and the `appBlockId` not-null.
+   *
+   * 🔴 The fake must honour `kind` INDEPENDENTLY of `appBlockId`, or the two predicates
+   * collapse into one here and the disagreement case becomes untestable through it.
+   */
+  function wireSeatListings(rows: Array<{ id: string; kind: string; appBlockId: string | null }>) {
     mockDb.appListing.findMany.mockImplementation(async (args: unknown): Promise<unknown[]> => {
-      const w = (args as { where: { id: { in: string[] }; appBlockId?: unknown } }).where;
+      const w = (args as { where: { id: { in: string[] }; kind?: string; appBlockId?: unknown } })
+        .where;
       return rows
         .filter((r) => w.id.in.includes(r.id))
+        .filter((r) => (w.kind === undefined ? true : r.kind === w.kind))
         .filter((r) => (w.appBlockId === undefined ? true : r.appBlockId != null))
         .map((r) => ({ appBlockId: r.appBlockId }));
     });
@@ -451,10 +598,65 @@ describe('resolveAccessibleAppBlockIds', () => {
 
   beforeEach(() => {
     wireSeatListings([
-      { id: LISTING, appBlockId: APP },
-      { id: OTHER_LISTING, appBlockId: OTHER },
-      { id: OFFSITE, appBlockId: null },
+      { id: LISTING, kind: 'onsite', appBlockId: APP },
+      { id: OTHER_LISTING, kind: 'onsite', appBlockId: OTHER },
+      { id: OFFSITE, kind: 'offsite', appBlockId: null },
+      { id: OFFSITE_WITH_BLOCK, kind: 'offsite', appBlockId: OFFSITE_BLOCK },
     ]);
+  });
+
+  describe('🔴 the discriminator is `kind`, NOT `appBlockId IS NULL`', () => {
+    it('an OFFSITE seat on a listing that HAS a block still contributes NOTHING', async () => {
+      // The `appBlockId: { not: null }` predicate does not fire here — the row has a
+      // block. Only the `kind: 'onsite'` predicate can refuse it, so this case is the
+      // ONLY one that can kill a mutant which drops that predicate.
+      mockDb.appBlock.findMany.mockResolvedValue([]);
+      wireSeats([
+        { appListingId: OFFSITE_WITH_BLOCK, userId: EDITOR, status: 'accepted', displayed: true },
+      ]);
+      const res = await resolveAccessibleAppBlockIds(EDITOR);
+      expect(res.editorIds).toEqual([]);
+      expect(res.allIds).toEqual([]);
+      // Named explicitly so the failure message says WHICH id leaked.
+      expect(res.allIds).not.toContain(OFFSITE_BLOCK);
+    });
+
+    it('🔴 POSITIVE CONTROL: the SAME block id DOES flow through when the kind is onsite', async () => {
+      // Without this, "contributes nothing" is indistinguishable from a fixture whose
+      // block id was never reachable at all — the same zero, two causes.
+      mockDb.appBlock.findMany.mockResolvedValue([]);
+      wireSeatListings([{ id: OFFSITE_WITH_BLOCK, kind: 'onsite', appBlockId: OFFSITE_BLOCK }]);
+      wireSeats([
+        { appListingId: OFFSITE_WITH_BLOCK, userId: EDITOR, status: 'accepted', displayed: true },
+      ]);
+      expect((await resolveAccessibleAppBlockIds(EDITOR)).allIds).toEqual([OFFSITE_BLOCK]);
+    });
+
+    it('🔴 STRUCTURAL: the listing query carries `kind: onsite` as well as the not-null', async () => {
+      // The behavioural case above is served by a fake; this pins the predicate that is
+      // actually sent to Postgres, so a mutant that moves the filter into memory (where
+      // the next refactor drops it) is still visible.
+      mockDb.appBlock.findMany.mockResolvedValue([]);
+      wireSeats([{ appListingId: LISTING, userId: EDITOR, status: 'accepted', displayed: true }]);
+      await resolveAccessibleAppBlockIds(EDITOR);
+      const args = mockDb.appListing.findMany.mock.calls[0][0] as {
+        where: { kind?: unknown; appBlockId?: unknown };
+      };
+      expect(args.where.kind, 'the KIND discriminator must be in the WHERE').toBe('onsite');
+      expect(args.where.appBlockId).toEqual({ not: null });
+    });
+
+    it('a MIXED portfolio keeps only the onsite seat of THREE', async () => {
+      // onsite+block (kept), offsite+no-block (dropped by either predicate),
+      // offsite+block (dropped by KIND alone).
+      mockDb.appBlock.findMany.mockResolvedValue([]);
+      wireSeats([
+        { appListingId: LISTING, userId: EDITOR, status: 'accepted', displayed: true },
+        { appListingId: OFFSITE, userId: EDITOR, status: 'accepted', displayed: true },
+        { appListingId: OFFSITE_WITH_BLOCK, userId: EDITOR, status: 'accepted', displayed: true },
+      ]);
+      expect((await resolveAccessibleAppBlockIds(EDITOR)).allIds).toEqual([APP]);
+    });
   });
 
   it('an owner gets their owned ids and no editor ids', async () => {
