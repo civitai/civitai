@@ -1470,6 +1470,7 @@ export type ChallengeJudge = {
   winnerSelectionPrompt: string | null;
   active: Generated<boolean>;
   userSelectable: Generated<boolean>;
+  judgingEngine: Generated<string>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };

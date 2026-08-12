@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { persist } from 'zustand/middleware';
+import type { JudgingEngineKey } from '~/server/games/daily-challenge/challenge-judging-engine';
 
 export type ActivityTab = 'generateContent' | 'reviewImage' | 'pickWinners';
 
@@ -13,6 +14,7 @@ export type JudgeDraft = {
   reviewTemplate?: string | null;
   winnerSelectionPrompt?: string | null;
   userSelectable?: boolean;
+  judgingEngine?: JudgingEngineKey;
 };
 
 type GenerateContentInputs = {

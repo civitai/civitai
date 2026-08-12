@@ -5787,6 +5787,7 @@ model ChallengeJudge {
   winnerSelectionPrompt String? @db.Text
   active                Boolean @default(true)
   userSelectable        Boolean @default(false) // offer this judge to users in the create form
+  judgingEngine         String  @default("legacy-absolute") @db.VarChar(50) // copied onto Challenge.judgingEngine at creation
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

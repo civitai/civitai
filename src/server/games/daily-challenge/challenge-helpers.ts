@@ -14,6 +14,7 @@ import {
   challengeJudgingCategoriesSchema,
   type ChallengeJudgingCategory,
 } from '~/server/schema/challenge.schema';
+import { challengeJudgingEngineForCreate } from '~/server/services/challenge-judge.service';
 import {
   getIsSafeBrowsingLevel,
   sfwBrowsingLevelsFlag,
@@ -481,6 +482,9 @@ export async function createChallengeCollection(input: {
 }
 
 export async function createChallengeRecord(input: CreateChallengeInput): Promise<number> {
+  // Copied from the judge, not referenced: editing a judge must not re-point a live challenge.
+  const judgingEngine = await challengeJudgingEngineForCreate(input.judgeId);
+
   const challenge = await dbWrite.challenge.create({
     data: {
       startsAt: input.startsAt,
@@ -524,6 +528,7 @@ export async function createChallengeRecord(input: CreateChallengeInput): Promis
       // can't fail the nightly creation cron.
       judgingCategories: (input.judgingCategories ??
         DEFAULT_CATEGORY_ROWS) as unknown as Prisma.InputJsonValue,
+      ...judgingEngine,
     },
     select: { id: true },
   });

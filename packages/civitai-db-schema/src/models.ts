@@ -3858,6 +3858,7 @@ export interface ChallengeJudge {
   winnerSelectionPrompt: string | null;
   active: boolean;
   userSelectable: boolean;
+  judgingEngine: string;
   createdAt: Date;
   updatedAt: Date;
   challenges?: Challenge[];

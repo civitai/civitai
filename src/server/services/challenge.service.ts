@@ -86,7 +86,10 @@ import {
 } from '~/server/services/user.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { resolveJudgingCategories } from '~/server/services/challenge-category.service';
-import { getUserSelectableJudges } from '~/server/services/challenge-judge.service';
+import {
+  challengeJudgingEngineForCreate,
+  getUserSelectableJudges,
+} from '~/server/services/challenge-judge.service';
 import {
   assertCanCreateUserChallenge,
   assertUserAccountInGoodStanding,
@@ -1549,6 +1552,9 @@ export async function upsertChallenge({
       ? await tryGenerateThemeElements(data.theme)
       : undefined;
 
+    // Copied from the judge, not referenced: editing a judge must not re-point a live challenge.
+    const judgingEngine = await challengeJudgingEngineForCreate(judgeId);
+
     // Create new challenge with a Contest Collection for entries
     const challenge = await dbWrite.$transaction(async (tx) => {
       // First create the collection with proper Contest Mode settings
@@ -1596,6 +1602,7 @@ export async function upsertChallenge({
           judgingCategories: judgingCategories
             ? (judgingCategories as unknown as Prisma.InputJsonValue)
             : Prisma.JsonNull,
+          ...judgingEngine,
           ...(newThemeElements && { metadata: { themeElements: newThemeElements } }),
         },
       });
@@ -1899,6 +1906,9 @@ export async function upsertUserChallenge({
     return updated;
   }
 
+  // Copied from the judge, not referenced: editing a judge must not re-point a live challenge.
+  const judgingEngine = await challengeJudgingEngineForCreate(judgeId);
+
   const created = await dbWrite.$transaction(async (tx) => {
     const collection = await tx.collection.create({
       data: {
@@ -1933,6 +1943,7 @@ export async function upsertUserChallenge({
         ingestion: ChallengeIngestionStatus.Pending,
         // Visible from 1 week before start (and only once scanned — the ingestion gate is separate).
         visibleAt: getUserChallengeVisibleAt(rest.startsAt),
+        ...judgingEngine,
         ...(themeEls && { metadata: { themeElements: themeEls } }),
       },
     });
@@ -3597,6 +3608,7 @@ export async function getJudgeById(id: number) {
       reviewTemplate: true,
       winnerSelectionPrompt: true,
       userSelectable: true,
+      judgingEngine: true,
     },
   });
   if (!judge) throw new TRPCError({ code: 'NOT_FOUND', message: 'Judge not found' });
@@ -3638,6 +3650,7 @@ export async function upsertJudge(input: UpsertJudgeInput & { userId: number }) 
       winnerSelectionPrompt: data.winnerSelectionPrompt ?? null,
       active: data.active ?? true,
       userSelectable: data.userSelectable ?? false,
+      ...(data.judgingEngine !== undefined && { judgingEngine: data.judgingEngine }),
     },
     update: {
       ...(data.name !== undefined && { name: data.name }),
@@ -3655,6 +3668,7 @@ export async function upsertJudge(input: UpsertJudgeInput & { userId: number }) 
       }),
       ...(data.active !== undefined && { active: data.active }),
       ...(data.userSelectable !== undefined && { userSelectable: data.userSelectable }),
+      ...(data.judgingEngine !== undefined && { judgingEngine: data.judgingEngine }),
     },
   });
 

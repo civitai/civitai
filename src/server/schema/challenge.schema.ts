@@ -21,6 +21,7 @@ import {
   CHALLENGE_MIN_DURATION_MS,
   CHALLENGE_MIN_ENTRY_FEE,
 } from '~/shared/constants/challenge.constants';
+import { JUDGING_ENGINES } from '~/server/games/daily-challenge/challenge-judging-engine';
 import { infiniteQuerySchema } from './base.schema';
 import { imageSchema } from './image.schema';
 import type { ProfileImage } from '~/server/selectors/image.selector';
@@ -754,6 +755,7 @@ export const upsertJudgeSchema = z.object({
   winnerSelectionPrompt: z.string().optional().nullable(),
   active: z.boolean().optional(),
   userSelectable: z.boolean().optional(),
+  judgingEngine: z.enum(Object.values(JUDGING_ENGINES)).optional(),
 });
 
 // Playground: Generate content for a model version

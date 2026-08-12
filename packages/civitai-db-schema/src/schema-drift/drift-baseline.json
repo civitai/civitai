@@ -13,6 +13,17 @@
       "field": "judgingEngine"
     },
     {
+      "fingerprint": "missing-column|ChallengeJudge|judgingEngine|ChallengeJudge|judgingEngine",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "ChallengeJudge",
+      "columns": [
+        "judgingEngine"
+      ],
+      "model": "ChallengeJudge",
+      "field": "judgingEngine"
+    },
+    {
       "fingerprint": "missing-column|ModelFlag|sfwOnly|ModelFlag|sfwOnly",
       "kind": "missing-column",
       "tier": "pending",

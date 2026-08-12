@@ -13,6 +13,20 @@ export function isJudgingEngineKey(value: unknown): value is JudgingEngineKey {
   return Object.values(JUDGING_ENGINES).includes(value as JudgingEngineKey);
 }
 
+/**
+ * Mod-facing labels. Keyed by the whole union, so adding an engine will not compile until it has
+ * one — the alternative is a picker that silently offers a raw key.
+ */
+export const JUDGING_ENGINE_LABELS: Record<JudgingEngineKey, string> = {
+  [JUDGING_ENGINES.LegacyAbsolute]: 'Legacy (absolute scoring)',
+  [JUDGING_ENGINES.PairwiseLadder]: 'Pairwise ladder',
+};
+
+export const JUDGING_ENGINE_OPTIONS = Object.values(JUDGING_ENGINES).map((value) => ({
+  value,
+  label: JUDGING_ENGINE_LABELS[value],
+}));
+
 export type JudgingEngineContext = {
   challengeId: number;
   collectionId: number;
