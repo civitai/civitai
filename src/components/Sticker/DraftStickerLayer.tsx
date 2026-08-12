@@ -1,6 +1,15 @@
-import { useEffect, useRef } from 'react';
+import { Text } from '@mantine/core';
+import clsx from 'clsx';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
+import type { Box } from '~/components/Sticker/place-button-position';
+import {
+  candidateDistance,
+  flippedButtonOffset,
+  placeButtonBoxes,
+  shouldFlipPlaceButton,
+} from '~/components/Sticker/place-button-position';
 import {
   useCreateStickerPlacement,
   useImagePlacementSpace,
@@ -14,11 +23,41 @@ import {
 } from '~/store/sticker-placement-draft.store';
 import { STICKER_PLACEMENT_MIN_SCALE, stickerMaxScale } from '~/shared/utils/sticker-placement';
 
+/**
+ * Where the placer's Buzz goes, from the resolved share rather than a constant.
+ *
+ * The shares are operator-tunable at runtime, so a string compiled against
+ * today's split is a claim about money that can stop being true with no deploy
+ * and nothing failing. Undefined while the space loads: saying nothing is the
+ * only honest thing to say before the number arrives.
+ */
+const payoutCopy = (ownerShare: number | undefined) => {
+  if (ownerShare == null) return null;
+  if (ownerShare >= 1) return 'All of it goes to the creator';
+  return `${Math.round(ownerShare * 100)}% goes to the creator`;
+};
+
 /** Where the rotate knob sits above the sticker, as a fraction of its height. */
 const KNOB_OFFSET = 0.22;
 
 /** Enough for the label and the currency badge at the smallest allowed sticker. */
 const BUY_BUTTON_MIN_WIDTH = 132;
+
+/** `mt-2`, in pixels, and the clearance the flipped side is built from. */
+const BUY_BUTTON_GAP = 8;
+
+/**
+ * The nearest ancestor that clips, as a box — the carousel's viewport on the
+ * image detail page, whose bottom edge is the bottom of the media box.
+ */
+function nearestClipBox(element: HTMLElement): Box | null {
+  for (let node = element.parentElement; node; node = node.parentElement) {
+    const style = getComputedStyle(node);
+    if (style.overflowX !== 'visible' || style.overflowY !== 'visible')
+      return node.getBoundingClientRect();
+  }
+  return null;
+}
 
 const CORNERS = [
   { sx: -1, sy: -1, className: '-left-1.5 -top-1.5 cursor-nwse-resize' },
@@ -144,6 +183,79 @@ export function DraftStickerLayer() {
     };
   }, [move, setInteraction]);
 
+  // Both the tray and the carousel's clipped viewport can swallow the button, so
+  // it moves above the sticker when that is the better of the two positions.
+  const [{ flipped, flippedOffset }, setPosition] = useState({ flipped: false, flippedOffset: 0 });
+  const buttonRef = useRef<HTMLDivElement>(null);
+
+  const rotation = draft?.rotation ?? 0;
+  useLayoutEffect(() => {
+    const element = rootRef.current;
+    const button = buttonRef.current;
+    if (!element || !button) return;
+
+    const measure = () => {
+      const tray = useStickerPlacementDraftStore.getState().tray;
+      const height = element.offsetHeight;
+      const offset = flippedButtonOffset({
+        stickerHeight: height,
+        knobOffset: KNOB_OFFSET,
+        gap: BUY_BUTTON_GAP,
+      });
+      const { below, above } = placeButtonBoxes({
+        current: button.getBoundingClientRect(),
+        flipped,
+        rotationDeg: rotation,
+        distance: candidateDistance({
+          stickerHeight: height,
+          buttonHeight: button.offsetHeight,
+          flippedOffset: offset,
+          gap: BUY_BUTTON_GAP,
+        }),
+      });
+
+      const next = {
+        flipped: shouldFlipPlaceButton({
+          below,
+          above,
+          tray: tray?.getBoundingClientRect() ?? null,
+          clip: nearestClipBox(element),
+        }),
+        flippedOffset: offset,
+      };
+
+      // Every pointer move re-measures, so bail on an unchanged result rather
+      // than handing React a new object to re-render for.
+      setPosition((current) =>
+        current.flipped === next.flipped && current.flippedOffset === next.flippedOffset
+          ? current
+          : next
+      );
+    };
+
+    measure();
+    // The tray grows when its price line wraps, when the balances land, and when
+    // the top-up panel opens — each of those moves the band under an existing
+    // draft, with no pointer event to notice it by.
+    //
+    // The sticker is watched for a different reason: its image has no intrinsic
+    // size until it loads, so the first measure on a cold start runs against a
+    // near-zero height. Swapping to a taller sticker is the same problem, and
+    // the effect's deps cannot see it — `begin()` resets x, y, scale and
+    // rotation to the same defaults, so choosing a different sticker produces an
+    // identical dep tuple. Both leave a clearance sized for the wrong sticker,
+    // which is the covered rotate knob all over again.
+    const tray = useStickerPlacementDraftStore.getState().tray;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    if (tray) observer.observe(tray);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [draft?.x, draft?.y, draft?.scale, rotation, flipped]);
+
   // Picking a sticker up from the tray starts a move with no offset — the press
   // happened outside the image, so there is no grab point to preserve.
   const trayInteraction = useStickerPlacementDraftStore((state) => state.interaction);
@@ -241,13 +353,24 @@ export function DraftStickerLayer() {
       />
 
       <div
+        ref={buttonRef}
         // `w-max` and the floor together: an absolutely positioned child is
         // shrink-to-fit against its containing block, which here is the sticker
         // itself — so a small sticker was squeezing the button until its label
         // clipped and its currency badge lost its padding. The button's size
         // must not be a function of the sticker's.
-        className="absolute left-1/2 top-full mt-2 w-max -translate-x-1/2 cursor-auto whitespace-nowrap"
-        style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+        // `items-center` rather than text alignment: the caption can be wider
+        // than the button, and a `w-max` box sized by whichever is longer leaves
+        // the other one off-centre.
+        className={clsx(
+          'absolute left-1/2 flex w-max -translate-x-1/2 cursor-auto flex-col items-center gap-1 whitespace-nowrap',
+          flipped ? 'bottom-full' : 'top-full mt-2'
+        )}
+        style={{
+          minWidth: BUY_BUTTON_MIN_WIDTH,
+          // Scales with the sticker because the knob it has to clear does.
+          ...(flipped ? { marginBottom: flippedOffset } : null),
+        }}
         // The button is inside the draggable body, so without this every press
         // on it would also start a move and the click would land mid-drag.
         onPointerDown={(event) => event.stopPropagation()}
@@ -275,6 +398,19 @@ export function DraftStickerLayer() {
             })
           }
         />
+        {/* On its own dark chip rather than over the artwork: this sits on
+            whatever the creator uploaded, and yellow on light work is as
+            unreadable as dimmed was on dark. */}
+        {payoutCopy(space?.ownerShare) && (
+          <Text
+            size="xs"
+            fw={500}
+            c="yellow.4"
+            className="rounded-full bg-black/80 px-2 py-0.5 leading-tight"
+          >
+            {payoutCopy(space?.ownerShare)}
+          </Text>
+        )}
       </div>
     </div>
   );
