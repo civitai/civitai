@@ -11,7 +11,29 @@ import { getClickhouse } from './clickhouse';
 import { getNotifications } from './notifications';
 import { getSysRedis } from './redis';
 import { syncSearchIndex } from './search-index';
+import { logAxiomError } from './axiom';
 import { appealResolutionEmail } from './emails/appeal-resolution.email';
+
+/**
+ * Run a post-write side effect so it cannot fail the moderation action that already happened.
+ *
+ * These run AFTER the Image row is blocked or accepted, and none of them can undo it: a ClickHouse
+ * blocklist row, a Redis invalidation, a comic re-queue. When one threw, the whole action rejected and
+ * the moderator got a 500 page for work that had in fact succeeded — reported as "actioning items still
+ * causes 500 error, but does action" on both Comics Review and the image queues (2026-08-12). Retrying
+ * is then the worst move available, because the write is already done.
+ *
+ * `trackImageDeleteTos` and `notifyImageTosViolation` already swallowed their own failures, which is
+ * why the same click was sometimes fine — this makes the rest of the set behave the same way, and logs
+ * so a degraded dependency is visible instead of silent.
+ */
+async function bestEffort(step: string, imageId: number, run: () => Promise<unknown>): Promise<void> {
+  try {
+    await run();
+  } catch (error) {
+    void logAxiomError(error, { event: 'image moderation side effect failed', step, imageId });
+  }
+}
 
 // The legacy always stored 'TOS' here — its one caller fed `blockedFor ?? 'moderated'`, which never matched
 // the CSAM/newUser keys (a latent bug). We key off needsReview to store the intended reason; do NOT "fix"
@@ -280,9 +302,11 @@ export async function applyBlockSideEffects(
 ): Promise<void> {
   const { imageId, actorUserId, ip, userAgent } = actor;
   await Promise.all([
-    addImagesToBlocklist([
-      { pHash: img.pHash, needsReview: img.needsReview, blockedFor: img.blockedFor },
-    ]),
+    bestEffort('blocklist', imageId, () =>
+      addImagesToBlocklist([
+        { pHash: img.pHash, needsReview: img.needsReview, blockedFor: img.blockedFor },
+      ])
+    ),
     trackImageDeleteTos({
       imageId,
       ownerId: img.userId,
@@ -293,8 +317,8 @@ export async function applyBlockSideEffects(
       userAgent,
     }),
     notifyImageTosViolation({ imageId, ownerId: img.userId, postId: img.postId }),
-    invalidateImagesExistence([imageId]),
-    applyVisibilitySideEffects(imageId, img.postId),
+    bestEffort('invalidate-existence', imageId, () => invalidateImagesExistence([imageId])),
+    bestEffort('visibility', imageId, () => applyVisibilitySideEffects(imageId, img.postId)),
   ]);
 }
 
@@ -303,8 +327,8 @@ export async function applyAcceptSideEffects(
   imageId: number
 ): Promise<void> {
   await Promise.all([
-    removeImagesFromBlocklist([img.pHash]),
-    applyVisibilitySideEffects(imageId, img.postId),
+    bestEffort('unblocklist', imageId, () => removeImagesFromBlocklist([img.pHash])),
+    bestEffort('visibility', imageId, () => applyVisibilitySideEffects(imageId, img.postId)),
   ]);
 }
 
