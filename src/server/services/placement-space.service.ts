@@ -26,15 +26,33 @@ import {
 async function resolveImageTarget(imageId: number) {
   const image = await dbWrite.image.findUnique({
     where: { id: imageId },
-    select: { id: true, userId: true, postId: true },
+    // The username rides along on the lookup that was already happening. It is
+    // shown to the placer, so the alternative — a second query keyed on the id
+    // this one just returned — would be a round trip for a string this row can
+    // reach in the same hop.
+    select: { id: true, userId: true, postId: true, user: { select: { username: true } } },
   });
   if (!image) throw throwBadRequestError('placement: that image no longer exists');
 
-  return { ownerId: image.userId, postId: image.postId };
+  return {
+    ownerId: image.userId,
+    postId: image.postId,
+    ownerUsername: image.user?.username ?? null,
+  };
 }
 
 export type ResolvedPlacementSpace = {
   ownerId: number;
+  /**
+   * Who the placer is paying, by name.
+   *
+   * Carried because "the creator" is ambiguous at the point it is read: the
+   * placer is looking at someone else's image with someone else's sticker on
+   * it, and both have a creator. `null` for a deleted or nameless account,
+   * where the caller falls back to the unnamed wording rather than showing a
+   * blank.
+   */
+  ownerUsername: string | null;
   mode: PlacementSpaceMode;
   /** What the owner asks. `null` when they have never set one. */
   setPrice: number | null;
@@ -73,7 +91,7 @@ export async function resolvePlacementSpaceFor({
   if (!surfaceAcceptsTarget(surface, targetType))
     throw throwBadRequestError(`placement: ${surface} cannot be placed on a ${targetType}`);
 
-  const { ownerId, postId } = await resolveImageTarget(targetId);
+  const { ownerId, postId, ownerUsername } = await resolveImageTarget(targetId);
 
   const rows = await dbWrite.placementSpace.findMany({
     where: {
@@ -109,6 +127,7 @@ export async function resolvePlacementSpaceFor({
 
   return {
     ownerId,
+    ownerUsername,
     mode: resolved.mode,
     setPrice: resolved.price,
     price: effectivePlacementPrice(resolved.price, cap),

@@ -143,7 +143,10 @@ export function StickerPlacementBar({
         )}
       </Button.Group>
 
-      <StickerPlacementTray />
+      {/* Told which image this bar is for, so a session left open on another
+          slide cannot keep the panel on screen bound to an image nobody is
+          looking at. */}
+      <StickerPlacementTray imageId={imageId} />
     </>
   );
 }

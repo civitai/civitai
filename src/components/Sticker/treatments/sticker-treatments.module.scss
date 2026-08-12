@@ -33,5 +33,8 @@
 @media (prefers-reduced-motion: reduce) {
   .motion {
     animation: stickerPop 1ms both;
+    // Otherwise every placed sticker keeps a compositor layer for the lifetime
+    // of the page, for an animation that is over in a millisecond.
+    will-change: auto;
   }
 }
