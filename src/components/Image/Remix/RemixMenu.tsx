@@ -1,15 +1,18 @@
 import { Menu, Text } from '@mantine/core';
+import { useRef } from 'react';
 import { IconBrush, IconMovie, IconWand } from '@tabler/icons-react';
 import type { RemixKind } from '~/shared/constants/remix.constants';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import {
   canReusePrompt,
+  getEngineRefusal,
   getRemixKinds,
-  getRemixRefusal,
+  isReuseRefused,
   startPromptReuse,
   startRemix,
   type RemixSourceImage,
 } from '~/components/Image/Remix/remix.utils';
+import { remixMenuZIndex } from '~/shared/constants/app-layout.constants';
 
 const kindLabels: Record<RemixKind, { label: string; description: string; icon: typeof IconWand }> =
   {
@@ -25,6 +28,7 @@ export function isRemixMenuVisible(image: RemixSourceImage) {
 export function RemixMenu({
   image,
   source,
+  sourceModelVersionId,
   onAction,
   children,
   zIndex,
@@ -32,19 +36,27 @@ export function RemixMenu({
   image: RemixSourceImage;
   /** Entry-point tag for telemetry, e.g. `remix:image-card`. */
   source: string;
+  /** Known only where the surface is scoped to a version (the model carousel). */
+  sourceModelVersionId?: number;
   onAction?: () => void;
   children: React.ReactNode;
   zIndex?: number;
 }) {
   const { trackAction } = useTrackEvent();
   const kinds = getRemixKinds(image);
-  const refusal = getRemixRefusal(image);
-  const showReuse = canReusePrompt(image);
+  const engineRefusal = getEngineRefusal(image);
+  const showReuse = canReusePrompt(image) && !isReuseRefused(image);
 
-  const track = (suffix: string) =>
+  const track = (remixKind: 'edit' | 'video' | 'reuse') =>
     trackAction({
       type: 'Image_Remix_Click',
-      details: { imageId: image.id, imageType: image.type, source: `${source}:${suffix}` },
+      details: {
+        imageId: image.id,
+        imageType: image.type,
+        source,
+        remixKind,
+        sourceModelVersionId,
+      },
     }).catch(() => undefined);
 
   const handleKind = (kind: RemixKind) => {
@@ -59,8 +71,25 @@ export function RemixMenu({
     onAction?.();
   };
 
+  // A menu holding nothing but a disabled refusal has no item to click, so an
+  // `onAction` that only fires from an item would strand a tour step whose only
+  // way forward is clicking through this button. Latched because `onOpen` fires
+  // on every open, and `onAction` advances a tour a step at a time.
+  const hasActionableItem = (!engineRefusal && kinds.length > 0) || showReuse;
+  const announcedRefusal = useRef(false);
+  const handleRefusalOpen = () => {
+    if (announcedRefusal.current) return;
+    announcedRefusal.current = true;
+    onAction?.();
+  };
+
   return (
-    <Menu withinPortal position="bottom-end" zIndex={zIndex}>
+    <Menu
+      withinPortal
+      position="bottom-end"
+      zIndex={zIndex ?? remixMenuZIndex}
+      onOpen={hasActionableItem ? undefined : handleRefusalOpen}
+    >
       <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown
         onClick={(e) => {
@@ -70,11 +99,12 @@ export function RemixMenu({
           e.stopPropagation();
         }}
       >
-        {refusal ? (
+        {engineRefusal && (
           <Menu.Item disabled>
-            <Text size="xs">{refusal}</Text>
+            <Text size="xs">{engineRefusal}</Text>
           </Menu.Item>
-        ) : (
+        )}
+        {!engineRefusal && (
           <>
             {kinds.map((kind) => {
               const { label, description, icon: Icon } = kindLabels[kind];
@@ -91,16 +121,16 @@ export function RemixMenu({
                 </Menu.Item>
               );
             })}
-            {kinds.length > 0 && showReuse && <Menu.Divider />}
-            {showReuse && (
-              <Menu.Item leftSection={<IconBrush size={16} stroke={1.5} />} onClick={handleReuse}>
-                <Text size="sm">Reuse prompt &amp; resources</Text>
-                <Text size="xs" c="dimmed">
-                  Start from this image&apos;s settings
-                </Text>
-              </Menu.Item>
-            )}
           </>
+        )}
+        {(engineRefusal || kinds.length > 0) && showReuse && <Menu.Divider />}
+        {showReuse && (
+          <Menu.Item leftSection={<IconBrush size={16} stroke={1.5} />} onClick={handleReuse}>
+            <Text size="sm">Reuse prompt &amp; resources</Text>
+            <Text size="xs" c="dimmed">
+              Start from this image&apos;s settings
+            </Text>
+          </Menu.Item>
         )}
       </Menu.Dropdown>
     </Menu>

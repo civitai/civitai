@@ -27,6 +27,7 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemStatus, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
+import { tourOverlayZIndex } from '~/shared/constants/app-layout.constants';
 import { useImageStore } from '~/store/image.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { BlockedReason } from '~/server/common/enums';
@@ -172,6 +173,10 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                         image={image}
                         source="remix:image-card"
                         onAction={handleRemixAction}
+                        // The content-gen tour's remix step can only be advanced
+                        // by clicking through to an option, and its overlay both
+                        // dims and swallows clicks below it.
+                        zIndex={running ? tourOverlayZIndex + 1 : undefined}
                       >
                         <HoverActionButton
                           label="Remix"

@@ -315,6 +315,12 @@ const modelCreateClickSchema = z.object({
     .optional(),
 });
 
+// DEFINITION CHANGE, Aug 2026: this used to fire when the Remix button itself
+// was clicked. The button now opens a menu, and the event fires when a menu
+// option is chosen — so volume drops by the menu-abandonment rate across every
+// surface at once, while the `source` values keep matching. On a funnel chart
+// that reads as a conversion collapse; it is a change in what is counted.
+// `remixKind` is absent on rows emitted before this date.
 const imageRemixClickSchema = z.object({
   type: z.literal('Image_Remix_Click'),
   details: z
@@ -333,6 +339,9 @@ const imageRemixClickSchema = z.object({
       // remix:image-card, remix:image-meta, etc.) — left as a string so new
       // remix entry-points can be added without a schema bump.
       source: z.string().optional(),
+      // Which kind of remix was chosen from the menu. Kept out of `source` so
+      // existing dashboards filtering on the bare entry-point tag keep matching.
+      remixKind: z.enum(['edit', 'video', 'reuse']).optional(),
     })
     .optional(),
 });

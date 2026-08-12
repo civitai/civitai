@@ -5,6 +5,7 @@ import {
   isWorkflowAvailable,
   workflowConfigByKey,
 } from '~/shared/data-graph/generation/config/workflows';
+import { ltxVersionIds, nanoBananaVersionIds } from '~/shared/data-graph/generation/version-ids';
 
 /**
  * The Remix button sends the user straight into these workflow/ecosystem pairs
@@ -34,5 +35,18 @@ describe('REMIX_ENGINES', () => {
   it.each(entries)('%s pins a checkpoint version', (_kind, engine) => {
     expect(Number.isInteger(engine.modelVersionId)).toBe(true);
     expect(engine.modelVersionId).toBeGreaterThan(0);
+  });
+
+  // The ids are what actually select the engine, and picking the wrong one is
+  // silent: the panel opens on a working generator, just not the one we chose.
+  // NanoBanana in particular falls back to `standard` for an unrecognised id,
+  // so a revert of the v2lite pin looks identical to a correct one at runtime.
+  it('edit resolves to Nano Banana 2 Light, not the standard fallback', () => {
+    expect(REMIX_ENGINES.edit.modelVersionId).toBe(nanoBananaVersionIds.v2lite);
+    expect(REMIX_ENGINES.edit.modelVersionId).not.toBe(nanoBananaVersionIds.standard);
+  });
+
+  it('video resolves to an LTX 2.3 version', () => {
+    expect(REMIX_ENGINES.video.modelVersionId).toBe(ltxVersionIds.v23Dev);
   });
 });
