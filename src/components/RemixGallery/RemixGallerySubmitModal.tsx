@@ -162,17 +162,31 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
               <Loader />
             </Group>
           ) : eligible.length ? (
-            <div className="grid grid-cols-4 gap-3">
-              {eligible.map((image) => (
-                <AspectRatioImageCard
-                  key={image.id}
-                  aspectRatio="square"
-                  image={image}
-                  onClick={() => setSelected(image.id)}
-                  className={clsx('cursor-pointer', selected === image.id && 'ring-2 ring-blue-5')}
-                />
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-4 gap-3">
+                {eligible.map((image) => (
+                  <AspectRatioImageCard
+                    key={image.id}
+                    aspectRatio="square"
+                    image={image}
+                    onClick={() => setSelected(image.id)}
+                    className={clsx(
+                      'cursor-pointer',
+                      selected === image.id && 'ring-2 ring-blue-5'
+                    )}
+                  />
+                ))}
+              </div>
+
+              {/* Scroll-to-load, which is what a populated grid should do. */}
+              {hasNextPage && (
+                <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
+                  <Group justify="center" py="md">
+                    <Loader size="sm" />
+                  </Group>
+                </InViewLoader>
+              )}
+            </>
           ) : (
             <NoContent
               message={
@@ -205,17 +219,23 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
             />
           )}
 
-          {/* Outside the branches above. Inside the populated one it could only
-              page while something was already eligible — so a creator whose 50
-              most recent posts are all above the ceiling got a terminal "none of
-              your images qualify" over a library it had never finished
-              reading. */}
-          {hasNextPage && !isLoading && visibility && (
-            <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
-              <Group justify="center" py="md">
-                <Loader size="sm" />
-              </Group>
-            </InViewLoader>
+          {/* A button rather than the in-view loader used above. With nothing
+              eligible there is no content between the loader and the top of the
+              scroll box, so it would sit permanently in view: fire, load 50,
+              still be in view, fire again — walking the whole library in a burst
+              of requests, in exactly the case where nothing will be found.
+              Paging past the first page is worth doing, but on intent. */}
+          {!eligible.length && hasNextPage && !isLoading && visibility && (
+            <Group justify="center" pb="sm">
+              <Button
+                variant="subtle"
+                size="compact-sm"
+                loading={isRefetching}
+                onClick={() => fetchNextPage()}
+              >
+                Keep looking through your images
+              </Button>
+            </Group>
           )}
         </div>
 
