@@ -337,11 +337,13 @@ describe('space resolution', () => {
   // upward one drag at a time: 10 -> 55 leaves the floor at 50 and 10 is gone.
   it('does not depend on the stored price', () => {
     const track = placementPriceTrack('sticker', 500);
-    expect(track).toEqual({ min: PLACEMENT_SURFACES.sticker.minPrice, max: 500 });
+    expect(track).toEqual({ min: PLACEMENT_SURFACES.sticker.trackMinPrice, max: 500 });
 
     // Same cap, same track, whatever the creator is currently charging.
     for (const cap of [100, 500, 2_500]) {
-      expect(placementPriceTrack('sticker', cap).min).toBe(PLACEMENT_SURFACES.sticker.minPrice);
+      expect(placementPriceTrack('sticker', cap).min).toBe(
+        PLACEMENT_SURFACES.sticker.trackMinPrice
+      );
     }
   });
 
@@ -369,7 +371,7 @@ describe('space resolution', () => {
   // rather than asserting a difference the shipped table does not have.
   it('takes its floor from the surface, not from a constant', () => {
     for (const surface of placementSurfaces)
-      expect(placementPriceTrack(surface, 500).min).toBe(PLACEMENT_SURFACES[surface].minPrice);
+      expect(placementPriceTrack(surface, 500).min).toBe(PLACEMENT_SURFACES[surface].trackMinPrice);
   });
 
   // A floor off its own grid puts the bottom of the track where the slider
@@ -377,7 +379,7 @@ describe('space resolution', () => {
   it('keeps every surface floor on the step grid', () => {
     for (const surface of placementSurfaces)
       expect(
-        PLACEMENT_SURFACES[surface].minPrice % PLACEMENT_PRICE_STEP,
+        PLACEMENT_SURFACES[surface].trackMinPrice % PLACEMENT_PRICE_STEP,
         `${surface} floor is off the step grid`
       ).toBe(0);
   });

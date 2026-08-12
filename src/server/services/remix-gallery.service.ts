@@ -121,7 +121,7 @@ export async function createRemixGallerySubmission({
   // verifies a submission is really a remix. Refused rather than rounded up:
   // charging more than the number the submitter was shown is the thing
   // `expectedPrice` below exists to prevent.
-  if (space.price < PLACEMENT_SURFACES[SURFACE].minPrice)
+  if (space.price < PLACEMENT_SURFACES[SURFACE].serverMinPrice)
     throw throwBadRequestError('remix gallery: this gallery is not priced for submissions');
 
   // Refused rather than charged. The client can only check affordability against

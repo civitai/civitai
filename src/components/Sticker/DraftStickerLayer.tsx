@@ -1,130 +1,94 @@
-import { Text } from '@mantine/core';
-import clsx from 'clsx';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
-import type { Box } from '~/components/Sticker/place-button-position';
-import {
-  candidateDistance,
-  flippedButtonOffset,
-  placeButtonBoxes,
-  shouldFlipPlaceButton,
-} from '~/components/Sticker/place-button-position';
-import {
-  useCreateStickerPlacement,
-  useImagePlacementSpace,
-} from '~/components/Sticker/placement.util';
+import { useCallback, useEffect, useRef } from 'react';
+import type { Gesture } from '~/components/Sticker/draft-gesture';
+import { rotate } from '~/components/Sticker/draft-gesture';
+import { DraftSticker } from '~/components/Sticker/DraftSticker';
+import { useImagePlacementSpace } from '~/components/Sticker/placement.util';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
-import { PLACEMENT_SPEND_TYPES } from '~/shared/constants/placement.constants';
-import type { StickerInteraction } from '~/store/sticker-placement-draft.store';
+import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
+import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
+import { STICKER_PLACEMENT_MIN_SCALE, stickerMaxScale } from '~/shared/utils/sticker-placement';
 import {
   pointerToSurfaceFraction,
   useStickerPlacementDraftStore,
 } from '~/store/sticker-placement-draft.store';
-import { STICKER_PLACEMENT_MIN_SCALE, stickerMaxScale } from '~/shared/utils/sticker-placement';
 
 /**
- * Where the placer's Buzz goes, from the resolved share rather than a constant.
+ * The stickers being positioned on one image, before they are paid for.
  *
- * The shares are operator-tunable at runtime, so a string compiled against
- * today's split is a claim about money that can stop being true with no deploy
- * and nothing failing. Undefined while the space loads: saying nothing is the
- * only honest thing to say before the number arrives.
- */
-const payoutCopy = (ownerShare: number | undefined) => {
-  if (ownerShare == null) return null;
-  if (ownerShare >= 1) return 'All of it goes to the creator';
-  return `${Math.round(ownerShare * 100)}% goes to the creator`;
-};
-
-/** Where the rotate knob sits above the sticker, as a fraction of its height. */
-const KNOB_OFFSET = 0.22;
-
-/** Enough for the label and the currency badge at the smallest allowed sticker. */
-const BUY_BUTTON_MIN_WIDTH = 132;
-
-/** `mt-2`, in pixels, and the clearance the flipped side is built from. */
-const BUY_BUTTON_GAP = 8;
-
-/**
- * The nearest ancestor that clips, as a box — the carousel's viewport on the
- * image detail page, whose bottom edge is the bottom of the media box.
- */
-function nearestClipBox(element: HTMLElement): Box | null {
-  for (let node = element.parentElement; node; node = node.parentElement) {
-    const style = getComputedStyle(node);
-    if (style.overflowX !== 'visible' || style.overflowY !== 'visible')
-      return node.getBoundingClientRect();
-  }
-  return null;
-}
-
-const CORNERS = [
-  { sx: -1, sy: -1, className: '-left-1.5 -top-1.5 cursor-nwse-resize' },
-  { sx: 1, sy: -1, className: '-right-1.5 -top-1.5 cursor-nesw-resize' },
-  { sx: -1, sy: 1, className: '-bottom-1.5 -left-1.5 cursor-nesw-resize' },
-  { sx: 1, sy: 1, className: '-bottom-1.5 -right-1.5 cursor-nwse-resize' },
-];
-
-const rotate = (x: number, y: number, degrees: number) => {
-  const radians = (degrees * Math.PI) / 180;
-  const cos = Math.cos(radians);
-  const sin = Math.sin(radians);
-  return { x: x * cos - y * sin, y: x * sin + y * cos };
-};
-
-/**
- * Everything a gesture has to remember from the moment it started.
+ * Several at once: arranging a few and then deciding which to keep is how this
+ * is actually used, and dragging a second one out used to delete the first. Each
+ * draws itself; this owns the one thing they cannot own separately, which is the
+ * gesture — a drag is bound to the window, and one listener that knows which
+ * draft it belongs to beats one listener per sticker.
  *
- * Captured on pointer-down rather than recomputed per move, because both are
- * relative to where the grab happened: a move keeps the sticker under the point
- * you actually grabbed, and a resize holds the opposite corner still. Recomputing
- * either from the current state feeds the result back into its own input, which
- * is what makes a sticker jump to the cursor or crawl away from its anchor.
- */
-type Gesture =
-  | { mode: 'move'; offsetX: number; offsetY: number }
-  | { mode: 'rotate' }
-  | { mode: 'resize'; anchorX: number; anchorY: number; sx: number; sy: number; aspect: number };
-
-/**
- * The sticker being positioned, drawn in the image's own media box and dragged
- * directly — no modal, no second copy of the image.
- *
- * Drag the body to move, a corner to resize, the knob above it to rotate, and
- * buy it with the button beneath it. The button lives inside the same transformed
+ * Drag a body to move, a corner to resize, the knob above it to rotate, and buy
+ * it with the button beneath it. The button lives inside the same transformed
  * element, so it travels and rotates with the sticker rather than sitting in a
  * panel across the screen from the thing it is buying.
  */
 export function DraftStickerLayer() {
-  const draft = useStickerPlacementDraftStore((state) => state.draft);
+  const drafts = useStickerPlacementDraftStore((state) => state.drafts);
+  const selectedDraftId = useStickerPlacementDraftStore((state) => state.selectedDraftId);
+  const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
   const move = useStickerPlacementDraftStore((state) => state.move);
   const setInteraction = useStickerPlacementDraftStore((state) => state.setInteraction);
   const { sticker } = useOwnedSticker();
-  const { space } = useImagePlacementSpace(draft?.imageId);
-  const place = useCreateStickerPlacement();
+  const { space } = useImagePlacementSpace(targetImageId ?? undefined);
+  // Resolved once for the layer rather than per draft: `useStickerTreatment`
+  // reads the user's settings and the router, so a subscription per sticker is
+  // N context consumers re-rendering on every routed dialog. `isPending` is
+  // false because a draft is not a placement yet — it carries its own dashed
+  // outline, and dressing it as pending would claim a decision is waiting.
+  const treatment = useStickerTreatment();
+  const dressed = resolveTreatment({ treatment, surface: 'detail', isPending: false });
   // The creator's ceiling, so a resize handle stops where the mutation would
   // refuse. The refusal is still on the server — this only means nobody has to
   // discover it by being told no after a drag.
   const maxScale = stickerMaxScale(space?.settings);
 
-  const rootRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<Gesture | null>(null);
   // Held in a ref because the pointer listener is bound once; re-binding it when
   // the space loads would drop the moves in flight at that moment.
   const maxScaleRef = useRef(maxScale);
   maxScaleRef.current = maxScale;
 
+  // First pointer down wins until it comes up. A second finger landing on
+  // another sticker used to overwrite the gesture, which sent the first finger's
+  // moves to the second finger's sticker.
+  //
+  // Reports whether it took the gesture, so the caller can keep selection in
+  // step with it. Selecting on a refused press moved the highlight and the
+  // z-order onto the second finger's sticker while the first finger was still
+  // dragging a different one — the sticker under your finger dropped beneath
+  // the one that was not.
+  //
+  // Refused outright while one is live, which is only safe because the owning
+  // pointer is captured: its up or cancel is guaranteed to arrive, so a gesture
+  // cannot be stranded and this cannot become a permanent refusal.
+  const onGesture = useCallback((next: Gesture) => {
+    if (gesture.current) return false;
+    gesture.current = next;
+    useStickerPlacementDraftStore.getState().setInteraction(next.mode);
+    return true;
+  }, []);
+
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
       // Read through getState rather than subscribing: this listener runs on
-      // every pointer move, and re-binding it whenever the draft changes would
+      // every pointer move, and re-binding it whenever a draft changes would
       // drop the moves that land during the swap.
       const active = gesture.current;
-      if (!active) return;
+      // Only the pointer that started it drives it. Every other stream on the
+      // screen is somebody else's finger.
+      if (!active || event.pointerId !== active.pointerId) return;
 
       const point = pointerToSurfaceFraction(event.clientX, event.clientY);
-      const current = useStickerPlacementDraftStore.getState().draft;
+      // By id, not by selection: a press selects and drags in one gesture, and a
+      // selection that changed under a drag in flight would otherwise start
+      // moving a sticker nobody is touching.
+      const current = useStickerPlacementDraftStore
+        .getState()
+        .drafts.find((draft) => draft.id === active.draftId);
       if (!point || !current) return;
 
       const { bounds } = point;
@@ -132,7 +96,7 @@ export function DraftStickerLayer() {
       const pointerY = event.clientY - bounds.top;
 
       if (active.mode === 'move') {
-        move({ x: point.x + active.offsetX, y: point.y + active.offsetY });
+        move(active.draftId, { x: point.x + active.offsetX, y: point.y + active.offsetY });
         return;
       }
 
@@ -141,7 +105,7 @@ export function DraftStickerLayer() {
         const dy = pointerY - current.y * bounds.height;
         // The knob sits above the sticker, so straight up is zero rather than
         // atan2's zero, which points right.
-        move({ rotation: (Math.atan2(dy, dx) * 180) / Math.PI + 90 });
+        move(active.draftId, { rotation: (Math.atan2(dy, dx) * 180) / Math.PI + 90 });
         return;
       }
 
@@ -161,14 +125,41 @@ export function DraftStickerLayer() {
         current.rotation
       );
 
-      move({
+      move(active.draftId, {
         scale: width / bounds.width,
         x: (active.anchorX + centre.x) / bounds.width,
         y: (active.anchorY + centre.y) / bounds.height,
       });
     };
 
-    const onUp = () => {
+    // The owning pointer and nothing else. Any other pointer lifting used to end
+    // a live drag; letting a primary one end it did the same thing for a thumb
+    // resting on a tablet. Capture is what makes strict ownership safe — the
+    // owner's up or cancel always arrives, and `lostpointercapture` covers the
+    // case where the browser takes capture away instead.
+    const onUp = (event: PointerEvent) => {
+      if (!gesture.current || event.pointerId !== gesture.current.pointerId) return;
+      gesture.current = null;
+      setInteraction(null);
+    };
+
+    // The backstop for the one case capture does not cover: capture lives on an
+    // element, and an element can be removed mid-gesture — the tray button a
+    // pickup captured, if the panel is closed while the drag is still running.
+    // The browser then releases capture and fires `lostpointercapture` at the
+    // detached node, which has no path to window, so this listener never hears
+    // it and the drag silently reverts to needing a volunteered pointerup.
+    // Refusal is unconditional, so losing that up would lock every later
+    // gesture. Leaving the window is how an up goes missing in practice, and
+    // ending a drag you have navigated away from is the right outcome anyway.
+    // ⚠️ Bound on `window` in the BUBBLE phase, and that is what makes it safe
+    // rather than catastrophic. `blur` does not bubble, so this fires only when
+    // the window itself loses focus. Registered with `{capture: true}`, or on
+    // `document`, it would instead see every focus change on the page — a
+    // select popup, a focus trap, one input handing off to another — and kill
+    // the drag on each one.
+    const onBlur = () => {
+      if (!gesture.current) return;
       gesture.current = null;
       setInteraction(null);
     };
@@ -176,242 +167,65 @@ export function DraftStickerLayer() {
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
+    window.addEventListener('lostpointercapture', onUp);
+    window.addEventListener('blur', onBlur);
     return () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
+      window.removeEventListener('lostpointercapture', onUp);
+      window.removeEventListener('blur', onBlur);
+      // Nothing can be dragging once this layer is gone, and `interaction` is
+      // what the tray reads to decide whether a pickup is allowed. Leaving it
+      // set would refuse the next pickup with no drag to justify it.
+      gesture.current = null;
+      setInteraction(null);
     };
+    // ⚠️ Both deps are zustand actions with permanently stable identity, and
+    // this cleanup now writes shared state — it is the only thing that unlocks
+    // a gesture when the layer goes away. Adding a dep that actually changes
+    // (`maxScale`, `drafts`, `targetImageId`) turns the cleanup into a
+    // per-render `gesture.current = null`, which kills any drag in progress the
+    // moment anything re-renders. Read values through refs instead.
   }, [move, setInteraction]);
 
-  // Both the tray and the carousel's clipped viewport can swallow the button, so
-  // it moves above the sticker when that is the better of the two positions.
-  const [{ flipped, flippedOffset }, setPosition] = useState({ flipped: false, flippedOffset: 0 });
-  const buttonRef = useRef<HTMLDivElement>(null);
-
-  const rotation = draft?.rotation ?? 0;
-  useLayoutEffect(() => {
-    const element = rootRef.current;
-    const button = buttonRef.current;
-    if (!element || !button) return;
-
-    const measure = () => {
-      const tray = useStickerPlacementDraftStore.getState().tray;
-      const height = element.offsetHeight;
-      const offset = flippedButtonOffset({
-        stickerHeight: height,
-        knobOffset: KNOB_OFFSET,
-        gap: BUY_BUTTON_GAP,
-      });
-      const { below, above } = placeButtonBoxes({
-        current: button.getBoundingClientRect(),
-        flipped,
-        rotationDeg: rotation,
-        distance: candidateDistance({
-          stickerHeight: height,
-          buttonHeight: button.offsetHeight,
-          flippedOffset: offset,
-          gap: BUY_BUTTON_GAP,
-        }),
-      });
-
-      const next = {
-        flipped: shouldFlipPlaceButton({
-          below,
-          above,
-          tray: tray?.getBoundingClientRect() ?? null,
-          clip: nearestClipBox(element),
-        }),
-        flippedOffset: offset,
-      };
-
-      // Every pointer move re-measures, so bail on an unchanged result rather
-      // than handing React a new object to re-render for.
-      setPosition((current) =>
-        current.flipped === next.flipped && current.flippedOffset === next.flippedOffset
-          ? current
-          : next
-      );
-    };
-
-    measure();
-    // The tray grows when its price line wraps, when the balances land, and when
-    // the top-up panel opens — each of those moves the band under an existing
-    // draft, with no pointer event to notice it by.
-    //
-    // The sticker is watched for a different reason: its image has no intrinsic
-    // size until it loads, so the first measure on a cold start runs against a
-    // near-zero height. Swapping to a taller sticker is the same problem, and
-    // the effect's deps cannot see it — `begin()` resets x, y, scale and
-    // rotation to the same defaults, so choosing a different sticker produces an
-    // identical dep tuple. Both leave a clearance sized for the wrong sticker,
-    // which is the covered rotate knob all over again.
-    const tray = useStickerPlacementDraftStore.getState().tray;
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    if (tray) observer.observe(tray);
-    window.addEventListener('resize', measure);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener('resize', measure);
-    };
-  }, [draft?.x, draft?.y, draft?.scale, rotation, flipped]);
-
   // Picking a sticker up from the tray starts a move with no offset — the press
-  // happened outside the image, so there is no grab point to preserve.
+  // happened outside the image, so there is no grab point to preserve. The draft
+  // it belongs to is the one `begin` just appended and selected.
   const trayInteraction = useStickerPlacementDraftStore((state) => state.interaction);
+  const trayPointerId = useStickerPlacementDraftStore((state) => state.interactionPointerId);
   useEffect(() => {
-    if (trayInteraction === 'move' && !gesture.current)
-      gesture.current = { mode: 'move', offsetX: 0, offsetY: 0 };
-  }, [trayInteraction]);
-
-  if (!draft) return null;
-
-  const art = sticker.find((option) => option.id === draft.cosmeticId);
-  if (!art) return null;
-
-  const begin =
-    (mode: StickerInteraction, corner?: { sx: number; sy: number }) =>
-    (event: React.PointerEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-
-      const point = pointerToSurfaceFraction(event.clientX, event.clientY);
-      const element = rootRef.current;
-      if (!point || !element) return;
-
-      if (mode === 'move') {
-        // Keep the sticker where it was relative to the grab, instead of
-        // snapping its centre to the cursor.
-        gesture.current = {
-          mode: 'move',
-          offsetX: draft.x - point.x,
-          offsetY: draft.y - point.y,
-        };
-      } else if (mode === 'resize' && corner) {
-        const { bounds } = point;
-        const width = draft.scale * bounds.width;
-        // Layout size, not the bounding box: `offsetWidth` ignores the CSS
-        // rotation, so this is the sticker's own aspect ratio rather than the
-        // ratio of the box its rotated form happens to occupy.
-        const aspect = element.offsetWidth / element.offsetHeight;
-        const anchor = rotate(
-          (-corner.sx * width) / 2,
-          (-corner.sy * width) / aspect / 2,
-          draft.rotation
-        );
-
-        gesture.current = {
-          mode: 'resize',
-          anchorX: draft.x * bounds.width + anchor.x,
-          anchorY: draft.y * bounds.height + anchor.y,
-          sx: corner.sx,
-          sy: corner.sy,
-          aspect,
-        };
-      } else {
-        gesture.current = { mode: 'rotate' };
-      }
-
-      setInteraction(mode);
+    if (trayInteraction !== 'move' || gesture.current || !selectedDraftId || trayPointerId == null)
+      return;
+    gesture.current = {
+      draftId: selectedDraftId,
+      pointerId: trayPointerId,
+      mode: 'move',
+      offsetX: 0,
+      offsetY: 0,
     };
+  }, [trayInteraction, selectedDraftId, trayPointerId]);
 
   return (
-    <div
-      ref={rootRef}
-      className="pointer-events-auto absolute cursor-move"
-      style={{
-        left: `${draft.x * 100}%`,
-        top: `${draft.y * 100}%`,
-        width: `${draft.scale * 100}%`,
-        transform: `translate(-50%, -50%) rotate(${draft.rotation}deg)`,
-        touchAction: 'none',
-      }}
-      onPointerDown={begin('move')}
-    >
-      <EdgeImage
-        src={art.url}
-        alt={`:${art.slug}:`}
-        options={{ width: 512, anim: art.animated, optimized: true }}
-        style={{ width: '100%', height: 'auto', display: 'block', pointerEvents: 'none' }}
-        draggable={false}
-      />
+    <>
+      {drafts.map((draft) => {
+        const art = sticker.find((option) => option.id === draft.cosmeticId);
+        if (!art) return null;
 
-      <span className="pointer-events-none absolute inset-0 border-2 border-dashed border-blue-5" />
-
-      {CORNERS.map((corner) => (
-        <span
-          key={corner.className}
-          onPointerDown={begin('resize', corner)}
-          className={`absolute size-3 rounded-full border-2 border-white bg-blue-5 ${corner.className}`}
-        />
-      ))}
-
-      <span
-        onPointerDown={begin('rotate')}
-        className="absolute left-1/2 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-white bg-blue-5"
-        style={{ top: `-${KNOB_OFFSET * 100}%` }}
-      />
-
-      <div
-        ref={buttonRef}
-        // `w-max` and the floor together: an absolutely positioned child is
-        // shrink-to-fit against its containing block, which here is the sticker
-        // itself — so a small sticker was squeezing the button until its label
-        // clipped and its currency badge lost its padding. The button's size
-        // must not be a function of the sticker's.
-        // `items-center` rather than text alignment: the caption can be wider
-        // than the button, and a `w-max` box sized by whichever is longer leaves
-        // the other one off-centre.
-        className={clsx(
-          'absolute left-1/2 flex w-max -translate-x-1/2 cursor-auto flex-col items-center gap-1 whitespace-nowrap',
-          flipped ? 'bottom-full' : 'top-full mt-2'
-        )}
-        style={{
-          minWidth: BUY_BUTTON_MIN_WIDTH,
-          // Scales with the sticker because the knob it has to clear does.
-          ...(flipped ? { marginBottom: flippedOffset } : null),
-        }}
-        // The button is inside the draggable body, so without this every press
-        // on it would also start a move and the click would land mid-drag.
-        onPointerDown={(event) => event.stopPropagation()}
-      >
-        <BuzzTransactionButton
-          size="sm"
-          style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-          buzzAmount={space?.price ?? 0}
-          // Yellow and Green only, matching what the escrow will actually draw.
-          // The mutation refuses Blue regardless; this keeps the button from
-          // promising a payment that would then be refused.
-          accountTypes={PLACEMENT_SPEND_TYPES}
-          label="Place"
-          loading={place.isPending}
-          onPerformTransaction={() =>
-            place.mutate({
-              imageId: draft.imageId,
-              data: {
-                cosmeticId: draft.cosmeticId,
-                x: draft.x,
-                y: draft.y,
-                scale: draft.scale,
-                rotation: draft.rotation,
-              },
-            })
-          }
-        />
-        {/* On its own dark chip rather than over the artwork: this sits on
-            whatever the creator uploaded, and yellow on light work is as
-            unreadable as dimmed was on dark. */}
-        {payoutCopy(space?.ownerShare) && (
-          <Text
-            size="xs"
-            fw={500}
-            c="yellow.4"
-            className="rounded-full bg-black/80 px-2 py-0.5 leading-tight"
-          >
-            {payoutCopy(space?.ownerShare)}
-          </Text>
-        )}
-      </div>
-    </div>
+        return (
+          <DraftSticker
+            key={draft.id}
+            draft={draft}
+            art={art}
+            selected={draft.id === selectedDraftId}
+            dressed={dressed}
+            price={space?.price ?? 0}
+            ownerShare={space?.ownerShare}
+            ownerUsername={space?.ownerUsername}
+            onGesture={onGesture}
+          />
+        );
+      })}
+    </>
   );
 }

@@ -100,7 +100,11 @@ export const PLACEMENT_SURFACES = {
     // hand and invisible in the UI.
     defaultMode: 'review',
     defaultPrice: 100,
-    minPrice: 50,
+    trackMinPrice: 50,
+    // Zero, which is what the global floor already was for this surface. The
+    // slider starts at 50, but a sticker price stored below it stays chargeable
+    // — raising this would refuse prices creators have already set.
+    serverMinPrice: 0,
     defaultDeclineFeeRate: 0.3,
     defaultSellerShare: 0,
     // The whole payment reaches the space owner, and the place button says so.
@@ -123,11 +127,12 @@ export const PLACEMENT_SURFACES = {
     // default price would put an inviting gallery on every image and refuse
     // every submission to it, because submission refuses an unpriced space.
     //
-    // Deliberately above `minPrice`: the floor is the spam gate and the default
-    // is what the platform thinks a gallery slot is worth. A creator can price
-    // down to 50, but nobody lands there by doing nothing.
+    // Deliberately above `serverMinPrice`: the floor is the spam gate and the
+    // default is what the platform thinks a gallery slot is worth. A creator can
+    // price down to 50, but nobody lands there by doing nothing.
     defaultPrice: 100,
-    minPrice: 50,
+    trackMinPrice: 50,
+    serverMinPrice: 50,
     defaultDeclineFeeRate: 0.3,
     defaultSellerShare: 0,
     // Zero for launch: the whole payment reaches the creator. Unlike the sticker
@@ -147,7 +152,19 @@ export const PLACEMENT_SURFACES = {
     targets: readonly PlacementSpaceEntity[];
     defaultMode: PlacementSpaceMode;
     defaultPrice: number | null;
-    minPrice: number;
+    /** The bottom of the price slider's track. Presentation only. */
+    trackMinPrice: number;
+    /**
+     * The lowest price the server will accept a creator moving to. A real
+     * refusal, not the bottom of a control — for `remixGallery` nothing verifies
+     * a submission is genuinely a remix, so the price is the only spam gate the
+     * surface has and a gallery set to 1 Buzz is the hole.
+     *
+     * Separate from `trackMinPrice` because the two answer different questions
+     * and stickers already answer them differently: its slider starts at 50
+     * while prices below that remain chargeable.
+     */
+    serverMinPrice: number;
     defaultDeclineFeeRate: number;
     defaultSellerShare: number;
     defaultPlatformShare: number;
@@ -246,20 +263,26 @@ export const PLACEMENT_PRICE_CAP_TIERS: PlacementPriceTier[] = [
   { minScore: 100_000, caps: { free: 1_000, bronze: 2_000, silver: 3_000, gold: 5_000 } },
 ];
 
+/**
+ * The absolute lower bound on a charge, below which a price is nonsense rather
+ * than cheap. A surface's own floor is `serverMinPrice`, which is the one that
+ * refuses a creator's price — this only stops the effective price going
+ * negative when a cap is misconfigured.
+ */
 export const PLACEMENT_MIN_PRICE = 0;
 
 /**
- * The price control's granularity. Global on purpose — the floor moved to the
- * surface table because stickers and galleries may want different ones, and
+ * The price control's granularity. Global on purpose — the track floor moved to
+ * the surface table because stickers and galleries may want different ones, and
  * nobody has asked for two step sizes.
  *
- * ⚠️ A surface whose `minPrice` is not a multiple of this puts the bottom of
- * its own track off-grid, the same way an operator cap does at the top.
+ * ⚠️ A surface whose `trackMinPrice` is not a multiple of this puts the bottom
+ * of its own track off-grid, the same way an operator cap does at the top.
  */
 export const PLACEMENT_PRICE_STEP = 10;
 
 /**
- * The bounds of the price control: a fixed grid of `[minPrice, cap]` in `step`
+ * The bounds of the price control: a fixed grid of `[trackMinPrice, cap]` in `step`
  * increments, independent of what is stored.
  *
  * Widening the track to swallow the stored price was worse than the problem.
@@ -268,7 +291,7 @@ export const PLACEMENT_PRICE_STEP = 10;
  * stored 67 sat *between* steps, so the track claimed a value the grid could
  * not land on and the first nudge silently rounded it away.
  *
- * So the slider owns `[minPrice, cap]` and nothing else. A price outside that
+ * So the slider owns `[trackMinPrice, cap]` and nothing else. A price outside that
  * grid is preserved until the creator moves the control, and the UI says what
  * it is rather than pretending the slider can return to it.
  */
@@ -318,7 +341,7 @@ export function placementPriceCaption(
 }
 
 export function placementPriceTrack(surface: PlacementSurface, cap: number | null) {
-  const { minPrice: min, defaultPrice } = PLACEMENT_SURFACES[surface];
+  const { trackMinPrice: min, defaultPrice } = PLACEMENT_SURFACES[surface];
   const ceiling = cap ?? defaultPrice ?? min;
   // Snapped down to the grid, so the top of the track is a value the slider can
   // actually land on: an operator cap of 333 would otherwise sit between steps
@@ -336,7 +359,7 @@ export function placementPriceTrack(surface: PlacementSurface, cap: number | nul
  * server clamps, so the control would be asking a question with one answer.
  */
 export const placementPriceUsable = (surface: PlacementSurface, cap: number | null) =>
-  cap == null || cap >= PLACEMENT_SURFACES[surface].minPrice + PLACEMENT_PRICE_STEP;
+  cap == null || cap >= PLACEMENT_SURFACES[surface].trackMinPrice + PLACEMENT_PRICE_STEP;
 
 /** Whether the slider can land on this price exactly, or would round it away. */
 export const onPlacementPriceGrid = (price: number, track: { min: number; max: number }) =>

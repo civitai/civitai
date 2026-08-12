@@ -125,7 +125,7 @@ export async function placementPriceRange(
   const tier = toPriceCapTier(capTier ?? undefined);
 
   return {
-    min: PLACEMENT_SURFACES[surface].minPrice,
+    min: PLACEMENT_SURFACES[surface].serverMinPrice,
     max: placementPriceCap(score, tier, config.priceCapTiers(surface)),
     score,
     tier,

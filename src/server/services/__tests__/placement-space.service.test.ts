@@ -208,7 +208,7 @@ describe('setPlacementSpace — the price guard', () => {
     // price the mutation refuses, which is the unreachable state this pairing
     // exists to prevent.
     expect(PLACEMENT_SURFACES.remixGallery.defaultPrice!).toBeGreaterThanOrEqual(
-      PLACEMENT_SURFACES.remixGallery.minPrice
+      PLACEMENT_SURFACES.remixGallery.serverMinPrice
     );
   });
 });

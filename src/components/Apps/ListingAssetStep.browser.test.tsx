@@ -1,10 +1,28 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
-// The bound the precheck applies, IMPORTED rather than spelled: a literal here
+// The bounds the prechecks apply, IMPORTED rather than spelled: a literal here
 // would agree with a precheck that hard-coded a different number.
-import { LISTING_ASSET_MAX_DIMENSION_PX } from '~/server/schema/blocks/app-listing.schema';
+import {
+  LISTING_ASSET_MAX_DIMENSION_PX,
+  LISTING_COVER_ASPECT_MAX,
+  LISTING_COVER_ASPECT_MIN,
+  LISTING_COVER_MIN_WIDTH_PX,
+  LISTING_ICON_ASPECT_MAX,
+  LISTING_ICON_ASPECT_MIN,
+  LISTING_ICON_MAX_PX,
+  LISTING_ICON_MIN_PX,
+  LISTING_SCREENSHOT_ASPECT_MAX,
+  LISTING_SCREENSHOT_ASPECT_MIN,
+  LISTING_SCREENSHOT_MIN_PX,
+  MAX_LISTING_COVER_SIZE_BYTES,
+} from '~/server/schema/blocks/app-listing.schema';
+import type * as AppListingSchema from '~/server/schema/blocks/app-listing.schema';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import {
+  jpegWithExifOrientation,
+  webpWithExifOrientation,
+} from '../../../test/fixtures/exif-image';
 
 /**
  * W13 — the shared listing ASSET step, focused on the OG-image AUTO-FILL path
@@ -46,7 +64,41 @@ const mocks = vi.hoisted(() => ({
   uploadToCF: vi.fn(),
   // Item 1: the per-asset scan-status poll (utils.appListings.getAssetScanStatuses.fetch).
   scanStatusFetch: vi.fn(),
+  // Hoisted (rather than an inline `vi.fn()` in the factory) so the per-kind
+  // precheck tests can read what the author was actually told: the icon/cover rows
+  // render `state.message` inline, but a SCREENSHOT slot renders only a status
+  // badge, so for screenshots this notification is the ONLY channel the rejection
+  // reason travels on.
+  showErrorNotification: vi.fn(),
+  // A pass-through spy over the server's own predicate, so a test can read the
+  // ARGUMENTS the component hands it — see the exclusions ledger below.
+  validateListingImage: vi.fn(),
 }));
+
+/**
+ * Wrap `validateListingImage` in a recording pass-through. The real implementation
+ * still decides every verdict (so no behaviour is mocked away); the spy exists only
+ * so the exclusions ledger can assert WHICH FIELDS the component supplies.
+ *
+ * 🔴 That ledger is the guard the PR body's two "deliberately left server-only"
+ * exclusions did not have: adding `sizeBytes: file.size` or
+ * `mimeType: file.type || undefined` to the call survived the whole suite at 34/34,
+ * even though the PR body itself argues those would refuse images the server
+ * accepts. A prose warning is not a guard.
+ */
+vi.mock('~/server/schema/blocks/app-listing.schema', async (importOriginal) => {
+  // Type-only NAMESPACE import, not `typeof import('…')` — the latter is an
+  // `import()` type annotation, which `@typescript-eslint/consistent-type-imports`
+  // rejects.
+  const actual = await importOriginal<typeof AppListingSchema>();
+  return {
+    ...actual,
+    validateListingImage: (...args: Parameters<typeof actual.validateListingImage>) => {
+      mocks.validateListingImage(...args);
+      return actual.validateListingImage(...args);
+    },
+  };
+});
 
 vi.mock('~/utils/trpc', () => {
   return {
@@ -127,7 +179,7 @@ vi.mock('~/hooks/useCFImageUpload', () => ({
 
 vi.mock('~/utils/notifications', () => ({
   showSuccessNotification: vi.fn(),
-  showErrorNotification: vi.fn(),
+  showErrorNotification: mocks.showErrorNotification,
 }));
 
 const { ListingAssetStep } = await import('./ListingAssetStep');
@@ -152,8 +204,13 @@ function renderStep(props: Partial<Parameters<typeof ListingAssetStep>[0]> = {})
  * Generate a REAL png File (via canvas → toBlob) — an arbitrary-bytes File would
  * fail `createImageBitmap` in the upload path (readImageDimensions), so the row
  * would never reach the scanning state we assert on.
+ *
+ * The default 640×480 is a VALID SCREENSHOT (aspect 1.33 inside 0.4–2.6, shorter
+ * side 480 ≥ 320) because the client now applies the server's per-kind geometry
+ * rules before uploading: a fixture that merely decodes is no longer enough for a
+ * test whose subject is anything downstream of the picker.
  */
-async function makeImageFile(name = 'shot.png', width = 200, height = 150): Promise<File> {
+async function makeImageFile(name = 'shot.png', width = 640, height = 480): Promise<File> {
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -197,6 +254,117 @@ function fileInputEl(which: 'icon' | 'cover' | 'screenshots'): Promise<HTMLInput
   });
 }
 
+/**
+ * Drive one slot with one fixture and assert nothing reached the object store —
+ * and that the author was told WHY, in the server's exact words.
+ *
+ * The message is asserted on the channel that actually carries it for that slot:
+ * icon/cover rows render `state.message` inline, a screenshot slot renders only a
+ * status badge. `showErrorNotification` carries it for all three, so it is the
+ * assertion every kind shares; without it the screenshot cases would be asserting
+ * on an element the component never renders.
+ */
+async function expectRefused(which: 'icon' | 'cover' | 'screenshots', file: File, message: string) {
+  const kind = which === 'screenshots' ? 'screenshot' : which;
+  await userEvent.upload(await fileInputEl(which), file);
+  await vi.waitFor(() =>
+    expect(mocks.showErrorNotification).toHaveBeenCalledWith({
+      title: `Could not add ${kind}`,
+      // The Error the author sees, matched on its whole message — not a substring,
+      // so a guard that fired for a different bound cannot satisfy it.
+      error: expect.objectContaining({ message }),
+    })
+  );
+  if (which !== 'screenshots') {
+    await expect.element(page.getByText(message)).toBeInTheDocument();
+  }
+  expect(mocks.uploadToCF).not.toHaveBeenCalled();
+  expect(mocks.persistAsync).not.toHaveBeenCalled();
+}
+
+/** Drive one slot with one fixture and assert it DID reach the object store. */
+async function expectUploaded(
+  which: 'icon' | 'cover' | 'screenshots',
+  file: File,
+  width: number,
+  height: number
+) {
+  await userEvent.upload(await fileInputEl(which), file);
+  await vi.waitFor(() => expect(mocks.uploadToCF).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() =>
+    expect(mocks.persistAsync).toHaveBeenCalledWith(expect.objectContaining({ width, height }))
+  );
+}
+
+/** Encode a solid raster of a known STORED size in the requested container. */
+async function raster(mime: 'image/webp' | 'image/jpeg', width: number, height: number) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('no 2d context');
+  // JPEG has no alpha, so an unpainted canvas encodes as black — fine either way,
+  // but painting keeps the three fixture builders producing comparable bytes.
+  ctx.fillStyle = '#4488cc';
+  ctx.fillRect(0, 0, width, height);
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob null'))), mime);
+  });
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  if (blob.type !== mime) throw new Error(`canvas encoded ${blob.type}, asked for ${mime}`);
+  return bytes;
+}
+
+/**
+ * A REAL image file carrying a REAL EXIF orientation — the fixture class every
+ * other one in this file lacks.
+ *
+ * 🔴 Why it has to exist: `makeImageFile` produces a fresh canvas PNG, which has
+ * no EXIF at all, so a suite built only from those cannot observe whether the
+ * component's dimension read honours orientation — mutating `readImageDimensions`
+ * from `'from-image'` to `'none'` left the file 34/34 GREEN. Whether the browser
+ * and the server agree about which axis is which is the entire premise the
+ * per-kind aspect precheck rests on, and only a fixture with an orientation tag
+ * can make a test fail when that premise is wrong.
+ *
+ * `expectClient` is asserted here rather than in the tests, so every fixture
+ * carries its own premise: the browser's reading is a MEASURED fact about this
+ * Chromium (149: it applies EXIF to JPEG, and does not to WebP), not something the
+ * component under test gets to decide. If a future engine changes its mind, these
+ * fail with "browser read X, expected Y" instead of the suite quietly going green
+ * for a new reason. `src/server/utils/__tests__/listing-asset-exif-fixture.test.ts`
+ * pins the other side: what `sharp` — and so the server — makes of the same bytes.
+ */
+async function makeExifOrientedFile(opts: {
+  name: string;
+  mime: 'image/webp' | 'image/jpeg';
+  /** The STORED raster's size, i.e. what the encoder is handed. */
+  width: number;
+  height: number;
+  orientation: number;
+  /** What THIS browser is expected to report for the finished file. */
+  expectClient: { width: number; height: number };
+}): Promise<File> {
+  const { name, mime, width, height, orientation, expectClient } = opts;
+  const encoded = await raster(mime, width, height);
+  const bytes =
+    mime === 'image/webp'
+      ? webpWithExifOrientation(encoded, width, height, orientation)
+      : jpegWithExifOrientation(encoded, orientation);
+  const file = new File([bytes as BlobPart], name, { type: mime });
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  try {
+    if (bitmap.width !== expectClient.width || bitmap.height !== expectClient.height) {
+      throw new Error(
+        `browser read ${bitmap.width}×${bitmap.height} for ${name}, expected ${expectClient.width}×${expectClient.height}`
+      );
+    }
+  } finally {
+    bitmap.close();
+  }
+  return file;
+}
+
 beforeEach(() => {
   mocks.ingestAsync.mockReset();
   mocks.setIconAsync.mockReset();
@@ -206,6 +374,8 @@ beforeEach(() => {
   mocks.persistAsync.mockReset();
   mocks.uploadToCF.mockReset();
   mocks.scanStatusFetch.mockReset();
+  mocks.showErrorNotification.mockReset();
+  mocks.validateListingImage.mockReset();
   // Default upload pipeline: CF upload + persist resolve so the row can reach
   // the attached+scanning state.
   mocks.uploadToCF.mockResolvedValue({ id: 'cf-image-id' });
@@ -320,7 +490,8 @@ describe('ListingAssetStep — uploaded-asset preview + cancel mid-scan', () => 
     mocks.setIconAsync.mockResolvedValue({ status: 'attached', iconId: 501, scanPending: true });
     renderStep();
 
-    await userEvent.upload(await fileInputEl('icon'), await makeImageFile('icon.png'));
+    // Square + comfortably inside the icon bounds — see `makeImageFile`.
+    await userEvent.upload(await fileInputEl('icon'), await makeImageFile('icon.png', 256, 256));
 
     const preview = page.getByTestId('apps-offsite-current-icon-preview');
     await expect.element(preview).toBeInTheDocument();
@@ -555,9 +726,13 @@ describe('ListingAssetStep — per-side dimension precheck (issue #3772)', () =>
     mocks.setCoverAsync.mockResolvedValue({ status: 'attached', coverId: 501, scanPending: true });
     renderStep();
 
+    // Half the long side, so the aspect (2.0) also sits inside the COVER's own
+    // 1.3–2.4 band: the fixture has to clear every rule the client now applies, or
+    // this would fail for a reason that has nothing to do with the bound it guards.
+    const atBoundHeight = LISTING_ASSET_MAX_DIMENSION_PX / 2;
     await userEvent.upload(
       await fileInputEl('cover'),
-      await makeImageFile('at-bound.png', LISTING_ASSET_MAX_DIMENSION_PX, 512)
+      await makeImageFile('at-bound.png', LISTING_ASSET_MAX_DIMENSION_PX, atBoundHeight)
     );
 
     // The positive control for the test above: the SAME code path and the same
@@ -567,8 +742,617 @@ describe('ListingAssetStep — per-side dimension precheck (issue #3772)', () =>
     await vi.waitFor(() => expect(mocks.uploadToCF).toHaveBeenCalledTimes(1));
     await vi.waitFor(() =>
       expect(mocks.persistAsync).toHaveBeenCalledWith(
-        expect.objectContaining({ width: LISTING_ASSET_MAX_DIMENSION_PX, height: 512 })
+        expect.objectContaining({
+          width: LISTING_ASSET_MAX_DIMENSION_PX,
+          height: atBoundHeight,
+        })
       )
     );
+  });
+});
+
+describe('ListingAssetStep — per-KIND geometry precheck (issue #3772)', () => {
+  /**
+   * The per-side ceiling above is kind-AGNOSTIC. Every other geometry rule the
+   * server applies is per-kind and lives at ATTACH (`validateListingImage`, reached
+   * through `setIcon`/`setCover`/`addScreenshot`) — which the client only gets to
+   * AFTER the upload AND the persist. So a 5000px icon, or a merely wrongly-shaped
+   * one, still cost a full transfer before being refused, and a wrongly-shaped icon
+   * is far easier to produce by accident than an 8192px one.
+   *
+   * Each bound is asserted in BOTH directions: a fixture the server would refuse is
+   * refused before `uploadToCF`, and a fixture at the boundary the server ACCEPTS
+   * still uploads. The accept half is not decoration — over-rejection at the picker
+   * is a worse failure than the wasted upload this is fixing, and only the accept
+   * cases can catch it.
+   *
+   * 🔴 As with the block above, these prove the UPLOAD IS SKIPPED, not that the
+   * image is rejected. The server re-derives the pair from the stored bytes and
+   * re-applies `validateListingImage`; that remains the enforcement point, and it is
+   * covered by `src/server/services/blocks/__tests__/app-listing-assets.service.test.ts`.
+   *
+   * Every expected message is BUILT FROM THE IMPORTED CONSTANTS and asserted whole,
+   * including the offending value, so a guard that fired for a different reason — or
+   * named a different number — cannot satisfy it.
+   */
+
+  beforeEach(() => {
+    // The accept cases run past the upload into the attach proc; without a resolved
+    // result the row would error for a reason unrelated to the bound under test.
+    mocks.setIconAsync.mockResolvedValue({ status: 'attached', iconId: 501, scanPending: false });
+    mocks.setCoverAsync.mockResolvedValue({ status: 'attached', coverId: 501, scanPending: false });
+    mocks.addScreenshotAsync.mockResolvedValue({
+      status: 'attached',
+      id: 'row-1',
+      order: 0,
+      scanPending: false,
+    });
+  });
+
+  // --- icon: longer side (the bound the kind-agnostic ceiling is DOUBLE of) ------
+
+  test('an icon over the ICON pixel cap is refused before the upload — at half the kind-agnostic ceiling', async () => {
+    renderStep();
+    // 🔴 The discriminating case for this whole block: this is UNDER
+    // LISTING_ASSET_MAX_DIMENSION_PX, so the pre-existing per-side precheck passes
+    // it. Only a check that knows the asset is an ICON refuses it.
+    expect(LISTING_ICON_MAX_PX).toBeLessThan(LISTING_ASSET_MAX_DIMENSION_PX);
+    const over = LISTING_ICON_MAX_PX + 1;
+    await expectRefused(
+      'icon',
+      await makeImageFile('big-icon.png', over, over),
+      `icon must be at most ${LISTING_ICON_MAX_PX}px on its longer side (got ${over}px)`
+    );
+  });
+
+  test('an icon EXACTLY at the ICON pixel cap still uploads', async () => {
+    renderStep();
+    await expectUploaded(
+      'icon',
+      await makeImageFile('max-icon.png', LISTING_ICON_MAX_PX, LISTING_ICON_MAX_PX),
+      LISTING_ICON_MAX_PX,
+      LISTING_ICON_MAX_PX
+    );
+  });
+
+  // --- icon: aspect (both sides of the band) ------------------------------------
+
+  test('a WIDE icon is refused before the upload', async () => {
+    renderStep();
+    await expectRefused(
+      'icon',
+      await makeImageFile('wide-icon.png', 242, 200),
+      `icon must be square-ish (aspect 1.21 outside ${LISTING_ICON_ASPECT_MIN}–${LISTING_ICON_ASPECT_MAX})`
+    );
+  });
+
+  test('a TALL icon is refused before the upload — the band is two-sided', async () => {
+    renderStep();
+    // The wide case above cannot tell a two-sided band from a bare upper bound.
+    await expectRefused(
+      'icon',
+      await makeImageFile('tall-icon.png', 200, 242),
+      `icon must be square-ish (aspect 0.83 outside ${LISTING_ICON_ASPECT_MIN}–${LISTING_ICON_ASPECT_MAX})`
+    );
+  });
+
+  test('an icon at the aspect band EDGE still uploads', async () => {
+    renderStep();
+    // 220/200 = 1.1 exactly — the boundary the two refusals bracket.
+    await expectUploaded('icon', await makeImageFile('edge-icon.png', 220, 200), 220, 200);
+  });
+
+  // --- icon: minimum shorter side ----------------------------------------------
+
+  test('an under-size icon is refused before the upload', async () => {
+    renderStep();
+    const under = LISTING_ICON_MIN_PX - 1;
+    await expectRefused(
+      'icon',
+      await makeImageFile('small-icon.png', under, under),
+      `icon must be at least ${LISTING_ICON_MIN_PX}px on its shorter side (got ${under}px)`
+    );
+  });
+
+  test('an icon EXACTLY at the minimum still uploads', async () => {
+    renderStep();
+    await expectUploaded(
+      'icon',
+      await makeImageFile('min-icon.png', LISTING_ICON_MIN_PX, LISTING_ICON_MIN_PX),
+      LISTING_ICON_MIN_PX,
+      LISTING_ICON_MIN_PX
+    );
+  });
+
+  // --- cover: aspect + minimum width -------------------------------------------
+
+  test('a SQUARE cover is refused before the upload', async () => {
+    renderStep();
+    // Width is kept above the cover minimum so the ASPECT rule is what fires.
+    await expectRefused(
+      'cover',
+      await makeImageFile('square-cover.png', 640, 640),
+      `cover must be landscape (aspect 1.00 outside ${LISTING_COVER_ASPECT_MIN}–${LISTING_COVER_ASPECT_MAX})`
+    );
+  });
+
+  test('an over-wide cover is refused before the upload', async () => {
+    renderStep();
+    await expectRefused(
+      'cover',
+      await makeImageFile('panorama.png', 1600, 640),
+      `cover must be landscape (aspect 2.50 outside ${LISTING_COVER_ASPECT_MIN}–${LISTING_COVER_ASPECT_MAX})`
+    );
+  });
+
+  test('a cover at the widest ACCEPTED aspect still uploads', async () => {
+    renderStep();
+    // 1536/640 = 2.4 exactly — one step inside the refusal above.
+    await expectUploaded('cover', await makeImageFile('wide-cover.png', 1536, 640), 1536, 640);
+  });
+
+  test('a too-narrow cover is refused before the upload', async () => {
+    renderStep();
+    const under = LISTING_COVER_MIN_WIDTH_PX - 1;
+    // Aspect 1.5 — inside the band, so WIDTH is unambiguously what fires.
+    await expectRefused(
+      'cover',
+      await makeImageFile('narrow-cover.png', under, 426),
+      `cover must be at least ${LISTING_COVER_MIN_WIDTH_PX}px wide (got ${under}px)`
+    );
+  });
+
+  test('a cover EXACTLY at the minimum width still uploads', async () => {
+    renderStep();
+    await expectUploaded(
+      'cover',
+      await makeImageFile('min-cover.png', LISTING_COVER_MIN_WIDTH_PX, 427),
+      LISTING_COVER_MIN_WIDTH_PX,
+      427
+    );
+  });
+
+  // --- screenshot: aspect + minimum shorter side --------------------------------
+
+  test('an over-wide screenshot is refused before the upload', async () => {
+    renderStep();
+    await expectRefused(
+      'screenshots',
+      await makeImageFile('wide-shot.png', 1080, 400),
+      `screenshot aspect 2.70 is outside ${LISTING_SCREENSHOT_ASPECT_MIN}–${LISTING_SCREENSHOT_ASPECT_MAX}`
+    );
+  });
+
+  test('an over-tall screenshot is refused before the upload — the band is two-sided', async () => {
+    renderStep();
+    await expectRefused(
+      'screenshots',
+      await makeImageFile('tall-shot.png', 400, 1080),
+      `screenshot aspect 0.37 is outside ${LISTING_SCREENSHOT_ASPECT_MIN}–${LISTING_SCREENSHOT_ASPECT_MAX}`
+    );
+  });
+
+  test('a screenshot at the widest ACCEPTED aspect still uploads', async () => {
+    renderStep();
+    // 1040/400 = 2.6 exactly.
+    await expectUploaded('screenshots', await makeImageFile('edge-shot.png', 1040, 400), 1040, 400);
+  });
+
+  test('an under-size screenshot is refused before the upload', async () => {
+    renderStep();
+    const under = LISTING_SCREENSHOT_MIN_PX - 1;
+    // Aspect 2.5 — inside the band, so the SHORTER SIDE is what fires.
+    await expectRefused(
+      'screenshots',
+      await makeImageFile('small-shot.png', 800, under),
+      `screenshot must be at least ${LISTING_SCREENSHOT_MIN_PX}px on its shorter side`
+    );
+  });
+
+  test('a screenshot EXACTLY at the minimum shorter side still uploads', async () => {
+    renderStep();
+    await expectUploaded(
+      'screenshots',
+      await makeImageFile('min-shot.png', 800, LISTING_SCREENSHOT_MIN_PX),
+      800,
+      LISTING_SCREENSHOT_MIN_PX
+    );
+  });
+
+  // --- the kind is actually THREADED, not assumed --------------------------------
+
+  test('ONE fixture, three verdicts — the slot decides which rules apply', async () => {
+    // 🔴 The guard against the kind being hardcoded or mis-threaded. A 256×256 square
+    // is a VALID icon, but too square for a cover (aspect 1.00 < 1.3) and too small
+    // for a screenshot (256 < 320). Any implementation that validates every upload
+    // as one fixed kind gets at least one of these three wrong, and a `kind`
+    // threaded from the wrong place gets the accept and the refusals inconsistent.
+    const square = () => makeImageFile('square.png', 256, 256);
+
+    renderStep();
+    await expectUploaded('icon', await square(), 256, 256);
+
+    mocks.uploadToCF.mockClear();
+    mocks.persistAsync.mockClear();
+    mocks.showErrorNotification.mockClear();
+    await expectRefused(
+      'cover',
+      await square(),
+      `cover must be landscape (aspect 1.00 outside ${LISTING_COVER_ASPECT_MIN}–${LISTING_COVER_ASPECT_MAX})`
+    );
+
+    await expectRefused(
+      'screenshots',
+      await square(),
+      `screenshot must be at least ${LISTING_SCREENSHOT_MIN_PX}px on its shorter side`
+    );
+  });
+});
+
+describe('ListingAssetStep — EXIF orientation: the axes only agree for some containers', () => {
+  /**
+   * The per-kind precheck above is only honest while the browser and the server
+   * read the SAME width/height pair. They do not, universally — and the exception
+   * is a format the file inputs explicitly `accept`.
+   *
+   * Measured on Chromium 149 (and pinned per-fixture by `makeExifOrientedFile`):
+   *
+   *   JPEG   EXIF orientation applied → the pair matches the server's.
+   *   WEBP   EXIF orientation NOT applied → the pair arrives TRANSPOSED relative
+   *          to the server's. `imageOrientation: 'from-image'` does not change
+   *          this; neither does `'none'`. The option is inert for WebP here.
+   *
+   * A transposition maps an aspect `a` to `1/a`, so it inverts the verdict of any
+   * bound naming an axis. For a COVER — whose band 1.3–2.4 lies entirely above 1 —
+   * that means EVERY EXIF-rotated WebP cover the server would store was refused at
+   * the picker. So the client now prechecks only the bounds a quarter-turn cannot
+   * change (`Math.min`/`Math.max` ones) whenever the file's own bytes say WebP,
+   * and leaves the rest to the server.
+   *
+   * 🔴 The direction matters: skipping a client check restores a LATE rejection,
+   * which is the cost this PR set out to reduce. Refusing something the server
+   * would accept has no recovery at all — the author simply cannot upload a valid
+   * image. The two are not symmetric, which is why the sniff errs toward skipping.
+   */
+
+  beforeEach(() => {
+    mocks.setIconAsync.mockResolvedValue({ status: 'attached', iconId: 501, scanPending: false });
+    mocks.setCoverAsync.mockResolvedValue({ status: 'attached', coverId: 501, scanPending: false });
+    mocks.addScreenshotAsync.mockResolvedValue({
+      status: 'attached',
+      screenshotId: 77,
+      imageId: 501,
+      scanPending: false,
+    });
+  });
+
+  /** Stored 640×1280 + orientation 6 → the server measures a 1280×640 landscape. */
+  const exifCover = (
+    mime: 'image/webp' | 'image/jpeg',
+    client: { width: number; height: number }
+  ) =>
+    makeExifOrientedFile({
+      name: mime === 'image/webp' ? 'rotated-cover.webp' : 'rotated-cover.jpg',
+      mime,
+      width: 640,
+      height: 1280,
+      orientation: 6,
+      expectClient: client,
+    });
+
+  test('🔴 an EXIF-rotated WEBP cover the server accepts is UPLOADED, not refused at the picker', async () => {
+    renderStep();
+
+    // The regression case, end to end. The server reads this file as 1280×640 —
+    // aspect 2.00, inside the cover band — and stores it. Chromium reads the stored
+    // 640×1280, aspect 0.50, which is outside the band on the far side; a precheck
+    // that applied the band to THAT pair refuses a perfectly valid cover before a
+    // byte is sent, and no server round-trip ever gets to overrule it.
+    await expectUploaded(
+      'cover',
+      await exifCover('image/webp', { width: 640, height: 1280 }),
+      640,
+      1280
+    );
+
+    // Nothing was reported to the author either — a refusal that also uploaded
+    // would be a different bug wearing this test's green.
+    expect(mocks.showErrorNotification).not.toHaveBeenCalled();
+  });
+
+  test('the WEBP skip is NARROW — the orientation-invariant ceiling still refuses before upload', async () => {
+    renderStep();
+
+    // `Math.max(width, height)` is what the ceiling reads, and a quarter turn cannot
+    // change it, so this bound is as trustworthy for WebP as for anything else and
+    // is still prechecked. Without this, "skip the aspect check for WebP" and "skip
+    // ALL checks for WebP" would be indistinguishable — and the second is a real
+    // regression against #3824, the PR this one builds on.
+    const over = LISTING_ASSET_MAX_DIMENSION_PX + 1;
+    await expectRefused(
+      'cover',
+      await makeExifOrientedFile({
+        name: 'huge-rotated.webp',
+        mime: 'image/webp',
+        width: 512,
+        height: over,
+        orientation: 6,
+        expectClient: { width: 512, height: over },
+      }),
+      `That image is too large (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side, got ${over}px).`
+    );
+  });
+
+  test('the WEBP skip is NARROW — the orientation-invariant icon minimum still refuses before upload', async () => {
+    renderStep();
+
+    // The icon's minimum is stated over `Math.min(width, height)`: invariant, so it
+    // stays on for WebP too. A square keeps this test about the minimum rather than
+    // about the aspect band that is skipped here.
+    const under = LISTING_ICON_MIN_PX - 1;
+    await expectRefused(
+      'icon',
+      await makeExifOrientedFile({
+        name: 'tiny-rotated.webp',
+        mime: 'image/webp',
+        width: under,
+        height: under,
+        orientation: 6,
+        expectClient: { width: under, height: under },
+      }),
+      `icon must be at least ${LISTING_ICON_MIN_PX}px on its shorter side (got ${under}px)`
+    );
+  });
+
+  test('the WEBP skip is NARROW — the orientation-invariant icon MAXIMUM still refuses before upload', async () => {
+    renderStep();
+
+    // The icon's own maximum is `Math.max(width, height)` — invariant under a
+    // quarter turn, so it stays on for WebP like the minimum above.
+    //
+    // 🔴 It needs its own case because it is NOT covered by the ceiling guard two
+    // tests up: 4096 is HALF the 8192 kind-agnostic ceiling, so a fixture that trips
+    // the icon maximum is comfortably under the ceiling and reaches this bound with
+    // nothing having fired earlier. Widening the skip to cover it therefore changes
+    // real behaviour — a 4097px icon that used to be refused at the picker would be
+    // uploaded and refused by the server — while leaving every other test green.
+    //
+    // The strip shape is deliberate: its aspect (20.49) is far outside the icon
+    // band, which for a WebP is exactly the bound that is skipped, so what remains
+    // to refuse it is the maximum and nothing else. `expectRefused` matches the
+    // WHOLE message, so a run where the aspect band fired instead would fail here
+    // rather than pass for the wrong reason.
+    const over = LISTING_ICON_MAX_PX + 1;
+    expect(over).toBeLessThan(LISTING_ASSET_MAX_DIMENSION_PX);
+    await expectRefused(
+      'icon',
+      await makeExifOrientedFile({
+        name: 'over-max-rotated.webp',
+        mime: 'image/webp',
+        width: over,
+        height: 200,
+        orientation: 6,
+        expectClient: { width: over, height: 200 },
+      }),
+      `icon must be at most ${LISTING_ICON_MAX_PX}px on its longer side (got ${over}px)`
+    );
+  });
+
+  test('the WEBP skip is NARROW — the screenshot MINIMUM shorter side still refuses before upload', async () => {
+    renderStep();
+
+    // The third kind's invariant bound, and the last of the four kept ones without a
+    // case of its own. `Math.min(width, height)` cannot be changed by a quarter turn,
+    // so a WebP screenshot under it is refused at the picker exactly as a PNG one is.
+    //
+    // Square on purpose: aspect 1.00 sits inside the screenshot band (0.4–2.6), so
+    // this fixture would be accepted by every bound EXCEPT the minimum — the test
+    // does not lean on the aspect skip in either direction, and a run in which the
+    // minimum stopped applying has nothing else left to refuse it.
+    const under = LISTING_SCREENSHOT_MIN_PX - 20;
+    await expectRefused(
+      'screenshots',
+      await makeExifOrientedFile({
+        name: 'small-rotated.webp',
+        mime: 'image/webp',
+        width: under,
+        height: under,
+        orientation: 6,
+        expectClient: { width: under, height: under },
+      }),
+      `screenshot must be at least ${LISTING_SCREENSHOT_MIN_PX}px on its shorter side`
+    );
+  });
+
+  test('🔴 the skipped set is not just the ASPECT bands — the cover minimum WIDTH names an axis too', async () => {
+    renderStep();
+
+    // The cover's minimum is stated over `width`, not over the shorter side, so a
+    // transposed reading flips it exactly the way an aspect band does — it is
+    // orientation-SENSITIVE despite not being an aspect. Stored 400×800 + orientation
+    // 6 is a 800×400 landscape to the server: aspect 2.00, width 800, a perfectly
+    // valid cover. Chromium reads 400×800, whose width (400) is under the 640
+    // minimum. Skip the aspect band alone and this valid cover is STILL refused at
+    // the picker — the same user-facing failure, one bound further down.
+    expect(400).toBeLessThan(LISTING_COVER_MIN_WIDTH_PX);
+    await expectUploaded(
+      'cover',
+      await makeExifOrientedFile({
+        name: 'narrow-rotated.webp',
+        mime: 'image/webp',
+        width: 400,
+        height: 800,
+        orientation: 6,
+        expectClient: { width: 400, height: 800 },
+      }),
+      400,
+      800
+    );
+    expect(mocks.showErrorNotification).not.toHaveBeenCalled();
+  });
+
+  test('a WEBP whose aspect is genuinely wrong is now left to the SERVER (the accepted cost)', async () => {
+    renderStep();
+
+    // Stated as an expectation rather than left implicit: for WebP the aspect band
+    // is no longer a picker-time verdict, so a square WebP cover — which the server
+    // still refuses — now costs the upload it used to be spared. That is the price
+    // of not being able to tell a rotated WebP from an unrotated one, and it is the
+    // cheap direction: a late rejection, not an impossible upload.
+    await expectUploaded(
+      'cover',
+      new File([(await raster('image/webp', 640, 640)) as BlobPart], 'square.webp', {
+        type: 'image/webp',
+      }),
+      640,
+      640
+    );
+  });
+
+  // --- the JPEG control: same EXIF, same server reading, agreeing browser ---------
+
+  test('an EXIF-rotated JPEG cover uploads — the axes agree, so nothing changed for it', async () => {
+    renderStep();
+
+    // The same 640×1280-stored, orientation-6 file in the container Chromium DOES
+    // rotate: the browser reports 1280×640, the server measures 1280×640, and the
+    // cover band is applied to a pair both sides agree on. This is what the WebP
+    // case was assumed to look like.
+    await expectUploaded(
+      'cover',
+      await exifCover('image/jpeg', { width: 1280, height: 640 }),
+      1280,
+      640
+    );
+    expect(mocks.showErrorNotification).not.toHaveBeenCalled();
+  });
+
+  test('🔴 an EXIF-rotated JPEG whose DISPLAYED aspect is wrong is still refused before upload', async () => {
+    renderStep();
+
+    // The discriminating case for the sniff's polarity. Stored 1280×640 + orientation
+    // 6 displays as a 640×1280 PORTRAIT — invalid as a cover on both sides. A sniff
+    // that skipped the aspect band for everything EXCEPT WebP (inverted), or that
+    // skipped it unconditionally, lets this reach the object store.
+    await expectRefused(
+      'cover',
+      await makeExifOrientedFile({
+        name: 'rotated-portrait.jpg',
+        mime: 'image/jpeg',
+        width: 1280,
+        height: 640,
+        orientation: 6,
+        expectClient: { width: 640, height: 1280 },
+      }),
+      `cover must be landscape (aspect 0.50 outside ${LISTING_COVER_ASPECT_MIN}–${LISTING_COVER_ASPECT_MAX})`
+    );
+  });
+
+  // --- the sniff reads BYTES, not the filename ------------------------------------
+
+  test('🔴 a WEBP named ".png" is still treated as a WEBP — the sniff reads the file, not its name', async () => {
+    renderStep();
+
+    // `file.type` comes from the file NAME. This fixture is a real EXIF-rotated WebP
+    // announcing itself as `image/png`, which is exactly the mislabelling the PR body
+    // gives as its reason for leaving the MIME check server-only — so a gate on
+    // `file.type` here would land back in the over-strict direction the whole change
+    // exists to fix, and would do it silently.
+    const bytes = webpWithExifOrientation(await raster('image/webp', 640, 1280), 640, 1280, 6);
+    const mislabelled = new File([bytes as BlobPart], 'actually-a-webp.png', { type: 'image/png' });
+    expect(mislabelled.type).toBe('image/png');
+
+    await expectUploaded('cover', mislabelled, 640, 1280);
+    expect(mocks.showErrorNotification).not.toHaveBeenCalled();
+  });
+
+  test('a PNG is NOT sniffed as WebP — the aspect band still applies to it', async () => {
+    renderStep();
+
+    // The positive control for the test above: if `isWebpContainer` answered true for
+    // everything (or its offsets were wrong in a way that matched anything), the band
+    // would be off for PNG too and this square cover would upload.
+    await expectRefused(
+      'cover',
+      await makeImageFile('square-cover.png', 640, 640),
+      `cover must be landscape (aspect 1.00 outside ${LISTING_COVER_ASPECT_MIN}–${LISTING_COVER_ASPECT_MAX})`
+    );
+  });
+});
+
+describe('ListingAssetStep — the precheck supplies GEOMETRY only (exclusions ledger)', () => {
+  /**
+   * 🔴 The PR body declares two fields deliberately withheld from
+   * `validateListingImage` — `sizeBytes` and `mimeType` — because this side cannot
+   * evaluate either faithfully and a wrong verdict would refuse an image the server
+   * accepts. Both were unguarded: adding either survived the entire suite. These
+   * make the exclusion a test rather than a paragraph, structurally (the exact set
+   * of keys handed over) and behaviourally (a file that WOULD trip each one still
+   * reaches the object store).
+   */
+
+  beforeEach(() => {
+    mocks.setCoverAsync.mockResolvedValue({ status: 'attached', coverId: 501, scanPending: false });
+  });
+
+  test('the meta handed to validateListingImage carries EXACTLY type/width/height', async () => {
+    renderStep();
+
+    await expectUploaded('cover', await makeImageFile('ok-cover.png', 1280, 640), 1280, 640);
+
+    expect(mocks.validateListingImage).toHaveBeenCalledTimes(1);
+    const [meta, kind] = mocks.validateListingImage.mock.calls[0];
+    // An asserted LEDGER, not a subset match: this fails when the set GROWS (a
+    // future `sizeBytes`/`mimeType`) and when it SHRINKS (a field the predicate
+    // needs going missing).
+    expect(Object.keys(meta).sort()).toEqual(['height', 'type', 'width']);
+    expect(meta).toEqual({ type: 'image', width: 1280, height: 640 });
+    expect(kind).toBe('cover');
+  });
+
+  test('the sniff verdict is passed through as the third argument (PNG → axis-aware)', async () => {
+    renderStep();
+
+    // Kept separate from the ledger above so the two claims stay separable: the
+    // ledger is an INVARIANT guard (it held before this change too), while this
+    // asserts the option the change introduced actually reaches the predicate — and
+    // that a PNG resolves to `false`, i.e. every bound stays on for it.
+    await expectUploaded('cover', await makeImageFile('ok-cover.png', 1280, 640), 1280, 640);
+
+    const [, , opts] = mocks.validateListingImage.mock.calls[0];
+    expect(opts).toEqual({ skipOrientationSensitive: false });
+  });
+
+  test('a cover over the per-kind BYTE cap still uploads — size stays a server verdict', async () => {
+    renderStep();
+
+    // Padding after `IEND` leaves the PNG decodable while pushing the file past the
+    // 4 MiB cover cap. Were `sizeBytes: file.size` passed, `validateListingImage`
+    // would refuse this at the picker naming the wrong gate (the whole-asset ceiling
+    // at persist is reached first on the server).
+    const png = await makeImageFile('padded.png', 1280, 640);
+    const padded = new File(
+      [png, new Uint8Array(MAX_LISTING_COVER_SIZE_BYTES) as BlobPart],
+      'padded.png',
+      { type: 'image/png' }
+    );
+    expect(padded.size).toBeGreaterThan(MAX_LISTING_COVER_SIZE_BYTES);
+
+    await expectUploaded('cover', padded, 1280, 640);
+    expect(mocks.showErrorNotification).not.toHaveBeenCalled();
+  });
+
+  test('a cover whose file.type is an UNSUPPORTED mime still uploads — MIME stays a server verdict', async () => {
+    renderStep();
+
+    // Real PNG bytes wearing a `image/gif` label, which `LISTING_ASSET_ALLOWED_MIME`
+    // does not contain. The server reads the DECODED format and accepts it; a
+    // `mimeType: file.type` passed here would not.
+    const png = await makeImageFile('mislabelled.png', 1280, 640);
+    const mislabelled = new File([png], 'mislabelled.gif', { type: 'image/gif' });
+    expect(mislabelled.type).toBe('image/gif');
+
+    await expectUploaded('cover', mislabelled, 1280, 640);
+    expect(mocks.showErrorNotification).not.toHaveBeenCalled();
   });
 });

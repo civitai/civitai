@@ -195,6 +195,33 @@ export function StickerPlacementOverlay({
               {body}
             </StickerPlacementHoverCard>
 
+            {/* ⚠️ Known wrong, and left wrong deliberately.
+
+                `scale` is a fraction of the media box's WIDTH while a `top`
+                percentage resolves against its HEIGHT, so this is the sticker's
+                real half-height only when the sticker's own aspect matches the
+                media box's. Otherwise it is off by `mediaAspect / stickerAspect`
+                — a gap below the sticker on the tall side, an overlap onto it on
+                the wide side. Not portrait vs landscape: a 2:1 sticker on a
+                square media box clears the sticker by half its height again.
+
+                Anchoring inside the sticker's own box fixes the arithmetic and
+                costs three worse things, and the third is why the obvious
+                restructure is not enough on its own:
+                  - the badge lands inside the hover-card trigger, whose 400px
+                    dropdown opens over the owner's approve/decline — fixed by
+                    having the hover card wrap only the artwork;
+                  - rotation is clamped to ±180, so the badge goes upside down
+                    AND ends up above the sticker. Counter-rotating fixes only
+                    the first half; `top-full` is the local bottom edge, which
+                    at 180° is the screen top and at 90° is off to the side.
+                    Staying upright and staying below are two separate fixes;
+                  - `body`'s transform makes it a stacking context, so a `z-10`
+                    inside it stops out-ranking other placements — a draft
+                    dragged over a pending one then swallows the owner's
+                    buttons. Nothing done INSIDE the box can fix that; it needs
+                    the badge kept outside the transform (what this does) or a
+                    z-index on the pending wrapper itself. */}
             <div
               className="pointer-events-auto absolute z-10 -translate-x-1/2"
               style={{
