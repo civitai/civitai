@@ -23,8 +23,10 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { RemixGalleryItem } from '~/components/RemixGallery/remix-gallery.utils';
 import { dedupeGalleryItems } from '~/components/RemixGallery/remix-gallery.utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Currency } from '~/shared/utils/prisma/enums';
-import { REMIX_GALLERY_MAX_PINNED } from '~/shared/utils/remix-gallery';
+import { REMIX_GALLERY_MAX_PINNED, remixGalleryRemovableAt } from '~/shared/utils/remix-gallery';
+import { daysFromNow, formatDateMin } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -39,6 +41,8 @@ import { trpc } from '~/utils/trpc';
 export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
   const dialog = useDialogContext();
   const utils = trpc.useUtils();
+  const currentUser = useCurrentUser();
+  const isModerator = currentUser?.isModerator ?? false;
 
   // Scoped server-side. Filtering the account-wide list here meant its limit
   // truncated before the filter ran, so a busy owner saw "nothing waiting" on
@@ -239,19 +243,14 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                         <IconPin size={14} />
                       </ActionIcon>
                     </Tooltip>
-                    <Tooltip label="Remove from your gallery">
-                      <ActionIcon
-                        size="sm"
-                        variant="filled"
-                        color="red"
-                        loading={act.isPending}
-                        onClick={() =>
-                          act.mutate({ placementId: item.placementId, action: 'remove' })
-                        }
-                      >
-                        <IconTrash size={14} />
-                      </ActionIcon>
-                    </Tooltip>
+                    <RemoveEntryButton
+                      item={item}
+                      isModerator={isModerator}
+                      pending={act.isPending && act.variables?.placementId === item.placementId}
+                      onRemove={() =>
+                        act.mutate({ placementId: item.placementId, action: 'remove' })
+                      }
+                    />
                   </Group>
                 </div>
               ))}
@@ -278,6 +277,75 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
         </div>
       </Stack>
     </Modal>
+  );
+}
+
+/**
+ * Remove, refused for a week after approval.
+ *
+ * Approval settles the money, so an owner who could approve and immediately
+ * remove would keep the Buzz and give the submitter nothing. The mutation is
+ * what enforces that; this only explains it, which is why it fails **open** —
+ * a missing `resolvedAt` shows an enabled button and lets the server rule,
+ * rather than locking someone out on absent data.
+ *
+ * Moderators are exempt here because they are exempt on the mutation. Disabling
+ * it for them would hide an action the server would allow, and a takedown is
+ * the case that must not wait.
+ */
+function RemoveEntryButton({
+  item,
+  isModerator,
+  pending,
+  onRemove,
+}: {
+  item: RemixGalleryItem;
+  isModerator: boolean;
+  pending: boolean;
+  onRemove: () => void;
+}) {
+  const removableAt = item.resolvedAt ? remixGalleryRemovableAt(item.resolvedAt) : null;
+  const locked = !isModerator && !!removableAt && removableAt > new Date();
+
+  return (
+    <Tooltip
+      withArrow
+      multiline
+      w={260}
+      label={
+        locked && removableAt
+          ? // Both halves are deliberate: "5 days" answers how long, the stamp
+            // answers when, and neither substitutes for the other on a wait
+            // measured in days. Framed as the submitter's protection because
+            // that is what it is — they paid to be here.
+            `Someone paid to be featured here, so entries stay up for a week after you approve them. You can remove this in ${daysFromNow(
+              removableAt,
+              { withoutSuffix: true }
+            )} — ${formatDateMin(removableAt)}.`
+          : 'Remove from your gallery'
+      }
+    >
+      <ActionIcon
+        size="sm"
+        variant="filled"
+        color="red"
+        loading={pending}
+        // `data-disabled` rather than `disabled`: a disabled button fires no
+        // pointer events, so Mantine's tooltip never opens — and the tooltip is
+        // the entire point of disabling it. This keeps the disabled styling and
+        // the explanation, with the click stopped below.
+        data-disabled={locked || undefined}
+        onClick={(event: React.MouseEvent) => {
+          if (locked) {
+            event.preventDefault();
+            return;
+          }
+          onRemove();
+        }}
+      >
+        <IconTrash size={14} />
+      </ActionIcon>
+    </Tooltip>
   );
 }
 
