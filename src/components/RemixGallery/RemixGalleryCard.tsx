@@ -126,7 +126,14 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
         </div>
       ) : (
         <Text size="sm" c="dimmed">
-          No remixes here yet. {visibility.open && 'Be the first to add yours.'}
+          {/* The invitation is gated exactly as the submit button is. Gated on
+              `open` alone it told the owner to be the first to add theirs, next
+              to no button, since they are the one person who cannot. */}
+          No remixes here yet.{' '}
+          {visibility.open &&
+            (isOwner
+              ? 'Other creators can pay to feature their remixes here.'
+              : 'Be the first to add yours.')}
         </Text>
       )}
 

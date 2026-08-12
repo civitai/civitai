@@ -34,7 +34,12 @@ export function RemixGallerySettings() {
   );
 
   const stored = spaces?.[0];
-  const [mode, setMode] = useState('off');
+  // Seeded from the surface default, not from `'off'`. A creator with no row is
+  // open — that is what default-on means — and showing them "No remix gallery"
+  // both lies and, because `commit` sends `mode` alongside whatever changed,
+  // silently writes that opt-out the first time they touch the price or the
+  // content rule. Configuring the feature would have turned it off.
+  const [mode, setMode] = useState<string>(PLACEMENT_SURFACES.remixGallery.defaultMode);
   const [price, setPrice] = useState<number | ''>('');
   const [contentRule, setContentRule] = useState<RemixGalleryContentRule>('atOrBelow');
 
