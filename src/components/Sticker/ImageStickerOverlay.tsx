@@ -136,11 +136,9 @@ export function ImageStickerOverlay({
           viewerId={currentUser?.id}
           treatment={treatment}
           // Every time they arrive on screen (Justin, 2026-08-12) — hence
-          // `armed`, which is first intersection rather than mount, because the
-          // carousel mounts a slide long before anyone looks at it. It does not
-          // disarm, so coming back to a slide you have already seen draws them
-          // straight away; nothing remounts on the way back, so there is no
-          // arrival to play.
+          // `armed`, which tracks intersection rather than mount, because the
+          // carousel mounts a slide long before anyone looks at it and keeps it
+          // mounted long after.
           //
           // `stagger` is what this surface does and never changes while it is
           // mounted; `armed` is whether it has been seen. Held apart because
@@ -157,6 +155,10 @@ export function ImageStickerOverlay({
           // surface has to hold still, and reveal is off by default, so
           // pressing the plus is often what mounts this in the first place.
           paced={!isPlacing}
+          // The box these are drawn on, so the pending controls can convert a
+          // width-fraction into a height-percentage rather than treating the
+          // two as the same unit.
+          mediaAspect={width / height}
           step={historyStep}
         />
       )}

@@ -67,6 +67,7 @@ export function StickerPlacementOverlay({
   stagger = false,
   armed = false,
   paced = true,
+  mediaAspect = 1,
   step = null,
 }: {
   placements: PlacedSticker[];
@@ -150,6 +151,22 @@ export function StickerPlacementOverlay({
    * to stop being a sequence has to say so without touching that flag.
    */
   paced?: boolean;
+  /**
+   * Width ÷ height of the box these are drawn on.
+   *
+   * Only the pending controls need it, and they need it because a sticker's
+   * `scale` is a fraction of the box's WIDTH while the `top` that places them
+   * resolves against its HEIGHT. Without the ratio the two are treated as the
+   * same unit, which on a 768×1152 image put the owner's buttons half again as
+   * far below the sticker as they should be — the "gap on the tall side" the
+   * comment below has described since before anyone had seen it.
+   *
+   * Still an approximation: it assumes a square sticker, because the artwork's
+   * own aspect is only knowable by measuring it once loaded. Square is what
+   * sticker artwork mostly is, and being wrong by the artwork's aspect is much
+   * closer than being wrong by the image's.
+   */
+  mediaAspect?: number;
   /**
    * Index of the last sticker to draw, for the history replay. `null` draws all
    * of them, which is every surface that is not being stepped through.
@@ -344,27 +361,22 @@ export function StickerPlacementOverlay({
                     buttons. Nothing done INSIDE the box can fix that; it needs
                     the badge kept outside the transform (what this does) or a
                     z-index on the pending wrapper itself. */}
+              {/* Two elements, and the split is what keeps it centred: the
+                  outer one only positions — `translateX(-50%)` against the
+                  sticker's own x — and the inner one only turns. With both on
+                  one element the rotation swings the box around its hinge and
+                  drags the centring with it, which reads as the block sitting
+                  off to one side. */}
               <div
-                className={clsx('pointer-events-auto absolute', revealClassName)}
+                className={clsx('pointer-events-auto absolute -translate-x-1/2', revealClassName)}
                 style={{
                   left: `${placement.data.x * 100}%`,
-                  top: `calc(${placement.data.y * 100}% + ${placement.data.scale * 50}%)`,
-                  // Tilted to match the sticker, hinged at the edge nearest it,
-                  // so the block reads as attached to a rotated sticker rather
-                  // than as a level bar under a crooked one.
-                  //
-                  // It does NOT orbit the sticker's centre — it stays where it
-                  // was and only turns. Orbiting needs the sticker's rendered
-                  // HEIGHT, and the anchor above is already approximate for
-                  // exactly that reason: `scale` is a fraction of the width
-                  // while `top` resolves against the height, so the true offset
-                  // needs the sticker's own aspect ratio, which is only knowable
-                  // by measuring the loaded artwork. Turning in place needs none
-                  // of that and carries most of the effect.
-                  transform: `translateX(-50%) rotate(${uprightRotation(
-                    placement.data.rotation
-                  )}deg)`,
-                  transformOrigin: 'top center',
+                  // The sticker's half-height, corrected for the box's aspect,
+                  // plus a small constant so it clears the artwork instead of
+                  // touching it.
+                  top: `calc(${placement.data.y * 100}% + ${
+                    placement.data.scale * 50 * mediaAspect
+                  }% + 4px)`,
                   // Above every sticker, not just above the one it belongs to:
                   // the layer order means anything placed later covers this
                   // sticker, and it would cover the owner's only way to answer.
@@ -372,13 +384,25 @@ export function StickerPlacementOverlay({
                   ...delayStyle,
                 }}
               >
-                {isOwner ? (
-                  <StickerPlacementActions placementIds={[placement.id]} compact />
-                ) : (
-                  <span className="whitespace-nowrap rounded bg-yellow-6 px-2 py-0.5 text-[10px] font-semibold text-dark-9">
-                    Awaiting review
-                  </span>
-                )}
+                <div
+                  style={{
+                    // Tilted to match the sticker, hinged at the edge nearest
+                    // it, so the block reads as attached to a rotated sticker
+                    // rather than as a level bar under a crooked one. It turns
+                    // in place rather than orbiting the sticker's centre, which
+                    // would need the artwork's real rendered height.
+                    transform: `rotate(${uprightRotation(placement.data.rotation)}deg)`,
+                    transformOrigin: 'top center',
+                  }}
+                >
+                  {isOwner ? (
+                    <StickerPlacementActions placementIds={[placement.id]} compact />
+                  ) : (
+                    <span className="whitespace-nowrap rounded bg-yellow-6 px-2 py-0.5 text-[10px] font-semibold text-dark-9">
+                      Awaiting review
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           );
