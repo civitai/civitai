@@ -27,6 +27,7 @@ const COLLECTION_OWNER_ID = 999;
 const ITEM_AUTHOR_ID = 777;
 const OUTSIDER_ID = 12_345;
 const ITEM_ROW_ID = 4242;
+const ITEM_ID = 55;
 
 // First $queryRaw is the permission row (getUserCollectionPermissionsByIds), second is the
 // item-owner lookup.
@@ -58,13 +59,32 @@ function arrangeCollection({
       },
     ])
     .mockResolvedValueOnce([{ userId: ITEM_AUTHOR_ID }]);
-  mockDbWrite.$queryRaw.mockResolvedValue([item]);
+
+  // The lookup's own WHERE clause is now the only thing deciding which rows the writes below
+  // touch, and a mock that ignores its arguments cannot see it. Losing the entity predicate
+  // returns the whole collection and the delete empties it; losing the collection predicate
+  // removes the entity everywhere it appears. Both mutations leave every assertion in this file
+  // green unless the fixture reads the statement it was asked for.
+  mockDbWrite.$queryRaw.mockImplementation((strings: string[], ...values: unknown[]) => {
+    const rendered = strings
+      .map((chunk, i) => chunk + (i < values.length ? render(values[i]) : ''))
+      .join('');
+    expect(rendered).toContain(`"collectionId" = ${COLLECTION_ID}`);
+    expect(rendered).toContain(`"imageId" = ${ITEM_ID}`);
+    return Promise.resolve([item]);
+  });
+}
+
+/** Prisma passes `Prisma.raw` fragments through as values, not as template text. */
+function render(value: unknown) {
+  const fragment = (value as { strings?: string[] })?.strings;
+  return Array.isArray(fragment) ? fragment.join('') : String(value);
 }
 
 function remove({ userId, isModerator = false }: { userId: number; isModerator?: boolean }) {
   return removeCollectionItem({
     collectionId: COLLECTION_ID,
-    itemId: 55,
+    itemId: ITEM_ID,
     userId,
     isModerator,
   } as never);
