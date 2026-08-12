@@ -435,6 +435,24 @@ describe('owner actions', () => {
     expect(placementUpdateMany).not.toHaveBeenCalled();
   });
 
+  it('locks an approved entry that has no resolvedAt, rather than skipping the check', async () => {
+    // The guard used to be gated on the column being set, so it failed OPEN:
+    // any approved row without one — a hand-seeded row, anything predating the
+    // approval path writing it — could be removed instantly. Found because the
+    // seeded review data has a null `resolvedAt` and showed no lock at all.
+    placementFindUnique.mockResolvedValue({
+      ...pending,
+      status: 'approved',
+      resolvedAt: null,
+      createdAt: new Date(),
+    });
+
+    await expect(
+      actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'remove', userId: OWNER })
+    ).rejects.toThrow(/can be removed from/i);
+    expect(placementUpdateMany).not.toHaveBeenCalled();
+  });
+
   it('allows removal once the lock has passed', async () => {
     placementFindUnique.mockResolvedValue({
       ...pending,

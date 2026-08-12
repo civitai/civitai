@@ -251,7 +251,15 @@ export async function actOnRemixGallerySubmission({
 }) {
   const placement = await dbWrite.placement.findUnique({
     where: { id: placementId },
-    select: { id: true, ownerId: true, status: true, surface: true, data: true, resolvedAt: true },
+    select: {
+      id: true,
+      ownerId: true,
+      status: true,
+      surface: true,
+      data: true,
+      resolvedAt: true,
+      createdAt: true,
+    },
   });
 
   if (!placement || placement.surface !== SURFACE)
@@ -299,8 +307,14 @@ export async function actOnRemixGallerySubmission({
     // A moderator is exempt: a takedown is a moderation record rather than an
     // owner decision, and the abusive cases are the ones that must not wait.
     const isModeratorTakedown = isModerator && placement.ownerId !== userId;
-    if (!isModeratorTakedown && placement.resolvedAt) {
-      const removableAt = remixGalleryRemovableAt(placement.resolvedAt);
+    if (!isModeratorTakedown) {
+      // Falls back to `createdAt` rather than skipping when `resolvedAt` is
+      // absent. Gating the check on the column being set made this fail OPEN:
+      // any approved row without one — a hand-seeded row, anything predating
+      // the approval path writing it — could be removed immediately, which is
+      // the exact case the lock exists to prevent. `createdAt` is never null,
+      // so there is always a time to measure from.
+      const removableAt = remixGalleryRemovableAt(placement.resolvedAt ?? placement.createdAt);
       if (removableAt > new Date())
         throw throwBadRequestError(
           `remix gallery: this entry can be removed from ${removableAt.toISOString()}. Someone paid to be featured here, so it stays up for a week after you approve it.`
