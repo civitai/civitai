@@ -73,6 +73,8 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
   // the owner was paid for permanently unreachable.
   const shown = hasNextPage ? trimToWholeRows(items) : items;
   const isOwner = currentUser?.id === visibility.ownerId;
+  // Server-side, and zero for anyone who is not the owner.
+  const pendingCount = visibility.pendingCount ?? 0;
 
   return (
     <Card className="flex flex-col gap-3 rounded-xl">
@@ -88,21 +90,34 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
             </Text>
           </InfoPopover>
         </Text>
-        {isOwner && (
-          <Tooltip label="Manage your gallery">
-            <ActionIcon
-              variant="subtle"
+        {isOwner &&
+          (pendingCount > 0 ? (
+            // A gear icon does not say "two people are waiting on you". The
+            // count was already reachable only by opening the modal, which is
+            // the one place you would not look to find out you needed to.
+            <Button
+              size="compact-sm"
+              variant="light"
+              color="yellow"
+              leftSection={<IconSettings size={16} />}
               onClick={() =>
-                dialogStore.trigger({
-                  component: RemixGalleryManageModal,
-                  props: { imageId },
-                })
+                dialogStore.trigger({ component: RemixGalleryManageModal, props: { imageId } })
               }
             >
-              <IconSettings size={18} />
-            </ActionIcon>
-          </Tooltip>
-        )}
+              {pendingCount} waiting
+            </Button>
+          ) : (
+            <Tooltip label="Manage your gallery">
+              <ActionIcon
+                variant="subtle"
+                onClick={() =>
+                  dialogStore.trigger({ component: RemixGalleryManageModal, props: { imageId } })
+                }
+              >
+                <IconSettings size={18} />
+              </ActionIcon>
+            </Tooltip>
+          ))}
       </Group>
 
       {isLoading ? (

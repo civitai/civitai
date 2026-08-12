@@ -19,6 +19,7 @@ import {
   REMIX_GALLERY_PAGE_SIZE,
   remixGalleryContentRule,
   remixGalleryLevelAllowed,
+  remixGalleryRemovableAt,
   remixGalleryShuffleSeed,
 } from '~/shared/utils/remix-gallery';
 
@@ -250,7 +251,7 @@ export async function actOnRemixGallerySubmission({
 }) {
   const placement = await dbWrite.placement.findUnique({
     where: { id: placementId },
-    select: { id: true, ownerId: true, status: true, surface: true, data: true },
+    select: { id: true, ownerId: true, status: true, surface: true, data: true, resolvedAt: true },
   });
 
   if (!placement || placement.surface !== SURFACE)
@@ -289,6 +290,23 @@ export async function actOnRemixGallerySubmission({
   // nothing left to refund; clawing it back after the fact would punish an
   // owner for taking down content they were entitled to remove.
   if (action === 'remove') {
+    // Refused on the mutation, not merely by disabling the button. Approval
+    // settles the money immediately, so without this an owner could accept a
+    // submission, keep the Buzz and remove the entry before anyone saw it —
+    // which is indistinguishable from an honest removal and costs the submitter
+    // everything they paid.
+    //
+    // A moderator is exempt: a takedown is a moderation record rather than an
+    // owner decision, and the abusive cases are the ones that must not wait.
+    const isModeratorTakedown = isModerator && placement.ownerId !== userId;
+    if (!isModeratorTakedown && placement.resolvedAt) {
+      const removableAt = remixGalleryRemovableAt(placement.resolvedAt);
+      if (removableAt > new Date())
+        throw throwBadRequestError(
+          `remix gallery: this entry can be removed from ${removableAt.toISOString()}. Someone paid to be featured here, so it stays up for a week after you approve it.`
+        );
+    }
+
     const { count } = await dbWrite.placement.updateMany({
       where: { id: placementId, status: 'approved' },
       data: {
@@ -763,14 +781,34 @@ async function galleryHasEntries({
 export async function getRemixGalleryVisibility({
   hostImageId,
   browsingLevel,
+  viewerId,
 }: {
   hostImageId: number;
   browsingLevel: number;
+  /** Decides whether the pending count is computed at all. */
+  viewerId?: number;
 }) {
   const [space, hasEntries] = await Promise.all([
     resolvePlacementSpaceFor({ surface: SURFACE, targetType: TARGET_TYPE, targetId: hostImageId }),
     galleryHasEntries({ hostImageId, browsingLevel }),
   ]);
+
+  // Counted here rather than by a second round trip from the card, and only for
+  // the owner — it is the one number that makes the panel actionable, and
+  // nobody else may know how many submissions someone is sitting on. The card
+  // already awaits this query, so for every other viewer this costs nothing.
+  const pendingCount =
+    viewerId && viewerId === space.ownerId
+      ? await dbRead.placement.count({
+          where: {
+            surface: SURFACE,
+            targetType: TARGET_TYPE,
+            targetId: hostImageId,
+            ownerId: space.ownerId,
+            status: 'pending',
+          },
+        })
+      : 0;
 
   return {
     open: space.mode !== 'off',
@@ -778,6 +816,7 @@ export async function getRemixGalleryVisibility({
     render: space.mode !== 'off' || hasEntries,
     price: space.price,
     ownerId: space.ownerId,
+    pendingCount,
   };
 }
 

@@ -45,6 +45,23 @@ export const REMIX_GALLERY_ROW_WIDTH = 4;
  */
 export const REMIX_GALLERY_MAX_PENDING_PER_OWNER = 10;
 
+/**
+ * How long an approved entry is protected from the owner removing it.
+ *
+ * Approval settles the money immediately, so without this an owner could accept
+ * a submission, take the Buzz and remove the entry before anyone saw it — the
+ * submitter pays in full for nothing, and it is indistinguishable from an honest
+ * removal. A week is long enough that the entry was genuinely shown.
+ *
+ * A moderator is not bound by it: a takedown is a moderation record, not an
+ * owner decision, and the abusive cases are exactly the ones that must not wait.
+ */
+export const REMIX_GALLERY_REMOVAL_LOCK_HOURS = 24 * 7;
+
+/** When an entry approved at `approvedAt` may be removed by its owner. */
+export const remixGalleryRemovableAt = (approvedAt: Date | string) =>
+  new Date(new Date(approvedAt).getTime() + REMIX_GALLERY_REMOVAL_LOCK_HOURS * 60 * 60 * 1000);
+
 export type RemixGalleryContentRule =
   /** The submission may not exceed the host image's rating. */
   | 'atOrBelow'

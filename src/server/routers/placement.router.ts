@@ -307,6 +307,10 @@ export const placementRouter = router({
       getRemixGalleryVisibility({
         hostImageId: input.imageId,
         browsingLevel: viewerBrowsingLevel(ctx, input.browsingLevel),
+        // The service only counts pending submissions when this matches the
+        // space owner, so a signed-out or unrelated viewer never learns how
+        // many someone has waiting.
+        viewerId: ctx.user?.id,
       })
     ),
 
