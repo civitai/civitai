@@ -1,4 +1,5 @@
-import { Button, Group, Popover, Stack, Text } from '@mantine/core';
+import { Button, Group, Popover, Skeleton, Stack, Text } from '@mantine/core';
+import clsx from 'clsx';
 import { useState } from 'react';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -9,30 +10,37 @@ import { trpc } from '~/utils/trpc';
  * One component for the image and the queue, so the two cannot end up asking
  * different questions before taking someone's money.
  *
- * **Decline confirms; approve does not.** Declining keeps 30% of what the placer
- * paid and cannot be undone. Approving pays the owner and is not undone either —
- * an approved sticker can be removed after a week, and that removes it without
- * returning anyone's Buzz — but it takes nothing from the placer that they did
- * not choose to spend, so it does not get the extra press.
+ * **Decline confirms; approve confirms only when there is a note.** Declining
+ * keeps 30% of what the placer paid and cannot be undone. A plain approve takes
+ * nothing from the placer they did not choose to spend, so it goes straight
+ * through — but an approve that would publish someone's words is a second
+ * decision, and it is the one the owner cannot see the subject of otherwise.
  */
 export function StickerPlacementActions({
   placementIds,
   compact = false,
   hasComment = false,
+  stacked = false,
   onDone,
 }: {
   placementIds: number[];
   compact?: boolean;
   /**
-   * Whether any of these carries a note, which is what makes partial approval
-   * meaningful. Offered only then rather than always: "Approve without note" on
-   * a placement with no note is a button that does nothing, in the one place an
-   * owner is deciding what to accept.
+   * Whether this carries a note. Only meaningful for a single placement — a bulk
+   * action deliberately does not offer the choice, so a mixed selection cannot
+   * silently apply one answer to all of them.
    */
   hasComment?: boolean;
+  /**
+   * Stack the buttons instead of sitting them in a row. The queue gives each row
+   * a narrow column; the overlay floats over artwork where a tall stack would
+   * cover more of the image than a wide one.
+   */
+  stacked?: boolean;
   onDone?: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const [approving, setApproving] = useState(false);
   const utils = trpc.useUtils();
 
   const act = trpc.placement.actOnStickers.useMutation({
@@ -48,6 +56,7 @@ export function StickerPlacementActions({
       });
       await utils.placement.invalidate();
       setConfirming(false);
+      setApproving(false);
       onDone?.();
     },
     onError: (error) =>
@@ -56,28 +65,45 @@ export function StickerPlacementActions({
 
   const size = compact ? 'compact-xs' : 'compact-sm';
   const disabled = !placementIds.length || act.isPending;
+  // A bulk action never asks about notes, so the question can only be about one
+  // placement — which is also the only case where the note can be shown.
+  const asksAboutNote = hasComment && placementIds.length === 1;
+
+  const approve = (hideComment?: boolean) =>
+    act.mutate({
+      placementIds,
+      action: 'approve',
+      ...(hideComment === undefined ? {} : { hideComment }),
+    });
+
+  const approveButton = (
+    <Button
+      size={size}
+      color="green"
+      disabled={disabled}
+      fullWidth={stacked}
+      onClick={() => (asksAboutNote ? setApproving((open) => !open) : approve())}
+    >
+      Approve{placementIds.length > 1 ? ` ${placementIds.length}` : ''}
+    </Button>
+  );
 
   return (
-    <Group gap={4} wrap="nowrap">
-      <Button
-        size={size}
-        color="green"
-        disabled={disabled}
-        onClick={() => act.mutate({ placementIds, action: 'approve' })}
-      >
-        Approve{placementIds.length > 1 ? ` ${placementIds.length}` : ''}
-      </Button>
-
-      {hasComment && (
-        <Button
-          size={size}
-          color="green"
-          variant="light"
-          disabled={disabled}
-          onClick={() => act.mutate({ placementIds, action: 'approve', hideComment: true })}
-        >
-          Approve without note
-        </Button>
+    <Group gap={4} wrap="nowrap" className={clsx(stacked && 'flex-col items-stretch')}>
+      {asksAboutNote ? (
+        <Popover opened={approving} onChange={setApproving} withArrow position="top" width={280}>
+          <Popover.Target>{approveButton}</Popover.Target>
+          <Popover.Dropdown>
+            <NoteDecision
+              placementId={placementIds[0]}
+              pending={act.isPending}
+              onInclude={() => approve(false)}
+              onOmit={() => approve(true)}
+            />
+          </Popover.Dropdown>
+        </Popover>
+      ) : (
+        approveButton
       )}
 
       <Popover opened={confirming} onChange={setConfirming} withArrow position="top" width={260}>
@@ -85,6 +111,7 @@ export function StickerPlacementActions({
           <Button
             size={size}
             color="red"
+            fullWidth={stacked}
             // Filled, not light. `light` is a tinted background at low contrast,
             // which sits on top of arbitrary artwork on the image overlay and
             // becomes unreadable against anything busy or red.
@@ -120,5 +147,63 @@ export function StickerPlacementActions({
         </Popover.Dropdown>
       </Popover>
     </Group>
+  );
+}
+
+/**
+ * The note, and the two ways to accept the sticker carrying it.
+ *
+ * The text is shown here because this is the only place the decision is made
+ * with the words in front of you — on the image there is no indication a note
+ * exists at all until the sticker is already live. Fetched on open rather than
+ * carried by the listing, which runs for every image on a feed page.
+ *
+ * Closing the popover is the third answer and needs no button: it leaves the
+ * placement pending, so Decline is still available.
+ */
+function NoteDecision({
+  placementId,
+  pending,
+  onInclude,
+  onOmit,
+}: {
+  placementId: number;
+  pending: boolean;
+  onInclude: () => void;
+  onOmit: () => void;
+}) {
+  const { data, isLoading } = trpc.placement.getStickerPlacementDetail.useQuery(
+    { placementId },
+    { staleTime: 60_000 }
+  );
+
+  return (
+    <Stack gap="xs">
+      <Text size="xs" c="dimmed">
+        They left a note with this sticker:
+      </Text>
+
+      {isLoading ? (
+        <Skeleton height={32} radius="sm" />
+      ) : (
+        <Text size="sm" className="whitespace-pre-wrap break-words">
+          {data?.comment ?? 'The note is no longer available.'}
+        </Text>
+      )}
+
+      <Text size="xs" c="dimmed">
+        Approving without it keeps the sticker and leaves the note private — only you, the person
+        who placed it, and moderators can read it.
+      </Text>
+
+      <Stack gap={4}>
+        <Button size="compact-xs" color="green" loading={pending} onClick={onInclude}>
+          Approve with the note
+        </Button>
+        <Button size="compact-xs" variant="default" loading={pending} onClick={onOmit}>
+          Approve without it
+        </Button>
+      </Stack>
+    </Stack>
   );
 }

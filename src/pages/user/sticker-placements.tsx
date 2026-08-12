@@ -149,6 +149,7 @@ export default function StickerPlacements() {
                   <StickerPlacementActions
                     placementIds={[row.id]}
                     hasComment={!!row.data.comment}
+                    stacked
                     compact
                   />
                 </Group>
