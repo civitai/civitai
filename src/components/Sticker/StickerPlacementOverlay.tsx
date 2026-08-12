@@ -392,9 +392,10 @@ export function StickerPlacementOverlay({
           // get the hover card — the owner needs to know who is asking before
           // answering, and the placer gets the same detail they would once it goes
           // live. Only the owner gets the buttons.
-          pendingControls.push(
-            <div key={placement.id}>
-              {/* ⚠️ Known wrong, and left wrong deliberately.
+          if (stickerHeights[placement.id] != null)
+            pendingControls.push(
+              <div key={placement.id}>
+                {/* ⚠️ Known wrong, and left wrong deliberately.
 
                 `scale` is a fraction of the media box's WIDTH while a `top`
                 percentage resolves against its HEIGHT, so this is the sticker's
@@ -421,40 +422,44 @@ export function StickerPlacementOverlay({
                     buttons. Nothing done INSIDE the box can fix that; it needs
                     the badge kept outside the transform (what this does) or a
                     z-index on the pending wrapper itself. */}
-              <div
-                className={clsx('pointer-events-auto absolute -translate-x-1/2', revealClassName)}
-                style={{
-                  left: `${placement.data.x * 100}%`,
-                  // Measured half-height plus a gap, in pixels. No percentage
-                  // arithmetic: a percentage in `top` resolves against the box's
-                  // height while the sticker is sized from its width, and every
-                  // attempt to reconcile the two by calculation has been wrong on
-                  // some aspect ratio. Until the measurement lands the controls
-                  // are held off screen rather than parked at the sticker's
-                  // centre, where they would sit on top of the artwork for a
-                  // frame and then jump.
-                  top: `calc(${placement.data.y * 100}% + ${
-                    (stickerHeights[placement.id] ?? 0) / 2 + CONTROL_GAP_PX
-                  }px)`,
-                  // Above every sticker, not just above the one it belongs to:
-                  // the layer order means anything placed later covers this
-                  // sticker, and it would cover the owner's only way to answer.
-                  zIndex: layer,
-                  ...delayStyle,
-                }}
-              >
-                <div>
-                  {isOwner ? (
-                    <StickerPlacementActions placementIds={[placement.id]} compact />
-                  ) : (
-                    <span className="whitespace-nowrap rounded bg-yellow-6 px-2 py-0.5 text-[10px] font-semibold text-dark-9">
-                      Awaiting review
-                    </span>
-                  )}
+                {/* Not rendered at all until the sticker has been measured.
+                  Rendering it early would put it at the sticker's centre — on
+                  top of the artwork — and then jump when the measurement lands.
+                  An inline `visibility` did that job until the reveal started
+                  animating visibility itself, at which point the two were
+                  fighting over the same property. Absent beats hidden here:
+                  there is nothing to interact with either. */}
+                <div
+                  className={clsx('pointer-events-auto absolute -translate-x-1/2', revealClassName)}
+                  style={{
+                    left: `${placement.data.x * 100}%`,
+                    // Measured half-height plus a gap, in pixels. No percentage
+                    // arithmetic: a percentage in `top` resolves against the box's
+                    // height while the sticker is sized from its width, and every
+                    // attempt to reconcile the two by calculation has been wrong on
+                    // some aspect ratio.
+                    top: `calc(${placement.data.y * 100}% + ${
+                      stickerHeights[placement.id] / 2 + CONTROL_GAP_PX
+                    }px)`,
+                    // Above every sticker, not just above the one it belongs to:
+                    // the layer order means anything placed later covers this
+                    // sticker, and it would cover the owner's only way to answer.
+                    zIndex: layer,
+                    ...delayStyle,
+                  }}
+                >
+                  <div>
+                    {isOwner ? (
+                      <StickerPlacementActions placementIds={[placement.id]} compact />
+                    ) : (
+                      <span className="whitespace-nowrap rounded bg-yellow-6 px-2 py-0.5 text-[10px] font-semibold text-dark-9">
+                        Awaiting review
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          );
+            );
 
           return (
             <StickerPlacementHoverCard key={placement.id} placementId={placement.id} pending>
