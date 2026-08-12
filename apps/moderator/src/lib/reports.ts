@@ -160,6 +160,14 @@ export function reportStatusVariant(status: string): 'default' | 'secondary' | '
 
 // Only id-URL-clean types are linkable; the rest return null until their richer URL shapes are ported.
 /** One map for "where does this entity live" — see `$lib/entity-url`. The private copy here knew four
- *  segments that one did not, so the same report linked on /reports and rendered dead in User Lookup. */
+ *  segments that one did not, so the same report linked on /reports and rendered dead in User Lookup.
+ *
+ *  A chat has no public page at all, so `entityUrl` correctly returns null for it and the row rendered
+ *  with nothing to click — the reported conversation was only reachable by pasting its id into Chat
+ *  Audit by hand. The transcript IS the destination; it just lives in this app rather than on the site. */
 export const getReportItemUrl = (base: string, type: ReportEntity, entityId: number | null) =>
-  entityUrl(base, type, entityId);
+  type === 'chat'
+    ? entityId
+      ? `/retool/chat-audit/chats?chat=${entityId}`
+      : null
+    : entityUrl(base, type, entityId);
