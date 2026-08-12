@@ -1,7 +1,7 @@
 /**
- * LTX Graph (LTXV2 + LTXV23)
+ * LTX Graph (LTXV2 + LTXV23 + LTXV25)
  *
- * Consolidated controls for LTX Video 2 and LTX Video 2.3 ecosystems.
+ * Consolidated controls for LTX Video 2, 2.3 and 2.5 ecosystems.
  * Both ecosystems are bound to this single graph; the model selector exposes
  * versions for both, and picking a version switches the active ecosystem
  * via the model node's baseModel transform.
@@ -74,9 +74,20 @@ const DISTILLED_IDS = new Set<number>([
 const SULPHUR2_IDS = new Set<number>([SULPHUR2_DEV_ID, SULPHUR2_DISTILLED_ID]);
 
 /**
+ * Registered base model names for the LTX ecosystems. These must match the
+ * `name` of the corresponding entry in `baseModelRecords` — the checkpoint
+ * graph resolves an option's ecosystem with `baseModelByName.get(...)`, and an
+ * unregistered string silently resolves to nothing, so the ecosystem never
+ * switches. `ltx-graph.test.ts` pins them.
+ */
+const LTXV2_BASE_MODEL = 'LTXV2';
+const LTXV23_BASE_MODEL = 'LTXV 2.3';
+const LTXV25_BASE_MODEL = 'LTXV 2.5';
+
+/**
  * Hierarchical version options for the model selector.
- * Top level: LTX version (2.0 / 2.3). Selecting a top-level option also
- * switches the active ecosystem via `baseModel`.
+ * Top level: LTX version (2.0 / 2.3 / 2.5, plus the Sulphur 2 fine-tune).
+ * Selecting a top-level option also switches the active ecosystem via `baseModel`.
  * Second level: variant (Dev / Distilled).
  */
 const ltxVersionOptions: VersionGroup = {
@@ -85,48 +96,48 @@ const ltxVersionOptions: VersionGroup = {
     {
       label: '2.0',
       value: LTXV2_DEV_ID,
-      baseModel: 'LTXV2',
+      baseModel: LTXV2_BASE_MODEL,
       children: {
         label: 'Variant',
         options: [
-          { label: '19B Dev', value: LTXV2_DEV_ID, baseModel: 'LTXV2' },
-          { label: '19B Distilled', value: LTXV2_DISTILLED_ID, baseModel: 'LTXV2' },
+          { label: '19B Dev', value: LTXV2_DEV_ID, baseModel: LTXV2_BASE_MODEL },
+          { label: '19B Distilled', value: LTXV2_DISTILLED_ID, baseModel: LTXV2_BASE_MODEL },
         ],
       },
     },
     {
       label: '2.3',
       value: LTXV23_DEV_ID,
-      baseModel: 'LTXV23',
+      baseModel: LTXV23_BASE_MODEL,
       children: {
         label: 'Variant',
         options: [
-          { label: 'Dev', value: LTXV23_DEV_ID, baseModel: 'LTXV23' },
-          { label: 'Distilled', value: LTXV23_DISTILLED_ID, baseModel: 'LTXV23' },
+          { label: 'Dev', value: LTXV23_DEV_ID, baseModel: LTXV23_BASE_MODEL },
+          { label: 'Distilled', value: LTXV23_DISTILLED_ID, baseModel: LTXV23_BASE_MODEL },
         ],
       },
     },
     {
       label: '2.5',
       value: LTXV25_DEV_ID,
-      baseModel: 'LTXV 2.5',
+      baseModel: LTXV25_BASE_MODEL,
       children: {
         label: 'Variant',
         options: [
-          { label: '22B Dev', value: LTXV25_DEV_ID, baseModel: 'LTXV 2.5' },
-          { label: '22B Distilled', value: LTXV25_DISTILLED_ID, baseModel: 'LTXV 2.5' },
+          { label: '22B Dev', value: LTXV25_DEV_ID, baseModel: LTXV25_BASE_MODEL },
+          { label: '22B Distilled', value: LTXV25_DISTILLED_ID, baseModel: LTXV25_BASE_MODEL },
         ],
       },
     },
     {
       label: 'Sulphur 2',
       value: SULPHUR2_DEV_ID,
-      baseModel: 'LTXV23',
+      baseModel: LTXV23_BASE_MODEL,
       children: {
         label: 'Variant',
         options: [
-          { label: 'Dev', value: SULPHUR2_DEV_ID, baseModel: 'LTXV23' },
-          { label: 'Distilled', value: SULPHUR2_DISTILLED_ID, baseModel: 'LTXV23' },
+          { label: 'Dev', value: SULPHUR2_DEV_ID, baseModel: LTXV23_BASE_MODEL },
+          { label: 'Distilled', value: SULPHUR2_DISTILLED_ID, baseModel: LTXV23_BASE_MODEL },
         ],
       },
     },

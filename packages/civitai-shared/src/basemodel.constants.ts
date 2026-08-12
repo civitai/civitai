@@ -1986,6 +1986,19 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     modelTypes: loraOnly,
     support: 'partial',
   },
+
+  // ==========================================================================
+  // LTXV 2.3 → LTXV 2.5
+  // ==========================================================================
+  // LTXV 2.3 LoRA works partially in LTXV 2.5 — surfaced in the resource picker
+  // only with Advanced mode on, and flagged as partially compatible.
+  {
+    sourceEcosystemId: ECO.LTXV23,
+    targetEcosystemId: ECO.LTXV25,
+    supportType: 'generation',
+    modelTypes: loraOnly,
+    support: 'partial',
+  },
 ];
 
 // =============================================================================
