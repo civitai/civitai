@@ -204,10 +204,10 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                   ? 'This image has no rating yet, so nothing can be submitted to it.'
                   : hasNextPage
                   ? // Hedged while pages remain, because every count here is
-                    // computed from what has loaded. The loader below keeps
-                    // fetching, so this is a statement about progress rather
-                    // than a verdict on the library.
-                    'Still looking through your images…'
+                    // computed from what has loaded. Phrased as a paused state
+                    // rather than an active one: nothing is fetching now, the
+                    // button below is the action.
+                    'Nothing so far in the images loaded.'
                   : unrated > 0 && !overRated
                   ? // Sending them to post images they have already posted is the
                     // one wrong answer here; they are waiting on a rating.
@@ -226,7 +226,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
               of requests, in exactly the case where nothing will be found.
               Paging past the first page is worth doing, but on intent. */}
           {!eligible.length && hasNextPage && !isLoading && visibility && (
-            <Group justify="center" pb="sm">
+            <Group justify="center" mt={-12} pb="sm">
               <Button
                 variant="subtle"
                 size="compact-sm"
