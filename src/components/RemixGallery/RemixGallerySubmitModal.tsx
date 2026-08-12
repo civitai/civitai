@@ -25,9 +25,8 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
   const utils = trpc.useUtils();
   const [selected, setSelected] = useState<number | null>(null);
 
-  const { data: visibility } = trpc.placement.getRemixGalleryVisibility.useQuery({
-    imageId: hostImageId,
-  });
+  const { data: visibility, isError: visibilityFailed } =
+    trpc.placement.getRemixGalleryVisibility.useQuery({ imageId: hostImageId });
 
   const { images, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryImages(
     { userId: currentUser?.id, period: 'AllTime', limit: 50 },
@@ -60,7 +59,15 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
     maxLevel == null
       ? []
       : images.filter((image) => !!image.nsfwLevel && image.nsfwLevel <= maxLevel);
-  const hidden = images.length - eligible.length;
+  // Counted apart, because they are hidden for different reasons and only one of
+  // them is about the gallery's ceiling. An unrated image is not "too spicy for
+  // this gallery", it has no rating yet — telling someone otherwise sends them
+  // looking for a rating that is not there.
+  const overRated =
+    maxLevel == null
+      ? 0
+      : images.filter((image) => !!image.nsfwLevel && image.nsfwLevel > maxLevel).length;
+  const unrated = images.filter((image) => !image.nsfwLevel).length;
 
   return (
     // `padding={0}` would strip the header's padding too, putting the title and
@@ -101,10 +108,24 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
               reason, which reads as a bug rather than a rule. The reason is not
               named: which rule bit is the host's business, not the
               submitter's. */}
-          {hidden > 0 && (
+          {maxLevel === 0 ? (
             <Text size="xs" c="dimmed">
-              {hidden === 1 ? '1 of your images is' : `${hidden} of your images are`} rated above
-              what this gallery accepts, so {hidden === 1 ? 'it is' : 'they are'} not shown.
+              This image has no rating yet, so nothing can be submitted to it.
+            </Text>
+          ) : (
+            overRated > 0 && (
+              <Text size="xs" c="dimmed">
+                {overRated === 1 ? '1 of your images is' : `${overRated} of your images are`} rated
+                above what this gallery accepts, so {overRated === 1 ? 'it is' : 'they are'} not
+                shown.
+              </Text>
+            )
+          )}
+
+          {unrated > 0 && (
+            <Text size="xs" c="dimmed">
+              {unrated === 1 ? '1 of your images is' : `${unrated} of your images are`} still being
+              rated and cannot be submitted yet.
             </Text>
           )}
 
@@ -124,7 +145,14 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
           {/* Waits on the ceiling as well as the images: without it the picker
               renders "you have nothing to submit" for a beat while the rule is
               still in flight. */}
-          {isLoading || !visibility ? (
+          {visibilityFailed ? (
+            // An errored query settles with no data and isLoading false, so
+            // waiting on `visibility` alone spins here forever with nothing to
+            // read and nothing to press.
+            <Alert color="red" icon={<IconAlertTriangle />}>
+              Couldn&apos;t load this gallery. Close this and try again.
+            </Alert>
+          ) : isLoading || !visibility ? (
             <Group justify="center" py="xl">
               <Loader />
             </Group>
@@ -158,7 +186,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
               message={
                 maxLevel === 0
                   ? 'This image has no rating yet, so nothing can be submitted to it.'
-                  : hidden > 0
+                  : overRated > 0
                   ? 'None of your posted images are rated low enough for this gallery.'
                   : "You don't have any posted images to submit yet. Post your remix first, then submit it here."
               }
