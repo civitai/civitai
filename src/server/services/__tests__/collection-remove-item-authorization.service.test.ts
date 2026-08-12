@@ -69,8 +69,10 @@ function arrangeCollection({
     const rendered = strings
       .map((chunk, i) => chunk + (i < values.length ? render(values[i]) : ''))
       .join('');
-    expect(rendered).toContain(`"collectionId" = ${COLLECTION_ID}`);
-    expect(rendered).toContain(`"imageId" = ${ITEM_ID}`);
+    // One assertion spanning both, because two independent `toContain`s prove the predicates are
+    // present and not that they are conjoined: `AND` -> `OR` keeps both substrings and returns
+    // the whole collection plus the image's rows everywhere else.
+    expect(rendered).toContain(`"collectionId" = ${COLLECTION_ID} AND "imageId" = ${ITEM_ID}`);
     return Promise.resolve([item]);
   });
 }
