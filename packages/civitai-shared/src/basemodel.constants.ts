@@ -2759,7 +2759,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: "Lightricks' next-generation video generation model",
     type: 'video',
     ecosystemId: ECO.LTXV2,
-    licenseId: 16,
+    licenseId: 35,
   },
   {
     id: BM.LTXV23,
