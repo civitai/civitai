@@ -9,6 +9,15 @@ import { useStickerRevealStore } from '~/store/sticker-reveal.store';
 import { useStickerHistoryStep } from '~/store/sticker-history.store';
 
 /**
+ * How much of the slide has to be on screen before its stickers start arriving.
+ *
+ * Most of it, not a sliver: the reveal is worth watching from the moment the
+ * slide is the thing you are looking at, and starting it mid-transition spends
+ * it on a strip of image sliding past.
+ */
+const ARM_AT = 0.6;
+
+/**
  * The overlay for one image: placed stickers, and the one being positioned.
  *
  * Sized to the rendered media box rather than to its container — a letterboxed
@@ -54,15 +63,15 @@ export function ImageStickerOverlay({
     return () => setSurface(null);
   }, [isPlacing, setSurface]);
 
-  // The reveal is a mount-time CSS animation, and mounting is not the same event
-  // as being looked at: the carousel keeps both neighbouring slides mounted, so
-  // an overlay two slides away plays its whole reveal off-screen and is already
-  // settled by the time anyone swipes to it. Arming on first intersection is
-  // what makes "every time they become visible" true for every slide rather
-  // than only for the one the page opened on.
+  // Mounting is not the same event as being looked at: the carousel keeps the
+  // slide either side mounted, so an overlay that armed on mount would play its
+  // whole reveal off-screen and be settled before anyone swiped to it. Arming on
+  // intersection — and disarming when the slide leaves — is what makes "every
+  // time they become visible" true for arriving at a slide, going next, and
+  // coming back.
   const [armed, setArmed] = useState(false);
   useEffect(() => {
-    if (!surfaceEl || armed) return;
+    if (!surfaceEl) return;
 
     // No observer means no way to tell arrival from mounting, and the stickers
     // are held at zero opacity until armed — so the failure has to be "reveal
@@ -74,19 +83,25 @@ export function ImageStickerOverlay({
 
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) setArmed(true);
+        // Two thresholds rather than one, and it keeps observing after the
+        // first: leaving the screen disarms, so coming back reveals again.
+        // Without that, arriving at a slide a second time showed the stickers
+        // already settled — the carousel keeps the slide either side mounted,
+        // so stepping right and back again never remounts anything, and a
+        // one-shot arm has nothing left to play.
+        if (entry.intersectionRatio >= ARM_AT) setArmed(true);
+        else if (entry.intersectionRatio === 0) setArmed(false);
       },
-      // Barely any exposure, because the unarmed state is blank rather than
-      // wrong: arming early costs a reveal that starts while the slide is still
-      // coming in, and arming late is a visibly empty image. Not 0 — a drag
-      // nudged a few percent and released arms the neighbour permanently, and
-      // its reveal then plays out while it snaps back off screen, so by the
-      // time you navigate there is nothing left to play.
-      { threshold: 0.05 }
+      // The gap between the two is deliberate. Arming at a sliver meant the
+      // reveal ran while the slide was still sliding in — and a drag nudged a
+      // few percent and released armed a neighbour that then played its whole
+      // reveal off-screen. Disarming only at nothing-visible stops the pair
+      // flickering while a drag hovers around the boundary.
+      { threshold: [0, ARM_AT] }
     );
     observer.observe(surfaceEl);
     return () => observer.disconnect();
-  }, [armed, surfaceEl]);
+  }, [surfaceEl]);
 
   const imageIds = useMemo(() => [imageId], [imageId]);
   // Signed-in viewers always fetch, because a pending placement is something
