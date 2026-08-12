@@ -15,13 +15,13 @@ import {
 import { IconCheck, IconExternalLink, IconX } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { Meta } from '~/components/Meta/Meta';
+import { SubmissionThumb } from '~/components/RemixGallery/SubmissionThumb';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
-import { formatDate } from '~/utils/date-helpers';
+import { daysFromNow, formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -29,6 +29,20 @@ const TABS = ['received', 'sent'] as const;
 type TabValue = (typeof TABS)[number];
 
 const isTabValue = (value: unknown): value is TabValue => TABS.includes(value as TabValue);
+
+const A_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * "2 hours ago" while it is still news, the date once it is history.
+ *
+ * Both queues turn on how long something has been sitting in them, and an
+ * absolute date answers that worst in exactly the window where people care.
+ * Same split the manage modal and the sticker hover card make.
+ */
+const agedLabel = (at: Date | string) => {
+  const value = new Date(at);
+  return Date.now() - value.getTime() < A_DAY_MS ? daysFromNow(value) : formatDate(value);
+};
 
 /**
  * Both directions of a remix gallery submission: what is waiting on your
@@ -156,11 +170,7 @@ function ReceivedTab({ rows, isLoading }: { rows: ReceivedRow[]; isLoading: bool
         <Card key={row.id} withBorder>
           <Group justify="space-between" wrap="nowrap" align="flex-start">
             <Group gap="sm" wrap="nowrap" align="flex-start">
-              {row.image && (
-                <div className="w-20 shrink-0">
-                  <AspectRatioImageCard aspectRatio="square" image={row.image} />
-                </div>
-              )}
+              {row.image && <SubmissionThumb image={row.image} />}
               <Stack gap={4}>
                 <Text size="sm">
                   <Text span fw={600}>
@@ -175,7 +185,7 @@ function ReceivedTab({ rows, isLoading }: { rows: ReceivedRow[]; isLoading: bool
                   </Text>
                 </Group>
                 <Text size="xs" c="dimmed">
-                  Sent {formatDate(row.createdAt)}
+                  Sent {agedLabel(row.createdAt)}
                   {row.expiresAt ? ` — expires ${formatDate(row.expiresAt)}` : ''}
                 </Text>
                 <Anchor component={Link} href={`/images/${row.targetId}`} size="xs">
@@ -187,9 +197,12 @@ function ReceivedTab({ rows, isLoading }: { rows: ReceivedRow[]; isLoading: bool
               </Stack>
             </Group>
 
-            <Group gap="xs" wrap="nowrap">
+            {/* Stacked and equal width, matching the manage modal: the pair is
+                one decision with two answers, not a row of buttons. */}
+            <Stack gap={6} className="w-28 shrink-0">
               <Button
                 size="compact-sm"
+                fullWidth
                 leftSection={<IconCheck size={14} />}
                 loading={busyWith(row.id, 'approve')}
                 // Every action button is disabled while any one is in flight.
@@ -203,6 +216,7 @@ function ReceivedTab({ rows, isLoading }: { rows: ReceivedRow[]; isLoading: bool
               </Button>
               <Button
                 size="compact-sm"
+                fullWidth
                 variant="default"
                 leftSection={<IconX size={14} />}
                 loading={busyWith(row.id, 'decline')}
@@ -211,7 +225,7 @@ function ReceivedTab({ rows, isLoading }: { rows: ReceivedRow[]; isLoading: bool
               >
                 Decline
               </Button>
-            </Group>
+            </Stack>
           </Group>
         </Card>
       ))}
@@ -285,7 +299,7 @@ function SentTab({ rows, isLoading }: { rows: SentRow[]; isLoading: boolean }) {
               </Group>
               <Text size="sm">On {row.owner?.username ?? 'a creator'}&apos;s image</Text>
               <Text size="xs" c="dimmed">
-                Submitted {formatDate(row.createdAt)}
+                Submitted {agedLabel(row.createdAt)}
                 {row.status === 'pending' && row.expiresAt
                   ? ` — expires ${formatDate(row.expiresAt)}`
                   : ''}

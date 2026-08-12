@@ -18,7 +18,6 @@ import {
 } from '@mantine/core';
 import {
   IconCheck,
-  IconExternalLink,
   IconInbox,
   IconPin,
   IconPinnedOff,
@@ -33,8 +32,8 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { RemixGalleryItem } from '~/components/RemixGallery/remix-gallery.utils';
 import { dedupeGalleryItems } from '~/components/RemixGallery/remix-gallery.utils';
+import { SubmissionThumb } from '~/components/RemixGallery/SubmissionThumb';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import type { RouterOutput } from '~/types/router';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { REMIX_GALLERY_MAX_PINNED, remixGalleryRemovableAt } from '~/shared/utils/remix-gallery';
 import { daysFromNow, formatDateMin } from '~/utils/date-helpers';
@@ -392,39 +391,6 @@ function RemoveEntryButton({
       >
         <IconTrash size={14} />
       </ActionIcon>
-    </Tooltip>
-  );
-}
-
-/**
- * The submitted image, openable.
- *
- * Approving or declining off a 64px thumbnail is deciding without looking, and
- * there was previously no way to look — the modal is the only place a
- * submission appears, and nothing in it linked anywhere.
- *
- * A new tab rather than navigation: this is a review queue with other rows
- * still waiting on it, and sending the owner away to see one submission loses
- * the modal and their place in it.
- */
-type PendingSubmission = RouterOutput['placement']['getPendingRemixGallerySubmissions'][number];
-
-function SubmissionThumb({ image }: { image: NonNullable<PendingSubmission['image']> }) {
-  return (
-    <Tooltip label="Open this remix in a new tab" withArrow openDelay={400}>
-      <a
-        href={`/images/${image.id}`}
-        target="_blank"
-        rel="noreferrer"
-        className="group relative block w-20 shrink-0"
-      >
-        <AspectRatioImageCard aspectRatio="square" image={image} />
-        {/* Hidden until hover: the affordance has to be discoverable without
-            putting a permanent icon over every thumbnail in the queue. */}
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-md bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
-          <IconExternalLink size={18} className="text-white" />
-        </div>
-      </a>
     </Tooltip>
   );
 }

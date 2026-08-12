@@ -32,6 +32,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { REMIX_GALLERY_ROW_WIDTH } from '~/shared/utils/remix-gallery';
+import { daysFromNow, formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
 // Loaded with the hover, not with the page. The creator card drags in profile
@@ -43,6 +44,19 @@ const SmartCreatorCard = dynamic(() =>
 
 /** Matches the sticker hover card, so the two read as the same object. */
 const HOVER_CARD_WIDTH = 400;
+
+const A_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * "2 hours ago" while it is still news, the date once it is history — the same
+ * split the sticker hover card makes, for the same reason: a relative stamp
+ * stops informing past a day, and an absolute one says nothing in the hours
+ * where people care.
+ */
+const featuredLabel = (at: Date | string) => {
+  const value = new Date(at);
+  return Date.now() - value.getTime() < A_DAY_MS ? daysFromNow(value) : formatDate(value);
+};
 
 /**
  * Who submitted this entry, on hover.
@@ -84,6 +98,27 @@ function GalleryEntryHoverCard({
       {/* The creator card carries its own padding edge to edge, and its border
           is dropped rather than the dropdown's so there is one outline. */}
       <HoverCard.Dropdown p={0}>
+        {/* Says why this popped. Without it the dropdown is a bare profile card
+            appearing over an image, with nothing tying it to the gallery it
+            came from. Same shape as the sticker hover card's header — icon,
+            dimmed line, timestamp pushed right — so the two read as one object.
+
+            "Featured", not "submitted": `resolvedAt` is when the owner approved
+            it, which is when it started appearing here. Calling that a
+            submission date would be a different and wrong fact. */}
+        <Group gap={6} px="sm" py={6} wrap="nowrap" justify="space-between">
+          <Group gap={6} wrap="nowrap" className="min-w-0">
+            <IconHierarchy size={14} className="shrink-0" />
+            <Text size="xs" c="dimmed" className="min-w-0 truncate">
+              Remix submitted by
+            </Text>
+          </Group>
+          {item.resolvedAt && (
+            <Text size="xs" c="dimmed" className="shrink-0">
+              featured {featuredLabel(item.resolvedAt)}
+            </Text>
+          )}
+        </Group>
         {opened ? (
           // The submitted image's owner IS the submitter: the mutation refuses
           // anything but your own image, so these cannot drift. `placerId` is
