@@ -160,7 +160,7 @@ export function StickerPlacementOverlay({
   // must not re-pace the stickers already on screen.
   const revealDuration = useRevealDuration();
   const delays = useMemo(
-    () => (stagger ? placementRevealDelays(ordered, { maxTotalMs: revealDuration }) : null),
+    () => (stagger ? placementRevealDelays(ordered, { totalMs: revealDuration }) : null),
     [ordered, stagger, revealDuration]
   );
 

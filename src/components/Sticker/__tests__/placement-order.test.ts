@@ -60,37 +60,71 @@ describe('placementRevealDelays', () => {
     expect(delays[2]).toBeGreaterThan(delays[1]);
   });
 
-  it('pauses longer where the real gap was longer', () => {
-    const base = new Date('2026-08-12T12:00:00Z').getTime();
-    const gaps = (ms: number) =>
-      placementRevealDelays([
-        { id: 1, placedAt: new Date(base) },
-        { id: 2, placedAt: new Date(base + ms) },
-      ])[1];
+  it('gives a longer share of the reveal to a longer real gap', () => {
+    const base = new Date('2026-08-12T00:00:00Z').getTime();
+    // Measured as a SHARE, not as a duration. The sequence is normalised to the
+    // chosen length, so with only two stickers the single pause is always the
+    // whole of it however far apart they were placed — the dilation lives in how
+    // the length is divided up, and needs three placements to be visible at all.
+    const share = (secondGapMs: number) => {
+      const delays = placementRevealDelays(
+        [
+          { id: 1, placedAt: new Date(base) },
+          { id: 2, placedAt: new Date(base + MINUTE) },
+          { id: 3, placedAt: new Date(base + MINUTE + secondGapMs) },
+        ],
+        { totalMs: 3_000 }
+      );
+      return (delays[2] - delays[1]) / delays[2];
+    };
 
-    // A minute apart, an hour apart, a week apart: each step strictly longer
-    // than the last. This is the property the "time dilation" is FOR — a
-    // constant step would satisfy every other assertion here.
-    expect(gaps(HOUR)).toBeGreaterThan(gaps(MINUTE));
-    expect(gaps(7 * 24 * HOUR)).toBeGreaterThan(gaps(HOUR));
+    expect(share(HOUR)).toBeGreaterThan(share(MINUTE));
+    expect(share(7 * 24 * HOUR)).toBeGreaterThan(share(HOUR));
   });
 
-  it('fits a long history inside the budget instead of dropping its tail', () => {
+  it('fills the duration it is given, whatever the history looks like', () => {
     const base = new Date('2026-08-01T00:00:00Z').getTime();
-    // Forty stickers, each a day apart — every gap at the per-step ceiling, so
-    // the uncapped sequence runs far past anything watchable.
-    const placements = Array.from({ length: 40 }, (_, index) => ({
+    const forty = Array.from({ length: 40 }, (_, index) => ({
       id: index + 1,
       placedAt: new Date(base + index * 24 * HOUR),
     }));
+    // Two stickers a minute apart are worth a fraction of a second of raw
+    // sequence; forty a day apart are worth far more than the budget. Both land
+    // on the same last delay, because the number is a duration the viewer chose
+    // rather than a ceiling — scaling only downwards left "12 seconds" looking
+    // identical to "1.5 seconds" on any image that was not heavily stickered.
+    const long = placementRevealDelays(forty, { totalMs: 3_000 });
+    const short = placementRevealDelays(
+      [at(1, '2026-08-12T12:00:00Z'), at(2, '2026-08-12T12:01:00Z')],
+      { totalMs: 3_000 }
+    );
 
-    const delays = placementRevealDelays(placements, { maxTotalMs: 3_000 });
-
-    expect(delays).toHaveLength(40);
-    expect(delays[delays.length - 1]).toBeLessThanOrEqual(3_000);
+    expect(long).toHaveLength(40);
+    expect(long[long.length - 1]).toBe(3_000);
+    expect(short[short.length - 1]).toBe(3_000);
     // Scaled, not truncated: the last stickers are the ones deliberately placed
     // over others, and a truncated tail reveals them with no sequence at all.
-    for (let i = 1; i < delays.length; i++) expect(delays[i]).toBeGreaterThan(delays[i - 1]);
+    for (let i = 1; i < long.length; i++) expect(long[i]).toBeGreaterThan(long[i - 1]);
+  });
+
+  it('keeps the shape of the gaps when it stretches them', () => {
+    const base = new Date('2026-08-12T00:00:00Z').getTime();
+    // A short gap then a long one. Whatever the total, the second pause has to
+    // stay several times the first — that ratio is the whole of the time
+    // dilation, and stretching to a duration must not flatten it.
+    const uneven = [
+      { id: 1, placedAt: new Date(base) },
+      { id: 2, placedAt: new Date(base + MINUTE) },
+      { id: 3, placedAt: new Date(base + MINUTE + 7 * 24 * HOUR) },
+    ];
+
+    const ratio = (totalMs: number) => {
+      const d = placementRevealDelays(uneven, { totalMs });
+      return (d[2] - d[1]) / (d[1] - d[0]);
+    };
+
+    expect(ratio(1_500)).toBeGreaterThan(1.5);
+    expect(ratio(12_000)).toBeCloseTo(ratio(1_500), 1);
   });
 
   it('never returns NaN when the whole history lands in one instant', () => {
@@ -100,7 +134,7 @@ describe('placementRevealDelays', () => {
         { id: 1, placedAt: same },
         { id: 2, placedAt: same },
       ],
-      { maxTotalMs: 0 }
+      { totalMs: 0 }
     );
 
     expect(delays.every(Number.isFinite)).toBe(true);

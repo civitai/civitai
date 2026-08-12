@@ -141,7 +141,7 @@ function StickerHistoryList({
   const setDuration = useStickerRevealSpeedStore((state) => state.setDuration);
 
   const delays = useMemo(
-    () => placementRevealDelays(placements, { maxTotalMs: durationMs * REPLAY_MULTIPLIER }),
+    () => placementRevealDelays(placements, { totalMs: durationMs * REPLAY_MULTIPLIER }),
     [placements, durationMs]
   );
 
@@ -253,7 +253,12 @@ function StickerHistoryList({
           </Text>
         </div>
         <div className="flex items-center gap-1">
-          <Menu shadow="md" position="bottom-end" withinPortal>
+          {/* NOT in a portal. Mantine's popover closes on any click outside its
+              own DOM, and a portalled menu is outside it — so choosing a speed
+              dismissed the whole panel. Kept inside, the click lands within the
+              popover and the menu is absolutely positioned, so it still cannot
+              move anything. */}
+          <Menu shadow="md" position="bottom-end" withinPortal={false}>
             <Menu.Target>
               <LegacyActionIcon size="sm" variant="subtle" color="gray" aria-label="Reveal speed">
                 <IconSettings size={14} />
