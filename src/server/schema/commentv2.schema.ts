@@ -3,6 +3,7 @@ import { constants } from '~/server/common/constants';
 import { ThreadSort } from '~/server/common/enums';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { surfaceMayContainStickers } from '~/shared/utils/sticker-token';
+import { COMMENT_ALLOWED_TAGS } from '~/utils/html-sanitize-helpers';
 
 export type CommentConnectorInput = z.infer<typeof commentConnectorSchema>;
 export const commentConnectorSchema = z.object({
@@ -33,7 +34,7 @@ export type UpsertCommentV2Input = z.infer<typeof upsertCommentv2Schema>;
 export const upsertCommentv2Schema = commentConnectorSchema.extend({
   id: z.number().optional(),
   content: getSanitizedStringSchema({
-    allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'span'],
+    allowedTags: COMMENT_ALLOWED_TAGS,
     // Read from STICKER_SURFACES rather than hardcoded, so "may contain a
     // sticker" and "charges for one" can't drift apart — that split is what let
     // sticker markup be containable on surfaces that never charged.
