@@ -509,6 +509,47 @@ export async function sendBuzz(input: {
   return { ok: true };
 }
 
+// STRIKES. The main app owns them (`UserStrike`), and Retool's own strike buttons called this endpoint
+// — so the spoke does too. The moderator database's legacy `UserStrikes` table is Retool-era history:
+// still read and shown, never written, because a row there gets none of what a real strike does —
+// escalation (>=2 points auto-mutes 3 days, >=3 indefinite + session invalidation), points, expiry,
+// the typed `strike-issued` notification and its email, or any way to void it.
+//
+// `ManualModAction` on purpose: it is the classification for a moderator-issued strike AND the one
+// reason the endpoint exempts from the 1-auto-strike-per-day rate limit. Any other value and a
+// moderator's second strike on the same account in one day comes back `{ skipped: true }` — a silent
+// no-op that reads as success.
+export async function issueStrike(input: {
+  userId: number;
+  /** The user-facing message. Shown to the account, so it is the canned text the moderator picked. */
+  description: string;
+  internalNotes?: string;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  const result = await postJson({
+    path: '/api/mod/retool/strike',
+    body: {
+      action: 'create',
+      userId: input.userId,
+      reason: 'ManualModAction',
+      description: input.description,
+      ...(input.internalNotes ? { internalNotes: input.internalNotes } : {}),
+    },
+    label: 'Strike endpoint',
+    auth: 'modKey',
+    timeoutMs: 15_000,
+  });
+  if (!result.ok) return result;
+
+  // `{ skipped: true }` is the rate-limit path. It returns 200, so without this a refused strike is
+  // indistinguishable from an issued one.
+  if (result.body?.skipped === true)
+    return { ok: false, error: 'The strike was rate-limited and NOT issued.' };
+
+  await logAction('issueStrike', input.userId, input.moderatorId);
+  return { ok: true };
+}
+
 // REWARDS ELIGIBILITY (Retool's UpdateBuzzEligible → /api/mod/set-rewards-eligibility).
 export async function setRewardsEligibility(input: {
   userId: number;

@@ -6,7 +6,6 @@ import { parseForm, userIdSchema } from '$lib/server/query';
 import { isSection } from '../sections';
 import {
   addUserNote,
-  addUserStrike,
   sendModNotification,
   updateUserNote,
 } from '$lib/server/moderation-memory.service';
@@ -19,6 +18,7 @@ import {
   bulkCommentAction,
   bulkReviewAction,
   grantCosmetic,
+  issueStrike,
   removeCosmetic,
   refundShopPurchase,
   sendBuzz,
@@ -256,18 +256,16 @@ export const actions: Actions = {
     );
     if (typeof input === 'string') return noteFail(400, input);
 
-    const result = await addUserStrike({
+    // Writes the MAIN APP's strike system, not the moderator database's legacy table — the legacy one
+    // gets no escalation, points, expiry, notification or void path. See issueStrike.
+    const result = await issueStrike({
       userId: input.userId,
-      reason: input.reason,
-      author,
+      description: input.reason,
       moderatorId: locals.user.id,
     });
     if (!result.ok) return noteFail(400, result.error);
-
-    // The strike landed either way; say so plainly rather than reporting a clean success, so nobody
-    // assumes the user was told when they were not.
-    if (!result.notified)
-      return noteFail(200, 'Strike recorded, but the user could not be notified.');
+    // No "could not notify" branch any more: the typed `strike-issued` notification and its email are
+    // sent by `createStrike` inside the same call, so there is no separate step here to half-fail.
     return { success: true };
   },
 

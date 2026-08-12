@@ -118,14 +118,24 @@ Open, with the evidence each audit produced:
       Verified end to end on 1290051: a 24h mute wrote `muteExpiresAt` exactly 24.0h out with
       `manualMute: true`; revoke cleared mute, expiry and flag. 55 strike-service tests pass, both apps
       typecheck.
-- [ ] **Strikes write a second, disconnected ledger.** `addUserStrike` inserts into the moderator DB's
-      legacy `UserStrikes`; the main app owns `UserStrike` via `retool/strike → create`. Missing from
-      the local path: escalation (≥2 points auto-mutes 3 days, ≥3 indefinite + session invalidation),
-      `points`/`expiresAt`, the `StrikeReason` enum, `reportId` attachment, the typed `strike-issued`
-      notification and its email, the auto-strike rate limit, and any way to void. The panel is also
-      blind to every strike the automated pipeline issued. **Still filed as backlog rather than parity
-      — Retool never called that endpoint either** — but this is the largest behavioural gap in the app.
-- [x] **Local mute / force-logout skip the session SIGNAL** (2026-08-11). Fixed inside
+- [x] **Strikes write a second, disconnected ledger** (2026-08-12 — decision: the main app owns strikes,
+      Retool only ever gave mods manual give/revoke on top of it). `addUserStrike` inserted into the
+      moderator database's legacy `UserStrikes`, which gets none of what a strike does. Issuing now calls
+      `retool/strike → create`, so escalation, points, expiry, the typed `strike-issued` notification and
+      the void path all apply. The legacy table stays as Retool-era history: read and shown, never written.
+      `ManualModAction` is the reason on purpose — it is both the right classification and the one value
+      the endpoint exempts from the 1-auto-strike-per-day limit; any other value silently returns
+      `{ skipped: true }` on a moderator's second strike of the day, which a 200 would have hidden. The
+      spoke now treats that shape as a failure.
+      🔴 **This uncovered a live production outage, fixed in the same change.**
+      `evaluateStrikeEscalation` ran `SELECT SUM(points) … FOR UPDATE`, which Postgres refuses outright
+      (`0A000: FOR UPDATE is not allowed with aggregate functions`). It is called by `createStrike`,
+      `voidStrike`, `expireStrikes` (daily) and `processTimedUnmutes` (hourly) — so **no strike could be
+      issued or voided, no strike ever expired, and no timed mute ever lifted**. The two crons catch per
+      user and log, so it failed silently: **679 `strike-expired-escalation-failed` events in the last 30
+      days of `civitai-prod`**, every one this error. Fixed by locking the rows and aggregating in a
+      second statement inside the same transaction — same lock, valid SQL. Note the 55 strike-service
+      tests passed before and after: they mock Prisma, so no test could have caught it.- [x] **Local mute / force-logout skip the session SIGNAL** (2026-08-11). Fixed inside
       `invalidateUserSessions` rather than at the four call sites, so mute, unmute, force-logout,
       `unmuteAndClearTimed` and `revokeTimedMute` are all covered and a sixth caller cannot forget it.
       Always sends `invalid`, never `refresh`: the tokens are revoked by the time it fires, so a

@@ -332,13 +332,24 @@ export async function evaluateStrikeEscalation(
 ): Promise<{ totalPoints: number; action: EscalationAction }> {
   // Read points and user state in a single transaction to prevent race conditions
   const { totalPoints, user } = await dbWrite.$transaction(async (tx) => {
+    // Lock the rows FIRST, then aggregate them. Postgres refuses `FOR UPDATE` on an aggregate query
+    // ("FOR UPDATE is not allowed with aggregate functions", SQLSTATE 0A000), so the previous single
+    // SUM(...) FOR UPDATE threw on every call — which took the whole strike endpoint with it. The lock
+    // still holds for the rest of the transaction, so the race this was written to prevent is covered.
+    await tx.$queryRaw`
+      SELECT id
+      FROM "UserStrike"
+      WHERE "userId" = ${userId}
+        AND "status" = ${StrikeStatus.Active}::"StrikeStatus"
+        AND "expiresAt" > NOW()
+      FOR UPDATE
+    `;
     const [pointsResult] = await tx.$queryRaw<[{ sum: bigint | null }]>`
       SELECT SUM(points) as sum
       FROM "UserStrike"
       WHERE "userId" = ${userId}
         AND "status" = ${StrikeStatus.Active}::"StrikeStatus"
         AND "expiresAt" > NOW()
-      FOR UPDATE
     `;
     const txUser = await tx.user.findUnique({
       where: { id: userId },
