@@ -7,6 +7,7 @@ import {
   Alert,
   Badge,
   Button,
+  Card,
   Divider,
   Group,
   Loader,
@@ -15,7 +16,16 @@ import {
   Text,
   Tooltip,
 } from '@mantine/core';
-import { IconCheck, IconPin, IconPinnedOff, IconTrash, IconX } from '@tabler/icons-react';
+import {
+  IconCheck,
+  IconExternalLink,
+  IconInbox,
+  IconPin,
+  IconPinnedOff,
+  IconRotate,
+  IconTrash,
+  IconX,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useMemo, useState } from 'react';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
@@ -24,6 +34,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { RemixGalleryItem } from '~/components/RemixGallery/remix-gallery.utils';
 import { dedupeGalleryItems } from '~/components/RemixGallery/remix-gallery.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import type { RouterOutput } from '~/types/router';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { REMIX_GALLERY_MAX_PINNED, remixGalleryRemovableAt } from '~/shared/utils/remix-gallery';
 import { daysFromNow, formatDateMin } from '~/utils/date-helpers';
@@ -120,73 +131,90 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
     <Modal {...dialog} title="Manage your remix gallery" size="lg">
       <Stack gap="md">
         <div>
-          <Text fw={600}>Waiting for review</Text>
+          <SectionDivider
+            icon={IconInbox}
+            label="Waiting for review"
+            badge={
+              forThisImage.length ? (
+                <Badge size="sm" variant="light" color="yellow">
+                  {forThisImage.length}
+                </Badge>
+              ) : null
+            }
+          />
           {pendingLoading ? (
             <Group justify="center" py="md">
               <Loader size="sm" />
             </Group>
           ) : forThisImage.length ? (
-            <Stack gap="xs" mt="xs">
+            <Stack gap="xs" mt="sm">
               {forThisImage.map((row) => (
-                <Group key={row.id} justify="space-between" wrap="nowrap">
-                  <Group gap="xs" wrap="nowrap">
-                    {row.image && (
-                      <div className="w-16">
-                        <AspectRatioImageCard aspectRatio="square" image={row.image} />
-                      </div>
-                    )}
-                    <Stack gap={0}>
-                      <Text size="sm">{row.placer?.username ?? 'Someone'}</Text>
-                      <Group gap={4}>
-                        <CurrencyIcon currency={Currency.BUZZ} size={12} />
-                        <Text size="xs" c="dimmed">
-                          {row.amount}
+                <Card key={row.id} withBorder p="xs" radius="md">
+                  <Group justify="space-between" wrap="nowrap" align="center">
+                    <Group gap="sm" wrap="nowrap" className="min-w-0">
+                      {row.image && <SubmissionThumb image={row.image} />}
+                      <Stack gap={2} className="min-w-0">
+                        <Text size="sm" fw={500} className="truncate">
+                          {row.placer?.username ?? 'Someone'}
                         </Text>
-                      </Group>
+                        <Group gap={4} wrap="nowrap">
+                          <CurrencyIcon currency={Currency.BUZZ} size={12} />
+                          <Text size="xs" c="dimmed">
+                            {row.amount}
+                          </Text>
+                        </Group>
+                        <Text size="xs" c="dimmed">
+                          Sent {formatDateMin(new Date(row.createdAt))}
+                        </Text>
+                      </Stack>
+                    </Group>
+                    {/* Stacked, and the same width, so the pair reads as one
+                        decision with two answers rather than a row of buttons.
+                        Keyed to the row and the action — bare `act.isPending`
+                        spun every button in the queue on any one click. */}
+                    <Stack gap={6} className="w-28 shrink-0">
+                      <Button
+                        size="compact-sm"
+                        fullWidth
+                        leftSection={<IconCheck size={14} />}
+                        loading={actingOn(row.id, 'approve')}
+                        onClick={() => act.mutate({ placementId: row.id, action: 'approve' })}
+                      >
+                        Approve
+                      </Button>
+                      <Button
+                        size="compact-sm"
+                        fullWidth
+                        variant="default"
+                        leftSection={<IconX size={14} />}
+                        loading={actingOn(row.id, 'decline')}
+                        onClick={() => act.mutate({ placementId: row.id, action: 'decline' })}
+                      >
+                        Decline
+                      </Button>
                     </Stack>
                   </Group>
-                  <Group gap="xs" wrap="nowrap">
-                    {/* Keyed to the row and the action. Bare `act.isPending`
-                        spun every button in the queue on any one click, which
-                        reads as "all of these are happening". */}
-                    <Button
-                      size="compact-sm"
-                      leftSection={<IconCheck size={14} />}
-                      loading={actingOn(row.id, 'approve')}
-                      onClick={() => act.mutate({ placementId: row.id, action: 'approve' })}
-                    >
-                      Approve
-                    </Button>
-                    <Button
-                      size="compact-sm"
-                      variant="default"
-                      leftSection={<IconX size={14} />}
-                      loading={actingOn(row.id, 'decline')}
-                      onClick={() => act.mutate({ placementId: row.id, action: 'decline' })}
-                    >
-                      Decline
-                    </Button>
-                  </Group>
-                </Group>
+                </Card>
               ))}
             </Stack>
           ) : (
-            <Text size="sm" c="dimmed" mt="xs">
+            <Text size="sm" c="dimmed" mt="sm">
               Nothing waiting.
             </Text>
           )}
         </div>
 
-        <Divider />
-
         <div>
-          <Group gap={6}>
-            <Text fw={600}>Pinned</Text>
-            <Badge size="sm" variant="light">
-              {pinnedIds.length}/{REMIX_GALLERY_MAX_PINNED}
-            </Badge>
-          </Group>
-          <Text size="xs" c="dimmed">
+          <SectionDivider
+            icon={IconPin}
+            label="Pinned"
+            badge={
+              <Badge size="sm" variant="light">
+                {pinnedIds.length}/{REMIX_GALLERY_MAX_PINNED}
+              </Badge>
+            }
+          />
+          <Text size="xs" c="dimmed" mt="sm">
             Pinned remixes always show first, in the order you set here. Everything else rotates.
           </Text>
 
@@ -210,10 +238,8 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
           )}
         </div>
 
-        <Divider />
-
         <div>
-          <Text fw={600}>In the rotation</Text>
+          <SectionDivider icon={IconRotate} label="In the rotation" />
           {atPinCap && (
             <Alert color="gray" p="xs" mt="xs">
               <Text size="xs">
@@ -352,6 +378,71 @@ function RemoveEntryButton({
         <IconTrash size={14} />
       </ActionIcon>
     </Tooltip>
+  );
+}
+
+/**
+ * The submitted image, openable.
+ *
+ * Approving or declining off a 64px thumbnail is deciding without looking, and
+ * there was previously no way to look — the modal is the only place a
+ * submission appears, and nothing in it linked anywhere.
+ *
+ * A new tab rather than navigation: this is a review queue with other rows
+ * still waiting on it, and sending the owner away to see one submission loses
+ * the modal and their place in it.
+ */
+type PendingSubmission = RouterOutput['placement']['getPendingRemixGallerySubmissions'][number];
+
+function SubmissionThumb({ image }: { image: NonNullable<PendingSubmission['image']> }) {
+  return (
+    <Tooltip label="Open this remix in a new tab" withArrow openDelay={400}>
+      <a
+        href={`/images/${image.id}`}
+        target="_blank"
+        rel="noreferrer"
+        className="group relative block w-20 shrink-0"
+      >
+        <AspectRatioImageCard aspectRatio="square" image={image} />
+        {/* Hidden until hover: the affordance has to be discoverable without
+            putting a permanent icon over every thumbnail in the queue. */}
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-md bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
+          <IconExternalLink size={18} className="text-white" />
+        </div>
+      </a>
+    </Tooltip>
+  );
+}
+
+/**
+ * A section heading that is the rule itself rather than text sitting above one.
+ *
+ * The three sections are different kinds of thing — a queue, a fixed order, and
+ * everything else — and at a glance they previously read as one long list with
+ * bold words in it.
+ */
+function SectionDivider({
+  icon: Icon,
+  label,
+  badge,
+}: {
+  icon: typeof IconInbox;
+  label: string;
+  badge?: React.ReactNode;
+}) {
+  return (
+    <Divider
+      labelPosition="left"
+      label={
+        <Group gap={6} wrap="nowrap">
+          <Icon size={15} />
+          <Text fw={600} size="sm">
+            {label}
+          </Text>
+          {badge}
+        </Group>
+      }
+    />
   );
 }
 
