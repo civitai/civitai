@@ -12,7 +12,7 @@
  *
  * Actions:
  *   clearProfile     - { userId, fields?: ('location'|'bio'|'message')[] }
- *   mute             - { userId }                       Set muted=true
+ *   mute             - { userId, expiresAt? }           Set muted=true (timed when expiresAt given)
  *   unmute           - { userId }                       Set muted=false
  *   forceLogout      - { userId }                       Invalidate all active sessions
  *   updateIdentity   - { userId, username?, email?, name? }    [privileged]
@@ -47,11 +47,18 @@ export default defineRetoolEndpoint('user', {
     },
   }),
   mute: retoolAction({
-    input: z.object({ userId }),
+    // `expiresAt` makes this a TIMED mute lifted by processTimedUnmutes. Omit it for the indefinite
+    // mute this action has always performed. A moderator-set expiry is marked manual, so strike
+    // de-escalation cannot lift it early — see setUserMuted.
+    input: z.object({ userId, expiresAt: z.coerce.date().optional() }),
     rateLimit: { max: 60, windowSeconds: 60 },
     async handler(input) {
-      await setUserMuted({ userId: input.userId, muted: true });
-      return { muted: true, affected: { userIds: [input.userId] } };
+      await setUserMuted({ userId: input.userId, muted: true, expiresAt: input.expiresAt ?? null });
+      return {
+        muted: true,
+        expiresAt: input.expiresAt ?? null,
+        affected: { userIds: [input.userId] },
+      };
     },
   }),
   unmute: retoolAction({

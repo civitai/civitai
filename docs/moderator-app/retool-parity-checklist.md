@@ -106,13 +106,18 @@ All **34** option-bearing widgets in the export (22 Select, 7 Checkbox, 1 RadioG
 
 Open, with the evidence each audit produced:
 
-- [ ] 🔴 **Timed mutes never expire.** `addTimedMute` writes the moderator-DB row and sets
-      `muted`/`mutedAt`, but **not `User.muteExpiresAt`** — the only thing that lifts a timed mute is
-      the main app's `processTimedUnmutes`, which selects on that column. So a 24-hour mute is
-      permanent while the panel renders it as expiring. **This cannot be fixed locally**: the main app
-      uses `muteExpiresAt !== null` to mean "this mute came from strikes", so a spoke-set value would
-      let a strike expiry silently clear a moderator's mute. Needs an `expiresAt`/`muteHours` parameter
-      on `retool/user → mute`, main-app side.
+- [x] 🔴 **Timed mutes never expire** (2026-08-12 — decision: a moderator's manual mute overrides the
+      strike system). `addTimedMute` wrote the moderator-DB row and set `muted`, but never
+      `User.muteExpiresAt` — the only column `processTimedUnmutes` selects on — so a 24-hour mute was
+      permanent while the panel rendered it as expiring.
+      The blocker was that `muteExpiresAt !== null` carried **two** meanings: "has an expiry" and "came
+      from strikes". `meta.manualMute` now separates them: `evaluateStrikeEscalation`'s de-escalation
+      branch skips a manual mute, so decaying strike points no longer lift a mute a moderator set to run
+      for another two days, while `processTimedUnmutes` still lifts it on time and clears the flag.
+      `retool/user → mute` takes an optional `expiresAt` (omitted = today's indefinite mute).
+      Verified end to end on 1290051: a 24h mute wrote `muteExpiresAt` exactly 24.0h out with
+      `manualMute: true`; revoke cleared mute, expiry and flag. 55 strike-service tests pass, both apps
+      typecheck.
 - [ ] **Strikes write a second, disconnected ledger.** `addUserStrike` inserts into the moderator DB's
       legacy `UserStrikes`; the main app owns `UserStrike` via `retool/strike → create`. Missing from
       the local path: escalation (≥2 points auto-mutes 3 days, ≥3 indefinite + session invalidation),

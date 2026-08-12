@@ -456,13 +456,45 @@ export async function clearUserProfileFields({
 /**
  * Mod-driven: explicit mute/unmute (vs. legacy toggle).
  */
-export async function setUserMuted({ userId, muted }: { userId: number; muted: boolean }) {
+/**
+ * `muteExpiresAt` carries two meanings that used to be the same one: "this mute has an expiry" and
+ * "this mute came from strikes". A moderator setting a timed mute needs the first without the second —
+ * otherwise `evaluateStrikeEscalation` clears their mute early the moment strike points decay, because
+ * its de-escalation branch treats any non-null `muteExpiresAt` as strike-owned.
+ *
+ * So a moderator-set expiry also stamps `meta.manualMute`, which that branch refuses to touch.
+ * `processTimedUnmutes` still lifts it on time — that is the point of a timed mute — and clears the
+ * flag with it.
+ */
+export async function setUserMuted({
+  userId,
+  muted,
+  expiresAt,
+}: {
+  userId: number;
+  muted: boolean;
+  expiresAt?: Date | null;
+}) {
   const date = new Date();
+  const existing = await dbRead.user.findUnique({ where: { id: userId }, select: { meta: true } });
+  const currentMeta = (existing?.meta ?? {}) as UserMeta & { manualMute?: boolean };
+  // Only a muted-with-expiry is manual-and-timed. An indefinite mute has no expiry to protect, and an
+  // unmute ends the whole question, so both clear the flag.
+  const manualMute = muted && !!expiresAt;
+
   const user = await updateUserById({
     id: userId,
     data: {
       muted,
       mutedAt: muted ? date : null,
+      // Unmuting always clears the expiry; muting only sets one when the caller asked for it, so an
+      // ordinary mute keeps today's indefinite behaviour.
+      ...(muted
+        ? expiresAt !== undefined
+          ? { muteExpiresAt: expiresAt }
+          : {}
+        : { muteExpiresAt: null }),
+      meta: { ...currentMeta, manualMute },
     },
     updateSource: muted ? 'retool:mute' : 'retool:unmute',
   });

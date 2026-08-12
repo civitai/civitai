@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/private';
+import { sql } from '@civitai/db/kysely';
 import { dbWrite } from './db';
 import { getBuzz } from './buzz';
 import { bustUserCosmeticCaches } from './cache';
@@ -293,11 +294,24 @@ export async function setMuted(input: {
   muted: boolean;
   moderatorId: number;
   activity?: string;
+  /** Set for a TIMED mute. Without it a timed mute never lifts: `processTimedUnmutes` selects on
+   *  `muteExpiresAt`, so a 24-hour mute that only wrote the moderator-DB row was permanent while this
+   *  panel rendered it as expiring. */
+  until?: Date | null;
 }): Promise<ActionResult> {
   const now = new Date();
+  // `meta.manualMute` separates "a moderator set this expiry" from "strikes set it". The main app's
+  // strike de-escalation clears any mute with a non-null muteExpiresAt, so without this flag a
+  // moderator's 72-hour mute is lifted early the moment the account's strike points decay.
+  const manualMute = input.muted && !!input.until;
   const result = await dbWrite
     .updateTable('User')
-    .set({ muted: input.muted, mutedAt: input.muted ? now : null })
+    .set({
+      muted: input.muted,
+      mutedAt: input.muted ? now : null,
+      muteExpiresAt: input.muted ? input.until ?? null : null,
+      meta: sql`COALESCE("meta", '{}'::jsonb) || ${JSON.stringify({ manualMute })}::jsonb`,
+    })
     .where('id', '=', input.userId)
     .executeTakeFirst();
 
@@ -1018,12 +1032,14 @@ export async function addTimedMute(input: {
     })
     .execute();
 
-  // The timed row is the schedule; the mute itself still has to be applied to the account.
+  // The timed row is the schedule; the mute itself still has to be applied to the account — WITH the
+  // expiry, or nothing ever lifts it.
   return setMuted({
     userId: input.userId,
     muted: true,
     moderatorId: input.moderatorId,
     activity: 'timedMute',
+    until: input.until,
   });
 }
 
