@@ -152,6 +152,12 @@ export function DraftStickerLayer() {
     // Refusal is unconditional, so losing that up would lock every later
     // gesture. Leaving the window is how an up goes missing in practice, and
     // ending a drag you have navigated away from is the right outcome anyway.
+    // ⚠️ Bound on `window` in the BUBBLE phase, and that is what makes it safe
+    // rather than catastrophic. `blur` does not bubble, so this fires only when
+    // the window itself loses focus. Registered with `{capture: true}`, or on
+    // `document`, it would instead see every focus change on the page — a
+    // select popup, a focus trap, one input handing off to another — and kill
+    // the drag on each one.
     const onBlur = () => {
       if (!gesture.current) return;
       gesture.current = null;
