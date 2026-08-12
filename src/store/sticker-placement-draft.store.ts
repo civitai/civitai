@@ -147,7 +147,17 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
 
   // Reopening on the image you are already placing on keeps the drafts — that is
   // the way back to the panel after putting it away, so taking them would punish
-  // using it. A different image is a different session.
+  // using it.
+  //
+  // A different image is a different session, and starting one DISCARDS whatever
+  // was arranged on the previous image. That is the intended behaviour, decided
+  // by Justin rather than fallen into: moving on to the next image means giving
+  // up the stickers you were applying to the last one. Note it is the *new
+  // session* that discards them, not the navigation — the drafts survive
+  // off-screen, so returning to the image before starting somewhere else brings
+  // them and the panel back. Do not add a confirmation here without asking;
+  // this looked like a silent-data-loss bug in review and is not one.
+  //
   // `interaction` is cleared on both branches. It is otherwise only cleared by
   // the layer's pointerup listener, so a pointerup that lands while the layer is
   // unmounted — the overlay stops rendering at zero width, which a resize
