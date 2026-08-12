@@ -164,8 +164,8 @@ export function MentionHoverCard({
   return (
     <Popover
       opened
-      // Controlled, so Mantine's own dismissals (outside click, Escape) come
-      // back through here rather than being swallowed.
+      // Controlled, so an outside click comes back through here rather than
+      // being swallowed.
       onChange={(opened) => !opened && setMention(null)}
       width={HOVER_CARD_WIDTH}
       shadow="sm"
