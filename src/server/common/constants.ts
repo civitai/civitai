@@ -588,6 +588,9 @@ type LicenseDetails = {
   // permission override (-> [None]) and the per-version monetization block. The set
   // of affected base models is derived from this flag (see nonCommercialBaseModels).
   nonCommercial?: boolean;
+  // When true, the license requires derivatives to carry the same license, so the
+  // creator's `allowDifferentLicense` cannot apply (see getEffectiveDifferentLicense).
+  requiresSameLicense?: boolean;
 };
 
 // Levels considered "mature" — restricted whenever a license sets disableMature.
@@ -674,7 +677,7 @@ const baseLicenses: Record<string, LicenseDetails> = {
     name: 'Illustrious License',
   },
   'ltxv license': {
-    url: 'https://huggingface.co/Lightricks/LTX-Video/blob/main/LTX-Video-Open-Weights-License-0.X.txt',
+    url: 'https://huggingface.co/Lightricks/LTX-Video/blob/8984fa25007f376c1a299016d0957a37a2f797bb/LTX-Video-Open-Weights-License-0.X.txt',
     name: 'LTX Video License',
   },
   'cogvideox license': {
@@ -710,10 +713,22 @@ const baseLicenses: Record<string, LicenseDetails> = {
     name: 'Pony',
   },
   ltxv2: {
-    // Not github.com/Lightricks/LTX-2 — that tracks the latest revision, which since
-    // Aug 2026 is scoped to 2.5+ and does not govern these weights.
-    url: 'https://huggingface.co/Lightricks/LTX-2.3/blob/main/LICENSE',
+    // Permalinked to the Jan 5 2026 revision these weights shipped under. Not
+    // github.com/Lightricks/LTX-2, which serves a later rewrite scoped to 2.5+.
+    url: 'https://huggingface.co/Lightricks/LTX-2.3/blob/6f3520585aa27248020550da2f453aa0c572398c/LICENSE',
     name: 'LTX-2 Community License Agreement',
+  },
+  ltxv25: {
+    // Permalinked to the Aug 11 2026 revision. `blob/main` tracks the latest, so the next
+    // rewrite Lightricks pushes there would silently relabel these weights — the same trap
+    // baseLicenses.ltxv2 avoids.
+    url: 'https://github.com/Lightricks/LTX-2/blob/2362161611a61154d342e02724fb8fe58efd455d/LICENSE.md',
+    name: 'LTX-2.x Community License Agreement',
+    // Section 3.6 permits only additive terms on derivatives, dropping the "or different"
+    // that the Jan 2026 text (baseLicenses.ltxv2) still allows.
+    requiresSameLicense: true,
+    notice:
+      'LTX Video 2.5 and its derivatives, including LoRAs and fine-tunes, are licensed by Lightricks Ltd. under the LTX-2.x Community License Agreement and must be redistributed under that same agreement, with a copy included. Use is subject to the use restrictions in its Attachment A. Entities with annual revenues of at least $10,000,000 must obtain a paid commercial license from Lightricks before any commercial use.',
   },
   anima: {
     url: 'https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md',
@@ -798,6 +813,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   LTXV: baseLicenses['ltxv license'],
   LTXV2: baseLicenses['ltxv2'],
   'LTXV 2.3': baseLicenses['ltxv2'],
+  'LTXV 2.5': baseLicenses['ltxv25'],
   CogVideoX: baseLicenses['cogvideox license'],
   NoobAI: baseLicenses['noobAi'],
   HiDream: baseLicenses['mit'],
@@ -868,6 +884,26 @@ export function getEffectiveCommercialUse(
   baseModel?: string | null
 ): CommercialUse[] {
   return isNonCommercialBaseModel(baseModel) ? [CommercialUse.None] : allowCommercialUse;
+}
+
+// Base models whose license requires derivatives to carry the same license.
+export const sameLicenseBaseModels: BaseModel[] = Object.entries(baseModelLicenses)
+  .filter(([, license]) => !!license?.requiresSameLicense)
+  .map(([baseModel]) => baseModel as BaseModel);
+
+export function requiresSameLicenseBaseModel(baseModel?: string | null): boolean {
+  return !!baseModel && !!baseModelLicenses[baseModel as BaseModel]?.requiresSameLicense;
+}
+
+// Effective "different permissions on merges" for a resource given its base model.
+// Mirrors getEffectiveCommercialUse: derived at read time so it tracks the license
+// config, and because the permission is stored per-model while the base model that
+// constrains it is per-version.
+export function getEffectiveDifferentLicense(
+  allowDifferentLicense: boolean,
+  baseModel?: string | null
+): boolean {
+  return requiresSameLicenseBaseModel(baseModel) ? false : allowDifferentLicense;
 }
 
 export function isNsfwLevelRestrictedForBaseModel(

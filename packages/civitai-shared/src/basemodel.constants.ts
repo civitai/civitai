@@ -2244,7 +2244,7 @@ export const licenses: LicenseRecord[] = [
   {
     id: 16,
     name: 'LTX Video License',
-    url: 'https://huggingface.co/Lightricks/LTX-Video/blob/main/LTX-Video-Open-Weights-License-0.X.txt',
+    url: 'https://huggingface.co/Lightricks/LTX-Video/blob/8984fa25007f376c1a299016d0957a37a2f797bb/LTX-Video-Open-Weights-License-0.X.txt',
   },
   {
     id: 17,
@@ -2349,7 +2349,7 @@ export const licenses: LicenseRecord[] = [
   {
     id: 35,
     name: 'LTX-2 Community License Agreement',
-    url: 'https://huggingface.co/Lightricks/LTX-2.3/blob/main/LICENSE',
+    url: 'https://huggingface.co/Lightricks/LTX-2.3/blob/6f3520585aa27248020550da2f453aa0c572398c/LICENSE',
   },
   {
     id: 36,
@@ -2378,6 +2378,13 @@ export const licenses: LicenseRecord[] = [
     id: 39,
     name: 'Black Forest Labs Terms of Service',
     url: 'https://bfl.ai/legal/terms-of-service',
+  },
+  {
+    id: 40,
+    // Separate from id 35: this is the Aug 2026 rewrite, scoped by its own section 1.9
+    // to LTX-2.5 and later, and stricter than the Jan 2026 text the 2.x weights carry.
+    name: 'LTX-2.x Community License Agreement',
+    url: 'https://github.com/Lightricks/LTX-2/blob/2362161611a61154d342e02724fb8fe58efd455d/LICENSE.md',
   },
 ];
 
@@ -2800,7 +2807,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: "Lightricks' LTX Video 2.5 generation model",
     type: 'video',
     ecosystemId: ECO.LTXV25,
-    licenseId: 35,
+    licenseId: 40,
   },
 
   // Lens
