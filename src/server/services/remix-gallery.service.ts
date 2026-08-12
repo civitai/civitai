@@ -947,19 +947,10 @@ export async function getPendingRemixGallerySubmissions({
 /**
  * The submitter's own view, so they can find and withdraw what they sent.
  *
- * Carries the submitted image so the list can show what was sent rather than
- * only its price and status.
- *
- * 🔴 **Every row is returned whether or not its image resolves.** The owner's
- * queue above filters to published/scanned/unflagged content and drops what
- * fails, because it is showing someone else's media to a stranger. Doing that
- * here would hide a submitter's own pending row the moment their image was
- * unpublished or flagged — and with it the only route to the withdraw that
- * returns their escrow. Their money must not become unreachable because their
- * image did. `image` is null on those rows and the page renders a placeholder.
- *
- * No visibility predicates for the same reason: this is a person's own upload
- * shown back to them, not a feed.
+ * Returns every row even when its image doesn't resolve. Filtering to visible
+ * content like the owner queue above does would hide a submitter's own pending
+ * row — and the withdraw that returns their escrow — the moment their image was
+ * unpublished or flagged.
  */
 export async function getMyRemixGallerySubmissions({
   placerId,
