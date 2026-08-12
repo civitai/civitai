@@ -52,6 +52,9 @@ vi.mock('~/components/UserSettings/hooks', () => ({
   useCurrentUserSettings: () => ({ hideDonationGoals: false }),
   useMutateUserSettings: () => ({ mutate: vi.fn(), isPending: false }),
 }));
+// The paid-access section opens with a DismissibleAlert, whose `useIsClient()` throws rather than
+// defaulting when the provider isn't mounted — unmocked it takes the whole render down.
+vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 // The description field mounts the whole rich-text editor (tiptap + sticker cosmetics queries), none
 // of which this test drives.
 vi.mock('~/components/RichTextEditor/RichTextEditorComponent', () => ({
@@ -114,9 +117,18 @@ const feeInput = () => page.getByLabelText('Licensing fee (Buzz)');
 
 // A version that already charges, with an affirmation on record — so the disclosure opens straight onto
 // the pricing controls, which is how a creator who already priced this version meets the form.
+// Published with a permanent gate: that is what makes the paid-access section configurable (and so the
+// early-access-loss warning reachable) without an early-access score.
 const chargingVersion = {
   ...(version as object),
+  status: 'Published',
   licensingFee: 2,
+  licensingFeeSettlementCurrency: 'Buzz',
+  paidAccess: {
+    endsAt: null,
+    timeframeDays: null,
+    terms: { download: { price: 5000 } },
+  },
   meta: {
     rightsAffirmation: {
       userId: 1,
@@ -128,6 +140,7 @@ const chargingVersion = {
 } as unknown as React.ComponentProps<typeof ModelVersionUpsertForm>['version'];
 
 function renderChargingForm() {
+  flags.current = { licensingFee: true, earlyAccessModel: true };
   renderWithProviders(
     <ModelVersionUpsertForm model={model} version={chargingVersion} onSubmit={vi.fn()}>
       {() => <button type="submit">Save</button>}
@@ -188,8 +201,9 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
   });
 
   // Closing the section on a version that already charges is a removal, and it happens with the priced
-  // controls off screen — so both the warning and the undo have to live outside them.
-  test('warns before removing an existing charge, and puts it back when reopened', async () => {
+  // controls off screen — so the warning, the irreversible-early-access note and the undo all have to live
+  // outside them.
+  test('warns before removing an existing charge, and restores it on request', async () => {
     renderChargingForm();
 
     await expect.element(chargeSwitch()).toBeChecked();
@@ -198,11 +212,55 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
 
     await userEvent.click(chargeSwitch());
     expect(feeInput().elements()).toHaveLength(0);
-    await expect.element(page.getByText(/Saving now removes this version/)).toBeInTheDocument();
+    expect(
+      page.getByText(/Saving now removes this version's license fee and paid access/).elements()
+    ).toHaveLength(1);
+    expect(page.getByText(/your payment for early access will be lost/).elements()).toHaveLength(1);
 
-    await userEvent.click(chargeSwitch());
+    await userEvent.click(page.getByRole('button', { name: 'Restore the stored settings' }));
+    await expect.element(chargeSwitch()).toBeChecked();
     await expect.element(feeInput()).toBeInTheDocument();
     expect((feeInput().element() as HTMLInputElement).value).toBe(stored);
+  });
+
+  // The alarm is keyed to the values, not the switch: clearing the fee with the section OPEN loses just as
+  // much, and a switch-position check cannot see it (`hasExistingCharge` forces the section open).
+  test('warns when a stored fee is cleared with the section still open', async () => {
+    renderChargingForm();
+
+    await expect.element(feeInput()).toBeInTheDocument();
+    await userEvent.fill(feeInput(), '0');
+    // Read synchronously right after the edit: the warning is absorbing, so if it isn't here now it is
+    // not coming, and a poll would only turn a one-second failure into a fifteen-second one.
+    expect(page.getByText(/Saving now removes this version/).elements()).toHaveLength(1);
+    // Still open — this is an edit in a labelled field, not a collapse.
+    await expect.element(chargeSwitch()).toBeChecked();
+  });
+
+  // A grandfathered version — priced before the affirmation existed — has to tick the box to save at all.
+  // Clearing that tick on a switch round-trip that changed nothing puts the creator back in front of
+  // "Confirmation required", which is the error this ticket was filed about.
+  test('keeps the affirmation through a switch round-trip on a version that already charges', async () => {
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={model}
+        version={
+          { ...(version as object), licensingFee: 2 } as React.ComponentProps<
+            typeof ModelVersionUpsertForm
+          >['version']
+        }
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    await userEvent.click(rightsCheckbox());
+    await expect.element(rightsCheckbox()).toBeChecked();
+
+    await userEvent.click(chargeSwitch());
+    await userEvent.click(chargeSwitch());
+    await expect.element(rightsCheckbox()).toBeChecked();
   });
 
   // A pristine edit short-circuits the mutation, so the observable is the form's own onSubmit: it fires

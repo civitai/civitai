@@ -505,9 +505,14 @@ export function ModelVersionUpsertForm({
   // the requirement) keeps them visible, so it can still be edited or turned off.
   const showChargeSettings =
     chargeEnabled && (alreadyAffirmed || rightsAffirmed || hasExistingCharge);
-  // Closing the section on a version that already charges IS the removal, and it happens without the
-  // creator seeing the priced controls at all — so the consequence has to be stated outside them.
-  const removingStoredCharge = hasExistingCharge && !showChargeSettings;
+  // Keyed to the VALUES, not to the switch: a stored charge can also be cleared with the section open (a
+  // hand-typed 0, the inner paid-access switch) or with it unmounted entirely (a non-commercial base
+  // model), and those lose exactly as much as closing the section does. Reading the switch position
+  // instead reduces to `!chargeEnabled` — `hasExistingCharge` forces the `showChargeSettings` OR-arm
+  // true — and misses every one of them.
+  const removingStoredFee = hasExistingLicensingFee && (currentLicensingFee ?? 0) <= 0;
+  const removingStoredGate = !!version?.paidAccess && !paidAccessConfig;
+  const removingStoredCharge = removingStoredFee || removingStoredGate;
 
   const licensingSourceVersionId = form.watch('licensingSourceVersionId') ?? null;
   const { data: licensingRootsData } = trpc.modelVersion.getLicensingRoots.useQuery(
@@ -580,13 +585,19 @@ export function ModelVersionUpsertForm({
     }
     if (form.getValues('licensingFeeSettlementCurrency'))
       form.setValue('licensingFeeSettlementCurrency', null, { shouldDirty: true });
-    if (form.getValues('rightsAffirmed')) form.setValue('rightsAffirmed', false);
+    // A version that already charges keeps its tick: it's the answer to a question the creator was asked
+    // about THIS version, and clearing it turns a switch round-trip that changed nothing into the
+    // "Confirmation required" save this ticket is about.
+    if (!hasExistingCharge && form.getValues('rightsAffirmed'))
+      form.setValue('rightsAffirmed', false);
   };
 
-  // Closing the section on a version that already charges is a removal, and it must be undoable from the
-  // UI — nothing else on screen holds the stored price, so without this a stray click on the switch loses
-  // it with no way back short of reloading the page.
+  // Restoring is an explicit action next to the warning, not a side effect of switching back on: the
+  // switch's job is disclosure, and having it silently re-apply the stored price would undo edits the
+  // creator made on purpose (dropping the gate but keeping the fee, or lowering the fee) as well as the
+  // clear. Re-opens the section too — a restored price behind a collapsed switch is the original bug.
   const restoreStoredCharges = () => {
+    setChargeEnabled(true);
     if (hasExistingLicensingFee) applyFeeRatio(feeToRatio(Number(version?.licensingFee ?? 0)));
     if (version?.paidAccess) {
       const stored = toFormPaidAccessConfig(version.paidAccess, version.donationGoal);
@@ -1185,28 +1196,35 @@ export function ModelVersionUpsertForm({
                       const checked = e.target.checked;
                       setChargeEnabled(checked);
                       if (!checked) clearCharges();
-                      else if (hasExistingCharge) restoreStoredCharges();
                     }}
                     disabled={isEarlyAccessOver && !!version?.paidAccess}
                   />
                 )}
                 {removingStoredCharge && (
-                  <Stack gap={4} mt="sm">
+                  <Stack gap={4} mt="sm" align="flex-start">
                     <Text size="xs" c="red">
                       Saving now removes this version&apos;s{' '}
-                      {hasExistingLicensingFee && version?.paidAccess
+                      {removingStoredFee && removingStoredGate
                         ? 'license fee and paid access'
-                        : hasExistingLicensingFee
+                        : removingStoredFee
                         ? 'license fee'
                         : 'paid access'}
-                      . Switch it back on to keep the stored settings.
+                      .
                     </Text>
-                    {!!version?.paidAccess && (
+                    {removingStoredGate && (
                       <Text size="xs" c="red">
                         You will not be able to add this model to early access again after removing
                         it. Also, your payment for early access will be lost.
                       </Text>
                     )}
+                    <Anchor
+                      component="button"
+                      type="button"
+                      size="xs"
+                      onClick={restoreStoredCharges}
+                    >
+                      Restore the stored settings
+                    </Anchor>
                   </Stack>
                 )}
                 {(showRightsAffirmation || requiresRightsAffirmation) && (
@@ -1617,13 +1635,6 @@ export function ModelVersionUpsertForm({
                       </Stack>
                     )}
 
-                    {version?.paidAccess && !paidAccessConfig && (
-                      <Text size="xs" c="red">
-                        You will not be able to add this model to early access again after removing
-                        it. Also, your payment for early access will be lost. Please consider this
-                        before removing early access.
-                      </Text>
-                    )}
                     {showLicensingFeeBlock && <Divider my="md" />}
                   </Stack>
                 )}
