@@ -845,9 +845,9 @@ describe('pickWinnersForChallenge — the recap writer is told who actually won'
   }
 
   const field = [
-    { imageId: 1, userId: 100, username: 'Vince_AI' },
-    { imageId: 2, userId: 200, username: 'ArtisticSoul66' },
-    { imageId: 3, userId: 300, username: 'unexpectedlyprovided' },
+    { imageId: 1, userId: 100, username: 'entrant_a' },
+    { imageId: 2, userId: 200, username: 'entrant_b' },
+    { imageId: 3, userId: 300, username: 'entrant_c' },
   ];
 
   function recapOnly() {
@@ -873,8 +873,8 @@ describe('pickWinnersForChallenge — the recap writer is told who actually won'
     await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
 
     expect(mockGenerateWinners.mock.calls[0][0].decidedWinners).toEqual([
-      { creatorId: 100, creator: 'Vince_AI', place: 1, reason: 'won the round-robin' },
-      { creatorId: 200, creator: 'ArtisticSoul66', place: 2, reason: 'second on win rate' },
+      { creatorId: 100, creator: 'entrant_a', place: 1, reason: 'won the round-robin' },
+      { creatorId: 200, creator: 'entrant_b', place: 2, reason: 'second on win rate' },
     ]);
   });
 

@@ -7,6 +7,7 @@ import type { JudgingConfig } from '~/server/games/daily-challenge/daily-challen
 // with what was discarded — so the model chose three names of its own from the shortlist and the
 // published recap celebrated entrants who had not placed. One live run congratulated ranks 5, 4
 // and 3 by name and never mentioned the winner or the runner-up, rendered beside the real podium.
+// (Entrant names below are placeholders — this repo is public and those were real accounts.)
 //
 // These assertions are about the PROMPT, because that is the only layer where "the model was told
 // who won" can be checked without a live LLM.
@@ -43,16 +44,16 @@ const config = {
 } as JudgingConfig;
 
 const entries = [
-  { creatorId: 1, creator: 'Vince_AI', summary: 's1', score: { theme: 9 } },
-  { creatorId: 2, creator: 'ArtisticSoul66', summary: 's2', score: { theme: 8 } },
-  { creatorId: 3, creator: 'unexpectedlyprovided', summary: 's3', score: { theme: 8 } },
-  { creatorId: 4, creator: 'Ouinche', summary: 's4', score: { theme: 7 } },
-  { creatorId: 5, creator: 'MikeLayviniel', summary: 's5', score: { theme: 7 } },
+  { creatorId: 1, creator: 'entrant_a', summary: 's1', score: { theme: 9 } },
+  { creatorId: 2, creator: 'entrant_b', summary: 's2', score: { theme: 8 } },
+  { creatorId: 3, creator: 'entrant_c', summary: 's3', score: { theme: 8 } },
+  { creatorId: 4, creator: 'entrant_d', summary: 's4', score: { theme: 7 } },
+  { creatorId: 5, creator: 'entrant_e', summary: 's5', score: { theme: 7 } },
 ] as never;
 
 const decidedWinners = [
-  { creatorId: 1, creator: 'Vince_AI', place: 1, reason: 'won the round-robin' },
-  { creatorId: 2, creator: 'ArtisticSoul66', place: 2, reason: 'second on win rate' },
+  { creatorId: 1, creator: 'entrant_a', place: 1, reason: 'won the round-robin' },
+  { creatorId: 2, creator: 'entrant_b', place: 2, reason: 'second on win rate' },
 ];
 
 function promptText() {
@@ -72,8 +73,8 @@ beforeEach(() => {
     content: {
       // What the model returned when it was picking for itself — the discarded set.
       winners: [
-        { creatorId: 5, creator: 'MikeLayviniel', reason: 'dreamy sunset beach' },
-        { creatorId: 4, creator: 'Ouinche', reason: 'quirky robot humor' },
+        { creatorId: 5, creator: 'entrant_e', reason: 'dreamy sunset beach' },
+        { creatorId: 4, creator: 'entrant_d', reason: 'quirky robot humor' },
       ],
       process: 'how I judged',
       outcome: 'what happened',
@@ -88,18 +89,18 @@ describe('generateWinners — when an engine already decided the places', () => 
 
     const prompt = promptText();
     expect(prompt).toContain('ALREADY DECIDED');
-    expect(prompt).toContain('Vince_AI');
-    expect(prompt).toContain('ArtisticSoul66');
+    expect(prompt).toContain('entrant_a');
+    expect(prompt).toContain('entrant_b');
     expect(prompt).not.toContain('Select exactly 3 different winners');
   });
 
   it('returns the decided places, never the model’s own picks', async () => {
     const result = await generateWinners({ theme: 'Neon', entries, config, decidedWinners });
 
-    expect(result.winners.map((winner) => winner.creator)).toEqual(['Vince_AI', 'ArtisticSoul66']);
-    // The exact names the live recap wrongly celebrated.
-    expect(result.winners.map((winner) => winner.creator)).not.toContain('MikeLayviniel');
-    expect(result.winners.map((winner) => winner.creator)).not.toContain('Ouinche');
+    expect(result.winners.map((winner) => winner.creator)).toEqual(['entrant_a', 'entrant_b']);
+    // The ranks the live recap wrongly celebrated: 5th and 4th.
+    expect(result.winners.map((winner) => winner.creator)).not.toContain('entrant_e');
+    expect(result.winners.map((winner) => winner.creator)).not.toContain('entrant_d');
   });
 
   it('still returns the prose, which is the only reason the call is made at all', async () => {
