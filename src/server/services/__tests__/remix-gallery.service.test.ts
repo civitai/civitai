@@ -73,6 +73,7 @@ const {
   retractRemixGallerySubmission,
   setRemixGalleryPins,
   parseGalleryCursor,
+  getRemixGallery,
 } = await import('~/server/services/remix-gallery.service');
 
 const {
@@ -320,6 +321,37 @@ describe('minor-flagged host ceiling', () => {
       actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
     ).rejects.toThrow(/PG-13 or below/i);
     expect(settlePlacement).not.toHaveBeenCalled();
+  });
+});
+
+describe('the ceiling is applied on read, not only on the mutation', () => {
+  // Without this the display-side half is a silent revert: delete the predicate
+  // from the gallery query and every other test in this file still passes,
+  // while entries approved before a host was flagged keep rendering — and the
+  // owner cannot take them down for a week.
+  it('carries the minor-host predicate in the gallery read', async () => {
+    queryRaw.mockImplementation(async () => []);
+
+    await getRemixGallery({ hostImageId: HOST_IMAGE, browsingLevel: 1 });
+
+    // Nested `Prisma.sql` fragments arrive as VALUES, not as part of the
+    // template's string array, so flattening them is what makes this test see
+    // the predicate at all.
+    const flatten = (value: unknown): string => {
+      if (Array.isArray(value)) return value.map(flatten).join(' ');
+      if (value && typeof value === 'object' && 'strings' in value)
+        return [
+          flatten((value as { strings: unknown }).strings),
+          flatten((value as { values?: unknown }).values ?? []),
+        ].join(' ');
+      return typeof value === 'string' ? value : '';
+    };
+
+    const sql = queryRaw.mock.calls.map(flatten).join(' ');
+
+    for (const column of ['minor', 'acceptableMinor', 'needsReview']) expect(sql).toContain(column);
+    // The bound itself, so widening the ceiling silently is also caught.
+    expect(sql).toMatch(/nsfwLevel"\s*<=/);
   });
 });
 

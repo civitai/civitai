@@ -75,7 +75,7 @@ export default function RemixSubmissions() {
   const { data: sent, isLoading: sentLoading } =
     trpc.placement.getMyRemixGallerySubmissions.useQuery();
 
-  const waiting = received?.length ?? 0;
+  const waiting = received?.items.length ?? 0;
 
   return (
     <>
@@ -107,7 +107,11 @@ export default function RemixSubmissions() {
             </Tabs.List>
 
             <Tabs.Panel value="received" pt="md">
-              <ReceivedTab rows={received ?? []} isLoading={receivedLoading} />
+              <ReceivedTab
+                rows={received?.items ?? []}
+                truncated={!!received?.truncated}
+                isLoading={receivedLoading}
+              />
             </Tabs.Panel>
 
             <Tabs.Panel value="sent" pt="md">
@@ -120,9 +124,17 @@ export default function RemixSubmissions() {
   );
 }
 
-type ReceivedRow = RouterOutput['placement']['getPendingRemixGallerySubmissions'][number];
+type ReceivedRow = RouterOutput['placement']['getPendingRemixGallerySubmissions']['items'][number];
 
-function ReceivedTab({ rows, isLoading }: { rows: ReceivedRow[]; isLoading: boolean }) {
+function ReceivedTab({
+  rows,
+  truncated,
+  isLoading,
+}: {
+  rows: ReceivedRow[];
+  truncated: boolean;
+  isLoading: boolean;
+}) {
   const utils = trpc.useUtils();
 
   const act = trpc.placement.actOnRemixGallerySubmission.useMutation({
@@ -173,7 +185,7 @@ function ReceivedTab({ rows, isLoading }: { rows: ReceivedRow[]; isLoading: bool
     <Stack gap="md">
       {/* Neither queue pages. A list that stops at the cap and says nothing
           reads as complete. */}
-      {rows.length >= REMIX_GALLERY_QUEUE_LIMIT && (
+      {truncated && (
         <Text size="xs" c="dimmed">
           Showing the first {REMIX_GALLERY_QUEUE_LIMIT}.
         </Text>

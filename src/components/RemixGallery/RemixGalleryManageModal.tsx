@@ -145,7 +145,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
     },
   });
 
-  const forThisImage = (pending ?? []).filter((row) => row.targetId === imageId);
+  const forThisImage = (pending?.items ?? []).filter((row) => row.targetId === imageId);
   const byId = new Map(items.map((item) => [item.placementId, item]));
   const pinnedItems = pinnedIds.map((id) => byId.get(id)).filter((x): x is RemixGalleryItem => !!x);
   const unpinned = items.filter((item) => !pinnedIds.includes(item.placementId));
@@ -259,7 +259,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                     sees a full list that looks complete and never learns the
                     rest exist — and the escrow behind those sits until it
                     expires. */}
-                {(pending?.length ?? 0) >= REMIX_GALLERY_QUEUE_LIMIT && (
+                {pending?.truncated && (
                   <Text size="xs" c="dimmed">
                     Showing the first {REMIX_GALLERY_QUEUE_LIMIT}. Answer some to see the rest.
                   </Text>

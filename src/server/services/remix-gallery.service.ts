@@ -778,15 +778,26 @@ export async function getRemixGallery({
 }
 
 /**
- * What counts as a host depicting a minor.
+ * What counts as a host depicting a minor. Three columns, because each catches a
+ * population the others miss.
  *
- * `needsReview = 'minor'` is included because it is the *unresolved* case, and
- * the resolution can go either way: clearing it without ticking `removeMinorFlag`
- * sets `minor = TRUE` (`handleUnblockImages`). Reading only the settled column
- * would leave the window between the scanner raising it and a moderator
- * answering it as the one moment the ceiling does not apply.
+ * `acceptableMinor` is the moderator checkbox "Realistic depiction of a minor",
+ * and it is the load-bearing one. It is written by a function that touches no
+ * other column, so it is independent of `minor` — and every other minor-related
+ * gate in this codebase checks it, several without checking `minor` at all.
+ * Omitting it here would have left the durably-marked population unguarded at
+ * any rating.
+ *
+ * `minor` alone is also narrower than it looks: resolving a minor review without
+ * `removeMinorFlag` writes `CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE`, so
+ * a set `minor` is nearly always a PG/PG-13 image that this ceiling would not
+ * have moved anyway. The R-and-above host the cap exists for lands in
+ * `acceptableMinor`.
+ *
+ * `needsReview = 'minor'` is the unresolved case, included because the
+ * resolution can go either way and fail-closed is the posture everywhere else.
  */
-const HOST_IS_MINOR = Prisma.sql`((minor OR "needsReview" = 'minor') IS TRUE)`;
+const HOST_IS_MINOR = Prisma.sql`((minor OR "acceptableMinor" OR "needsReview" = 'minor') IS TRUE)`;
 
 /**
  * The same predicate, qualified for the `h` alias in the gallery read.
@@ -796,7 +807,23 @@ const HOST_IS_MINOR = Prisma.sql`((minor OR "needsReview" = 'minor') IS TRUE)`;
  * `FALSE OR NULL` is NULL — which `?? true` in the visibility path would then
  * read as fail-closed and cap *every* gallery at PG-13.
  */
-const HOST_IS_MINOR_H = Prisma.sql`(h.minor OR h."needsReview" = 'minor') IS TRUE`;
+const HOST_IS_MINOR_H = Prisma.sql`(h.minor OR h."acceptableMinor" OR h."needsReview" = 'minor') IS TRUE`;
+
+/**
+ * The host's rating and minor flag from the replica, for display decisions.
+ *
+ * Deliberately not `loadHostImage`: that reads the primary because it decides a
+ * mutation, and this runs on every image-detail view. The predicate is shared,
+ * so the two cannot disagree about *what* a minor host is — only, under replica
+ * lag, about a flag set in the last moment. The mutation still refuses, so the
+ * cost of that window is a picker offering an image that is then declined.
+ */
+async function readHostImage(hostImageId: number) {
+  const [row] = await dbRead.$queryRaw<{ nsfwLevel: number; minor: boolean }[]>`
+    SELECT "nsfwLevel", ${HOST_IS_MINOR} AS minor FROM "Image" WHERE id = ${hostImageId}
+  `;
+  return row ?? null;
+}
 
 /**
  * The display-side half of the minor-host ceiling.
@@ -950,9 +977,10 @@ export async function getRemixGalleryVisibility({
   /** Decides whether the pending count is computed at all. */
   viewerId?: number;
 }) {
-  const [space, hasEntries] = await Promise.all([
+  const [space, hasEntries, host] = await Promise.all([
     resolvePlacementSpaceFor({ surface: SURFACE, targetType: TARGET_TYPE, targetId: hostImageId }),
     galleryHasEntries({ hostImageId, browsingLevel }),
+    readHostImage(hostImageId),
   ]);
 
   // Counted here rather than by a second round trip from the card, and only for
@@ -972,11 +1000,6 @@ export async function getRemixGalleryVisibility({
         })
       : 0;
 
-  // The owner's name and cut, so the submit button can say where the money goes
-  // without the copy asserting it. The shares are operator-tunable at runtime,
-  // so a string compiled against today's split is a claim about money that can
-  // quietly stop being true — the same reason `ResolvedPlacementSpace` carries
-  // `ownerShare` at all.
   // The submitter's own pending rows. Without this, submitting shows nothing at
   // all on the image it was sent to — the money left and the page looked
   // unchanged. Skipped for the owner, whose pending view is the queue above.
@@ -985,18 +1008,34 @@ export async function getRemixGalleryVisibility({
       ? await getViewerPendingSubmissions({ hostImageId, viewerId })
       : [];
 
-  // The ceiling the picker filters on, so a submitter is not offered an image
-  // the mutation will refuse — and, for a minor-flagged host, is not shown a
-  // grid of their own mature work next to a Submit button.
-  const [host] = await dbRead.$queryRaw<{ nsfwLevel: number; minor: boolean }[]>`
-    SELECT "nsfwLevel", ${HOST_IS_MINOR} AS minor FROM "Image" WHERE id = ${hostImageId}
-  `;
-  const maxSubmissionLevel = remixGalleryMaxSubmissionLevel({
-    rule: remixGalleryContentRule(space.settings),
-    hostLevel: host?.nsfwLevel ?? 0,
-    hostMinor: host?.minor ?? true,
-  });
+  // The ceiling the picker filters on, so a submitter is not offered an image the
+  // mutation will refuse — and, for a minor-flagged host, is not shown a grid of
+  // their own mature work next to a Submit button.
+  //
+  // Withheld from anyone who cannot act on it. Under the `any` rule this number
+  // is 2 only when the host carries a minor flag, so returning it unconditionally
+  // from a public query turned every image id into a one-call oracle for another
+  // user's moderation state — including an *unresolved* review on an image the
+  // caller cannot even view. The refusal message on the mutation is anonymised
+  // for exactly that reason; this would have shipped the same fact as a number.
+  // Signed in, gallery open, not your own: the case the picker needs and nothing
+  // wider.
+  const canSubmitHere = !!viewerId && space.mode !== 'off' && viewerId !== space.ownerId;
+  const maxSubmissionLevel = canSubmitHere
+    ? remixGalleryMaxSubmissionLevel({
+        rule: remixGalleryContentRule(space.settings),
+        hostLevel: host?.nsfwLevel ?? 0,
+        // A host row that no longer resolves fails closed rather than lifting the
+        // ceiling.
+        hostMinor: host?.minor ?? true,
+      })
+    : null;
 
+  // The owner's name and cut, so the submit button can say where the money goes
+  // without the copy asserting it. The shares are operator-tunable at runtime,
+  // so a string compiled against today's split is a claim about money that can
+  // quietly stop being true — the same reason `ResolvedPlacementSpace` carries
+  // `ownerShare` at all.
   const owner = await dbRead.user.findUnique({
     where: { id: space.ownerId },
     select: { username: true },
@@ -1066,9 +1105,15 @@ export async function getPendingRemixGallerySubmissions({
     take: limit,
   });
 
+  // Measured before the image filter below, not after. A queue that hit the cap
+  // and then dropped rows whose image was deleted returns fewer than `limit`, so
+  // a caller counting the returned rows concludes it saw everything — precisely
+  // when it did not, and the escrow behind the rest sits until it expires.
+  const truncated = rows.length >= limit;
+
   const entries = rows.filter((row) => isRemixGalleryPlacementData(row.data));
   const imageIds = entries.map((row) => (row.data as RemixGalleryPlacementData).imageId);
-  if (!imageIds.length) return [];
+  if (!imageIds.length) return { items: [], truncated };
 
   const images = await dbRead.$queryRaw<
     {
@@ -1095,13 +1140,16 @@ export async function getPendingRemixGallerySubmissions({
   `;
   const byId = new Map(images.map((image) => [image.id, image]));
 
-  return entries
-    .map((row) => ({
-      ...row,
-      data: row.data as RemixGalleryPlacementData,
-      image: byId.get((row.data as RemixGalleryPlacementData).imageId) ?? null,
-    }))
-    .filter((row) => row.image);
+  return {
+    items: entries
+      .map((row) => ({
+        ...row,
+        data: row.data as RemixGalleryPlacementData,
+        image: byId.get((row.data as RemixGalleryPlacementData).imageId) ?? null,
+      }))
+      .filter((row) => row.image),
+    truncated,
+  };
 }
 
 /**

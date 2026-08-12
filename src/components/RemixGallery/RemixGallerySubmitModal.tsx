@@ -156,7 +156,9 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
           ) : (
             <NoContent
               message={
-                hidden > 0
+                maxLevel === 0
+                  ? 'This image has no rating yet, so nothing can be submitted to it.'
+                  : hidden > 0
                   ? 'None of your posted images are rated low enough for this gallery.'
                   : "You don't have any posted images to submit yet. Post your remix first, then submit it here."
               }
