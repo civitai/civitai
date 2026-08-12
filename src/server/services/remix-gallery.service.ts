@@ -301,6 +301,7 @@ export async function actOnRemixGallerySubmission({
       ownerId: true,
       status: true,
       surface: true,
+      targetId: true,
       data: true,
       resolvedAt: true,
       createdAt: true,
@@ -387,9 +388,21 @@ export async function actOnRemixGallerySubmission({
     return { settled: true, removed: true };
   }
 
+  // A decline charges the submitter the non-refundable share, and that share
+  // prices the owner's attention: a spammer costs them a review. When the host
+  // cannot show a gallery the owner was never offered a choice — approve is
+  // refused above — so there is no judgement to charge for, and the submitter is
+  // refunded in full through the same path expiry and retraction use.
+  //
+  // Without this, the fair outcome for the submitter was the one where the owner
+  // ignored their queue: doing nothing expires the hold and returns everything,
+  // while tidying up took 30% for a refusal caused entirely by the host's state.
+  const declineRefundsInFull =
+    action === 'decline' && !(await loadHostImage(placement.targetId)).showable;
+
   const result = await settlePlacement({
     placementId,
-    action: action === 'approve' ? 'approve' : 'decline',
+    action: action === 'approve' ? 'approve' : declineRefundsInFull ? 'expire' : 'decline',
     actorId: userId,
   });
 

@@ -350,6 +350,46 @@ it('refuses a submission to a host that cannot show a gallery', async () => {
   expect(holdPlacementEscrow).not.toHaveBeenCalled();
 });
 
+describe('declining on a host that cannot show a gallery', () => {
+  const pending = {
+    id: PLACEMENT,
+    ownerId: OWNER,
+    status: 'pending',
+    surface: 'remixGallery',
+    targetId: HOST_IMAGE,
+    data: { imageId: REMIX_IMAGE },
+    resolvedAt: null,
+    createdAt: new Date('2026-01-01'),
+  };
+
+  const declineWithHost = async (showable: boolean) => {
+    placementFindUnique.mockResolvedValue(pending);
+    // Only `loadHostImage` runs on this path, so the fake answers with the host
+    // row rather than the submission-then-host pair the submit path expects.
+    queryRaw.mockImplementation(async () => [{ nsfwLevel: NsfwLevel.PG, minor: false, showable }]);
+    await actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'decline', userId: OWNER });
+  };
+
+  it('refunds in full instead of charging the decline fee', async () => {
+    // The fee prices the owner's attention. An unshowable host refuses approval,
+    // so the owner was never offered a choice — and without this the outcome
+    // fair to the submitter was the one where the owner ignored their queue.
+    await declineWithHost(false);
+
+    expect(settlePlacement).toHaveBeenCalledWith(
+      expect.objectContaining({ placementId: PLACEMENT, action: 'expire' })
+    );
+  });
+
+  it('still charges the fee on a normal host', async () => {
+    await declineWithHost(true);
+
+    expect(settlePlacement).toHaveBeenCalledWith(
+      expect.objectContaining({ placementId: PLACEMENT, action: 'decline' })
+    );
+  });
+});
+
 describe('the ceiling is applied on read, not only on the mutation', () => {
   // Without this the display-side half is a silent revert: delete the predicate
   // from a read query and every other test in this file still passes, while
