@@ -2,7 +2,7 @@ import type { Popover } from '@mantine/core';
 import { HoverCard, Skeleton, Stack, Text } from '@mantine/core';
 import dynamic from 'next/dynamic';
 import type { ReactElement, ReactNode } from 'react';
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useSyncExternalStore } from 'react';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { trpc } from '~/utils/trpc';
 
@@ -38,21 +38,31 @@ const NestedContext = createContext(false);
 /** Suppresses hover cards inside a hover card. Read by `UserHoverCard`. */
 export const useNestedHoverCard = () => useContext(NestedContext);
 
+let hoverQuery: MediaQueryList | undefined;
+const getHoverQuery = () => {
+  hoverQuery ??= window.matchMedia('(hover: hover) and (pointer: fine)');
+  return hoverQuery;
+};
+
+// One MediaQueryList and one subscription for the whole page, not one per
+// avatar — a feed renders these by the hundred.
+const subscribeHover = (onChange: () => void) => {
+  const query = getHoverQuery();
+  query.addEventListener('change', onChange);
+  return () => query.removeEventListener('change', onChange);
+};
+
 /**
  * Hover cards are for pointers that hover. A touch tap synthesises `mouseover`
  * with no reliable `mouseout`, so on a phone the card opens on a tap meant for
  * the link underneath and then has no gesture that dismisses it.
  */
 export function useHoverCapable() {
-  const [capable, setCapable] = useState(false);
-  useEffect(() => {
-    const query = window.matchMedia('(hover: hover) and (pointer: fine)');
-    setCapable(query.matches);
-    const onChange = (e: MediaQueryListEvent) => setCapable(e.matches);
-    query.addEventListener('change', onChange);
-    return () => query.removeEventListener('change', onChange);
-  }, []);
-  return capable;
+  return useSyncExternalStore(
+    subscribeHover,
+    () => getHoverQuery().matches,
+    () => false
+  );
 }
 
 /**
@@ -143,18 +153,29 @@ export function CreatorHoverDropdown({
 export function HoverCreatorCard({
   userId,
   username,
+  expectUsername,
 }: {
   userId?: number | null;
   username?: string | null;
+  /**
+   * Refuse to show a creator other than this one. Set where the identity that
+   * was verified (a mention's link target) isn't the one the query is keyed on.
+   */
+  expectUsername?: string | null;
 }) {
   const { data, isLoading, isError } = trpc.user.getCreator.useQuery(
     userId ? { id: userId } : { username: username as string },
     { enabled: !!userId || !!username, staleTime: 5 * 60_000 }
   );
 
+  const mismatched =
+    !!expectUsername &&
+    !!data?.username &&
+    data.username.toLowerCase() !== expectUsername.toLowerCase();
+
   // Falling through on failure would show the zeroed `[deleted]` card the
   // skeleton exists to hide, which reads as an answer rather than a failure.
-  if (isError || (!isLoading && !userId && !data))
+  if (isError || mismatched || (!isLoading && !userId && !data))
     return (
       <Text size="sm" c="dimmed" p="md">
         Couldn&apos;t load this creator.

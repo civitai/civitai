@@ -13,7 +13,12 @@ import {
   useNestedHoverCard,
 } from '~/components/UserAvatar/UserHoverCard';
 
-type Mention = { userId: number | null; username: string | null; rect: DOMRect };
+type Mention = {
+  userId: number | null;
+  username: string | null;
+  linked: boolean;
+  rect: DOMRect;
+};
 
 /**
  * The user a mention element claims to be, or null if the claim can't be trusted.
@@ -26,23 +31,39 @@ type Mention = { userId: number | null; username: string | null; rect: DOMRect }
  * has to be that user's profile.
  */
 function readMention(el: HTMLElement): Omit<Mention, 'rect'> | null {
-  const raw = el.getAttribute('data-id')?.replace(/^mention:/, '') ?? '';
+  const idAttr = el.getAttribute('data-id') ?? '';
+  const raw = idAttr.replace(/^mention:/, '');
   const label = el.getAttribute('data-label');
   const userId = /^\d+$/.test(raw) ? Number(raw) : null;
   const username = label ?? (userId ? null : raw || null);
   if (!userId && !username) return null;
 
-  const anchor = el.closest('a');
-  if (anchor && !linksToProfile(anchor, label ?? username)) return null;
+  // `closest` walks ancestors only, so a link *inside* the mention would never
+  // be checked — and the renderer never produces one.
+  if (el.querySelector('a')) return null;
 
-  return { userId, username };
+  const anchor = el.closest('a');
+  // The profile the renderer would have linked to. `data-label` is what it uses
+  // when present, falling back to the raw id attribute — so a mention stored
+  // without a label still validates instead of silently losing its card.
+  if (anchor && !linksToProfile(anchor, label ?? idAttr)) return null;
+
+  return { userId, username, linked: !!anchor };
 }
 
-function linksToProfile(anchor: HTMLAnchorElement, username: string | null) {
-  if (!username) return false;
+/**
+ * Same-origin and same profile. Comparing only the path would accept
+ * `https://evil.example/user/Justin`, which is the whole attack.
+ */
+function linksToProfile(anchor: HTMLAnchorElement, expected: string) {
   try {
-    const { pathname } = new URL(anchor.getAttribute('href') ?? '', window.location.origin);
-    return decodeURIComponent(pathname).replace(/\/$/, '') === `/user/${username}`;
+    const url = new URL(anchor.getAttribute('href') ?? '', window.location.href);
+    if (url.origin !== window.location.origin) return false;
+    // Usernames resolve case-insensitively, so a link that works must pass.
+    return (
+      decodeURIComponent(url.pathname).replace(/\/$/, '').toLowerCase() ===
+      `/user/${expected}`.toLowerCase()
+    );
   } catch {
     return false;
   }
@@ -124,8 +145,17 @@ export function MentionHoverCard({
         return;
       setMention(null);
     };
+    // Mantine's own Escape handling is a React prop on the dropdown, which only
+    // sees keys pressed inside it — and nothing ever focuses a hover card.
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMention(null);
+    };
     window.addEventListener('scroll', onScroll, true);
-    return () => window.removeEventListener('scroll', onScroll, true);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('scroll', onScroll, true);
+      document.removeEventListener('keydown', onKeyDown);
+    };
   }, [mention]);
 
   if (!mention) return null;
@@ -158,7 +188,15 @@ export function MentionHoverCard({
         onMouseEnter={() => clearTimeout(closeTimer.current)}
         onMouseLeave={() => setMention(null)}
       >
-        <HoverCreatorCard userId={mention.userId} username={mention.username} />
+        <HoverCreatorCard
+          userId={mention.userId}
+          username={mention.username}
+          // The href was validated against the label, but the card is keyed on
+          // the id — independent attributes, so they can disagree. A link and a
+          // card that name different people is the same borrowed identity in a
+          // quieter form.
+          expectUsername={mention.linked ? mention.username : undefined}
+        />
       </CreatorHoverDropdown>
     </Popover>
   );
