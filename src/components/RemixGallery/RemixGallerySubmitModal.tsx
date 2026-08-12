@@ -162,30 +162,17 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
               <Loader />
             </Group>
           ) : eligible.length ? (
-            <>
-              <div className="grid grid-cols-4 gap-3">
-                {eligible.map((image) => (
-                  <AspectRatioImageCard
-                    key={image.id}
-                    aspectRatio="square"
-                    image={image}
-                    onClick={() => setSelected(image.id)}
-                    className={clsx(
-                      'cursor-pointer',
-                      selected === image.id && 'ring-2 ring-blue-5'
-                    )}
-                  />
-                ))}
-              </div>
-
-              {hasNextPage && (
-                <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
-                  <Group justify="center" py="md">
-                    <Loader size="sm" />
-                  </Group>
-                </InViewLoader>
-              )}
-            </>
+            <div className="grid grid-cols-4 gap-3">
+              {eligible.map((image) => (
+                <AspectRatioImageCard
+                  key={image.id}
+                  aspectRatio="square"
+                  image={image}
+                  onClick={() => setSelected(image.id)}
+                  className={clsx('cursor-pointer', selected === image.id && 'ring-2 ring-blue-5')}
+                />
+              ))}
+            </div>
           ) : (
             <NoContent
               message={
@@ -201,6 +188,12 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                     : 'This gallery is not open for submissions.'
                   : maxLevel === 0
                   ? 'This image has no rating yet, so nothing can be submitted to it.'
+                  : hasNextPage
+                  ? // Hedged while pages remain, because every count here is
+                    // computed from what has loaded. The loader below keeps
+                    // fetching, so this is a statement about progress rather
+                    // than a verdict on the library.
+                    'Still looking through your images…'
                   : unrated > 0 && !overRated
                   ? // Sending them to post images they have already posted is the
                     // one wrong answer here; they are waiting on a rating.
@@ -210,6 +203,19 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                   : "You don't have any posted images to submit yet. Post your remix first, then submit it here."
               }
             />
+          )}
+
+          {/* Outside the branches above. Inside the populated one it could only
+              page while something was already eligible — so a creator whose 50
+              most recent posts are all above the ceiling got a terminal "none of
+              your images qualify" over a library it had never finished
+              reading. */}
+          {hasNextPage && !isLoading && visibility && (
+            <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
+              <Group justify="center" py="md">
+                <Loader size="sm" />
+              </Group>
+            </InViewLoader>
           )}
         </div>
 

@@ -830,15 +830,20 @@ const hostIsMinor = (alias = 'i') => {
  * visible to every viewer through that helper's second arm and would have been
  * refused here. Same mistake as reading `minor` alone — a hand-rolled predicate
  * where the repo already has the canonical one.
+ *
+ * The trailing `IS TRUE` matches its sibling. Every input here is NOT NULL
+ * today, so it changes nothing — but that is a property of four column
+ * defaults rather than of this expression, and a NULL leaking through a future
+ * `NOT` would drop rows silently instead of keeping them.
  */
 const hostIsShowable = (alias = 'i') => {
   const t = Prisma.raw(`"${alias}"`);
-  return Prisma.sql`(
+  return Prisma.sql`((
     ${t}."needsReview" IS NULL
     AND ${imageReviewedSql(alias)}
     AND NOT ${t}."tosViolation"
     AND ${t}."nsfwLevel" != ${NsfwLevel.Blocked}
-  )`;
+  ) IS TRUE)`;
 };
 
 /**
