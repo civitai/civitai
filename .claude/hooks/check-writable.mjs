@@ -19,19 +19,43 @@ function prettierWriteTargets(command) {
     .flatMap((seg) =>
       seg
         .slice(seg.indexOf('--write') + '--write'.length)
+        // Drop redirections and their operands (`2>&1`, `> out.log`) — they are not format targets.
+        .replace(/\d*[<>]+&?\s*[^\s]*/g, ' ')
         .split(/\s+/)
         .map((t) => t.replace(/^['"]|['"]$/g, ''))
-        .filter((t) => t && !t.startsWith('-'))
+        // Not targets: flags, and redirections (`2>&1`, `> out.txt`) that survive the segment split.
+        .filter((t) => t && !t.startsWith('-') && !/[<>]/.test(t))
     );
 }
 
-// Reaches the whole repo: the root, a bare glob, or a glob rooted at a top-level dir.
+// The rule from CLAUDE.md is about BREADTH, not about prettier: a run may only reach files this
+// change owns, because the repo is not Prettier-clean (789 of 4,116 `src` files) and a broad `--write`
+// both buries the change and rewrites colleagues' uncommitted work in place. So a named file or a
+// directory deep enough to belong to one feature runs; anything that could sweep an app or the repo
+// asks first. `pnpm run prettier:write` (dirty files only) always runs.
+const OWNED_DIR_DEPTH = 3; // e.g. src/components/Sticker — an app or a top-level dir is not owned
+
+// Depth alone is not ownership: apps/moderator/src is three deep and is still a whole app. A
+// directory named after the tree it holds, rather than after a feature, needs one more level.
+const CONTAINER_DIRS = new Set([
+  'src', 'app', 'apps', 'lib', 'libs', 'packages', 'components', 'pages', 'routes', 'server',
+  'scripts', 'utils', 'hooks', 'store', 'stores', 'types', 'styles', 'public', 'tests', 'test',
+]);
+
 function isUnscoped(target) {
   const t = target.replace(/\\/g, '/').replace(/\/+$/, '');
   if (t === '' || t === '.' || t === '*' || t.startsWith('**')) return true;
-  if (!t.includes('*')) return false;
-  const fixed = t.split('*')[0].replace(/\/+$/, '');
-  return fixed.split('/').filter(Boolean).length < 2;
+
+  // Judge a glob by the fixed prefix it can never escape: src/**/*.tsx is still all of src.
+  const dir = t.includes('*') ? t.slice(0, t.indexOf('*')).replace(/\/+$/, '') : t;
+  const segments = dir.split('/').filter(Boolean);
+  const leaf = segments[segments.length - 1] || '';
+
+  // A named file is one file, at any depth.
+  if (!t.includes('*') && /\.[a-z0-9]+$/i.test(leaf)) return false;
+
+  const required = CONTAINER_DIRS.has(leaf.toLowerCase()) ? OWNED_DIR_DEPTH + 1 : OWNED_DIR_DEPTH;
+  return segments.length < required;
 }
 
 // Patterns that would kill Claude Code or critical processes - BLOCK OUTRIGHT
