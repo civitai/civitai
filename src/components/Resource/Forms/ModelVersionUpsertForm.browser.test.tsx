@@ -11,7 +11,6 @@ import { renderWithProviders } from '../../../../test/component-setup';
  */
 
 import type * as TrpcModule from '~/utils/trpc';
-import type * as IsClientModule from '~/providers/IsClientProvider';
 
 const mutateAsync = vi.hoisted(() =>
   vi.fn(async (input: unknown) => ({ id: 456, ...(input as object) }))
@@ -52,13 +51,6 @@ vi.mock('~/components/Buzz/CreatorProgramV2/CreatorProgram.util', () => ({
 vi.mock('~/components/UserSettings/hooks', () => ({
   useCurrentUserSettings: () => ({ hideDonationGoals: false }),
   useMutateUserSettings: () => ({ mutate: vi.fn(), isPending: false }),
-}));
-// The paid-access section opens with a DismissibleAlert, whose `useIsClient()` throws rather than
-// defaulting when the provider isn't mounted — unmocked it takes the whole render down. Spread the real
-// module so the provider export stays intact if anything in the graph starts using it.
-vi.mock('~/providers/IsClientProvider', async (importOriginal) => ({
-  ...(await importOriginal<typeof IsClientModule>()),
-  useIsClient: () => true,
 }));
 // The description field mounts the whole rich-text editor (tiptap + sticker cosmetics queries), none
 // of which this test drives.

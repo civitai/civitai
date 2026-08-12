@@ -26,7 +26,6 @@ import * as z from 'zod';
 
 import { CapUpsell } from '~/components/Buzz/CapUpsell';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import {
   MAX_DONATION_GOAL,
@@ -1280,46 +1279,6 @@ export function ModelVersionUpsertForm({
                 )}
                 {showChargeSettings && showPaidAccessInput && (
                   <Stack gap={0} mt="md">
-                    <DismissibleAlert
-                      id="ea-info"
-                      size="sm"
-                      color="yellow"
-                      title={
-                        <Group gap="xs">
-                          <Text>Earn Buzz with early access! </Text>
-                          <Popover width={300} withArrow withinPortal shadow="sm">
-                            <Popover.Target>
-                              <IconInfoCircle size={16} />
-                            </Popover.Target>
-                            <Popover.Dropdown>
-                              <Stack gap="xs">
-                                <Text size="sm">
-                                  Early Access helps creators monetize, learn more{' '}
-                                  <Anchor href="/articles/6341">here</Anchor>
-                                </Text>
-                              </Stack>
-                            </Popover.Dropdown>
-                          </Popover>
-                        </Group>
-                      }
-                      content={
-                        <Stack>
-                          <Text size="xs">
-                            Early access allows you to charge a fee for early access to your model.
-                            Once the early access period ends, your model will be available to
-                            everyone for free.
-                          </Text>
-                          {!currentUser?.isModerator && maxEarlyAccessModels > 0 && (
-                            <Text size="xs">
-                              You have {activeEarlyAccessCount} of {maxEarlyAccessModels} early
-                              access {maxEarlyAccessModels === 1 ? 'slot' : 'slots'} in use. This
-                              limit increases as you post more models on the site.
-                            </Text>
-                          )}
-                        </Stack>
-                      }
-                      mb="xs"
-                    />
                     {isEarlyAccessOver && (
                       <Text size="xs" c="red">
                         Early access has ended for this model version. You cannot make changes to
