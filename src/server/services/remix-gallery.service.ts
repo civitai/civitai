@@ -83,7 +83,7 @@ const MINOR_HOST_REFUSAL =
  */
 async function loadHostImage(hostImageId: number) {
   const [row] = await dbWrite.$queryRaw<{ nsfwLevel: number; minor: boolean }[]>`
-    SELECT "nsfwLevel", minor FROM "Image" WHERE id = ${hostImageId}
+    SELECT "nsfwLevel", ${HOST_IS_MINOR} AS minor FROM "Image" WHERE id = ${hostImageId}
   `;
 
   if (!row) throw throwBadRequestError('remix gallery: that image no longer exists');
@@ -778,6 +778,27 @@ export async function getRemixGallery({
 }
 
 /**
+ * What counts as a host depicting a minor.
+ *
+ * `needsReview = 'minor'` is included because it is the *unresolved* case, and
+ * the resolution can go either way: clearing it without ticking `removeMinorFlag`
+ * sets `minor = TRUE` (`handleUnblockImages`). Reading only the settled column
+ * would leave the window between the scanner raising it and a moderator
+ * answering it as the one moment the ceiling does not apply.
+ */
+const HOST_IS_MINOR = Prisma.sql`((minor OR "needsReview" = 'minor') IS TRUE)`;
+
+/**
+ * The same predicate, qualified for the `h` alias in the gallery read.
+ *
+ * The trailing `IS TRUE` is load-bearing in both. `needsReview` is nullable, so
+ * `"needsReview" = 'minor'` is NULL rather than FALSE on the ordinary image, and
+ * `FALSE OR NULL` is NULL — which `?? true` in the visibility path would then
+ * read as fail-closed and cap *every* gallery at PG-13.
+ */
+const HOST_IS_MINOR_H = Prisma.sql`(h.minor OR h."needsReview" = 'minor') IS TRUE`;
+
+/**
  * The display-side half of the minor-host ceiling.
  *
  * The mutation refuses an over-rating submission, but a host can be flagged as
@@ -788,7 +809,9 @@ export async function getRemixGallery({
 const minorHostCeiling = (hostImageId: number) => Prisma.sql`
         AND (
           i."nsfwLevel" <= ${REMIX_GALLERY_MINOR_HOST_MAX_LEVEL}
-          OR NOT EXISTS (SELECT 1 FROM "Image" h WHERE h.id = ${hostImageId} AND h.minor)
+          OR NOT EXISTS (
+            SELECT 1 FROM "Image" h WHERE h.id = ${hostImageId} AND (${HOST_IS_MINOR_H})
+          )
         )`;
 
 export function parseGalleryCursor(cursor?: string | null) {
@@ -966,7 +989,7 @@ export async function getRemixGalleryVisibility({
   // the mutation will refuse — and, for a minor-flagged host, is not shown a
   // grid of their own mature work next to a Submit button.
   const [host] = await dbRead.$queryRaw<{ nsfwLevel: number; minor: boolean }[]>`
-    SELECT "nsfwLevel", minor FROM "Image" WHERE id = ${hostImageId}
+    SELECT "nsfwLevel", ${HOST_IS_MINOR} AS minor FROM "Image" WHERE id = ${hostImageId}
   `;
   const maxSubmissionLevel = remixGalleryMaxSubmissionLevel({
     rule: remixGalleryContentRule(space.settings),
