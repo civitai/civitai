@@ -521,6 +521,11 @@ export type RemixGalleryEntry = {
   placementId: number;
   placerId: number;
   pinned: boolean;
+  /**
+   * When the owner approved it. The removal lock is measured from here, and the
+   * client needs it to say how long is left rather than guessing at the date.
+   */
+  resolvedAt: Date | null;
   image: AsyncReturnType<typeof getAllImages>['items'][number];
 };
 
@@ -537,6 +542,7 @@ type GalleryRow = {
   /** Coalesced in the query, so never null despite the column being nullable. */
   position: number;
   sortKey: number;
+  resolvedAt: Date | null;
 };
 
 /**
@@ -646,6 +652,7 @@ export async function getRemixGallery({
         pl.id AS "placementId",
         i.id AS "imageId",
         pl."placerId",
+        pl."resolvedAt",
         CASE WHEN pl.data ->> 'pinnedAt' IS NOT NULL THEN 1 ELSE 0 END AS pinned,
         -- Coalesced rather than ordered NULLS LAST, because the keyset compares
         -- it and every comparison against NULL is NULL, which drops the row
@@ -697,6 +704,7 @@ export async function getRemixGallery({
               placementId: row.placementId,
               placerId: row.placerId,
               pinned: row.pinned === 1,
+              resolvedAt: row.resolvedAt,
               image,
             }
           : null;

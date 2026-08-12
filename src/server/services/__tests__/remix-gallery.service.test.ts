@@ -75,9 +75,8 @@ const {
   parseGalleryCursor,
 } = await import('~/server/services/remix-gallery.service');
 
-const { remixGalleryLevelAllowed, REMIX_GALLERY_MAX_PINNED } = await import(
-  '~/shared/utils/remix-gallery'
-);
+const { remixGalleryLevelAllowed, REMIX_GALLERY_MAX_PINNED, REMIX_GALLERY_REMOVAL_LOCK_HOURS } =
+  await import('~/shared/utils/remix-gallery');
 
 /** A submission that passes every check, so each test breaks exactly one thing. */
 const goodSubmission = {
@@ -417,6 +416,61 @@ describe('owner actions', () => {
     await expect(
       actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'decline', userId: OWNER })
     ).rejects.toThrow(/already resolved/i);
+  });
+
+  it('refuses to remove a live entry inside the removal lock', async () => {
+    // Approval settles the money immediately, so accept-then-remove would take
+    // the submitter's Buzz for an entry nobody ever saw — and it looks exactly
+    // like an honest removal. Refused on the mutation, not by disabling a
+    // button, because the button is a suggestion and this is money.
+    placementFindUnique.mockResolvedValue({
+      ...pending,
+      status: 'approved',
+      resolvedAt: new Date(),
+    });
+
+    await expect(
+      actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'remove', userId: OWNER })
+    ).rejects.toThrow(/can be removed from/i);
+    expect(placementUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('allows removal once the lock has passed', async () => {
+    placementFindUnique.mockResolvedValue({
+      ...pending,
+      status: 'approved',
+      resolvedAt: new Date(Date.now() - (REMIX_GALLERY_REMOVAL_LOCK_HOURS + 1) * 60 * 60 * 1000),
+    });
+    placementUpdateMany.mockResolvedValue({ count: 1 });
+
+    await actOnRemixGallerySubmission({
+      placementId: PLACEMENT,
+      action: 'remove',
+      userId: OWNER,
+    });
+
+    expect(placementUpdateMany).toHaveBeenCalled();
+  });
+
+  it('lets a moderator take down a locked entry', async () => {
+    // The lock protects a submitter from the owner. An abusive entry is the case
+    // that must not wait a week, and a takedown is a moderation record rather
+    // than an owner decision.
+    placementFindUnique.mockResolvedValue({
+      ...pending,
+      status: 'approved',
+      resolvedAt: new Date(),
+    });
+    placementUpdateMany.mockResolvedValue({ count: 1 });
+
+    await actOnRemixGallerySubmission({
+      placementId: PLACEMENT,
+      action: 'remove',
+      userId: STRANGER,
+      isModerator: true,
+    });
+
+    expect(placementUpdateMany.mock.calls[0][0].data).toMatchObject({ removedBy: 'moderator' });
   });
 
   it('takes a live entry down with a direct write, not through settlePlacement', async () => {

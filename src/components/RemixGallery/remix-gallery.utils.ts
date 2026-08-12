@@ -12,6 +12,12 @@ export type RemixGalleryItem = {
   placementId: number;
   placerId: number;
   pinned: boolean;
+  /**
+   * When the owner approved it. Only approved entries reach this list, so this
+   * is the moment the removal lock runs from — the manage modal needs it to say
+   * how long is left rather than inferring a date from something else.
+   */
+  resolvedAt: Date | string | null;
   image: RemixGalleryImage;
 };
 
