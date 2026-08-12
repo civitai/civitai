@@ -23,15 +23,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       const session = await getServerAuthSession({ req, res });
       const userId = session?.user?.id;
-      if (userId)
-        await Promise.race([
-          syncUserDiscordLeaderboardRoles(userId),
-          new Promise((resolve) => setTimeout(resolve, SYNC_TIMEOUT)),
+      if (userId) {
+        // The redirect wins the race on a slow Discord, so without this the sync a user is waiting on can fail
+        // to finish every single time and look exactly like a sync that never ran.
+        let timer: NodeJS.Timeout | undefined;
+        const timedOut = await Promise.race([
+          syncUserDiscordLeaderboardRoles(userId).then(() => false),
+          new Promise<boolean>((resolve) => {
+            timer = setTimeout(() => resolve(true), SYNC_TIMEOUT);
+          }),
         ]);
+        clearTimeout(timer);
+
+        if (timedOut)
+          logToAxiom({
+            type: 'warn',
+            name: 'discord-link-sync-timeout',
+            error: { userId, timeout: SYNC_TIMEOUT },
+          });
+      }
     } catch (e) {
       logToAxiom({
-        type: 'discord-link-sync-error',
-        name: 'auth-linked',
+        type: 'error',
+        name: 'discord-link-sync-error',
         message: e instanceof Error ? e.message : String(e),
       });
     }

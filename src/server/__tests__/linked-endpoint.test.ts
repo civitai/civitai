@@ -6,14 +6,15 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 // effect is gated on the one-shot cookie /api/auth/connect sets — otherwise any page could fire it in a
 // logged-in visitor's browser and spend our Discord rate limit.
 
-const { mockSync, mockSession } = vi.hoisted(() => ({
+const { mockSync, mockSession, mockLog } = vi.hoisted(() => ({
   mockSync: vi.fn(),
   mockSession: vi.fn(),
+  mockLog: vi.fn(),
 }));
 
 vi.mock('~/server/jobs/apply-discord-roles', () => ({ syncUserDiscordLeaderboardRoles: mockSync }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({ getServerAuthSession: mockSession }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
+vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLog }));
 
 import handler from '~/pages/api/auth/linked';
 
@@ -107,5 +108,28 @@ describe('/api/auth/linked', () => {
 
     expect(res.statusCode).toBe(302);
     vi.useRealTimers();
+  });
+
+  // A sync that loses the race every time looks identical to one that never ran, so the timeout has to say so.
+  it('logs when the sync loses the race', async () => {
+    vi.useFakeTimers();
+    mockSync.mockReturnValue(new Promise(() => undefined));
+    const { req, res } = mockReqRes({ provider: 'discord', returnUrl: '/' }, linkStarted);
+
+    const pending = handler(req, res as unknown as NextApiResponse);
+    await vi.advanceTimersByTimeAsync(5000);
+    await pending;
+
+    expect(mockLog).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'discord-link-sync-timeout' })
+    );
+    vi.useRealTimers();
+  });
+
+  it('does not log a timeout when the sync finishes in time', async () => {
+    const { req, res } = mockReqRes({ provider: 'discord', returnUrl: '/' }, linkStarted);
+    await handler(req, res as unknown as NextApiResponse);
+
+    expect(mockLog).not.toHaveBeenCalled();
   });
 });
