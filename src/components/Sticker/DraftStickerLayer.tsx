@@ -359,8 +359,11 @@ export function DraftStickerLayer() {
         // itself — so a small sticker was squeezing the button until its label
         // clipped and its currency badge lost its padding. The button's size
         // must not be a function of the sticker's.
+        // `items-center` rather than text alignment: the caption can be wider
+        // than the button, and a `w-max` box sized by whichever is longer leaves
+        // the other one off-centre.
         className={clsx(
-          'absolute left-1/2 w-max -translate-x-1/2 cursor-auto whitespace-nowrap',
+          'absolute left-1/2 flex w-max -translate-x-1/2 cursor-auto flex-col items-center gap-1 whitespace-nowrap',
           flipped ? 'bottom-full' : 'top-full mt-2'
         )}
         style={{
@@ -395,9 +398,19 @@ export function DraftStickerLayer() {
             })
           }
         />
-        <Text size="xs" fw={500} ta="center" mt={4} c="yellow.4">
-          {payoutCopy(space?.ownerShare)}
-        </Text>
+        {/* On its own dark chip rather than over the artwork: this sits on
+            whatever the creator uploaded, and yellow on light work is as
+            unreadable as dimmed was on dark. */}
+        {payoutCopy(space?.ownerShare) && (
+          <Text
+            size="xs"
+            fw={500}
+            c="yellow.4"
+            className="rounded-full bg-black/80 px-2 py-0.5 leading-tight"
+          >
+            {payoutCopy(space?.ownerShare)}
+          </Text>
+        )}
       </div>
     </div>
   );
