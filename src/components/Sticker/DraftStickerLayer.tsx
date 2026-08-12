@@ -55,10 +55,27 @@ export function DraftStickerLayer() {
   // First pointer down wins until it comes up. A second finger landing on
   // another sticker used to overwrite the gesture, which sent the first finger's
   // moves to the second finger's sticker.
+  //
+  // Reports whether it took the gesture, so the caller can keep selection in
+  // step with it. Selecting on a refused press moved the highlight and the
+  // z-order onto the second finger's sticker while the first finger was still
+  // dragging a different one — the sticker under your finger dropped beneath
+  // the one that was not.
+  //
+  // A *primary* pointer always takes over, and that is the important half. A
+  // flat "refuse while a gesture exists" makes a lost pointerup permanent:
+  // nothing else clears the ref, so pressing the button, alt-tabbing and
+  // releasing in another window — which delivers neither pointerup nor
+  // pointercancel — would refuse every drag, resize, rotate and tray pickup for
+  // the rest of the session, recoverable only by removing every draft. A second
+  // finger is never primary while the first is down, so refusing only
+  // non-primary keeps that closed while letting a mouse or a fresh first touch
+  // heal a stranded gesture on the next press.
   const onGesture = useCallback((next: Gesture) => {
-    if (gesture.current) return;
+    if (gesture.current && !next.isPrimary) return false;
     gesture.current = next;
     useStickerPlacementDraftStore.getState().setInteraction(next.mode);
+    return true;
   }, []);
 
   useEffect(() => {
@@ -121,10 +138,13 @@ export function DraftStickerLayer() {
       });
     };
 
-    // Ends only for the pointer that owns it. An unconditional clear let a
-    // second finger lifting anywhere kill a drag that was still in progress.
+    // Ends for the pointer that owns it, or for any primary pointer — an
+    // unconditional clear let a second finger lifting anywhere kill a live drag,
+    // but an owner-only clear would strand the gesture forever if its own
+    // pointerup never arrives.
     const onUp = (event: PointerEvent) => {
-      if (gesture.current && event.pointerId !== gesture.current.pointerId) return;
+      if (gesture.current && event.pointerId !== gesture.current.pointerId && !event.isPrimary)
+        return;
       gesture.current = null;
       setInteraction(null);
     };
@@ -150,6 +170,9 @@ export function DraftStickerLayer() {
     gesture.current = {
       draftId: selectedDraftId,
       pointerId: trayPointerId,
+      // The tray refuses a pickup while any gesture is live, so the pointer that
+      // got here is the one that owns the drag.
+      isPrimary: true,
       mode: 'move',
       offsetX: 0,
       offsetY: 0,

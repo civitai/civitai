@@ -4,7 +4,7 @@ import clsx from 'clsx';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
-import type { Gesture } from '~/components/Sticker/draft-gesture';
+import type { Gesture, StartGesture } from '~/components/Sticker/draft-gesture';
 import { KNOB_OFFSET, rotate } from '~/components/Sticker/draft-gesture';
 import {
   candidateDistance,
@@ -85,7 +85,7 @@ export function DraftSticker({
   price: number;
   ownerShare: number | undefined;
   ownerUsername: string | null | undefined;
-  onGesture: (gesture: Gesture) => void;
+  onGesture: StartGesture;
 }) {
   const payout = payoutCopy(ownerShare, ownerUsername);
   const select = useStickerPlacementDraftStore((state) => state.select);
@@ -183,7 +183,13 @@ export function DraftSticker({
     const element = rootRef.current;
     if (!element) return;
 
-    const observer = new ResizeObserver(remeasure);
+    // `measure`, not `remeasure`: a resize gesture rewrites `scale` every frame,
+    // which resizes the root, which fires this — so refreshing the clip here put
+    // the ancestor walk back on the pointermove path for one of the three
+    // gestures, which is exactly what the comment above claims it does not do. A
+    // size change cannot move the clipping ancestor, so there is nothing to
+    // re-derive; mount, a tray change and a window resize still do.
+    const observer = new ResizeObserver(measure);
     observer.observe(element);
     if (buttonRef.current) observer.observe(buttonRef.current);
     if (trayElement) observer.observe(trayElement);
@@ -195,8 +201,9 @@ export function DraftSticker({
     };
     // No `selected` here: it decides z-order and nothing this measures. The
     // component only exists while its draft does, so the element is committed
-    // before this first runs.
-  }, [remeasure, trayElement]);
+    // before this first runs. `measure` and `remeasure` are both permanently
+    // stable, so this still binds once.
+  }, [measure, remeasure, trayElement]);
 
   // The cheap half, and the only one a gesture reaches: rect and offset reads,
   // no style recalc. Which ancestor clips is a property of the tree, not of the
@@ -210,20 +217,26 @@ export function DraftSticker({
       event.preventDefault();
       event.stopPropagation();
 
-      // Pressing an unselected sticker both selects it and starts the drag, so
-      // reaching one of several takes one gesture rather than two.
-      select(draft.id);
-
       const point = pointerToSurfaceFraction(event.clientX, event.clientY);
       const element = rootRef.current;
       if (!point || !element) return;
 
+      // Selection follows the gesture rather than the press. Pressing an
+      // unselected sticker both selects it and starts the drag — one gesture,
+      // not two — but a press that is REFUSED because another finger already
+      // holds a drag must not move the selection either, or the highlight and
+      // the z-order land on a sticker nobody is dragging.
+      const take = (gesture: Gesture) => {
+        if (onGesture(gesture)) select(draft.id);
+      };
+
       if (mode === 'move') {
         // Keep the sticker where it was relative to the grab, instead of
         // snapping its centre to the cursor.
-        onGesture({
+        take({
           draftId: draft.id,
           pointerId: event.pointerId,
+          isPrimary: event.isPrimary,
           mode: 'move',
           offsetX: draft.x - point.x,
           offsetY: draft.y - point.y,
@@ -241,9 +254,10 @@ export function DraftSticker({
           draft.rotation
         );
 
-        onGesture({
+        take({
           draftId: draft.id,
           pointerId: event.pointerId,
+          isPrimary: event.isPrimary,
           mode: 'resize',
           anchorX: draft.x * bounds.width + anchor.x,
           anchorY: draft.y * bounds.height + anchor.y,
@@ -252,7 +266,12 @@ export function DraftSticker({
           aspect,
         });
       } else {
-        onGesture({ draftId: draft.id, pointerId: event.pointerId, mode: 'rotate' });
+        take({
+          draftId: draft.id,
+          pointerId: event.pointerId,
+          isPrimary: event.isPrimary,
+          mode: 'rotate',
+        });
       }
     };
 

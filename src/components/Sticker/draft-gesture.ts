@@ -19,11 +19,14 @@
  * dragging the second finger's sticker — and lifting the second finger would
  * end the first finger's drag while it was still down.
  */
-export type Gesture = { draftId: string; pointerId: number } & (
+export type Gesture = { draftId: string; pointerId: number; isPrimary: boolean } & (
   | { mode: 'move'; offsetX: number; offsetY: number }
   | { mode: 'rotate' }
   | { mode: 'resize'; anchorX: number; anchorY: number; sx: number; sy: number; aspect: number }
 );
+
+/** Returns whether the gesture was taken; a refusal means one is already live. */
+export type StartGesture = (gesture: Gesture) => boolean;
 
 export const rotate = (x: number, y: number, degrees: number) => {
   const radians = (degrees * Math.PI) / 180;

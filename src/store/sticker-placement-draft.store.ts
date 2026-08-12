@@ -184,7 +184,12 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
           state.selectedDraftId === target
             ? drafts[drafts.length - 1]?.id ?? null
             : state.selectedDraftId,
+        // Cleared as a pair, always. It is inert on this path today, but "these
+        // two move together" is only an invariant if nothing breaks it, and a
+        // later reader of `interactionPointerId` alone would inherit a stale
+        // pointer from a draft that no longer exists.
         interaction: null,
+        interactionPointerId: null,
       };
     }),
 

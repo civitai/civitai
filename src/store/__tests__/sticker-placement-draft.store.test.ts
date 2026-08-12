@@ -43,7 +43,8 @@ describe('sticker placement draft store', () => {
 
       state().begin(OTHER_COSMETIC);
 
-      expect(state().drafts.map((draft) => draft.id)).toEqual([first, state().drafts[1].id]);
+      expect(state().drafts).toHaveLength(2);
+      expect(state().drafts[0].id).toBe(first);
       expect(state().drafts[0].cosmeticId).toBe(COSMETIC);
     });
 
@@ -146,12 +147,17 @@ describe('sticker placement draft store', () => {
       expect(state().trayOpen).toBe(false);
     });
 
-    // `interaction` is otherwise cleared only by the layer's pointerup listener.
-    // If that listener is not mounted when the pointer comes up — the overlay
-    // stops rendering at zero width, which a resize mid-drag does — it is
-    // stranded at 'move', and the layer re-arms a drag on the selected sticker
-    // as soon as it remounts. The sticker then follows the bare cursor with no
-    // button held.
+    // A tray pickup hands the drag to the layer through `interaction` plus the
+    // pointer holding it. If the layer unmounts between that handoff and the
+    // pointerup — the overlay stops rendering at zero width, which a resize can
+    // do — nothing clears the pair, and the layer arms a phantom drag on the
+    // selected sticker the moment it remounts: it follows the bare cursor with
+    // no button held.
+    //
+    // The tray shape specifically, which is why the fixture sets a pointer id.
+    // An on-image drag strands as `{'move', null}`, and the layer's arming
+    // effect already refuses that for want of a pointer id — so this is the
+    // shape the clear is actually needed for.
     it('clears a stranded interaction when the panel is reopened', () => {
       withDrafts(1);
       state().closeTray();

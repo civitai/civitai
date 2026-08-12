@@ -103,11 +103,16 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
    * it, which is the thing being fixed rather than a detail of when it renders.
    */
   const grab = (cosmeticId: number) => (event: React.PointerEvent) => {
-    // A second finger cannot start a pickup while the first is mid-drag. The
-    // layer holds one gesture, so the sticker this created would be dropped on
-    // the image and then never follow anything — placed, stationary, with no
-    // cue that it went wrong.
-    if (!event.isPrimary) return;
+    // No pickup while a drag is already in flight. The layer holds one gesture,
+    // so the sticker this created would be dropped on the image and then never
+    // follow anything — placed, stationary, with no cue that it went wrong.
+    //
+    // Gated on a live gesture rather than on `event.isPrimary`, which looks
+    // equivalent and is not: a mouse is primary no matter how many touches are
+    // down, so a trackpad pickup during a touch drag walked straight past it —
+    // and a palm resting on a tablet makes the dragging finger non-primary, so
+    // it silently dropped pickups that were perfectly fine.
+    if (useStickerPlacementDraftStore.getState().interaction) return;
 
     event.preventDefault();
     endGrab.current?.();
