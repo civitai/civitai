@@ -236,8 +236,21 @@ function toSeatListing(row: RawSeatListing, wasShadow: boolean): SeatListing {
  * `externalUrl`, so such a listing HAS a `blockId` slug while declaring
  * `submitVersion: false`. A slug-only gate would hand that listing's collaborator
  * Forgejo `write`.
+ *
+ * 🔴 A TYPE PREDICATE, not a `boolean`, and that is load-bearing rather than cosmetic.
+ * The three call sites pass `listing.blockSlug` to a Forgejo call that requires a
+ * `string`, and they used to do it through a `!` non-null assertion justified by a
+ * comment ("safe: `hasWritableRepo` is precisely the null check"). That comment was the
+ * only thing holding the invariant: relax this function to a kind-only check — a
+ * one-token edit that looks like a simplification — and all three assertions silently
+ * start asserting something false, passing `undefined` as a repo slug. As a predicate,
+ * the compiler does the narrowing, the `!`s are gone, and that same edit is a type
+ * error at every call site instead.
  */
-function hasWritableRepo(listing: { kind: string; blockSlug: string | null }): boolean {
+function hasWritableRepo(listing: {
+  kind: string;
+  blockSlug: string | null;
+}): listing is { kind: string; blockSlug: string } {
   return listingKindSupports(listing.kind, 'submitVersion') && listing.blockSlug != null;
 }
 
@@ -503,10 +516,10 @@ export async function respondToInvite(opts: {
     });
   });
 
-  // 🔴 KIND-GATED, not slug-gated — see {@link hasWritableRepo}. The non-null assertion
-  // is safe: `hasWritableRepo` is precisely the null check.
+  // 🔴 KIND-GATED, not slug-gated — see {@link hasWritableRepo}. It is a TYPE PREDICATE,
+  // so `blockSlug` narrows to `string` here; no non-null assertion is involved.
   if (opts.accept && hasWritableRepo(listing)) {
-    await grantAppRepoWrite({ slug: listing.blockSlug!, userId: opts.userId });
+    await grantAppRepoWrite({ slug: listing.blockSlug, userId: opts.userId });
   }
 
   return { appListingId: listing.appListingId, userId: opts.userId, status: nextStatus };
@@ -547,7 +560,7 @@ export async function removeCollaborator(opts: {
   });
 
   if (removed && hasWritableRepo(listing)) {
-    await revokeAppRepoWrite({ slug: listing.blockSlug!, userId: opts.targetUserId });
+    await revokeAppRepoWrite({ slug: listing.blockSlug, userId: opts.targetUserId });
   }
   return { appListingId: listing.appListingId, userId: opts.targetUserId, removed };
 }
@@ -578,7 +591,7 @@ export async function leaveApp(opts: {
   });
 
   if (removed && hasWritableRepo(listing)) {
-    await revokeAppRepoWrite({ slug: listing.blockSlug!, userId: opts.userId });
+    await revokeAppRepoWrite({ slug: listing.blockSlug, userId: opts.userId });
   }
   return { appListingId: listing.appListingId, userId: opts.userId, removed };
 }

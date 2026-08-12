@@ -62,6 +62,18 @@ import { describe, expect, it } from 'vitest';
  *       `appOwnerUserId` and is user-wide. Left as-is, deliberately — see the note on
  *       `getMyRevenue`, which must keep showing an ex-owner the money they accrued
  *       before transferring an app away.
+ *   D5. THE OWNER HALF OF A GATE READ A DIFFERENT COLUMN FROM ITS SEAT HALF. Five gates
+ *       spelled the owner question as `<row>.userId !== callerId` against
+ *       `AppListing.userId` — a DENORMALIZED copy for an on-site listing, whose canonical
+ *       owner is `AppBlock.app.userId` — while their seat half delegated to
+ *       `resolveListingAccess`, which resolves the canonical owner. On a drifted onsite
+ *       row those two halves disagree, and the disagreement is two-sided: the REAL owner
+ *       resolves as `owner` (not `editor`) and is refused, and whoever the stale column
+ *       names walks straight through the first comparison. FIXED (not merely recorded):
+ *       all five now ask `resolveListingAccess`. The class this ledger used to record is
+ *       consequently EMPTY for every collaborator-reachable gate, and
+ *       {@link DENORM_OWNER_HOLDOUTS} keeps it that way while naming the owner-only
+ *       holdouts that are NOT fixed.
  */
 
 const ROOT = process.cwd();
@@ -79,15 +91,21 @@ const GATE_LEDGER: Record<string, string> = {
     'widened to owned+seated via getMyAppsEarnings; getMyRevenue is deliberately NOT ' +
     'widened (D4).',
   'src/server/services/blocks/app-listing-assets.service.ts':
-    'loadOwnedListing + resolveOwnerScreenshotTarget widened to owner | ACCEPTED ' +
-    'collaborator | moderator via resolveListingAccess. Keeps its pre-existing mod ' +
-    'bypass (D1). loadValidatedImage is NOT widened: it gates IMAGE ownership, and an ' +
-    'editor attaches their OWN uploads.',
+    'loadOwnedListing is THE gate: owner | ACCEPTED collaborator | moderator, with BOTH ' +
+    'the owner half and the seat half resolved by resolveListingAccess — never the ' +
+    'denormalized AppListing.userId (D5). Keeps its pre-existing mod bypass (D1), which ' +
+    'still short-circuits first so a mod pays no extra read. resolveOwnerScreenshotTarget ' +
+    'no longer runs its own early copy of the gate: it called loadOwnedListing on the ' +
+    'same listing one line later, so the copy was pure drift surface. loadValidatedImage ' +
+    'is NOT widened: it gates IMAGE ownership, and an editor attaches their OWN uploads.',
   'src/server/services/blocks/offsite-listing.service.ts':
-    'loadOwnedEditableListing, getMyListingForApp and submitListingRevision widened to ' +
-    'owner | ACCEPTED collaborator. Still NO mod bypass (D1). submitListingRevision ' +
-    'needed the seat check specifically because beginListingRevision clones the shadow ' +
-    'with the PARENT OWNER’s userId, so an editor’s own shadow reads as not-theirs.',
+    'loadOwnedEditableListing, getMyListingForApp and submitListingRevision are owner | ' +
+    'ACCEPTED collaborator, all three via the one resolveListingRole helper (a thin read ' +
+    'of resolveListingAccess) — the owner half included, so a stale denormalized column ' +
+    'cannot invert them (D5). Still NO mod bypass (D1). submitListingRevision needed the ' +
+    'seat check specifically because beginListingRevision clones the shadow with the ' +
+    'PARENT OWNER’s userId, so an editor’s own shadow reads as not-theirs — and that ' +
+    'clone is a copy of a copy, which is why reading it directly was doubly wrong.',
   'src/server/services/blocks/app-analytics.service.ts':
     'getOwnedAppBlocks resolves the permitted-id SET (owned + seated) instead of ' +
     '`app: { userId }`. Safe to widen HERE because every downstream aggregate filters ' +
@@ -243,19 +261,84 @@ const KIND_CAPABILITY_LEDGER: Record<string, string> = {
  * `assertAppEditAccess` — the blocks.router wrapper.
  *
  * 🔴 THE LISTING-OWNER CLASS IS MATCHED EXPLICITLY, and that is the point of the third
- * and fourth alternatives. This PR widened three gates spelled
- * `listing.userId !== user.id`, `shadow.userId !== userId` and
- * `shot.appListing.userId !== user.id` — the DENORMALIZED owner column, not
- * `app.userId`. Before they were listed here the regex could not see any of them: their
- * three files were in the ledger only INCIDENTALLY, matched by an unrelated token
- * (`resolveListingAccess`, `loadOwnedListingInTx`), so a new file opening a fresh
- * `listing.userId !== callerId` gate would have grown the population WITHOUT growing
- * `GATES` — the "fails on GROWTH" assertion below would have stayed green through
- * exactly the event it exists to catch. Every shape is probed in the POSITIVE CONTROL
- * test, because a regex nobody has watched match is a claim, not a guard.
+ * and fourth alternatives. The gates spelled `listing.userId !== user.id`,
+ * `shadow.userId !== userId` and `shot.appListing.userId !== user.id` read the
+ * DENORMALIZED owner column, not `app.userId`. Before they were listed here the regex
+ * could not see any of them: their files were in the ledger only INCIDENTALLY, matched by
+ * an unrelated token (`resolveListingAccess`, `loadOwnedListingInTx`), so a new file
+ * opening a fresh `listing.userId !== callerId` gate would have grown the population
+ * WITHOUT growing `GATES` — the "fails on GROWTH" assertion below would have stayed green
+ * through exactly the event it exists to catch.
+ *
+ * 🔴 THOSE ALTERNATIVES NOW MATCH NOTHING IN PRODUCTION, AND THEY STAY. All five sites of
+ * that class were routed through `resolveListingAccess` (D5), so keeping the alternatives
+ * here is what makes a REINTRODUCTION grow `GATES` and fail loudly instead of shipping as
+ * a fresh copy of the same inversion. Every shape is probed in the POSITIVE CONTROL test,
+ * because a regex nobody has watched match is a claim, not a guard — and that matters
+ * more, not less, now that the live corpus no longer exercises them.
  */
 const GATE_RE =
   /app\??\.userId|app:\s*\{\s*userId|(?:\w*[Ll]isting|\w*[Ss]hadow)\.userId\s*!==|\w+\.appListing\.userId\s*!==|resolveAppAccess|resolveListingAccess|resolveAccessibleAppBlockIds|assertAppEditAccess|listAppInsiderUserIds|loadOwnedListingInTx/;
+
+/**
+ * 🔴 THE DENORMALIZED-OWNER GATE CLASS (D5) — every spelling of "compare the caller
+ * against `AppListing.userId`", including the positive-branch form.
+ *
+ * Broader than the corresponding alternatives in {@link GATE_RE} on purpose: this one
+ * also matches `===`, because a gate can be written as an ALLOW branch (the self-review
+ * exclusion is) and that form is just as stale-able. Kept as a separate regex rather than
+ * widened into `GATE_RE` so that the gate POPULATION and the column-read CLASS can be
+ * asserted independently — a site can legitimately be in one and not the other.
+ */
+const DENORM_OWNER_RE =
+  /(?:\w*[Ll]isting|\w*[Ss]hadow)\.userId\s*(?:!==|===)|\w+\.appListing\.userId\s*(?:!==|===)/;
+
+/**
+ * 🔴 THE CLASS IS NOT DELETED, IT IS EMPTY-EXCEPT-FOR-THESE — and this table is the
+ * difference between "we fixed it" and "we stopped looking".
+ *
+ * Every collaborator-reachable gate now resolves the owner canonically. What is left is
+ * three NON-collaborator sites that still compare against the column, listed with why
+ * each was not swept along — two owner-only lifecycle gates that carry the same latent
+ * inversion, and one that is in the class by SHAPE but safe by CONTEXT (it matches on
+ * `appBlockId IS NULL`, where the column IS canonical). "Left as-is" and "safe" are
+ * different verdicts and the table states which is which, because a reader who assumes
+ * the first means the second is exactly how this class gets forgotten again.
+ *
+ * The assertion below fails on GROWTH (a new site reads the column)
+ * and on SHRINK (one of these was fixed and this record went stale) — the same property
+ * the two ledgers above have, applied to a class rather than to a population.
+ */
+const DENORM_OWNER_HOLDOUTS: Record<string, string> = {
+  'src/server/services/blocks/offsite-moderation.service.ts':
+    'TWO owner-only gates: loadOwnedListingInTx (unpublish/republish your own listing, ' +
+    'DUAL-KIND so an onsite listing reaches it) and listMyListingModerationEvents. Both ' +
+    'carry the same latent inversion as D5 — on a drifted onsite row the real owner is ' +
+    'refused and the stale name is admitted — and neither is fixed here. The reason is ' +
+    'mechanical, not a judgement that they are safe: loadOwnedListingInTx runs INSIDE an ' +
+    'interactive transaction and would need resolveListingAccess to accept a ' +
+    'Prisma.TransactionClient, i.e. a widening of the shared AccessDb type that changes ' +
+    'the resolver for every caller. That deserves its own PR, not a ride-along.',
+  'src/server/services/blocks/publish-request.service.ts':
+    'The orphan-draft REUSE check in submitVersion’s first-version branch ' +
+    '(`existingSlugListing.userId === submittedByUserId`) — reuse a same-slug ' +
+    'pre-approval draft only if it is the submitter’s own, else treat the slug as taken. ' +
+    'NOT a stale-copy hazard and NOT scheduled for change: the row it reads is matched on ' +
+    '`kind = onsite AND status = draft AND appBlockId IS NULL` in the same condition, and ' +
+    'a listing with no backing AppBlock has no OauthClient in its ownership chain, so the ' +
+    'column IS the canonical owner there — resolveListingAccess would return the exact ' +
+    'same number by its own fallback. Recorded so the class stays enumerated rather than ' +
+    'sampled: it is in the class by SHAPE, and safe by CONTEXT.',
+  'src/server/services/blocks/app-listing-review.service.ts':
+    'The self-review exclusion in upsertAppListingReview, written as an ALLOW branch ' +
+    '(`listing.userId === userId` → refuse). Not a collaborator gate at all — it is ' +
+    'anti-abuse — but it reads the same denormalized column, so on a drifted onsite ' +
+    'listing the REAL owner could review their own app while a stranger named by the ' +
+    'stale row could not. NOT fixed here: the block-side equivalent already resolves the ' +
+    'insider set (listAppInsiderUserIds), so the right fix is to route this at the same ' +
+    'insider seam rather than to swap one column read for another, and widening an ' +
+    'anti-abuse rule is a product decision.',
+};
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -378,6 +461,97 @@ describe('app-ownership gate ledger', () => {
         `${file} rationale must state what it decided about collaborators`
       ).toBe(true);
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 D5 — the denormalized-owner gate CLASS, pinned as (almost) empty.
+  // -------------------------------------------------------------------------
+
+  describe('🔴 the denormalized-owner gate class (D5)', () => {
+    const DENORM_SITES = FILES.filter((f) => DENORM_OWNER_RE.test(CODE.get(f)!)).sort();
+
+    it('POSITIVE CONTROL: DENORM_OWNER_RE matches every spelling the fix removed', () => {
+      // These five lines are copied verbatim from the pre-fix source. A regex asserting a
+      // class is EMPTY is worthless unless it has been watched to match that class — an
+      // empty result is otherwise indistinguishable from a typo in the pattern.
+      const REMOVED: Array<[string, string]> = [
+        [
+          'offsite-listing::loadOwnedEditableListing',
+          'if (listing.userId !== userId && !(await isAcceptedListingEditor(listingId, userId))) {',
+        ],
+        [
+          'offsite-listing::submitListingRevision',
+          'if (shadow.userId !== userId && !(await isAcceptedListingEditor(shadowId, userId))) {',
+        ],
+        [
+          'offsite-listing::getMyListingForApp',
+          'if (listing.userId !== userId && !(await isAcceptedListingEditor(listing.id, userId))) {',
+        ],
+        [
+          'app-listing-assets::loadOwnedListing',
+          'if (listing.userId !== user.id && !user.isModerator) {',
+        ],
+        [
+          'app-listing-assets::resolveOwnerScreenshotTarget',
+          'if (shot.appListing.userId !== user.id && !user.isModerator) {',
+        ],
+        [
+          'the ALLOW-branch form (app-listing-review)',
+          'if (listing.userId === userId) { throw throwAuthorizationError(...); }',
+        ],
+      ];
+      for (const [label, sample] of REMOVED) {
+        expect(DENORM_OWNER_RE.test(sample), `DENORM_OWNER_RE must recognise: ${label}`).toBe(
+          true
+        );
+      }
+    });
+
+    it('NEGATIVE CONTROL: it does not match the canonical resolution or an unrelated owner', () => {
+      // The replacement must NOT itself count as a member of the class, or the assertion
+      // below could never go green; and an Image/Post owner check is a different subject.
+      expect(DENORM_OWNER_RE.test('const role = await resolveListingRole(listingId, userId);')).toBe(
+        false
+      );
+      expect(
+        DENORM_OWNER_RE.test('const ownerUserId = row.appBlock?.app?.userId ?? row.userId;')
+      ).toBe(false);
+      expect(DENORM_OWNER_RE.test('if (image.userId !== user.id) return null;')).toBe(false);
+    });
+
+    it('the class is EMPTY except for the recorded owner-only holdouts (GROWTH and SHRINK)', () => {
+      // 🔴 Read the failure message before "fixing" it. GROWTH means a gate went back to
+      // comparing against AppListing.userId — the two-sided inversion D5 describes.
+      // SHRINK means one of the holdouts was finally fixed and DENORM_OWNER_HOLDOUTS is
+      // now lying about the state of the codebase.
+      expect(DENORM_SITES).toEqual(Object.keys(DENORM_OWNER_HOLDOUTS).sort());
+    });
+
+    it('no file that gates on collaborator ACCESS is in the class', () => {
+      // The narrower, behaviour-facing half of the same claim: whatever the holdout list
+      // says, a file that consults a seat must not ALSO be comparing against the column —
+      // that is exactly the split-brain gate D5 is about (seat half canonical, owner half
+      // denormalized), and it is what all five fixed sites looked like.
+      const seatAware = FILES.filter((f) =>
+        /resolveListingAccess|resolveAppAccess|resolveListingRole/.test(CODE.get(f)!)
+      );
+      expect(seatAware.length).toBeGreaterThan(2); // positive control: the scan found some
+      for (const file of seatAware) {
+        expect(
+          DENORM_OWNER_RE.test(CODE.get(file)!),
+          `${file} resolves a seat canonically but still compares against AppListing.userId`
+        ).toBe(false);
+      }
+    });
+
+    it('every holdout entry names a real file and states why it was left', () => {
+      for (const [file, rationale] of Object.entries(DENORM_OWNER_HOLDOUTS)) {
+        expect(CODE.get(file), `${file} is not in the scanned population`).toBeDefined();
+        expect(rationale.length, `${file} rationale is too terse to be a decision`).toBeGreaterThan(
+          80
+        );
+      }
+    });
   });
 
   it('🔴 the consolidated predicate is the ONLY place the accepted-status filter is written', () => {

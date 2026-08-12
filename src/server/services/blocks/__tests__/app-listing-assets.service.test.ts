@@ -941,6 +941,12 @@ describe('screenshot CRUD', () => {
   });
 
   it('removeScreenshot rejects a non-owner of the parent listing', async () => {
+    // The parent listing must be wired: ownership is decided by `loadOwnedListing`, which
+    // LOADS the listing and resolves its canonical owner. (This case used to pass off an
+    // earlier, denormalized-column copy of the same check that read `appListing.userId`
+    // straight off the screenshot row; that copy is gone — see
+    // `app-access.denormalized-owner-drift.test.ts`.)
+    mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.appListingScreenshot.findUnique.mockResolvedValue({
       id: 'b', appListingId: 'apl_1', appListing: { userId: 42 },
     });
