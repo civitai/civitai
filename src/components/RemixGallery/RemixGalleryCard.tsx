@@ -4,6 +4,7 @@ import {
   Card,
   Center,
   Group,
+  HoverCard,
   Skeleton,
   Stack,
   Text,
@@ -12,6 +13,8 @@ import {
 } from '@mantine/core';
 import { IconHierarchy, IconPlus, IconSettings } from '@tabler/icons-react';
 import clsx from 'clsx';
+import dynamic from 'next/dynamic';
+import { useState } from 'react';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -30,6 +33,75 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { REMIX_GALLERY_ROW_WIDTH } from '~/shared/utils/remix-gallery';
 import { trpc } from '~/utils/trpc';
+
+// Loaded with the hover, not with the page. The creator card drags in profile
+// cosmetics, live metrics and edge media, and this gallery renders on image
+// detail pages whether or not anyone hovers an entry.
+const SmartCreatorCard = dynamic(() =>
+  import('~/components/CreatorCard/CreatorCard').then((m) => m.SmartCreatorCard)
+);
+
+/** Matches the sticker hover card, so the two read as the same object. */
+const HOVER_CARD_WIDTH = 400;
+
+/**
+ * Who submitted this entry, on hover.
+ *
+ * The gallery is a marketing surface for the submitter as much as a decoration
+ * for the owner — their name and shop reach everyone who looks at someone
+ * else's image — so this carries the creator card's actions rather than the
+ * sticker card's name-only treatment.
+ *
+ * Nothing is fetched per entry. `CreatorCardSimple` runs its own
+ * `user.getCreator` query on mount, un-gated, so a card mounted per grid cell
+ * would be one request per entry for the many nobody hovers. Rendering the
+ * contents only once `opened` is what holds that to one request per hover —
+ * Mantine would not mount the dropdown early either, but resting the property
+ * on a library default leaves it invisible here and silently broken if the
+ * default ever moves.
+ */
+function GalleryEntryHoverCard({
+  item,
+  children,
+}: {
+  item: RemixGalleryItem;
+  children: React.ReactElement;
+}) {
+  const [opened, setOpened] = useState(false);
+
+  return (
+    <HoverCard
+      width={HOVER_CARD_WIDTH}
+      shadow="sm"
+      withArrow
+      withinPortal
+      openDelay={300}
+      position="bottom"
+      offset={4}
+      onOpen={() => setOpened(true)}
+    >
+      <HoverCard.Target>{children}</HoverCard.Target>
+      {/* The creator card carries its own padding edge to edge, and its border
+          is dropped rather than the dropdown's so there is one outline. */}
+      <HoverCard.Dropdown p={0}>
+        {opened ? (
+          // The submitted image's owner IS the submitter: the mutation refuses
+          // anything but your own image, so these cannot drift. `placerId` is
+          // the fallback because the card only needs an id to fetch the rest.
+          <SmartCreatorCard
+            user={item.image.user ?? { id: item.placerId }}
+            withActions
+            withBorder={false}
+          />
+        ) : (
+          <div className="p-3">
+            <Skeleton height={92} radius="md" />
+          </div>
+        )}
+      </HoverCard.Dropdown>
+    </HoverCard>
+  );
+}
 
 /**
  * The remix gallery, in the image-detail sidebar above generation data.
@@ -133,21 +205,26 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
       ) : shown.length ? (
         <div className="grid grid-cols-4 gap-3">
           {shown.map((item) => (
-            <AspectRatioImageCard
-              key={item.placementId}
-              aspectRatio="square"
-              image={item.image}
-              className={clsx(item.pinned && 'ring-2 ring-yellow-5')}
-              routedDialog={{
-                name: 'imageDetail',
-                // Handing the dialog a set is what makes next/previous browse
-                // the gallery instead of the feed behind it.
-                state: {
-                  imageId: item.image.id,
-                  images: galleryDialogImages(item.image.id, shown),
-                },
-              }}
-            />
+            <GalleryEntryHoverCard key={item.placementId} item={item}>
+              {/* A wrapper because `AspectRatioImageCard` does not forward a
+                  ref, and `HoverCard.Target` needs one on its child. */}
+              <div>
+                <AspectRatioImageCard
+                  aspectRatio="square"
+                  image={item.image}
+                  className={clsx(item.pinned && 'ring-2 ring-yellow-5')}
+                  routedDialog={{
+                    name: 'imageDetail',
+                    // Handing the dialog a set is what makes next/previous
+                    // browse the gallery instead of the feed behind it.
+                    state: {
+                      imageId: item.image.id,
+                      images: galleryDialogImages(item.image.id, shown),
+                    },
+                  }}
+                />
+              </div>
+            </GalleryEntryHoverCard>
           ))}
         </div>
       ) : (
