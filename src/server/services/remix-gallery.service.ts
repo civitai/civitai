@@ -10,6 +10,7 @@ import { holdPlacementEscrow, settlePlacement } from '~/server/services/placemen
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
+import { imageReviewedSql } from '~/server/common/image-visibility';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { onlySelectableLevels } from '~/shared/constants/browsingLevel.constants';
 import { declineFeeAmount, PLACEMENT_SURFACES } from '~/shared/utils/placement';
@@ -83,31 +84,13 @@ const MINOR_HOST_REFUSAL =
  */
 async function loadHostImage(hostImageId: number) {
   const [row] = await dbWrite.$queryRaw<{ nsfwLevel: number; minor: boolean; showable: boolean }[]>`
-    SELECT "nsfwLevel", ${HOST_IS_MINOR} AS minor, ${HOST_IS_SHOWABLE} AS showable
-    FROM "Image" WHERE id = ${hostImageId}
+    SELECT i."nsfwLevel", ${hostIsMinor()} AS minor, ${hostIsShowable()} AS showable
+    FROM "Image" i WHERE i.id = ${hostImageId}
   `;
 
   if (!row) throw throwBadRequestError('remix gallery: that image no longer exists');
   return row;
 }
-
-/**
- * Whether the host can display a gallery at all.
- *
- * Every check on this surface asked what the *submission* was, and none asked
- * whether the host could show it. A blocked or unscanned host is hidden from
- * everyone but its owner, yet nothing required the submitter to be able to see
- * it — so Buzz went into escrow for a placement that could never render, and
- * the submitter's only ways out were withdrawing or being charged the decline
- * fee. Not a safety hole, since display is gated either way; it is money taken
- * for something structurally unshowable.
- */
-const HOST_IS_SHOWABLE = Prisma.sql`(
-  ingestion = 'Scanned'
-  AND "needsReview" IS NULL
-  AND NOT "tosViolation"
-  AND "nsfwLevel" != ${NsfwLevel.Blocked}
-)`;
 
 export type CreateRemixGallerySubmission = {
   placerId: number;
@@ -811,43 +794,67 @@ export async function getRemixGallery({
  * and it is the load-bearing one. It is written by a function that touches no
  * other column, so it is independent of `minor` — and every other minor-related
  * gate in this codebase checks it, several without checking `minor` at all.
- * Omitting it here would have left the durably-marked population unguarded at
- * any rating.
  *
- * `minor` alone is also narrower than it looks: resolving a minor review without
+ * `minor` alone is narrower than it looks: resolving a minor review without
  * `removeMinorFlag` writes `CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE`, so
- * a set `minor` is nearly always a PG/PG-13 image that this ceiling would not
- * have moved anyway. The R-and-above host the cap exists for lands in
- * `acceptableMinor`.
+ * a set `minor` is nearly always a PG/PG-13 image already under this ceiling.
+ * The R-and-above host the cap exists for lands in `acceptableMinor`.
  *
  * `needsReview = 'minor'` is the unresolved case, included because the
  * resolution can go either way and fail-closed is the posture everywhere else.
- */
-const HOST_IS_MINOR = Prisma.sql`((minor OR "acceptableMinor" OR "needsReview" = 'minor') IS TRUE)`;
-
-/**
- * The same predicate, qualified for the `h` alias in the gallery read.
  *
- * The trailing `IS TRUE` is load-bearing in both. `needsReview` is nullable, so
- * `"needsReview" = 'minor'` is NULL rather than FALSE on the ordinary image, and
- * `FALSE OR NULL` is NULL — which `?? true` in the visibility path would then
- * read as fail-closed and cap *every* gallery at PG-13.
+ * Parameterised by alias rather than written twice. The second copy — one for
+ * the `h` alias in the gallery read — was a hand-written duplicate, which is
+ * exactly the shape that drifts silently and fails open.
  */
-const HOST_IS_MINOR_H = Prisma.sql`(h.minor OR h."acceptableMinor" OR h."needsReview" = 'minor') IS TRUE`;
+const hostIsMinor = (alias = 'i') => {
+  const t = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`((${t}.minor OR ${t}."acceptableMinor" OR ${t}."needsReview" = 'minor') IS TRUE)`;
+};
 
 /**
- * The host's rating and minor flag from the replica, for display decisions.
+ * Whether the host can display a gallery at all.
+ *
+ * Every check on this surface asked what the *submission* was, and none asked
+ * whether the host could show it. A blocked or unscanned host is hidden from
+ * everyone but its owner, yet nothing required the submitter to be able to see
+ * it — so Buzz went into escrow for a placement that could never render, and
+ * the submitter's only ways out were withdrawing or being charged the decline
+ * fee. Not a safety hole, since display is gated either way; it is money taken
+ * for something structurally unshowable.
+ *
+ * Built on `imageReviewedSql` rather than on `ingestion = 'Scanned'`, which is
+ * what this originally said. That is *stricter* than the rule it claims to
+ * track, and stricter in the direction that costs a creator revenue: a stalled
+ * scan that a moderator rated, or a routine `Rescan` of a published image, is
+ * visible to every viewer through that helper's second arm and would have been
+ * refused here. Same mistake as reading `minor` alone — a hand-rolled predicate
+ * where the repo already has the canonical one.
+ */
+const hostIsShowable = (alias = 'i') => {
+  const t = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`(
+    ${t}."needsReview" IS NULL
+    AND ${imageReviewedSql(alias)}
+    AND NOT ${t}."tosViolation"
+    AND ${t}."nsfwLevel" != ${NsfwLevel.Blocked}
+  )`;
+};
+
+/**
+ * The host's rating and flags from the replica, for display decisions.
  *
  * Deliberately not `loadHostImage`: that reads the primary because it decides a
- * mutation, and this runs on every image-detail view. The predicate is shared,
- * so the two cannot disagree about *what* a minor host is — only, under replica
- * lag, about a flag set in the last moment. The mutation still refuses, so the
- * cost of that window is a picker offering an image that is then declined.
+ * mutation, and this runs on every image-detail view. The predicates are shared,
+ * so the two cannot disagree about *what* a minor or showable host is — only,
+ * under replica lag, about a flag set in the last moment. The mutation still
+ * refuses, so the cost of that window is a picker offering an image that is then
+ * declined.
  */
 async function readHostImage(hostImageId: number) {
   const [row] = await dbRead.$queryRaw<{ nsfwLevel: number; minor: boolean; showable: boolean }[]>`
-    SELECT "nsfwLevel", ${HOST_IS_MINOR} AS minor, ${HOST_IS_SHOWABLE} AS showable
-    FROM "Image" WHERE id = ${hostImageId}
+    SELECT i."nsfwLevel", ${hostIsMinor()} AS minor, ${hostIsShowable()} AS showable
+    FROM "Image" i WHERE i.id = ${hostImageId}
   `;
   return row ?? null;
 }
@@ -864,7 +871,7 @@ const minorHostCeiling = (hostImageId: number) => Prisma.sql`
         AND (
           i."nsfwLevel" <= ${REMIX_GALLERY_MINOR_HOST_MAX_LEVEL}
           OR NOT EXISTS (
-            SELECT 1 FROM "Image" h WHERE h.id = ${hostImageId} AND (${HOST_IS_MINOR_H})
+            SELECT 1 FROM "Image" h WHERE h.id = ${hostImageId} AND ${hostIsMinor('h')}
           )
         )`;
 

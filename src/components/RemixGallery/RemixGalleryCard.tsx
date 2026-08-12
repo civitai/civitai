@@ -26,6 +26,7 @@ import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImag
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { RemixGalleryExplainer } from '~/components/RemixGallery/RemixGalleryExplainer';
 import { RemixGalleryManageModal } from '~/components/RemixGallery/RemixGalleryManageModal';
 import { RemixGallerySubmitModal } from '~/components/RemixGallery/RemixGallerySubmitModal';
@@ -388,28 +389,33 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
         </Button>
       )}
 
+      {/* Wrapped rather than hidden. A signed-out visitor could open the modal
+          and be told the gallery was closed — it is open, they are signed out,
+          and nothing said so. */}
       {visibility.open && !isOwner && (
-        <Button
-          variant="light"
-          radius="md"
-          leftSection={<IconPlus size={16} />}
-          onClick={() =>
-            dialogStore.trigger({
-              component: RemixGallerySubmitModal,
-              props: { hostImageId: imageId },
-            })
-          }
-        >
-          <Group gap={4} wrap="nowrap">
-            <span>Submit your remix</span>
-            {visibility.price != null && (
-              <>
-                <CurrencyIcon currency={Currency.BUZZ} size={14} />
-                <span>{visibility.price}</span>
-              </>
-            )}
-          </Group>
-        </Button>
+        <LoginRedirect reason="perform-action">
+          <Button
+            variant="light"
+            radius="md"
+            leftSection={<IconPlus size={16} />}
+            onClick={() =>
+              dialogStore.trigger({
+                component: RemixGallerySubmitModal,
+                props: { hostImageId: imageId },
+              })
+            }
+          >
+            <Group gap={4} wrap="nowrap">
+              <span>Submit your remix</span>
+              {visibility.price != null && (
+                <>
+                  <CurrencyIcon currency={Currency.BUZZ} size={14} />
+                  <span>{visibility.price}</span>
+                </>
+              )}
+            </Group>
+          </Button>
+        </LoginRedirect>
       )}
 
       {/* Derived from the owner's actual share rather than asserting one. The

@@ -190,7 +190,15 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
             <NoContent
               message={
                 maxLevel == null
-                  ? 'This gallery is not open for submissions.'
+                  ? // Three different reasons collapse into a null ceiling, and
+                    // naming the wrong one is worse than saying less: signed
+                    // out, gallery closed, or a host that cannot show a gallery
+                    // at all (mid-rescan, blocked, under review).
+                    !currentUser
+                    ? 'Sign in to submit a remix to this gallery.'
+                    : visibility?.open
+                    ? 'This image cannot show a gallery right now.'
+                    : 'This gallery is not open for submissions.'
                   : maxLevel === 0
                   ? 'This image has no rating yet, so nothing can be submitted to it.'
                   : unrated > 0 && !overRated
