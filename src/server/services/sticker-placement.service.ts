@@ -5,6 +5,7 @@ import {
   settlePlacement,
   MAX_LEG_ATTEMPTS,
 } from '~/server/services/placement-escrow.service';
+import { recordPlacementTip } from '~/server/services/placement-metrics.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { spendStickerUsesFor } from '~/server/services/sticker.service';
@@ -14,7 +15,6 @@ import {
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { updateEntityMetricDetached } from '~/server/utils/metric-helpers';
 import type { PlacementStatus } from '~/shared/utils/placement';
 import type {
   PlacementSettlementState,
@@ -39,59 +39,6 @@ const TARGET_TYPE = 'image' as const;
  * through. Their remedy for the rest is block, which declines all of them.
  */
 const MAX_PENDING_PER_OWNER = 10;
-
-/**
- * A sticker counts toward the image's Buzz counter, because it is a tip.
- *
- * Agreed by Justin, Ellie and Luis in the 2026-08-12 review: a placement reads as
- * a pseudo-tip, and the counter people already look at should say so. The whole
- * `amount` counts, not the owner's share of it — Justin's own example was two
- * 200⚡ stickers taking a counter from 13 to 413.
- *
- * **Emitted only on approval, and never reversed.** The counter measures Buzz
- * that reached the owner, and every path that takes a live sticker down —
- * owner removal past the lock, a moderator takedown, a cosmetic takedown —
- * deliberately moves no money back. A placement that is declined or expires is
- * refunded and never counted here, because it never approved.
- *
- * The same event the tip button emits (`Image`/`Buzz`), so this arrives through
- * the metric pipeline everything else already reads rather than as a second
- * number the feed, the detail page and the search index each have to learn to
- * add.
- *
- * Detached from any request context on purpose — approval happens from the
- * review queue, from an auto-approving space and from a bulk action, and the
- * counter has to move the same way in all three.
- *
- * **Nothing here may throw.** It runs after the settle has already claimed the
- * transition and paid the owner, so a throw would report a live, paid placement
- * as failed — and in the bulk path would put its id in `failed`, inviting the
- * owner to action it again. `updateEntityMetric` catches its own emission, but
- * the module load, the tracker construction and the flag read sit outside that,
- * so the whole call is wrapped rather than trusting where the boundary happens
- * to fall today.
- */
-async function recordStickerTip({ imageId, amount }: { imageId: number; amount: number }) {
-  if (amount <= 0) return;
-
-  try {
-    await updateEntityMetricDetached({
-      entityType: 'Image',
-      entityId: imageId,
-      metricType: 'Buzz',
-      amount,
-    });
-  } catch (error) {
-    await logToAxiom({
-      name: 'sticker-placement',
-      type: 'error',
-      message: 'could not count an approved placement toward the image buzz counter',
-      imageId,
-      amount,
-      error: (error as Error).message,
-    }).catch(() => null);
-  }
-}
 
 /**
  * The note on a placement, if this viewer may read it.
@@ -318,7 +265,7 @@ export async function createStickerPlacement({
     // line: `settlePlacement` returns `settled: false` when something else got
     // there first, and counting then would add the placement's Buzz to the image
     // twice for one payment.
-    if (settled) await recordStickerTip({ imageId, amount: space.price });
+    if (settled) await recordPlacementTip({ surface: SURFACE, imageId, amount: space.price });
   }
 
   return { placementId: placement.id, status: space.mode === 'auto' ? 'approved' : 'pending' };
@@ -739,7 +686,11 @@ export async function actOnStickerPlacement({
   // for: two owners' tabs both pressing approve would otherwise count the same
   // payment on the image twice.
   if (action === 'approve' && settled)
-    await recordStickerTip({ imageId: placement.targetId, amount: placement.amount });
+    await recordPlacementTip({
+      surface: SURFACE,
+      imageId: placement.targetId,
+      amount: placement.amount,
+    });
 
   return { settled };
 }

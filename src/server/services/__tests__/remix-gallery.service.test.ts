@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
+import type * as MetricHelpers from '~/server/utils/metric-helpers';
+
+const updateEntityMetricDetached = vi.fn(async () => undefined);
+vi.mock('~/server/utils/metric-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof MetricHelpers>()),
+  updateEntityMetricDetached,
+}));
 
 /**
  * Every quantity distinct, so a value reaching the wrong place cannot pass by
@@ -960,5 +967,63 @@ describe('gallery cursor', () => {
     // expression, which selects a different but stable permutation and looks
     // like nothing is wrong.
     expect(parseGalleryCursor(cursor as string | undefined)).toBeNull();
+  });
+});
+
+/**
+ * A gallery entry is a paid placement on the host image, so it counts toward the
+ * same Buzz counter a sticker does (Justin, 2026-08-12). Same rule on both
+ * surfaces, because a single counter that means different things depending on
+ * which surface you asked has lost the only property it needs.
+ */
+describe('an approved submission counts toward the host image buzz counter', () => {
+  const pending = {
+    id: PLACEMENT,
+    ownerId: OWNER,
+    status: 'pending',
+    surface: 'remixGallery',
+    data: { imageId: REMIX_IMAGE },
+    targetId: HOST_IMAGE,
+    amount: PRICE,
+    resolvedAt: null,
+    createdAt: new Date(0),
+  };
+
+  it('counts what the submitter paid, against the host image', async () => {
+    placementFindUnique.mockResolvedValue(pending);
+
+    await actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER });
+
+    expect(updateEntityMetricDetached).toHaveBeenCalledWith({
+      entityType: 'Image',
+      // The HOST, not the submitted image. The submitter's own image gained
+      // nothing; the creator was paid to have it shown on theirs.
+      entityId: HOST_IMAGE,
+      metricType: 'Buzz',
+      amount: PRICE,
+    });
+  });
+
+  /**
+   * A decline still moves 30% of the fee to the owner and still counts nothing
+   * (Justin, 2026-08-12). Counting it would grow the counter fastest for a
+   * creator who refuses everything.
+   */
+  it('counts nothing when the owner declines, though the fee is kept', async () => {
+    placementFindUnique.mockResolvedValue(pending);
+
+    await actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'decline', userId: OWNER });
+
+    expect(updateEntityMetricDetached).not.toHaveBeenCalled();
+  });
+
+  it('counts nothing when the settle lost the race', async () => {
+    placementFindUnique.mockResolvedValue(pending);
+    settlePlacement.mockResolvedValue({ settled: false });
+
+    await expect(
+      actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
+    ).rejects.toThrow(/already resolved/i);
+    expect(updateEntityMetricDetached).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getAllImages } from '~/server/services/image.service';
 import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
+import { recordPlacementTip } from '~/server/services/placement-metrics.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
@@ -299,6 +300,8 @@ export async function actOnRemixGallerySubmission({
     select: {
       id: true,
       ownerId: true,
+      targetId: true,
+      amount: true,
       status: true,
       surface: true,
       targetId: true,
@@ -415,6 +418,18 @@ export async function actOnRemixGallerySubmission({
   // appeared to work and did not is what this cost us on chunk D.
   if (!result.settled)
     throw throwBadRequestError('remix gallery: that submission was already resolved elsewhere');
+
+  // A gallery entry is a paid placement on this image, so it counts toward the
+  // same Buzz counter a sticker does (Justin, 2026-08-12). Gated on `settled`
+  // rather than on the action asked for, so a double-submitted approve counts
+  // one payment once. A decline counts nothing even though its fee reaches the
+  // owner — see `recordPlacementTip` for why.
+  if (action === 'approve')
+    await recordPlacementTip({
+      surface: SURFACE,
+      imageId: placement.targetId,
+      amount: placement.amount,
+    });
 
   return result;
 }
