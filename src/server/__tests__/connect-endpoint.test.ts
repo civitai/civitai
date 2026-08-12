@@ -12,6 +12,14 @@ function mockReqRes(query: Record<string, string>, host = 'civitai.com') {
     statusCode: 200 as number,
     body: undefined as unknown,
     location: undefined as string | undefined,
+    headers: {} as Record<string, unknown>,
+    getHeader(name: string) {
+      return this.headers[name];
+    },
+    setHeader(name: string, value: unknown) {
+      this.headers[name] = value;
+      return this;
+    },
     status(code: number) {
       this.statusCode = code;
       return this;

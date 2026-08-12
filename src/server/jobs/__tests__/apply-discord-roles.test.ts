@@ -32,7 +32,10 @@ vi.mock('~/server/jobs/job', () => ({
   getJobDate: vi.fn().mockResolvedValue([new Date(0), vi.fn()]),
 }));
 
-import { applyDiscordLeaderboardRoles } from '~/server/jobs/apply-discord-roles';
+import {
+  applyDiscordLeaderboardRoles,
+  syncUserDiscordLeaderboardRoles,
+} from '~/server/jobs/apply-discord-roles';
 
 const TOP_10 = { id: 'role-10', name: 'Top 10' };
 const TOP_100 = { id: 'role-100', name: 'Top 100' };
@@ -40,15 +43,20 @@ const TOP_100 = { id: 'role-100', name: 'Top 100' };
 type RawCall = [TemplateStringsArray, ...unknown[]];
 
 // The metadata writes are tagged templates, so recover each one's bound params and read back the
-// providerAccountIds it touched. Grants append to the array (`||`); revokes only subtract.
+// providerAccountIds it touched. Only a grant binds the role as a JSON array (the value it appends); both bind
+// the bare name (the value they subtract), so that pair identifies the direction without reading the SQL text.
 function idsWritten(kind: 'grant' | 'revoke', roleName: string) {
+  const appended = JSON.stringify([roleName]);
   return (mockDbWrite.$executeRaw.mock.calls as RawCall[])
     .map(([strings, ...values]) => Prisma.sql(strings, ...values))
     .filter(
-      (query) => query.values.includes(roleName) && query.sql.includes('||') === (kind === 'grant')
+      (query) =>
+        query.values.includes(roleName) && query.values.includes(appended) === (kind === 'grant')
     )
     .flatMap((query) =>
-      query.values.filter((v): v is string => typeof v === 'string' && /^\d+$/.test(v))
+      query.values.filter(
+        (v): v is string => typeof v === 'string' && v !== roleName && v !== appended
+      )
     );
 }
 
@@ -141,6 +149,61 @@ describe('applyDiscordLeaderboardRoles — Top 10 removal', () => {
     await applyDiscordLeaderboardRoles();
 
     expect(mockDiscord.removeRoleFromUser).not.toHaveBeenCalled();
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  // Taking a role away from someone who has it is worse than failing to grant one, so the revoke direction gets
+  // the same treatment: metadata follows Discord's answer per account.
+  it('keeps the role recorded for an account whose revoke Discord rejected', async () => {
+    const holders = [{ providerAccountId: '111' }, { providerAccountId: '222' }];
+    mockDbWrite.user.findMany.mockResolvedValue([topUser(5, '333')]);
+    mockDbWrite.$queryRaw.mockResolvedValueOnce(holders).mockResolvedValueOnce([]);
+    mockDiscord.removeRoleFromUser.mockImplementation(async (providerAccountId: string) => {
+      if (providerAccountId === '222') throw new Error('Missing Permissions');
+      return true;
+    });
+
+    await applyDiscordLeaderboardRoles();
+
+    expect(idsWritten('revoke', 'Top 100')).toEqual(['111']);
+  });
+
+  // updateLeaderboardRank({ leaderboardIds }) truncates UserRank and refills it with one event's users, so a
+  // near-total revoke list means our view of who is ranked collapsed, not that the leaderboard emptied out.
+  it('refuses to revoke in bulk when most holders would lose the role at once', async () => {
+    const holders = Array.from({ length: 20 }, (_, i) => ({ providerAccountId: `${100 + i}` }));
+    mockDbWrite.user.findMany.mockResolvedValue([topUser(5, '100')]);
+    mockDbWrite.$queryRaw.mockResolvedValueOnce(holders).mockResolvedValueOnce([]);
+
+    await applyDiscordLeaderboardRoles();
+
+    expect(mockDiscord.removeRoleFromUser).not.toHaveBeenCalled();
+  });
+});
+
+describe('syncUserDiscordLeaderboardRoles', () => {
+  it('grants both roles to a top-10 user without revoking anything', async () => {
+    mockDbWrite.user.findUnique.mockResolvedValue({
+      rank: { leaderboardRank: 3 },
+      accounts: [{ providerAccountId: '111' }],
+    });
+
+    await syncUserDiscordLeaderboardRoles(1);
+
+    expect(idsWritten('grant', 'Top 100')).toEqual(['111']);
+    expect(idsWritten('grant', 'Top 10')).toEqual(['111']);
+    expect(mockDiscord.removeRoleFromUser).not.toHaveBeenCalled();
+  });
+
+  it('touches nothing for an unranked user', async () => {
+    mockDbWrite.user.findUnique.mockResolvedValue({
+      rank: null,
+      accounts: [{ providerAccountId: '111' }],
+    });
+
+    await syncUserDiscordLeaderboardRoles(1);
+
+    expect(mockDiscord.addRoleToUser).not.toHaveBeenCalled();
     expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 });

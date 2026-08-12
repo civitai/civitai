@@ -1,6 +1,8 @@
+import crypto from 'crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { hubLoginUrl } from '@civitai/auth';
 import { resolveSelfOrigin, safePath } from '~/server/auth/oauth-bridge';
+import { setLinkSyncCookie } from '~/server/auth/link-sync';
 
 // GET /api/auth/connect?provider=<id>&returnUrl=<same-origin path> — start the hub account-LINK flow from the
 // MAIN SERVER. Builds the hub link URL with the server's AUTH_JWT_ISSUER (no client-side hub env var) and 302s
@@ -35,5 +37,6 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   // `roles=true` opts into the provider's incremental scope (Discord Linked Roles) — only the /discord/link-role
   // flow passes it; a plain "Connect <provider>" never does, so normal linking can't trip the Linked-Roles scope.
   const linkRoles = req.query.roles === 'true';
+  setLinkSyncCookie(res, crypto.randomUUID());
   res.redirect(302, hubLoginUrl(HUB, { provider, link: true, linkRoles, returnUrl }));
 }

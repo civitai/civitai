@@ -86,6 +86,30 @@ const applyDiscordActivityRoles = createJob(
   }
 );
 
+// Nobody sheds half the leaderboard overnight, so a revoke list that size means our view of who is ranked
+// collapsed. UserRank is rebuilt by TRUNCATE + INSERT, and updateLeaderboardRank({ leaderboardIds }) — the
+// hourly event path — legitimately leaves it holding only that event's users until the next nightly rebuild.
+// Before this job ran unguarded that could not reach us; now it can, and it would strip the roles for real.
+const REVOKE_SHARE_LIMIT = 0.5;
+const REVOKE_FLOOR = 10;
+
+const withinBlastRadius = (role: DiscordRole, revoking: string[], holders: string[]) => {
+  if (holders.length < REVOKE_FLOOR) return true;
+  if (revoking.length <= holders.length * REVOKE_SHARE_LIMIT) return true;
+
+  logToAxiom({
+    type: 'discord-role-sync-aborted',
+    name: 'apply-discord-leaderboard-roles',
+    error: {
+      reason: 'revoke list too large — refusing to strip the role in bulk',
+      role: role.name,
+      revoking: revoking.length,
+      holders: holders.length,
+    },
+  });
+  return false;
+};
+
 const getLeaderboardRoles = async () => {
   const discordRoles = await discord.getAllRoles();
 
@@ -95,8 +119,10 @@ const getLeaderboardRoles = async () => {
     logToAxiom({
       type: 'discord-role-sync-aborted',
       name: 'apply-discord-leaderboard-roles',
-      reason: 'leaderboard roles not found in guild',
-      missing: [!top10Role && 'Top 10', !top100Role && 'Top 100'].filter(Boolean),
+      error: {
+        reason: 'leaderboard roles not found in guild',
+        missing: [!top10Role && 'Top 10', !top100Role && 'Top 100'].filter(Boolean),
+      },
     });
     return null;
   }
@@ -146,8 +172,10 @@ export const applyDiscordLeaderboardRoles = async () => {
     logToAxiom({
       type: 'discord-role-sync-aborted',
       name: 'apply-discord-leaderboard-roles',
-      reason: 'no ranked users with a linked discord account',
-      holders: existingTop100.length,
+      error: {
+        reason: 'no ranked users with a linked discord account',
+        holders: existingTop100.length,
+      },
     });
     return;
   }
@@ -162,14 +190,16 @@ export const applyDiscordLeaderboardRoles = async () => {
   await addRoleToAccounts(top100Role, newTop100);
 
   const removedTop100 = existingTop100.filter((id) => !top100Ids.has(id));
-  await removeRoleFromAccounts(top100Role, removedTop100);
+  if (withinBlastRadius(top100Role, removedTop100, existingTop100))
+    await removeRoleFromAccounts(top100Role, removedTop100);
 
   // Get the new users in the top 10 and the users that are no longer in the top 10
   const newTop10 = [...top10Ids].filter((id) => !existingTop10.includes(id));
   await addRoleToAccounts(top10Role, newTop10);
 
   const removedTop10 = existingTop10.filter((id) => !top10Ids.has(id));
-  await removeRoleFromAccounts(top10Role, removedTop10);
+  if (withinBlastRadius(top10Role, removedTop10, existingTop10))
+    await removeRoleFromAccounts(top10Role, removedTop10);
 };
 
 // Grant-only sync for a single user, so linking Discord doesn't mean waiting for the nightly cron. Removals stay
@@ -308,13 +338,16 @@ const applyToDiscord = async (
     logToAxiom({
       type: 'discord-role-sync',
       name: 'apply-discord-roles',
-      role: role.name,
-      action,
-      requested: providerAccountIds.length,
-      applied: applied.length,
-      notInGuild,
-      failed: errors.length,
-      errors: [...new Set(errors)].slice(0, 5),
+      // civitai-prod is at its column cap, so `error` is the only top-level container new fields can go in.
+      error: {
+        role: role.name,
+        action,
+        requested: providerAccountIds.length,
+        applied: applied.length,
+        notInGuild,
+        failed: errors.length,
+        errors: [...new Set(errors)].slice(0, 5),
+      },
     });
   }
 
@@ -335,7 +368,7 @@ const addRoleToAccounts = async (role: DiscordRole, providerAccountIds: string[]
       (COALESCE(metadata->'roles', '[]'::jsonb) - ${role.name}::text) || ${roleValue}::jsonb,
       true
     )
-    WHERE "providerAccountId" IN (${Prisma.join(granted)})`;
+    WHERE provider = 'discord' AND "providerAccountId" IN (${Prisma.join(granted)})`;
 };
 
 const removeRoleFromAccounts = async (role: DiscordRole, providerAccountIds: string[]) => {
@@ -351,6 +384,6 @@ const removeRoleFromAccounts = async (role: DiscordRole, providerAccountIds: str
       COALESCE(metadata->'roles', '[]'::jsonb) - ${role.name}::text,
       true
     )
-    WHERE "providerAccountId" IN (${Prisma.join(revoked)})`;
+    WHERE provider = 'discord' AND "providerAccountId" IN (${Prisma.join(revoked)})`;
 };
 // #endregion
