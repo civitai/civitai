@@ -52,7 +52,11 @@ export function DraftStickerLayer() {
   const maxScaleRef = useRef(maxScale);
   maxScaleRef.current = maxScale;
 
+  // First pointer down wins until it comes up. A second finger landing on
+  // another sticker used to overwrite the gesture, which sent the first finger's
+  // moves to the second finger's sticker.
   const onGesture = useCallback((next: Gesture) => {
+    if (gesture.current) return;
     gesture.current = next;
     useStickerPlacementDraftStore.getState().setInteraction(next.mode);
   }, []);
@@ -63,7 +67,9 @@ export function DraftStickerLayer() {
       // every pointer move, and re-binding it whenever a draft changes would
       // drop the moves that land during the swap.
       const active = gesture.current;
-      if (!active) return;
+      // Only the pointer that started it drives it. Every other stream on the
+      // screen is somebody else's finger.
+      if (!active || event.pointerId !== active.pointerId) return;
 
       const point = pointerToSurfaceFraction(event.clientX, event.clientY);
       // By id, not by selection: a press selects and drags in one gesture, and a
@@ -115,7 +121,10 @@ export function DraftStickerLayer() {
       });
     };
 
-    const onUp = () => {
+    // Ends only for the pointer that owns it. An unconditional clear let a
+    // second finger lifting anywhere kill a drag that was still in progress.
+    const onUp = (event: PointerEvent) => {
+      if (gesture.current && event.pointerId !== gesture.current.pointerId) return;
       gesture.current = null;
       setInteraction(null);
     };
@@ -134,10 +143,18 @@ export function DraftStickerLayer() {
   // happened outside the image, so there is no grab point to preserve. The draft
   // it belongs to is the one `begin` just appended and selected.
   const trayInteraction = useStickerPlacementDraftStore((state) => state.interaction);
+  const trayPointerId = useStickerPlacementDraftStore((state) => state.interactionPointerId);
   useEffect(() => {
-    if (trayInteraction !== 'move' || gesture.current || !selectedDraftId) return;
-    gesture.current = { draftId: selectedDraftId, mode: 'move', offsetX: 0, offsetY: 0 };
-  }, [trayInteraction, selectedDraftId]);
+    if (trayInteraction !== 'move' || gesture.current || !selectedDraftId || trayPointerId == null)
+      return;
+    gesture.current = {
+      draftId: selectedDraftId,
+      pointerId: trayPointerId,
+      mode: 'move',
+      offsetX: 0,
+      offsetY: 0,
+    };
+  }, [trayInteraction, selectedDraftId, trayPointerId]);
 
   return (
     <>

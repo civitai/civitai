@@ -223,6 +223,7 @@ export function DraftSticker({
         // snapping its centre to the cursor.
         onGesture({
           draftId: draft.id,
+          pointerId: event.pointerId,
           mode: 'move',
           offsetX: draft.x - point.x,
           offsetY: draft.y - point.y,
@@ -242,6 +243,7 @@ export function DraftSticker({
 
         onGesture({
           draftId: draft.id,
+          pointerId: event.pointerId,
           mode: 'resize',
           anchorX: draft.x * bounds.width + anchor.x,
           anchorY: draft.y * bounds.height + anchor.y,
@@ -250,7 +252,7 @@ export function DraftSticker({
           aspect,
         });
       } else {
-        onGesture({ draftId: draft.id, mode: 'rotate' });
+        onGesture({ draftId: draft.id, pointerId: event.pointerId, mode: 'rotate' });
       }
     };
 

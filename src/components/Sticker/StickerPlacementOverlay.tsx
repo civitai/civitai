@@ -170,36 +170,6 @@ export function StickerPlacementOverlay({
             {placement.isPending && (
               <span className="pointer-events-none absolute -inset-1 rounded border-2 border-dashed border-yellow-6" />
             )}
-
-            {/* Anchored to the sticker's own bottom edge from inside its box.
-                It used to be a sibling offset by `scale * 50%`, which mixes
-                units: `scale` is a fraction of the media box's WIDTH, while a
-                `top` percentage resolves against its HEIGHT. On a portrait
-                image the two differ by the aspect ratio, so the badge drifted
-                below the sticker by a gap that grew with how tall the image
-                was. `top-full` is the real edge whatever the shape.
-
-                Travels and rotates with the sticker, the same as the Place
-                button it replaces — so the thing that appears after buying sits
-                where the thing you clicked was. */}
-            {placement.isPending && (
-              <div
-                className="pointer-events-auto absolute left-1/2 top-full z-10 mt-1 -translate-x-1/2"
-                // Inside the hover-card trigger now. That is on purpose for the
-                // badge, which is a label the card explains; the owner's
-                // buttons keep their own stopPropagation so hovering to read
-                // does not arm an action.
-                onPointerDown={(event) => event.stopPropagation()}
-              >
-                {isOwner ? (
-                  <StickerPlacementActions placementIds={[placement.id]} compact />
-                ) : (
-                  <span className="whitespace-nowrap rounded bg-yellow-6 px-2 py-0.5 text-[10px] font-semibold text-dark-9">
-                    Awaiting review
-                  </span>
-                )}
-              </div>
-            )}
           </div>
         );
 
@@ -219,15 +189,44 @@ export function StickerPlacementOverlay({
         // get the hover card — the owner needs to know who is asking before
         // answering, and the placer gets the same detail they would once it goes
         // live. Only the owner gets the buttons.
-        // The wrapper stays `pointer-events-none`: a pending sticker is not
-        // itself a target, and only the badge or the owner's buttons inside it
-        // re-enable pointers. Dropping it would make the artwork hoverable,
-        // which is a different decision from where the badge sits.
         return (
           <div key={placement.id} className="pointer-events-none">
             <StickerPlacementHoverCard placementId={placement.id} pending>
               {body}
             </StickerPlacementHoverCard>
+
+            {/* ⚠️ Known wrong, and left wrong deliberately. `scale` is a
+                fraction of the media box's WIDTH while a `top` percentage
+                resolves against its HEIGHT, so this offset is only the
+                sticker's real half-height on a square media box — it leaves a
+                growing gap below the sticker on portrait images and overlaps it
+                on landscape.
+
+                Anchoring inside the sticker's own box fixes the arithmetic and
+                costs three worse things: the box is a transformed stacking
+                context, so `z-10` stops out-ranking other placements; the badge
+                lands inside the hover-card trigger, whose 400px dropdown then
+                opens over the owner's approve/decline; and rotation is clamped
+                to ±180, so the badge renders upside down and above the sticker
+                at the far end. Doing it properly means restructuring this
+                branch so the hover card wraps only the artwork and the badge
+                counter-rotates — worth doing, bigger than a nudge, and not
+                worth shipping half of. */}
+            <div
+              className="pointer-events-auto absolute z-10 -translate-x-1/2"
+              style={{
+                left: `${placement.data.x * 100}%`,
+                top: `calc(${placement.data.y * 100}% + ${placement.data.scale * 50}%)`,
+              }}
+            >
+              {isOwner ? (
+                <StickerPlacementActions placementIds={[placement.id]} compact />
+              ) : (
+                <span className="whitespace-nowrap rounded bg-yellow-6 px-2 py-0.5 text-[10px] font-semibold text-dark-9">
+                  Awaiting review
+                </span>
+              )}
+            </div>
           </div>
         );
       })}

@@ -76,6 +76,13 @@ interface StickerPlacementDraftStore {
    * picked it up rather than waiting to be grabbed a second time.
    */
   interaction: StickerInteraction | null;
+  /**
+   * The pointer that started a tray pickup, so the layer can hand the drag to
+   * that same finger. Without it the layer would arm against whichever pointer
+   * moved next, which on a touch screen is not necessarily the one holding the
+   * sticker.
+   */
+  interactionPointerId: number | null;
 
   open: (imageId: number) => void;
   /** End the session outright — every draft, the panel and the target. */
@@ -88,7 +95,7 @@ interface StickerPlacementDraftStore {
   setSurface: (element: HTMLElement | null) => void;
   setTray: (element: HTMLElement | null) => void;
   begin: (cosmeticId: number, at?: { x: number; y: number }, maxScale?: number) => void;
-  setInteraction: (interaction: StickerInteraction | null) => void;
+  setInteraction: (interaction: StickerInteraction | null, pointerId?: number) => void;
   /**
    * Moves one draft by id rather than "the current one". A gesture outlives the
    * selection — a press selects and then drags — so resolving the target at
@@ -99,12 +106,33 @@ interface StickerPlacementDraftStore {
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
+let draftSequence = 0;
+
+/**
+ * A draft's id, which never leaves the browser.
+ *
+ * Feature-detected rather than called directly: `crypto.randomUUID` is undefined
+ * outside a secure context, so any http origin that is not localhost — a LAN dev
+ * host, an http preview — would throw inside a zustand `set` called from a
+ * pointermove handler, taking the whole placement flow down instead of
+ * degrading. Same guard the rest of the repo uses on the client.
+ *
+ * The counter is a sound fallback precisely because these ids are local and
+ * short-lived: they identify a draft within one page's session and are never
+ * stored, sent, or compared against anything from elsewhere.
+ */
+const nextDraftId = () =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `draft-${++draftSequence}`;
+
 const ENDED = {
   targetImageId: null,
   trayOpen: false,
   drafts: [] as StickerDraft[],
   selectedDraftId: null,
   interaction: null,
+  interactionPointerId: null,
 };
 
 export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>((set) => ({
@@ -115,14 +143,20 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
   surface: null,
   tray: null,
   interaction: null,
+  interactionPointerId: null,
 
   // Reopening on the image you are already placing on keeps the drafts — that is
   // the way back to the panel after putting it away, so taking them would punish
   // using it. A different image is a different session.
+  // `interaction` is cleared on both branches. It is otherwise only cleared by
+  // the layer's pointerup listener, so a pointerup that lands while the layer is
+  // unmounted — the overlay stops rendering at zero width, which a resize
+  // mid-drag can do — strands it at 'move'. Reopening then re-arms a drag on the
+  // selected sticker with no button held, and it follows the bare cursor.
   open: (imageId) =>
     set((state) =>
       state.targetImageId === imageId
-        ? { targetImageId: imageId, trayOpen: true }
+        ? { targetImageId: imageId, trayOpen: true, interaction: null, interactionPointerId: null }
         : { ...ENDED, targetImageId: imageId, trayOpen: true }
     ),
 
@@ -156,7 +190,8 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
 
   select: (id) => set({ selectedDraftId: id }),
 
-  setInteraction: (interaction) => set({ interaction }),
+  setInteraction: (interaction, pointerId) =>
+    set({ interaction, interactionPointerId: interaction ? pointerId ?? null : null }),
   setSurface: (element) => set({ surface: element }),
   setTray: (element) => set({ tray: element }),
 
@@ -165,7 +200,7 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
       if (state.targetImageId == null) return state;
 
       const draft: StickerDraft = {
-        id: crypto.randomUUID(),
+        id: nextDraftId(),
         imageId: state.targetImageId,
         cosmeticId,
         x: at?.x ?? 0.5,

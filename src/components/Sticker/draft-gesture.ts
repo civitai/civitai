@@ -11,8 +11,15 @@
  * a drag, and there can be several drafts on the image, so resolving the target
  * at every pointer move would let a selection change redirect a gesture already
  * in flight.
+ *
+ * `pointerId` because the drafts share one gesture and one pair of window
+ * listeners. `touchAction: 'none'` means the browser hands us every touch stream
+ * rather than treating the second finger as a scroll, so without this a second
+ * finger anywhere would overwrite the gesture — the first finger would start
+ * dragging the second finger's sticker — and lifting the second finger would
+ * end the first finger's drag while it was still down.
  */
-export type Gesture = { draftId: string } & (
+export type Gesture = { draftId: string; pointerId: number } & (
   | { mode: 'move'; offsetX: number; offsetY: number }
   | { mode: 'rotate' }
   | { mode: 'resize'; anchorX: number; anchorY: number; sx: number; sy: number; aspect: number }

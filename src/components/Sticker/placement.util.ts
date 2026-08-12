@@ -176,9 +176,8 @@ export function useImagePlacementSpace(imageId?: number) {
  * One hook rather than the mutation inline, so the tray and the sticker's own
  * buy button cannot drift into two versions of what happens on success.
  */
-export function useCreateStickerPlacement(draftId?: string) {
+export function useCreateStickerPlacement(draftId: string) {
   const utils = trpc.useUtils();
-  const close = useStickerPlacementDraftStore((state) => state.close);
   const cancelDraft = useStickerPlacementDraftStore((state) => state.cancelDraft);
 
   return trpc.placement.createSticker.useMutation({
@@ -190,14 +189,24 @@ export function useCreateStickerPlacement(draftId?: string) {
             ? 'Only you can see it until the creator approves it.'
             : 'It is live on the image now.',
       });
-      await utils.placement.invalidate();
+      await Promise.all([
+        utils.placement.invalidate(),
+        // A placement spends a use, and the tray reads the remaining count from
+        // a different router. This used to be covered by accident: success
+        // ended the session, which unmounted the tray, so the count refetched
+        // on the next open. Now the tray survives a purchase, and without this
+        // it keeps showing the pre-purchase number — the count even climbs back
+        // up as the bought draft leaves `drafts` and stops being subtracted.
+        // You could then lay out and pay for a sticker you have no use left
+        // for, and only be refused by the server after the Buzz confirmation.
+        utils.cosmetic.getStickerBalances.invalidate(),
+      ]);
       // Only the one that was bought. The others are still being arranged, and
       // ending the session would take them with it — which is the bug this
       // whole flow exists to avoid, arrived at from the other direction. The
       // draft has to go either way: it is now a real placement, and leaving it
       // would draw the same sticker twice with one of them uncommitted.
-      if (draftId) cancelDraft(draftId);
-      else close();
+      cancelDraft(draftId);
     },
     onError: (error) =>
       showErrorNotification({

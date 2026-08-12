@@ -27,7 +27,7 @@ import { trpc } from '~/utils/trpc';
  * three stickers sit in a field of empty panel, and pushed the instructions so
  * far from them that they read as unrelated.
  */
-export function StickerPlacementTray() {
+export function StickerPlacementTray({ imageId }: { imageId: number }) {
   const currentUser = useCurrentUser();
   const { sticker, isLoading } = useOwnedSticker();
   // The sticker they tried to place with nothing left. Buying uses here rather
@@ -52,7 +52,13 @@ export function StickerPlacementTray() {
   const setInteraction = useStickerPlacementDraftStore((state) => state.setInteraction);
   const setTray = useStickerPlacementDraftStore((state) => state.setTray);
 
-  const showing = targetImageId != null && trayOpen;
+  // Bound to this bar's own image, not merely to "a session exists". The
+  // carousel keeps every slide's overlay mounted while the bar follows the
+  // visible one, so a session left open on a previous slide would otherwise
+  // keep the panel up showing that image's price and balances — and a drag from
+  // it would measure the off-screen slide's surface and land a sticker on an
+  // image nobody is looking at.
+  const showing = targetImageId === imageId && trayOpen;
 
   // Registered after the early return below has been passed, so the element in
   // the store is always one that is actually on screen. `showing` rather than
@@ -97,18 +103,27 @@ export function StickerPlacementTray() {
    * it, which is the thing being fixed rather than a detail of when it renders.
    */
   const grab = (cosmeticId: number) => (event: React.PointerEvent) => {
+    // A second finger cannot start a pickup while the first is mid-drag. The
+    // layer holds one gesture, so the sticker this created would be dropped on
+    // the image and then never follow anything — placed, stationary, with no
+    // cue that it went wrong.
+    if (!event.isPrimary) return;
+
     event.preventDefault();
     endGrab.current?.();
     setDragging(cosmeticId);
+    const { pointerId } = event;
 
     const onMove = (move: PointerEvent) => {
+      if (move.pointerId !== pointerId) return;
       const at = pointerOverSurface(move.clientX, move.clientY);
       if (!at) return;
       begin(cosmeticId, at, maxScale);
-      // Handing the drag to the layer, which owns it from here. Armed only once
-      // the sticker exists on the image, so there is never a live move gesture
-      // with nothing to move.
-      setInteraction('move');
+      // Handing the drag to the layer, which owns it from here — along with the
+      // pointer holding it, so the layer arms against this finger rather than
+      // whichever one moves next. Armed only once the sticker exists on the
+      // image, so there is never a live move gesture with nothing to move.
+      setInteraction('move', pointerId);
       teardown();
     };
 

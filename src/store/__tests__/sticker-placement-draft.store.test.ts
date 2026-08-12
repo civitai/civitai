@@ -33,11 +33,18 @@ describe('sticker placement draft store', () => {
 
   describe('several at once', () => {
     // Dragging a second sticker out used to delete the first, which made
-    // arranging a few and then choosing between them impossible.
+    // arranging a few and then choosing between them impossible. Asserted on
+    // identity rather than on length: `withDrafts` already checks the count, so
+    // a length assertion here could not fail if setup passed.
     it('keeps the earlier stickers when another is dragged out', () => {
-      withDrafts(3);
+      state().open(IMAGE);
+      state().begin(COSMETIC);
+      const first = state().drafts[0].id;
 
-      expect(state().drafts).toHaveLength(3);
+      state().begin(OTHER_COSMETIC);
+
+      expect(state().drafts.map((draft) => draft.id)).toEqual([first, state().drafts[1].id]);
+      expect(state().drafts[0].cosmeticId).toBe(COSMETIC);
     });
 
     it('gives each draft its own identity, so the same sticker can be laid twice', () => {
@@ -99,12 +106,17 @@ describe('sticker placement draft store', () => {
       expect(state().drafts.map((draft) => draft.id)).toEqual(ids);
     });
 
+    // A gesture can outlive its draft — the remove badge is reachable mid-drag.
+    // `not.toThrow()` alone would pass for a guard that returned a corrupted
+    // list, so the surviving draft is checked too.
     it('ignores a move for a draft that is already gone', () => {
-      withDrafts(1);
-      const [only] = state().drafts;
-      state().cancelDraft(only.id);
+      withDrafts(2);
+      const [first, second] = state().drafts;
+      state().cancelDraft(first.id);
 
-      expect(() => state().move(only.id, { x: 0.9 })).not.toThrow();
+      expect(() => state().move(first.id, { x: 0.9 })).not.toThrow();
+      expect(state().drafts.map((draft) => draft.id)).toEqual([second.id]);
+      expect(state().drafts[0].x).toBe(0.5);
     });
   });
 
@@ -132,6 +144,24 @@ describe('sticker placement draft store', () => {
 
       expect(state().targetImageId).toBeNull();
       expect(state().trayOpen).toBe(false);
+    });
+
+    // `interaction` is otherwise cleared only by the layer's pointerup listener.
+    // If that listener is not mounted when the pointer comes up — the overlay
+    // stops rendering at zero width, which a resize mid-drag does — it is
+    // stranded at 'move', and the layer re-arms a drag on the selected sticker
+    // as soon as it remounts. The sticker then follows the bare cursor with no
+    // button held.
+    it('clears a stranded interaction when the panel is reopened', () => {
+      withDrafts(1);
+      state().closeTray();
+      useStickerPlacementDraftStore.setState({ interaction: 'move', interactionPointerId: 3 });
+
+      state().open(IMAGE);
+
+      expect(state().interaction).toBeNull();
+      expect(state().interactionPointerId).toBeNull();
+      expect(state().drafts, 'reopening the same image dropped the drafts').toHaveLength(1);
     });
 
     it('gets back to the panel without losing the stickers', () => {
@@ -199,19 +229,13 @@ describe('sticker placement draft store', () => {
     });
   });
 
-  // `useCreateStickerPlacement` removes the bought draft rather than ending the
-  // session. Ending it would take the drafts still being arranged with it; and
-  // leaving the bought one would draw the same sticker twice, once as the real
-  // placement and once as an uncommitted draft on top of it.
-  it('leaves the other drafts alone when one is bought', () => {
-    withDrafts(2);
-    state().begin(OTHER_COSMETIC);
-    const bought = state().drafts[1];
-
-    state().cancelDraft(bought.id);
-
-    expect(state().drafts).toHaveLength(2);
-    expect(state().drafts.map((draft) => draft.id)).not.toContain(bought.id);
-    expect(state().targetImageId).toBe(IMAGE);
-  });
+  // ⚠️ What is NOT covered here, stated so a green run is not over-read.
+  //
+  // `useCreateStickerPlacement`'s `onSuccess` — which decides that a purchase
+  // removes one draft instead of ending the session, and which invalidates the
+  // sticker-use balance — is a React hook with one caller, `DraftSticker`, and
+  // neither has a test. Reverting either of those decisions fails nothing in
+  // this file: these tests drive the store directly, and the store is not where
+  // that choice lives. An earlier version of this file claimed otherwise in a
+  // comment; the comment was the only thing connecting them.
 });
