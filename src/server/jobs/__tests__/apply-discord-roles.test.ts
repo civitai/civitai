@@ -128,4 +128,19 @@ describe('applyDiscordLeaderboardRoles — Top 10 removal', () => {
     expect(idsWritten('revoke', 'Top 10')).toEqual(['222']);
     expect(mockDiscord.removeRoleFromUser).not.toHaveBeenCalledWith('222', TOP_100.id);
   });
+
+  // The job no longer refuses to run on a partially populated leaderboard, so an empty UserRank reaches this
+  // code instead of being filtered out upstream. Reading it as "everyone left the top 100" would strip the role
+  // from every holder in one run.
+  it('strips nobody when no ranked user has a linked Discord account', async () => {
+    mockDbWrite.user.findMany.mockResolvedValue([]);
+    mockDbWrite.$queryRaw
+      .mockResolvedValueOnce([{ providerAccountId: '111' }, { providerAccountId: '222' }])
+      .mockResolvedValueOnce([{ providerAccountId: '111' }]);
+
+    await applyDiscordLeaderboardRoles();
+
+    expect(mockDiscord.removeRoleFromUser).not.toHaveBeenCalled();
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
 });

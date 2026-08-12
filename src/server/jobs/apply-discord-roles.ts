@@ -140,6 +140,18 @@ export const applyDiscordLeaderboardRoles = async () => {
     }))
   );
 
+  // Nobody ranked with a linked Discord account is not a real state — it means UserRank is empty or mid-rebuild.
+  // Continuing would read that as "everyone left the top 100" and strip the roles from every holder.
+  if (!top100.length) {
+    logToAxiom({
+      type: 'discord-role-sync-aborted',
+      name: 'apply-discord-leaderboard-roles',
+      reason: 'no ranked users with a linked discord account',
+      holders: existingTop100.length,
+    });
+    return;
+  }
+
   const top100Ids = new Set(top100.map((u) => u.providerAccountId));
   const top10Ids = new Set(
     top100.filter((u) => u.rank && u.rank <= 10).map((u) => u.providerAccountId)
