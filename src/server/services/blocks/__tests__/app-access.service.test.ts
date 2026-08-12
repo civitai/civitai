@@ -439,10 +439,13 @@ describe('resolveListingAccess — role × KIND', () => {
  *
  * For an ON-SITE listing the owner is `OauthClient.userId`, reached as
  * `AppListing.appBlock.app.userId`. `AppListing.userId` is a DENORMALIZED COPY, and this
- * feature's own code can leave it stale on purpose: `acceptTransfer` step 3 is unguarded
- * for onsite and treats a 0-count as an accepted desync
- * (`app-ownership-transfer.service.ts`), so a listing whose OauthClient moved but whose
- * column did not is a state the code can produce itself.
+ * feature's own code leaves it stale on a SHADOW REVISION: `beginListingRevision` clones
+ * the parent with `userId: parent.userId`, and no ownership write ever revisits the clone
+ * (`acceptTransfer` step 3 updates only the parent row; the revision-apply copies assets
+ * back, never `userId`). So a shadow whose parent's OauthClient moved, but whose own
+ * column did not, is a state the code produces itself. It is NOT the transfer's listing
+ * write that drifts — that one is unconditional and heals the parent; the mechanism is
+ * laid out in full in `app-access.denormalized-owner-drift.test.ts`.
  *
  * Reading the copy inverts the gate in BOTH directions at once, which is why the fixture
  * below pins both: the REAL owner is refused on their own listing, and the STALE user is

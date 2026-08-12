@@ -113,8 +113,15 @@ const OFFSITE_WITH_REPO = 'apl_offsite_with_repo';
 const OFFSITE_REPO_SLUG = 'offsite-repo';
 /**
  * 🔴 An ON-SITE listing whose denormalized `AppListing.userId` DISAGREES with its
- * canonical `OauthClient.userId` — the state this very service's step (3) can leave
- * behind (unguarded for onsite, a 0-count is an accepted desync).
+ * canonical `OauthClient.userId`.
+ *
+ * 🔴 Step (3) does NOT leave this behind on the row it writes, despite being unguarded
+ * for onsite: `where: { id }` is unconditional, runs in the same tx as the step-(2)
+ * `OauthClient` move, and follows an in-tx read of the same row through its own FK — so
+ * it HEALS the copy. What it leaves behind is any SHADOW REVISION of that listing, which
+ * it never addresses and which froze `userId` at clone time. This fixture is the
+ * resulting state, whichever row you imagine it on. Full mechanism:
+ * `app-access.denormalized-owner-drift.test.ts`.
  */
 const DRIFTED = 'apl_drifted';
 const OLD_OWNER = 10;

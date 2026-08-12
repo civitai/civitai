@@ -236,8 +236,35 @@ function toSeatListing(row: RawSeatListing, wasShadow: boolean): SeatListing {
  * `externalUrl`, so such a listing HAS a `blockId` slug while declaring
  * `submitVersion: false`. A slug-only gate would hand that listing's collaborator
  * Forgejo `write`.
+ *
+ * 🔴 A TYPE PREDICATE, not a `boolean` — and here is EXACTLY what that buys, because an
+ * earlier version of this comment claimed a safety property the compiler does not
+ * provide. The three call sites pass `listing.blockSlug` to a Forgejo call that requires
+ * a `string`, and they used to do it through a `!` non-null assertion justified by a
+ * comment ("safe: `hasWritableRepo` is precisely the null check"). The predicate replaces
+ * that comment with narrowing the compiler performs, so the three `!`s are gone and the
+ * three call sites can no longer be re-written to pass a nullable slug without tsc
+ * objecting.
+ *
+ * 🔴 WHAT IT DOES **NOT** BUY: TypeScript NEVER checks a user-defined predicate's BODY
+ * against the declared predicate. Relaxing this body to a kind-only check is a silent
+ * change — measured on this tree with `pnpm typecheck`: the relaxed body emits **0**
+ * errors, while the positive control (same relaxed body, return type demoted to
+ * `boolean`) emits exactly **3** — `TS2322: Type 'string | null' is not assignable to
+ * type 'string'`, one per call site (`respondToInvite`, `removeCollaborator`,
+ * `leaveApp`) as each loses the narrowing. So the predicate is checked at its CALLERS and
+ * unchecked at its DEFINITION, and the null-slug half of this function has no
+ * compile-time guard at all.
+ *
+ * That half is therefore pinned BEHAVIOURALLY, by `app-collaborator.service.test.ts` →
+ * "🔴 an ON-SITE listing with NO backing block reaches Forgejo NEVER". That case is the
+ * only one that can kill a body relaxed to `listingKindSupports(...)` alone: every other
+ * on-site fixture has a slug, so both clauses agree and either one alone satisfies them.
  */
-function hasWritableRepo(listing: { kind: string; blockSlug: string | null }): boolean {
+function hasWritableRepo(listing: {
+  kind: string;
+  blockSlug: string | null;
+}): listing is { kind: string; blockSlug: string } {
   return listingKindSupports(listing.kind, 'submitVersion') && listing.blockSlug != null;
 }
 
@@ -503,10 +530,10 @@ export async function respondToInvite(opts: {
     });
   });
 
-  // 🔴 KIND-GATED, not slug-gated — see {@link hasWritableRepo}. The non-null assertion
-  // is safe: `hasWritableRepo` is precisely the null check.
+  // 🔴 KIND-GATED, not slug-gated — see {@link hasWritableRepo}. It is a TYPE PREDICATE,
+  // so `blockSlug` narrows to `string` here; no non-null assertion is involved.
   if (opts.accept && hasWritableRepo(listing)) {
-    await grantAppRepoWrite({ slug: listing.blockSlug!, userId: opts.userId });
+    await grantAppRepoWrite({ slug: listing.blockSlug, userId: opts.userId });
   }
 
   return { appListingId: listing.appListingId, userId: opts.userId, status: nextStatus };
@@ -547,7 +574,7 @@ export async function removeCollaborator(opts: {
   });
 
   if (removed && hasWritableRepo(listing)) {
-    await revokeAppRepoWrite({ slug: listing.blockSlug!, userId: opts.targetUserId });
+    await revokeAppRepoWrite({ slug: listing.blockSlug, userId: opts.targetUserId });
   }
   return { appListingId: listing.appListingId, userId: opts.targetUserId, removed };
 }
@@ -578,7 +605,7 @@ export async function leaveApp(opts: {
   });
 
   if (removed && hasWritableRepo(listing)) {
-    await revokeAppRepoWrite({ slug: listing.blockSlug!, userId: opts.userId });
+    await revokeAppRepoWrite({ slug: listing.blockSlug, userId: opts.userId });
   }
   return { appListingId: listing.appListingId, userId: opts.userId, removed };
 }

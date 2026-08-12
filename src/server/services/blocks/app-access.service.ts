@@ -121,15 +121,42 @@ export type ListingAccess = {
    *
    * For an ON-SITE listing ownership lives on `OauthClient.userId`, reached as
    * `AppListing.appBlock.app.userId`; `AppListing.userId` is a DENORMALIZED COPY that
-   * this feature's own code can leave stale (`acceptTransfer` step 3 is deliberately
-   * unguarded for onsite and treats a 0-count as an accepted desync). Reading the copy
-   * would hand the roster — including `displayed:false` seats, `invitedBy` and the
-   * timestamps — to whoever the stale row names, while refusing the REAL owner
-   * `NOT_OWNER` on their own app. For an OFF-SITE listing there is no OauthClient in
-   * the ownership chain, so the column IS the owner and the fallback is exact.
+   * this feature's own code can leave stale — see {@link resolveListingAccess} for the
+   * mechanism that actually does it (a SHADOW REVISION freezes the column at clone
+   * time and no ownership write ever revisits it). Reading the copy would hand the
+   * roster — including `displayed:false` seats, `invitedBy` and the timestamps — to
+   * whoever the stale row names, while refusing the REAL owner `NOT_OWNER` on their own
+   * app. For an OFF-SITE listing there is no OauthClient in the ownership chain, so the
+   * column IS the owner and the fallback is exact.
    *
-   * This matches `toSeatListing` / `loadOwnedListing`, which already resolve it this
-   * way; `app-access.call-site-ledger.test.ts` pins that every consumer agrees.
+   * 🔴 …WITH ONE MEASURED EXCEPTION TO "kind-aware", tracked as
+   * https://github.com/civitai/civitai/issues/3844. The implementation is BLOCK-FIRST
+   * (`appBlock.app.userId ?? listing.userId`) and never branches on `kind`, which reads
+   * as kind-aware only because an ordinary off-site listing has no block. On an OFF-SITE
+   * listing that DOES carry one, the block decides — and both off-site ownership writers
+   * (`acceptTransfer`'s offsite path and `claimListing`) move only the column, so this
+   * function keeps naming the OLD owner. 0 rows of that shape in production and no code
+   * path can mint one today (see the issue for the measurement). Do not fix it here; the
+   * behaviour is pinned in `app-access.denormalized-owner-drift.test.ts`.
+   *
+   * The same resolution is written in `app-collaborator.service::toSeatListing` and in
+   * `app-ownership-transfer.service::loadOwnedListing`, the two WRITE-side seat/transfer
+   * loaders; every other consumer delegates to THIS function rather than re-deriving it.
+   *
+   * 🔴 WHAT THE LEDGER ACTUALLY PINS, stated exactly, because two earlier versions of
+   * this paragraph overstated it. The ledger enumerates the POPULATION of gate sites, and
+   * it separately RECORDS a class of gate that reads the denormalized column directly.
+   * That class is now empty for every collaborator-reachable gate. But its
+   * `DENORM_OWNER_RE` assertion is a **naming-convention lint, not a structural guard**:
+   * it is anchored on the receiver name (`*listing` / `*shadow` / `<x>.appListing`), so
+   * it catches a reintroduction written in this feature's idiom — in either operand
+   * order, with optional chaining, with `!=` — and is BLIND to the same gate written
+   * against a hoisted local, a destructure, or any other variable name. Its own KNOWN
+   * EVASIONS test pins that limit as a measured fact. It also fails if the three recorded
+   * holdouts are fixed without updating the record. The claim that no gate anywhere reads
+   * the column is NOT what it holds; the behaviour is held instead by
+   * `app-access.denormalized-owner-drift.test.ts` (spelling-blind by construction) and
+   * the transfer/seat suites.
    */
   ownerUserId: number;
   /** The PARENT's kind — what the caller may do is derived from it, never from a seat. */
@@ -507,6 +534,27 @@ export type AccessibleAppBlocks = {
  *
  * The `earnings: false` cell of {@link CAPABILITIES_BY_KIND} is the declared form of the
  * same rule; this is it expressed as a query predicate.
+ *
+ * 🔴 IT IS NOT ONLY THE MONEY PATH, AND THE JUSTIFICATION ABOVE DOES NOT COVER THE OTHER
+ * CONSUMER ON ITS OWN. `app-analytics.service::getOwnedAppBlocks` reads the SAME set, and
+ * `CAPABILITIES_BY_KIND.offsite.analytics` is `true` — so read naively, `kind: 'onsite'`
+ * narrows a capability the table grants. It does not, for two independent reasons, and
+ * BOTH are needed:
+ *   1. This set is a set of APP BLOCK ids, and every downstream analytics aggregate is
+ *      `appBlockId IN thatSet` over block-scoped series (`AppBlockView`, install counts,
+ *      the manifest). An OFFSITE listing's analytics surface is `AppListingMetric` —
+ *      connect/visit counters on the LISTING — which this set does not address at all.
+ *      An ordinary offsite listing has no block, so it contributes nothing here whatever
+ *      the kind clause says; the `analytics: true` cell is honoured on a different read.
+ *   2. The only shape the clause actually removes is the odd one: an OFFSITE listing that
+ *      HAS a backing block (`mapAppBlockToListing` + `externalUrl`). Its block-scoped
+ *      series belong to a block whose listing declares itself off-site; feeding it here
+ *      would report app-block analytics for a listing the store presents as external.
+ *      0 rows of that shape in production (same measurement as above).
+ * DECISION: the predicate is left as-is and this comment is widened to cover both
+ * consumers, rather than splitting the resolver into a money set and an analytics set.
+ * Splitting would add a second decayable set and change a live read to fix a case with
+ * no rows, no user-visible difference (see 1), and no capability actually withheld.
  */
 export async function resolveAccessibleAppBlockIds(userId: number): Promise<AccessibleAppBlocks> {
   const [owned, seats] = await Promise.all([

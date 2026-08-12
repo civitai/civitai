@@ -33,6 +33,9 @@ import {
   assertListingMeetsFloor,
 } from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionable } from '~/server/services/blocks/app-listing-actionable.service';
+// TYPE-ONLY (erased at compile time) — the runtime reach into `app-access.service` stays
+// a dynamic import, so this adds nothing to the module graph. See `resolveListingRole`.
+import type { AppRole } from '~/server/services/blocks/app-access.service';
 import { computeListingProblems } from '~/server/services/blocks/listing-problems';
 import { measureUploadedImage } from '~/server/services/blocks/measure-uploaded-image';
 import { storedObjectEtagMetadata } from '~/server/services/blocks/stored-object-integrity';
@@ -841,17 +844,52 @@ const editableListingSelect = {
 } as const;
 
 /**
- * True when `userId` holds an ACCEPTED collaborator seat reachable from this listing.
+ * The caller's role on this listing — `'owner'`, `'editor'`, or `null` for no access.
+ *
+ * 🔴 THE WHOLE GATE, not just its collaborator half. Every author gate in this file
+ * asks THIS, never `listing.userId !== userId`, because that column is a DENORMALIZED
+ * copy of the owner for an ON-SITE listing — the canonical owner is the backing
+ * `AppBlock.app.userId`. Comparing against the copy inverts the gate in BOTH directions
+ * on a drifted row: it refuses the real owner and admits whoever the stale row names.
+ * `resolveListingAccess` resolves the owner from the block, hops a shadow revision to its
+ * parent, and answers the seat question in the same call.
+ *
+ * 🔴 WHERE THE DRIFT ACTUALLY COMES FROM — a SHADOW REVISION, and this is worth stating
+ * precisely because an earlier version of this comment named the wrong mechanism and
+ * would have sent the next maintainer to the wrong file. {@link beginListingRevision}
+ * clones the parent with `userId: parent.userId`; `acceptTransfer` step 3 updates ONLY
+ * `{ id: <the transferred listing> }` and never that listing's shadows, and
+ * {@link applyApprovedRevision} never copies `userId` back onto the parent. So a shadow
+ * that outlives a transfer keeps the OLD owner FROZEN while its parent and the
+ * `OauthClient` both name the new one. That is reachable on every path in this file that
+ * can be handed a shadow id — `updateRevisionDraft` → {@link loadOwnedEditableListing},
+ * and {@link submitListingRevision}, which takes nothing else.
+ *
+ * 🔴 NOT via `acceptTransfer`'s onsite listing write, which is what that earlier comment
+ * claimed. That write is `where: { id }` — UNCONDITIONAL, in the same transaction as the
+ * `OauthClient` move and after an in-tx read of the row through its own FK — so it HEALS
+ * the parent's copy rather than drifting it, and a 0-count there would require the row to
+ * be absent, which the pre-read precludes. There is no other in-app writer of
+ * `OauthClient.userId`. The top-level row's copy therefore has no drift mechanism at all;
+ * only clones of it do. (`getMyListingForApp` resolves its row by `appBlockId`/`slug`, so
+ * it only ever sees a parent — it goes through this helper for uniformity, not because a
+ * stale copy can reach it.)
+ *
+ * 🔴 IT COSTS ONE EXTRA READ ON THE OWNER PATH, deliberately. The bare comparison was
+ * free for the owner because the row was already in hand — but "already in hand" is
+ * exactly the stale copy. These are author EDIT paths (a handful of calls per editing
+ * session), not a hot read, so correctness wins. The non-owner path costs the same as
+ * before: it already resolved through here.
  *
  * Dynamic import: `app-access.service` is small and IO-only, but keeping the import
  * inside the body matches this file's existing discipline for cross-service reach
  * (`beginListingRevision`'s import of the asset service) and keeps the module graph of
  * a plain listing read unchanged.
  */
-async function isAcceptedListingEditor(listingId: string, userId: number): Promise<boolean> {
+async function resolveListingRole(listingId: string, userId: number): Promise<AppRole | null> {
   const { resolveListingAccess } = await import('~/server/services/blocks/app-access.service');
   const access = await resolveListingAccess(listingId, userId);
-  return access?.role === 'editor';
+  return access?.role ?? null;
 }
 
 /**
@@ -865,6 +903,10 @@ async function isAcceptedListingEditor(listingId: string, userId: number): Promi
  * consolidating the predicate and is recorded in `app-access.call-site-ledger.test.ts`
  * rather than quietly normalised, because "make the mod bypass consistent" is a
  * behaviour change to the author edit path that deserves its own decision.
+ *
+ * 🔴 THE OWNER HALF IS `resolveListingRole`, NOT `listing.userId` — the row loaded here
+ * carries the DENORMALIZED copy, which is stale-able for onsite. See
+ * {@link resolveListingRole}.
  */
 async function loadOwnedEditableListing(
   listingId: string,
@@ -877,7 +919,7 @@ async function loadOwnedEditableListing(
   if (!listing) {
     throw new OffsiteRequestError('NOT_FOUND', `listing ${listingId} not found`);
   }
-  if (listing.userId !== userId && !(await isAcceptedListingEditor(listingId, userId))) {
+  if ((await resolveListingRole(listingId, userId)) === null) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only edit your own listings');
   }
   return listing;
@@ -1153,12 +1195,19 @@ export async function submitListingRevision(opts: {
   if (!shadow) {
     throw new OffsiteRequestError('NOT_FOUND', `revision draft ${shadowId} not found`);
   }
-  // Owner OR an ACCEPTED collaborator. 🔴 Note the shadow's `userId` is the PARENT
-  // OWNER's, not the editor's — `beginListingRevision` clones with
-  // `userId: parent.userId` — so an editor's own shadow reads as owned by someone
-  // else and the bare equality refused it. Submitting a new version is an explicit
-  // editor capability, so the seat check is what admits them.
-  if (shadow.userId !== userId && !(await isAcceptedListingEditor(shadowId, userId))) {
+  // Owner OR an ACCEPTED collaborator, resolved from the SHADOW id — {@link
+  // resolveListingRole} hops to the parent, which is where both the seat and the
+  // canonical owner live.
+  //
+  // 🔴 A shadow is the WORST row to read `userId` off, and it is where the drift is
+  // actually MINTED rather than merely inherited. `beginListingRevision` clones with
+  // `userId: parent.userId`, and nothing ever revisits that clone: an ownership transfer
+  // updates only the parent row (`where: { id }`), and the revision-apply copies assets
+  // back, never `userId`. So the bare equality was wrong twice over — it refused an
+  // editor on their own shadow (the clone names the parent owner, not them) AND, on any
+  // shadow that outlives a transfer of its parent, it named an owner who had already
+  // been replaced, refusing the new owner and admitting the old one.
+  if ((await resolveListingRole(shadowId, userId)) === null) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only submit your own revision');
   }
   if (shadow.revisionOfId == null || !shadow.revisionOf) {
@@ -1620,9 +1669,11 @@ export async function getMyListingForApp(opts: {
   userId: number;
 }): Promise<GetMyListingForAppResult> {
   const { appBlockId, slug, userId } = opts;
+  // 🔴 `userId` is deliberately NOT selected. Nothing below reads it any more (the gate
+  // is `resolveListingRole`), and leaving the denormalized owner column sitting next to
+  // an access check is an invitation to compare against it again.
   const entrySelect = {
     id: true,
-    userId: true,
     status: true,
     contentRating: true,
     revisionOfId: true,
@@ -1654,8 +1705,21 @@ export async function getMyListingForApp(opts: {
   }
   // Owner OR an ACCEPTED collaborator ON THE LISTING (the seat key since the re-key).
   // This is the media editor's entry read; an editor who cannot reach it cannot edit
-  // anything.
-  if (listing.userId !== userId && !(await isAcceptedListingEditor(listing.id, userId))) {
+  // anything. The owner half goes through {@link resolveListingRole} too, for UNIFORMITY
+  // rather than because a stale copy can reach here: this read resolves its row by
+  // `appBlockId`/`slug`, so it only ever sees a top-level parent, and a parent's copy has
+  // no drift mechanism (see {@link resolveListingRole}). One spelling of the gate across
+  // the file is the point — a second spelling is what drifts.
+  //
+  // 🟡 KNOWN, ACCEPTED: this re-reads the same row on the same pool, so a listing DELETED
+  // between the two reads reports `NOT_OWNED` instead of `NOT_FOUND` (`resolveListingAccess`
+  // returns null for a missing row, and null role is the refusal here). It is cosmetic —
+  // the caller is refused either way, no capability turns on it — and the alternative is
+  // to distinguish "no row" from "no role" in the shared resolver's return, which widens
+  // it for every caller to improve one error string on a race with a moderator delete.
+  // Written down rather than left as a puzzle for whoever next reads a NOT_OWNED in the
+  // logs for a listing that no longer exists.
+  if ((await resolveListingRole(listing.id, userId)) === null) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only manage your own listings');
   }
   // A pending revision REQUEST (not mere shadow existence) drives the "already

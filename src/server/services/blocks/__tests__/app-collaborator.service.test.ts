@@ -88,10 +88,25 @@ const SHADOW = 'apl_shadow';
 const OFFSITE_WITH_REPO = 'apl_offsite_with_repo';
 const OFFSITE_REPO_SLUG = 'offsite-repo';
 /**
+ * 🔴 An ON-SITE listing with NO backing AppBlock — the OTHER shape where the two clauses
+ * of `hasWritableRepo` disagree, and the mirror image of {@link OFFSITE_WITH_REPO}. Here
+ * the KIND says `submitVersion: true` and only `blockSlug != null` can refuse.
+ *
+ * It is a real row, not a hypothetical: `publish-request.service::submitVersion`'s
+ * first-version branch matches a pre-approval draft on
+ * `kind = 'onsite' AND status = 'draft' AND appBlockId IS NULL`, so an on-site listing
+ * exists without a block for the whole window before its first approval.
+ */
+const ONSITE_NO_BLOCK = 'apl_onsite_no_block';
+/**
  * 🔴 An ON-SITE listing whose denormalized `AppListing.userId` DISAGREES with its
- * canonical `OauthClient.userId`. `acceptTransfer` step 3 is deliberately unguarded for
- * onsite and treats a 0-count as an accepted desync, so this state is one the feature's
- * own code can produce.
+ * canonical `OauthClient.userId`. This state is one the feature's own code produces, via
+ * a SHADOW REVISION: `beginListingRevision` clones the column and no ownership write ever
+ * revisits the clone, so a shadow that outlives a transfer names the old owner forever.
+ * (NOT via `acceptTransfer`'s onsite listing write — that one is `where: { id }`,
+ * unconditional and in the same tx as the OauthClient move, so it heals the parent rather
+ * than drifting it. The full mechanism is in
+ * `app-access.denormalized-owner-drift.test.ts`.)
  */
 const DRIFTED = 'apl_drifted';
 const OWNER = 10;
@@ -155,6 +170,17 @@ function listingTable(): Record<string, Record<string, unknown>> {
         blockId: OFFSITE_REPO_SLUG,
         app: { userId: OWNER },
       },
+    },
+    // 🔴 onsite, but with NO block and therefore NO repo slug.
+    [ONSITE_NO_BLOCK]: {
+      id: ONSITE_NO_BLOCK,
+      slug: 'onsite-no-block-slug',
+      kind: 'onsite',
+      userId: OWNER,
+      appBlockId: null,
+      revisionOfId: null,
+      revisionOf: null,
+      appBlock: null,
     },
     // 🔴 onsite, with the canonical owner and the denormalized column DISAGREEING.
     [DRIFTED]: {
@@ -746,6 +772,71 @@ describe('🔴 Forgejo is ON-SITE ONLY — the `submitVersion: false` capability
       });
       expect(mockRepo.grantAppRepoWrite).toHaveBeenCalledWith({
         slug: OFFSITE_REPO_SLUG,
+        userId: TARGET,
+      });
+    });
+  });
+
+  /**
+   * 🔴 THE NULL-SLUG HALF — the clause the COMPILER cannot hold.
+   *
+   * `hasWritableRepo` is a type PREDICATE, and an earlier comment on it claimed that
+   * relaxing its body to a kind-only check "is a type error at every call site instead".
+   * It is not: TypeScript never checks a user-defined predicate's body against the
+   * declared predicate. Measured with `pnpm typecheck` on this tree — the relaxed body
+   * emits 0 errors; the positive control (same body, return type demoted to `boolean`)
+   * emits exactly 3 `TS2322: Type 'string | null' is not assignable to type 'string'`,
+   * one per call site.
+   *
+   * So the null half is held HERE or nowhere. Every other on-site fixture in this file
+   * carries a slug, which means both clauses agree on it and either alone satisfies it;
+   * this row is the only one that can kill a body relaxed to `listingKindSupports(...)`
+   * — the kind says `submitVersion: true`, so only `blockSlug != null` can refuse, and
+   * a mutant would call Forgejo with `null` as the repository name.
+   */
+  describe('🔴 an ON-SITE listing with NO backing block reaches Forgejo NEVER', () => {
+    it('accept grants nothing — there is no repo to grant on', async () => {
+      const res = await respondToInvite({
+        appListingId: ONSITE_NO_BLOCK,
+        userId: TARGET,
+        accept: true,
+        now: NOW,
+      });
+      expect(res.status).toBe('accepted');
+      expect(mockRepo.grantAppRepoWrite).not.toHaveBeenCalled();
+    });
+
+    it('remove revokes nothing', async () => {
+      await removeCollaborator({
+        appListingId: ONSITE_NO_BLOCK,
+        targetUserId: TARGET,
+        actorUserId: OWNER,
+      });
+      expect(mockRepo.revokeAppRepoWrite).not.toHaveBeenCalled();
+    });
+
+    it('leave revokes nothing', async () => {
+      await leaveApp({ appListingId: ONSITE_NO_BLOCK, userId: TARGET });
+      expect(mockRepo.revokeAppRepoWrite).not.toHaveBeenCalled();
+    });
+
+    it('🔴 POSITIVE CONTROL: the SAME row reaches Forgejo once it has a block', async () => {
+      // Without this, "not called" is indistinguishable from a fixture this path never
+      // reaches at all — the reassuring zero. Only the block changes here; the kind was
+      // already `onsite`, so this also proves the kind clause was never what refused.
+      LISTINGS[ONSITE_NO_BLOCK] = {
+        ...LISTINGS[ONSITE_NO_BLOCK],
+        appBlockId: 'ab_late',
+        appBlock: { appId: 'oc_late', blockId: 'late-repo', app: { userId: OWNER } },
+      };
+      await respondToInvite({
+        appListingId: ONSITE_NO_BLOCK,
+        userId: TARGET,
+        accept: true,
+        now: NOW,
+      });
+      expect(mockRepo.grantAppRepoWrite).toHaveBeenCalledWith({
+        slug: 'late-repo',
         userId: TARGET,
       });
     });

@@ -17,6 +17,9 @@ import {
   type ListingAssetKind,
 } from '~/server/schema/blocks/app-listing.schema';
 import type { SessionUser } from '~/types/session';
+// TYPE-ONLY (erased at compile time) — the runtime reach into `app-access.service` stays
+// a dynamic import (it imports this module back). See `resolveListingRole`.
+import type { AppRole } from '~/server/services/blocks/app-access.service';
 import {
   classifyStoredObjectIntegrity,
   readRecordedEtag,
@@ -332,10 +335,15 @@ export { nsfwLevelFromContentRating };
  * pre-existing and is recorded in `app-access.call-site-ledger.test.ts` rather than
  * silently normalised here.
  *
- * The collaborator half routes through `resolveListingAccess`, which is SHADOW-AWARE:
- * a shadow revision carries `appBlockId: null`, so the seat is resolved via its parent.
- * Without that, an editor would lose access to their own in-flight revision the moment
- * their first media edit minted it.
+ * 🔴 BOTH halves route through `resolveListingAccess` — the owner one too, not just the
+ * collaborator fallback. It is SHADOW-AWARE (a shadow revision carries `appBlockId: null`, so both the seat and
+ * the canonical owner are resolved via its parent; without that an editor would lose
+ * access to their own in-flight revision the moment their first media edit minted it)
+ * and it is KIND-AWARE about ownership (`appBlock.app.userId ?? listing.userId`).
+ *
+ * 🔴 THIS IS THE ONLY OWNERSHIP GATE ON THE ASSET PATH. `resolveOwnerScreenshotTarget`
+ * used to run a second, denormalized-column copy of it one line before calling this;
+ * that copy is gone.
  */
 async function loadOwnedListing(
   listingId: string,
@@ -365,17 +373,36 @@ async function loadOwnedListing(
     },
   });
   if (!listing) throw new TRPCError({ code: 'NOT_FOUND', message: 'Listing not found' });
-  if (listing.userId !== user.id && !user.isModerator) {
-    // Not the owner and not a mod — the last chance is an ACCEPTED collaborator seat.
-    // Resolved lazily so the common owner/mod path costs no extra query.
+  if (!user.isModerator) {
+    // Not a mod — the way in is an owner or an ACCEPTED collaborator ROLE, resolved
+    // canonically. Mods short-circuit first, so their path still costs no extra query.
     //
-    // 🔴 `db` IS THREADED THROUGH, not dropped. An EDITOR never takes the owner
-    // short-circuit above — a shadow's `userId` is the PARENT OWNER's — so this is the
-    // ONLY branch an editor ever reaches. Resolving it off the replica while the caller
-    // handed us `dbWrite` would re-open, as a 403, the very read-after-write hole the
-    // override exists to close for the owner's 404.
-    const editor = await isAcceptedListingEditor(listingId, user.id, db);
-    if (!editor) {
+    // 🔴 THE OWNER HALF IS RESOLVED, NOT COMPARED. `listing.userId` (selected above) is
+    // a DENORMALIZED copy of the owner for an ON-SITE listing — the canonical owner is
+    // `AppBlock.app.userId`. Comparing against the copy inverts this gate in BOTH
+    // directions on a drifted row: the real owner is refused FORBIDDEN on their own
+    // listing, and whoever the stale row names is let in. `resolveListingAccess` is the
+    // one place that resolution lives.
+    //
+    // 🔴 THE DRIFT COMES FROM A SHADOW REVISION, not from the transfer's listing write —
+    // an earlier version of this comment blamed the latter and was wrong.
+    // `beginListingRevision` clones the parent with `userId: parent.userId` and nothing
+    // ever revisits the clone (`acceptTransfer` step 3 updates only `{ id: <parent> }`;
+    // the revision-apply copies assets back, never `userId`), so a shadow that outlives a
+    // transfer names the OLD owner forever. That matters HERE specifically: this gate is
+    // handed a shadow id on the whole approved-listing edit flow — see
+    // `resolveOwnerAssetEditTarget`, which calls `loadOwnedListing(shadowId, user,
+    // dbWrite)` directly. The transfer's own write to the parent is unconditional and in
+    // the same transaction as the OauthClient move, so it HEALS the parent rather than
+    // drifting it.
+    //
+    // 🔴 `db` IS THREADED THROUGH, not dropped. An EDITOR never resolves as the owner —
+    // a shadow's canonical owner is the PARENT's — so this is the ONLY branch an editor
+    // ever reaches. Resolving it off the replica while the caller handed us `dbWrite`
+    // would re-open, as a 403, the very read-after-write hole the override exists to
+    // close for the owner's 404.
+    const role = await resolveListingRole(listingId, user.id, db);
+    if (role === null) {
       throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this listing' });
     }
   }
@@ -383,23 +410,25 @@ async function loadOwnedListing(
 }
 
 /**
- * True when `userId` holds an ACCEPTED collaborator seat reachable from this listing.
+ * The caller's role on this listing — `'owner'`, `'editor'`, or `null` for no access.
  *
- * Extracted so every gate in this file asks the question the SAME way (`resolveAppAccess`
- * is the single predicate; this is a thin `role === 'editor'` read of it) and so the
- * seam has one name to mock in tests.
+ * Extracted so every gate in this file asks the question the SAME way
+ * (`resolveListingAccess` is the single predicate; this is a thin read of it) and so the
+ * seam has one name to mock in tests. It answers BOTH halves: the canonical owner
+ * (kind-aware — `appBlock.app.userId ?? listing.userId`, never the denormalized column
+ * alone) and the ACCEPTED seat, in one call.
  *
  * `db` defaults to the replica and MUST be passed on by any caller that itself received
  * a pool override — see the note at the `loadOwnedListing` call site.
  */
-async function isAcceptedListingEditor(
+async function resolveListingRole(
   listingId: string,
   userId: number,
   db: typeof dbRead = dbRead
-): Promise<boolean> {
+): Promise<AppRole | null> {
   const { resolveListingAccess } = await import('~/server/services/blocks/app-access.service');
   const access = await resolveListingAccess(listingId, userId, db);
-  return access?.role === 'editor';
+  return access?.role ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1253,11 +1282,9 @@ async function resolveOwnerScreenshotTarget(
   screenshotId: string,
   user: SessionUser
 ): Promise<{ screenshotId: string; listing: OwnedListing }> {
-  const select = {
-    id: true,
-    appListingId: true,
-    appListing: { select: { userId: true } },
-  } as const;
+  // 🔴 The listing's `userId` is deliberately NOT selected any more — see the note on
+  // the removed early gate below.
+  const select = { id: true, appListingId: true } as const;
   // 🔴 READ-AFTER-WRITE. The replica answers first, but a MISS off the replica is NOT
   // authoritative here: once the first mutation mints the shadow, `getMyListingForApp`
   // re-projects the SHADOW's row ids from the PRIMARY, so the very next call arrives
@@ -1274,17 +1301,18 @@ async function resolveOwnerScreenshotTarget(
     shot = await dbWrite.appListingScreenshot.findUnique({ where: { id: screenshotId }, select });
   }
   if (!shot) throw new TRPCError({ code: 'NOT_FOUND', message: 'Screenshot not found' });
-  // Owner / mod / ACCEPTED collaborator (see `loadOwnedListing`). This is an EARLY
-  // check on the screenshot's own listing; `loadOwnedListing` below re-asserts it on
-  // the resolved listing row, so widening here does not weaken the second gate.
-  if (shot.appListing.userId !== user.id && !user.isModerator) {
-    // Same pool discipline as `loadOwnedListing`: `db` is whichever pool actually
-    // answered for this screenshot, and an editor only ever reaches THIS branch.
-    const editor = await isAcceptedListingEditor(shot.appListingId, user.id, db);
-    if (!editor) {
-      throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this listing' });
-    }
-  }
+  // 🔴 THE EARLY OWNER CHECK THAT USED TO SIT HERE IS GONE, and its removal is the point
+  // rather than a shortcut. It read `shot.appListing.userId` — the DENORMALIZED owner
+  // column — and then asked `loadOwnedListing(shot.appListingId, user, db)` the SAME
+  // question about the SAME listing on the very next line. Two spellings of one
+  // predicate is how they drift: this copy was the stale-column spelling, so on a
+  // drifted onsite listing it refused the real owner (and admitted the stale name)
+  // BEFORE the correct gate below ever ran. A redundant guard also makes a mutation
+  // kill unattributable — whichever copy you break, the other one throws the same
+  // FORBIDDEN with the same message. One gate, one line: `loadOwnedListing`.
+  //
+  // Pool discipline is unchanged: `db` is whichever pool actually answered for this
+  // screenshot, and it is handed straight to the gate that now owns the decision.
   const sourceListing = await loadOwnedListing(shot.appListingId, user, db);
   const listing = await resolveOwnerAssetEditTarget(sourceListing, user);
   if (listing.id === shot.appListingId) return { screenshotId, listing };
