@@ -1389,7 +1389,9 @@ export function ModelVersionUpsertForm({
                                 <Input.Wrapper
                                   label={
                                     <Group gap="xs">
-                                      <Text fw="bold">Early access time frame</Text>
+                                      <Text fw={500} size="sm">
+                                        Early access time frame
+                                      </Text>
                                       <Popover width={300} withArrow withinPortal shadow="sm">
                                         <Popover.Target>
                                           <IconInfoCircle size={16} />
@@ -1583,68 +1585,67 @@ export function ModelVersionUpsertForm({
                         </>
                       )}
                     </Card>
-                    {paidAccessConfig && (
-                      <Stack mt="sm">
-                        {!paidAccessConfig.permanent &&
-                          (version?.status !== 'Published' || version?.donationGoal) &&
-                          features.donationGoals && (
-                            <Card withBorder>
-                              <Card.Section withBorder>
-                                <Group py="sm" px="md" justify="space-between" wrap="nowrap">
-                                  <div>
-                                    <Text fw={500} size="sm">
-                                      Let the community unlock this early
-                                    </Text>
-                                    <Text size="xs">
-                                      If the goal is met before the window ends, early access ends
-                                      immediately and the version becomes free for everyone. After
-                                      the model is published, you cannot change this value.
-                                    </Text>
-                                  </div>
-                                  <InputSwitch
-                                    name="paidAccessConfig.donationGoalEnabled"
+                    {!!paidAccessConfig &&
+                      !paidAccessConfig.permanent &&
+                      (version?.status !== 'Published' || version?.donationGoal) &&
+                      features.donationGoals && (
+                        <Stack mt="sm">
+                          <Card withBorder>
+                            <Card.Section withBorder bg={cardHeaderBg}>
+                              <Group py="xs" px="md" justify="space-between" wrap="nowrap">
+                                <div>
+                                  <Text fw={600} size="sm">
+                                    Let the community unlock this early
+                                  </Text>
+                                  <Text size="xs" c="dimmed">
+                                    If the goal is met before the window ends, early access ends
+                                    immediately and the version becomes free for everyone. After the
+                                    model is published, you cannot change this value.
+                                  </Text>
+                                </div>
+                                <InputSwitch
+                                  name="paidAccessConfig.donationGoalEnabled"
+                                  disabled={donationGoalLocked}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      form.setValue('paidAccessConfig.donationGoal', 50000);
+                                    } else {
+                                      form.setValue('paidAccessConfig.donationGoal', undefined);
+                                    }
+                                  }}
+                                />
+                              </Group>
+                            </Card.Section>
+                            {paidAccessConfig?.donationGoalEnabled && (
+                              <Card.Section py="sm" px="md">
+                                <Stack>
+                                  <InputNumber
+                                    name="paidAccessConfig.donationGoal"
+                                    label="Goal amount"
+                                    description="Early access purchases count toward this goal. After publishing, you cannot change this value."
+                                    min={MIN_DONATION_GOAL}
+                                    max={MAX_DONATION_GOAL}
+                                    step={100}
+                                    leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                                     disabled={donationGoalLocked}
-                                    onChange={(e) => {
-                                      if (e.target.checked) {
-                                        form.setValue('paidAccessConfig.donationGoal', 50000);
-                                      } else {
-                                        form.setValue('paidAccessConfig.donationGoal', undefined);
-                                      }
-                                    }}
                                   />
-                                </Group>
+                                  <Switch
+                                    label="Hide donation goals from public view"
+                                    description="Others won't see the progress bar or collected amount. The goal still works, and you and moderators can still see it. This applies to all of your donation goals."
+                                    checked={hideDonationGoals ?? false}
+                                    onChange={(e) =>
+                                      mutateUserSettings({
+                                        hideDonationGoals: e.target.checked,
+                                      })
+                                    }
+                                    disabled={hideDonationGoalsUpdating}
+                                  />
+                                </Stack>
                               </Card.Section>
-                              {paidAccessConfig?.donationGoalEnabled && (
-                                <Card.Section py="sm" px="md">
-                                  <Stack>
-                                    <InputNumber
-                                      name="paidAccessConfig.donationGoal"
-                                      label="Goal amount"
-                                      description="Early access purchases count toward this goal. After publishing, you cannot change this value."
-                                      min={MIN_DONATION_GOAL}
-                                      max={MAX_DONATION_GOAL}
-                                      step={100}
-                                      leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-                                      disabled={donationGoalLocked}
-                                    />
-                                    <Switch
-                                      label="Hide donation goals from public view"
-                                      description="Others won't see the progress bar or collected amount. The goal still works, and you and moderators can still see it. This applies to all of your donation goals."
-                                      checked={hideDonationGoals ?? false}
-                                      onChange={(e) =>
-                                        mutateUserSettings({
-                                          hideDonationGoals: e.target.checked,
-                                        })
-                                      }
-                                      disabled={hideDonationGoalsUpdating}
-                                    />
-                                  </Stack>
-                                </Card.Section>
-                              )}
-                            </Card>
-                          )}
-                      </Stack>
-                    )}
+                            )}
+                          </Card>
+                        </Stack>
+                      )}
                   </Stack>
                 )}
                 {showChargeSettings && showLicensingFeeBlock && (
