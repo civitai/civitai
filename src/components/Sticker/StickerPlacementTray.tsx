@@ -45,26 +45,31 @@ export function StickerPlacementTray() {
   useEffect(() => () => endGrab.current?.(), []);
 
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
+  const trayOpen = useStickerPlacementDraftStore((state) => state.trayOpen);
   const draft = useStickerPlacementDraftStore((state) => state.draft);
   const begin = useStickerPlacementDraftStore((state) => state.begin);
-  const close = useStickerPlacementDraftStore((state) => state.close);
+  const closeTray = useStickerPlacementDraftStore((state) => state.closeTray);
   const setInteraction = useStickerPlacementDraftStore((state) => state.setInteraction);
   const setTray = useStickerPlacementDraftStore((state) => state.setTray);
 
+  const showing = targetImageId != null && trayOpen;
+
   // Registered after the early return below has been passed, so the element in
-  // the store is always one that is actually on screen.
+  // the store is always one that is actually on screen. `showing` rather than
+  // the target alone: a panel that has been put away is not an obstacle the buy
+  // button should still be avoiding.
   useEffect(() => {
-    if (targetImageId == null) return;
+    if (!showing) return;
     setTray(trayRef.current);
     return () => setTray(null);
-  }, [targetImageId, setTray]);
+  }, [showing, setTray]);
 
   const { space } = useImagePlacementSpace(targetImageId ?? undefined);
   const { data: balances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
     enabled: !!currentUser && targetImageId != null,
   });
 
-  if (targetImageId == null) return null;
+  if (!showing) return null;
 
   // `null` is unlimited and `undefined` is not loaded yet. Collapsing them
   // flashes "unlimited" on every open.
@@ -114,8 +119,10 @@ export function StickerPlacementTray() {
   };
 
   const price = space?.price ?? 0;
+  // Says the panel can be got out of the way only once there is something that
+  // would survive it. Before that it is an instruction about nothing.
   const instruction = draft
-    ? 'Drag it where you want it, then buy it under the sticker.'
+    ? 'Drag it where you want it, then buy it under the sticker. Closing this panel leaves it on the image.'
     : 'Drag a sticker onto the image.';
 
   return (
@@ -135,7 +142,10 @@ export function StickerPlacementTray() {
                 ' · this creator reviews placements, so only you will see it until they approve. If they decline, part of what you paid stays with them.'}
             </Text>
           </div>
-          <CloseButton onClick={close} aria-label="Cancel placing a sticker" />
+          <CloseButton
+            onClick={closeTray}
+            aria-label={draft ? 'Close the sticker panel' : 'Stop placing a sticker'}
+          />
         </div>
 
         {topUp ? (

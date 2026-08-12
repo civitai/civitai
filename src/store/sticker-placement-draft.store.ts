@@ -33,8 +33,16 @@ export type StickerDraft = {
  */
 interface StickerPlacementDraftStore {
   draft: StickerDraft | null;
-  /** Open with a tray but nothing chosen yet. */
+  /**
+   * The image this placement session belongs to — NOT whether the tray is
+   * showing. The two were one field, and it meant the panel could not be got out
+   * of the way: the panel covers the bottom of the viewport, so a sticker aimed
+   * near the bottom edge had nowhere to go, and closing the panel took the draft,
+   * the layer drawing it and the coordinate surface with it.
+   */
   targetImageId: number | null;
+  /** Whether the panel is showing. A session outlives it. */
+  trayOpen: boolean;
   surface: HTMLElement | null;
   /**
    * The tray element, for the one thing outside it that has to know where it is:
@@ -51,7 +59,12 @@ interface StickerPlacementDraftStore {
   interaction: StickerInteraction | null;
 
   open: (imageId: number) => void;
+  /** End the session outright — the draft, the panel and the target. */
   close: () => void;
+  /** Put the panel away and leave the draft on the image. */
+  closeTray: () => void;
+  /** Discard the draft and leave the panel as it is. */
+  cancelDraft: () => void;
   setSurface: (element: HTMLElement | null) => void;
   setTray: (element: HTMLElement | null) => void;
   begin: (cosmeticId: number, at?: { x: number; y: number }, maxScale?: number) => void;
@@ -61,15 +74,35 @@ interface StickerPlacementDraftStore {
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
+const ENDED = { targetImageId: null, trayOpen: false, draft: null, interaction: null };
+
 export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>((set) => ({
   draft: null,
   targetImageId: null,
+  trayOpen: false,
   surface: null,
   tray: null,
   interaction: null,
 
-  open: (imageId) => set({ targetImageId: imageId, draft: null, interaction: null }),
-  close: () => set({ targetImageId: null, draft: null, interaction: null }),
+  // Reopening on the image you are already placing on keeps the draft — that is
+  // the way back to the panel after putting it away, so taking the sticker would
+  // punish using it. A different image is a different session.
+  open: (imageId) =>
+    set((state) =>
+      state.draft?.imageId === imageId
+        ? { targetImageId: imageId, trayOpen: true }
+        : { targetImageId: imageId, trayOpen: true, draft: null, interaction: null }
+    ),
+
+  close: () => set(ENDED),
+
+  // A session with neither a panel nor a draft has nothing left to show, and
+  // leaving `targetImageId` set would keep this image in placement mode — still
+  // revealing pending placements, still holding the surface — with nothing on
+  // screen to say so or to end it.
+  closeTray: () => set((state) => (state.draft ? { trayOpen: false } : ENDED)),
+  cancelDraft: () => set((state) => (state.trayOpen ? { draft: null, interaction: null } : ENDED)),
+
   setInteraction: (interaction) => set({ interaction }),
   setSurface: (element) => set({ surface: element }),
   setTray: (element) => set({ tray: element }),

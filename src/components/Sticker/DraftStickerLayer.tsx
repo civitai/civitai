@@ -1,4 +1,5 @@
 import { Text } from '@mantine/core';
+import { IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -104,6 +105,7 @@ export function DraftStickerLayer() {
   const draft = useStickerPlacementDraftStore((state) => state.draft);
   const move = useStickerPlacementDraftStore((state) => state.move);
   const setInteraction = useStickerPlacementDraftStore((state) => state.setInteraction);
+  const cancelDraft = useStickerPlacementDraftStore((state) => state.cancelDraft);
   const { sticker } = useOwnedSticker();
   const { space } = useImagePlacementSpace(draft?.imageId);
   const place = useCreateStickerPlacement();
@@ -397,6 +399,21 @@ export function DraftStickerLayer() {
         className="absolute left-1/2 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-white bg-blue-5"
         style={{ top: `-${KNOB_OFFSET * 100}%` }}
       />
+
+      {/* Offset diagonally out past the corner handle rather than replacing it —
+          all four corners resize, and losing one to a destructive action on the
+          only corner a right-hander reaches first is worse than the crowding.
+          Dark rather than the handles' blue: it is the one control here that
+          throws work away. */}
+      <button
+        type="button"
+        aria-label="Remove this sticker"
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={cancelDraft}
+        className="absolute -right-7 -top-7 flex size-5 cursor-pointer items-center justify-center rounded-full border-2 border-white bg-dark-7 text-white"
+      >
+        <IconX size={10} stroke={3} />
+      </button>
 
       <div
         ref={buttonRef}
