@@ -13,6 +13,7 @@ import {
 } from '@mantine/core';
 import {
   IconArrowBackUp,
+  IconArrowRight,
   IconCaretDownFilled,
   IconDotsVertical,
   IconEdit,
@@ -33,7 +34,9 @@ import { CommentBadge } from '~/components/CommentsV2/Comment/CommentBadge';
 import {
   CommentsProvider,
   useCommentsContext,
+  useNewCommentStore,
   useRootThreadContext,
+  useSeededReplyThreads,
 } from '~/components/CommentsV2/CommentsProvider';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { openReportModal } from '~/components/Dialog/triggers/report';
@@ -92,14 +95,19 @@ export function CommentContent({
   borderless,
   ...groupProps
 }: CommentProps) {
-  const { expanded, toggleExpanded, setRootThread } = useRootThreadContext();
+  const { setExpanded, setRootThread, rootEntityType } = useRootThreadContext();
   const { entityId, entityType, highlighted, level } = useCommentsContext();
   const { canDelete, canEdit, canReply, canHide, canPin, badge, canReport } = useCommentV2Context();
 
-  const { data: replyCount = 0 } = trpc.commentv2.getCount.useQuery({
-    entityId: comment.id,
-    entityType: 'comment',
-  });
+  const seededThreads = useSeededReplyThreads();
+  const seededThread = seededThreads.byCommentId.get(comment.id);
+  const seededCount =
+    seededThread?.commentCount ?? (seededThreads.childless.has(comment.id) ? 0 : undefined);
+
+  const { data: replyCount = 0 } = trpc.commentv2.getCount.useQuery(
+    { entityId: comment.id, entityType: 'comment' },
+    { initialData: seededCount }
+  );
 
   const id = useStore((state) => state.id);
   const setId = useStore((state) => state.setId);
@@ -145,15 +153,19 @@ export function CommentContent({
     };
   }, [isHighlighted, comment.id]);
 
-  const isExpanded = !viewOnly && expanded.includes(comment.id);
+  const maxDepth = constants.comments.getMaxDepth({ entityType: rootEntityType ?? entityType });
+  // Subscribe per comment rather than to the whole set: opening one thread must not re-render
+  // every other comment in the conversation.
+  const expandOverride = useNewCommentStore((state) => state.expandOverrides[comment.id]);
+  // A thread the page fetched up front is one the reader is meant to see open. Deriving it means
+  // re-rooting the section can't carry this section's opened threads back out with it.
+  const expandsByDefault = !!seededThread && seededThread.depth < maxDepth;
+  const isExpanded = !viewOnly && (expandOverride ?? expandsByDefault);
+  // Too deep to indent any further, so this one opens as its own thread instead of in place.
+  const opensOwnThread = (level ?? 0) >= maxDepth && !isExpanded;
   const onToggleReplies = () => {
-    const maxDepth = constants.comments.getMaxDepth({ entityType });
-
-    if ((level ?? 0) >= maxDepth && !isExpanded) {
-      setRootThread('comment', comment.id);
-    } else {
-      toggleExpanded(comment.id);
-    }
+    if (opensOwnThread) setRootThread('comment', comment.id);
+    else setExpanded(comment.id, !isExpanded);
   };
 
   for (const end of trimmableEnds) {
@@ -329,7 +341,7 @@ export function CommentContent({
             <CommentForm comment={comment} onCancel={() => setId(undefined)} autoFocus />
           )}
         </Stack>
-        {isExpanded && <CommentReplies commentId={comment.id} userId={comment.user.id} />}
+        {isExpanded && <CommentReplies commentId={comment.id} replyCount={replyCount} />}
         {canReply && replying && (
           <Box pt="sm">
             <CreateComment
@@ -349,9 +361,13 @@ export function CommentContent({
               color="blue"
               size="sm"
               onClick={onToggleReplies}
-              rightSection={<IconCaretDownFilled size={16} />}
+              rightSection={
+                opensOwnThread ? <IconArrowRight size={16} /> : <IconCaretDownFilled size={16} />
+              }
             >
-              Show {replyCount} More
+              {opensOwnThread
+                ? `View ${replyCount} ${replyCount > 1 ? 'replies' : 'reply'}`
+                : `Show ${replyCount} More`}
             </Button>
           </Group>
         )}
@@ -363,8 +379,9 @@ export function CommentContent({
   );
 }
 
-function CommentReplies({ commentId, userId }: { commentId: number; userId?: number }) {
+function CommentReplies({ commentId, replyCount }: { commentId: number; replyCount: number }) {
   const { level, badges } = useCommentsContext();
+  const { setRootThread } = useRootThreadContext();
 
   return (
     <Stack mt="md" className={classes.replyInset}>
@@ -372,9 +389,10 @@ function CommentReplies({ commentId, userId }: { commentId: number; userId?: num
         entityType="comment"
         entityId={commentId}
         badges={badges}
+        limit={constants.comments.replyPageSize}
         level={(level ?? 0) + 1}
       >
-        {({ data, created, isLoading, isFetching, showMore, toggleShowMore }) =>
+        {({ data, created, isLoading, showMore }) =>
           isLoading ? (
             <Center>
               <Loader type="bars" />
@@ -384,12 +402,22 @@ function CommentReplies({ commentId, userId }: { commentId: number; userId?: num
               {data?.map((comment) => (
                 <Comment key={comment.id} comment={comment} />
               ))}
+              {/* A thread too long to sit inline opens on its own rather than paging in place —
+                  paging here grows an already-indented block with no end in sight, behind a
+                  button that reads the same as the article's own "load more". */}
               {showMore && (
-                <Center>
-                  <Button onClick={toggleShowMore} loading={isFetching} variant="subtle" size="md">
-                    Load More Comments
+                <Group align="flex-start">
+                  <Button
+                    variant="subtle"
+                    radius="xl"
+                    color="blue"
+                    size="sm"
+                    onClick={() => setRootThread('comment', commentId)}
+                    rightSection={<IconArrowRight size={16} />}
+                  >
+                    View all {replyCount} replies
                   </Button>
-                </Center>
+                </Group>
               )}
               {created.map((comment) => (
                 <Comment key={comment.id} comment={comment} />

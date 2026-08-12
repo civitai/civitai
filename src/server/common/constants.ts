@@ -21,6 +21,42 @@ export const lipsum = `
 Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
 `;
 
+/**
+ * Comment surfaces laid out full-width, so a conversation can render open and deeply nested
+ * without the indentation running out of room. Everything else gets the shallower defaults —
+ * `image` and `bountyEntry` sit in narrow columns and are shallower still.
+ *
+ * Deep threads reach the end of an article's ceiling for 99.5% of article threads (prod,
+ * Aug 2026); bounty and challenge threads have not been measured, and share the ceiling
+ * because they share the layout.
+ */
+const wideCommentSurfaces = new Set(['article', 'bounty', 'challenge']);
+
+function getCommentMaxDepth(entityType: string) {
+  if (wideCommentSurfaces.has(entityType)) return 10;
+  switch (entityType) {
+    case 'image':
+    case 'bountyEntry':
+      return 3;
+    default:
+      return 5;
+  }
+}
+
+/**
+ * Surfaces that open fewer reply levels than they can hold, because something below the section
+ * has to stay reachable. A challenge puts its entry gallery *underneath* the discussion, and
+ * opening every thread put that gallery 7.5 screens down (measured, 131-comment challenge);
+ * one level costs 4.2. Bounty and article have nothing below their discussion to scroll to.
+ */
+const autoExpandDepthOverrides: Record<string, number> = { challenge: 1 };
+
+function getCommentAutoExpandDepth(entityType: string) {
+  if (!wideCommentSurfaces.has(entityType)) return 0;
+  const ceiling = getCommentMaxDepth(entityType) - 1;
+  return Math.min(autoExpandDepthOverrides[entityType] ?? ceiling, ceiling);
+}
+
 export const constants = {
   modelFilterDefaults: {
     sort: ModelSort.HighestRated,
@@ -344,15 +380,25 @@ export const constants = {
     },
   },
   comments: {
+    /**
+     * Deepest reply level a surface renders inline. Past it, "show replies" re-roots the
+     * section on that comment instead. Resolve it against the *surface* entity type, never
+     * the nested `comment` type every reply thread carries.
+     */
     getMaxDepth({ entityType }: { entityType: string }) {
-      switch (entityType) {
-        case 'image':
-        case 'bountyEntry':
-          return 3;
-        default:
-          return 5;
-      }
+      return getCommentMaxDepth(entityType);
     },
+    /** How many reply levels a surface opens up front. 0 leaves every thread behind its button. */
+    getAutoExpandDepth({ entityType }: { entityType: string }) {
+      return getCommentAutoExpandDepth(entityType);
+    },
+    /**
+     * Most replies a single page may open up front, shallowest first. Threads past it stay behind
+     * "show replies" — a 1k-comment article opening every thread is what made these pages
+     * unresponsive before pagination, and this is what keeps a page a page's worth of work.
+     */
+    autoExpandBudget: 40,
+    replyPageSize: 5,
     maxLength: 50000, // 50k characters
   },
   altTruncateLength: 125,
