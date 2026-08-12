@@ -328,7 +328,19 @@ export const actions: Actions = {
   sendNotification: async ({ request, locals }) => {
     if (!canAccess(locals.user, '/users')) return notifyFail('Not permitted.');
     const input = parseForm(
-      userIdSchema.extend({ message: z.string().trim().min(1).max(1000) }),
+      userIdSchema.extend({
+        message: z.string().trim().min(1).max(1000),
+        // Relative paths and absolute civitai URLs only: this renders as a click-through in the user's
+        // notification tray, so an arbitrary URL here is a moderator-authored redirect to anywhere.
+        url: z
+          .string()
+          .trim()
+          .max(300)
+          .refine((v) => v === '' || v.startsWith('/') || /^https:\/\/[a-z0-9.-]*civitai\.(com|red)\//i.test(v), {
+            message: 'Link must be a relative path or a civitai URL.',
+          })
+          .optional(),
+      }),
       await request.formData()
     );
     if (typeof input === 'string') return notifyFail(input);
@@ -336,6 +348,7 @@ export const actions: Actions = {
     const result = await sendModNotification({
       userId: input.userId,
       message: input.message,
+      url: input.url || undefined,
       moderatorId: locals.user.id,
     });
     if (!result.ok) return notifyFail(result.error);

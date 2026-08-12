@@ -176,10 +176,21 @@ Open, with the evidence each audit produced:
       posts nothing — so the form cannot fire before the count has been read back. Zero selected disables
       it outright, which also kills the silent no-op of acting with nothing ticked. Verified in a browser:
       disabled at 0, enabled at 1, "Delete 1 comment?" with Yes/Cancel, and no navigation on first click.
-- [ ] **Notifications: three dropped pieces** — the "Number of Notifs" control (hardcoded 25), Delete
-      Notification, and `notificationLink`. The last is live on the receiving end:
-      `system-announcement`'s `prepareMessage` reads `details.url`, and the send form posts `message`
-      only.
+- [x] **`notificationLink`** (2026-08-12). `sendModNotification` already accepted a `url`; only the form
+      and the action never sent one, so every notification shipped as dead text while the receiving end
+      was ready for it. The field is **validated to relative paths and civitai.com/.red URLs** — this
+      renders as a click-through in the user's tray, so an unrestricted field is a moderator-authored
+      redirect to anywhere. Verified: the send form posts `userId`, `message`, `url`.
+- [x] **"Number of Notifs" control** (2026-08-12 — 25/50/100/200, on its own
+      `/api/user-notifications/[userId]?limit=` endpoint so changing it does not refetch the other
+      twelve queries; server-clamped to 200). ⚠️ **Not exercised**: the notifications service is
+      unreachable from local dev, so the list renders "service unavailable" and the control never
+      appears. The endpoint is confirmed firing at `?limit=25`.
+- [ ] 🚧 **Delete Notification — BLOCKED, needs a new endpoint.** Not a wiring gap. The
+      `@civitai/notifications` client exposes no per-notification delete; its only delete is
+      `cleanupNotifications({ before })`, an **age-based bulk purge across every user**, which is not
+      this action. Shipping it needs a route on `apps/notifications` plus a client method, then the
+      moderator-app wiring — a cross-app change, not a panel change.
 - [x] **`GensPerResource` look-back days hardcoded to 30** (2026-08-11 — Retool's selector, 7/30/90/365).
       Moved to its own `/api/user-generations/[userId]?days=` endpoint rather than a parameter on the
       account bundle, so changing the window does not refetch the other thirteen queries — and this app's

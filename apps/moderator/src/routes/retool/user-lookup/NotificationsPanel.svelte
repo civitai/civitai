@@ -4,6 +4,10 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import { browser } from '$app/environment';
+  import * as Select from '@civitai/ui/components/ui/select/index.js';
+  import type { Capped, Notification } from './user-account';
   import { dateTime } from '$lib/format';
   import type { Account } from './user-account';
   import type { FormResult } from './form-result';
@@ -13,6 +17,7 @@
   // monolith renders it. These are the ones that carry prose; anything else is ids and is not worth
   // showing. Falls back to nothing rather than dumping JSON at a moderator.
   const BODY_KEYS = ['message', 'details', 'content', 'reason', 'body'];
+
   const notificationBody = (details: Record<string, unknown>) => {
     for (const key of BODY_KEYS) {
       const value = details?.[key];
@@ -36,6 +41,26 @@
     onSubmit: SubmitFunction;
     submitting: boolean;
   } = $props();
+
+  // Retool's "Number of Notifs". Fetched separately from the account bundle so changing it does not
+  // refetch twelve other queries.
+  const COUNTS: [string, string][] = [
+    ['25', '25'],
+    ['50', '50'],
+    ['100', '100'],
+    ['200', '200'],
+  ];
+  let notifLimit = $state('25');
+  const notifications = $derived(
+    browser
+      ? fetch(`/api/user-notifications/${userId}?limit=${notifLimit}`).then(
+          (r): Promise<Capped<Notification> | null> => {
+            if (!r.ok) throw new Error(String(r.status));
+            return r.json();
+          }
+        )
+      : null
+  );
 
   const error = $derived(form?.scope === 'notify' ? form.error : null);
   let sending = $state(false);
@@ -68,6 +93,14 @@
     <form method="POST" action="?/sendNotification" use:enhance={onSubmit}>
       <input type="hidden" name="userId" value={userId} />
       <Textarea name="message" rows={3} placeholder="What should this user be told?" required />
+      <!-- Retool's `notificationLink`. Live on the receiving end already: `system-announcement`'s
+           `prepareMessage` reads `details.url` and renders it as the click-through, so without this the
+           notification is dead text. Retool sent /safety, or /generate for its non-AI-content reason. -->
+      <Input
+        name="url"
+        class="mt-2"
+        placeholder="Link (optional) — e.g. /safety or /generate"
+      />
       <div class="mt-2 flex gap-2">
         <Button type="submit" size="sm" disabled={submitting}>
           {submitting ? 'Sending…' : 'Send'}
@@ -80,24 +113,36 @@
   {/if}
 </section>
 
-{#await account}
+{#await notifications}
   <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">
     <p class="text-sm text-dark-2">Loading notifications…</p>
   </div>
-{:then result}
-  {#if result?.notifications === null}
+{:then notifications}
+  {#if notifications === null}
     <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">
       <h3 class="mb-3 text-sm font-semibold text-white">Notifications</h3>
       <p class="text-sm text-amber-300">Notifications service unavailable.</p>
     </div>
-  {:else if result}
-    {@const notifications = result.notifications}
+  {:else if notifications}
     <ListCard
       title="Notifications sent"
       total={notifications.items.length} capped={notifications.truncated}
       shown={15}
       hint="What the site has told this user — context for “I was never warned”."
     >
+      {#snippet controls()}
+        <label class="mb-3 flex items-center gap-2 text-xs text-dark-2">
+          Number of notifications
+          <Select.Root type="single" bind:value={notifLimit}>
+            <Select.Trigger class="w-20">{notifLimit}</Select.Trigger>
+            <Select.Content>
+              {#each COUNTS as [value, label] (value)}
+                <Select.Item {value}>{label}</Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+        </label>
+      {/snippet}
       {#snippet children(limit)}
         <ul class="space-y-1 text-sm">
           {#each notifications.items.slice(0, limit) as n (n.id)}

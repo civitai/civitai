@@ -126,8 +126,6 @@ export type Account = {
   trainings: { runs: TrainingRun[]; truncated: boolean };
   bounties: Capped<Bounty>;
   bountyEntries: Capped<BountyEntry>;
-  /** Null when the notifications service is unreachable — distinct from "none sent". */
-  notifications: Capped<Notification> | null;
   shopPurchases: Capped<ShopPurchase>;
   availableBadges: AvailableCosmetic[];
 };

@@ -14,7 +14,6 @@ import {
   getReceivedReviews,
   getReviews,
   getTrainingRuns,
-  getUserNotifications,
 } from '$lib/server/user-account.service';
 
 // Client-fetched: the Buzz balance is an external HTTP call and the lists are only wanted once an
@@ -33,7 +32,6 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     trainings,
     bounties,
     bountyEntries,
-    notifications,
     shopPurchases,
     availableBadges,
   ] = await Promise.all([
@@ -47,7 +45,6 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     getTrainingRuns(userId),
     getBounties(userId),
     getBountyEntries(userId),
-    getUserNotifications(userId),
     getShopPurchases(userId),
     getAvailableBadges(userId),
   ]);
@@ -63,7 +60,6 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     trainings,
     bounties,
     bountyEntries,
-    notifications,
     shopPurchases,
     availableBadges,
   });
