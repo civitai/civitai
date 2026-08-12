@@ -212,7 +212,7 @@ type SettleAction =
  * a member added to one but not the other would refund in full while recording
  * a fee that was never taken.
  */
-const FEE_WAIVING_ACTIONS: SettleAction[] = ['declineByBlock', 'declineUnshowableHost'];
+export const FEE_WAIVING_ACTIONS: SettleAction[] = ['declineByBlock', 'declineUnshowableHost'];
 
 const STATUS_FOR_ACTION: Record<SettleAction, 'approved' | 'declined' | 'expired' | 'removed'> = {
   approve: 'approved',
