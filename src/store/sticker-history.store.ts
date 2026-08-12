@@ -22,17 +22,45 @@ interface StickerHistoryStore {
    * the image, and the replay is a thing you start.
    */
   step: number | null;
+  /**
+   * Bumped by every state change that ends a replay.
+   *
+   * A playing replay is a chain of timers, and clearing them cannot be made to
+   * happen reliably at the moment the replay is called off: the popover fades
+   * out over 150ms before its content unmounts, so a timer landing in that
+   * window used to write a step back over the store AFTER it had been cleared —
+   * leaving the image clipped with the panel already shut and nothing on screen
+   * to explain it. A timer carries the run it belongs to and is a no-op once
+   * this has moved on, so correctness does not depend on the ordering.
+   */
+  runId: number;
   open: (imageId: number) => void;
   close: () => void;
   setStep: (imageId: number, step: number | null) => void;
+  /** Starts a replay at its first sticker and returns the run to stamp timers with. */
+  beginRun: (imageId: number) => number;
+  /** A timer's write. Ignored unless its run is still the current one. */
+  advanceRun: (runId: number, imageId: number, step: number | null) => void;
 }
 
-export const useStickerHistoryStore = create<StickerHistoryStore>((set) => ({
+export const useStickerHistoryStore = create<StickerHistoryStore>((set, get) => ({
   imageId: null,
   step: null,
-  open: (imageId) => set({ imageId, step: null }),
-  close: () => set({ imageId: null, step: null }),
-  setStep: (imageId, step) => set({ imageId, step }),
+  runId: 0,
+  open: (imageId) => set((state) => ({ imageId, step: null, runId: state.runId + 1 })),
+  close: () => set((state) => ({ imageId: null, step: null, runId: state.runId + 1 })),
+  // A manual step ends any replay in progress, which is what the panel's own
+  // controls mean by stepping.
+  setStep: (imageId, step) => set((state) => ({ imageId, step, runId: state.runId + 1 })),
+  beginRun: (imageId) => {
+    const runId = get().runId + 1;
+    set({ imageId, step: 0, runId });
+    return runId;
+  },
+  advanceRun: (runId, imageId, step) => {
+    if (get().runId !== runId) return;
+    set({ imageId, step });
+  },
 }));
 
 /**

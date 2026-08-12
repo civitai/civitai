@@ -62,16 +62,26 @@ export function ImageStickerOverlay({
   // than only for the one the page opened on.
   const [armed, setArmed] = useState(false);
   useEffect(() => {
-    if (!surfaceEl || armed || typeof IntersectionObserver === 'undefined') return;
+    if (!surfaceEl || armed) return;
+
+    // No observer means no way to tell arrival from mounting, and the stickers
+    // are held at zero opacity until armed — so the failure has to be "reveal
+    // immediately", never "stay hidden".
+    if (typeof IntersectionObserver === 'undefined') {
+      setArmed(true);
+      return;
+    }
 
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) setArmed(true);
       },
-      // A slide is either the one on screen or entirely off it, so anything
-      // above zero separates them. Not 0: the carousel holds neighbours
-      // adjacent, and a hairline overlap during a drag is not arrival.
-      { threshold: 0.25 }
+      // Any exposure at all, because the unarmed state is now blank rather than
+      // wrong: arming a moment early costs a reveal that starts while the slide
+      // is still sliding in, while arming late is a visibly empty image. The
+      // carousel viewport is `overflow-hidden`, so a neighbour still reports
+      // nothing until it starts to come in.
+      { threshold: 0 }
     );
     observer.observe(surfaceEl);
     return () => observer.disconnect();
@@ -117,7 +127,12 @@ export function ImageStickerOverlay({
           // Not while placing. Watching the existing stickers replay under the
           // sticker you are dragging is movement in the one moment the surface
           // has to hold still.
-          stagger={armed && !isPlacing}
+          // `stagger` is what this surface does and is true from the first
+          // render; `armed` is whether it has been seen yet. Held apart on
+          // purpose — collapsing them into one flag paints an un-staggered
+          // frame before the reveal can start, which reads as a blink.
+          stagger={!isPlacing}
+          armed={armed}
           step={historyStep}
         />
       )}

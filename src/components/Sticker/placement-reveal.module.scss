@@ -22,6 +22,16 @@
   animation: placementAppear 220ms ease-out var(--sticker-delay, 0ms) both;
 }
 
+/* The state before the reveal is allowed to start.
+   A surface that staggers wears this from its FIRST paint, because the reveal
+   arms on intersection and that cannot happen before a frame has been painted:
+   without it the stickers draw at full opacity, then the animation's backwards
+   fill blanks them, and the reveal reads as a blink. Only ever paired with a
+   later `.appear` — nothing else removes it. */
+.hold {
+  opacity: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* The stagger IS the motion here — a sticker held back for two seconds is
      movement on the page whether or not anything eases. `!important` because

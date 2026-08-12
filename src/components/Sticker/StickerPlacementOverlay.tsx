@@ -51,6 +51,7 @@ export function StickerPlacementOverlay({
   treatment = STILL_STICKER_TREATMENT,
   surface = 'detail',
   stagger = false,
+  armed = false,
   step = null,
 }: {
   placements: PlacedSticker[];
@@ -113,6 +114,17 @@ export function StickerPlacementOverlay({
    * same reason the treatments drop their animation on a card.
    */
   stagger?: boolean;
+  /**
+   * Whether the staggering surface is being looked at yet.
+   *
+   * Separate from `stagger` because the two answer different questions and the
+   * gap between them is a frame the viewer sees. `stagger` is a property of the
+   * surface and is known at the first render; arming is an observation that
+   * cannot happen until after a paint. While a staggering surface is unarmed its
+   * stickers are held at zero opacity, so the reveal starts from blank rather
+   * than from a painted frame it then has to blank out.
+   */
+  armed?: boolean;
   /**
    * Index of the last sticker to draw, for the history replay. `null` draws all
    * of them, which is every surface that is not being stepped through.
@@ -183,7 +195,7 @@ export function StickerPlacementOverlay({
           // a sticker silently sliding under the one it was placed over is the
           // one failure this layer exists to prevent.
           const layer = index + 1;
-          const delay = step == null && !replayed ? delays?.[index] ?? 0 : 0;
+          const delay = armed && step == null && !replayed ? delays?.[index] ?? 0 : 0;
           const delayStyle = delay ? ({ '--sticker-delay': `${delay}ms` } as CSSProperties) : {};
 
           // Pending rows only ever reach a viewer who is party to them — the
@@ -221,7 +233,7 @@ export function StickerPlacementOverlay({
               className={clsx(
                 'absolute',
                 interactive && 'pointer-events-auto',
-                stagger && styles.appear
+                stagger && (armed ? styles.appear : styles.hold)
               )}
               style={{
                 left: `${placement.data.x * 100}%`,

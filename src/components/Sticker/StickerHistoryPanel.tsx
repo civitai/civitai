@@ -48,7 +48,7 @@ export function StickerHistoryButton({
   // Only the approved ones and the viewer's own pending, same as the overlay —
   // this reads the same query, so the list cannot show a sticker the image does
   // not draw.
-  const { byImage, isLoading } = useStickerPlacements([imageId], opened);
+  const { byImage, isLoading, isError } = useStickerPlacements([imageId], opened);
   const placements = useMemo(() => orderPlacements(byImage.get(imageId) ?? []), [byImage, imageId]);
 
   // Closing ends the replay. Leaving a step set would hold the image at a point
@@ -102,7 +102,12 @@ export function StickerHistoryButton({
       </Popover.Target>
 
       <Popover.Dropdown p={0}>
-        <StickerHistoryList imageId={imageId} placements={placements} isLoading={isLoading} />
+        <StickerHistoryList
+          imageId={imageId}
+          placements={placements}
+          isLoading={isLoading}
+          isError={isError}
+        />
       </Popover.Dropdown>
     </Popover>
   );
@@ -112,14 +117,18 @@ function StickerHistoryList({
   imageId,
   placements,
   isLoading,
+  isError,
 }: {
   imageId: number;
   placements: PlacedSticker[];
   isLoading: boolean;
+  isError: boolean;
 }) {
   const step = useStickerHistoryStore((state) => (state.imageId === imageId ? state.step : null));
   const setStep = useStickerHistoryStore((state) => state.setStep);
   const close = useStickerHistoryStore((state) => state.close);
+  const beginRun = useStickerHistoryStore((state) => state.beginRun);
+  const advanceRun = useStickerHistoryStore((state) => state.advanceRun);
 
   const cosmeticIds = useMemo(
     () => placements.map((placement) => placement.data.cosmeticId),
@@ -134,30 +143,47 @@ function StickerHistoryList({
 
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const [playing, setPlaying] = useState(false);
+  const run = useRef<number | null>(null);
 
   const stop = () => {
     timers.current.forEach(clearTimeout);
     timers.current = [];
+    run.current = null;
     setPlaying(false);
   };
 
-  // Timers outlive the component otherwise, and each one writes to a store that
-  // is still mounted — a replay left running over whatever image came next.
+  // Timers outlive the component otherwise. Clearing them here is tidiness, not
+  // the guarantee — the popover fades for 150ms before this unmounts, so a timer
+  // can still fire after the replay was called off, and what makes that harmless
+  // is the run stamp the store checks rather than this cleanup.
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
+
+  // Anything that ends the replay from outside this component — dismissing the
+  // popover, a slide change, the reveal toggle — bumps `runId`. Dropping the
+  // timers on the spot stops them queueing behind a run nobody is watching.
+  const runId = useStickerHistoryStore((state) => state.runId);
+  useEffect(() => {
+    if (run.current !== null && run.current !== runId) stop();
+    // `stop` is re-made every render and only reads refs; depending on it would
+    // re-run this on every render instead of on a run change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runId]);
 
   const play = () => {
     stop();
     if (placements.length < 2) return;
     setPlaying(true);
-    setStep(imageId, 0);
+    const current = beginRun(imageId);
+    run.current = current;
     timers.current = delays.slice(1).map((delay, index) =>
       setTimeout(() => {
-        setStep(imageId, index + 1);
         // The last one ends the replay rather than leaving the image pinned to
         // its final frame, which is the same picture but with the controls
         // still saying a replay is running.
-        if (index + 1 === placements.length - 1) {
-          setStep(imageId, null);
+        const last = index + 1 === placements.length - 1;
+        advanceRun(current, imageId, last ? null : index + 1);
+        if (last) {
+          run.current = null;
           setPlaying(false);
         }
       }, delay)
@@ -179,6 +205,15 @@ function StickerHistoryList({
       <div className="p-3">
         <Skeleton height={64} radius="md" />
       </div>
+    );
+
+  // A failed fetch is also an empty list, and it must not be reported as an
+  // image nobody has stickered — the reader would take that as an answer.
+  if (isError)
+    return (
+      <Text size="xs" c="dimmed" className="p-3">
+        Couldn&apos;t load the sticker history.
+      </Text>
     );
 
   if (!placements.length)
