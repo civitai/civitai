@@ -34,6 +34,15 @@ import {
 const PENDING_CONTROL_Z = 1000;
 
 /**
+ * Clear air between the bottom of a pending sticker and the owner's controls.
+ *
+ * Generous rather than tight: the artwork sways for as long as it is on screen,
+ * and the treatments draw shadows and a die-cut edge outside the element's box,
+ * so a gap measured to the pixel is a gap the sticker moves into.
+ */
+const CONTROL_GAP_PX = 14;
+
+/**
  * Placed stickers, drawn over the content they were placed on.
  *
  * Oldest at the bottom, newest on top. Covering another sticker is a feature —
@@ -172,10 +181,6 @@ export function StickerPlacementOverlay({
     [ordered, stagger, revealMultiplier]
   );
 
-  // The arrival reveal belongs to this mount, and a replay is the panel's job
-  // from then on. Without this, ending a replay hands every sticker its arrival
-  // delay back — on elements that are already on screen with their animations
-  // finished, which re-pins the sway mid-cycle and can re-run the pop.
   // The rendered height of each pending sticker, in pixels, measured rather than
   // derived. Two attempts to compute where the owner's controls go from `scale`
   // were both wrong on real images, because `scale` is a fraction of the box's
@@ -196,7 +201,8 @@ export function StickerPlacementOverlay({
   }, []);
 
   const measureSticker = useCallback(
-    (placementId: number) => (node: HTMLDivElement | null) => {
+    (placement: PlacedSticker) => (node: HTMLDivElement | null) => {
+      const placementId = placement.id;
       const existing = observers.current.get(placementId);
       if (existing) {
         existing.disconnect();
@@ -205,7 +211,21 @@ export function StickerPlacementOverlay({
       if (!node || typeof ResizeObserver === 'undefined') return;
 
       const observer = new ResizeObserver(() => {
-        const height = node.offsetHeight;
+        // `offsetHeight`/`offsetWidth`, deliberately: they are LAYOUT numbers and
+        // ignore transforms. A bounding rect would be simpler and is wrong here,
+        // because the artwork animates — it pops from 0.72 to 1.06 on arrival and
+        // sways forever after — so a rect measured at observe time is whatever
+        // frame that landed on, and a sticker measured mid-pop reports too small
+        // and the controls sit on top of it.
+        //
+        // The rotation is then added back by hand: a tilted rectangle's visual
+        // height is h·|cos r| + w·|sin r|, and ignoring the second term is what
+        // put the buttons over the artwork on anything more than slightly
+        // turned.
+        const radians = (placement.data.rotation * Math.PI) / 180;
+        const height =
+          node.offsetHeight * Math.abs(Math.cos(radians)) +
+          node.offsetWidth * Math.abs(Math.sin(radians));
         // Guarded, because writing state from a ResizeObserver that the write
         // then resizes is how a resize loop starts.
         setStickerHeights((current) =>
@@ -299,7 +319,7 @@ export function StickerPlacementOverlay({
           const body = (
             <div
               key={placement.id}
-              ref={placement.isPending ? measureSticker(placement.id) : undefined}
+              ref={placement.isPending ? measureSticker(placement) : undefined}
               className={clsx('absolute', interactive && 'pointer-events-auto', revealClassName)}
               style={{
                 left: `${placement.data.x * 100}%`,
@@ -395,7 +415,7 @@ export function StickerPlacementOverlay({
                   // centre, where they would sit on top of the artwork for a
                   // frame and then jump.
                   top: `calc(${placement.data.y * 100}% + ${
-                    (stickerHeights[placement.id] ?? 0) / 2 + 8
+                    (stickerHeights[placement.id] ?? 0) / 2 + CONTROL_GAP_PX
                   }px)`,
                   visibility: stickerHeights[placement.id] ? 'visible' : 'hidden',
                   // Above every sticker, not just above the one it belongs to:
