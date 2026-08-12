@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
+import { COMMENT_ALLOWED_TAGS, sanitizeHtml } from '~/utils/html-sanitize-helpers';
 
 // The comment schemas override `allowedTags` to a list that excludes `img`, so a
 // sticker rides through as `<span data-type="sticker" data-id>` — the same
 // mechanism @mentions use. If someone "simplifies" the node to an <img>, or
 // trims DEFAULT_ALLOWED_ATTRIBUTES, stickers silently vanish from every comment
 // at submit time with no error. These pin that contract.
-const COMMENT_ALLOWED_TAGS = ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'span'];
 const sanitizeAsComment = (html: string) =>
   sanitizeHtml(html, { allowedTags: COMMENT_ALLOWED_TAGS, allowStickers: true });
 
