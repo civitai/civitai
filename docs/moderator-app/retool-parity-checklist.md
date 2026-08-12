@@ -158,11 +158,13 @@ Open, with the evidence each audit produced:
       was *deliberately* unported because "the main app's equivalent also refreshes entity caches and
       search indexes"; `unassignCosmetic` does neither, so the stated reason was false and the comment
       is gone.
-- [ ] **Every `retool/*` call attributes to the API key's owner**, not the acting moderator: one shared
-      `CIVITAI_MOD_API_KEY` confers each `privileged:` capability on everyone who can reach the page,
-      shares the per-actor rate limits, and puts the key owner on every `retoolAudit` row. Either mint
-      per-moderator keys (the endpoints resolve a real user from the bearer token) or state that
-      `isSenior` is the real control — and `updateIdentity` currently has no senior gate at all.
+- [ ] **Every `retool/*` call attributes to the API key's owner** — **direction decided 2026-08-12: mint
+      per-moderator keys** so actions are attributable, deferred as its own piece of work rather than
+      folded into parity. Until then one shared `CIVITAI_MOD_API_KEY` confers each `privileged:`
+      capability on everyone who can reach the page, shares the per-actor rate limits, and puts the key
+      owner on every `retoolAudit` row. Note this now matters more, not less: strike issuing moved onto
+      this key today, so a strike's `retoolAudit` row names the key owner while `ModActivity` names the
+      real moderator. **`updateIdentity` also still has no senior gate.**
 - [x] **Filter rows missing on five list panels** (2026-08-11 completes this). Reviews, Bounties and
       Reports were done by the 2026-08-10 filter work; **Comments** now has Retool's search on both
       lists, matched against the plain text rather than the stored HTML — searching the markup meant
@@ -245,9 +247,18 @@ Open, with the evidence each audit produced:
 - [x] **A ninth Content row, Chat Messages** (2026-08-11). `AllCountsUnion` does not produce it, which
       is exactly why an export-driven port could not see it — and a moderator judging harassment is
       counting DMs.
-- [ ] **Placement**: Retool put mute / ban / purge / freshdesk / refresh-session / clear-cache in a bar
-      on the landing section. Ours are all one section away under Admin. Reachable, but not in front of
-      the moderator on arrival.
+- [x] **Placement** — **deliberate divergence, not a gap** (decided 2026-08-12). Retool put mute / ban /
+      purge / freshdesk / refresh-session / clear-cache in a bar on the landing section; here they stay
+      one section away under Admin, and that is the intended shape.
+      Reasoning: ban and purge are the two actions that got confirmation steps *because* they are
+      dangerous, and a destructive bar on the first screen of every lookup undoes that care — the landing
+      section is where a moderator arrives to *read*, often about an account they will not act on. What
+      Retool actually bought with that bar was **immediacy of state**, and that is now on the landing
+      section anyway: ban reason, CSAM chip, strike counts, restriction status, subscription tier, open
+      reports and who filed them are all header chips visible from every section.
+      The one genuinely reach-for-it-mid-reading action, **Force Logout**, was moved into the header —
+      it touches sessions only and needs no confirmation. Revisit if moderators report the extra click
+      on mute specifically; that is the only one of the six with a real argument for promotion.
 - [x] **`sections.ts` is inverted against the live nav**: it ships *Content Overview* (which the live
       sidebar does **not** show) and omits *Bulk Image Manager* (which it does). That page now exists.
 - [ ] **"Talked to a mod"** — a header button opening a *Chats with Mods* modal listing chat ids.
@@ -355,9 +366,14 @@ browser as user 1290051, not by reading the code.
       message-only with no delete.
 - [x] **Browsing level shown** (2026-08-11 — a `Viewing: <label>` header chip off `User.browsingLevel`,
       labelled with the shared `getBrowsingLevelLabel` so it matches the rest of the site).
-- [ ] **Comment Spammer alert** in Quick Info — the other half of the old browsing-level item, split out
-      because it is a separate signal and nothing computes it yet.
-- [ ] **Timed mutes**: a **Mute Start** datetime and a **Notify User** button beside the presets.
+- [ ] **Comment Spammer alert** in Quick Info — **parked 2026-08-12: nobody is sure what it should
+      measure.** Nothing computes this signal today, and Retool's own definition is not in the export, so
+      building one would be inventing a moderation heuristic rather than porting it. Needs a rule from
+      the mod team (rate? duplicate text? ratio to other activity?) before it means anything.
+- [ ] **Timed mutes: Mute Start / Notify User** — **parked 2026-08-12**: `TimedMutes` is **0 rows in
+      both databases**, so the feature was most likely never used. The underlying expiry bug is fixed
+      regardless (see the 🔴 item above) — this is only about the two extra controls, which are not worth
+      building onto a table nobody writes until someone confirms the feature is wanted.
 - [x] **Banned for CSAM** (2026-08-11). The ban badge now carries its reason code, and a separate
       **CSAM ban** chip appears for the `SexualMinor*` codes — a Nudify ban and a SexualMinor ban are
       not the same next conversation, and the reason was a section away under Admin. Verified against
