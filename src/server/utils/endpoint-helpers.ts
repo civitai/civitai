@@ -39,6 +39,42 @@ function logRestServerFault(e: unknown) {
   );
 }
 
+/**
+ * Is this REST status a SERVER FAULT — i.e. one whose error text is OURS, never a
+ * message written for the caller?
+ *
+ * 🔴 ONE predicate, deliberately governing BOTH sides of `handleEndpointError`:
+ * whether the fault is LOGGED in full, and whether the response body is
+ * GENERICIZED. Keeping them on one rule buys an invariant that is worth more than
+ * either half alone, and that `endpoint-helpers-error-envelope.test.ts` pins over
+ * every 5xx status:
+ *
+ *   the un-redacted text is dropped from the wire EXACTLY when it is preserved in
+ *   the log — so genericizing can never destroy the only copy of a message.
+ *
+ * Two exclusions, both load-bearing:
+ *   - **4xx** is client feedback the caller is meant to read (zod issues, "not
+ *     found", rate-limit hints). Never logged as a fault, never genericized.
+ *   - **503** is the retryable transient-upstream mapping
+ *     (`throwServiceUnavailableError`, the Meili/ClickHouse/orchestrator brownout
+ *     guards). It fires in high-volume waves, so it is excluded from the error
+ *     stream — which means the response is the ONLY copy of its message. Its
+ *     messages are hand-authored retry hints ("… is temporarily overloaded —
+ *     please retry."), and no Prisma code maps to SERVICE_UNAVAILABLE in
+ *     `prismaErrorToTrpcCode`, so the #3845 disclosure class cannot arrive as a
+ *     503. Genericizing it would therefore destroy an actionable hint (the
+ *     shipped Go CLI renders it verbatim on its 503 branch) to redact text that
+ *     is never driver-derived. Kept verbatim, on purpose.
+ *
+ * NB `TIMEOUT` maps to **408**, not a 5xx (`@trpc/server` JSONRPC2_TO_HTTP_CODE),
+ * so it takes the 4xx pass-through. The 5xx codes reachable here are
+ * INTERNAL_SERVER_ERROR (500), NOT_IMPLEMENTED (501), BAD_GATEWAY (502),
+ * SERVICE_UNAVAILABLE (503) and GATEWAY_TIMEOUT (504).
+ */
+function isRestServerFault(status: number): boolean {
+  return status >= 500 && status !== 503;
+}
+
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
 
 // Single chokepoint every endpoint wrapper funnels through (in place of a bare
@@ -251,15 +287,37 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
   if (e instanceof TRPCError) {
     const apiError = e as TRPCError;
     const status = getHTTPStatusCodeFromError(apiError);
-    // A TRPCError that maps to a 5xx (INTERNAL_SERVER_ERROR / TIMEOUT) is a genuine
-    // server fault that previously reached the client as a 500 with NOTHING logged
-    // structurally — invisible in `_axiom`. Emit the un-masked cause-walked error
-    // log so it's queryable. Sub-500 (4xx) TRPCErrors are normal client feedback,
-    // and SERVICE_UNAVAILABLE (503) is the retryable transient-upstream mapping
-    // (transient CH/Meili/orchestrator) that fires in high-volume waves — both are
-    // excluded so they don't flood the error stream (mirrors the tRPC onError
-    // early-return for 503).
-    if (status >= 500 && status !== 503) logRestServerFault(apiError);
+    // ── SERVER FAULT (500/501/502/504) — log in full, genericize on the wire ────
+    // A TRPCError that maps to one of these is a genuine server fault that
+    // previously reached the client as a 5xx with NOTHING logged structurally —
+    // invisible in `_axiom`. Emit the un-masked cause-walked error log so it's
+    // queryable. See `isRestServerFault` for why 4xx and 503 are excluded.
+    //
+    // 🔴 civitai#3845 — this branch produces 500s TOO, and its body was the SAME
+    // leak the else-branch below had. `throwDbError` (~310 call sites) turns a
+    // driver error straight into
+    //   `new TRPCError({ code: prismaErrorToTrpcCode[e.code] ?? 'INTERNAL_SERVER_ERROR',
+    //                    message: e.message, cause: e })`
+    // and `P2022` — the exact code from the #3845 incident — maps to
+    // INTERNAL_SERVER_ERROR, so the raw invocation text carrying the TABLE and
+    // COLUMN name arrived here and was served verbatim (the fallback body below
+    // is `{ message: apiError.message }`). Reachable unauthenticated: e.g.
+    // `GET /api/v1/articles/{id}` (a public MixedAuthEndpoint) → `getArticleById`
+    // → `throwDbError`. Genericizing here is what makes "no driver-derived text on
+    // any 500" a property of the HELPER rather than of one branch of it.
+    //
+    // The `code` is deliberately UNIFORM across every genericized 5xx: the HTTP
+    // status already distinguishes 500/501/502/504, and a per-sub-kind code would
+    // hand back a fault-classification oracle that genericizing exists to remove.
+    // The un-redacted error is fully preserved by `logRestServerFault` above —
+    // this genericizes the RESPONSE only, never the LOG.
+    if (isRestServerFault(status)) {
+      logRestServerFault(apiError);
+      return res
+        .status(status)
+        .json(restErrorBody(REST_ERROR_CODE.INTERNAL_SERVER_ERROR, GENERIC_SERVER_ERROR_MESSAGE));
+    }
+    // ── CLIENT FEEDBACK (4xx) + 503 — passed through BYTE-IDENTICALLY ──────────
     // Older Zod-validation TRPCErrors stuff a JSON-encoded issue array into
     // `message`; many newer call sites (incl. `withMeili`'s
     // MeiliCallTimeoutError → TRPCError mapping) pass a plain string. Falling
@@ -285,10 +343,13 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     // from Loki the normal way. safeError keeps it PII-light (primitive fields only).
     logRestServerFault(error);
     // 🔴 civitai#3845 — do NOT put `error.message` (or any other driver-derived
-    // text) in this body. This branch is the 500 chokepoint for 14 PUBLIC REST
-    // routes, so `.message` here is whatever the driver produced. In the #3845
-    // incident that was a raw Prisma invocation carrying the TABLE and COLUMN
-    // name, served to unauthenticated callers on `GET /api/v1/apps/{slug}`:
+    // text) in this body. `handleEndpointError` is the shared 500 chokepoint for
+    // 14 REST routes — 10 on the public `/api/v1` surface, plus 3 `mod/*` and
+    // `user/orchestrator-key`, which are authenticated — and this is ONE of its
+    // two 500-producing branches (the TRPCError branch above is the other, and
+    // had the same leak). `.message` here is whatever the driver produced. In the
+    // #3845 incident that was a raw Prisma invocation carrying the TABLE and
+    // COLUMN name, served to unauthenticated callers on `GET /api/v1/apps/{slug}`:
     //   "Invalid `prisma.appCollaborator.findMany()` invocation: The column
     //    `app_collaborators.app_listing_id` does not exist in the current database."
     // The un-redacted error is still fully preserved by `logRestServerFault`

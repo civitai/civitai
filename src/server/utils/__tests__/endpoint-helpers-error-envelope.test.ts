@@ -11,11 +11,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *               The column `app_collaborators.app_listing_id` does not exist
  *               in the current database." }
  *
- * `handleEndpointError` is the shared 500 chokepoint for 14 REST routes, so the
- * leak is a property of the HELPER, not of that one route — which is why the
- * guard lives here rather than only in the route suite. The route-level
- * counterpart (driving the real handler end to end) is in
- * `src/tests/api/v1/apps/apps-error-envelope.test.ts`.
+ * `handleEndpointError` is the shared 500 chokepoint for 14 REST routes (10 on
+ * the public `/api/v1` surface), so the leak is a property of the HELPER, not of
+ * that one route — which is why the guard lives here rather than only in the
+ * route suite. The route-level counterpart (driving the real handler end to end)
+ * is in `src/tests/api/v1/apps/apps-error-envelope.test.ts`.
+ *
+ * 🔴 The helper has TWO 500-producing branches. This first `describe` covers the
+ * non-`TRPCError` one; the second covers the `TRPCError` one, which is where a
+ * `throwDbError`-wrapped driver error actually lands and which the original fix
+ * left leaking.
  *
  * This suite exercises the REAL `handleEndpointError` — `src/__tests__/setup.ts`
  * seeds `TRPC_ORIGINS` precisely so `endpoint-helpers` is importable — and mocks
@@ -36,13 +41,23 @@ const { mockLogToAxiom, mockBuildCentralErrorLog, mockWasServerFaultLogged } = v
   mockWasServerFaultLogged: vi.fn(() => false),
 }));
 
-vi.mock('~/server/logging/client', () => ({
+// Spread the ORIGINAL and override only the three exports this suite drives.
+// `~/server/logging/client` has 7 exports; replacing it wholesale with a 3-key
+// object makes the mock go stale the moment `endpoint-helpers` (or anything it
+// pulls in) reaches for a fourth — a failure that surfaces as an unrelated
+// "not a function" far from here.
+vi.mock('~/server/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   logToAxiom: mockLogToAxiom,
   buildCentralErrorLog: mockBuildCentralErrorLog,
   wasServerFaultLogged: mockWasServerFaultLogged,
 }));
 
+import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
+import { throwDbError } from '~/server/utils/errorHandling';
+import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 
 // The exact internals the incident disclosed. Kept as named constants so the
 // assertions below read as "this identifier must not appear", not as a wall of
@@ -193,5 +208,264 @@ describe('handleEndpointError — non-TRPCError branch', () => {
 
     expect(res._status()).toBe(500);
     expect(mockLogToAxiom).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The SECOND 500-producing branch of the same helper.
+ *
+ * `handleEndpointError` has two: the `else` (non-`TRPCError`) branch above, and
+ * this one. The original #3845 fix changed only the former, which left the leak
+ * fully live — because the dominant way a driver error reaches a REST route is
+ * NOT as a bare `Error` but as a `TRPCError` built by `throwDbError`
+ * (`errorHandling.ts`), whose Prisma map sends `P2022` — the exact code from the
+ * incident — to `INTERNAL_SERVER_ERROR`. That TRPCError carries `error.message`
+ * verbatim and this branch served it as `{ message: <driver text> }`.
+ *
+ * The two things this branch must NOT lose, both pinned below:
+ *   - 4xx bodies pass through BYTE-IDENTICALLY (the `JSON.parse` exists because
+ *     older zod-validation TRPCErrors JSON-encode an issue ARRAY into `message`,
+ *     and the shipped Go CLI renders that shape per-field), and
+ *   - 503 keeps its message verbatim — see `isRestServerFault`.
+ */
+describe('handleEndpointError — TRPCError branch', () => {
+  /** Exactly what `throwDbError` builds from the #3845 driver error. */
+  function dbTrpcError() {
+    return new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: driverError().message,
+      cause: driverError(),
+    });
+  }
+
+  // ── Guard 5: the #3845 disclosure, on the OTHER 500 branch ─────────────────
+  it('does NOT disclose driver, table or column detail on a 500 TRPCError', () => {
+    const res = createRes();
+
+    handleEndpointError(res as never, dbTrpcError());
+
+    expect(res._status()).toBe(500);
+    const serialized = JSON.stringify(res._json());
+    for (const secret of MUST_NOT_DISCLOSE) {
+      expect(
+        serialized,
+        `#3845 (TRPCError branch): the public 500 body must not disclose ${JSON.stringify(
+          secret
+        )} — full body was ${serialized}`
+      ).not.toContain(secret);
+    }
+  });
+
+  // ── Guard 6: SEAM — the real throwDbError → handleEndpointError chain ──────
+  // Neither component's own suite builds this combined state: `throwDbError` is
+  // only ever tested on the code it PRODUCES, and the helper is only ever tested
+  // on errors a test fabricated. This drives a genuine
+  // `PrismaClientKnownRequestError` (code P2022, the incident's) through the real
+  // `throwDbError` and into the real helper.
+  it('SEAM: a real P2022 driver error through throwDbError does not reach the wire', () => {
+    const res = createRes();
+    const prismaError = new Prisma.PrismaClientKnownRequestError(driverError().message, {
+      code: 'P2022',
+      clientVersion: '6.13.0',
+      meta: { column: `${LEAKED_TABLE}.${LEAKED_COLUMN}` },
+    });
+
+    let thrown: unknown;
+    try {
+      throwDbError(prismaError);
+    } catch (e) {
+      thrown = e;
+    }
+
+    // Positive control on the FIXTURE: if throwDbError stopped mapping P2022 to a
+    // 500 this test would silently be exercising some other status.
+    expect(thrown, 'throwDbError must produce a TRPCError').toBeInstanceOf(TRPCError);
+    expect((thrown as TRPCError).code, 'P2022 must map to INTERNAL_SERVER_ERROR').toBe(
+      'INTERNAL_SERVER_ERROR'
+    );
+    expect(
+      (thrown as TRPCError).message,
+      'the fixture must actually carry the leaked text, or the guard below is vacuous'
+    ).toContain(`${LEAKED_TABLE}.${LEAKED_COLUMN}`);
+
+    handleEndpointError(res as never, thrown);
+
+    expect(res._status()).toBe(500);
+    const serialized = JSON.stringify(res._json());
+    for (const secret of MUST_NOT_DISCLOSE) {
+      expect(
+        serialized,
+        `#3845 seam: the public 500 body must not disclose ${JSON.stringify(
+          secret
+        )} — full body was ${serialized}`
+      ).not.toContain(secret);
+    }
+  });
+
+  // ── Guard 7: the envelope, by VALUE not by key presence ───────────────────
+  it('serves the shared envelope with the generic text in BOTH `message` and `error`', () => {
+    const res = createRes();
+
+    handleEndpointError(res as never, dbTrpcError());
+
+    const body = res._json() as Record<string, unknown>;
+    expect(body.code, 'the 500 envelope must carry the `code` discriminator').toBe(
+      'INTERNAL_SERVER_ERROR'
+    );
+    expect(body.message, '`message` must be the generic text').toBe(GENERIC_SERVER_ERROR_MESSAGE);
+    // Asserted by VALUE: the shipped CLI renders `error` in PREFERENCE to
+    // `message`, so an `error` that were blank (or still the driver text) is the
+    // whole ballgame and key-presence would not notice either.
+    expect(body.error, '`error` must be the generic text too — the CLI prefers it').toBe(
+      GENERIC_SERVER_ERROR_MESSAGE
+    );
+  });
+
+  // ── Guard 8: observability preserved on THIS branch too ───────────────────
+  it('INVARIANT: still logs the UN-redacted TRPCError (observability preserved)', () => {
+    const err = dbTrpcError();
+    const res = createRes();
+
+    handleEndpointError(res as never, err);
+
+    expect(mockBuildCentralErrorLog).toHaveBeenCalledTimes(1);
+    expect(mockBuildCentralErrorLog).toHaveBeenCalledWith(err);
+    const [payload] = mockLogToAxiom.mock.calls[0] as [Record<string, unknown>];
+    expect(
+      String(payload.message),
+      'the LOG must keep the un-redacted driver text even though the RESPONSE drops it'
+    ).toContain(`${LEAKED_TABLE}.${LEAKED_COLUMN}`);
+  });
+
+  // ── Guard 9: the 4xx pass-through, EXECUTED rather than reasoned about ────
+  it('INVARIANT: a zod-issue-ARRAY 400 still produces the identical parsed body', () => {
+    // The shape older zod-validation TRPCErrors carry: the issue array
+    // JSON-encoded into `message`. Field values are pairwise distinct so a body
+    // assembled from the wrong part of the payload cannot coincidentally match.
+    const issues = [
+      {
+        code: 'invalid_type',
+        expected: 'string',
+        received: 'undefined',
+        path: ['slug'],
+        message: 'Required',
+      },
+      {
+        code: 'too_big',
+        maximum: 64,
+        type: 'string',
+        inclusive: true,
+        path: ['slug'],
+        message: 'String must contain at most 64 character(s)',
+      },
+    ];
+    const res = createRes();
+
+    handleEndpointError(
+      res as never,
+      new TRPCError({ code: 'BAD_REQUEST', message: JSON.stringify(issues) })
+    );
+
+    expect(res._status(), 'a 400 must NOT be swept into the server-fault branch').toBe(400);
+    // BYTE-IDENTICAL: the parsed array itself, not an object wrapping it, and
+    // with no `code`/`message`/`error` envelope grafted on.
+    expect(
+      res._json(),
+      'the 400 body must stay the parsed zod issue array, unchanged'
+    ).toStrictEqual(issues);
+    expect(mockLogToAxiom, 'a 4xx is client feedback, never a logged fault').not.toHaveBeenCalled();
+  });
+
+  it('INVARIANT: a plain-string 4xx still produces the identical `{ message }` body', () => {
+    const res = createRes();
+
+    handleEndpointError(res as never, new TRPCError({ code: 'NOT_FOUND', message: 'No article' }));
+
+    expect(res._status()).toBe(404);
+    expect(res._json(), 'the fallback 4xx body must stay exactly `{ message }`').toStrictEqual({
+      message: 'No article',
+    });
+    expect(mockLogToAxiom).not.toHaveBeenCalled();
+  });
+
+  // ── Guard 10: the deliberate 503 carve-out ────────────────────────────────
+  it('503 keeps its retry hint VERBATIM and is still not logged (deliberate)', () => {
+    const hint = 'Image search is temporarily overloaded — please retry.';
+    const res = createRes();
+
+    handleEndpointError(
+      res as never,
+      new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: hint })
+    );
+
+    expect(res._status()).toBe(503);
+    // 503 is excluded from the fault log, so the response is the ONLY copy of
+    // this message — genericizing it would destroy it rather than relocate it.
+    expect(res._json(), '503 must pass through unchanged').toStrictEqual({ message: hint });
+    expect(mockLogToAxiom, '503 stays out of the error stream').not.toHaveBeenCalled();
+  });
+
+  // ── Guard 11: the COUPLING invariant, over every 5xx status ───────────────
+  // One predicate governs both logging and genericizing, so the property that
+  // matters is not "500 is generic" but "the text is dropped from the wire
+  // EXACTLY when it is preserved in the log". Asserted per status, in ONE test,
+  // so it cannot pass by only ever exercising the agreeing half.
+  it('INVARIANT: across every 5xx, genericized ⟺ logged (text is never destroyed)', () => {
+    const cases = [
+      { code: 'INTERNAL_SERVER_ERROR', status: 500 },
+      { code: 'NOT_IMPLEMENTED', status: 501 },
+      { code: 'BAD_GATEWAY', status: 502 },
+      { code: 'SERVICE_UNAVAILABLE', status: 503 },
+      { code: 'GATEWAY_TIMEOUT', status: 504 },
+    ] as const;
+
+    for (const { code, status } of cases) {
+      vi.clearAllMocks();
+      mockWasServerFaultLogged.mockReturnValue(false);
+      const marker = `distinct-text-for-${status}`;
+      const res = createRes();
+
+      handleEndpointError(res as never, new TRPCError({ code, message: marker }));
+
+      expect(res._status(), `${code} must map to ${status}`).toBe(status);
+      const serialized = JSON.stringify(res._json());
+      const genericized = !serialized.includes(marker);
+      const logged = mockLogToAxiom.mock.calls.length > 0;
+      expect(
+        genericized,
+        `${code} (${status}): dropped-from-the-wire (${genericized}) must equal ` +
+          `kept-in-the-log (${logged}) — otherwise the only copy of the message is destroyed`
+      ).toBe(logged);
+    }
+  });
+
+  // ── Guard 12: the threshold boundaries ────────────────────────────────────
+  // Pins BOTH sides of `status >= 500`: a 499 must pass through and a 500 must
+  // not, so neither `> 500` nor `>= 400` can survive.
+  it('INVARIANT: the server-fault threshold sits exactly at 500', () => {
+    const belowRes = createRes();
+    handleEndpointError(
+      belowRes as never,
+      new TRPCError({ code: 'CLIENT_CLOSED_REQUEST', message: 'below-threshold-text' })
+    );
+    expect(belowRes._status()).toBe(499);
+    expect(
+      JSON.stringify(belowRes._json()),
+      '499 is below the threshold — its message must pass through'
+    ).toContain('below-threshold-text');
+
+    vi.clearAllMocks();
+    mockWasServerFaultLogged.mockReturnValue(false);
+
+    const atRes = createRes();
+    handleEndpointError(
+      atRes as never,
+      new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'at-threshold-text' })
+    );
+    expect(atRes._status()).toBe(500);
+    expect(
+      JSON.stringify(atRes._json()),
+      '500 is AT the threshold — its message must be genericized'
+    ).not.toContain('at-threshold-text');
   });
 });

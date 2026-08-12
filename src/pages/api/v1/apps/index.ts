@@ -76,17 +76,24 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
       .json(restErrorBody(REST_ERROR_CODE.BAD_REQUEST, 'Invalid query', parsed.error.flatten()));
   }
 
-  const limited = await enforceAppsCatalogRateLimit({ req, res, user, log: req.log });
-  if (limited) return;
-
-  // DEFAULT-CLOSED scope gate — pass the resolved scope EXPLICITLY to the service.
-  const scope = await resolveStoreVisibilityScope({ user });
-  if (scope === 'none') {
-    // Anon / non-privileged pre-launch → empty page, NEVER the full catalog.
-    return res.status(200).json({ items: [], metadata: { nextCursor: undefined, nextPage: undefined } });
-  }
-
+  // Same try-scope discipline as the sibling `[slug].ts`: the rate limiter and the
+  // scope gate are `await`ed calls into Redis / the Flipt client, so a throw from
+  // either must land in `handleEndpointError` rather than escaping to Next.js's
+  // default 500 (no envelope, no fault log). Structural — neither has a known
+  // throw path today.
   try {
+    const limited = await enforceAppsCatalogRateLimit({ req, res, user, log: req.log });
+    if (limited) return;
+
+    // DEFAULT-CLOSED scope gate — pass the resolved scope EXPLICITLY to the service.
+    const scope = await resolveStoreVisibilityScope({ user });
+    if (scope === 'none') {
+      // Anon / non-privileged pre-launch → empty page, NEVER the full catalog.
+      return res
+        .status(200)
+        .json({ items: [], metadata: { nextCursor: undefined, nextPage: undefined } });
+    }
+
     const { items, nextCursor } = await listAvailableListings(parsed.data, {
       redCapable: isRedCapableRequest(req.headers.host),
       scope,

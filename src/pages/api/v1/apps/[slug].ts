@@ -67,16 +67,25 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
       .json(restErrorBody(REST_ERROR_CODE.BAD_REQUEST, 'Invalid slug', parsed.error.flatten()));
   }
 
-  const limited = await enforceAppsCatalogRateLimit({ req, res, user, log: req.log });
-  if (limited) return;
-
-  // DEFAULT-CLOSED scope gate — pass the resolved scope EXPLICITLY to the service.
-  const scope = await resolveStoreVisibilityScope({ user });
-  if (scope === 'none') {
-    return res.status(404).json(restErrorBody(REST_ERROR_CODE.NOT_FOUND, 'App not found'));
-  }
-
+  // Everything that can throw lives INSIDE the try. The rate limiter and the
+  // scope gate used to sit outside it: both are `await`ed calls into Redis / the
+  // Flipt client, and a throw from either would escape `handleEndpointError`
+  // entirely — no envelope, no `code`, no fault log, just Next.js's default 500.
+  // Neither has a known throw path today (the limiter catches its own Redis
+  // errors and fails open; `isFlipt` swallows init + eval failures and returns
+  // false), so this closes a STRUCTURAL gap rather than an observed bug — but
+  // "no envelope on this path" should not depend on a dependency's internals
+  // staying that defensive.
   try {
+    const limited = await enforceAppsCatalogRateLimit({ req, res, user, log: req.log });
+    if (limited) return;
+
+    // DEFAULT-CLOSED scope gate — pass the resolved scope EXPLICITLY to the service.
+    const scope = await resolveStoreVisibilityScope({ user });
+    if (scope === 'none') {
+      return res.status(404).json(restErrorBody(REST_ERROR_CODE.NOT_FOUND, 'App not found'));
+    }
+
     const detail = await getListingDetail(
       { slug: parsed.data.slug },
       { redCapable: isRedCapableRequest(req.headers.host), scope }
