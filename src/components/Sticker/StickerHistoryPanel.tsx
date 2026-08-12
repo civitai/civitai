@@ -19,11 +19,12 @@ import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacement
 import type { PlacedSticker } from '~/components/Sticker/placement.util';
 import { useStickerPlacements } from '~/components/Sticker/placement.util';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
+import styles from '~/components/Sticker/placement-reveal.module.scss';
 import { useStickerHistoryStore } from '~/store/sticker-history.store';
 import {
   REPLAY_MULTIPLIER,
-  REVEAL_DURATIONS,
-  revealDurationLabel,
+  REVEAL_MULTIPLIERS,
+  revealMultiplierLabel,
   useStickerRevealSpeedStore,
 } from '~/store/sticker-reveal-speed.store';
 import { daysFromNow } from '~/utils/date-helpers';
@@ -137,12 +138,12 @@ function StickerHistoryList({
   );
   const { sticker: artwork } = useStickerCosmetics(cosmeticIds);
 
-  const durationMs = useStickerRevealSpeedStore((state) => state.durationMs);
-  const setDuration = useStickerRevealSpeedStore((state) => state.setDuration);
+  const multiplier = useStickerRevealSpeedStore((state) => state.multiplier);
+  const setMultiplier = useStickerRevealSpeedStore((state) => state.setMultiplier);
 
   const delays = useMemo(
-    () => placementRevealDelays(placements, { totalMs: durationMs * REPLAY_MULTIPLIER }),
-    [placements, durationMs]
+    () => placementRevealDelays(placements, { multiplier: multiplier * REPLAY_MULTIPLIER }),
+    [placements, multiplier]
   );
 
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -198,6 +199,11 @@ function StickerHistoryList({
       }, delay)
     );
   };
+
+  // How long until the next sticker lands, for the bar under the header. Zero
+  // whenever there is no next one to wait for.
+  const stepProgressMs =
+    step != null && step + 1 < delays.length ? delays[step + 1] - delays[step] : 0;
 
   const at = step ?? placements.length - 1;
   const stepTo = (next: number) => {
@@ -267,15 +273,15 @@ function StickerHistoryList({
             {/* In a portal, so opening it cannot resize the panel either. */}
             <Menu.Dropdown>
               <Menu.Label>Reveal speed</Menu.Label>
-              {REVEAL_DURATIONS.map((option) => (
+              {REVEAL_MULTIPLIERS.map((option) => (
                 <Menu.Item
                   key={option}
-                  onClick={() => setDuration(option)}
+                  onClick={() => setMultiplier(option)}
                   leftSection={
-                    <IconCheck size={14} className={clsx(option !== durationMs && 'invisible')} />
+                    <IconCheck size={14} className={clsx(option !== multiplier && 'invisible')} />
                   }
                 >
-                  {revealDurationLabel(option)}
+                  {revealMultiplierLabel(option)}
                 </Menu.Item>
               ))}
             </Menu.Dropdown>
@@ -322,12 +328,12 @@ function StickerHistoryList({
               <IconChevronRight size={14} />
             </LegacyActionIcon>
           </Tooltip>
-          <Tooltip label="Back to the full image" withArrow>
+          <Tooltip label="Show all stickers" withArrow>
             <LegacyActionIcon
               size="sm"
               variant="subtle"
               color="gray"
-              aria-label="Back to the full image"
+              aria-label="Show all stickers"
               onClick={() => {
                 stop();
                 close();
@@ -342,6 +348,19 @@ function StickerHistoryList({
             </LegacyActionIcon>
           </Tooltip>
         </div>
+      </div>
+
+      {/* Always in the layout, so starting a replay cannot change the panel's
+          height — the same rule as the controls above it. Empty unless a wait
+          is actually in progress. */}
+      <div className="h-0.5 w-full bg-transparent">
+        {playing && stepProgressMs > 0 && (
+          <div
+            key={step}
+            className={clsx('h-full bg-blue-5', styles.stepProgress)}
+            style={{ animationDuration: `${stepProgressMs}ms` }}
+          />
+        )}
       </div>
 
       <ScrollArea.Autosize mah={280}>

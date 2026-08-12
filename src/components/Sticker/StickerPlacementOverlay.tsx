@@ -13,7 +13,7 @@ import {
   type StickerTreatmentKey,
 } from '~/components/Sticker/treatments/sticker-treatments';
 import styles from '~/components/Sticker/placement-reveal.module.scss';
-import { useRevealDuration } from '~/store/sticker-reveal-speed.store';
+import { useRevealMultiplier } from '~/store/sticker-reveal-speed.store';
 import { useEffect, useMemo, useState, type CSSProperties, type ReactElement } from 'react';
 
 /**
@@ -158,10 +158,10 @@ export function StickerPlacementOverlay({
   const ordered = useMemo(() => orderPlacements(placements), [placements]);
   // Off the full history, not off the visible slice: stepping through a replay
   // must not re-pace the stickers already on screen.
-  const revealDuration = useRevealDuration();
+  const revealMultiplier = useRevealMultiplier();
   const delays = useMemo(
-    () => (stagger ? placementRevealDelays(ordered, { totalMs: revealDuration }) : null),
-    [ordered, stagger, revealDuration]
+    () => (stagger ? placementRevealDelays(ordered, { multiplier: revealMultiplier }) : null),
+    [ordered, stagger, revealMultiplier]
   );
 
   // The arrival reveal belongs to this mount, and a replay is the panel's job

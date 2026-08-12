@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { orderPlacements, placementRevealDelays } from '~/components/Sticker/placement-order';
+import {
+  orderPlacements,
+  placementRevealDelays,
+  revealDurationForSpan,
+} from '~/components/Sticker/placement-order';
 
 const at = (id: number, iso: string) => ({ id, placedAt: new Date(iso) });
 
@@ -80,6 +84,39 @@ describe('placementRevealDelays', () => {
 
     expect(share(HOUR)).toBeGreaterThan(share(MINUTE));
     expect(share(7 * 24 * HOUR)).toBeGreaterThan(share(HOUR));
+  });
+
+  it('takes its length from how old the history is', () => {
+    const base = new Date('2026-08-12T00:00:00Z').getTime();
+    const spanned = (spanMs: number) =>
+      placementRevealDelays([
+        { id: 1, placedAt: new Date(base) },
+        { id: 2, placedAt: new Date(base + spanMs / 2) },
+        { id: 3, placedAt: new Date(base + spanMs) },
+      ]).at(-1) as number;
+
+    // The complaint this replaced: a fixed length made two stickers a minute
+    // apart take as long as a year-long build. An hour and a day both sit on the
+    // floor — inside a day the gaps carry the pacing — and it grows from there.
+    expect(spanned(HOUR)).toBe(spanned(24 * HOUR));
+    expect(spanned(30 * 24 * HOUR)).toBeGreaterThan(spanned(24 * HOUR));
+    expect(spanned(365 * 24 * HOUR)).toBeGreaterThan(spanned(30 * 24 * HOUR));
+  });
+
+  it('caps at a year, so a five-year history is not five times the wait', () => {
+    const year = 365 * 24 * HOUR;
+
+    expect(revealDurationForSpan(5 * year)).toBe(revealDurationForSpan(year));
+    // And the floor holds at the other end, including for placements that share
+    // a timestamp — a burst still has to read as a sequence.
+    expect(revealDurationForSpan(0)).toBe(revealDurationForSpan(HOUR));
+  });
+
+  it('scales what the span decided by the viewer multiplier', () => {
+    const span = 30 * 24 * HOUR;
+
+    expect(revealDurationForSpan(span, 2)).toBe(revealDurationForSpan(span) * 2);
+    expect(revealDurationForSpan(span, 0.5)).toBe(revealDurationForSpan(span) / 2);
   });
 
   it('fills the duration it is given, whatever the history looks like', () => {

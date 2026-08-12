@@ -36,13 +36,36 @@ export function orderPlacements<T extends Ordered>(placements: T[]): T[] {
  */
 const BASE_STEP_MS = 140;
 const MAX_STEP_MS = 700;
-/**
- * How long the whole reveal runs unless a caller says otherwise. Overridden by
- * the viewer's reveal-speed setting everywhere it is used for real.
- */
-const TOTAL_MS = 3_000;
-
 const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+/**
+ * The reveal is as long as the history is old.
+ *
+ * A fixed duration made the setting meaningless in both directions: two
+ * stickers placed a minute apart stretched across twelve seconds of nothing
+ * happening, while a year-long build got the same twelve seconds as an
+ * afternoon's. The length now comes from the real span between the first and
+ * last placement, so "this took a while" is carried by the reveal itself and
+ * the viewer's setting is a multiplier on top rather than the whole answer.
+ *
+ * A floor because a burst still needs long enough to read as a sequence; a cap
+ * because nobody watches a reveal past a few seconds, and past a year the
+ * difference stops meaning anything anyway.
+ */
+const FLOOR_MS = 1_500;
+const CAP_MS = 12_000;
+/** Where the cap is reached. A year of history is as old as the reveal shows. */
+const CAP_SPAN_DAYS = 365;
+
+export function revealDurationForSpan(spanMs: number, multiplier = 1): number {
+  const days = Math.max(0, spanMs) / DAY_MS;
+  // Log-scaled, and flat below a day: within a single day the gaps are what
+  // carry the pacing, and stretching an afternoon's worth of stickers past the
+  // floor buys nothing.
+  const aged = days <= 1 ? 0 : Math.min(1, Math.log10(days) / Math.log10(CAP_SPAN_DAYS));
+  return (FLOOR_MS + (CAP_MS - FLOOR_MS) * aged) * multiplier;
+}
 
 /**
  * Milliseconds to hold each sticker back, in the order given.
@@ -53,13 +76,12 @@ const HOUR_MS = 60 * 60 * 1000;
  * spans minutes to weeks and a linear map turns everything below a day into the
  * same instant.
  *
- * The sequence is then stretched — or squeezed — so the last sticker lands on
- * `totalMs` exactly. Both directions, because the number is a duration the
- * viewer chose, not a ceiling: two stickers placed a minute apart are worth
- * 0.3s of raw sequence, and only scaling down left "12 seconds" looking
- * identical to "1.5 seconds" on every image that was not heavily stickered.
- * Scaling never truncates either, because the tail is the part someone
- * deliberately placed over another.
+ * The sequence is then stretched — or squeezed — to exactly the length the
+ * history has earned (see `revealDurationForSpan`). Both directions: two
+ * stickers a minute apart are worth 0.3s of raw sequence, so scaling only
+ * downwards left every setting looking the same on any image that was not
+ * heavily stickered. Scaling never truncates either, because the tail is the
+ * part someone deliberately placed over another.
  *
  * What the dilation survives as is the RATIO between the gaps: a week-long pause
  * still runs several times longer than a five-minute one, whatever length the
@@ -70,9 +92,20 @@ const HOUR_MS = 60 * 60 * 1000;
  */
 export function placementRevealDelays(
   placements: Ordered[],
-  { totalMs = TOTAL_MS }: { totalMs?: number } = {}
+  {
+    multiplier = 1,
+    totalMs,
+  }: {
+    /** The viewer's speed setting, applied on top of the span-derived length. */
+    multiplier?: number;
+    /** An explicit length, for a caller that has already decided one. */
+    totalMs?: number;
+  } = {}
 ): number[] {
   if (placements.length <= 1) return placements.map(() => 0);
+
+  const span = time(placements[placements.length - 1].placedAt) - time(placements[0].placedAt);
+  const length = totalMs ?? revealDurationForSpan(span, multiplier);
 
   const delays: number[] = [0];
   for (let i = 1; i < placements.length; i++) {
@@ -87,6 +120,6 @@ export function placementRevealDelays(
   // at NaN and hold the whole layer at the animation's first frame.
   if (total === 0) return delays.map(() => 0);
 
-  const scale = totalMs / total;
+  const scale = length / total;
   return delays.map((delay) => Math.round(delay * scale));
 }

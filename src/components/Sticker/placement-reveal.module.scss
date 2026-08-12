@@ -32,6 +32,25 @@
   opacity: 0;
 }
 
+@keyframes placementStepProgress {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* Runs for exactly as long as the wait for the next sticker.
+   A replay of a history with long gaps in it is mostly waiting, and waiting is
+   indistinguishable from nothing happening — which is what it looked like. The
+   bar is the only thing that says the pause is deliberate. Driven by an inline
+   `animation-duration` per step, and keyed on the step so it restarts. */
+.stepProgress {
+  animation: placementStepProgress linear both;
+  transform-origin: left;
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* The stagger IS the motion here — a sticker held back for two seconds is
      movement on the page whether or not anything eases. `!important` because
