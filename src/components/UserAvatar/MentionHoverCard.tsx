@@ -56,8 +56,12 @@ function readMention(el: HTMLElement): Omit<Mention, 'rect'> | null {
  * `https://evil.example/user/Justin`, which is the whole attack.
  */
 function linksToProfile(anchor: HTMLAnchorElement, expected: string) {
+  const href = anchor.getAttribute('href');
+  // An empty href resolves to the current page, which would pass the check for
+  // any reader who happened to be standing on that profile.
+  if (!href) return false;
   try {
-    const url = new URL(anchor.getAttribute('href') ?? '', window.location.href);
+    const url = new URL(href, window.location.href);
     if (url.origin !== window.location.origin) return false;
     // Usernames resolve case-insensitively, so a link that works must pass.
     return (
@@ -145,17 +149,12 @@ export function MentionHoverCard({
         return;
       setMention(null);
     };
-    // Mantine's own Escape handling is a React prop on the dropdown, which only
-    // sees keys pressed inside it — and nothing ever focuses a hover card.
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMention(null);
-    };
+    // No Escape handler here on purpose. A modal binds Escape as a capturing
+    // window listener, which runs before anything on document, so a card opened
+    // inside one — a comment thread modal, say — would take the modal down with
+    // it. Mouseleave, scroll and outside-click already dismiss it.
     window.addEventListener('scroll', onScroll, true);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('scroll', onScroll, true);
-      document.removeEventListener('keydown', onKeyDown);
-    };
+    return () => window.removeEventListener('scroll', onScroll, true);
   }, [mention]);
 
   if (!mention) return null;
