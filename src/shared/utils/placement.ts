@@ -251,9 +251,7 @@ export const PLACEMENT_MIN_PRICE = 0;
 /**
  * The price control's granularity. Global on purpose — the floor moved to the
  * surface table because stickers and galleries may want different ones, and
- * nobody has asked for two step sizes. `minPrice` is not a server floor either;
- * `PLACEMENT_MIN_PRICE` is, so a price below the track stays valid and keeps
- * being charged.
+ * nobody has asked for two step sizes.
  *
  * ⚠️ A surface whose `minPrice` is not a multiple of this puts the bottom of
  * its own track off-grid, the same way an operator cap does at the top.

@@ -12,7 +12,7 @@ import { getPlacementConfig } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { onlySelectableLevels } from '~/shared/constants/browsingLevel.constants';
-import { declineFeeAmount } from '~/shared/utils/placement';
+import { declineFeeAmount, PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import type { RemixGalleryPlacementData } from '~/shared/utils/remix-gallery';
 import {
   isRemixGalleryPlacementData,
@@ -114,6 +114,15 @@ export async function createRemixGallerySubmission({
 
   if (space.price == null)
     throw throwBadRequestError('remix gallery: this creator has not set a price yet');
+
+  // `setPlacementSpace` refuses to write a price below the floor, but it lets an
+  // existing lower one be carried, so a row predating the rule still reads back
+  // here — and the floor is the only spam gate this surface has, since nothing
+  // verifies a submission is really a remix. Refused rather than rounded up:
+  // charging more than the number the submitter was shown is the thing
+  // `expectedPrice` below exists to prevent.
+  if (space.price < PLACEMENT_SURFACES[SURFACE].minPrice)
+    throw throwBadRequestError('remix gallery: this gallery is not priced for submissions');
 
   // Refused rather than charged. The client can only check affordability against
   // the number it rendered, so charging a price the submitter never saw is a
