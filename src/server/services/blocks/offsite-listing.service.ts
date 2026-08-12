@@ -856,7 +856,8 @@ async function isAcceptedListingEditor(listingId: string, userId: number): Promi
 
 /**
  * Load a listing and assert the caller may edit it: its OWNER or an ACCEPTED
- * collaborator on the backing AppBlock.
+ * collaborator ON THE LISTING (seats are listing-keyed since the re-key; the backing
+ * AppBlock is not the seat key, and an off-site listing has none).
  *
  * 🔴 STILL NO MODERATOR OVERRIDE — unchanged, and deliberately different from
  * `app-listing-assets.service::loadOwnedListing`, which does bypass for mods. That
@@ -1651,8 +1652,9 @@ export async function getMyListingForApp(opts: {
       `no listing found for app ${appBlockId ?? slug ?? '(unspecified)'}`
     );
   }
-  // Owner OR an ACCEPTED collaborator on the backing AppBlock. This is the media
-  // editor's entry read; an editor who cannot reach it cannot edit anything.
+  // Owner OR an ACCEPTED collaborator ON THE LISTING (the seat key since the re-key).
+  // This is the media editor's entry read; an editor who cannot reach it cannot edit
+  // anything.
   if (listing.userId !== userId && !(await isAcceptedListingEditor(listing.id, userId))) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only manage your own listings');
   }

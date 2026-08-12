@@ -22,15 +22,28 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
  */
 
 export type AppCollaboratorNotificationDetails = {
-  /** The app's public slug — identity + link target. */
+  /** The listing's public slug — identity + link target. */
   slug: string;
-  /** The backing AppBlock id (stable deep-link key). */
+  /** The store listing the seat/transfer belongs to (the stable key). */
+  appListingId?: string | null;
+  /**
+   * The backing AppBlock id, when there is one. 🔴 `null` for an OFF-SITE listing —
+   * seats are listing-keyed and off-site listings have no AppBlock, so this is a
+   * legitimately-absent value, not a missing one.
+   */
   appBlockId?: string | null;
   /** Best-effort display name for nicer copy; absent ⇒ terser message. */
   name?: string | null;
 };
 
-/** Where each notification points. Both audiences land on the app's own page. */
+/**
+ * Where each notification points.
+ *
+ * 🔴 The per-app authoring pages are BLOCK-keyed (`/apps/[appBlockId]/…`), so an
+ * off-site listing has no such page to deep-link to and falls back to `/apps`. That is
+ * the pre-existing behaviour for a null `appBlockId`, kept deliberately rather than
+ * inventing a route that does not exist.
+ */
 function appUrl(details: AppCollaboratorNotificationDetails): string {
   return details.appBlockId ? `/apps/${details.appBlockId}` : '/apps';
 }

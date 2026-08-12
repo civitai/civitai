@@ -4,8 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * App Listing COLLABORATORS — OWNERSHIP TRANSFER.
  *
  * The load-bearing properties, each with its own describe:
- *   - ATOMICITY: both ownership columns move together; a failure on the SECOND write
- *     rolls the FIRST back.
+ *   - ATOMICITY: on an ON-SITE listing both ownership columns move together; a failure
+ *     on the SECOND write rolls the FIRST back.
+ *   - KIND: an OFF-SITE listing moves `AppListing.userId` ONLY — and one carrying a
+ *     `connectClientId` is REFUSED outright, at initiate AND again in-tx at accept.
  *   - A PENDING transfer confers NOTHING.
  *   - MONEY INVARIANCE: `BlockBuzzAttribution` is never touched, so payout grouping by
  *     `(app_owner_user_id, period_key)` cannot collide and the old owner keeps their
@@ -28,7 +30,10 @@ const { mockDb, mockRepo, mockNotify, calls } = vi.hoisted(() => {
     appBlock: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
     user: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
     oauthClient: { updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })) },
-    appListing: { updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })) },
+    appListing: {
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
+    },
     appOwnershipTransfer: {
       create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
@@ -75,32 +80,165 @@ vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
 vi.mock('~/server/services/blocks/app-repo-access', () => mockRepo);
 vi.mock('~/server/services/blocks/app-collaborator-notify', () => mockNotify);
 
-const { acceptTransfer, cancelTransfer, getPendingTransfer, initiateTransfer } = await import(
-  '~/server/services/blocks/app-ownership-transfer.service'
-);
-const { resolveAppAccess } = await import('~/server/services/blocks/app-access.service');
+const {
+  acceptTransfer,
+  cancelTransfer,
+  getPendingTransfer,
+  initiateTransfer,
+  refusesTransferForConnectClient,
+  CONNECT_CLIENT_TRANSFER_REFUSAL,
+} = await import('~/server/services/blocks/app-ownership-transfer.service');
+const { resolveListingAccess } = await import('~/server/services/blocks/app-access.service');
 
 const APP = 'ab_app1';
 const CLIENT = 'oc_client1';
 const SLUG = 'my-app';
+/** The ON-SITE listing: an AppBlock, an OauthClient, a Forgejo repo. */
+const LISTING = 'apl_live';
+/** A plain external-link OFF-SITE listing: no block, no client. Transferable. */
+const OFFSITE = 'apl_offsite';
+const OFFSITE_SLUG = 'cool-offsite';
+/** An OAuth-CONNECT off-site listing. 🔴 NOT transferable in v1. */
+const CONNECT_LISTING = 'apl_connect';
+const CONNECT_CLIENT = 'oc_connect9';
+const SHADOW = 'apl_shadow';
+/**
+ * 🔴 An OFF-SITE listing that DOES carry a backing AppBlock — and therefore a Forgejo
+ * repo slug. `mapAppBlockToListing` mints exactly this shape for an AppBlock with an
+ * `externalUrl`. It is the row on which `kind === 'onsite'` and `blockSlug != null`
+ * DISAGREE, and `acceptTransfer` used to branch on each of them in different places:
+ * step (2) on the kind, the post-commit Forgejo swap on the slug.
+ */
+const OFFSITE_WITH_REPO = 'apl_offsite_with_repo';
+const OFFSITE_REPO_SLUG = 'offsite-repo';
+/**
+ * 🔴 An ON-SITE listing whose denormalized `AppListing.userId` DISAGREES with its
+ * canonical `OauthClient.userId` — the state this very service's step (3) can leave
+ * behind (unguarded for onsite, a 0-count is an accepted desync).
+ */
+const DRIFTED = 'apl_drifted';
 const OLD_OWNER = 10;
 const NEW_OWNER = 20;
 const STRANGER = 50;
+/** The name left behind in a stale denormalized `AppListing.userId`. */
+const STALE_OWNER = 77;
 const TRANSFER = 'aot_t1';
 const NOW = new Date('2026-08-10T12:00:00Z');
 const FUTURE = new Date('2026-08-17T12:00:00Z');
 const PAST = new Date('2026-08-03T12:00:00Z');
 
+/**
+ * The listing table, keyed by id. Every row differs from every other in id, slug, kind,
+ * appBlockId AND connectClientId, so no assertion can be satisfied by the wrong row.
+ */
+function listingTable(): Record<string, Record<string, unknown>> {
+  return {
+    [LISTING]: {
+      id: LISTING,
+      slug: SLUG,
+      kind: 'onsite',
+      userId: OLD_OWNER,
+      appBlockId: APP,
+      connectClientId: null,
+      revisionOfId: null,
+      revisionOf: null,
+      appBlock: { appId: CLIENT, blockId: SLUG, app: { userId: OLD_OWNER } },
+    },
+    [OFFSITE]: {
+      id: OFFSITE,
+      slug: OFFSITE_SLUG,
+      kind: 'offsite',
+      userId: OLD_OWNER,
+      appBlockId: null,
+      connectClientId: null,
+      revisionOfId: null,
+      revisionOf: null,
+      appBlock: null,
+    },
+    [CONNECT_LISTING]: {
+      id: CONNECT_LISTING,
+      slug: 'connected-thing',
+      kind: 'offsite',
+      userId: OLD_OWNER,
+      appBlockId: null,
+      connectClientId: CONNECT_CLIENT,
+      revisionOfId: null,
+      revisionOf: null,
+      appBlock: null,
+    },
+    [SHADOW]: {
+      id: SHADOW,
+      slug: SLUG,
+      kind: 'onsite',
+      userId: OLD_OWNER,
+      appBlockId: null,
+      connectClientId: null,
+      revisionOfId: LISTING,
+      revisionOf: { id: LISTING, kind: 'onsite', appBlockId: APP },
+      appBlock: null,
+    },
+    // 🔴 offsite, but WITH a block and therefore WITH a repo slug.
+    [OFFSITE_WITH_REPO]: {
+      id: OFFSITE_WITH_REPO,
+      slug: 'offsite-store-slug',
+      kind: 'offsite',
+      userId: OLD_OWNER,
+      appBlockId: 'ab_offsiteBlock',
+      connectClientId: null,
+      revisionOfId: null,
+      revisionOf: null,
+      appBlock: {
+        appId: 'oc_offsite',
+        blockId: OFFSITE_REPO_SLUG,
+        app: { userId: OLD_OWNER },
+      },
+    },
+    // 🔴 onsite, with the canonical owner and the denormalized column DISAGREEING.
+    [DRIFTED]: {
+      id: DRIFTED,
+      slug: 'drifted-slug',
+      kind: 'onsite',
+      userId: STALE_OWNER,
+      appBlockId: 'ab_drifted',
+      connectClientId: null,
+      revisionOfId: null,
+      revisionOf: null,
+      appBlock: { appId: 'oc_drifted', blockId: 'drifted-repo', app: { userId: OLD_OWNER } },
+    },
+  };
+}
+
+let LISTINGS: Record<string, Record<string, unknown>>;
+
+/** A live pending transfer whose `appListing` relation is taken from the table. */
 function liveTransfer(over: Record<string, unknown> = {}) {
+  const listingId = (over.appListingId as string) ?? LISTING;
+  const l = LISTINGS[listingId];
   return {
     id: TRANSFER,
-    appBlockId: APP,
+    appListingId: listingId,
     fromUserId: OLD_OWNER,
     toUserId: NEW_OWNER,
     status: 'pending',
     expiresAt: FUTURE,
     createdAt: NOW,
-    appBlock: { appId: CLIENT, blockId: SLUG },
+    appListing: {
+      id: l.id,
+      slug: l.slug,
+      kind: l.kind,
+      connectClientId: l.connectClientId,
+      appBlockId: l.appBlockId,
+      // 🔴 Taken FROM THE ROW, not hardcoded: the offsite-with-a-repo fixture carries a
+      // different `blockId`, and a hardcoded `SLUG` here would make every Forgejo
+      // assertion in this suite about the same string regardless of which listing was
+      // transferred.
+      appBlock: l.appBlock
+        ? {
+            appId: (l.appBlock as { appId: string }).appId,
+            blockId: (l.appBlock as { blockId: string }).blockId,
+          }
+        : null,
+    },
     ...over,
   };
 }
@@ -108,6 +246,7 @@ function liveTransfer(over: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   calls.length = 0;
+  LISTINGS = listingTable();
   mockDb.$transaction.mockImplementation(async (cb: (tx: typeof mockDb) => Promise<unknown>) => {
     calls.push('tx:begin');
     try {
@@ -119,11 +258,16 @@ beforeEach(() => {
       throw e;
     }
   });
+  mockDb.appListing.findUnique.mockImplementation(async (args: unknown): Promise<unknown> => {
+    const w = (args as { where: { id?: string } }).where;
+    return w.id ? LISTINGS[w.id] ?? null : null;
+  });
   mockDb.appBlock.findUnique.mockResolvedValue({
     id: APP,
     appId: CLIENT,
     blockId: SLUG,
     app: { userId: OLD_OWNER },
+    appListing: { id: LISTING },
   });
   // 🔴 The user read is LOGGED into `calls`, so its POSITION relative to `tx:begin` is
   // observable. `dbRead` and `dbWrite` are the same fake here, so "was the ban read on
@@ -137,7 +281,7 @@ beforeEach(() => {
   mockDb.oauthClient.updateMany.mockResolvedValue({ count: 1 });
   mockDb.appListing.updateMany.mockResolvedValue({ count: 1 });
   mockDb.appOwnershipTransfer.updateMany.mockResolvedValue({ count: 1 });
-  mockDb.appOwnershipTransfer.findUnique.mockResolvedValue(liveTransfer());
+  mockDb.appOwnershipTransfer.findUnique.mockImplementation(async () => liveTransfer());
   mockDb.appOwnershipTransfer.create.mockImplementation(async (args: unknown) => ({
     ...(args as { data: Record<string, unknown> }).data,
     createdAt: NOW,
@@ -147,7 +291,7 @@ beforeEach(() => {
 describe('initiateTransfer', () => {
   it('the OWNER can offer; the row is pending with an expiry and an event is written', async () => {
     const t = await initiateTransfer({
-      appBlockId: APP,
+      appListingId: LISTING,
       toUserId: NEW_OWNER,
       actorUserId: OLD_OWNER,
       now: NOW,
@@ -161,7 +305,7 @@ describe('initiateTransfer', () => {
 
   it('🔴 NOTHING moves at initiate — neither ownership column is written', async () => {
     await initiateTransfer({
-      appBlockId: APP,
+      appListingId: LISTING,
       toUserId: NEW_OWNER,
       actorUserId: OLD_OWNER,
       now: NOW,
@@ -172,21 +316,38 @@ describe('initiateTransfer', () => {
 
   it('a NON-OWNER cannot initiate', async () => {
     await expect(
-      initiateTransfer({ appBlockId: APP, toUserId: NEW_OWNER, actorUserId: STRANGER, now: NOW })
+      initiateTransfer({ appListingId: LISTING, toUserId: NEW_OWNER, actorUserId: STRANGER, now: NOW })
     ).rejects.toMatchObject({ code: 'NOT_OWNER' });
   });
 
   it('transferring to yourself is INVALID_TARGET', async () => {
     await expect(
-      initiateTransfer({ appBlockId: APP, toUserId: OLD_OWNER, actorUserId: OLD_OWNER, now: NOW })
+      initiateTransfer({
+        appListingId: LISTING,
+        toUserId: OLD_OWNER,
+        actorUserId: OLD_OWNER,
+        now: NOW,
+      })
     ).rejects.toMatchObject({ code: 'INVALID_TARGET' });
   });
 
   it('🔴 a BANNED recipient cannot receive ownership', async () => {
     mockDb.user.findUnique.mockResolvedValue({ id: NEW_OWNER, bannedAt: new Date() });
     await expect(
-      initiateTransfer({ appBlockId: APP, toUserId: NEW_OWNER, actorUserId: OLD_OWNER, now: NOW })
+      initiateTransfer({
+        appListingId: LISTING,
+        toUserId: NEW_OWNER,
+        actorUserId: OLD_OWNER,
+        now: NOW,
+      })
     ).rejects.toMatchObject({ code: 'BANNED' });
+  });
+
+  it('a SHADOW revision cannot be transferred — there is nothing to own', async () => {
+    await expect(
+      initiateTransfer({ appListingId: SHADOW, toUserId: NEW_OWNER, actorUserId: OLD_OWNER, now: NOW })
+    ).rejects.toMatchObject({ code: 'INVALID_TARGET' });
+    expect(mockDb.appOwnershipTransfer.create).not.toHaveBeenCalled();
   });
 
   // 🔴 THE TWO PARTY COLUMNS, asserted as VALUES. A mutant that swapped them survived:
@@ -198,17 +359,17 @@ describe('initiateTransfer', () => {
   // wrong party. Fixture ids are deliberately distinct so the two cannot alias.
   it('🔴 the offer records fromUserId = CURRENT OWNER and toUserId = RECIPIENT, not the reverse', async () => {
     const t = await initiateTransfer({
-      appBlockId: APP,
+      appListingId: LISTING,
       toUserId: NEW_OWNER,
       actorUserId: OLD_OWNER,
       now: NOW,
     });
     const created = mockDb.appOwnershipTransfer.create.mock.calls[0][0] as {
-      data: { fromUserId: number; toUserId: number; appBlockId: string; status: string };
+      data: { fromUserId: number; toUserId: number; appListingId: string; status: string };
     };
     expect(created.data.fromUserId).toBe(OLD_OWNER);
     expect(created.data.toUserId).toBe(NEW_OWNER);
-    expect(created.data.appBlockId).toBe(APP);
+    expect(created.data.appListingId).toBe(LISTING);
     expect(created.data.status).toBe('pending');
     // …and the returned view carries the same orientation the client will render.
     expect(t.fromUserId).toBe(OLD_OWNER);
@@ -217,10 +378,10 @@ describe('initiateTransfer', () => {
     expect(OLD_OWNER).not.toBe(NEW_OWNER);
   });
 
-  it('🔴 `fromUserId` is the app’s CURRENT owner, not merely the actor', async () => {
+  it('🔴 `fromUserId` is the listing’s CURRENT owner, not merely the actor', async () => {
     // The audit event names the target; the row must name the owner it is moving FROM.
     await initiateTransfer({
-      appBlockId: APP,
+      appListingId: LISTING,
       toUserId: NEW_OWNER,
       actorUserId: OLD_OWNER,
       now: NOW,
@@ -232,17 +393,18 @@ describe('initiateTransfer', () => {
     expect(evt.data.targetUserId).toBe(NEW_OWNER);
   });
 
-  it('EXPIRED pending rows are reclaimed first, so one lapsed offer cannot wedge the app forever', async () => {
+  it('EXPIRED pending rows are reclaimed first, so one lapsed offer cannot wedge the listing forever', async () => {
     await initiateTransfer({
-      appBlockId: APP,
+      appListingId: LISTING,
       toUserId: NEW_OWNER,
       actorUserId: OLD_OWNER,
       now: NOW,
     });
     const reclaim = mockDb.appOwnershipTransfer.updateMany.mock.calls[0][0] as {
-      where: { status: string; expiresAt: { lte: Date } };
+      where: { appListingId: string; status: string; expiresAt: { lte: Date } };
       data: { status: string };
     };
+    expect(reclaim.where.appListingId).toBe(LISTING);
     expect(reclaim.where.status).toBe('pending');
     expect(reclaim.where.expiresAt.lte).toEqual(NOW);
     expect(reclaim.data.status).toBe('expired');
@@ -253,7 +415,12 @@ describe('initiateTransfer', () => {
       Object.assign(new Error('Unique constraint failed'), { code: 'P2002' })
     );
     await expect(
-      initiateTransfer({ appBlockId: APP, toUserId: NEW_OWNER, actorUserId: OLD_OWNER, now: NOW })
+      initiateTransfer({
+        appListingId: LISTING,
+        toUserId: NEW_OWNER,
+        actorUserId: OLD_OWNER,
+        now: NOW,
+      })
     ).rejects.toMatchObject({ code: 'ALREADY_SEATED' });
   });
 
@@ -263,26 +430,113 @@ describe('initiateTransfer', () => {
       Object.assign(new Error('connection reset'), { code: 'P1001' })
     );
     await expect(
-      initiateTransfer({ appBlockId: APP, toUserId: NEW_OWNER, actorUserId: OLD_OWNER, now: NOW })
+      initiateTransfer({
+        appListingId: LISTING,
+        toUserId: NEW_OWNER,
+        actorUserId: OLD_OWNER,
+        now: NOW,
+      })
     ).rejects.toThrow('connection reset');
   });
 });
 
+// ---------------------------------------------------------------------------
+// 🔴 THE CONNECT-CLIENT REFUSAL — the v1 scope decision, enforced at BOTH ends.
+// ---------------------------------------------------------------------------
+
+describe('🔴 an OFF-SITE listing with a connectClientId is REFUSED', () => {
+  /**
+   * THE DECISION. v1 moves `AppListing.userId` and nothing else. A connect listing
+   * carries an `OauthClient` with a SECRET, redirect URIs and allowed origins, and both
+   * silent options are bad: moving it hands over live credentials nobody agreed to
+   * transfer; NOT moving it leaves ownership SPLIT between the listing and the client.
+   * So the transfer is refused, with an error that says why.
+   *
+   * Enforced twice — at initiate (fail fast) and IN-TX at accept — because an offer
+   * stays open for `transferExpiryDays` and a revision approve can LINK a client inside
+   * that window. An initiate-only check is simply false for the whole window.
+   */
+  it('the predicate is exported and states the rule in one place', () => {
+    expect(refusesTransferForConnectClient({ kind: 'offsite', connectClientId: CONNECT_CLIENT })).toBe(
+      true
+    );
+    expect(refusesTransferForConnectClient({ kind: 'offsite', connectClientId: null })).toBe(false);
+    // 🔴 ON-SITE IS UNAFFECTED — its OauthClient is reached through the AppBlock, and
+    // THAT one does move. A predicate that dropped the kind check would block every
+    // on-site transfer the moment the column were ever populated.
+    expect(refusesTransferForConnectClient({ kind: 'onsite', connectClientId: CONNECT_CLIENT })).toBe(
+      false
+    );
+  });
+
+  it('initiate REFUSES, and no transfer row is created', async () => {
+    await expect(
+      initiateTransfer({
+        appListingId: CONNECT_LISTING,
+        toUserId: NEW_OWNER,
+        actorUserId: OLD_OWNER,
+        now: NOW,
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_TARGET', message: CONNECT_CLIENT_TRANSFER_REFUSAL });
+    expect(mockDb.appOwnershipTransfer.create).not.toHaveBeenCalled();
+    expect(mockDb.appOwnershipEvent.create).not.toHaveBeenCalled();
+  });
+
+  it('🔴 the message NAMES the reason — "unlink the OAuth client first" is actionable', async () => {
+    // A bare FORBIDDEN would leave the owner with no idea what to do, and the whole
+    // point of refusing rather than guessing is that the human makes the call.
+    expect(CONNECT_CLIENT_TRANSFER_REFUSAL).toMatch(/OAuth application/i);
+    expect(CONNECT_CLIENT_TRANSFER_REFUSAL).toMatch(/Unlink the OAuth client first/i);
+  });
+
+  it('🔴 ACCEPT re-asserts it: a client LINKED after the offer was made blocks the accept', async () => {
+    // The window this closes. The offer was created against a clean listing; a revision
+    // approve then linked a client. Nothing about the transfer row changed — only the
+    // listing did — so an initiate-time-only check would let it through.
+    mockDb.appOwnershipTransfer.findUnique.mockImplementation(async () => {
+      const t = liveTransfer();
+      return {
+        ...t,
+        appListing: { ...t.appListing, kind: 'offsite', connectClientId: CONNECT_CLIENT },
+      };
+    });
+    await expect(
+      acceptTransfer({ transferId: TRANSFER, userId: NEW_OWNER, now: NOW })
+    ).rejects.toMatchObject({ code: 'INVALID_TARGET', message: CONNECT_CLIENT_TRANSFER_REFUSAL });
+    // Nothing moved, and the transaction aborted.
+    expect(mockDb.appListing.updateMany).not.toHaveBeenCalled();
+    expect(mockDb.oauthClient.updateMany).not.toHaveBeenCalled();
+    expect(mockDb.appOwnershipEvent.create).not.toHaveBeenCalled();
+    expect(calls).toContain('tx:rollback');
+  });
+
+  it('POSITIVE CONTROL: the SAME off-site listing WITHOUT a client transfers fine', async () => {
+    // Otherwise "it threw" is indistinguishable from off-site transfers being broken.
+    await expect(
+      initiateTransfer({
+        appListingId: OFFSITE,
+        toUserId: NEW_OWNER,
+        actorUserId: OLD_OWNER,
+        now: NOW,
+      })
+    ).resolves.toMatchObject({ appListingId: OFFSITE, status: 'pending' });
+  });
+});
+
 describe('a PENDING transfer confers NOTHING on the recipient', () => {
-  it('resolveAppAccess gives the recipient no role while the offer is open', async () => {
+  it('resolveListingAccess gives the recipient no role while the offer is open', async () => {
     // The access predicate does not consult the transfer table at all — asserted by
     // observing the resolved role, which is the property that matters.
-    mockDb.appBlock.findUnique.mockResolvedValue({ id: APP, app: { userId: OLD_OWNER } });
     // No SEAT exists for the recipient — the open offer is the only thing linking them
-    // to the app, and it must count for nothing.
+    // to the listing, and it must count for nothing.
     mockDb.appCollaborator.findFirst.mockResolvedValue(null);
-    const access = await resolveAppAccess(APP, NEW_OWNER);
+    const access = await resolveListingAccess(LISTING, NEW_OWNER);
     expect(access!.role).toBeNull();
     expect(access!.ownerUserId).toBe(OLD_OWNER);
   });
 });
 
-describe('acceptTransfer — 🔴 ATOMICITY of the two ownership columns', () => {
+describe('acceptTransfer — 🔴 ATOMICITY of the two ownership columns (ONSITE)', () => {
   it('moves BOTH OauthClient.userId and AppListing.userId', async () => {
     const res = await acceptTransfer({ transferId: TRANSFER, userId: NEW_OWNER, now: NOW });
     expect(res).toMatchObject({ fromUserId: OLD_OWNER, toUserId: NEW_OWNER });
@@ -295,10 +549,10 @@ describe('acceptTransfer — 🔴 ATOMICITY of the two ownership columns', () =>
     expect(client.data.userId).toBe(NEW_OWNER);
 
     const listing = mockDb.appListing.updateMany.mock.calls[0][0] as {
-      where: { appBlockId: string };
+      where: { id: string };
       data: { userId: number };
     };
-    expect(listing.where.appBlockId).toBe(APP);
+    expect(listing.where.id).toBe(LISTING);
     expect(listing.data.userId).toBe(NEW_OWNER);
   });
 
@@ -356,13 +610,19 @@ describe('acceptTransfer — 🔴 ATOMICITY of the two ownership columns', () =>
     expect(mockDb.appOwnershipEvent.create).not.toHaveBeenCalled();
   });
 
-  it('an app with NO listing yet still transfers (a 0-count on the listing is legitimate)', async () => {
-    // A first-version app pending approval has no AppListing row; that must not fail
-    // the transfer, which is why the listing write is deliberately NOT status-guarded.
+  it('🔴 ONSITE: the listing write is deliberately NOT owner-guarded, so a desync cannot fail it', async () => {
+    // `AppListing.userId` is a DENORMALIZED copy on an on-site listing; the canonical
+    // column is the OauthClient's, already guarded above. A 0-count here is a legitimate
+    // desync (or a claimListing that moved the copy), and must not fail a transfer whose
+    // authority already succeeded.
     mockDb.appListing.updateMany.mockResolvedValue({ count: 0 });
     await expect(
       acceptTransfer({ transferId: TRANSFER, userId: NEW_OWNER, now: NOW })
     ).resolves.toMatchObject({ toUserId: NEW_OWNER });
+    const listing = mockDb.appListing.updateMany.mock.calls[0][0] as {
+      where: Record<string, unknown>;
+    };
+    expect(listing.where).toEqual({ id: LISTING });
   });
 
   it('only the ADDRESSEE can accept', async () => {
@@ -373,7 +633,9 @@ describe('acceptTransfer — 🔴 ATOMICITY of the two ownership columns', () =>
   });
 
   it('🔴 an EXPIRED offer cannot be accepted', async () => {
-    mockDb.appOwnershipTransfer.findUnique.mockResolvedValue(liveTransfer({ expiresAt: PAST }));
+    mockDb.appOwnershipTransfer.findUnique.mockImplementation(async () =>
+      liveTransfer({ expiresAt: PAST })
+    );
     await expect(
       acceptTransfer({ transferId: TRANSFER, userId: NEW_OWNER, now: NOW })
     ).rejects.toMatchObject({ code: 'NO_INVITE' });
@@ -381,7 +643,9 @@ describe('acceptTransfer — 🔴 ATOMICITY of the two ownership columns', () =>
   });
 
   it('a CANCELLED offer cannot be accepted', async () => {
-    mockDb.appOwnershipTransfer.findUnique.mockResolvedValue(liveTransfer({ status: 'cancelled' }));
+    mockDb.appOwnershipTransfer.findUnique.mockImplementation(async () =>
+      liveTransfer({ status: 'cancelled' })
+    );
     await expect(
       acceptTransfer({ transferId: TRANSFER, userId: NEW_OWNER, now: NOW })
     ).rejects.toMatchObject({ code: 'NO_INVITE' });
@@ -391,6 +655,79 @@ describe('acceptTransfer — 🔴 ATOMICITY of the two ownership columns', () =>
     await acceptTransfer({ transferId: TRANSFER, userId: NEW_OWNER, now: NOW });
     expect(mockRepo.revokeAppRepoWrite).toHaveBeenCalledWith({ slug: SLUG, userId: OLD_OWNER });
     expect(mockRepo.grantAppRepoWrite).toHaveBeenCalledWith({ slug: SLUG, userId: NEW_OWNER });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 🔴 OFF-SITE accept: one column, GUARDED, and no OauthClient / Forgejo anywhere.
+// ---------------------------------------------------------------------------
+
+describe('🔴 acceptTransfer — OFF-SITE moves ONE column, and that column IS the authority', () => {
+  beforeEach(() => {
+    mockDb.appOwnershipTransfer.findUnique.mockImplementation(async () =>
+      liveTransfer({ appListingId: OFFSITE })
+    );
+  });
+
+  it('moves AppListing.userId and NEVER touches OauthClient', async () => {
+    const res = await acceptTransfer({ transferId: TRANSFER, userId: NEW_OWNER, now: NOW });
+    expect(res).toMatchObject({ appListingId: OFFSITE, toUserId: NEW_OWNER });
+    expect(mockDb.oauthClient.updateMany).not.toHaveBeenCalled();
+    const listing = mockDb.appListing.updateMany.mock.calls[0][0] as {
+      where: { id: string; userId: number };
+      data: { userId: number };
+    };
+    expect(listing.data.userId).toBe(NEW_OWNER);
+    // 🔴 STATUS-GUARDED on the snapshotted previous owner. Off-site has no OauthClient
+    // write to guard, so this predicate is the ONLY TOCTOU protection that exists.
+    expect(listing.where).toEqual({ id: OFFSITE, userId: OLD_OWNER });
+  });
+
+  it('🔴 a mod `claimListing` in the window makes the accept fail closed, not silently undo it', async () => {
+    // This is the reconciliation with `offsite-moderation::claimListing`, which also
+    // writes `AppListing.userId` for off-site listings. If a moderator reassigned the
+    // listing after the offer was made, the guarded update matches 0 rows and the accept
+    // is refused — moderator authority is final, and the pending offer becomes
+    // permanently unacceptable rather than reverting the remedy.
+    mockDb.appListing.updateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      acceptTransfer({ transferId: TRANSFER, userId: NEW_OWNER, now: NOW })
+    ).rejects.toMatchObject({ code: 'NO_INVITE' });
+    expect(mockDb.appOwnershipEvent.create).not.toHaveBeenCalled();
+    expect(calls).toContain('tx:rollback');
+  });
+
+  it('touches NO Forgejo repo — there is none', async () => {
+    await acceptTransfer({ transferId: TRANSFER, userId: NEW_OWNER, now: NOW });
+    expect(mockRepo.revokeAppRepoWrite).not.toHaveBeenCalled();
+    expect(mockRepo.grantAppRepoWrite).not.toHaveBeenCalled();
+  });
+
+  it('records the kind on the audit event, so the trail says WHICH shape of move happened', async () => {
+    await acceptTransfer({ transferId: TRANSFER, userId: NEW_OWNER, now: NOW });
+    const evt = mockDb.appOwnershipEvent.create.mock.calls[0][0] as {
+      data: { action: string; metadata: { kind: string } };
+    };
+    expect(evt.data.action).toBe('transfer_accepted');
+    expect(evt.data.metadata.kind).toBe('offsite');
+  });
+
+  it('🔴 POSITIVE CONTROL: the ONSITE path DOES call both, so these zeroes mean something', async () => {
+    mockDb.appOwnershipTransfer.findUnique.mockImplementation(async () => liveTransfer());
+    await acceptTransfer({ transferId: TRANSFER, userId: NEW_OWNER, now: NOW });
+    expect(mockDb.oauthClient.updateMany).toHaveBeenCalledOnce();
+    expect(mockRepo.grantAppRepoWrite).toHaveBeenCalledOnce();
+  });
+
+  it('an ONSITE transfer whose block record vanished is refused rather than half-applied', async () => {
+    mockDb.appOwnershipTransfer.findUnique.mockImplementation(async () => {
+      const t = liveTransfer();
+      return { ...t, appListing: { ...t.appListing, appBlock: null } };
+    });
+    await expect(
+      acceptTransfer({ transferId: TRANSFER, userId: NEW_OWNER, now: NOW })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(mockDb.appListing.updateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -504,6 +841,70 @@ describe('🔴 acceptTransfer re-reads bannedAt — the 7-day window', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// 🔴 acceptTransfer's post-commit Forgejo swap is gated on KIND, like step (2).
+// ---------------------------------------------------------------------------
+
+describe('🔴 the Forgejo swap and the ownership write agree about what "on-site" means', () => {
+  /**
+   * `acceptTransfer` makes two kind-shaped decisions and used to make them with two
+   * different predicates: step (2) (move `OauthClient.userId`) branched on
+   * `kind === 'onsite'`, while the post-commit repo swap branched on `blockSlug != null`.
+   * On every ordinary row those agree. On an OFF-SITE listing that carries a backing
+   * AppBlock they do not — and there the function did the WORSE half of both: it left the
+   * OauthClient alone (correctly, per its kind) while swapping Forgejo `write` on the
+   * app's repo from one user to another.
+   *
+   * This case is the only one that can distinguish the two predicates, so it is the only
+   * one that can kill a slug-only mutant.
+   */
+  beforeEach(() => {
+    mockDb.appOwnershipTransfer.findUnique.mockImplementation(async () =>
+      liveTransfer({ appListingId: OFFSITE_WITH_REPO })
+    );
+  });
+
+  it('POSITIVE CONTROL: the fixture really is offsite AND really does carry a repo slug', async () => {
+    const t = liveTransfer({ appListingId: OFFSITE_WITH_REPO }) as {
+      appListing: { kind: string; appBlock: { blockId: string } | null };
+    };
+    expect(t.appListing.kind).toBe('offsite');
+    expect(t.appListing.appBlock?.blockId).toBe(OFFSITE_REPO_SLUG);
+  });
+
+  it('🔴 no repo grant and no repo revoke fire for an OFF-SITE listing that has a slug', async () => {
+    await acceptTransfer({ transferId: TRANSFER, userId: NEW_OWNER, now: NOW });
+    expect(mockRepo.revokeAppRepoWrite).not.toHaveBeenCalled();
+    expect(mockRepo.grantAppRepoWrite).not.toHaveBeenCalled();
+  });
+
+  it('the OauthClient is still left alone, as its kind requires — the two agree now', async () => {
+    // The structural half: both decisions must land on the same side for this row.
+    await acceptTransfer({ transferId: TRANSFER, userId: NEW_OWNER, now: NOW });
+    expect(mockDb.oauthClient.updateMany).not.toHaveBeenCalled();
+    // …and the transfer itself still completes: this is a gate on the repo call, not a
+    // refusal of the transfer.
+    expect(mockDb.appListing.updateMany).toHaveBeenCalled();
+  });
+
+  it('🔴 POSITIVE CONTROL: THAT EXACT SLUG is swapped once the kind is onsite', async () => {
+    // Without this, "not called" is indistinguishable from a repo mock nothing reaches.
+    LISTINGS[OFFSITE_WITH_REPO] = { ...LISTINGS[OFFSITE_WITH_REPO], kind: 'onsite' };
+    mockDb.appOwnershipTransfer.findUnique.mockImplementation(async () =>
+      liveTransfer({ appListingId: OFFSITE_WITH_REPO })
+    );
+    await acceptTransfer({ transferId: TRANSFER, userId: NEW_OWNER, now: NOW });
+    expect(mockRepo.revokeAppRepoWrite).toHaveBeenCalledWith({
+      slug: OFFSITE_REPO_SLUG,
+      userId: OLD_OWNER,
+    });
+    expect(mockRepo.grantAppRepoWrite).toHaveBeenCalledWith({
+      slug: OFFSITE_REPO_SLUG,
+      userId: NEW_OWNER,
+    });
+  });
+});
+
 describe('🔴 MONEY INVARIANCE — attribution and payout grouping are untouched', () => {
   it('accept never writes BlockBuzzAttribution', async () => {
     await acceptTransfer({ transferId: TRANSFER, userId: NEW_OWNER, now: NOW });
@@ -519,7 +920,7 @@ describe('🔴 MONEY INVARIANCE — attribution and payout grouping are untouche
     expect(mockDb.appBlockPublishRequest.updateMany).not.toHaveBeenCalled();
   });
 
-  it('accept never removes collaborator seats — the app keeps its editors', async () => {
+  it('accept never removes collaborator seats — the listing keeps its editors', async () => {
     await acceptTransfer({ transferId: TRANSFER, userId: NEW_OWNER, now: NOW });
     expect(mockDb.appCollaborator.deleteMany).not.toHaveBeenCalled();
   });
@@ -563,17 +964,30 @@ describe('cancelTransfer / getPendingTransfer', () => {
     expect(mockDb.appOwnershipEvent.create).not.toHaveBeenCalled();
   });
 
+  it('a CONNECT listing’s stale offer can still be CANCELLED — refusing to move is not refusing to tidy', async () => {
+    // The refusal is about MOVING ownership. An offer created before a client was linked
+    // must still be withdrawable, or the partial-unique index wedges the listing.
+    mockDb.appOwnershipTransfer.findUnique.mockImplementation(async () =>
+      liveTransfer({ appListingId: CONNECT_LISTING })
+    );
+    await expect(
+      cancelTransfer({ transferId: TRANSFER, actorUserId: OLD_OWNER, now: NOW })
+    ).resolves.toMatchObject({ cancelled: true });
+  });
+
   it('getPendingTransfer returns a LIVE offer', async () => {
-    mockDb.appOwnershipTransfer.findFirst.mockResolvedValue(liveTransfer());
+    mockDb.appOwnershipTransfer.findFirst.mockImplementation(async () => liveTransfer());
     expect(
-      await getPendingTransfer({ appBlockId: APP, viewerUserId: OLD_OWNER, now: NOW })
+      await getPendingTransfer({ appListingId: LISTING, viewerUserId: OLD_OWNER, now: NOW })
     ).toMatchObject({ id: TRANSFER });
   });
 
   it('🔴 getPendingTransfer treats an EXPIRED row as ABSENT (read-time predicate, no sweeper needed)', async () => {
-    mockDb.appOwnershipTransfer.findFirst.mockResolvedValue(liveTransfer({ expiresAt: PAST }));
+    mockDb.appOwnershipTransfer.findFirst.mockImplementation(async () =>
+      liveTransfer({ expiresAt: PAST })
+    );
     expect(
-      await getPendingTransfer({ appBlockId: APP, viewerUserId: OLD_OWNER, now: NOW })
+      await getPendingTransfer({ appListingId: LISTING, viewerUserId: OLD_OWNER, now: NOW })
     ).toBeNull();
   });
 });
@@ -587,23 +1001,17 @@ describe('🔴 getPendingTransfer — who may read the offer', () => {
    * This read had NO authorization at all: the proc destructured `{ input }` and never
    * touched `ctx`, while all three sibling transfer procs gate. The row it returns names
    * both parties (`fromUserId`, `toUserId`) and the deadline, so any account with the
-   * author flag could ask, for any app id, who is handing it to whom and by when —
+   * author flag could ask, for any listing id, who is handing it to whom and by when —
    * a pre-announcement of an acquisition, readable by the whole flagged cohort.
    *
-   * Permitted: the app OWNER (the offer's `fromUserId`) and the ADDRESSEE. That is
+   * Permitted: the listing OWNER (the offer's `fromUserId`) and the ADDRESSEE. That is
    * exactly the set that may ACT on the transfer, which is what makes it consistent
    * rather than arbitrary.
    */
   const EDITOR = 30;
 
   beforeEach(() => {
-    mockDb.appOwnershipTransfer.findFirst.mockResolvedValue(liveTransfer());
-    mockDb.appBlock.findUnique.mockResolvedValue({
-      id: APP,
-      appId: CLIENT,
-      blockId: SLUG,
-      app: { userId: OLD_OWNER },
-    });
+    mockDb.appOwnershipTransfer.findFirst.mockImplementation(async () => liveTransfer());
     mockDb.appCollaborator.findFirst.mockImplementation(async (args: unknown) => {
       const w = (args as { where: { userId: number; status?: string } }).where;
       return w.userId === EDITOR && w.status === 'accepted' ? { userId: EDITOR } : null;
@@ -612,53 +1020,97 @@ describe('🔴 getPendingTransfer — who may read the offer', () => {
 
   it('the OWNER sees the offer', async () => {
     await expect(
-      getPendingTransfer({ appBlockId: APP, viewerUserId: OLD_OWNER, now: NOW })
+      getPendingTransfer({ appListingId: LISTING, viewerUserId: OLD_OWNER, now: NOW })
     ).resolves.toMatchObject({ id: TRANSFER, toUserId: NEW_OWNER });
   });
 
   it('the ADDRESSEE sees the offer they must accept', async () => {
     await expect(
-      getPendingTransfer({ appBlockId: APP, viewerUserId: NEW_OWNER, now: NOW })
+      getPendingTransfer({ appListingId: LISTING, viewerUserId: NEW_OWNER, now: NOW })
     ).resolves.toMatchObject({ id: TRANSFER });
   });
 
   it('🔴 a STRANGER gets null — not the row, and not a FORBIDDEN either', async () => {
     // `null`, deliberately: a throw would make this proc an EXISTENCE ORACLE, and "this
-    // app has a pending transfer" is itself the private fact. The refusal has to be
+    // listing has a pending transfer" is itself the private fact. The refusal has to be
     // indistinguishable from "there is no offer".
     await expect(
-      getPendingTransfer({ appBlockId: APP, viewerUserId: STRANGER, now: NOW })
+      getPendingTransfer({ appListingId: LISTING, viewerUserId: STRANGER, now: NOW })
     ).resolves.toBeNull();
   });
 
-  it('🔴 an ACCEPTED EDITOR gets null — a seat is not a claim on the app’s disposal', async () => {
+  it('🔴 an ACCEPTED EDITOR gets null — a seat is not a claim on the listing’s disposal', async () => {
     // An editor is a co-owner for CONTENT. Initiating a transfer is one of the two
     // owner-reserved actions, so watching one is not theirs either.
     await expect(
-      getPendingTransfer({ appBlockId: APP, viewerUserId: EDITOR, now: NOW })
+      getPendingTransfer({ appListingId: LISTING, viewerUserId: EDITOR, now: NOW })
     ).resolves.toBeNull();
   });
 
   it('POSITIVE CONTROL: that same editor really does resolve as an editor', async () => {
     // Otherwise the null above proves nothing — it could be a seat lookup wired to
     // nothing rather than a deliberate exclusion.
-    const { resolveAppAccess: resolve } = await import(
-      '~/server/services/blocks/app-access.service'
-    );
-    expect((await resolve(APP, EDITOR))!.role).toBe('editor');
+    expect((await resolveListingAccess(LISTING, EDITOR))!.role).toBe('editor');
   });
 
-  it('a missing app is NOT_FOUND', async () => {
-    mockDb.appBlock.findUnique.mockResolvedValue(null);
+  it('a missing listing is NOT_FOUND', async () => {
     await expect(
-      getPendingTransfer({ appBlockId: APP, viewerUserId: OLD_OWNER, now: NOW })
+      getPendingTransfer({ appListingId: 'apl_nope', viewerUserId: OLD_OWNER, now: NOW })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
+  it('the offer is looked up under the PARENT listing when asked from a shadow', async () => {
+    await getPendingTransfer({ appListingId: SHADOW, viewerUserId: OLD_OWNER, now: NOW });
+    expect(mockDb.appOwnershipTransfer.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { appListingId: LISTING, status: 'pending' } })
+    );
+  });
+
+  /**
+   * 🔴 THE OWNER SIDE OF THIS GATE IS `resolveListingAccess(...).role === 'owner'`, so
+   * it inherits whatever that resolver calls the owner.
+   *
+   * On `origin/main` this read did not exist in this shape; the re-key routed it through
+   * the listing resolver, and while that resolver returned the DENORMALIZED
+   * `AppListing.userId` the gate answered a different question than every sibling
+   * (`initiateTransfer`/`loadOwnedListing` resolve `appBlock.app.userId ?? userId`).
+   * The consequence is specific and inverted: the REAL owner gets `null` for their own
+   * outgoing offer — which reads as "there is no transfer", the one answer that is
+   * indistinguishable from safety — while the stale name reads both parties and the
+   * deadline.
+   */
+  describe('🔴 the owner half of the gate is the CANONICAL owner', () => {
+    beforeEach(() => {
+      mockDb.appOwnershipTransfer.findFirst.mockImplementation(async () =>
+        liveTransfer({ appListingId: DRIFTED, fromUserId: OLD_OWNER })
+      );
+    });
+
+    it('POSITIVE CONTROL: the DRIFTED fixture disagrees with itself', () => {
+      const l = LISTINGS[DRIFTED] as { userId: number; appBlock: { app: { userId: number } } };
+      expect(l.userId).toBe(STALE_OWNER);
+      expect(l.appBlock.app.userId).toBe(OLD_OWNER);
+    });
+
+    it('🔴 the REAL owner sees their own outgoing offer', async () => {
+      await expect(
+        getPendingTransfer({ appListingId: DRIFTED, viewerUserId: OLD_OWNER, now: NOW })
+      ).resolves.toMatchObject({ id: TRANSFER, toUserId: NEW_OWNER });
+    });
+
+    it('🔴 the STALE user named by the column sees NOTHING', async () => {
+      await expect(
+        getPendingTransfer({ appListingId: DRIFTED, viewerUserId: STALE_OWNER, now: NOW })
+      ).resolves.toBeNull();
+    });
+  });
+
   it('an EXPIRED offer is null for the owner too (expiry still wins over authorization)', async () => {
-    mockDb.appOwnershipTransfer.findFirst.mockResolvedValue(liveTransfer({ expiresAt: PAST }));
+    mockDb.appOwnershipTransfer.findFirst.mockImplementation(async () =>
+      liveTransfer({ expiresAt: PAST })
+    );
     await expect(
-      getPendingTransfer({ appBlockId: APP, viewerUserId: OLD_OWNER, now: NOW })
+      getPendingTransfer({ appListingId: LISTING, viewerUserId: OLD_OWNER, now: NOW })
     ).resolves.toBeNull();
   });
 });

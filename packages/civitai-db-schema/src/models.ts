@@ -2151,9 +2151,6 @@ export interface AppBlock {
   userScopeGrants?: AppUserScopeGrant[];
   reviews?: AppBlockReview[];
   appListing?: AppListing | null;
-  collaborators?: AppCollaborator[];
-  ownershipEvents?: AppOwnershipEvent[];
-  ownershipTransfers?: AppOwnershipTransfer[];
 }
 
 export interface AppBlockReview {
@@ -2172,8 +2169,8 @@ export interface AppBlockReview {
 }
 
 export interface AppCollaborator {
-  appBlockId: string;
-  appBlock?: AppBlock;
+  appListingId: string;
+  appListing?: AppListing;
   userId: number;
   user?: User;
   role: string;
@@ -2188,8 +2185,8 @@ export interface AppCollaborator {
 
 export interface AppOwnershipEvent {
   id: string;
-  appBlockId: string | null;
-  appBlock?: AppBlock | null;
+  appListingId: string | null;
+  appListing?: AppListing | null;
   slug: string;
   action: string;
   actorUserId: number | null;
@@ -2202,8 +2199,8 @@ export interface AppOwnershipEvent {
 
 export interface AppOwnershipTransfer {
   id: string;
-  appBlockId: string;
-  appBlock?: AppBlock;
+  appListingId: string;
+  appListing?: AppListing;
   fromUserId: number;
   fromUser?: User;
   toUserId: number;
@@ -2281,6 +2278,9 @@ export interface AppListing {
   publishRequests?: AppListingPublishRequest[];
   reports?: AppListingReport[];
   moderationEvents?: AppListingModerationEvent[];
+  collaborators?: AppCollaborator[];
+  ownershipEvents?: AppOwnershipEvent[];
+  ownershipTransfers?: AppOwnershipTransfer[];
 }
 
 export interface AppListingScreenshot {

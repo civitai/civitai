@@ -1,6 +1,7 @@
 import { dbRead } from '~/server/db/client';
 import {
-  resolveAppAccess,
+  listingKindSupports,
+  resolveListingAccess,
   resolveAccessibleAppBlockIds,
 } from '~/server/services/blocks/app-access.service';
 import type { RevenueSummary } from '~/server/services/blocks/buzz-attribution.service';
@@ -50,6 +51,18 @@ import type { RevenueSummary } from '~/server/services/blocks/buzz-attribution.s
  * Both scopes are therefore applied: the app must be one the caller may see, AND the
  * rows must belong to the app's CURRENT owner. That is the same forward-cut the
  * transfer decision describes, enforced on the read side.
+ *
+ * ## The third scope: KIND
+ *
+ * 🔴 EARNINGS ARE BLOCK-SCOPED AND THEREFORE ON-SITE ONLY. `BlockBuzzAttribution` keys
+ * on `appBlockId`; an OFF-SITE listing has no AppBlock, so no attribution row can ever
+ * belong to it. That is a structural fact, not a policy toggle, and it is the
+ * `earnings: false` cell of `CAPABILITIES_BY_KIND`.
+ *
+ * The refusal is EXPLICIT (`unsupportedKind`), never a zeroed summary. A zero here
+ * would be indistinguishable from "this app earned nothing" — the exact silent-zero
+ * shape this codebase keeps paying for — and would teach an off-site developer that
+ * their listing earns and simply has not yet.
  */
 
 export type AppScopedRevenue = {
@@ -66,35 +79,69 @@ const EMPTY_SUMMARY: RevenueSummary = {
 };
 
 export type AppEarningsResult =
-  | { ok: true; appBlockId: string; role: 'owner' | 'editor'; summary: RevenueSummary }
+  | {
+      ok: true;
+      appListingId: string;
+      appBlockId: string;
+      role: 'owner' | 'editor';
+      summary: RevenueSummary;
+    }
   /**
    * `notPermitted` is a REAL, reachable state (unlike revenue's deliberately-absent
    * `notOwned`): a collaborator-reachable read genuinely does compute access, so the
    * caller can be told "you may not see this" rather than handed a zero that is
    * indistinguishable from "this app earned nothing".
+   *
+   * `unsupportedKind` is the OFF-SITE refusal — the listing exists and the caller may
+   * well be its owner, but earnings are structurally block-scoped. Also explicit, for
+   * the same never-a-silent-zero reason.
    */
-  | { ok: false; appBlockId: string; reason: 'notPermitted' | 'notFound' };
+  | {
+      ok: false;
+      appListingId: string;
+      reason: 'notPermitted' | 'notFound' | 'unsupportedKind';
+    };
 
 /**
- * Earnings for ONE app, readable by its owner OR an accepted collaborator.
+ * Earnings for ONE listing, readable by its owner OR an accepted collaborator.
  *
- * Fail-closed: an app the caller has no role on returns `notPermitted` WITHOUT running
- * any aggregate — the caller never learns anything about a stranger's app, not even
- * its totals.
+ * Fail-closed: a listing the caller has no role on returns `notPermitted` WITHOUT
+ * running any aggregate — the caller never learns anything about a stranger's app, not
+ * even its totals. An OFF-SITE listing returns `unsupportedKind`, also without an
+ * aggregate (there is no id to aggregate on).
  */
 export async function getAppEarnings(opts: {
-  appBlockId: string;
+  appListingId: string;
   userId: number;
   from?: Date;
   to?: Date;
 }): Promise<AppEarningsResult> {
-  const access = await resolveAppAccess(opts.appBlockId, opts.userId);
-  if (!access) return { ok: false, appBlockId: opts.appBlockId, reason: 'notFound' };
-  if (!access.role) return { ok: false, appBlockId: opts.appBlockId, reason: 'notPermitted' };
+  const access = await resolveListingAccess(opts.appListingId, opts.userId);
+  if (!access) return { ok: false, appListingId: opts.appListingId, reason: 'notFound' };
+  if (!access.role) return { ok: false, appListingId: opts.appListingId, reason: 'notPermitted' };
+  // 🔴 KIND GATE. TWO INDEPENDENT clauses, OR-ed so that EITHER ONE refuses on its own:
+  // the declared capability table says off-site has no earnings, and the resolved
+  // `appBlockId` is the physical reason it cannot. They agree on the common shapes and
+  // DISAGREE on two that are both reachable, which is why neither clause may be dropped:
+  //
+  //   - kind 'offsite' WITH a block — `mapAppBlockToListing` mints this for any AppBlock
+  //     carrying an `externalUrl` (reachable via the mod proc `backfillAppListings`).
+  //     Only the KIND clause refuses it, and dropping it would return REAL money figures
+  //     for a listing whose kind declares `earnings: false`.
+  //   - kind 'onsite' WITHOUT a block — a listing whose backing AppBlock row is missing
+  //     or not yet linked. Only the BLOCK clause refuses it; dropping it would run the
+  //     aggregate with `appBlockId: null`.
+  //
+  // `app-collaborator-earnings.service.test.ts` fixtures BOTH shapes, so the `||`→`&&`
+  // mutant (which requires both clauses to fire before refusing) dies on each of them.
+  if (!listingKindSupports(access.kind, 'earnings') || !access.appBlockId) {
+    return { ok: false, appListingId: opts.appListingId, reason: 'unsupportedKind' };
+  }
+  const appBlockId = access.appBlockId;
 
   const where = {
     // 🔴 BOTH scopes. See the module header — dropping either one is the leak.
-    appBlockId: opts.appBlockId,
+    appBlockId,
     appOwnerUserId: access.ownerUserId,
     ...(opts.from || opts.to
       ? {
@@ -141,7 +188,8 @@ export async function getAppEarnings(opts: {
 
   return {
     ok: true,
-    appBlockId: opts.appBlockId,
+    appListingId: opts.appListingId,
+    appBlockId,
     role: access.role,
     summary: {
       pending: bucket(pending as Agg),

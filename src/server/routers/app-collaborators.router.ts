@@ -39,14 +39,27 @@ import type { SessionUser } from '~/types/session';
  * invite unacceptable. The author FLAG (a mod floor + the `app-dev-testers` cohort) is
  * the right gate; app ownership is not.
  *
- * ## No input-schema changes anywhere
+ * ## Keyed on the APP LISTING, so it serves BOTH store kinds
  *
- * Every proc here is NEW. No existing proc's input schema is touched by this feature,
- * so released `civitai` CLI versions driving the `AppBlocksSubmit`-scoped listing-media
- * procs are unaffected. None of these procs carries a CLI scope annotation: the CLI has
- * no collaborator commands, and an un-annotated proc implicitly requires
- * `TokenScope.Full`, which a session (or a Full personal key) satisfies via
- * `enforceTokenScope`'s early return. Annotate the day a CLI command needs one.
+ * Every proc takes `appListingId`. Seats are keyed to `AppListing` (see
+ * `app-access.service`'s header) precisely so an OFF-SITE listing — which has no
+ * AppBlock at all — can hold collaborators. What a seat then UNLOCKS is derived from
+ * the listing's kind, not from anything sent over the wire: `getAppEarnings` refuses an
+ * off-site listing with `unsupportedKind`, and the version/git surface is block-keyed
+ * so it is unreachable for one by construction.
+ *
+ * ## No PRE-EXISTING input schema is changed
+ *
+ * Every proc here is NEW AND UNCONSUMED, which is what makes re-keying their inputs
+ * from `appBlockId` to `appListingId` a non-event: no released `civitai` CLI version
+ * and no shipped client calls `appCollaborators.*`. The `AppBlocksSubmit`-scoped
+ * listing-media procs that the CLI DOES drive are untouched — `app-collaborator.cli-
+ * contract.test.ts` pins their schemas so the distinction is proven, not asserted.
+ *
+ * None of these procs carries a CLI scope annotation: the CLI has no collaborator
+ * commands, and an un-annotated proc implicitly requires `TokenScope.Full`, which a
+ * session (or a Full personal key) satisfies via `enforceTokenScope`'s early return.
+ * Annotate the day a CLI command needs one.
  */
 
 const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
@@ -116,7 +129,7 @@ export const appCollaboratorsRouter = router({
       );
       return run(() =>
         inviteCollaborator({
-          appBlockId: input.appBlockId,
+          appListingId: input.appListingId,
           targetUserId: input.targetUserId,
           actorUserId: ctx.user!.id,
         })
@@ -132,7 +145,7 @@ export const appCollaboratorsRouter = router({
       );
       return run(() =>
         removeCollaborator({
-          appBlockId: input.appBlockId,
+          appListingId: input.appListingId,
           targetUserId: input.targetUserId,
           actorUserId: ctx.user!.id,
         })
@@ -157,7 +170,7 @@ export const appCollaboratorsRouter = router({
       const { respondToInvite } = await import('~/server/services/blocks/app-collaborator.service');
       return run(() =>
         respondToInvite({
-          appBlockId: input.appBlockId,
+          appListingId: input.appListingId,
           userId: ctx.user!.id,
           accept: input.accept,
         })
@@ -170,7 +183,7 @@ export const appCollaboratorsRouter = router({
     .input(leaveAppSchema)
     .mutation(async ({ ctx, input }) => {
       const { leaveApp } = await import('~/server/services/blocks/app-collaborator.service');
-      return run(() => leaveApp({ appBlockId: input.appBlockId, userId: ctx.user!.id }));
+      return run(() => leaveApp({ appListingId: input.appListingId, userId: ctx.user!.id }));
     }),
 
   /**
@@ -187,7 +200,7 @@ export const appCollaboratorsRouter = router({
       );
       return run(() =>
         setCollaboratorDisplayed({
-          appBlockId: input.appBlockId,
+          appListingId: input.appListingId,
           userId: ctx.user!.id,
           displayed: input.displayed,
         })
@@ -236,7 +249,7 @@ export const appCollaboratorsRouter = router({
       );
       return run(() =>
         listCollaborators({
-          appBlockId: input.appBlockId,
+          appListingId: input.appListingId,
           viewerUserId: ctx.user?.id ?? null,
           isModerator: !!ctx.user?.isModerator,
         })
@@ -249,9 +262,13 @@ export const appCollaboratorsRouter = router({
    * 🔴 NOT a widening of `blocks.getMyRevenue`. That proc is keyed on the snapshotted
    * `appOwnerUserId` and is USER-WIDE; reusing it for an editor (by passing the
    * owner's id) would return the owner's ENTIRE PORTFOLIO. This one resolves the
-   * caller's role on THIS app and filters by `appBlockId` + the app's CURRENT owner.
-   * Returns an explicit `notPermitted` rather than a zero, so a caller can never read
-   * "no access" as "earned nothing".
+   * caller's role on THIS listing and filters by its `appBlockId` + the app's CURRENT
+   * owner. Returns an explicit `notPermitted` rather than a zero, so a caller can never
+   * read "no access" as "earned nothing".
+   *
+   * 🔴 ON-SITE ONLY, returning `unsupportedKind` for an off-site listing.
+   * `BlockBuzzAttribution` is keyed on `appBlockId`, which an off-site listing does not
+   * have — so there is nothing to sum, and a zeroed summary would be a lie.
    */
   getAppEarnings: appDeveloperProcedure
     .input(getAppEarningsSchema)
@@ -261,7 +278,7 @@ export const appCollaboratorsRouter = router({
       );
       return run(() =>
         getAppEarnings({
-          appBlockId: input.appBlockId,
+          appListingId: input.appListingId,
           userId: ctx.user!.id,
           from: input.from ? new Date(input.from) : undefined,
           to: input.to ? new Date(input.to) : undefined,
@@ -293,7 +310,7 @@ export const appCollaboratorsRouter = router({
       );
       return run(() =>
         initiateTransfer({
-          appBlockId: input.appBlockId,
+          appListingId: input.appListingId,
           toUserId: input.toUserId,
           actorUserId: ctx.user!.id,
         })
@@ -341,7 +358,7 @@ export const appCollaboratorsRouter = router({
         '~/server/services/blocks/app-ownership-transfer.service'
       );
       return run(() =>
-        getPendingTransfer({ appBlockId: input.appBlockId, viewerUserId: ctx.user!.id })
+        getPendingTransfer({ appListingId: input.appListingId, viewerUserId: ctx.user!.id })
       );
     }),
 });
