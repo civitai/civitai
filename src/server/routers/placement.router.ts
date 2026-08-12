@@ -17,6 +17,7 @@ import {
   removePlacementSchema,
   retractRemixGallerySubmissionSchema,
   setRemixGalleryPinsSchema,
+  setStickerCommentHiddenSchema,
   submitToRemixGallerySchema,
   suspendPlacerSchema,
 } from '~/server/schema/placement.schema';
@@ -44,6 +45,7 @@ import {
   getPlacementSettlementStates,
   getStickerPlacementCounts,
   getStickerPlacements,
+  setStickerCommentHidden,
 } from '~/server/services/sticker-placement.service';
 import {
   actOnRemixGallerySubmission,
@@ -199,6 +201,21 @@ export const placementRouter = router({
     .input(actOnStickerPlacementsSchema)
     .mutation(({ input, ctx }) =>
       actOnStickerPlacements({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+
+  /**
+   * Hiding or restoring the note on a sticker. Ungated for the same reason
+   * `actOnStickers` is: turning the flag off must not leave an owner holding a
+   * note on their own image with no way to refuse it.
+   */
+  setStickerCommentHidden: protectedProcedure
+    .input(setStickerCommentHiddenSchema)
+    .mutation(({ input, ctx }) =>
+      setStickerCommentHidden({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
     ),
 
   isSuspended: moderatorProcedure

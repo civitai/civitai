@@ -99,7 +99,24 @@ const reportedPlacementFilter = ({
   if (typeof placementId !== 'number' || !Number.isFinite(placementId))
     throw throwBadRequestError('report: a sticker placement report must name a placement');
 
-  return { details: { path: ['placementId'], equals: placementId } };
+  // A note is reported separately from the sticker it hangs off, and folding the
+  // two together would hide one behind the other: a moderator who cleared the
+  // artwork would never see that someone also complained about the text.
+  //
+  // Only ever added for `comment`, never for `sticker`. Reports filed before
+  // this field existed carry no `target` key at all, and `equals: 'sticker'`
+  // does not match a missing one — so asserting the default here would stop
+  // every new sticker report deduping against the history it should dedupe
+  // against, which is the same fold this predicate exists to prevent.
+  const target = (details as { target?: string } | undefined)?.target;
+  if (target !== 'comment') return { details: { path: ['placementId'], equals: placementId } };
+
+  return {
+    AND: [
+      { details: { path: ['placementId'], equals: placementId } },
+      { details: { path: ['target'], equals: 'comment' } },
+    ],
+  };
 };
 
 const validateReportCreation = async ({

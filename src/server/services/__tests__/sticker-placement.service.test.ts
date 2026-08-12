@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as MetricHelpers from '~/server/utils/metric-helpers';
+import { STICKER_REMOVAL_LOCK_HOURS } from '~/shared/utils/sticker-placement';
 
 /**
  * Fixture discipline: every quantity in scope is a distinct number, so a value
@@ -61,10 +63,20 @@ const transactionFindMany = vi.fn(async () => [] as unknown[]);
 const placementFindFirst = vi.fn(async () => null as unknown);
 const cosmeticFindUnique = vi.fn(async () => null as unknown);
 
+const placementFindUnique = vi.fn(async () => null as unknown);
+const placementUpdate = vi.fn(async () => ({}));
+const placementUpdateMany = vi.fn(async () => ({ count: 1 }));
+
 vi.mock('~/server/db/client', () => ({
   dbWrite: {
     $queryRaw: (...args: unknown[]) => queryRaw(...args),
-    placement: { create: placementCreate, count: placementCount, findUnique: vi.fn() },
+    placement: {
+      create: placementCreate,
+      count: placementCount,
+      findUnique: placementFindUnique,
+      update: placementUpdate,
+      updateMany: placementUpdateMany,
+    },
   },
   dbRead: {
     placement: {
@@ -77,7 +89,14 @@ vi.mock('~/server/db/client', () => ({
   },
 }));
 
+const updateEntityMetricDetached = vi.fn(async () => undefined);
+vi.mock('~/server/utils/metric-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof MetricHelpers>()),
+  updateEntityMetricDetached,
+}));
+
 const {
+  actOnStickerPlacement,
   createStickerPlacement,
   getStickerPlacements,
   getPlacementSettlementStates,
@@ -117,6 +136,7 @@ beforeEach(() => {
   queryRaw.mockResolvedValue([]);
   resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE });
   placementCount.mockResolvedValue(0);
+  placementUpdateMany.mockResolvedValue({ count: 1 });
   holdPlacementEscrow.mockImplementation(async () => {
     calls.push('hold');
     return { fee: 210, principal: 490 };
@@ -660,5 +680,309 @@ describe('the hover-card detail', () => {
 
     const [query] = placementFindFirst.mock.calls[0] as [{ where: { OR: MixedObject[] } }];
     expect(query.where.OR.map((clause) => clause.status)).toEqual(['approved']);
+  });
+});
+
+/**
+ * The image's Buzz counter, which the 2026-08-12 review agreed a sticker should
+ * move: a placement reads as a pseudo-tip, so it counts toward the number people
+ * already look at.
+ */
+describe("a placement counts toward the image's Buzz counter", () => {
+  const givenApprovable = () =>
+    placementFindUnique.mockResolvedValue({
+      id: PLACEMENT,
+      ownerId: OWNER,
+      targetId: IMAGE,
+      amount: PRICE,
+      status: 'pending',
+      surface: 'sticker',
+      data: { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 },
+      createdAt: new Date(0),
+      resolvedAt: null,
+    });
+
+  it('counts what the placer paid when an auto space approves on placement', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE, mode: 'auto' });
+    givenStickerAndBalance();
+
+    await createStickerPlacement(placeInput);
+
+    expect(updateEntityMetricDetached).toHaveBeenCalledWith({
+      entityType: 'Image',
+      entityId: IMAGE,
+      metricType: 'Buzz',
+      // `price`, not `setPrice`: the cap is what was actually charged.
+      amount: PRICE,
+    });
+  });
+
+  /**
+   * The guard that stops one payment being counted twice. `settlePlacement`
+   * returns `settled: false` when something else claimed the transition first —
+   * a double-submitted approve, a retried call — so counting on the action asked
+   * for rather than on the transition won would add the Buzz again with no
+   * second payment behind it.
+   */
+  it('does not count a settle that lost the race', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE, mode: 'auto' });
+    givenStickerAndBalance();
+    settlePlacement.mockImplementation(async () => ({ settled: false }));
+
+    await createStickerPlacement(placeInput);
+
+    expect(updateEntityMetricDetached).not.toHaveBeenCalled();
+  });
+
+  it('counts when the owner approves from the queue', async () => {
+    givenApprovable();
+
+    await actOnStickerPlacement({ placementId: PLACEMENT, action: 'approve', userId: OWNER });
+
+    expect(updateEntityMetricDetached).toHaveBeenCalledWith(
+      expect.objectContaining({ entityId: IMAGE, amount: PRICE })
+    );
+  });
+
+  it('counts nothing when the owner declines', async () => {
+    givenApprovable();
+
+    await actOnStickerPlacement({ placementId: PLACEMENT, action: 'decline', userId: OWNER });
+
+    expect(updateEntityMetricDetached).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The week an approved sticker stays up.
+ *
+ * Approval pays the owner and removal refunds nothing, so without the lock an
+ * owner could accept a sticker, bank the Buzz and wipe it before anyone saw it.
+ */
+describe('the owner cannot remove a sticker for a week after approving it', () => {
+  const HOUR_MS = 60 * 60 * 1000;
+
+  const givenApproved = (approvedHoursAgo: number, resolved = true) => {
+    const at = new Date(Date.now() - approvedHoursAgo * HOUR_MS);
+    placementFindUnique.mockResolvedValue({
+      id: PLACEMENT,
+      ownerId: OWNER,
+      targetId: IMAGE,
+      amount: PRICE,
+      status: 'approved',
+      surface: 'sticker',
+      data: { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 },
+      createdAt: at,
+      resolvedAt: resolved ? at : null,
+    });
+  };
+
+  it('refuses inside the week, and says when it opens', async () => {
+    givenApproved(STICKER_REMOVAL_LOCK_HOURS - 1);
+
+    await expect(
+      actOnStickerPlacement({ placementId: PLACEMENT, action: 'remove', userId: OWNER })
+    ).rejects.toThrow(/stays up for a week/);
+    expect(placementUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('allows it once the week is up, and moves no money', async () => {
+    givenApproved(STICKER_REMOVAL_LOCK_HOURS + 1);
+
+    await actOnStickerPlacement({ placementId: PLACEMENT, action: 'remove', userId: OWNER });
+
+    const [write] = placementUpdateMany.mock.calls[0] as [{ data: Record<string, unknown> }];
+    expect(write.data).toMatchObject({ status: 'removed', removedBy: 'owner' });
+    // `settlePlacement` claims `WHERE status = 'pending'`, so routing a live row
+    // through it would report success and change nothing.
+    expect(settlePlacement).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Fails CLOSED on a row with no `resolvedAt`. Skipping the check when the
+   * column is absent would let a hand-seeded row — or anything predating the
+   * approval path writing it — be removed immediately, which is the exact case
+   * the lock exists for.
+   */
+  it('measures from createdAt when the approval time is missing', async () => {
+    givenApproved(0, false);
+
+    await expect(
+      actOnStickerPlacement({ placementId: PLACEMENT, action: 'remove', userId: OWNER })
+    ).rejects.toThrow(/stays up for a week/);
+  });
+
+  /**
+   * A takedown is a moderation record, not an owner decision, and the abusive
+   * cases are the ones that must not wait. The exemption follows the role being
+   * exercised — an owner who is also a moderator is still the owner here.
+   */
+  it('does not bind a moderator acting on content that is not theirs', async () => {
+    givenApproved(1);
+
+    await actOnStickerPlacement({
+      placementId: PLACEMENT,
+      action: 'remove',
+      userId: STRANGER,
+      isModerator: true,
+    });
+
+    const [write] = placementUpdateMany.mock.calls[0] as [{ data: Record<string, unknown> }];
+    expect(write.data).toMatchObject({ removedBy: 'moderator' });
+  });
+
+  it('still binds an owner who happens to be a moderator', async () => {
+    givenApproved(1);
+
+    await expect(
+      actOnStickerPlacement({
+        placementId: PLACEMENT,
+        action: 'remove',
+        userId: OWNER,
+        isModerator: true,
+      })
+    ).rejects.toThrow(/stays up for a week/);
+  });
+});
+
+/** The optional note, and the partial approval that refuses it. */
+describe('the note on a placement', () => {
+  const withComment = (comment?: string) =>
+    placementFindUnique.mockResolvedValue({
+      id: PLACEMENT,
+      ownerId: OWNER,
+      targetId: IMAGE,
+      amount: PRICE,
+      status: 'pending',
+      surface: 'sticker',
+      data: {
+        cosmeticId: COSMETIC,
+        x: 0.5,
+        y: 0.5,
+        scale: 0.2,
+        rotation: 0,
+        ...(comment ? { comment } : {}),
+      },
+      createdAt: new Date(0),
+      resolvedAt: null,
+    });
+
+  it('is stored with the placement, trimmed and collapsed', async () => {
+    givenStickerAndBalance();
+
+    await createStickerPlacement({
+      ...placeInput,
+      data: { ...placeInput.data, comment: '  love   this\n\none  ' },
+    });
+
+    const [write] = placementCreate.mock.calls[0] as [{ data: { data: { comment?: string } } }];
+    expect(write.data.data.comment).toBe('love this one');
+  });
+
+  it('stores no comment key at all when the field was left blank', async () => {
+    givenStickerAndBalance();
+
+    await createStickerPlacement({ ...placeInput, data: { ...placeInput.data, comment: '   ' } });
+
+    const [write] = placementCreate.mock.calls[0] as [{ data: { data: Record<string, unknown> } }];
+    expect(write.data.data).not.toHaveProperty('comment');
+  });
+
+  it('is hidden by an approve that refuses it, before the placement goes live', async () => {
+    withComment('nice hat');
+
+    await actOnStickerPlacement({
+      placementId: PLACEMENT,
+      action: 'approve',
+      userId: OWNER,
+      hideComment: true,
+    });
+
+    const [write] = placementUpdate.mock.calls[0] as [{ data: { data: Record<string, unknown> } }];
+    expect(write.data.data).toMatchObject({ comment: 'nice hat', commentHidden: true });
+    // The rest of the payload survives: refusing a note must not be a way to
+    // move the sticker it was attached to.
+    expect(write.data.data).toMatchObject({ cosmeticId: COSMETIC, x: 0.5, scale: 0.2 });
+  });
+
+  /**
+   * Hiding is the owner's judgement about their own image, not a deletion. The
+   * three parties with a reason to see it keep seeing it — the owner who hid it,
+   * the placer who wrote and paid for it, and a moderator acting on a report,
+   * which is about text nobody else can read.
+   */
+  describe('once hidden', () => {
+    const givenHidden = () =>
+      placementFindFirst.mockResolvedValue({
+        id: PLACEMENT,
+        createdAt: new Date(0),
+        resolvedAt: new Date(0),
+        status: 'approved',
+        ownerId: OWNER,
+        placerId: PLACER,
+        data: {
+          cosmeticId: COSMETIC,
+          x: 0.5,
+          y: 0.5,
+          scale: 0.2,
+          rotation: 0,
+          comment: 'nice hat',
+          commentHidden: true,
+        },
+        placer: { id: PLACER, username: 'placer' },
+      });
+
+    beforeEach(() => {
+      placementFindFirst.mockReset();
+      cosmeticFindUnique.mockReset();
+      cosmeticFindUnique.mockResolvedValue(null);
+    });
+
+    it('is withheld from everyone else', async () => {
+      givenHidden();
+
+      const detail = await getStickerPlacementDetail({
+        placementId: PLACEMENT,
+        viewerId: STRANGER,
+      });
+
+      expect(detail.comment).toBeNull();
+      // Still stated, so the placer is never told their note is live when it is
+      // not — and so the owner's control knows which way it points.
+      expect(detail.commentHidden).toBe(true);
+    });
+
+    it('stays readable to the placer who paid for it', async () => {
+      givenHidden();
+
+      const detail = await getStickerPlacementDetail({ placementId: PLACEMENT, viewerId: PLACER });
+
+      expect(detail.comment).toBe('nice hat');
+    });
+
+    it('stays readable to a moderator acting on a report about it', async () => {
+      givenHidden();
+
+      const detail = await getStickerPlacementDetail({
+        placementId: PLACEMENT,
+        viewerId: STRANGER,
+        isModerator: true,
+      });
+
+      expect(detail.comment).toBe('nice hat');
+    });
+  });
+
+  it('writes no flag onto a placement that never carried one', async () => {
+    withComment();
+
+    await actOnStickerPlacement({
+      placementId: PLACEMENT,
+      action: 'approve',
+      userId: OWNER,
+      hideComment: true,
+    });
+
+    expect(placementUpdate).not.toHaveBeenCalled();
   });
 });

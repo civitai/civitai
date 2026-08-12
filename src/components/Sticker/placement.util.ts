@@ -23,6 +23,12 @@ export type PlacedSticker = {
    */
   placedAt: Date | string;
   isPending: boolean;
+  /**
+   * Whether this placement carries a note the viewer may read. The text itself
+   * is not in the listing — that runs for every image on a feed page — and comes
+   * with the hover card instead.
+   */
+  hasComment: boolean;
 };
 
 /**

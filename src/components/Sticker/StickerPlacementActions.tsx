@@ -9,18 +9,27 @@ import { trpc } from '~/utils/trpc';
  * One component for the image and the queue, so the two cannot end up asking
  * different questions before taking someone's money.
  *
- * **Decline confirms; approve does not.** Approving is reversible — the owner
- * can remove an approved placement afterwards and it refunds in full. Declining
- * keeps 30% of what the placer paid and cannot be undone, so it gets the extra
- * press. That asymmetry is the point rather than an inconsistency.
+ * **Decline confirms; approve does not.** Declining keeps 30% of what the placer
+ * paid and cannot be undone. Approving pays the owner and is not undone either —
+ * an approved sticker can be removed after a week, and that removes it without
+ * returning anyone's Buzz — but it takes nothing from the placer that they did
+ * not choose to spend, so it does not get the extra press.
  */
 export function StickerPlacementActions({
   placementIds,
   compact = false,
+  hasComment = false,
   onDone,
 }: {
   placementIds: number[];
   compact?: boolean;
+  /**
+   * Whether any of these carries a note, which is what makes partial approval
+   * meaningful. Offered only then rather than always: "Approve without note" on
+   * a placement with no note is a button that does nothing, in the one place an
+   * owner is deciding what to accept.
+   */
+  hasComment?: boolean;
   onDone?: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
@@ -58,6 +67,18 @@ export function StickerPlacementActions({
       >
         Approve{placementIds.length > 1 ? ` ${placementIds.length}` : ''}
       </Button>
+
+      {hasComment && (
+        <Button
+          size={size}
+          color="green"
+          variant="light"
+          disabled={disabled}
+          onClick={() => act.mutate({ placementIds, action: 'approve', hideComment: true })}
+        >
+          Approve without note
+        </Button>
+      )}
 
       <Popover opened={confirming} onChange={setConfirming} withArrow position="top" width={260}>
         <Popover.Target>

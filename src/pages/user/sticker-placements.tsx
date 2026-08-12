@@ -125,6 +125,14 @@ export default function StickerPlacements() {
                       Placed {formatDate(row.createdAt)}
                       {row.expiresAt ? ` · expires ${formatDate(row.expiresAt)}` : ''}
                     </Text>
+                    {/* Shown here because this is where the note is decided on.
+                        An owner choosing "Approve without note" needs to have
+                        read the note in the same glance as the sticker. */}
+                    {row.data.comment && (
+                      <Text size="sm" className="whitespace-pre-wrap break-words">
+                        &ldquo;{row.data.comment}&rdquo;
+                      </Text>
+                    )}
                     <Anchor
                       component={Link}
                       href={`/images/${row.targetId}`}
@@ -138,7 +146,11 @@ export default function StickerPlacements() {
                     </Anchor>
                   </Stack>
 
-                  <StickerPlacementActions placementIds={[row.id]} compact />
+                  <StickerPlacementActions
+                    placementIds={[row.id]}
+                    hasComment={!!row.data.comment}
+                    compact
+                  />
                 </Group>
               </Card>
             );
