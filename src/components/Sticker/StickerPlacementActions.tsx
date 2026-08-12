@@ -1,4 +1,5 @@
 import { Button, Group, Popover, Skeleton, Stack, Text } from '@mantine/core';
+import { IconMessage } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -93,7 +94,10 @@ export function StickerPlacementActions({
       {asksAboutNote ? (
         <Popover opened={approving} onChange={setApproving} withArrow position="top" width={280}>
           <Popover.Target>{approveButton}</Popover.Target>
-          <Popover.Dropdown>
+          {/* Unpadded so the header's divider can run the full width of the
+              panel. Same reason, and the same shape, as the sticker hover
+              card's dropdown. */}
+          <Popover.Dropdown p={0}>
             <NoteDecision
               placementId={placementIds[0]}
               pending={act.isPending}
@@ -178,32 +182,55 @@ function NoteDecision({
   );
 
   return (
-    <Stack gap="xs">
-      <Text size="xs" c="dimmed">
-        They left a note with this sticker:
-      </Text>
-
-      {isLoading ? (
-        <Skeleton height={32} radius="sm" />
-      ) : (
-        <Text size="sm" className="whitespace-pre-wrap break-words">
-          {data?.comment ?? 'The note is no longer available.'}
+    <>
+      {/* A panel header, divider across the full width, styled like the sticker
+          hover card's — the two are the same kind of object seen from two
+          places, and matching them is what stops the sticker UI reading as
+          several unrelated widgets. */}
+      <Group
+        gap={6}
+        px="sm"
+        py={6}
+        wrap="nowrap"
+        className="border-b border-gray-3 dark:border-dark-4"
+      >
+        <IconMessage size={14} className="shrink-0 text-yellow-6" />
+        <Text size="xs" c="dimmed" className="min-w-0 truncate">
+          They left a note with this sticker
         </Text>
-      )}
+      </Group>
 
-      <Text size="xs" c="dimmed">
-        Approving without it keeps the sticker and leaves the note private — only you, the person
-        who placed it, and moderators can read it.
-      </Text>
+      <Stack gap="xs" p="sm">
+        {/* Its own surface rather than a rule beside it. The note is the subject
+            of the question and everything else in the panel is instructions
+            about it, so it has to read as quoted content at a glance. */}
+        {isLoading ? (
+          <Skeleton height={40} radius="sm" />
+        ) : (
+          <div className="rounded-md bg-gray-2 px-2 py-1.5 dark:bg-dark-5">
+            <Text size="sm" className="whitespace-pre-wrap break-words">
+              {data?.comment ?? 'The note is no longer available.'}
+            </Text>
+          </div>
+        )}
 
-      <Stack gap={4}>
-        <Button size="compact-xs" color="green" loading={pending} onClick={onInclude}>
-          Approve with the note
-        </Button>
-        <Button size="compact-xs" variant="default" loading={pending} onClick={onOmit}>
-          Approve without it
-        </Button>
+        <Stack gap={4}>
+          <Button size="compact-xs" color="green" loading={pending} onClick={onInclude}>
+            Approve with the note
+          </Button>
+          <Button size="compact-xs" variant="default" loading={pending} onClick={onOmit}>
+            Approve without it
+          </Button>
+        </Stack>
+
+        {/* Under the buttons, not above them. It explains what the second button
+            does, and between the note and the choice it pushed the note far
+            enough from the buttons to be skipped. */}
+        <Text size="xs" c="dimmed">
+          Approving without it keeps the sticker and leaves the note private — only you, the person
+          who placed it, and moderators can read it.
+        </Text>
       </Stack>
-    </Stack>
+    </>
   );
 }
