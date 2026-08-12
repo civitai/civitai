@@ -3380,32 +3380,41 @@ export const removeCollectionItem = async ({
 
   const idColumn = Prisma.raw(`"${tableKey.toLowerCase()}Id"`);
 
-  // An automatically featured item is rejected rather than deleted. Deleting it would let the
-  // next job run re-add the same image, since the job's dedupe is "is there already a row" —
-  // so for these rows the tombstone IS the removal. REJECTED is invisible to the render path,
-  // which defaults to ACCEPTED only.
-  const rejected = await dbWrite.$executeRaw`
-    UPDATE "CollectionItem"
-    SET status = 'REJECTED'::"CollectionItemStatus",
-        "reviewedById" = ${userId},
-        "reviewedAt" = now()
-    WHERE "collectionId" = ${collectionId}
-      AND ${idColumn} = ${itemId}
-      AND "addedById" = ${AUTO_FEATURE_USER_ID}
-      AND note LIKE ${`${AUTO_FEATURE_NOTE_PREFIX}:%`}
-      AND status <> 'REJECTED'::"CollectionItemStatus"
+  // Read the row and decide here rather than expressing "is this an auto-featured row" as a SQL
+  // predicate. Both columns are nullable, and `NOT (addedById = X AND note LIKE Y)` is NULL —
+  // not TRUE — whenever `note` is NULL, which is the normal case: that silently matched zero
+  // rows and reported success. Same shape as saveItemInCollections' check, so the two removal
+  // doors agree about the same row.
+  const [existing] = await dbWrite.$queryRaw<
+    { id: number; addedById: number | null; note: string | null }[]
+  >`
+    SELECT id, "addedById", note
+    FROM "CollectionItem"
+    WHERE "collectionId" = ${collectionId} AND ${idColumn} = ${itemId}
+    LIMIT 1
   `;
 
-  if (!rejected) {
-    // The DELETE carries the same exclusion rather than trusting the UPDATE's row count: an
-    // already-REJECTED tombstone matches nothing above, and removing it a second time would
-    // hand the image straight back to the next job run.
-    await dbWrite.$executeRaw`
-      DELETE FROM "CollectionItem"
-      WHERE "collectionId" = ${collectionId}
-        AND ${idColumn} = ${itemId}
-        AND NOT ("addedById" = ${AUTO_FEATURE_USER_ID} AND note LIKE ${`${AUTO_FEATURE_NOTE_PREFIX}:%`})
-    `;
+  if (existing) {
+    // An automatically featured item is rejected rather than deleted. Deleting it would let the
+    // next job run re-add the same image, since the job's dedupe is "is there already a row" —
+    // so for these rows the tombstone IS the removal. REJECTED is invisible to the render path,
+    // which defaults to ACCEPTED only.
+    const isAutoFeatured =
+      existing.addedById === AUTO_FEATURE_USER_ID &&
+      !!existing.note?.startsWith(`${AUTO_FEATURE_NOTE_PREFIX}:`);
+
+    if (isAutoFeatured) {
+      await dbWrite.collectionItem.updateMany({
+        where: { id: existing.id },
+        data: {
+          status: CollectionItemStatus.REJECTED,
+          reviewedById: userId,
+          reviewedAt: new Date(),
+        },
+      });
+    } else {
+      await dbWrite.collectionItem.deleteMany({ where: { id: existing.id } });
+    }
   }
 
   return {

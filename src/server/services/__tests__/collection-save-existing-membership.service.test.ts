@@ -248,6 +248,24 @@ describe('saveItemInCollections removals', () => {
       })
     );
   });
+
+  // Attribution alone must not tombstone. CivitaiOfficial also curates by hand, and those adds
+  // carry no auto-feature note — tombstoning them would make them unremovable for good, since
+  // re-adding a rejected row only updates its tag.
+  it('deletes a CivitaiOfficial item that the job did not add', async () => {
+    await expect(
+      removeFrom({
+        addedById: AUTO_FEATURE_USER_ID,
+        note: 'contest entry',
+        collectionOwnerId: USER_ID,
+      })
+    ).resolves.toBeDefined();
+
+    expect(mockDbWrite.collectionItem.updateMany).not.toHaveBeenCalled();
+    expect(mockDbWrite.collectionItem.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: [555] } },
+    });
+  });
 });
 
 describe('saveItemInCollections with an existing closed-contest membership', () => {
