@@ -414,6 +414,11 @@ export function ModelVersionUpsertForm({
   // collapsed behind the master switch below.
   const hasExistingCharge = !!version?.paidAccess || hasExistingLicensingFee;
   const [chargeEnabled, setChargeEnabled] = useState(hasExistingCharge);
+  // The generation fee gets its own opt-in beside paid access, so each of the two ways to charge opens
+  // its own card. Paid access tracks `paidAccessConfig != null`; the fee has no such object, so it needs
+  // state of its own rather than reading `licensingFee > 0` (which would collapse the card the moment a
+  // creator cleared the field to retype it).
+  const [feeEnabled, setFeeEnabled] = useState(hasExistingLicensingFee);
   const rightsAffirmed = form.watch('rightsAffirmed') ?? false;
   // The fee is edited as a whole-number "buzz per N images" ratio; the stored `licensingFee` stays per-image.
   const [feeRatio, setFeeRatio] = useState(() => feeToRatio(initialLicensingFee));
@@ -510,6 +515,9 @@ export function ModelVersionUpsertForm({
   // model), and those lose exactly as much as closing the section does. Reading the switch position
   // instead reduces to `!chargeEnabled` — `hasExistingCharge` forces the `showChargeSettings` OR-arm
   // true — and misses every one of them.
+  // Step 4 for the fee: its own opt-in, so the fee editor is reached by saying you want to charge per
+  // generation rather than by the section being open at all.
+  const feeEditorOpen = showChargeSettings && showLicensingFeeBlock && feeEnabled;
   const removingStoredFee = hasExistingLicensingFee && (currentLicensingFee ?? 0) <= 0;
   // Read through `gateCharges` — what the submit actually sends — for the same reason it exists: the raw
   // config survives behind a hidden editor, so a version that went private, or whose usage control can no
@@ -582,6 +590,7 @@ export function ModelVersionUpsertForm({
   // `requiresRightsAffirmation`) a submit blocked by a control that isn't on screen.
   const feeSeededRef = useRef(false);
   const clearCharges = () => {
+    setFeeEnabled(false);
     if ((form.getValues('licensingFee') ?? 0) > 0) {
       form.setValue('licensingFee', 0, { shouldDirty: true });
       setFeeRatio((r) => ({ buzz: 0, images: r.images }));
@@ -605,7 +614,10 @@ export function ModelVersionUpsertForm({
   // clear. Re-opens the section too — a restored price behind a collapsed switch is the original bug.
   const restoreStoredCharges = () => {
     setChargeEnabled(true);
-    if (hasExistingLicensingFee) applyFeeRatio(feeToRatio(Number(version?.licensingFee ?? 0)));
+    if (hasExistingLicensingFee) {
+      setFeeEnabled(true);
+      applyFeeRatio(feeToRatio(Number(version?.licensingFee ?? 0)));
+    }
     if (version?.paidAccess) {
       const stored = toFormPaidAccessConfig(version.paidAccess, version.donationGoal);
       form.setValue('paidAccessConfig', stored, { shouldDirty: true });
@@ -631,12 +643,12 @@ export function ModelVersionUpsertForm({
   // re-suggesting on a second visit would re-price a creator who had already set the fee to 0 and closed
   // the section.
   useEffect(() => {
-    if (!showChargeSettings || !showLicensingFeeBlock || feeSeededRef.current) return;
+    if (!feeEditorOpen || feeSeededRef.current) return;
     feeSeededRef.current = true;
     if (hasExistingCharge || (form.getValues('licensingFee') ?? 0) > 0) return;
     const suggestion = suggestedFee({ modelType: model?.type, baseModel });
     if (suggestion > 0) applyFeeRatio(feeToRatio(suggestion));
-  }, [showChargeSettings, showLicensingFeeBlock]);
+  }, [feeEditorOpen]);
 
   // Non-commercial base models can't be monetized. The monetization controls are
   // hidden (shouldUnregister is false, so their values would otherwise persist and
@@ -794,6 +806,7 @@ export function ModelVersionUpsertForm({
       // And for the master switch, for the same reason: `reset` restores the stored fee/gate, so the
       // switch has to follow what was actually restored rather than its mount-time value.
       setChargeEnabled(!!version.paidAccess || Number(version.licensingFee ?? 0) > 0);
+      setFeeEnabled(Number(version.licensingFee ?? 0) > 0);
       feeSeededRef.current = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -876,6 +889,9 @@ export function ModelVersionUpsertForm({
     model?.nsfw && baseModel && nsfwRestrictedBaseModels.includes(baseModel as BaseModel);
 
   const canSave = !hasNsfwBaseModelViolation;
+
+  // A card header carrying its own toggle needs to read as a header, not as another row of fields.
+  const cardHeaderBg = colorScheme === 'dark' ? 'dark.6' : 'gray.1';
 
   // A private model, or a usage control that can't be gated, loses its gate on save no matter what the
   // creator does — the submit substitutes null either way. Nothing to offer them, so say why instead.
@@ -1263,9 +1279,7 @@ export function ModelVersionUpsertForm({
                   />
                 )}
                 {showChargeSettings && showPaidAccessInput && (
-                  <Stack gap={0}>
-                    <Divider label="Paid Access Set Up" mb="md" mt="md" />
-
+                  <Stack gap={0} mt="md">
                     <DismissibleAlert
                       id="ea-info"
                       size="sm"
@@ -1321,454 +1335,526 @@ export function ModelVersionUpsertForm({
                         </Text>
                       </Alert>
                     )}
-                    <Alert color="blue" icon={<IconInfoCircle size={18} />} my="sm">
-                      <Text size="xs">
-                        Charge a fee for access to this version — a timed{' '}
-                        <Text span fw={600}>
-                          Early Access
-                        </Text>{' '}
-                        window that becomes free when it ends, or ongoing{' '}
-                        <Text span fw={600}>
-                          Paid Access
-                        </Text>{' '}
-                        that always requires purchase. Buyers unlock download and generation.
-                      </Text>
-                    </Alert>
-                    <Switch
-                      my="sm"
-                      label="Charge for access to this version"
-                      checked={paidAccessConfig !== null}
-                      onChange={(e) =>
-                        form.setValue(
-                          'paidAccessConfig',
-                          e.target.checked
-                            ? {
-                                permanent: !canChooseTimed,
-                                timeframe: EARLY_ACCESS_CONFIG.timeframeValues[0],
-                                accessPrice: 5000,
-                                generationPrice: undefined,
-                                freePreviewGenerations: DEFAULT_GENERATION_TRIAL_LIMIT,
-                                donationGoalEnabled: false,
-                                donationGoal: undefined,
-                              }
-                            : null
-                        )
-                      }
-                      disabled={
-                        isEarlyAccessOver || (atEarlyAccessModelCap && paidAccessConfig === null)
-                      }
-                    />
-                    {paidAccessConfig && (
-                      <Stack>
-                        <Input.Wrapper
-                          label={<Text fw="bold">Access mode</Text>}
-                          description={
-                            paidAccessConfig.permanent
-                              ? 'Always requires purchase — this version never becomes free.'
-                              : 'A timed Early Access window; the version becomes free when it ends.'
-                          }
-                        >
-                          <SegmentedControl
-                            value={paidAccessConfig.permanent ? 'permanent' : 'timed'}
-                            onChange={(value) =>
-                              form.setValue('paidAccessConfig.permanent', value === 'permanent')
-                            }
-                            data={[
-                              {
-                                label: 'Early Access (timed)',
-                                value: 'timed',
-                                // A timed window can't be started after publish (permanent stays available).
-                                disabled: !canChooseTimed,
-                              },
-                              {
-                                label: 'Paid Access (permanent)',
-                                value: 'permanent',
-                              },
-                            ]}
-                            color="blue"
-                            size="xs"
-                            fullWidth
-                            disabled={isEarlyAccessOver}
-                            styles={{
-                              root: {
-                                border: `1px solid ${
-                                  colorScheme === 'dark'
-                                    ? theme.colors.dark[4]
-                                    : theme.colors.gray[4]
-                                }`,
-                                background: 'none',
-                                marginTop: 'calc(var(--mantine-spacing-xs) * 0.5)',
-                              },
-                            }}
-                          />
-                        </Input.Wrapper>
-                        {!paidAccessConfig.permanent && (
-                          <Input.Wrapper
-                            label={
-                              <Group gap="xs">
-                                <Text fw="bold">Early access time frame</Text>
-                                <Popover width={300} withArrow withinPortal shadow="sm">
-                                  <Popover.Target>
-                                    <IconInfoCircle size={16} />
-                                  </Popover.Target>
-                                  <Popover.Dropdown>
-                                    <Stack gap="xs">
-                                      <Text size="sm">
-                                        The amount of resources you can have in early access and for
-                                        how long is determined by actions you&rsquo;ve taken on the
-                                        site. Increase your limits by posting more free models that
-                                        people want, being kind, and generally doing good within the
-                                        community.
-                                      </Text>
-                                    </Stack>
-                                  </Popover.Dropdown>
-                                </Popover>
-                              </Group>
-                            }
-                            description="When the window ends the version becomes free. Up to 30 days at your current Creator Program score."
-                            error={form.formState.errors.paidAccessConfig?.message}
-                          >
-                            <SegmentedControl
-                              onChange={(value) =>
-                                form.setValue('paidAccessConfig.timeframe', parseInt(value, 10))
-                              }
-                              value={
-                                paidAccessConfig?.timeframe?.toString() ??
-                                EARLY_ACCESS_CONFIG.timeframeValues[0]
-                              }
-                              data={earlyAccessUnlockedDays.map((v) => ({
-                                label: `${v} days`,
-                                value: v.toString(),
-                                disabled: maxEarlyAccessValue < v,
-                              }))}
-                              color="blue"
-                              size="xs"
-                              styles={{
-                                root: {
-                                  border: `1px solid ${
-                                    colorScheme === 'dark'
-                                      ? theme.colors.dark[4]
-                                      : theme.colors.gray[4]
-                                  }`,
-                                  background: 'none',
-                                  marginTop: 'calc(var(--mantine-spacing-xs) * 0.5)', // 5px
-                                },
-                              }}
-                              fullWidth
-                              disabled={isEarlyAccessOver}
-                            />
-                            {earlyAccessUnlockedDays.length !==
-                              EARLY_ACCESS_CONFIG.timeframeValues.length && (
-                              <Group wrap="nowrap">
-                                <Text size="xs" c="yellow">
-                                  You will unlock more early access day over time by posting models
-                                  to the site.
-                                </Text>
-                              </Group>
-                            )}
-                            {!canIncreaseEarlyAccess && (
-                              <Text size="xs" c="dimmed" mt="sm">
-                                You cannot increase early access value after a model has been
-                                published
-                              </Text>
-                            )}
-                          </Input.Wrapper>
-                        )}
-                        <Stack mt="sm">
-                          <Card withBorder>
-                            <Card.Section withBorder inheritPadding py="sm">
-                              <Text fw={600} size="sm">
-                                Pricing
-                              </Text>
-                            </Card.Section>
-                            <Card.Section inheritPadding py="sm">
-                              <Stack>
-                                <InputNumber
-                                  name="paidAccessConfig.accessPrice"
-                                  label="Price for access"
-                                  description={
-                                    isGenOnly
-                                      ? 'What buyers pay to generate with this version on-site.'
-                                      : 'Buyers unlock download + generation.'
-                                  }
-                                  min={100}
-                                  max={accessPriceMax}
-                                  step={100}
-                                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-                                  withAsterisk
-                                  disabled={isEarlyAccessOver}
-                                />
-                                {(paidAccessConfig?.accessPrice ?? 0) > paidAccessCap && (
-                                  <Text size="xs" c="yellow.5">
-                                    This price is above your membership&apos;s{' '}
-                                    {paidAccessCap.toLocaleString()} Buzz cap. You can keep or lower
-                                    it, but not raise it.
-                                  </Text>
-                                )}
-                                {!currentUser?.isModerator && (
-                                  <CapUpsell
-                                    value={paidAccessConfig?.accessPrice}
-                                    cap={limits.access.maxPrice ?? Infinity}
-                                    capTier={feeCapTier}
-                                    capFor={(t) =>
-                                      monetizationLimits({ tier: t, baseModel, permanent: true })
-                                        .access.maxPrice ?? Infinity
+                    <Card withBorder mt="sm">
+                      <Card.Section withBorder inheritPadding py="xs" bg={cardHeaderBg}>
+                        <Group justify="space-between" wrap="nowrap">
+                          <div>
+                            <Text fw={600} size="sm">
+                              Charge for access to this version
+                            </Text>
+                            <Text size="xs" c="dimmed">
+                              Buyers unlock download and generation — for a timed Early Access
+                              window, or ongoing.
+                            </Text>
+                          </div>
+                          <Switch
+                            aria-label="Charge for access to this version"
+                            checked={paidAccessConfig !== null}
+                            onChange={(e) =>
+                              form.setValue(
+                                'paidAccessConfig',
+                                e.target.checked
+                                  ? {
+                                      permanent: !canChooseTimed,
+                                      timeframe: EARLY_ACCESS_CONFIG.timeframeValues[0],
+                                      accessPrice: 5000,
+                                      generationPrice: undefined,
+                                      freePreviewGenerations: DEFAULT_GENERATION_TRIAL_LIMIT,
+                                      donationGoalEnabled: false,
+                                      donationGoal: undefined,
                                     }
-                                    title="Price for access"
+                                  : null
+                              )
+                            }
+                            disabled={
+                              isEarlyAccessOver ||
+                              (atEarlyAccessModelCap && paidAccessConfig === null)
+                            }
+                          />
+                        </Group>
+                      </Card.Section>
+                      {paidAccessConfig && (
+                        <>
+                          <Card.Section inheritPadding py="sm">
+                            <Stack>
+                              <Input.Wrapper
+                                label={
+                                  <Text fw={500} size="sm">
+                                    Access mode
+                                  </Text>
+                                }
+                                description={
+                                  paidAccessConfig.permanent
+                                    ? 'Always requires purchase — this version never becomes free.'
+                                    : 'A timed Early Access window; the version becomes free when it ends.'
+                                }
+                              >
+                                <SegmentedControl
+                                  value={paidAccessConfig.permanent ? 'permanent' : 'timed'}
+                                  onChange={(value) =>
+                                    form.setValue(
+                                      'paidAccessConfig.permanent',
+                                      value === 'permanent'
+                                    )
+                                  }
+                                  data={[
+                                    {
+                                      label: 'Early Access (timed)',
+                                      value: 'timed',
+                                      // A timed window can't be started after publish (permanent stays available).
+                                      disabled: !canChooseTimed,
+                                    },
+                                    {
+                                      label: 'Paid Access (permanent)',
+                                      value: 'permanent',
+                                    },
+                                  ]}
+                                  color="blue"
+                                  size="xs"
+                                  fullWidth
+                                  disabled={isEarlyAccessOver}
+                                  styles={{
+                                    root: {
+                                      border: `1px solid ${
+                                        colorScheme === 'dark'
+                                          ? theme.colors.dark[4]
+                                          : theme.colors.gray[4]
+                                      }`,
+                                      background: 'none',
+                                      marginTop: 'calc(var(--mantine-spacing-xs) * 0.5)',
+                                    },
+                                  }}
+                                />
+                              </Input.Wrapper>
+                              {!paidAccessConfig.permanent && (
+                                <Input.Wrapper
+                                  label={
+                                    <Group gap="xs">
+                                      <Text fw="bold">Early access time frame</Text>
+                                      <Popover width={300} withArrow withinPortal shadow="sm">
+                                        <Popover.Target>
+                                          <IconInfoCircle size={16} />
+                                        </Popover.Target>
+                                        <Popover.Dropdown>
+                                          <Stack gap="xs">
+                                            <Text size="sm">
+                                              The amount of resources you can have in early access
+                                              and for how long is determined by actions you&rsquo;ve
+                                              taken on the site. Increase your limits by posting
+                                              more free models that people want, being kind, and
+                                              generally doing good within the community.
+                                            </Text>
+                                          </Stack>
+                                        </Popover.Dropdown>
+                                      </Popover>
+                                    </Group>
+                                  }
+                                  description="When the window ends the version becomes free. Up to 30 days at your current Creator Program score."
+                                  error={form.formState.errors.paidAccessConfig?.message}
+                                >
+                                  <SegmentedControl
+                                    onChange={(value) =>
+                                      form.setValue(
+                                        'paidAccessConfig.timeframe',
+                                        parseInt(value, 10)
+                                      )
+                                    }
+                                    value={
+                                      paidAccessConfig?.timeframe?.toString() ??
+                                      EARLY_ACCESS_CONFIG.timeframeValues[0]
+                                    }
+                                    data={earlyAccessUnlockedDays.map((v) => ({
+                                      label: `${v} days`,
+                                      value: v.toString(),
+                                      disabled: maxEarlyAccessValue < v,
+                                    }))}
+                                    color="blue"
+                                    size="xs"
+                                    styles={{
+                                      root: {
+                                        border: `1px solid ${
+                                          colorScheme === 'dark'
+                                            ? theme.colors.dark[4]
+                                            : theme.colors.gray[4]
+                                        }`,
+                                        background: 'none',
+                                        marginTop: 'calc(var(--mantine-spacing-xs) * 0.5)', // 5px
+                                      },
+                                    }}
+                                    fullWidth
+                                    disabled={isEarlyAccessOver}
                                   />
-                                )}
-                                {!isGenOnly && (
-                                  <>
-                                    <Radio.Group
-                                      label="Generating on-site"
-                                      value={genMode}
-                                      onChange={(next) => {
-                                        const mode = next as GenerationMode;
-                                        setGenMode(mode);
-                                        // Only `separate` carries a price — the other two must clear it, or a
-                                        // stale value would keep the cheaper tier alive underneath the choice.
-                                        if (mode !== 'separate')
-                                          form.setValue(
-                                            'paidAccessConfig.generationPrice',
-                                            undefined as never
-                                          );
+                                  {earlyAccessUnlockedDays.length !==
+                                    EARLY_ACCESS_CONFIG.timeframeValues.length && (
+                                    <Group wrap="nowrap">
+                                      <Text size="xs" c="yellow">
+                                        You will unlock more early access day over time by posting
+                                        models to the site.
+                                      </Text>
+                                    </Group>
+                                  )}
+                                  {!canIncreaseEarlyAccess && (
+                                    <Text size="xs" c="dimmed" mt="sm">
+                                      You cannot increase early access value after a model has been
+                                      published
+                                    </Text>
+                                  )}
+                                </Input.Wrapper>
+                              )}
+                            </Stack>
+                          </Card.Section>
+                          <Card.Section inheritPadding py="sm" withBorder>
+                            <Stack>
+                              <InputNumber
+                                name="paidAccessConfig.accessPrice"
+                                label="Price for access"
+                                description={
+                                  isGenOnly
+                                    ? 'What buyers pay to generate with this version on-site.'
+                                    : 'Buyers unlock download + generation.'
+                                }
+                                min={100}
+                                max={accessPriceMax}
+                                step={100}
+                                leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                                withAsterisk
+                                disabled={isEarlyAccessOver}
+                              />
+                              {(paidAccessConfig?.accessPrice ?? 0) > paidAccessCap && (
+                                <Text size="xs" c="yellow.5">
+                                  This price is above your membership&apos;s{' '}
+                                  {paidAccessCap.toLocaleString()} Buzz cap. You can keep or lower
+                                  it, but not raise it.
+                                </Text>
+                              )}
+                              {!currentUser?.isModerator && (
+                                <CapUpsell
+                                  value={paidAccessConfig?.accessPrice}
+                                  cap={limits.access.maxPrice ?? Infinity}
+                                  capTier={feeCapTier}
+                                  capFor={(t) =>
+                                    monetizationLimits({ tier: t, baseModel, permanent: true })
+                                      .access.maxPrice ?? Infinity
+                                  }
+                                  title="Price for access"
+                                />
+                              )}
+                              {!isGenOnly && (
+                                <>
+                                  <Radio.Group
+                                    label="Generating on-site"
+                                    value={genMode}
+                                    onChange={(next) => {
+                                      const mode = next as GenerationMode;
+                                      setGenMode(mode);
+                                      // Only `separate` carries a price — the other two must clear it, or a
+                                      // stale value would keep the cheaper tier alive underneath the choice.
+                                      if (mode !== 'separate')
                                         form.setValue(
-                                          'paidAccessConfig.freeGeneration',
-                                          mode === 'free'
+                                          'paidAccessConfig.generationPrice',
+                                          undefined as never
                                         );
-                                      }}
-                                    >
-                                      <Stack gap={4} mt={4}>
-                                        <Radio
-                                          value="bundled"
-                                          label="Same as the access price"
-                                          disabled={isEarlyAccessOver}
-                                        />
-                                        <Radio
-                                          value="separate"
-                                          label="A cheaper generation-only price"
-                                          disabled={isEarlyAccessOver}
-                                        />
-                                        <Radio
-                                          value="free"
-                                          label="Free for everyone"
-                                          description="Anyone can generate on-site without buying; only the download is gated. Earn per generation with a licensing fee instead."
-                                          disabled={isEarlyAccessOver}
-                                        />
-                                      </Stack>
-                                    </Radio.Group>
-                                    {genMode === 'separate' && (
-                                      <InputNumber
-                                        name="paidAccessConfig.generationPrice"
-                                        label="Generation-only price"
-                                        description="What buyers pay to generate on-site without unlocking the download. Can't exceed the access price."
-                                        min={50}
-                                        // Grandfather floor, as on the access price — generation is capped
-                                        // per-component and increase-only.
-                                        max={Math.max(
-                                          Math.min(
-                                            paidAccessConfig?.accessPrice ?? paidAccessCap,
-                                            paidAccessCap
-                                          ),
-                                          storedPaidGen?.price ?? 0
-                                        )}
-                                        step={100}
-                                        leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                                      form.setValue(
+                                        'paidAccessConfig.freeGeneration',
+                                        mode === 'free'
+                                      );
+                                    }}
+                                  >
+                                    <Stack gap={4} mt={4}>
+                                      <Radio
+                                        value="bundled"
+                                        label="Same as the access price"
                                         disabled={isEarlyAccessOver}
                                       />
-                                    )}
-                                  </>
-                                )}
-                                {/* A free grant has no trial to run out, so there's nothing to sample toward. */}
-                                {!(genMode === 'free' && !isGenOnly) && (
-                                  <InputNumber
-                                    name="paidAccessConfig.freePreviewGenerations"
-                                    label="Free preview generations"
-                                    description={`How many free test generations a user can do before purchasing the ${resourceLabel}.`}
-                                    min={0}
-                                    max={1000}
-                                    disabled={isEarlyAccessOver}
-                                    withAsterisk
-                                  />
-                                )}
-                                <InputSwitch
-                                  name="paidAccessConfig.acceptsBlueBuzz"
-                                  label="Also accept Blue Buzz"
-                                  description={ACCEPTS_BLUE_BUZZ_HINT}
-                                  disabled={isEarlyAccessOver}
-                                />
-                              </Stack>
-                            </Card.Section>
-                          </Card>
-
-                          {!paidAccessConfig.permanent &&
-                            (version?.status !== 'Published' || version?.donationGoal) &&
-                            features.donationGoals && (
-                              <Card withBorder>
-                                <Card.Section withBorder>
-                                  <Group py="sm" px="md" justify="space-between" wrap="nowrap">
-                                    <div>
-                                      <Text fw={500} size="sm">
-                                        Let the community unlock this early
-                                      </Text>
-                                      <Text size="xs">
-                                        If the goal is met before the window ends, early access ends
-                                        immediately and the version becomes free for everyone. After
-                                        the model is published, you cannot change this value.
-                                      </Text>
-                                    </div>
-                                    <InputSwitch
-                                      name="paidAccessConfig.donationGoalEnabled"
-                                      disabled={donationGoalLocked}
-                                      onChange={(e) => {
-                                        if (e.target.checked) {
-                                          form.setValue('paidAccessConfig.donationGoal', 50000);
-                                        } else {
-                                          form.setValue('paidAccessConfig.donationGoal', undefined);
-                                        }
-                                      }}
-                                    />
-                                  </Group>
-                                </Card.Section>
-                                {paidAccessConfig?.donationGoalEnabled && (
-                                  <Card.Section py="sm" px="md">
-                                    <Stack>
-                                      <InputNumber
-                                        name="paidAccessConfig.donationGoal"
-                                        label="Goal amount"
-                                        description="Early access purchases count toward this goal. After publishing, you cannot change this value."
-                                        min={MIN_DONATION_GOAL}
-                                        max={MAX_DONATION_GOAL}
-                                        step={100}
-                                        leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-                                        disabled={donationGoalLocked}
+                                      <Radio
+                                        value="separate"
+                                        label="A cheaper generation-only price"
+                                        disabled={isEarlyAccessOver}
                                       />
-                                      <Switch
-                                        label="Hide donation goals from public view"
-                                        description="Others won't see the progress bar or collected amount. The goal still works, and you and moderators can still see it. This applies to all of your donation goals."
-                                        checked={hideDonationGoals ?? false}
-                                        onChange={(e) =>
-                                          mutateUserSettings({
-                                            hideDonationGoals: e.target.checked,
-                                          })
-                                        }
-                                        disabled={hideDonationGoalsUpdating}
+                                      <Radio
+                                        value="free"
+                                        label="Free for everyone"
+                                        description="Anyone can generate on-site without buying; only the download is gated. Earn per generation with a licensing fee instead."
+                                        disabled={isEarlyAccessOver}
                                       />
                                     </Stack>
-                                  </Card.Section>
-                                )}
-                              </Card>
-                            )}
-                        </Stack>
+                                  </Radio.Group>
+                                  {genMode === 'separate' && (
+                                    <InputNumber
+                                      name="paidAccessConfig.generationPrice"
+                                      label="Generation-only price"
+                                      description="What buyers pay to generate on-site without unlocking the download. Can't exceed the access price."
+                                      min={50}
+                                      // Grandfather floor, as on the access price — generation is capped
+                                      // per-component and increase-only.
+                                      max={Math.max(
+                                        Math.min(
+                                          paidAccessConfig?.accessPrice ?? paidAccessCap,
+                                          paidAccessCap
+                                        ),
+                                        storedPaidGen?.price ?? 0
+                                      )}
+                                      step={100}
+                                      leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                                      disabled={isEarlyAccessOver}
+                                    />
+                                  )}
+                                </>
+                              )}
+                              {/* A free grant has no trial to run out, so there's nothing to sample toward. */}
+                              {!(genMode === 'free' && !isGenOnly) && (
+                                <InputNumber
+                                  name="paidAccessConfig.freePreviewGenerations"
+                                  label="Free preview generations"
+                                  description={`How many free test generations a user can do before purchasing the ${resourceLabel}.`}
+                                  min={0}
+                                  max={1000}
+                                  disabled={isEarlyAccessOver}
+                                  withAsterisk
+                                />
+                              )}
+                              <InputSwitch
+                                name="paidAccessConfig.acceptsBlueBuzz"
+                                label="Also accept Blue Buzz"
+                                description={ACCEPTS_BLUE_BUZZ_HINT}
+                                disabled={isEarlyAccessOver}
+                              />
+                            </Stack>
+                          </Card.Section>
+                        </>
+                      )}
+                    </Card>
+                    {paidAccessConfig && (
+                      <Stack mt="sm">
+                        {!paidAccessConfig.permanent &&
+                          (version?.status !== 'Published' || version?.donationGoal) &&
+                          features.donationGoals && (
+                            <Card withBorder>
+                              <Card.Section withBorder>
+                                <Group py="sm" px="md" justify="space-between" wrap="nowrap">
+                                  <div>
+                                    <Text fw={500} size="sm">
+                                      Let the community unlock this early
+                                    </Text>
+                                    <Text size="xs">
+                                      If the goal is met before the window ends, early access ends
+                                      immediately and the version becomes free for everyone. After
+                                      the model is published, you cannot change this value.
+                                    </Text>
+                                  </div>
+                                  <InputSwitch
+                                    name="paidAccessConfig.donationGoalEnabled"
+                                    disabled={donationGoalLocked}
+                                    onChange={(e) => {
+                                      if (e.target.checked) {
+                                        form.setValue('paidAccessConfig.donationGoal', 50000);
+                                      } else {
+                                        form.setValue('paidAccessConfig.donationGoal', undefined);
+                                      }
+                                    }}
+                                  />
+                                </Group>
+                              </Card.Section>
+                              {paidAccessConfig?.donationGoalEnabled && (
+                                <Card.Section py="sm" px="md">
+                                  <Stack>
+                                    <InputNumber
+                                      name="paidAccessConfig.donationGoal"
+                                      label="Goal amount"
+                                      description="Early access purchases count toward this goal. After publishing, you cannot change this value."
+                                      min={MIN_DONATION_GOAL}
+                                      max={MAX_DONATION_GOAL}
+                                      step={100}
+                                      leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                                      disabled={donationGoalLocked}
+                                    />
+                                    <Switch
+                                      label="Hide donation goals from public view"
+                                      description="Others won't see the progress bar or collected amount. The goal still works, and you and moderators can still see it. This applies to all of your donation goals."
+                                      checked={hideDonationGoals ?? false}
+                                      onChange={(e) =>
+                                        mutateUserSettings({
+                                          hideDonationGoals: e.target.checked,
+                                        })
+                                      }
+                                      disabled={hideDonationGoalsUpdating}
+                                    />
+                                  </Stack>
+                                </Card.Section>
+                              )}
+                            </Card>
+                          )}
                       </Stack>
                     )}
-
-                    {showLicensingFeeBlock && <Divider my="md" />}
                   </Stack>
                 )}
                 {showChargeSettings && showLicensingFeeBlock && (
-                  <Stack gap="xs" mt={showPaidAccessInput ? undefined : 'md'}>
-                    <Input.Wrapper
-                      label="License Fee"
-                      description={`Charge for generations using this version, as Buzz per number of generations. If this is a derivative of a base model that already charges a licensing fee, your fee is added on top of it. Set 0 to disable. Your membership allows up to ${licensingFeeCap} Buzz per generation for this model type.`}
-                    >
-                      <Group gap="xs" wrap="nowrap" mt={4}>
-                        <NumberInput
-                          aria-label="Licensing fee (Buzz)"
-                          value={feeRatio.buzz}
-                          onChange={(v) =>
-                            applyFeeRatio({
-                              buzz: typeof v === 'number' ? v : 0,
-                              images: feeRatio.images,
-                            })
-                          }
-                          min={0}
-                          max={feeMaxFor(licensingFeeCeilingLimits, feeRatio.images)}
-                          step={1}
-                          allowDecimal={false}
-                          leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-                          w={140}
-                        />
-                        <Text size="sm" c="dimmed">
-                          per
-                        </Text>
-                        <Select
-                          aria-label="Number of generations"
-                          value={String(feeRatio.images)}
-                          onChange={(v) => {
-                            const images = Number(v) || DEFAULT_FEE_IMAGES;
-                            // Clamp to the absolute ceiling only, in the RATIO domain: the cap is
-                            // per-image and can be fractional, so `cap * images` would put a decimal
-                            // into a whole-number field the schema rejects. floor() keeps it valid.
-                            applyFeeRatio({
-                              buzz: Math.min(
-                                feeRatio.buzz,
-                                feeMaxFor(licensingFeeCeilingLimits, images)
-                              ),
-                              images,
-                            });
-                          }}
-                          data={feeImageOptions.map((n) => ({
-                            value: String(n),
-                            label: String(n),
-                          }))}
-                          allowDeselect={false}
-                          w={90}
-                        />
-                        <Text size="sm" c="dimmed">
-                          {feeRatio.images === 1 ? 'generation' : 'generations'}
-                        </Text>
-                      </Group>
-                    </Input.Wrapper>
-                    {!currentUser?.isModerator && (
-                      <CapUpsell
-                        value={feeRatio.buzz}
-                        cap={feeMaxFor(limits, feeRatio.images)}
-                        capTier={feeCapTier}
-                        capFor={(t) =>
-                          feeMaxFor(
-                            monetizationLimits({ tier: t, modelType: model?.type, baseModel }),
-                            feeRatio.images
-                          )
-                        }
-                        title="Licensing fee"
-                        expanded={currentLicensingFee > licensingFeeCap}
-                        perLabel={`${feeRatio.images} generation${
-                          feeRatio.images === 1 ? '' : 's'
-                        }`}
-                      />
-                    )}
-                    {currentLicensingFee > licensingFeeCap && (
-                      <Text size="xs" c="yellow.5">
-                        This fee is above your membership&apos;s {licensingFeeCap} Buzz cap for this
-                        model type. You can keep or lower it, but not raise it.
-                      </Text>
-                    )}
-                    {showLicensingFeeSettlementCurrency && (
-                      <InputSelect
-                        name="licensingFeeSettlementCurrency"
-                        label="Settlement Currency"
-                        description="Currency used to pay you out for license fees. Cash settlement is restricted; contact support to enable."
-                        data={[
-                          { value: LicensingFeeSettlementCurrency.Buzz, label: 'Buzz' },
-                          { value: LicensingFeeSettlementCurrency.Cash, label: 'Cash' },
-                        ]}
-                        allowDeselect={false}
-                      />
-                    )}
-                    {currentLicensingFee > 0 && (
-                      <Group gap="xs" wrap="nowrap" align="flex-start">
-                        <IconAlertTriangle
-                          size={14}
-                          className="text-yellow-500"
-                          style={{ flexShrink: 0, marginTop: 2 }}
-                        />
-                        <Text size="xs" c="yellow">
-                          With a license fee set, this version stops earning creator compensation
-                          and tips — you earn through the license fee instead.
-                        </Text>
-                      </Group>
-                    )}
+                  <Stack gap={0} mt="md">
+                    <Card withBorder>
+                      <Card.Section withBorder inheritPadding py="xs" bg={cardHeaderBg}>
+                        <Group justify="space-between" wrap="nowrap">
+                          <div>
+                            <Text fw={600} size="sm">
+                              Charge a fee to generate with this version
+                            </Text>
+                            <Text size="xs" c="dimmed">
+                              Earn Buzz every time someone generates with it, whether or not they
+                              bought access.
+                            </Text>
+                          </div>
+                          <Switch
+                            aria-label="Charge a fee to generate with this version"
+                            checked={feeEnabled}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setFeeEnabled(checked);
+                              if (!checked && (form.getValues('licensingFee') ?? 0) > 0) {
+                                form.setValue('licensingFee', 0, { shouldDirty: true });
+                                setFeeRatio((r) => ({ buzz: 0, images: r.images }));
+                              }
+                            }}
+                          />
+                        </Group>
+                      </Card.Section>
+                      {feeEditorOpen && (
+                        <Card.Section inheritPadding py="sm">
+                          <Stack gap="xs">
+                            <Input.Wrapper
+                              label={
+                                <Group gap="xs">
+                                  <Text fw={500} size="sm">
+                                    Fee per generation
+                                  </Text>
+                                  <Popover width={320} withArrow withinPortal shadow="sm">
+                                    <Popover.Target>
+                                      <IconInfoCircle size={16} />
+                                    </Popover.Target>
+                                    <Popover.Dropdown>
+                                      <Stack gap="xs">
+                                        <Text size="sm">
+                                          You earn this in Buzz each time someone generates with
+                                          this version on-site, set as Buzz per number of
+                                          generations.
+                                        </Text>
+                                        <Text size="sm">
+                                          If this is a derivative of a base model that already
+                                          charges a licensing fee, yours is added on top of it.
+                                        </Text>
+                                        <Text size="sm">
+                                          Your membership allows up to {licensingFeeCap} Buzz per
+                                          generation for this model type.
+                                        </Text>
+                                      </Stack>
+                                    </Popover.Dropdown>
+                                  </Popover>
+                                </Group>
+                              }
+                            >
+                              <Group gap="xs" wrap="nowrap" mt={4}>
+                                <NumberInput
+                                  aria-label="Licensing fee (Buzz)"
+                                  value={feeRatio.buzz}
+                                  onChange={(v) =>
+                                    applyFeeRatio({
+                                      buzz: typeof v === 'number' ? v : 0,
+                                      images: feeRatio.images,
+                                    })
+                                  }
+                                  min={0}
+                                  max={feeMaxFor(licensingFeeCeilingLimits, feeRatio.images)}
+                                  step={1}
+                                  allowDecimal={false}
+                                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                                  w={140}
+                                />
+                                <Text size="sm" c="dimmed">
+                                  per
+                                </Text>
+                                <Select
+                                  aria-label="Number of generations"
+                                  value={String(feeRatio.images)}
+                                  onChange={(v) => {
+                                    const images = Number(v) || DEFAULT_FEE_IMAGES;
+                                    // Clamp to the absolute ceiling only, in the RATIO domain: the cap is
+                                    // per-image and can be fractional, so `cap * images` would put a decimal
+                                    // into a whole-number field the schema rejects. floor() keeps it valid.
+                                    applyFeeRatio({
+                                      buzz: Math.min(
+                                        feeRatio.buzz,
+                                        feeMaxFor(licensingFeeCeilingLimits, images)
+                                      ),
+                                      images,
+                                    });
+                                  }}
+                                  data={feeImageOptions.map((n) => ({
+                                    value: String(n),
+                                    label: String(n),
+                                  }))}
+                                  allowDeselect={false}
+                                  w={90}
+                                />
+                                <Text size="sm" c="dimmed">
+                                  {feeRatio.images === 1 ? 'generation' : 'generations'}
+                                </Text>
+                              </Group>
+                            </Input.Wrapper>
+                            {!currentUser?.isModerator && (
+                              <CapUpsell
+                                value={feeRatio.buzz}
+                                cap={feeMaxFor(limits, feeRatio.images)}
+                                capTier={feeCapTier}
+                                capFor={(t) =>
+                                  feeMaxFor(
+                                    monetizationLimits({
+                                      tier: t,
+                                      modelType: model?.type,
+                                      baseModel,
+                                    }),
+                                    feeRatio.images
+                                  )
+                                }
+                                title="Licensing fee"
+                                expanded={currentLicensingFee > licensingFeeCap}
+                                perLabel={`${feeRatio.images} generation${
+                                  feeRatio.images === 1 ? '' : 's'
+                                }`}
+                              />
+                            )}
+                            {currentLicensingFee > licensingFeeCap && (
+                              <Text size="xs" c="yellow.5">
+                                This fee is above your membership&apos;s {licensingFeeCap} Buzz cap
+                                for this model type. You can keep or lower it, but not raise it.
+                              </Text>
+                            )}
+                            {showLicensingFeeSettlementCurrency && (
+                              <InputSelect
+                                name="licensingFeeSettlementCurrency"
+                                label="Settlement Currency"
+                                description="Currency used to pay you out for license fees. Cash settlement is restricted; contact support to enable."
+                                data={[
+                                  { value: LicensingFeeSettlementCurrency.Buzz, label: 'Buzz' },
+                                  { value: LicensingFeeSettlementCurrency.Cash, label: 'Cash' },
+                                ]}
+                                allowDeselect={false}
+                              />
+                            )}
+                            {currentLicensingFee > 0 && (
+                              <Group gap="xs" wrap="nowrap" align="flex-start">
+                                <IconAlertTriangle
+                                  size={14}
+                                  className="text-yellow-500"
+                                  style={{ flexShrink: 0, marginTop: 2 }}
+                                />
+                                <Text size="xs" c="yellow">
+                                  With a license fee set, this version stops earning creator
+                                  compensation and tips — you earn through the license fee instead.
+                                </Text>
+                              </Group>
+                            )}
+                          </Stack>
+                        </Card.Section>
+                      )}
+                    </Card>
                   </Stack>
                 )}
               </Stack>

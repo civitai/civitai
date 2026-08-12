@@ -118,6 +118,8 @@ function renderNewVersionForm(onSubmit: (v?: unknown) => void = vi.fn()) {
 
 const chargeSwitch = () => page.getByRole('switch', { name: /I want to charge for this version/ });
 const accessSwitch = () => page.getByRole('switch', { name: /Charge for access to this version/ });
+const feeSwitch = () =>
+  page.getByRole('switch', { name: /Charge a fee to generate with this version/ });
 const rightsCheckbox = () => page.getByRole('checkbox', { name: /I hold the rights to monetize/ });
 const feeInput = () => page.getByLabelText('Licensing fee (Buzz)');
 
@@ -177,6 +179,9 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     expect(feeInput().elements()).toHaveLength(0);
 
     await userEvent.click(rightsCheckbox());
+    // Each way to charge has its own opt-in: the fee editor waits on its own switch.
+    expect(feeInput().elements()).toHaveLength(0);
+    await userEvent.click(feeSwitch());
     await expect.element(feeInput()).toBeInTheDocument();
     // Seeded on reveal — the suggestion is why the field isn't simply blank.
     expect(Number((feeInput().element() as HTMLInputElement).value)).toBeGreaterThan(0);
@@ -187,6 +192,7 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
 
     await userEvent.click(chargeSwitch());
     await userEvent.click(rightsCheckbox());
+    await userEvent.click(feeSwitch());
     await expect.element(feeInput()).toBeInTheDocument();
 
     await userEvent.click(chargeSwitch());
@@ -245,6 +251,24 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     expect(page.getByText(/Saving now removes this version/).elements()).toHaveLength(1);
     // Still open — this is an edit in a labelled field, not a collapse.
     await expect.element(chargeSwitch()).toBeChecked();
+  });
+
+  // The fee switch owns the fee the way the access switch owns the gate: closing it takes the value with
+  // it, or the card would hide a charge that still submits.
+  test('closing the fee switch clears the fee it revealed', async () => {
+    renderForm();
+
+    await userEvent.click(chargeSwitch());
+    await userEvent.click(rightsCheckbox());
+    await userEvent.click(feeSwitch());
+    await expect.element(feeInput()).toBeInTheDocument();
+
+    await userEvent.click(feeSwitch());
+    expect(feeInput().elements()).toHaveLength(0);
+
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0]).toMatchObject({ licensingFee: 0 });
   });
 
   // A private model drops its gate on save (handleSubmit substitutes null), while the form's config still
