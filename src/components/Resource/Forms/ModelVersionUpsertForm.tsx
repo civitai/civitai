@@ -514,6 +514,10 @@ export function ModelVersionUpsertForm({
   // Read through `gateCharges` — what the submit actually sends — for the same reason it exists: the raw
   // config survives behind a hidden editor, so a version that went private, or whose usage control can no
   // longer be gated, drops its gate on save while the config still reads non-null.
+  //
+  // "charges nothing" stands in for "sends no gate" because `buildModelVersionTerms` has no branch that
+  // emits a gate charging nothing (and the server rejects that shape). Add one and this starts lying —
+  // switch it to the nullness of `toPaidAccessInput` then.
   const removingStoredGate = !!version?.paidAccess && !gateCharges;
   const removingStoredCharge = removingStoredFee || removingStoredGate;
 
@@ -873,6 +877,14 @@ export function ModelVersionUpsertForm({
 
   const canSave = !hasNsfwBaseModelViolation;
 
+  // A private model, or a usage control that can't be gated, loses its gate on save no matter what the
+  // creator does — the submit substitutes null either way. Nothing to offer them, so say why instead.
+  const gateRemovalIsStructural = removingStoredGate && (isPrivateModel || !paidAccessUsageOk);
+  // Whether the control each sentence is about is actually on screen (see the colour rule below).
+  const removalControlsVisible =
+    (!removingStoredFee || (showChargeSettings && showLicensingFeeBlock)) &&
+    (!removingStoredGate || (showChargeSettings && showPaidAccessInput));
+
   return (
     <>
       <Form id={id} form={form} onSubmit={handleSubmit}>
@@ -1205,9 +1217,9 @@ export function ModelVersionUpsertForm({
                 )}
                 {removingStoredCharge && (
                   <Stack gap={4} mt="sm" align="flex-start">
-                    {/* Red only when the priced controls are off screen — that's the case the creator
-                        can't see. With them open this is a note about an edit they just made. */}
-                    <Text size="xs" c={showChargeSettings ? 'yellow.5' : 'red'}>
+                    {/* Red only when the control the sentence is about is off screen — that's the case
+                        the creator can't see. On screen, this describes an edit they just made. */}
+                    <Text size="xs" c={removalControlsVisible ? 'yellow.5' : 'red'}>
                       Saving now removes this version&apos;s{' '}
                       {removingStoredFee && removingStoredGate
                         ? 'license fee and paid access'
@@ -1216,20 +1228,31 @@ export function ModelVersionUpsertForm({
                         : 'paid access'}
                       .
                     </Text>
-                    {removingStoredGate && (
-                      <Text size="xs" c="red">
-                        You will not be able to add this model to early access again after removing
-                        it. Also, your payment for early access will be lost.
-                      </Text>
+                    {removingStoredGate &&
+                      (gateRemovalIsStructural ? (
+                        <Text size="xs" c="red">
+                          {isPrivateModel
+                            ? "A private model can't have paid access, so this can't be kept."
+                            : "This version's usage control can't be gated, so this can't be kept."}
+                        </Text>
+                      ) : (
+                        <Text size="xs" c="red">
+                          You will not be able to add this model to early access again after
+                          removing it. Also, your payment for early access will be lost.
+                        </Text>
+                      ))}
+                    {/* No affordance for a removal the creator cannot prevent: the submit substitutes
+                        null for these regardless, so restoring would clear nothing and read as broken. */}
+                    {(removingStoredFee || !gateRemovalIsStructural) && (
+                      <Anchor
+                        component="button"
+                        type="button"
+                        size="xs"
+                        onClick={restoreStoredCharges}
+                      >
+                        Restore the stored settings
+                      </Anchor>
                     )}
-                    <Anchor
-                      component="button"
-                      type="button"
-                      size="xs"
-                      onClick={restoreStoredCharges}
-                    >
-                      Restore the stored settings
-                    </Anchor>
                   </Stack>
                 )}
                 {(showRightsAffirmation || requiresRightsAffirmation) && (

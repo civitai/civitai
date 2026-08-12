@@ -261,9 +261,18 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
       </ModelVersionUpsertForm>
     );
 
-    await expect
-      .element(page.getByText(/Saving now removes this version's paid access/))
-      .toBeInTheDocument();
+    // Present at first render (no user action), so read it synchronously behind a stable anchor.
+    await expect.element(chargeSwitch()).toBeChecked();
+    expect(page.getByText(/Saving now removes this version's paid access/).elements()).toHaveLength(
+      1
+    );
+    // The warning is doing the work precisely BECAUSE the gate editor isn't on screen for a private
+    // model — without this the test would still pass if that editor came back.
+    expect(accessSwitch().elements()).toHaveLength(0);
+    // And no restore affordance: handleSubmit substitutes null for a private model whatever we write.
+    expect(
+      page.getByRole('button', { name: 'Restore the stored settings' }).elements()
+    ).toHaveLength(0);
   });
 
   // A grandfathered version — priced before the affirmation existed — has to tick the box to save at all.
