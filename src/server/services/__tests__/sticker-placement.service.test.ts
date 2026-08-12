@@ -270,6 +270,36 @@ describe("the creator's size limit", () => {
 
     expect(placed.data.scale).toBe(0.35);
   });
+
+  /**
+   * Layer order is placement order, and the client cannot order what it was not
+   * told. Dropping `createdAt` from the select is a plausible tidy-up — nothing
+   * in the payload is named after it — and it degrades into stickers stacking in
+   * whatever order Prisma happened to return, which only shows up where two of
+   * them overlap.
+   */
+  it('carries when each placement was made', async () => {
+    const placedAt = new Date('2026-08-12T12:00:00Z');
+    placementFindMany.mockResolvedValueOnce([
+      {
+        id: 7,
+        targetId: IMAGE,
+        placerId: PLACER,
+        ownerId: OWNER,
+        status: 'approved',
+        amount: PRICE,
+        data: { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.35, rotation: 0 },
+        createdAt: placedAt,
+      },
+    ]);
+
+    const [placed] = await getStickerPlacements({ imageIds: [IMAGE] });
+
+    expect(placed.placedAt).toEqual(placedAt);
+    expect(placementFindMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ orderBy: { createdAt: 'asc' } })
+    );
+  });
 });
 
 describe('the order money and uses move in', () => {

@@ -3,6 +3,7 @@ import { IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettingsProvider';
 import { StickerCountChip, useStickerInviteStyle } from '~/components/Sticker/StickerCountChip';
+import { StickerHistoryButton } from '~/components/Sticker/StickerHistoryPanel';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
 import {
   useImagePlacementSpace,
@@ -117,6 +118,13 @@ export function StickerPlacementBar({
             onClick={() => openTray(imageId)}
             buttonProps={buttonStyling?.('BuzzTip')}
           />
+        )}
+
+        {/* Only where there is a history to read. At zero the group is an
+            invitation to place the first one, and a history button beside it
+            opens onto nothing. */}
+        {total > 0 && (
+          <StickerHistoryButton imageId={imageId} buttonProps={buttonStyling?.('AddReaction')} />
         )}
 
         {canPlace && (
