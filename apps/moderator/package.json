@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@civitai/auth": "workspace:*",
+    "@civitai/axiom": "workspace:*",
     "@civitai/brand": "workspace:*",
     "@civitai/buzz": "workspace:*",
     "@civitai/clickhouse": "workspace:*",

@@ -1,9 +1,10 @@
-import type { Handle } from '@sveltejs/kit';
+import type { Handle, HandleServerError } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { guard } from '$lib/server/auth';
 import { applyGrants, canAccess } from '$lib/server/access';
 import { loadPageAccessGrants } from '$lib/server/page-access';
 import { authenticateWebhookToken } from '$lib/server/webhook-endpoint';
+import { logAxiomError } from '$lib/server/axiom';
 
 // Where authenticated-but-not-a-moderator users get sent. A 403 would be a dead end (re-login can't
 // grant the role); bounce them to the main site instead. Overridable via env for non-prod hosts.
@@ -65,4 +66,30 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   return resolve(event);
+};
+
+// Without this, an uncaught throw anywhere in a load, action or endpoint is a 500 page and a stack on pod
+// stdout — which is why "it errors but the action went through" could be reported for a week without
+// anyone being able to say which action or why. Logged with the route rather than the raw URL: `route.id`
+// is the template (`/reports/[slug]`), so failures group instead of scattering across every id, and it
+// cannot carry whatever a moderator typed into a lookup box.
+//
+// `getClientAddress()` is deliberately not read here — it throws when there is no address to give, which
+// inside the error handler would replace the real fault with a second one.
+export const handleError: HandleServerError = ({ error, event, status, message }) => {
+  void logAxiomError(error, {
+    event: 'unhandled server error',
+    // Not `name` — safeError spreads last and sets that to the error's own class.
+    app: 'moderator',
+    route: event.route.id,
+    method: event.request.method,
+    status,
+    // The action a form posted to (`?/setStatus`), which is the part of the URL that says WHICH verb
+    // failed. Named separately because SvelteKit keeps it in the query string, not the path.
+    action: [...event.url.searchParams.keys()].find((k) => k.startsWith('/')) ?? null,
+    userId: event.locals.user?.id ?? null,
+  });
+  // What the moderator sees. Deliberately not `error.message` — these throws carry query text and
+  // internal detail, and the operator can do nothing with either.
+  return { message: message || 'Internal Error' };
 };
