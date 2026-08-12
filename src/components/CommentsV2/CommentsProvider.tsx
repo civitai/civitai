@@ -1,14 +1,6 @@
 import type { MantineColor } from '@mantine/core';
 
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import { trpc } from '~/utils/trpc';
@@ -17,6 +9,7 @@ import { immer } from 'zustand/middleware/immer';
 import { useRouter } from 'next/router';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import type { CommentV2Model } from '~/server/selectors/commentv2.selector';
+import type { ReplyThread } from '~/server/services/commentsv2.reply-threads';
 import { ThreadSort } from '../../server/common/enums';
 import { constants } from '~/server/common/constants';
 import { RETURN_TO_ROOT_THREAD_ID } from '~/components/CommentsV2/commentv2.utils';
@@ -27,6 +20,8 @@ export type CommentV2BadgeProps = {
   color: MantineColor;
   label: string;
 };
+
+type RootEntity = Pick<CommentConnectorInput, 'entityType' | 'entityId'>;
 
 type Props = CommentConnectorInput & {
   initialCount?: number;
@@ -67,8 +62,7 @@ type RootThreadContext = {
   isInitialThread: boolean;
   setInitialThread: () => void;
   setRootThread: (entityType: CommentConnectorInput['entityType'], entityId: number) => void;
-  expanded: number[];
-  toggleExpanded: (commentId: number) => void;
+  setExpanded: (commentId: number, expanded: boolean) => void;
   activeComment?: CommentV2Model;
   /**
    * The surface the section belongs to. Every nested thread reports its own entity type as
@@ -84,6 +78,22 @@ export const useRootThreadContext = () => {
   return context;
 };
 
+/**
+ * Reply trees a page fetched alongside its own comments. A nested thread reads its first page and
+ * its counts from here rather than asking for them, so a whole conversation costs one request per
+ * page instead of one per comment per level — and whether a thread renders open follows from what
+ * this holds, so nothing has to be written anywhere to open it.
+ */
+type SeededReplyThreads = {
+  byCommentId: Map<number, ReplyThread>;
+  /** Comments the batch confirmed have no replies at all, over the levels it finished. */
+  childless: Set<number>;
+};
+
+const emptySeededThreads: SeededReplyThreads = { byCommentId: new Map(), childless: new Set() };
+const SeededReplyThreadsCtx = createContext<SeededReplyThreads>(emptySeededThreads);
+export const useSeededReplyThreads = () => useContext(SeededReplyThreadsCtx);
+
 export function RootThreadProvider({
   entityType: initialEntityType,
   entityId: initialEntityId,
@@ -91,17 +101,29 @@ export function RootThreadProvider({
   ...props
 }: Props) {
   const router = useRouter();
-  const [entity, setEntity] = useState({
-    entityType: initialEntityType,
-    entityId: initialEntityId,
-  });
   const [sort, setSort] = useState<ThreadSort>(ThreadSort.Oldest);
-  const expanded = useNewCommentStore((state) => state.expandedComments);
-  const toggleExpanded = useNewCommentStore((state) => state.toggleExpanded);
+  const setExpanded = useNewCommentStore((state) => state.setExpanded);
+
+  const queryType = router.query.commentParentType as
+    | CommentConnectorInput['entityType']
+    | undefined;
+  const queryId = parseNumericString(router.query.commentParentId);
+  const linkedThread: RootEntity | undefined =
+    queryType && queryId ? { entityType: queryType, entityId: queryId } : undefined;
+
+  // A deep-link decides where the section starts; opening a thread from inside it is an override on
+  // top of that. Deriving rather than syncing keeps a second deep-link working — arriving at a
+  // different one changes the key below, which drops the override exactly as a remount would.
+  const rootKey = `${initialEntityType}_${initialEntityId}_${queryType ?? ''}_${queryId ?? ''}`;
+  const [state, setState] = useState<{ rootKey: string; override?: RootEntity }>({ rootKey });
+  if (state.rootKey !== rootKey) setState({ rootKey });
+  const override = state.rootKey === rootKey ? state.override : undefined;
+
+  const entity = override ??
+    linkedThread ?? { entityType: initialEntityType, entityId: initialEntityId };
+
   const isInitialThread =
     entity.entityId === initialEntityId && entity.entityType === initialEntityType;
-  const queryType = router.query.commentParentType as CommentConnectorInput['entityType'];
-  const queryId = parseNumericString(router.query.commentParentId);
 
   const { data: activeComment } = trpc.commentv2.getSingle.useQuery(
     { id: entity.entityId },
@@ -109,42 +131,44 @@ export function RootThreadProvider({
   );
 
   const setRootThread = useCallback(
-    (entityType: CommentConnectorInput['entityType'], entityId: number) => {
-      setEntity({
-        entityType,
-        entityId,
-      });
-    },
+    (entityType: CommentConnectorInput['entityType'], entityId: number) =>
+      setState((current) => ({ ...current, override: { entityType, entityId } })),
     []
   );
 
-  const setInitialThread = useCallback(() => {
-    setEntity({
-      entityType: initialEntityType,
-      entityId: initialEntityId,
-    });
-  }, [initialEntityType, initialEntityId]);
+  const setInitialThread = useCallback(
+    () =>
+      setState((current) => ({
+        ...current,
+        override: { entityType: initialEntityType, entityId: initialEntityId },
+      })),
+    [initialEntityType, initialEntityId]
+  );
 
-  useEffect(() => {
-    if (queryType && queryId) {
-      setRootThread(queryType, queryId);
-    }
-  }, [queryType, queryId]);
+  const value = useMemo(
+    () => ({
+      sort,
+      setSort,
+      setRootThread,
+      setInitialThread,
+      isInitialThread,
+      setExpanded,
+      activeComment,
+      rootEntityType: initialEntityType,
+    }),
+    [
+      sort,
+      setRootThread,
+      setInitialThread,
+      isInitialThread,
+      setExpanded,
+      activeComment,
+      initialEntityType,
+    ]
+  );
 
   return (
-    <RootThreadCtx.Provider
-      value={{
-        sort,
-        setSort,
-        expanded,
-        setRootThread,
-        setInitialThread,
-        isInitialThread,
-        toggleExpanded,
-        activeComment,
-        rootEntityType: initialEntityType,
-      }}
-    >
+    <RootThreadCtx.Provider value={value}>
       <CommentsProvider
         entityType={entity.entityType}
         entityId={entity.entityId}
@@ -183,21 +207,23 @@ export function CommentsProvider({
   const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const utils = trpc.useUtils();
   const { sort, setSort, activeComment, rootEntityType, isInitialThread } = useRootThreadContext();
-  const setExpanded = useNewCommentStore((state) => state.setExpanded);
-  const collapse = useNewCommentStore((state) => state.collapse);
-  const autoExpanded = useRef(new Set<number>());
   const storeKey = getKey(entityType, entityId);
   const created = useNewCommentStore(
-    useCallback((state) => state.comments[storeKey] ?? [], [storeKey])
+    useCallback((state) => state.comments[storeKey] ?? emptyComments, [storeKey])
   );
 
-  // Fetch thread metadata separately (only metadata, no comments)
-  const { data: threadDetails } = trpc.commentv2.getThreadDetails.useQuery({
-    entityId,
-    entityType,
-  });
+  // A nested thread the page above already fetched. Passed to the queries below as initial data,
+  // which — unlike writing it into the cache — lands on whatever key each query actually uses.
+  const inheritedThread = useSeededReplyThreads().byCommentId.get(entityId);
+  const seeded = entityType === 'comment' ? inheritedThread : undefined;
+
+  const { data: threadDetails } = trpc.commentv2.getThreadDetails.useQuery(
+    { entityId, entityType },
+    seeded
+      ? { initialData: { id: seeded.id, locked: seeded.locked, hiddenCount: seeded.hiddenCount } }
+      : undefined
+  );
 
   // Notification deep-links pass ?highlight=<commentId>. Forward it to the server so the
   // target comment is included in the first page even when it would otherwise be past the
@@ -215,7 +241,6 @@ export function CommentsProvider({
       : undefined;
   const replyPageSize = constants.comments.replyPageSize;
 
-  // Use infinite query with cursor-based pagination for comments
   const { data, isLoading, isRefetching, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.commentv2.getInfinite.useInfiniteQuery(
       {
@@ -231,72 +256,33 @@ export function CommentsProvider({
       {
         enabled: initialCount === undefined || initialCount > 0,
         getNextPageParam: (lastPage) => lastPage?.nextCursor,
+        initialData: seeded
+          ? {
+              pages: [
+                {
+                  comments: seeded.comments,
+                  nextCursor: seeded.nextCursor,
+                  targetComment: null,
+                  replyThreads: [],
+                  childlessCommentIds: [],
+                },
+              ],
+              pageParams: [undefined],
+            }
+          : undefined,
       }
     );
 
-  const replyThreads = useMemo(
-    () => data?.pages.flatMap((page) => page?.replyThreads ?? []) ?? [],
-    [data]
-  );
-  const childlessCommentIds = useMemo(
-    () => data?.pages.flatMap((page) => page?.childlessCommentIds ?? []) ?? [],
-    [data]
-  );
-
-  // Seed each nested thread's caches from the batch above and open it, so the whole
-  // conversation renders at once rather than a thread at a time behind "show replies".
-  useEffect(() => {
-    if (!replyThreads.length) return;
-
-    const expandable: number[] = [];
-    for (const thread of replyThreads) {
-      utils.commentv2.getCount.setData(
-        { entityId: thread.commentId, entityType: 'comment' },
-        thread.commentCount
-      );
-      utils.commentv2.getThreadDetails.setData(
-        { entityId: thread.commentId, entityType: 'comment' },
-        { id: thread.id, locked: thread.locked, hiddenCount: thread.hiddenCount }
-      );
-      utils.commentv2.getInfinite.setInfiniteData(
-        {
-          entityId: thread.commentId,
-          entityType: 'comment',
-          limit: replyPageSize,
-          sort,
-          hidden: false,
-          repliesLimit: replyPageSize,
-        },
-        {
-          pages: [
-            {
-              comments: thread.comments,
-              nextCursor: thread.nextCursor,
-              targetComment: null,
-              replyThreads: [],
-              childlessCommentIds: [],
-            },
-          ],
-          pageParams: [null],
-        }
-      );
-      // A thread's depth is the level of the comment that owns it. Open each thread once, so
-      // loading another page doesn't re-open what the reader has since collapsed.
-      if (thread.depth < maxDepth && !autoExpanded.current.has(thread.commentId)) {
-        autoExpanded.current.add(thread.commentId);
-        expandable.push(thread.commentId);
-      }
+  const seededReplyThreads = useMemo(() => {
+    if (!repliesDepth) return emptySeededThreads;
+    const byCommentId = new Map<number, ReplyThread>();
+    const childless = new Set<number>();
+    for (const page of data?.pages ?? []) {
+      for (const thread of page?.replyThreads ?? []) byCommentId.set(thread.commentId, thread);
+      for (const id of page?.childlessCommentIds ?? []) childless.add(id);
     }
-
-    // Comments the batch confirmed have no replies at all, so they don't each ask for their own
-    // count. Only the levels it finished are listed — past those, "no thread" means "not looked
-    // at", and answering 0 there would hide a real "show replies" button.
-    for (const id of childlessCommentIds) {
-      utils.commentv2.getCount.setData({ entityId: id, entityType: 'comment' }, 0);
-    }
-
-    setExpanded(expandable);
-  }, [replyThreads, childlessCommentIds, maxDepth, replyPageSize, sort, setExpanded, utils]);
+    return { byCommentId, childless };
+  }, [data, repliesDepth]);
 
   // Flatten pages, prepending the deep-link target (when present) and deduping by id so a
   // later cursor page that naturally contains the target doesn't render it twice.
@@ -319,18 +305,6 @@ export function CommentsProvider({
     return result;
   }, [data]);
 
-  // Expansion state is global and sticky, so what a thread view opened would otherwise follow the
-  // reader back out and leave the full conversation heavier than it started. Undo this section's
-  // own auto-expansion when it re-roots. Keyed on the entity alone: loading another page must not
-  // collapse what earlier pages opened.
-  useEffect(() => {
-    const openedHere = autoExpanded.current;
-    return () => {
-      collapse([...openedHere]);
-      openedHere.clear();
-    };
-  }, [entityId, entityType, collapse]);
-
   // Opening a thread replaces the whole section, which collapses the page under the reader and
   // leaves them somewhere they never asked to be. Put them at the comment they opened, once the
   // thread has actually rendered — surfaces show a loader in its place until then, and child
@@ -350,16 +324,14 @@ export function CommentsProvider({
     el.scrollIntoView({ block: 'start' });
   }, [level, isInitialThread, activeCommentId, threadSettled]);
 
-  // Get thread metadata from dedicated query (includes locked status and hiddenCount)
-  const threadMeta = threadDetails;
-  const hiddenCount = threadMeta?.hiddenCount ?? 0;
+  const hiddenCount = threadDetails?.hiddenCount ?? 0;
 
   const createdComments = useMemo(
     () => created.filter((x) => !comments?.some((comment) => comment.id === x.id)),
     [created, comments]
   );
 
-  const isLocked = threadMeta?.locked ?? false;
+  const isLocked = threadDetails?.locked ?? false;
   const isReadonly = !features.canWrite;
   const isMuted = currentUser?.muted ?? false;
   const shouldHideComments = hideWhenLocked && isLocked;
@@ -370,53 +342,88 @@ export function CommentsProvider({
     }
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  return (
-    <CommentsCtx.Provider
-      value={{
-        data: shouldHideComments ? [] : comments,
-        isLoading,
-        isFetching: isRefetching,
-        isFetchingNextPage,
-        entityId,
-        entityType,
-        isLocked,
-        isMuted,
-        isReadonly,
-        created: shouldHideComments ? [] : created,
-        badges,
-        limit: initialLimit,
-        showMore: shouldHideComments ? false : hasNextPage ?? false,
-        toggleShowMore: loadMore,
-        highlighted,
-        hiddenCount,
-        forceLocked,
-        sort,
-        setSort,
-        parentThreadId: threadMeta?.id,
-        level,
-      }}
-    >
-      {children({
-        data: shouldHideComments ? [] : comments,
-        isLoading,
-        isFetching: isRefetching,
-        isFetchingNextPage,
-        isLocked,
-        isMuted,
-        isReadonly,
-        created: shouldHideComments ? [] : createdComments,
-        badges,
-        limit: initialLimit,
-        showMore: shouldHideComments ? false : hasNextPage ?? false,
-        toggleShowMore: loadMore,
-        highlighted,
-        hiddenCount,
-        forceLocked,
-        sort,
-        setSort,
-        activeComment,
-      })}
-    </CommentsCtx.Provider>
+  const childProps: ChildProps = {
+    data: shouldHideComments ? [] : comments,
+    isLoading,
+    isFetching: isRefetching,
+    isFetchingNextPage,
+    isLocked,
+    isMuted,
+    isReadonly,
+    created: shouldHideComments ? [] : createdComments,
+    badges,
+    limit: initialLimit,
+    showMore: shouldHideComments ? false : hasNextPage ?? false,
+    toggleShowMore: loadMore,
+    highlighted,
+    hiddenCount,
+    forceLocked,
+    sort,
+    setSort,
+    activeComment,
+  };
+
+  const threadId = threadDetails?.id;
+  const value = useMemo<CommentsContext>(
+    () => ({
+      data: shouldHideComments ? [] : comments,
+      isLoading,
+      isFetching: isRefetching,
+      isFetchingNextPage,
+      entityId,
+      entityType,
+      isLocked,
+      isMuted,
+      isReadonly,
+      created: shouldHideComments ? [] : created,
+      badges,
+      limit: initialLimit,
+      showMore: shouldHideComments ? false : hasNextPage ?? false,
+      toggleShowMore: loadMore,
+      highlighted,
+      hiddenCount,
+      forceLocked,
+      sort,
+      setSort,
+      parentThreadId: threadId,
+      level,
+    }),
+    [
+      shouldHideComments,
+      comments,
+      isLoading,
+      isRefetching,
+      isFetchingNextPage,
+      entityId,
+      entityType,
+      isLocked,
+      isMuted,
+      isReadonly,
+      created,
+      badges,
+      initialLimit,
+      hasNextPage,
+      loadMore,
+      highlighted,
+      hiddenCount,
+      forceLocked,
+      sort,
+      setSort,
+      threadId,
+      level,
+    ]
+  );
+
+  const section = <CommentsCtx.Provider value={value}>{children(childProps)}</CommentsCtx.Provider>;
+
+  // Only the page that fetched the reply trees publishes them. A nested thread must keep reading
+  // its parent's, or it would shadow the map its own children need.
+  return repliesDepth ? (
+    <SeededReplyThreadsCtx.Provider value={seededReplyThreads}>
+      {section}
+    </SeededReplyThreadsCtx.Provider>
+  ) : (
+    section
   );
 }
 
@@ -434,14 +441,15 @@ export function CommentsProvider({
 type StoreProps = {
   /** dictionary of [entityType_entityId]: [...comments] */
   comments: Record<string, CommentV2Model[]>;
-  expandedComments: number[];
-  setExpanded: (commentIds: number[]) => void;
-  collapse: (commentIds: number[]) => void;
-  toggleExpanded: (commentId: number) => void;
+  /** The reader's own open/closed choice. No entry means the surface's default stands. */
+  expandOverrides: Record<number, boolean>;
+  setExpanded: (commentId: number, expanded: boolean) => void;
   addComment: (entityType: string, entityId: number, comment: CommentV2Model) => void;
   editComment: (entityType: string, entityId: number, comment: CommentV2Model) => void;
   deleteComment: (entityType: string, entityId: number, commentId: number) => void;
 };
+
+const emptyComments: CommentV2Model[] = [];
 
 const getKey = (entityType: string, entityId: number) => `${entityId}_${entityType}`;
 
@@ -449,23 +457,10 @@ export const useNewCommentStore = create<StoreProps>()(
   immer((set) => {
     return {
       comments: {},
-      expandedComments: [],
-      setExpanded: (commentIds: number[]) =>
+      expandOverrides: {},
+      setExpanded: (commentId: number, expanded: boolean) =>
         set((state) => {
-          state.expandedComments = [...new Set([...state.expandedComments, ...commentIds])];
-        }),
-      collapse: (commentIds: number[]) =>
-        set((state) => {
-          const dropping = new Set(commentIds);
-          state.expandedComments = state.expandedComments.filter((x) => !dropping.has(x));
-        }),
-      toggleExpanded: (commentId: number) =>
-        set((state) => {
-          if (state.expandedComments.includes(commentId)) {
-            state.expandedComments = state.expandedComments.filter((x) => x !== commentId);
-          } else {
-            state.expandedComments.push(commentId);
-          }
+          state.expandOverrides[commentId] = expanded;
         }),
       addComment: (entityType, entityId, comment) =>
         set((state) => {
