@@ -123,15 +123,26 @@ function mergePreview(prev: AssetState, next: AssetState): AssetState {
 }
 
 /**
- * Read the DISPLAYED pixel dimensions of an image File (the attach proc rejects
- * zero/unknown).
+ * Read the pixel dimensions of an image File as the BROWSER presents them (the
+ * attach proc rejects zero/unknown).
  *
- * `imageOrientation: 'from-image'` is the spec default, and is passed EXPLICITLY
- * because the prechecks in `uploadAndPersist` depend on it: the server measures
- * the displayed pair too (`probeStoredImage` transposes width/height for the EXIF
- * quarter-turns, orientations 5–8), and only if this side does the same do the two
- * agree on the individual axes rather than merely on `Math.max`. Spelling it out
- * keeps that agreement from resting on a default a browser could differ on.
+ * 🔴 "As the browser presents them" is not the same as the server's pair for every
+ * container, and the prechecks in `uploadAndPersist` are split along exactly that
+ * line. Measured on Chromium 149:
+ *
+ *   JPEG, PNG  the browser applies EXIF orientation, and so does the server
+ *              (`probeStoredImage` transposes for orientations 5–8) — the two
+ *              agree on BOTH AXES, not merely on `Math.max`.
+ *   WEBP       the browser does NOT apply it. An EXIF-oriented WebP stored 640×1280
+ *              reads 640×1280 here and 1280×640 on the server. The axes are
+ *              transposed relative to each other, so any bound naming an axis (an
+ *              aspect band, the cover's minimum width) gets the OPPOSITE verdict.
+ *
+ * `imageOrientation: 'from-image'` is the spec default and is passed explicitly to
+ * state the intent, but it does NOT buy the agreement: in this Chromium the option
+ * is inert for WebP — `'from-image'`, `'none'` and no options all return the stored
+ * pair — which is why `uploadAndPersist` sniffs the container instead of trusting
+ * it. WebP is offered by the file inputs' own `accept`, so this is a live path.
  */
 async function readImageDimensions(file: File): Promise<{ width: number; height: number }> {
   const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
@@ -140,6 +151,32 @@ async function readImageDimensions(file: File): Promise<{ width: number; height:
   } finally {
     bitmap.close();
   }
+}
+
+/** `RIFF` at offset 0 and `WEBP` at offset 8 — the WebP container's signature. */
+const WEBP_RIFF = [0x52, 0x49, 0x46, 0x46];
+const WEBP_FORM = [0x57, 0x45, 0x42, 0x50];
+
+/**
+ * Is this file a WEBP, judged from its own first bytes?
+ *
+ * 🔴 Deliberately NOT `file.type`. That is derived from the file NAME, which is
+ * precisely why the MIME check is left server-only a few lines below — and a
+ * mislabelled file is the case this has to get right: reading `.png` off a WebP
+ * would re-enable the axis-sensitive bounds on the one container whose axes this
+ * side cannot trust, which is the over-strict failure being fixed. The bytes are
+ * the thing the server's decoder will also go on.
+ *
+ * Reads the first 12 bytes only (`File.slice` is a view; nothing else is pulled
+ * into memory). A file too short to hold a signature is not a WebP — and is not a
+ * decodable image either, so `createImageBitmap` has already thrown for it.
+ */
+async function isWebpContainer(file: File): Promise<boolean> {
+  const header = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+  if (header.length < 12) return false;
+  return (
+    WEBP_RIFF.every((b, i) => header[i] === b) && WEBP_FORM.every((b, i) => header[8 + i] === b)
+  );
 }
 
 export function ListingAssetStep({
@@ -352,10 +389,18 @@ export function ListingAssetStep({
     // Both predicates are IMPORTED, never restated: a vendored copy of a bound is
     // exactly what goes stale and starts refusing valid input (civitai/cli#270).
     //
-    // Evaluating them on the BROWSER's reading is sound because both sides read the
-    // DISPLAYED pixel pair — see `readImageDimensions`. They agree on BOTH AXES, not
-    // merely on `Math.max`, and that is precisely what licenses prechecking the
-    // orientation-SENSITIVE aspect bounds here at all.
+    // 🔴 How much of (2) may be evaluated here depends on the CONTAINER, because
+    // that decides whether this side and the server agree about which axis is which
+    // — see `readImageDimensions` for the measurement. For JPEG and PNG both apply
+    // EXIF orientation and agree on both axes, so every bound is fair game. For
+    // WEBP the browser does not, so the pair arrives transposed relative to the
+    // server's and any bound naming an axis would be evaluated against the wrong
+    // one: an EXIF-rotated WebP cover the server stores happily (aspect 2.00) reads
+    // as 0.50 here, i.e. EVERY such cover would be refused at the picker. So for
+    // WebP the axis-sensitive bounds are skipped and left to the server, and only
+    // the transposition-INVARIANT ones — which a quarter-turn cannot change — are
+    // prechecked. Skipping restores a late rejection; refusing something the server
+    // would accept is the failure that has no recovery.
     const tooLarge = listingAssetTooLargeReason('That image', width, height);
     if (tooLarge) throw new Error(`${tooLarge}.`);
     // `validateListingImage` is handed only what this side knows FAITHFULLY; it
@@ -369,7 +414,9 @@ export function ListingAssetStep({
     //     name the wrong gate for files above the ceiling. Left server-side whole.
     // `type` is not a claim: `createImageBitmap` has already thrown above for
     // anything that is not a decodable image.
-    const perKind = validateListingImage({ type: 'image', width, height }, kind);
+    const perKind = validateListingImage({ type: 'image', width, height }, kind, {
+      skipOrientationSensitive: await isWebpContainer(file),
+    });
     // No trailing period — the attach proc surfaces `reason` verbatim, and this has
     // to read identically wherever the rejection lands.
     if (!perKind.ok) throw new Error(perKind.reason);
