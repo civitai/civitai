@@ -32,8 +32,8 @@ import {
  */
 const payoutCopy = (ownerShare: number | undefined) => {
   if (ownerShare == null) return null;
-  if (ownerShare >= 1) return 'All of it goes to the creator';
-  return `${Math.round(ownerShare * 100)}% goes to the creator`;
+  if (ownerShare >= 1) return 'All proceeds go to the creator';
+  return `${Math.round(ownerShare * 100)}% of proceeds go to the creator`;
 };
 
 /** Enough for the label and the currency badge at the smallest allowed sticker. */
