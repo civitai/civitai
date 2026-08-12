@@ -1,4 +1,4 @@
-import { Card, Text, UnstyledButton } from '@mantine/core';
+import { Card, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -54,30 +54,37 @@ export function CollapsibleCard({
 
   return (
     <Card className={clsx('flex flex-col gap-3', rounded ? 'rounded-xl' : 'rounded-none')}>
-      <div className="flex items-center gap-3">
-        {/* The title toggles and the chevron toggles; `actions` sits between
-            them as a sibling. Putting them inside the toggle would nest a
-            button in a button — the copy control here is one — which is invalid
-            markup and swallows its own click. */}
-        <UnstyledButton
-          onClick={() => setOpen((o) => !o)}
-          aria-expanded={open}
-          className="flex items-center gap-2"
-        >
-          <Text className="flex items-center gap-2 text-xl font-semibold">
-            {icon}
-            <span>{title}</span>
-          </Text>
-        </UnstyledButton>
-        {open && actions}
-        <UnstyledButton
-          onClick={() => setOpen((o) => !o)}
-          aria-expanded={open}
-          aria-label={`${open ? 'Collapse' : 'Expand'} ${title}`}
-          className="ml-auto flex items-center"
-        >
-          <Chevron size={18} className="shrink-0 opacity-60" />
-        </UnstyledButton>
+      {/* The whole row toggles, including the gap between the title and the
+          chevron. It is a div rather than a button because `actions` holds a
+          button of its own — the copy control — and a button inside a button is
+          invalid markup that swallows its own click. So the row carries the
+          role and the keyboard handling instead, and the actions stop the click
+          from reaching it. */}
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        aria-label={`${open ? 'Collapse' : 'Expand'} ${title}`}
+        onClick={() => setOpen((o) => !o)}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          // Space scrolls the sidebar otherwise, which on a collapse control is
+          // the panel appearing to jump rather than to fold.
+          event.preventDefault();
+          setOpen((o) => !o);
+        }}
+        className="flex cursor-pointer select-none items-center gap-3"
+      >
+        <Text className="flex items-center gap-2 text-xl font-semibold">
+          {icon}
+          <span>{title}</span>
+        </Text>
+        {open && (
+          <div onClick={(event) => event.stopPropagation()} className="flex items-center">
+            {actions}
+          </div>
+        )}
+        <Chevron size={18} className="ml-auto shrink-0 opacity-60" />
       </div>
       {mounted && <div className={clsx('flex flex-col gap-3', !open && 'hidden')}>{children}</div>}
     </Card>

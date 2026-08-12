@@ -1,11 +1,14 @@
-import { Button, Popover, ScrollArea, Skeleton, Text, Tooltip } from '@mantine/core';
+import { Button, Menu, Popover, ScrollArea, Skeleton, Text, Tooltip } from '@mantine/core';
 import type { ButtonProps } from '@mantine/core';
 import {
+  IconArrowBackUp,
+  IconCheck,
   IconChevronLeft,
   IconChevronRight,
   IconPlayerPlay,
   IconPlayerStop,
   IconScript,
+  IconSettings,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -17,15 +20,13 @@ import type { PlacedSticker } from '~/components/Sticker/placement.util';
 import { useStickerPlacements } from '~/components/Sticker/placement.util';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import { useStickerHistoryStore } from '~/store/sticker-history.store';
+import {
+  REPLAY_MULTIPLIER,
+  REVEAL_DURATIONS,
+  revealDurationLabel,
+  useStickerRevealSpeedStore,
+} from '~/store/sticker-reveal-speed.store';
 import { daysFromNow } from '~/utils/date-helpers';
-
-/**
- * A replay is watched, not raced. The reveal's own budget is sized so stickers
- * are not still arriving while someone reads the page; this one is the thing
- * being looked at, so it gets room to breathe — same dilation, longer ceiling,
- * so the gaps between placements still read as gaps.
- */
-const REPLAY_TOTAL_MS = 8_000;
 
 /**
  * The sticker history: who built this image, in what order, and a replay of it.
@@ -136,9 +137,12 @@ function StickerHistoryList({
   );
   const { sticker: artwork } = useStickerCosmetics(cosmeticIds);
 
+  const durationMs = useStickerRevealSpeedStore((state) => state.durationMs);
+  const setDuration = useStickerRevealSpeedStore((state) => state.setDuration);
+
   const delays = useMemo(
-    () => placementRevealDelays(placements, { maxTotalMs: REPLAY_TOTAL_MS }),
-    [placements]
+    () => placementRevealDelays(placements, { maxTotalMs: durationMs * REPLAY_MULTIPLIER }),
+    [placements, durationMs]
   );
 
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -230,11 +234,47 @@ function StickerHistoryList({
 
   return (
     <div className="flex flex-col">
+      {/* Everything lives in this row, and every control in it is always
+          present — disabled rather than absent. The status and the way back to
+          the full image used to be a footer that appeared only while stepping,
+          which grew the panel under the cursor: the pointer ended up over a
+          sticker in the list, that opened its creator card, and the card was
+          then in the way of the thing being read. A panel that never changes
+          height cannot do that. */}
       <div className="flex items-center justify-between gap-2 border-b border-gray-3 px-3 py-2 dark:border-dark-4">
-        <Text size="xs" fw={600}>
-          Sticker history
-        </Text>
+        <div className="flex min-w-0 items-baseline gap-2">
+          <Text size="xs" fw={600}>
+            Sticker history
+          </Text>
+          {/* Tabular figures and a fixed slot: a count that changes width as it
+              counts is the same layout shift in miniature. */}
+          <Text size="xs" c="dimmed" className="shrink-0 tabular-nums">
+            {step == null ? placements.length : `${step + 1} of ${placements.length}`}
+          </Text>
+        </div>
         <div className="flex items-center gap-1">
+          <Menu shadow="md" position="bottom-end" withinPortal>
+            <Menu.Target>
+              <LegacyActionIcon size="sm" variant="subtle" color="gray" aria-label="Reveal speed">
+                <IconSettings size={14} />
+              </LegacyActionIcon>
+            </Menu.Target>
+            {/* In a portal, so opening it cannot resize the panel either. */}
+            <Menu.Dropdown>
+              <Menu.Label>Reveal speed</Menu.Label>
+              {REVEAL_DURATIONS.map((option) => (
+                <Menu.Item
+                  key={option}
+                  onClick={() => setDuration(option)}
+                  leftSection={
+                    <IconCheck size={14} className={clsx(option !== durationMs && 'invisible')} />
+                  }
+                >
+                  {revealDurationLabel(option)}
+                </Menu.Item>
+              ))}
+            </Menu.Dropdown>
+          </Menu>
           <Tooltip label={playing ? 'Stop' : 'Replay'} withArrow>
             <LegacyActionIcon
               size="sm"
@@ -275,6 +315,25 @@ function StickerHistoryList({
               }
             >
               <IconChevronRight size={14} />
+            </LegacyActionIcon>
+          </Tooltip>
+          <Tooltip label="Back to the full image" withArrow>
+            <LegacyActionIcon
+              size="sm"
+              variant="subtle"
+              color="gray"
+              aria-label="Back to the full image"
+              onClick={() => {
+                stop();
+                close();
+              }}
+              // Disabled rather than hidden: it holds its place in the row so
+              // nothing moves when a replay starts or ends, and a disabled
+              // control reads as "nothing to undo" where a missing one reads as
+              // the panel having changed shape.
+              disabled={step == null}
+            >
+              <IconArrowBackUp size={14} />
             </LegacyActionIcon>
           </Tooltip>
         </div>
@@ -333,21 +392,6 @@ function StickerHistoryList({
           })}
         </ol>
       </ScrollArea.Autosize>
-
-      {step != null && (
-        <button
-          type="button"
-          onClick={() => {
-            stop();
-            close();
-          }}
-          className="cursor-pointer border-0 border-t border-solid border-gray-3 bg-transparent px-3 py-2 text-left dark:border-dark-4"
-        >
-          <Text size="xs" c="dimmed">
-            Showing {step + 1} of {placements.length} — back to the full image
-          </Text>
-        </button>
-      )}
     </div>
   );
 }
