@@ -5,9 +5,14 @@ import { trpc } from '~/utils/trpc';
 
 const ALERT_ID = 'remix-gallery-explainer';
 
-/** Where the reasoning lives in full, for anyone who wants it. */
+/**
+ * Where the reasoning lives in full, for anyone who wants it.
+ *
+ * Relative, so a reader on civitai.red stays on civitai.red. An absolute
+ * civitai.com URL would move them off the domain they chose.
+ */
 const EARNINGS_ARTICLE =
-  'https://civitai.com/articles/33568/how-image-creators-earn-what-we-heard-and-what-were-building';
+  '/articles/33568/how-image-creators-earn-what-we-heard-and-what-were-building';
 
 /**
  * What the gallery is for, inside the gallery.
@@ -57,8 +62,8 @@ export function RemixGalleryExplainer() {
   if (!currentUser || !settings || isDismissed) return null;
 
   return (
-    <div className="flex gap-2 rounded-md bg-blue-0 p-2 dark:bg-dark-6">
-      <IconHierarchy size={16} className="mt-0.5 shrink-0 text-blue-6" />
+    <div className="flex gap-2 rounded-md border border-blue-2 bg-blue-0 p-2 dark:border-blue-9/30 dark:bg-blue-9/20">
+      <IconHierarchy size={16} className="mt-0.5 shrink-0 text-blue-6 dark:text-blue-4" />
       <div className="flex flex-col gap-1">
         <Text size="xs" fw={600}>
           What&apos;s a remix gallery?
