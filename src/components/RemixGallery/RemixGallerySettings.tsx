@@ -81,7 +81,7 @@ export function RemixGallerySettings() {
   const overCap = typeof price === 'number' && cap > 0 && price > cap;
   // Waiting on the owner, and waiting on someone else. Only the first is a
   // to-do, which is why it is the one badged in yellow.
-  const receivedCount = pending?.length ?? 0;
+  const receivedCount = pending?.items.length ?? 0;
   const sentCount = (sent ?? []).filter((row) => row.status === 'pending').length;
   const caption = placementPriceCaption(
     'remixGallery',

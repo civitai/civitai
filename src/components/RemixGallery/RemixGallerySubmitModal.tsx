@@ -1,4 +1,4 @@
-import { Alert, Button, Divider, Group, Loader, Modal, Stack, Text } from '@mantine/core';
+import { Alert, Anchor, Button, Divider, Group, Loader, Modal, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
@@ -25,9 +25,8 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
   const utils = trpc.useUtils();
   const [selected, setSelected] = useState<number | null>(null);
 
-  const { data: visibility } = trpc.placement.getRemixGalleryVisibility.useQuery({
-    imageId: hostImageId,
-  });
+  const { data: visibility, isError: visibilityFailed } =
+    trpc.placement.getRemixGalleryVisibility.useQuery({ imageId: hostImageId });
 
   const { images, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryImages(
     { userId: currentUser?.id, period: 'AllTime', limit: 50 },
@@ -52,6 +51,22 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
 
   const price = visibility?.price ?? null;
 
+  // Filtered rather than shown-and-refused. Until the ceiling arrives nothing is
+  // offered: rendering the whole grid first and removing images a moment later
+  // invites a click on one that is about to disappear.
+  const maxLevel = visibility?.maxSubmissionLevel;
+  const eligible =
+    maxLevel == null
+      ? []
+      : images.filter((image) => !!image.nsfwLevel && image.nsfwLevel <= maxLevel);
+  // The picker's query backfills `browsingLevel`, which forces the
+  // `nsfwLevel != 0` branch server-side, so an unrated image never arrives here
+  // and every hidden one is genuinely over the ceiling.
+  const overRated =
+    maxLevel == null
+      ? 0
+      : images.filter((image) => !!image.nsfwLevel && image.nsfwLevel > maxLevel).length;
+
   return (
     // `padding={0}` would strip the header's padding too, putting the title and
     // the close button against the edges. Only the body needs to lose it, so the
@@ -74,6 +89,37 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
             The creator reviews every submission and decides what belongs in their gallery.
           </Text>
 
+          {/* The picker lists published images because that is all the mutation
+              accepts, and a freshly generated image is not one. Said here rather
+              than only in the empty state: the case that confuses people is
+              having images in the grid and not the one they just made. */}
+          <Text size="xs" c="dimmed">
+            Only images you have posted appear below.{' '}
+            <Anchor href="/posts/create" target="_blank" rel="noreferrer" size="xs">
+              Post your remix first
+            </Anchor>{' '}
+            if you don&apos;t see it.
+          </Text>
+
+          {/* Says why the grid is short. Without it a submitter whose work is
+              mostly mature sees a picker missing their best images and no
+              reason, which reads as a bug rather than a rule. The reason is not
+              named: which rule bit is the host's business, not the
+              submitter's. */}
+          {maxLevel === 0 ? (
+            <Text size="xs" c="dimmed">
+              This image has no rating yet, so nothing can be submitted to it.
+            </Text>
+          ) : (
+            overRated > 0 && (
+              <Text size="xs" c="dimmed">
+                {overRated === 1 ? '1 of your images is' : `${overRated} of your images are`} rated
+                above what this gallery accepts, so {overRated === 1 ? 'it is' : 'they are'} not
+                shown.
+              </Text>
+            )
+          )}
+
           {visibility && !visibility.open && (
             <Alert color="yellow" icon={<IconAlertTriangle />}>
               This creator has stopped accepting submissions.
@@ -87,14 +133,26 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
             fires on viewport intersection, so it has to live inside here — it
             is reached by scrolling this box, not the page. */}
         <div className="flex-1 overflow-y-auto px-4 py-3">
-          {isLoading ? (
+          {/* Waits on the ceiling as well as the images: without it the picker
+              renders "you have nothing to submit" for a beat while the rule is
+              still in flight. */}
+          {visibilityFailed && !visibility ? (
+            // An errored query settles with no data and isLoading false, so
+            // waiting on `visibility` alone spins here forever with nothing to
+            // read and nothing to press. Gated on `!visibility` as well, because
+            // React Query keeps the previous data through a failed refetch — the
+            // error alone would replace a working, already-populated picker.
+            <Alert color="red" icon={<IconAlertTriangle />}>
+              Couldn&apos;t load this gallery. Close this and try again.
+            </Alert>
+          ) : isLoading || !visibility ? (
             <Group justify="center" py="xl">
               <Loader />
             </Group>
-          ) : images.length ? (
+          ) : eligible.length ? (
             <>
               <div className="grid grid-cols-4 gap-3">
-                {images.map((image) => (
+                {eligible.map((image) => (
                   <AspectRatioImageCard
                     key={image.id}
                     aspectRatio="square"
@@ -108,6 +166,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                 ))}
               </div>
 
+              {/* Scroll-to-load, which is what a populated grid should do. */}
               {hasNextPage && (
                 <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
                   <Group justify="center" py="md">
@@ -117,7 +176,50 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
               )}
             </>
           ) : (
-            <NoContent message="You don't have any published images to submit yet." />
+            <NoContent
+              message={
+                maxLevel == null
+                  ? // Three different reasons collapse into a null ceiling, and
+                    // naming the wrong one is worse than saying less: signed
+                    // out, gallery closed, or a host that cannot show a gallery
+                    // at all (mid-rescan, blocked, under review).
+                    !currentUser
+                    ? 'Sign in to submit a remix to this gallery.'
+                    : visibility?.open
+                    ? 'This image cannot show a gallery right now.'
+                    : 'This gallery is not open for submissions.'
+                  : maxLevel === 0
+                  ? 'This image has no rating yet, so nothing can be submitted to it.'
+                  : hasNextPage
+                  ? // Hedged while pages remain, because every count here is
+                    // computed from what has loaded. Phrased as a paused state
+                    // rather than an active one: nothing is fetching now, the
+                    // button below is the action.
+                    'Nothing so far in the images loaded.'
+                  : overRated > 0
+                  ? 'None of your posted images are rated low enough for this gallery.'
+                  : "You don't have any posted images to submit yet. Post your remix first, then submit it here."
+              }
+            />
+          )}
+
+          {/* A button rather than the in-view loader used above. With nothing
+              eligible there is no content between the loader and the top of the
+              scroll box, so it would sit permanently in view: fire, load 50,
+              still be in view, fire again — walking the whole library in a burst
+              of requests, in exactly the case where nothing will be found.
+              Paging past the first page is worth doing, but on intent. */}
+          {!eligible.length && hasNextPage && !isLoading && visibility && (
+            <Group justify="center" mt={-12} pb="sm">
+              <Button
+                variant="subtle"
+                size="compact-sm"
+                loading={isRefetching}
+                onClick={() => fetchNextPage()}
+              >
+                Keep looking through your images
+              </Button>
+            </Group>
           )}
         </div>
 

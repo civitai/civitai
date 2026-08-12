@@ -37,7 +37,11 @@ import { dedupeGalleryItems } from '~/components/RemixGallery/remix-gallery.util
 import { SubmissionThumb } from '~/components/RemixGallery/SubmissionThumb';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Currency } from '~/shared/utils/prisma/enums';
-import { REMIX_GALLERY_MAX_PINNED, remixGalleryRemovableAt } from '~/shared/utils/remix-gallery';
+import {
+  REMIX_GALLERY_MAX_PINNED,
+  REMIX_GALLERY_QUEUE_LIMIT,
+  remixGalleryRemovableAt,
+} from '~/shared/utils/remix-gallery';
 import { daysFromNow, formatDateMin } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -141,7 +145,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
     },
   });
 
-  const forThisImage = (pending ?? []).filter((row) => row.targetId === imageId);
+  const forThisImage = (pending?.items ?? []).filter((row) => row.targetId === imageId);
   const byId = new Map(items.map((item) => [item.placementId, item]));
   const pinnedItems = pinnedIds.map((id) => byId.get(id)).filter((x): x is RemixGalleryItem => !!x);
   const unpinned = items.filter((item) => !pinnedIds.includes(item.placementId));
@@ -251,6 +255,15 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                     </Group>
                   </Card>
                 ))}
+                {/* The queue does not page. Without this line a busy owner
+                    sees a full list that looks complete and never learns the
+                    rest exist — and the escrow behind those sits until it
+                    expires. */}
+                {pending?.truncated && (
+                  <Text size="xs" c="dimmed">
+                    Showing the first {REMIX_GALLERY_QUEUE_LIMIT}. Answer some to see the rest.
+                  </Text>
+                )}
               </Stack>
             ) : (
               <Text size="sm" c="dimmed" mt="sm">

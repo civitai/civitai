@@ -185,6 +185,17 @@ type SettleAction =
    * fee later is additive, refunding one taken wrongly is not.
    */
   | 'declineByBlock'
+  /**
+   * The owner declined, but the host could not have shown the placement anyway —
+   * it is blocked, unscanned or under review, so approval was refused and the
+   * owner was never offered a choice. Same reasoning as a block: the fee prices
+   * the owner's *attention*, and there was no judgement here to charge for.
+   *
+   * Recorded as a decline rather than an expiry, though the money is identical.
+   * An expiry says the hold timed out with nobody acting, which is not what
+   * happened and is the only thing the row would say afterwards.
+   */
+  | 'declineUnshowableHost'
   | 'expire'
   | 'removeByOwner'
   | 'removeByModerator'
@@ -195,10 +206,19 @@ type SettleAction =
    */
   | 'removeByCosmeticTakedown';
 
+/**
+ * Actions that return the whole escrow, fee included. Named once because the
+ * waive is read in two places — computing the payout and writing the row — and
+ * a member added to one but not the other would refund in full while recording
+ * a fee that was never taken.
+ */
+export const FEE_WAIVING_ACTIONS: SettleAction[] = ['declineByBlock', 'declineUnshowableHost'];
+
 const STATUS_FOR_ACTION: Record<SettleAction, 'approved' | 'declined' | 'expired' | 'removed'> = {
   approve: 'approved',
   decline: 'declined',
   declineByBlock: 'declined',
+  declineUnshowableHost: 'declined',
   expire: 'expired',
   removeByOwner: 'removed',
   removeByModerator: 'removed',
@@ -467,7 +487,7 @@ export async function settlePlacement({
   const before = await dbWrite.placement.findUnique({ where: { id: placementId } });
   if (!before) throw new Error(`placement escrow: placement ${placementId} not found`);
 
-  const feeWaived = action === 'declineByBlock' ? true : before.feeWaived;
+  const feeWaived = FEE_WAIVING_ACTIONS.includes(action) ? true : before.feeWaived;
   const held = await heldAmountsFor(placementId);
   // Computed against the status this settle is *about to* write, since the row
   // still says `pending` and a pending placement has no settled outcome.
@@ -488,7 +508,7 @@ export async function settlePlacement({
         removedBy,
         resolvedAt: new Date(),
         resolvedById: actorId ?? null,
-        ...(action === 'declineByBlock' ? { feeWaived: true } : {}),
+        ...(FEE_WAIVING_ACTIONS.includes(action) ? { feeWaived: true } : {}),
       },
     });
 

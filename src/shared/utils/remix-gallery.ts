@@ -33,6 +33,14 @@ export const REMIX_GALLERY_MAX_PINNED = 4;
 /** Entries per page. The rest arrive on scroll against the same seed. */
 export const REMIX_GALLERY_PAGE_SIZE = 12;
 
+/**
+ * How many rows either review queue returns in one request.
+ *
+ * Neither queue pages, so this is also the point at which a busy owner stops
+ * being shown everything — the queues say so rather than looking complete.
+ */
+export const REMIX_GALLERY_QUEUE_LIMIT = 50;
+
 /** Cards per row, used to trim a page to a whole number of rows. */
 export const REMIX_GALLERY_ROW_WIDTH = 4;
 
@@ -76,6 +84,12 @@ export const remixGalleryContentRule = (
   settings?.contentRule === 'any' ? 'any' : REMIX_GALLERY_DEFAULT_CONTENT_RULE;
 
 /**
+ * The hard ceiling on what may be submitted into a host image flagged as
+ * depicting a minor. Not a creator preference and not overridable by one.
+ */
+export const REMIX_GALLERY_MINOR_HOST_MAX_LEVEL = NsfwLevel.PG13;
+
+/**
  * Whether a submission's rating is acceptable for a host under a rule.
  *
  * `nsfwLevel` is a single bitwise flag per image and the levels are ordered
@@ -85,23 +99,62 @@ export const remixGalleryContentRule = (
  * A level of 0 means unscanned or unrated and is refused under **both** rules.
  * It is not a safe value, it is an absent one, and treating it as PG is how an
  * unscanned image lands on someone else's page.
+ *
+ * `hostMinor` is required rather than optional so a caller cannot reach this
+ * without having loaded the flag: the submitted image being clean says nothing
+ * about the host, and a remix can arrive from an external generation, so the
+ * generator's own refusals are not in the path.
  */
 export function remixGalleryLevelAllowed({
   rule,
   submissionLevel,
   hostLevel,
+  hostMinor,
 }: {
   rule: RemixGalleryContentRule;
   submissionLevel: number;
   hostLevel: number;
+  hostMinor: boolean;
 }) {
   if (!submissionLevel || submissionLevel === NsfwLevel.Blocked) return false;
-  if (rule === 'any') return true;
-  // An unrated host cannot ceiling anything, so it fails closed rather than
-  // admitting everything.
-  if (!hostLevel) return false;
-  return submissionLevel <= hostLevel;
+  return submissionLevel <= remixGalleryMaxSubmissionLevel({ rule, hostLevel, hostMinor });
 }
+
+/**
+ * The highest rating this gallery will take, as a number the picker can filter
+ * on before anyone pays.
+ *
+ * Expressed as the ceiling rather than as a second copy of the rules, because
+ * `remixGalleryLevelAllowed` is defined in terms of it — a picker that filtered
+ * on its own reading of the rules would drift from what the mutation refuses,
+ * and the direction it drifts in decides whether someone is charged for a
+ * submission that was never going to be accepted.
+ *
+ * Zero means nothing may be submitted: an unrated host cannot ceiling anything,
+ * so `atOrBelow` fails closed rather than admitting everything.
+ */
+export function remixGalleryMaxSubmissionLevel({
+  rule,
+  hostLevel,
+  hostMinor,
+}: {
+  rule: RemixGalleryContentRule;
+  hostLevel: number;
+  hostMinor: boolean;
+}) {
+  const ceiling = rule === 'any' ? NsfwLevel.XXX : hostLevel;
+  // The one ceiling `any` does not lift.
+  return hostMinor ? Math.min(ceiling, REMIX_GALLERY_MINOR_HOST_MAX_LEVEL) : ceiling;
+}
+
+/** Whether a refusal from `remixGalleryLevelAllowed` was the minor-host cap. */
+export const remixGalleryBlockedByMinorHost = ({
+  submissionLevel,
+  hostMinor,
+}: {
+  submissionLevel: number;
+  hostMinor: boolean;
+}) => hostMinor && submissionLevel > REMIX_GALLERY_MINOR_HOST_MAX_LEVEL;
 
 /**
  * Hours since the epoch, the same value the contest-collection shuffle uses.

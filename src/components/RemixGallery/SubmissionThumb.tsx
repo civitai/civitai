@@ -3,7 +3,8 @@ import { IconExternalLink } from '@tabler/icons-react';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import type { RouterOutput } from '~/types/router';
 
-type PendingSubmission = RouterOutput['placement']['getPendingRemixGallerySubmissions'][number];
+type PendingSubmission =
+  RouterOutput['placement']['getPendingRemixGallerySubmissions']['items'][number];
 
 /**
  * The submitted image, openable.
