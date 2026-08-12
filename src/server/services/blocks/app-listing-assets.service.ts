@@ -379,11 +379,22 @@ async function loadOwnedListing(
     //
     // 🔴 THE OWNER HALF IS RESOLVED, NOT COMPARED. `listing.userId` (selected above) is
     // a DENORMALIZED copy of the owner for an ON-SITE listing — the canonical owner is
-    // `AppBlock.app.userId`, and `acceptTransfer`'s onsite step 3 is deliberately
-    // unguarded (a 0-count is an accepted desync), so the copy can go stale. Comparing
-    // against it inverts this gate in BOTH directions on a drifted row: the real owner
-    // is refused FORBIDDEN on their own listing, and whoever the stale row names is let
-    // in. `resolveListingAccess` is the one place that resolution lives.
+    // `AppBlock.app.userId`. Comparing against the copy inverts this gate in BOTH
+    // directions on a drifted row: the real owner is refused FORBIDDEN on their own
+    // listing, and whoever the stale row names is let in. `resolveListingAccess` is the
+    // one place that resolution lives.
+    //
+    // 🔴 THE DRIFT COMES FROM A SHADOW REVISION, not from the transfer's listing write —
+    // an earlier version of this comment blamed the latter and was wrong.
+    // `beginListingRevision` clones the parent with `userId: parent.userId` and nothing
+    // ever revisits the clone (`acceptTransfer` step 3 updates only `{ id: <parent> }`;
+    // the revision-apply copies assets back, never `userId`), so a shadow that outlives a
+    // transfer names the OLD owner forever. That matters HERE specifically: this gate is
+    // handed a shadow id on the whole approved-listing edit flow — see
+    // `resolveOwnerAssetEditTarget`, which calls `loadOwnedListing(shadowId, user,
+    // dbWrite)` directly. The transfer's own write to the parent is unconditional and in
+    // the same transaction as the OauthClient move, so it HEALS the parent rather than
+    // drifting it.
     //
     // 🔴 `db` IS THREADED THROUGH, not dropped. An EDITOR never resolves as the owner —
     // a shadow's canonical owner is the PARENT's — so this is the ONLY branch an editor

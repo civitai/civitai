@@ -133,10 +133,14 @@ const GATE_LEDGER: Record<string, string> = {
     'capability table. Every other site delegates here. Seats are keyed to AppListing ' +
     'so an offsite listing can hold collaborators. 🔴 BOTH resolvers report the CANONICAL ' +
     'owner (`appBlock.app.userId ?? listing.userId`), never the denormalized ' +
-    'AppListing.userId alone: acceptTransfer’s onsite step 3 is unguarded and treats a ' +
-    '0-count as an accepted desync, so the copy can be stale — and a stale copy inverts ' +
+    'AppListing.userId alone: a SHADOW REVISION clones that column and no ownership ' +
+    'write ever revisits the clone, so the copy can be stale — and a stale copy inverts ' +
     'every gate that delegates here, refusing the real owner while admitting the name ' +
-    'the row happens to carry.',
+    'the row happens to carry. (NOT acceptTransfer’s onsite listing write, which is ' +
+    'unconditional and heals the parent; see app-access.denormalized-owner-drift.test.ts ' +
+    'for the mechanism in full.) 🔴 The resolution is BLOCK-FIRST, not kind-branching, ' +
+    'and on an offsite-listing-that-carries-a-block it names the wrong owner after a ' +
+    'transfer or a mod claim — 0 rows and unmintable today, tracked as issue #3844.',
   'src/server/services/blocks/app-collaborator.service.ts':
     'assertOwner — seat management is OWNER-ONLY by product decision (an editor is a ' +
     'co-owner in every respect EXCEPT managing collaborators and initiating a ' +
@@ -276,9 +280,17 @@ const KIND_CAPABILITY_LEDGER: Record<string, string> = {
  * a fresh copy of the same inversion. Every shape is probed in the POSITIVE CONTROL test,
  * because a regex nobody has watched match is a claim, not a guard — and that matters
  * more, not less, now that the live corpus no longer exercises them.
+ *
+ * 🔴 AND IT IS A SPELLING GUARD, NOT A STRUCTURAL ONE. Read {@link DENORM_OWNER_RE}'s
+ * KNOWN EVASIONS block before quoting either regex as protection: both are anchored on
+ * the RECEIVER NAME (`*listing` / `*shadow` / `<x>.appListing`), so a gate written
+ * against a differently-named local evades them entirely. The listing-owner alternatives
+ * here accept either operand order, optional chaining and `!=` — but they are a
+ * naming-convention lint over this feature's own conventions, and the guard that
+ * actually holds the BEHAVIOUR is `app-access.denormalized-owner-drift.test.ts`.
  */
 const GATE_RE =
-  /app\??\.userId|app:\s*\{\s*userId|(?:\w*[Ll]isting|\w*[Ss]hadow)\.userId\s*!==|\w+\.appListing\.userId\s*!==|resolveAppAccess|resolveListingAccess|resolveAccessibleAppBlockIds|assertAppEditAccess|listAppInsiderUserIds|loadOwnedListingInTx/;
+  /app\??\.userId|app:\s*\{\s*userId|(?:\w*[Ll]isting|\w*[Ss]hadow)\??\.userId\s*(?:!==|!=)|(?:!==|!=)\s*(?:\w*[Ll]isting|\w*[Ss]hadow)\??\.userId|\w+\??\.appListing\??\.userId\s*(?:!==|!=)|(?:!==|!=)\s*\w+\??\.appListing\??\.userId|resolveAppAccess|resolveListingAccess|resolveAccessibleAppBlockIds|assertAppEditAccess|listAppInsiderUserIds|loadOwnedListingInTx/;
 
 /**
  * 🔴 THE DENORMALIZED-OWNER GATE CLASS (D5) — every spelling of "compare the caller
@@ -289,9 +301,38 @@ const GATE_RE =
  * exclusion is) and that form is just as stale-able. Kept as a separate regex rather than
  * widened into `GATE_RE` so that the gate POPULATION and the column-read CLASS can be
  * asserted independently — a site can legitimately be in one and not the other.
+ *
+ * 🔴 KNOWN EVASIONS — READ THIS BEFORE CITING THIS REGEX AS A GUARD. It is a SPELLED
+ * check, not a structural one: it is anchored on the RECEIVER NAME. Measured over the
+ * whole non-test `src/` corpus, of eleven realistic spellings of the exact D5 regression
+ * it catches eight and MISSES three, and the three it misses are ordinary code:
+ *
+ *   - a HOISTED LOCAL  — `const ownerId = listing.userId; if (ownerId !== userId) …`
+ *   - a DESTRUCTURE    — `const { userId: ownerId } = listing; if (ownerId !== …)`
+ *   - ANY OTHER NAME   — `row.userId !== userId`, `parent.…`, `draft.…`
+ *
+ * The three newly-covered spellings (reversed operands, `listing?.userId`, `!=`) were
+ * added because they cost nothing: they changed NEITHER matched file set — `GATES` stayed
+ * at 16 files and this class stayed at exactly the three holdouts below — so the widening
+ * is strictly additive. Going further is not free and was REJECTED with a measurement: a
+ * pattern over an ARBITRARY receiver (`(?:\w+\.)*\w+\.userId <op>`) matches **127 files
+ * repo-wide and 15 under `src/server/services/blocks/` alone**, almost all of them
+ * correct and unrelated (`image.userId`, `session.userId`, `client.userId`,
+ * `sub.userId`, `metadata.userId`). As an enumerated-equality assertion that is a
+ * permanently-noisy allowlist that decays on every unrelated edit — a gate people learn
+ * to click through — and it STILL would not see the hoisted-local or destructured forms.
+ *
+ * 🔴 SO THE HONEST STATEMENT OF WHAT THIS HOLDS: it is a NAMING-CONVENTION LINT. It keeps
+ * a gate written in this feature's own idiom from being reintroduced silently, and it
+ * keeps the holdout record from going stale. It is NOT a guarantee that no gate compares
+ * against `AppListing.userId`. The guard that actually holds the BEHAVIOUR — for any
+ * spelling, because it never reads the source at all — is
+ * `app-access.denormalized-owner-drift.test.ts`, which drives all five sites against a
+ * drifted fixture and asserts both directions. If you are deciding whether this class is
+ * safe, that suite is the evidence; this one is bookkeeping.
  */
 const DENORM_OWNER_RE =
-  /(?:\w*[Ll]isting|\w*[Ss]hadow)\.userId\s*(?:!==|===)|\w+\.appListing\.userId\s*(?:!==|===)/;
+  /(?:\w*[Ll]isting|\w*[Ss]hadow)\??\.userId\s*(?:!==|===|!=|==)|(?:!==|===|!=|==)\s*(?:\w*[Ll]isting|\w*[Ss]hadow)\??\.userId|\w+\??\.appListing\??\.userId\s*(?:!==|===|!=|==)|(?:!==|===|!=|==)\s*\w+\??\.appListing\??\.userId/;
 
 /**
  * 🔴 THE CLASS IS NOT DELETED, IT IS EMPTY-EXCEPT-FOR-THESE — and this table is the
@@ -305,9 +346,11 @@ const DENORM_OWNER_RE =
  * different verdicts and the table states which is which, because a reader who assumes
  * the first means the second is exactly how this class gets forgotten again.
  *
- * The assertion below fails on GROWTH (a new site reads the column)
- * and on SHRINK (one of these was fixed and this record went stale) — the same property
- * the two ledgers above have, applied to a class rather than to a population.
+ * The assertion below fails on GROWTH (a new site reads the column IN ONE OF THE
+ * SPELLINGS {@link DENORM_OWNER_RE} CAN SEE — read its KNOWN EVASIONS block, this is a
+ * naming-convention lint, not a structural guarantee) and on SHRINK (one of these was
+ * fixed and this record went stale) — the same property the two ledgers above have,
+ * applied to a class rather than to a population.
  */
 const DENORM_OWNER_HOLDOUTS: Record<string, string> = {
   'src/server/services/blocks/offsite-moderation.service.ts':
@@ -408,6 +451,11 @@ describe('app-ownership gate ledger', () => {
         'screenshot listing-owner gate (app-listing-assets::resolveOwnerScreenshotTarget)',
         'if (shot.appListing.userId !== user.id && !user.isModerator) {',
       ],
+      // The three spellings the widening added. Each is a one-token rewrite of a shape
+      // above, and each used to walk straight past this regex.
+      ['reversed operands', 'if (userId !== listing.userId) throw e;'],
+      ['optional chaining', 'if (listing?.userId !== userId) throw e;'],
+      ['loose inequality', 'if (listing.userId != userId) throw e;'],
     ];
     for (const [label, sample] of SHAPES) {
       expect(GATE_RE.test(sample), `GATE_RE must recognise: ${label}`).toBe(true);
@@ -499,11 +547,53 @@ describe('app-ownership gate ledger', () => {
           'the ALLOW-branch form (app-listing-review)',
           'if (listing.userId === userId) { throw throwAuthorizationError(...); }',
         ],
+        // Widened spellings — a one-token rewrite of the shapes above, each of which
+        // used to evade this regex completely.
+        [
+          'reversed operands',
+          "if (userId !== listing.userId && (await resolveListingRole(id, userId)) !== 'editor') {",
+        ],
+        ['reversed ALLOW-branch', 'if (userId === listing.userId) { throw e; }'],
+        ['optional chaining', 'if (listing?.userId !== userId) throw e;'],
+        ['loose inequality', 'if (listing.userId != userId) throw e;'],
+        ['shadow, reversed', 'if (userId !== shadow.userId) throw e;'],
+        ['nested member, optional', 'if (shot.appListing?.userId !== user.id) throw e;'],
       ];
       for (const [label, sample] of REMOVED) {
         expect(DENORM_OWNER_RE.test(sample), `DENORM_OWNER_RE must recognise: ${label}`).toBe(
           true
         );
+      }
+    });
+
+    it('🔴 KNOWN EVASIONS: the spellings this regex CANNOT see, pinned as measured', () => {
+      // 🔴 THIS TEST ASSERTS A LIMIT, NOT A CAPABILITY, and it is here so the limit is a
+      // measured fact in the suite rather than a sentence in a comment nobody re-derives.
+      // `DENORM_OWNER_RE` is anchored on the RECEIVER NAME, so a gate written against a
+      // differently-named local is invisible to it — including the exact D5 regression,
+      // restored verbatim under another name.
+      //
+      // Do NOT "fix" this by widening the regex to an arbitrary receiver. That was
+      // measured: `(?:\w+\.)*\w+\.userId <op>` matches 127 files repo-wide and 15 under
+      // `src/server/services/blocks/` alone, nearly all correct and unrelated, which
+      // turns the enumerated-equality assertion above into a permanently-noisy
+      // allowlist. If one of these forms is what you want caught, the guard is
+      // `app-access.denormalized-owner-drift.test.ts` — it asserts BEHAVIOUR and is
+      // blind to spelling by construction.
+      const EVADES: Array<[string, string]> = [
+        ['a hoisted local', 'const ownerId = listing.userId;\nif (ownerId !== userId) throw e;'],
+        [
+          'a destructure',
+          'const { userId: ownerId } = listing;\nif (ownerId !== callerId) throw e;',
+        ],
+        ['any other receiver name', 'if (row.userId !== userId) throw e;'],
+      ];
+      for (const [label, sample] of EVADES) {
+        expect(
+          DENORM_OWNER_RE.test(sample),
+          `${label} is a KNOWN evasion — if this now matches, the regex was widened; ` +
+            'update the KNOWN EVASIONS comment and re-measure the false-positive count'
+        ).toBe(false);
       }
     });
 
@@ -524,6 +614,11 @@ describe('app-ownership gate ledger', () => {
       // comparing against AppListing.userId — the two-sided inversion D5 describes.
       // SHRINK means one of the holdouts was finally fixed and DENORM_OWNER_HOLDOUTS is
       // now lying about the state of the codebase.
+      //
+      // 🔴 GREEN HERE IS NOT "no gate compares against the column". It is "no gate
+      // compares against it in a spelling this regex can see" — see the KNOWN EVASIONS
+      // test below and the note on DENORM_OWNER_RE. The behavioural claim belongs to
+      // `app-access.denormalized-owner-drift.test.ts`.
       expect(DENORM_SITES).toEqual(Object.keys(DENORM_OWNER_HOLDOUTS).sort());
     });
 

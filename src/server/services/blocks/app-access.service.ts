@@ -121,28 +121,42 @@ export type ListingAccess = {
    *
    * For an ON-SITE listing ownership lives on `OauthClient.userId`, reached as
    * `AppListing.appBlock.app.userId`; `AppListing.userId` is a DENORMALIZED COPY that
-   * this feature's own code can leave stale (`acceptTransfer` step 3 is deliberately
-   * unguarded for onsite and treats a 0-count as an accepted desync). Reading the copy
-   * would hand the roster — including `displayed:false` seats, `invitedBy` and the
-   * timestamps — to whoever the stale row names, while refusing the REAL owner
-   * `NOT_OWNER` on their own app. For an OFF-SITE listing there is no OauthClient in
-   * the ownership chain, so the column IS the owner and the fallback is exact.
+   * this feature's own code can leave stale — see {@link resolveListingAccess} for the
+   * mechanism that actually does it (a SHADOW REVISION freezes the column at clone
+   * time and no ownership write ever revisits it). Reading the copy would hand the
+   * roster — including `displayed:false` seats, `invitedBy` and the timestamps — to
+   * whoever the stale row names, while refusing the REAL owner `NOT_OWNER` on their own
+   * app. For an OFF-SITE listing there is no OauthClient in the ownership chain, so the
+   * column IS the owner and the fallback is exact.
+   *
+   * 🔴 …WITH ONE MEASURED EXCEPTION TO "kind-aware", tracked as
+   * https://github.com/civitai/civitai/issues/3844. The implementation is BLOCK-FIRST
+   * (`appBlock.app.userId ?? listing.userId`) and never branches on `kind`, which reads
+   * as kind-aware only because an ordinary off-site listing has no block. On an OFF-SITE
+   * listing that DOES carry one, the block decides — and both off-site ownership writers
+   * (`acceptTransfer`'s offsite path and `claimListing`) move only the column, so this
+   * function keeps naming the OLD owner. 0 rows of that shape in production and no code
+   * path can mint one today (see the issue for the measurement). Do not fix it here; the
+   * behaviour is pinned in `app-access.denormalized-owner-drift.test.ts`.
    *
    * The same resolution is written in `app-collaborator.service::toSeatListing` and in
    * `app-ownership-transfer.service::loadOwnedListing`, the two WRITE-side seat/transfer
    * loaders; every other consumer delegates to THIS function rather than re-deriving it.
    *
-   * 🔴 WHAT THE LEDGER ACTUALLY PINS, stated exactly, because an earlier version of this
-   * sentence claimed "`app-access.call-site-ledger.test.ts` pins that every consumer
-   * agrees" and it did not — the ledger enumerates the POPULATION of gate sites, and it
-   * separately RECORDED a class of gate that read the denormalized column directly. That
-   * class is now empty for every collaborator-reachable gate, and the ledger's
-   * `DENORM_OWNER_RE` assertion is what holds it empty: it fails if a new gate compares
-   * against `AppListing.userId`, and it fails if the two remaining owner-only holdouts
-   * (`offsite-moderation.service.ts`, `app-listing-review.service.ts`, both listed there
-   * with their reasons) are fixed without updating the record. Agreement between the two
-   * write-side loaders and this function is pinned BEHAVIOURALLY instead, by
-   * `app-access.denormalized-owner-drift.test.ts` and the transfer/seat suites.
+   * 🔴 WHAT THE LEDGER ACTUALLY PINS, stated exactly, because two earlier versions of
+   * this paragraph overstated it. The ledger enumerates the POPULATION of gate sites, and
+   * it separately RECORDS a class of gate that reads the denormalized column directly.
+   * That class is now empty for every collaborator-reachable gate. But its
+   * `DENORM_OWNER_RE` assertion is a **naming-convention lint, not a structural guard**:
+   * it is anchored on the receiver name (`*listing` / `*shadow` / `<x>.appListing`), so
+   * it catches a reintroduction written in this feature's idiom — in either operand
+   * order, with optional chaining, with `!=` — and is BLIND to the same gate written
+   * against a hoisted local, a destructure, or any other variable name. Its own KNOWN
+   * EVASIONS test pins that limit as a measured fact. It also fails if the three recorded
+   * holdouts are fixed without updating the record. The claim that no gate anywhere reads
+   * the column is NOT what it holds; the behaviour is held instead by
+   * `app-access.denormalized-owner-drift.test.ts` (spelling-blind by construction) and
+   * the transfer/seat suites.
    */
   ownerUserId: number;
   /** The PARENT's kind — what the caller may do is derived from it, never from a seat. */

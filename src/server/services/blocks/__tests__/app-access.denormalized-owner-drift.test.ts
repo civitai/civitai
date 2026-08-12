@@ -5,10 +5,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *
  * `AppListing.userId` is the CANONICAL owner for an OFF-SITE listing and a DENORMALIZED
  * COPY for an ON-SITE one, whose real owner is `OauthClient.userId` reached as
- * `AppListing.appBlock.app.userId`. The copy can go stale: `acceptTransfer`'s onsite
- * step 3 is deliberately unguarded and treats a 0-count as an accepted desync. Five
- * production gates used to compare the caller against that copy, and on a drifted row a
- * comparison like that fails in BOTH directions at once:
+ * `AppListing.appBlock.app.userId`. Five production gates used to compare the caller
+ * against that copy, and on a drifted row a comparison like that fails in BOTH directions
+ * at once:
  *
  *   - the REAL owner is refused on their own listing — and refused twice over, because
  *     the collaborator fallback resolves them as `owner`, which is not `editor`; and
@@ -22,10 +21,39 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * reason — the fix must move the OWNER half onto the canonical resolution without
  * touching the seat half in either direction.
  *
+ * 🔴 WHERE A DRIFTED ROW ACTUALLY COMES FROM — stated exactly, because the first version
+ * of this file named the wrong mechanism and a wrong mechanism sends the next reader to
+ * the wrong file. It is a SHADOW REVISION:
+ *
+ *   - `beginListingRevision` clones the approved parent into a hidden draft with
+ *     `userId: parent.userId` (a copy of a copy) and `appBlockId: null`;
+ *   - `acceptTransfer` step 3 updates only `{ id: <the transferred listing> }` — it never
+ *     touches that listing's shadows — and `applyApprovedRevision` copies assets back to
+ *     the parent, never `userId`;
+ *   - so a shadow that outlives a transfer of its parent keeps the OLD owner FROZEN,
+ *     while the parent and the `OauthClient` both name the new one. A gate that reads the
+ *     shadow's own column reads that frozen value.
+ *
+ * 🔴 It is NOT `acceptTransfer`'s onsite listing write "being deliberately unguarded, a
+ * 0-count an accepted desync" — that write is `where: { id }`, i.e. UNCONDITIONAL, issued
+ * in the same transaction as the `OauthClient` move and after an in-tx read of the same
+ * row through its own FK. It HEALS the parent's copy; a 0-count there needs the row to be
+ * absent, which the pre-read precludes. And `app-ownership-transfer.service.ts` holds the
+ * only in-app write to `OauthClient.userId`. So the top-level row's copy has no drift
+ * mechanism; only clones of it do.
+ *
+ * The fixture below is therefore built as a parent PLUS its shadow, and both directions
+ * are asserted on each. The parent is given the drifted value anyway — it costs nothing
+ * and it is what makes each case measurable against the pre-fix code, which read the
+ * column on both rows.
+ *
  * 🔴 MEASURED STATE, so the stakes are stated honestly: 0 drifted rows across all 21
- * onsite listings in production on 2026-08-11, because the only mechanism that creates
- * drift (an onsite ownership transfer) has never run. This is LATENT, not live. It goes
- * live on the first onsite transfer.
+ * onsite listings in production on 2026-08-11, because no onsite ownership transfer has
+ * ever run. This is LATENT, not live. It goes live on the first onsite transfer of a
+ * listing that has an in-flight revision draft. (The rate of approved onsite parents
+ * carrying a shadow is NOT measured here — `getMyListingForApp` stopped minting one per
+ * page view, so the old 78% figure in `app-listing-assets.service.ts` describes the
+ * pre-change world and must not be re-quoted as current.)
  *
  * The last describe block is the control that keeps the fix from over-reaching: on an
  * OFF-SITE listing the column IS the owner, so "always use the block owner" would be a
@@ -276,6 +304,85 @@ describe('offsite-listing::loadOwnedEditableListing (via updateListing)', () => 
   });
 });
 
+describe('🔴 D1: offsite-listing has NO moderator bypass — behaviourally, not as a string', () => {
+  /**
+   * D1 is the decision that `offsite-listing.service`'s author gates admit ONLY the
+   * owner and an accepted editor, while its sibling `app-listing-assets.service` also
+   * lets a moderator through. Until now that decision existed as prose in
+   * `app-access.call-site-ledger.test.ts` and as a comment on `loadOwnedEditableListing`
+   * — and a LEDGER STRING IS NOT A GUARD. A mutant that threads `isModerator` into
+   * `loadOwnedEditableListing` and short-circuits on it leaves the entire blocks suite
+   * green, and the comments there explicitly anticipate a future "make the mod bypass
+   * consistent" edit — which would silently widen an AUTHOR edit path to every moderator.
+   *
+   * `updateListing` already accepts `isModerator` (it is threaded into `deriveScopePatch`
+   * so a mod editing a listing that links a foreign OAuth client is not blocked by the
+   * client re-assertion), so the flag reaching the function is not hypothetical: it is
+   * already in the signature, one line away from the gate. These cases pin that it does
+   * NOT reach the gate.
+   */
+  it('a moderator who is not the owner is REFUSED on an ON-SITE listing', async () => {
+    await expect(
+      updateListing({
+        listingId: LIVE,
+        patch: { name: 'Renamed' },
+        userId: STRANGER,
+        isModerator: true,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_OWNED', message: 'you can only edit your own listings' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+  });
+
+  it('a moderator who is not the owner is REFUSED on an OFF-SITE listing', async () => {
+    // The kind D1 is named for. Same refusal, so the decision is not an artefact of the
+    // drifted onsite fixture.
+    wireListings({
+      [LIVE]: liveRow({
+        kind: 'offsite',
+        userId: REAL_OWNER,
+        externalUrl: 'https://example.com/',
+        appBlockId: null,
+        appBlock: null,
+      }),
+    });
+    await expect(
+      updateListing({
+        listingId: LIVE,
+        patch: { name: 'Renamed' },
+        userId: STRANGER,
+        isModerator: true,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_OWNED' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+  });
+
+  it('🔴 POSITIVE CONTROL: the flag is accepted and the owner still gets through with it', async () => {
+    // Without this, the two refusals above are indistinguishable from `isModerator` being
+    // an unknown key that never reaches anything — a reassuring zero. This proves the
+    // same call shape SUCCEEDS when the caller is the owner, so the refusals are the
+    // gate's verdict on the CALLER, not on the argument.
+    await expect(
+      updateListing({
+        listingId: LIVE,
+        patch: { name: 'Renamed' },
+        userId: REAL_OWNER,
+        isModerator: true,
+      })
+    ).resolves.toMatchObject({ listingId: LIVE });
+    expect(mockWrite.appListing.update).toHaveBeenCalledOnce();
+  });
+
+  it('🔴 CROSS-FILE CONTROL: the SAME non-owner moderator IS admitted by the assets gate', async () => {
+    // D1 is a claim about a DIVERGENCE between two sibling gates, so asserting only the
+    // refusal would leave "mods are refused everywhere" indistinguishable from it. The
+    // asset path's bypass is live and must stay live; that is what makes the offsite
+    // refusal above a decision rather than an oversight.
+    await expect(
+      getListingAssets({ listingId: LIVE }, { id: STRANGER, isModerator: true } as never)
+    ).resolves.toMatchObject({ listingId: LIVE });
+  });
+});
+
 describe('offsite-listing::submitListingRevision', () => {
   it('ADMITS the real owner (resolved through the shadow’s PARENT)', async () => {
     await expect(
@@ -309,6 +416,13 @@ describe('offsite-listing::submitListingRevision', () => {
 });
 
 describe('offsite-listing::getMyListingForApp', () => {
+  // 🔴 SCOPE NOTE, so this block is not read as more than it is. Unlike the other four
+  // sites, this one cannot be handed a shadow id — it resolves its row by `appBlockId` or
+  // `slug`, so it only ever sees a top-level parent, and a parent's copy has no drift
+  // mechanism (see the file header). The fixture below is therefore a state production
+  // cannot reach on THIS path. The cases still earn their place: they pin WHICH FIELD the
+  // gate reads, which is what keeps the fifth site from being the one that quietly keeps
+  // its own spelling of the predicate.
   it('ADMITS the real owner', async () => {
     await expect(
       getMyListingForApp({ appBlockId: BLOCK, userId: REAL_OWNER })
@@ -349,19 +463,39 @@ describe('app-listing-assets::loadOwnedListing (via getListingAssets)', () => {
     });
   });
 
-  it('still admits an ACCEPTED editor and a moderator, and still refuses a stranger', async () => {
+  it('still admits an ACCEPTED editor, and still refuses a stranger', async () => {
     seatFor(EDITOR);
     await expect(getListingAssets({ listingId: LIVE }, user(EDITOR))).resolves.toMatchObject({
       listingId: LIVE,
     });
-    // The mod bypass (D1) is this file's alone and must survive the consolidation — and
-    // it must still short-circuit BEFORE the resolve, so a mod pays no seat lookup.
-    await expect(
-      getListingAssets({ listingId: LIVE }, { id: STRANGER, isModerator: true } as never)
-    ).resolves.toMatchObject({ listingId: LIVE });
     await expect(getListingAssets({ listingId: LIVE }, user(STRANGER))).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
+  });
+
+  it('🔴 the mod bypass survives AND still short-circuits before the resolve', async () => {
+    // The mod bypass (D1) is this file's alone and must survive the consolidation. The
+    // second half of that sentence used to be an unasserted claim — "a mod pays no extra
+    // query" appeared in the comment while nothing counted the calls, so a mutant that
+    // moved the `isModerator` check AFTER the resolve would have kept this green.
+    // Counting it is the whole point, so it is counted, with a positive control.
+    seatFor(EDITOR);
+    await expect(
+      getListingAssets({ listingId: LIVE }, { id: STRANGER, isModerator: true } as never)
+    ).resolves.toMatchObject({ listingId: LIVE });
+    expect(mockRead.appCollaborator.findFirst).not.toHaveBeenCalled();
+    expect(mockWrite.appCollaborator.findFirst).not.toHaveBeenCalled();
+
+    // POSITIVE CONTROL: the seat lookup is reachable from this very call shape — the only
+    // thing that changed is who is asking. Without it, "0 calls" is indistinguishable
+    // from a seat lookup this path never performs for anyone.
+    await expect(getListingAssets({ listingId: LIVE }, user(EDITOR))).resolves.toMatchObject({
+      listingId: LIVE,
+    });
+    expect(
+      mockRead.appCollaborator.findFirst.mock.calls.length +
+        mockWrite.appCollaborator.findFirst.mock.calls.length
+    ).toBe(1);
   });
 });
 
@@ -418,27 +552,37 @@ describe('🔴 THE OTHER DIRECTION: an OFF-SITE listing’s column IS the owner'
     ).rejects.toMatchObject({ code: 'NOT_OWNED' });
   });
 
-  it('🔴 RECORDED DISAGREEMENT (not an endorsement): offsite + a block ⇒ the BLOCK wins', async () => {
-    // 🔴 This pins what the shared resolver DOES today, and it is NOT what its own prose
-    // says. `resolveListingAccess` computes `appBlock.app.userId ?? listing.userId` —
+  it('🔴 KNOWN REGRESSION on an unreachable shape (issue #3844): offsite + a block ⇒ the BLOCK wins', async () => {
+    // 🔴 CALLED WHAT IT IS. An earlier version of this comment (and of the PR body)
+    // framed this as a "neutral recorded disagreement". It is not neutral: PRE-PR these
+    // five gates compared against `AppListing.userId` and were therefore CORRECT on this
+    // shape; routing them through the resolver makes them wrong on it. That is a
+    // regression — on a shape that cannot currently occur, but a regression.
+    //
+    // `resolveListingAccess` computes `appBlock.app.userId ?? listing.userId` —
     // BLOCK-FIRST, with no branch on `kind`. That reads as "kind-aware" only because an
     // ordinary off-site listing has no block, so the fallback is the only branch reached.
+    // On an OFFSITE listing that carries one, the block decides — and BOTH off-site
+    // ownership writers move only the column, so the block keeps naming the old owner:
+    //   - `acceptTransfer` — its step (2) OauthClient move is `if (isOnsite)`-guarded;
+    //   - `claimListing` — the mod impersonation remedy (report → delist → claim → ban),
+    //     which refuses a non-offsite listing outright and writes only the column.
+    // So on this shape the ex-owner (or the impersonator the claim was meant to
+    // dispossess) keeps edit access and the rightful owner is refused.
     //
-    // On the one shape where the two rules differ — an OFFSITE listing that carries a
-    // block, which `mapAppBlockToListing` mints from any AppBlock with an `externalUrl`
-    // and which the mod proc `backfillAppListings` can reach — the block wins, so the
-    // listing's own `userId` does NOT decide. That matters because
-    // `app-ownership-transfer` moves ONLY the column for an offsite listing: transfer
-    // such a listing and this resolver keeps naming the OLD owner. It is the same
-    // stale-copy inversion, one shape over.
+    // 🔴 WHY IT IS PINNED RATHER THAN FIXED: measured against production 2026-08-12 the
+    // shape is not merely 0-row, it is UNMINTABLE. `kind='offsite' AND app_block_id IS
+    // NOT NULL` → 0 rows; 0 of 22 `app_blocks` carry an `external_url`; and a grep of
+    // `src/server` finds NO writer of that column — every hit is a read, a projection or
+    // a test fixture. `mapAppBlockToListing` mints the shape only from an AppBlock that
+    // has one. Changing the resolver moves the primary listing-access predicate for every
+    // caller, so it belongs in its own PR: https://github.com/civitai/civitai/issues/3844
+    // (which also notes that `resolveAccessibleAppBlockIds`, in the same module, already
+    // discriminates on `kind` rather than on block-nullness — the two halves disagree
+    // about which discriminator is authoritative).
     //
-    // 0 rows of this shape in production (measured 2026-08-11: 5 offsite listings, 0 with
-    // a block), and `resolveAccessibleAppBlockIds` already discriminates on `kind` rather
-    // than on block-nullness for exactly this reason — so the two halves of one module
-    // disagree about which discriminator is authoritative. Changing the resolver is a
-    // decision for whoever owns that call, not a side effect of consolidating five gates,
-    // so it is RECORDED here (and in the ledger's D5 note) and pinned, not silently
-    // altered. This test failing means someone changed it — read this comment first.
+    // This test failing means someone changed the resolver — read the issue first, and
+    // update this case deliberately rather than deleting it.
     wireListings({
       [LIVE]: offsite({ appBlockId: BLOCK, appBlock: { app: { userId: STRANGER } } }),
     });
