@@ -873,7 +873,7 @@ export const MODEL3D_ECOSYSTEM_KEYS = new Set<string>(
  *  - ComfyImageGenInput  → Anima, Ernie, Lens, HiDream-O1
  *  - SdCppImageGenInput  → ZImageTurbo, ZImageBase, Qwen
  *  - Flux2KleinImageGen  → Flux2Klein_9B(_base), Flux2Klein_4B(_base)
- *  - ComfyLtx*VideoGen   → LTXV2, LTXV23
+ *  - ComfyLtx*VideoGen   → LTXV2, LTXV23, LTXV25
  *  - AceStepAudioInput   → Ace
  *
  * NOTE: lookalikes that are EXTERNAL and must NOT be listed — `Flux2` (≠ Klein),
@@ -908,9 +908,10 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'Flux2Klein_9B_base',
   'Flux2Klein_4B',
   'Flux2Klein_4B_base',
-  // ComfyLtx2VideoGenInput / ComfyLtx23VideoGenInput
+  // ComfyLtx2VideoGenInput / ComfyLtx23VideoGenInput / ComfyLtx25VideoGenInput
   'LTXV2',
   'LTXV23',
+  'LTXV25',
   // AceStepAudioInput
   'Ace',
   // Hunyuan3dComfyPolyGenInput (3D; Meshy/Tripo are FAL and stay external)
@@ -1148,6 +1149,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // LTXV2.3 - checkpoint and LORA
   { ecosystemId: ECO.LTXV23, supportType: 'generation', modelTypes: checkpointAndLora },
+
+  // LTXV2.5 - checkpoint and LORA
+  { ecosystemId: ECO.LTXV25, supportType: 'generation', modelTypes: checkpointAndLora },
 
   // AceAudio - checkpoint only (audio generation)
   { ecosystemId: ECO.AceAudio, supportType: 'generation', modelTypes: checkpointOnly },
@@ -1447,6 +1451,14 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.LTXV23,
     defaults: {
       model: { id: 2749908 },
+      modelLocked: true,
+      engine: 'ltx2',
+    },
+  },
+  {
+    ecosystemId: ECO.LTXV25,
+    defaults: {
+      model: { id: 3220143 },
       modelLocked: true,
       engine: 'ltx2',
     },

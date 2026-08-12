@@ -90,7 +90,8 @@ import {
   type GateResolution,
 } from '~/shared/data-graph/generation/gates';
 import {
-  LTXV23_MAX_QUANTITY,
+  VID_MAX_QUANTITY,
+  VID_QUANTITY_ECOSYSTEMS,
   SDCPP_EXCLUDED_MODEL_IDS,
   SDCPP_SUPPORTED_ECOSYSTEMS,
 } from '~/shared/constants/generation.constants';
@@ -714,9 +715,10 @@ function CostBreakdown() {
 
 /**
  * Quantity input. The graph's quantity node sets `meta.max` to the user's
- * tier-gated cap (`ext.limits.vidQuantity` for LTXV23, `maxQuantity` elsewhere).
+ * tier-gated cap (`ext.limits.vidQuantity` for the video-batching ecosystems in
+ * VID_QUANTITY_ECOSYSTEMS, `maxQuantity` elsewhere).
  *
- * For LTXV23 non-gold users (tier cap below 4), the default Mantine controls
+ * For those ecosystems' non-gold users (tier cap below 4), the default Mantine controls
  * are replaced with custom chevrons so the up-arrow stays interactive at the
  * cap and opens a membership upsell popover instead of being silently
  * disabled. Typing is unrestricted during input; on blur the value snaps to
@@ -729,7 +731,7 @@ function QuantityField() {
   const { ecosystem } = useGraphSubscriptions(graph, ['ecosystem'] as const) as {
     ecosystem?: string;
   };
-  const isLtxv23 = ecosystem === 'LTXV23';
+  const batchesVideos = !!ecosystem && VID_QUANTITY_ECOSYSTEMS.has(ecosystem);
 
   const [upsellOpened, setUpsellOpened] = useState(false);
 
@@ -742,7 +744,7 @@ function QuantityField() {
           value={value}
           meta={meta}
           onChange={onChange}
-          isLtxv23={isLtxv23}
+          batchesVideos={batchesVideos}
           upsellOpened={upsellOpened}
           setUpsellOpened={setUpsellOpened}
         />
@@ -755,7 +757,7 @@ interface QuantityFieldInnerProps {
   value: number | undefined;
   meta: { min: number; max: number; step: number };
   onChange: (next: number) => void;
-  isLtxv23: boolean;
+  batchesVideos: boolean;
   upsellOpened: boolean;
   setUpsellOpened: (open: boolean) => void;
 }
@@ -764,14 +766,14 @@ function QuantityFieldInner({
   value,
   meta,
   onChange,
-  isLtxv23,
+  batchesVideos,
   upsellOpened,
   setUpsellOpened,
 }: QuantityFieldInnerProps) {
   const tierMax = meta.max;
   const min = meta.min;
   const step = meta.step ?? 1;
-  const showUpsell = isLtxv23 && tierMax < LTXV23_MAX_QUANTITY;
+  const showUpsell = batchesVideos && tierMax < VID_MAX_QUANTITY;
 
   // Local input state — lets the user freely type any value (including
   // out-of-range) without Mantine pre-clamping or the graph schema snapping
@@ -917,7 +919,7 @@ function QuantityFieldInner({
         </Text>
         <Text size="xs" c="dimmed" mb="sm">
           Your current tier allows {tierMax} {tierMax === 1 ? 'video' : 'videos'} per request.
-          Upgrade your membership to generate up to {LTXV23_MAX_QUANTITY} at a time.
+          Upgrade your membership to generate up to {VID_MAX_QUANTITY} at a time.
         </Text>
         <Button
           component="a"

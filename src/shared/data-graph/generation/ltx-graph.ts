@@ -54,14 +54,19 @@ const LTXV2_DISTILLED_ID = 2600562;
 const LTXV23_DEV_ID = 2749908;
 const LTXV23_DISTILLED_ID = 2749948;
 
+/** LTXV25 model version IDs */
+const LTXV25_DEV_ID = 3220143;
+const LTXV25_DISTILLED_ID = 3220250;
+
 /** Sulphur 2 model version IDs (LTXV23 ecosystem) */
 const SULPHUR2_DEV_ID = 2921800;
 const SULPHUR2_DISTILLED_ID = 2923808;
 
-/** Set of all distilled version IDs (across both ecosystems) */
+/** Set of all distilled version IDs (across every LTX ecosystem) */
 const DISTILLED_IDS = new Set<number>([
   LTXV2_DISTILLED_ID,
   LTXV23_DISTILLED_ID,
+  LTXV25_DISTILLED_ID,
   SULPHUR2_DISTILLED_ID,
 ]);
 
@@ -98,6 +103,18 @@ const ltxVersionOptions: VersionGroup = {
         options: [
           { label: 'Dev', value: LTXV23_DEV_ID, baseModel: 'LTXV23' },
           { label: 'Distilled', value: LTXV23_DISTILLED_ID, baseModel: 'LTXV23' },
+        ],
+      },
+    },
+    {
+      label: '2.5',
+      value: LTXV25_DEV_ID,
+      baseModel: 'LTXV 2.5',
+      children: {
+        label: 'Variant',
+        options: [
+          { label: '22B Dev', value: LTXV25_DEV_ID, baseModel: 'LTXV 2.5' },
+          { label: '22B Distilled', value: LTXV25_DISTILLED_ID, baseModel: 'LTXV 2.5' },
         ],
       },
     },
@@ -165,11 +182,41 @@ const ltxv23MaxDurationByResolution: Record<string, number> = {
   '1080p': 15,
 };
 
+/** LTXV25 aspect ratio options by resolution */
+const ltxv25AspectRatiosByResolution: Record<string, AspectRatioOption[]> = {
+  '720p': [
+    { label: '16:9', value: '16:9', width: 1280, height: 720 },
+    { label: '3:2', value: '3:2', width: 1176, height: 784 },
+    { label: '1:1', value: '1:1', width: 960, height: 960 },
+    { label: '2:3', value: '2:3', width: 784, height: 1176 },
+    { label: '9:16', value: '9:16', width: 720, height: 1280 },
+  ],
+  '1080p': [
+    { label: '16:9', value: '16:9', width: 1920, height: 1080 },
+    { label: '3:2', value: '3:2', width: 1764, height: 1176 },
+    { label: '1:1', value: '1:1', width: 1440, height: 1440 },
+    { label: '2:3', value: '2:3', width: 1176, height: 1764 },
+    { label: '9:16', value: '9:16', width: 1080, height: 1920 },
+  ],
+};
+
+/** LTXV25 resolution options */
+const ltxv25Resolutions = [
+  { label: '720p', value: '720p' },
+  { label: '1080p', value: '1080p' },
+];
+
+/** Max duration per resolution (LTXV25) */
+const ltxv25MaxDurationByResolution: Record<string, number> = {
+  '720p': 20,
+  '1080p': 15,
+};
+
 /**
- * Aspect ratio values shared by both ecosystems (used by the parent-level
- * `images` node for upload-time aspect ratio hints). Both LTXV2 and LTXV23
- * support the same set of ratio strings; only the resolved pixel dimensions
- * differ, which is handled per-ecosystem in the handler.
+ * Aspect ratio values shared by every LTX ecosystem (used by the parent-level
+ * `images` node for upload-time aspect ratio hints). They all support the same
+ * set of ratio strings; only the resolved pixel dimensions differ, which is
+ * handled per-ecosystem in the handler.
  */
 const sharedAspectRatioValues: `${number}:${number}`[] = ['16:9', '3:2', '1:1', '2:3', '9:16'];
 
@@ -178,7 +225,7 @@ const sharedAspectRatioValues: `${number}:${number}`[] = ['16:9', '3:2', '1:1', 
 // =============================================================================
 
 /** LTX version discriminator — derived from `ecosystem`. */
-type LTXVersion = 'v2' | 'v23';
+type LTXVersion = 'v2' | 'v23' | 'v25';
 
 type LTXCtx = { ecosystem: string; workflow: string };
 
@@ -332,10 +379,56 @@ const ltxv23SubGraph = new DataGraph<LTXVersionCtx, GenerationCtx>()
     defaultValue: true,
   });
 
+// =============================================================================
+// LTXV25 Subgraph
+// =============================================================================
+
+const ltxv25SubGraph = new DataGraph<LTXVersionCtx, GenerationCtx>()
+  // Resolution selector
+  .node('resolution', {
+    input: z.enum(['720p', '1080p']).optional(),
+    output: z.enum(['720p', '1080p']),
+    defaultValue: '720p' as const,
+    meta: { options: ltxv25Resolutions },
+  })
+
+  // Aspect ratio - only for txt2vid and ref2vid; options vary by resolution
+  .node(
+    'aspectRatio',
+    (ctx) => {
+      const resolution = (ctx as { resolution?: string }).resolution ?? '720p';
+      const options =
+        ltxv25AspectRatiosByResolution[resolution] ?? ltxv25AspectRatiosByResolution['720p'];
+      return {
+        ...aspectRatioNode({ options, defaultValue: '16:9' }),
+        when: ctx.workflow === 'txt2vid' || ctx.workflow === 'img2vid:ref2vid',
+      };
+    },
+    ['workflow', 'resolution']
+  )
+
+  // Duration - slider, max varies by resolution
+  .node(
+    'duration',
+    (ctx) => {
+      const resolution = (ctx as { resolution?: string }).resolution ?? '720p';
+      const max = ltxv25MaxDurationByResolution[resolution] ?? 20;
+      return sliderNode({ min: 3, max, step: 1, defaultValue: 5 });
+    },
+    ['resolution']
+  )
+
+  // Generate audio toggle
+  .node('generateAudio', {
+    input: z.boolean().optional(),
+    output: z.boolean(),
+    defaultValue: true,
+  });
+
 // `quantity` lives in ecosystem-graph (single source of truth so the two
-// definitions don't fight over the same key during evaluation). LTXV23 is
-// allow-listed there for video output — it batches multiple videos in a
-// single job using Seed + slotIndex.
+// definitions don't fight over the same key during evaluation). LTXV23 and
+// LTXV25 are allow-listed there for video output — they batch multiple videos
+// in a single job using Seed + slotIndex.
 
 // =============================================================================
 // LTX Graph (parent)
@@ -343,11 +436,11 @@ const ltxv23SubGraph = new DataGraph<LTXVersionCtx, GenerationCtx>()
 
 /**
  * Consolidated LTX video generation controls.
- * Bound to both LTXV2 and LTXV23 ecosystems via the ecosystem discriminator.
+ * Bound to the LTXV2, LTXV23 and LTXV25 ecosystems via the ecosystem discriminator.
  *
  * Shared nodes (defined here, before the discriminator):
  * - images: First/last frame slots for img2vid; single reference for ref2vid
- * - model: Combined version selector (LTXV2 + LTXV23)
+ * - model: Combined version selector (LTXV2 + LTXV23 + LTXV25)
  * - seed
  * - cfgScale, steps: Hidden for distilled models
  * - frameGuideStrength: img2vid with both first/last frames
@@ -459,17 +552,21 @@ export const ltxGraph = new DataGraph<LTXCtx, GenerationCtx>()
 
   // Computed discriminator — derived from ecosystem.
   // We can't discriminate directly on `ecosystem` here: the outer ecosystem-graph
-  // uses a groupedDiscriminator that collapses ['LTXV2','LTXV23'] into a single
-  // group and strips the inner ecosystem literal, so `data.ecosystem === 'LTXV23'`
-  // would not narrow. Discriminating on a computed key sidesteps that collision.
-  .computed('ltxVersion', (ctx): LTXVersion => (ctx.ecosystem === 'LTXV23' ? 'v23' : 'v2'), [
-    'ecosystem',
-  ])
+  // uses a groupedDiscriminator that collapses ['LTXV2','LTXV23','LTXV25'] into a
+  // single group and strips the inner ecosystem literal, so `data.ecosystem ===
+  // 'LTXV23'` would not narrow. Discriminating on a computed key sidesteps that.
+  .computed(
+    'ltxVersion',
+    (ctx): LTXVersion =>
+      ctx.ecosystem === 'LTXV25' ? 'v25' : ctx.ecosystem === 'LTXV23' ? 'v23' : 'v2',
+    ['ecosystem']
+  )
 
   // Discriminate version-specific controls into per-version subgraphs
   .discriminator('ltxVersion', {
     v2: ltxv2SubGraph,
     v23: ltxv23SubGraph,
+    v25: ltxv25SubGraph,
   })
 
   // Prompt enhancer toggle — when on, the handler prepends a promptEnhancement
@@ -501,6 +598,7 @@ export {
   ltxv23AspectRatios,
   ltxv23AspectRatiosByResolution,
   ltxv23Resolutions,
+  ltxv25AspectRatiosByResolution,
   ltxVersionOptions,
   LTXV2_DISTILLED_ID,
   LTXV23_DISTILLED_ID,
