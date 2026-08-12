@@ -65,6 +65,7 @@ export function OfficialShopSection({
       hideTitle={meta.hideTitle}
       className={className}
     >
+      <ShopBrowsePagination page={page} onChange={setPage} totalPages={totalPages} />
       <ShopSection.Items>
         {items.map(({ shopItem, createdAt }) => (
           <ShopItem

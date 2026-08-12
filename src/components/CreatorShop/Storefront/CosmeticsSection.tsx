@@ -65,6 +65,7 @@ export function CosmeticsSection({
       />
       {matched.length ? (
         <>
+          <ShopBrowsePagination page={page} onChange={setPage} totalPages={totalPages} />
           <ShopItemGrid
             items={cosmetics}
             ownedCosmeticIds={ownedCosmeticIds}
