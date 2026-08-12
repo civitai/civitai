@@ -258,6 +258,13 @@ export const createReport = async ({
   // only mods can create csam reports
   if (data.reason === ReportReason.CSAM && !isModerator) throw throwAuthorizationError();
 
+  // User-only on purpose: reporting your own content is how a creator contests a
+  // rating, so this must not widen to other entity types.
+  if (type === ReportEntity.User && id === userId)
+    throw throwBadRequestError(
+      'You cannot report your own profile. To reach a moderator about your own account, use the Support Portal at /support-portal.'
+    );
+
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
 
   const validReport =
