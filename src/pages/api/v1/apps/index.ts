@@ -6,6 +6,7 @@ import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-
 import { enforceAppsCatalogRateLimit } from '~/server/utils/apps-catalog-rate-limit';
 import { getNextPage } from '~/server/utils/pagination-helpers';
 import { isHostForColor } from '~/server/utils/server-domain';
+import { REST_ERROR_CODE, restErrorBody } from '~/server/utils/rest-error-envelope';
 
 /**
  * GET /api/v1/apps
@@ -68,7 +69,11 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
     limit: firstQuery(req.query.limit),
   });
   if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.flatten() });
+    // Sibling of `[slug].ts` — same shared envelope (civitai#3845). `error`
+    // stays the zod flatten OBJECT, which the shipped Go CLI special-cases.
+    return res
+      .status(400)
+      .json(restErrorBody(REST_ERROR_CODE.BAD_REQUEST, 'Invalid query', parsed.error.flatten()));
   }
 
   const limited = await enforceAppsCatalogRateLimit({ req, res, user, log: req.log });

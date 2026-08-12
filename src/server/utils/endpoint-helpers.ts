@@ -18,6 +18,11 @@ import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
+import {
+  GENERIC_SERVER_ERROR_MESSAGE,
+  REST_ERROR_CODE,
+  restErrorBody,
+} from '~/server/utils/rest-error-envelope';
 
 // Fire-and-forget structured, cause-walked error log for a REST 500 produced by
 // `handleEndpointError`. logToAxiom's stderr write is synchronous (→ Alloy → Loki),
@@ -279,7 +284,20 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     // log (name + message + stack, un-masked cause) so the next one is attributable
     // from Loki the normal way. safeError keeps it PII-light (primitive fields only).
     logRestServerFault(error);
-    return res.status(500).json({ message: 'An unexpected error occurred', error: error.message });
+    // 🔴 civitai#3845 — do NOT put `error.message` (or any other driver-derived
+    // text) in this body. This branch is the 500 chokepoint for 14 PUBLIC REST
+    // routes, so `.message` here is whatever the driver produced. In the #3845
+    // incident that was a raw Prisma invocation carrying the TABLE and COLUMN
+    // name, served to unauthenticated callers on `GET /api/v1/apps/{slug}`:
+    //   "Invalid `prisma.appCollaborator.findMany()` invocation: The column
+    //    `app_collaborators.app_listing_id` does not exist in the current database."
+    // The un-redacted error is still fully preserved by `logRestServerFault`
+    // above (structured, cause-walked, queryable in `_axiom`) — this genericizes
+    // the RESPONSE only, never the LOG. Pinned by
+    // `src/server/utils/__tests__/endpoint-helpers-error-envelope.test.ts`.
+    return res
+      .status(500)
+      .json(restErrorBody(REST_ERROR_CODE.INTERNAL_SERVER_ERROR, GENERIC_SERVER_ERROR_MESSAGE));
   }
 }
 
