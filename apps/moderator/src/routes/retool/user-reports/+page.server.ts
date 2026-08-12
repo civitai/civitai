@@ -6,7 +6,7 @@ import { parseForm, parseIdList, parseQuery, userIdSchema } from '$lib/server/qu
 import { removeImages, restoreImages, setImageFlag } from '$lib/server/user-actions.service';
 import { VIOLATION_TYPES } from '$lib/violations';
 import { MAX_INT4, usersByIds } from '$lib/server/users.service';
-import { ReportEntity, ReportStatus, reportReasons } from '$lib/reports';
+import { DEFAULT_REPORT_REASONS, ReportEntity, ReportStatus } from '$lib/reports';
 import { getReportHistory, getReports, setReportStatus } from '$lib/server/reports.service';
 import {
   addUserStrike,
@@ -65,9 +65,6 @@ const querySchema = z.object({
 
 const PER_PAGE = 50;
 
-// Retool excluded `reason = 'Automated'`: those are system-generated and drown the human queue.
-const QUEUE_REASONS = reportReasons.filter((r) => r !== 'Automated');
-
 export const load: PageServerLoad = async ({ url, locals }) => {
   const { user, page, cursor, tos, noPrompt, levels, from, to, prompt, negativePrompt } =
     parseQuery(url, querySchema);
@@ -83,7 +80,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       page,
       limit: PER_PAGE,
       statuses: [ReportStatus.Pending, ReportStatus.Processing],
-      reasons: QUEUE_REASONS,
+      reasons: DEFAULT_REPORT_REASONS,
     }),
     getReportHistory(ReportEntity.User),
     user ? getSuspectImages(user, filters, { cursor }) : null,

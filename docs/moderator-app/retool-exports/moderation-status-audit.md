@@ -86,7 +86,10 @@ that was the point of the board:
 - `UrgentReports` — **PRESENT**, predicate-for-predicate (`reports.service.ts`).
 - `ActionReport` — **PRESENT** via `setReportStatus`.
 - `Reports` / `OLDReports` — **PARTIAL**. Counts covered; the colour/threshold and "who last, how long
-  ago" are not (group B). Retool excluded only `Automated`; our badges now count every reason.
+  ago" are not (group B). Retool excluded only `Automated`; our badges counted every reason, which is
+  effectively the whole badge — on the dev clone (2026-08-12) 238,531 of 238,621 pending model reports
+  were Clavata's, and no queue but images was under 99%. Restored 2026-08-12 as `DEFAULT_REPORT_REASONS`,
+  shared by the badges, `/reports/[slug]`, User Reports and Chat Audit.
 - `RecentReports` / `RecentReportImage` — **ABSENT** (group B).
 - `ActionAllPostReports` — **ABSENT**. Selects pending post-reports where *every* image in the post is
   already `nsfwLevel = 32`, i.e. reports the content has already resolved. `/reports/[slug]` actions one

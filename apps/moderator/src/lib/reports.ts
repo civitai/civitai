@@ -48,6 +48,20 @@ export const DEFAULT_REPORT_STATUSES: ReportStatus[] = [
  *  makes an idle queue read as a growing backlog. The queue page still LANDS on both. */
 export const NEW_REPORT_STATUSES: ReportStatus[] = [ReportStatus.Pending];
 
+/**
+ * The reasons a human queue is for. Every Retool report query carried `reason != 'Automated'` and the
+ * port dropped it, which is not a rounding difference: `entity-moderation` files one `Automated` report
+ * per Clavata hit, and they outnumber human reports by three to four orders of magnitude in every queue
+ * but images (measured on the dev clone, 2026-08-12: model 238,531 automated to 90 human, chat 52,777 to
+ * 1). So every badge read as a five-figure backlog of work nobody does from this page, and that is what
+ * made the real single-digit numbers invisible.
+ *
+ * Hidden, not unreachable — `Automated` stays in the reason filter, so asking for them is one click.
+ */
+export const DEFAULT_REPORT_REASONS: ReportReason[] = reportReasons.filter(
+  (r) => r !== ReportReason.Automated
+);
+
 export const reportEntityLabels: Record<ReportEntity, string> = {
   model: 'Model',
   comment: 'Model Comment',

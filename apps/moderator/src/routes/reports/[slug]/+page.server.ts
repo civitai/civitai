@@ -5,6 +5,7 @@ import { getResolvedPostReportIds } from '$lib/server/moderation-board.service';
 import { removePlacement } from '$lib/server/user-actions.service';
 import { canAccess } from '$lib/server/access';
 import {
+  DEFAULT_REPORT_REASONS,
   DEFAULT_REPORT_STATUSES,
   reportEntityForSlug,
   reportReasons,
@@ -33,22 +34,32 @@ export const load: PageServerLoad = async ({ params, url }) => {
   const urlReasons = url.searchParams.getAll('reason').filter(isReason);
   const reportedBy = url.searchParams.get('reportedBy')?.trim() || '';
 
-  // A present-but-empty param (`?status=`) is an explicit clear → all; an absent param → the default
-  // review view. Reason has NO default: the badge counts every reason, so landing on a subset would
-  // send a moderator to a list shorter than the number they clicked.
+  // A present-but-empty param (`?status=`/`?reason=`) is an explicit clear → all; an absent param → the
+  // default review view. Both defaults must stay equal to what the badge counts, or a moderator lands on
+  // a list that disagrees with the number they clicked.
   const statuses = url.searchParams.has('status') ? urlStatuses : DEFAULT_REPORT_STATUSES;
-  const reasons = urlReasons;
+  const reasons = url.searchParams.has('reason') ? urlReasons : DEFAULT_REPORT_REASONS;
 
   const data = await getReports({
     type,
     page,
-    // No selection is every reason, said explicitly — the badge counts them all, so the page must too.
+    // An empty selection is every one, said explicitly rather than implied by omission.
     statuses: statuses.length ? statuses : 'all',
     reasons: reasons.length ? reasons : 'all',
     reportedBy: reportedBy || undefined,
   });
 
-  return { type, statuses, reasons, reportedBy, ...data };
+  // The default reason set is NOT echoed into the filter control: eight pre-ticked chips read as a
+  // heavily-narrowed view when it is the ordinary one. The page says what it is hiding instead, and only
+  // while it is hiding it — once reasons are chosen explicitly, the choice is the whole story.
+  return {
+    type,
+    statuses,
+    reasons: urlReasons,
+    hidingAutomated: !url.searchParams.has('reason'),
+    reportedBy,
+    ...data,
+  };
 };
 
 // Access is gated globally in hooks.server.ts (route-tier check), so actions don't re-check here.

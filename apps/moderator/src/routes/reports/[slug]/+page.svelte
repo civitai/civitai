@@ -144,6 +144,15 @@
   </form>
 </div>
 
+{#if data.hidingAutomated}
+  <p class="mb-4 text-xs text-muted-foreground">
+    Automated reports are hidden — this queue and its badge both count only reports people filed.
+    <button type="button" class="underline" onclick={() => applyMulti('reason', [])}>
+      Show automated reports
+    </button>
+  </p>
+{/if}
+
 <div class="rounded-xl border">
   <Table>
     <TableHeader>

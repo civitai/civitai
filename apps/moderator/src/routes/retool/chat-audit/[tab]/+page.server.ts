@@ -4,10 +4,10 @@ import type { PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import { MAX_INT4 } from '$lib/server/users.service';
 import {
+  DEFAULT_REPORT_REASONS,
   DEFAULT_REPORT_STATUSES,
   ReportEntity,
   ReportStatus,
-  reportReasons,
   reportStatuses,
 } from '$lib/reports';
 import { getReports } from '$lib/server/reports.service';
@@ -28,11 +28,6 @@ import { TABS } from '../tabs';
 // `chat` is bounded to int4: Chat.id is a Postgres integer, and a larger value ERRORS the comparison
 // rather than missing, which took the whole page down with a 500.
 const REPORTS_PER_PAGE = 20;
-
-// Retool's ChatReport carried `reason != 'Automated'`: system-generated reports drown the human queue.
-// Without the statuses filter this queue counted every chat report in history while the panel called
-// them open.
-const QUEUE_REASONS = reportReasons.filter((r) => r !== 'Automated');
 
 const querySchema = z.object({
   q: z.string().trim().catch(''),
@@ -67,7 +62,7 @@ export const load: PageServerLoad = async ({ url, params }) => {
     const reports = await getReports({
       type: ReportEntity.Chat,
       statuses: rstatus.length ? rstatus : DEFAULT_REPORT_STATUSES,
-      reasons: QUEUE_REASONS,
+      reasons: DEFAULT_REPORT_REASONS,
       page: rpage,
       limit: REPORTS_PER_PAGE,
     });
