@@ -1,8 +1,10 @@
+import { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import type { DiscordRole } from '~/server/integrations/discord';
 import { discord } from '~/server/integrations/discord';
+import { logToAxiom } from '~/server/logging/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createJob } from './job';
 
@@ -84,65 +86,104 @@ const applyDiscordActivityRoles = createJob(
   }
 );
 
-export const applyDiscordLeaderboardRoles = async () => {
+const getLeaderboardRoles = async () => {
   const discordRoles = await discord.getAllRoles();
 
   const top10Role = discordRoles.find((r) => r.name === 'Top 10');
   const top100Role = discordRoles.find((r) => r.name === 'Top 100');
-  if (!top100Role || !top10Role) return;
+  if (!top100Role || !top10Role) {
+    logToAxiom({
+      type: 'discord-role-sync-aborted',
+      name: 'apply-discord-leaderboard-roles',
+      reason: 'leaderboard roles not found in guild',
+      missing: [!top10Role && 'Top 10', !top100Role && 'Top 100'].filter(Boolean),
+    });
+    return null;
+  }
+
+  return { top10Role, top100Role };
+};
+
+export const applyDiscordLeaderboardRoles = async () => {
+  const roles = await getLeaderboardRoles();
+  if (!roles) return;
+  const { top10Role, top100Role } = roles;
 
   const existingTop100 = await getAccountsInRole(top100Role);
   const existingTop10 = await getAccountsInRole(top10Role);
 
   // Get the top 100 users with a discord account
-  const top100 =
-    (
-      await dbWrite.user.findMany({
-        where: {
-          rank: { leaderboardRank: { lte: 100 } },
-          accounts: {
-            some: { provider: 'discord' },
+  const top100 = (
+    await dbWrite.user.findMany({
+      where: {
+        rank: { leaderboardRank: { lte: 100 } },
+        accounts: {
+          some: { provider: 'discord' },
+        },
+      },
+      select: {
+        rank: {
+          select: {
+            leaderboardRank: true,
           },
         },
-        select: {
-          rank: {
-            select: {
-              leaderboardRank: true,
-            },
-          },
-          accounts: {
-            select: { providerAccountId: true },
-            where: { provider: 'discord' },
-          },
+        accounts: {
+          select: { providerAccountId: true },
+          where: { provider: 'discord' },
         },
-      })
-    )?.map((s) => ({
+      },
+    })
+  ).flatMap((s) =>
+    s.accounts.map((account) => ({
       rank: s.rank?.leaderboardRank,
-      providerAccountId: s.accounts[0].providerAccountId,
-    })) ?? [];
+      providerAccountId: account.providerAccountId,
+    }))
+  );
+
+  const top100Ids = new Set(top100.map((u) => u.providerAccountId));
+  const top10Ids = new Set(
+    top100.filter((u) => u.rank && u.rank <= 10).map((u) => u.providerAccountId)
+  );
 
   // Get the new users in the top 100 and the users that are no longer in the top 100
-  const newTop100 = top100
-    .filter((u) => !existingTop100.includes(u.providerAccountId))
-    .map((u) => u.providerAccountId);
+  const newTop100 = [...top100Ids].filter((id) => !existingTop100.includes(id));
   await addRoleToAccounts(top100Role, newTop100);
 
-  const removedTop100 = existingTop100.filter(
-    (u) => !top100.map((u) => u.providerAccountId).includes(u)
-  );
+  const removedTop100 = existingTop100.filter((id) => !top100Ids.has(id));
   await removeRoleFromAccounts(top100Role, removedTop100);
 
   // Get the new users in the top 10 and the users that are no longer in the top 10
-  const newTop10 = top100
-    .filter((u) => u.rank && u.rank <= 10)
-    .filter((u) => !existingTop10.includes(u.providerAccountId))
-    .map((u) => u.providerAccountId);
+  const newTop10 = [...top10Ids].filter((id) => !existingTop10.includes(id));
   await addRoleToAccounts(top10Role, newTop10);
 
-  const removedTop10 = existingTop10.filter(
-    (u) => !top100.map((u) => u.providerAccountId).includes(u)
-  );
+  const removedTop10 = existingTop10.filter((id) => !top10Ids.has(id));
   await removeRoleFromAccounts(top10Role, removedTop10);
+};
+
+// Grant-only sync for a single user, so linking Discord doesn't mean waiting for the nightly cron. Removals stay
+// with the cron: a link should never strip a role because our rank data happens to be mid-refresh.
+export const syncUserDiscordLeaderboardRoles = async (userId: number) => {
+  const roles = await getLeaderboardRoles();
+  if (!roles) return;
+  const { top10Role, top100Role } = roles;
+
+  const user = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: {
+      rank: { select: { leaderboardRank: true } },
+      accounts: {
+        select: { providerAccountId: true },
+        where: { provider: 'discord' },
+      },
+    },
+  });
+
+  const rank = user?.rank?.leaderboardRank;
+  const providerAccountIds = user?.accounts.map((a) => a.providerAccountId) ?? [];
+  if (!providerAccountIds.length || !rank || rank > 100) return;
+
+  await addRoleToAccounts(top100Role, providerAccountIds);
+  if (rank <= 10) await addRoleToAccounts(top10Role, providerAccountIds);
 };
 
 const applyDiscordPaidRoles = createJob('apply-discord-paid-roles', '*/10 * * * *', async () => {
@@ -211,67 +252,93 @@ export const applyDiscordRoles = [applyDiscordActivityRoles, applyDiscordPaidRol
 
 // #region [utilities]
 const getAccountsInRole = async (role: DiscordRole) => {
+  const roleValue = JSON.stringify([role.name]);
   return (
     (
-      await dbWrite.$queryRawUnsafe<{ providerAccountId: string }[]>(`
+      await dbWrite.$queryRaw<{ providerAccountId: string }[]>`
       SELECT
         "providerAccountId"
       FROM "Account"
       WHERE
           provider = 'discord'
-      AND metadata -> 'roles' @> '["${role.name}"]';`)
+      AND metadata -> 'roles' @> ${roleValue}::jsonb`
     )?.map((x) => x.providerAccountId) ?? []
   );
 };
 
-const addRoleToAccounts = async (role: DiscordRole, providerAccountIds: string[]) => {
-  // Update discord
+// Our metadata is a record of what Discord accepted, so only the accounts Discord actually accepted may be
+// written. Recording a role we failed to apply is unrecoverable: the next run reads it back as already-granted
+// and never retries.
+const applyToDiscord = async (
+  role: DiscordRole,
+  providerAccountIds: string[],
+  action: 'add' | 'remove'
+) => {
+  const applied: string[] = [];
+  let notInGuild = 0;
+  const errors: string[] = [];
+
   const tasks = providerAccountIds.map((providerAccountId) => async () => {
     try {
-      await discord.addRoleToUser(providerAccountId, role.id);
+      const ok =
+        action === 'add'
+          ? await discord.addRoleToUser(providerAccountId, role.id)
+          : await discord.removeRoleFromUser(providerAccountId, role.id);
+      if (ok) applied.push(providerAccountId);
+      else notInGuild++;
     } catch (e) {
-      console.error(e);
+      errors.push(e instanceof Error ? e.message : String(e));
     }
   });
   await limitConcurrency(tasks, 10);
 
-  // Update the accounts in the database
+  if (notInGuild || errors.length) {
+    logToAxiom({
+      type: 'discord-role-sync',
+      name: 'apply-discord-roles',
+      role: role.name,
+      action,
+      requested: providerAccountIds.length,
+      applied: applied.length,
+      notInGuild,
+      failed: errors.length,
+      errors: [...new Set(errors)].slice(0, 5),
+    });
+  }
+
+  return applied;
+};
+
+const addRoleToAccounts = async (role: DiscordRole, providerAccountIds: string[]) => {
+  if (providerAccountIds.length === 0) return;
+  const granted = await applyToDiscord(role, providerAccountIds, 'add');
+  if (granted.length === 0) return;
+
   const roleValue = JSON.stringify([role.name]);
-  const ids = providerAccountIds.map((id) => `'${id}'`).join(',');
-  if (ids.length === 0) return;
-  await dbWrite.$executeRawUnsafe(`
+  await dbWrite.$executeRaw`
     UPDATE "Account"
     SET metadata = jsonb_set(
       metadata,
       '{roles}',
-      COALESCE(metadata->'roles', '[]'::jsonb) || '${roleValue}'::jsonb,
+      (COALESCE(metadata->'roles', '[]'::jsonb) - ${role.name}::text) || ${roleValue}::jsonb,
       true
     )
-    WHERE "providerAccountId" IN (${ids})`);
+    WHERE "providerAccountId" IN (${Prisma.join(granted)})`;
 };
 
 const removeRoleFromAccounts = async (role: DiscordRole, providerAccountIds: string[]) => {
-  // Update discord
-  const tasks = providerAccountIds.map((providerAccountId) => async () => {
-    try {
-      await discord.removeRoleFromUser(providerAccountId, role.id);
-    } catch (e) {
-      console.error(e);
-    }
-  });
-  await limitConcurrency(tasks, 10);
+  if (providerAccountIds.length === 0) return;
+  const revoked = await applyToDiscord(role, providerAccountIds, 'remove');
+  if (revoked.length === 0) return;
 
-  // Update the accounts in the database
-  const ids = providerAccountIds.map((id) => `'${id}'`).join(',');
-  if (ids.length === 0) return;
-  await dbWrite.$executeRawUnsafe(`
+  await dbWrite.$executeRaw`
     UPDATE "Account"
     SET metadata = jsonb_set(
       metadata,
       '{roles}',
-      COALESCE(metadata->'roles', '[]'::jsonb) - '${role.name}',
+      COALESCE(metadata->'roles', '[]'::jsonb) - ${role.name}::text,
       true
     )
-    WHERE "providerAccountId" IN (${ids})`);
+    WHERE "providerAccountId" IN (${Prisma.join(revoked)})`;
 };
 // #endregion

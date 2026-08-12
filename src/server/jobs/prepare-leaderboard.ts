@@ -7,7 +7,10 @@ import { pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 import { applyDiscordLeaderboardRoles } from '~/server/jobs/apply-discord-roles';
 import { logToAxiom } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
-import { isLeaderboardPopulated } from '~/server/services/leaderboard.service';
+import {
+  getUnpopulatedLeaderboards,
+  isLeaderboardPopulated,
+} from '~/server/services/leaderboard.service';
 import { leaderboardPopulatedKey } from '~/server/services/new-creators.service';
 import { updateLeaderboardRank } from '~/server/services/user.service';
 import type { Task } from '~/server/utils/concurrency-helpers';
@@ -231,7 +234,16 @@ const updateUserDiscordLeaderboardRoles = createJob(
   'update-user-discord-leaderboard-roles',
   '10 0 * * *',
   async () => {
-    if (!(await isLeaderboardPopulated())) throw new Error('Leaderboard not populated');
+    // Roles are driven by UserRank, not by any single board, so an unpopulated board only means the ranks may
+    // lag a day. Skipping the run instead costs the whole day's role sync, with no retry.
+    const unpopulated = await getUnpopulatedLeaderboards();
+    if (unpopulated.length)
+      logToAxiom({
+        type: 'leaderboard-partially-populated',
+        name: 'update-user-discord-leaderboard-roles',
+        unpopulated,
+      });
+
     await applyDiscordLeaderboardRoles();
   }
 );

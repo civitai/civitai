@@ -48,17 +48,23 @@ describe('/api/auth/connect', () => {
     const url = new URL(res.location as string);
     expect(url.origin + url.pathname).toBe('https://auth.test/login/discord');
     expect(url.searchParams.get('link')).toBe('true');
-    // returnUrl is made absolute + same-origin from the request host (the hub returns here after linking).
-    expect(url.searchParams.get('returnUrl')).toBe('https://civitai.com/user/account#accounts');
+    // The hub returns to /api/auth/linked (absolute + same-origin from the request host) so the main app can run
+    // its post-link side effects, carrying the caller's path along for the forward.
+    const returned = new URL(url.searchParams.get('returnUrl') as string);
+    expect(returned.origin + returned.pathname).toBe('https://civitai.com/api/auth/linked');
+    expect(returned.searchParams.get('provider')).toBe('discord');
+    expect(returned.searchParams.get('returnUrl')).toBe('/user/account#accounts');
   });
 
   it('collapses an unsafe returnUrl to the origin root (no open redirect)', async () => {
     const handler = (await import('~/pages/api/auth/connect')).default;
     const { req, res } = mockReqRes({ provider: 'github', returnUrl: 'https://evil.com' });
     handler(req, res as unknown as NextApiResponse);
-    expect(new URL(res.location as string).searchParams.get('returnUrl')).toBe(
-      'https://civitai.com/'
+    const returned = new URL(
+      new URL(res.location as string).searchParams.get('returnUrl') as string
     );
+    expect(returned.origin + returned.pathname).toBe('https://civitai.com/api/auth/linked');
+    expect(returned.searchParams.get('returnUrl')).toBe('/');
   });
 
   it('400 when provider is missing', async () => {

@@ -26,8 +26,12 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   }
 
   // Absolute, same-origin return target (the hub redirects back here cross-origin after linking). safePath
-  // keeps it a same-origin path — no open redirect through the query param.
-  const returnUrl = `${selfOrigin.replace(/\/+$/, '')}${safePath(req.query.returnUrl)}`;
+  // keeps it a same-origin path — no open redirect through the query param. The hub returns to /api/auth/linked
+  // so the main app can run post-link side effects it alone can do, which then forwards to the caller's path.
+  const linked = new URL('/api/auth/linked', selfOrigin);
+  linked.searchParams.set('provider', provider);
+  linked.searchParams.set('returnUrl', safePath(req.query.returnUrl));
+  const returnUrl = linked.toString();
   // `roles=true` opts into the provider's incremental scope (Discord Linked Roles) — only the /discord/link-role
   // flow passes it; a plain "Connect <provider>" never does, so normal linking can't trip the Linked-Roles scope.
   const linkRoles = req.query.roles === 'true';
