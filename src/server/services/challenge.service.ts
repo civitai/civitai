@@ -2689,6 +2689,15 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
       log('Sending entries for final judgment');
       const generated = await generateWinners({
         theme: challenge.theme || 'Creative Challenge',
+        // Same contract as the job path: when an engine decided the places, the recap writer is
+        // told who won rather than left to pick its own names for the prose.
+        decidedWinners: engineWinners?.map((winner, i) => ({
+          creatorId: winner.userId,
+          creator:
+            rankedField.find((entry) => entry.userId === winner.userId)?.username ?? 'unknown',
+          place: i + 1,
+          reason: winner.reason,
+        })),
         entries: recapField(rankedField, config.finalReviewAmount, judgingEngine).map((entry) => ({
           creator: entry.username,
           creatorId: entry.userId,

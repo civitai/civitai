@@ -681,3 +681,230 @@ describe('pickWinnersForChallenge — a user’s representative comes from the l
     expect(imageIdsOf(mockRankField.mock.calls[0][1]).sort()).toEqual([1, 2]);
   });
 });
+
+// Arrival placement is read-modify-write — getStandings, findSlot, insertStanding — with nothing
+// serialising it. Run inside the concurrent review tasks, every entry in a tick binary-searches the
+// SAME standings snapshot, so none of them ever meets another. Measured live on a 6-entry
+// challenge: every arrival bout was against the first entry placed, 0/1/1/1/1/1 comparisons where
+// serial placement costs ~11 across different incumbents.
+//
+// It is invisible from outside — the standings look complete and `comparisons` records the small
+// number — and at small field sizes the close-time rerun repairs it, which is why the live test
+// still passed. On a 284-entry field the rerun is bounded at K and the rest keep the burst's answer.
+//
+// Same failure shape as the podium seat race: an instantly-resolving mock cannot see it, so the
+// fake below puts a real await between the read and the write.
+describe('reviewEntries — entries in one tick are placed against each other, not one pivot', () => {
+  const ENTRIES = 5;
+
+  /** Stateful stand-in for the ladder: reads the standings, "compares", then appends. */
+  function ladderFake() {
+    const ladder: number[] = [];
+    const opponents: number[] = [];
+
+    mockRecordEntry.mockImplementation(async (_ctx: unknown, entry: { imageId: number }) => {
+      const snapshot = [...ladder];
+      // The await that makes the read-modify-write interleavable — a synchronous fake cannot
+      // express the bug this test exists to catch.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (snapshot.length) opponents.push(snapshot[snapshot.length >> 1]);
+      ladder.push(entry.imageId);
+    });
+
+    return { ladder, opponents };
+  }
+
+  function mockMultiEntryReview(count: number) {
+    const entries = Array.from({ length: count }, (_, i) => ({
+      imageId: 100 + i,
+      userId: 1000 + i,
+      username: `u${i}`,
+      url: `uuid-${i}`,
+      nsfwLevel: 1,
+    }));
+
+    mockGetActiveChallenges.mockResolvedValue([currentChallenge]);
+    mockDbReadQueryRaw.mockResolvedValue([
+      {
+        allowedNsfwLevel: 1,
+        judgeId: null,
+        judgingPrompt: null,
+        prizeMode: 'Fixed',
+        prizePool: 0,
+        basePrizePool: 0,
+        buzzPerAction: 0,
+        poolTrigger: null,
+        maxPrizePool: null,
+        prizeDistribution: null,
+        metadata: null,
+        source: ChallengeSource.System,
+        judgingCategories: null,
+        entryFee: 0,
+        judgingEngine: 'pairwise-ladder',
+      },
+    ]);
+    mockDbReadChallengeFindUnique.mockResolvedValue({ reviewCostType: 'None', reviewCost: 0 });
+
+    // Keyed off the SQL rather than call order: five entries at concurrency 5 interleave their
+    // per-entry guard query, so a mockResolvedValueOnce chain would hand back the wrong rows.
+    mockDbWriteQueryRaw.mockImplementation(async (strings: unknown) => {
+      const sql = (strings as string[]).join(' ');
+      if (sql.includes('SELECT EXISTS')) return [{ exists: false }];
+      // `tagId IS NULL` is the recent-entry query; the request-review query filters on
+      // `tagId = reviewMeTagId` and must stay empty or every entry is reviewed twice.
+      if (sql.includes('ci."tagId" IS NULL')) return entries;
+      return [];
+    });
+
+    mockGenerateReview.mockResolvedValue({
+      score: { theme: 8, aesthetic: 8, humor: 8, wittiness: 8 },
+      summary: 'summary',
+      comment: 'nice',
+      reaction: 'Like',
+    });
+
+    return entries;
+  }
+
+  it('never lets two placements overlap', async () => {
+    mockMultiEntryReview(ENTRIES);
+    let inFlight = 0;
+    let peak = 0;
+    mockRecordEntry.mockImplementation(async () => {
+      peak = Math.max(peak, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight--;
+    });
+
+    await reviewEntries();
+
+    expect(mockRecordEntry).toHaveBeenCalledTimes(ENTRIES);
+    expect(peak).toBe(1);
+  });
+
+  it('measures each arrival against a DIFFERENT incumbent, not all against the first', async () => {
+    mockMultiEntryReview(ENTRIES);
+    const { opponents } = ladderFake();
+
+    await reviewEntries();
+
+    // The bug's signature: 4 opponents, every one of them the first entry placed.
+    expect(opponents).toHaveLength(ENTRIES - 1);
+    expect(new Set(opponents).size).toBeGreaterThan(1);
+  });
+
+  it('places in submission order, not in the order the LLM calls happened to return', async () => {
+    mockMultiEntryReview(ENTRIES);
+
+    // The absolute pass stays concurrent, so completion order is whatever the provider does. Skew
+    // it hard the other way: the first entry started is the last one finished.
+    const started: number[] = [];
+    const finished: number[] = [];
+    mockGenerateReview.mockImplementation(async (input: { creator: string }) => {
+      const imageId = 100 + Number(input.creator.slice(1));
+      started.push(imageId);
+      const rank = started.length;
+      await new Promise((resolve) => setTimeout(resolve, (ENTRIES - rank + 1) * 10));
+      finished.push(imageId);
+      return {
+        score: { theme: 8, aesthetic: 8, humor: 8, wittiness: 8 },
+        summary: 'summary',
+        comment: 'nice',
+        reaction: 'Like',
+      };
+    });
+
+    const placed: number[] = [];
+    mockRecordEntry.mockImplementation(async (_ctx: unknown, entry: { imageId: number }) => {
+      placed.push(entry.imageId);
+    });
+
+    await reviewEntries();
+
+    expect(placed).toEqual(started);
+    // Without this the test would pass on a fake whose completion order matched anyway.
+    expect(finished).not.toEqual(started);
+  });
+});
+
+// The other half of the recap fix: generateWinners can only write about the right people if the
+// caller hands it the engine's places. See challenge-recap-winners.test.ts for the prompt side.
+describe('pickWinnersForChallenge — the recap writer is told who actually won', () => {
+  function mockJudgeRow(judgingEngine: string) {
+    mockDbReadQueryRaw.mockResolvedValueOnce([
+      {
+        judgeId: null,
+        judgingPrompt: null,
+        eventId: null,
+        source: ChallengeSource.System,
+        judgingCategories: null,
+        judgingEngine,
+        metadata: null,
+      },
+    ]);
+  }
+
+  const field = [
+    { imageId: 1, userId: 100, username: 'Vince_AI' },
+    { imageId: 2, userId: 200, username: 'ArtisticSoul66' },
+    { imageId: 3, userId: 300, username: 'unexpectedlyprovided' },
+  ];
+
+  function recapOnly() {
+    mockGenerateWinners.mockResolvedValue({
+      process: 'llm',
+      outcome: 'llm',
+      model: 'test-model',
+      usage: { promptTokens: 0, completionTokens: 0 },
+      winners: [],
+    });
+  }
+
+  it('passes the engine’s places, in place order, with the right names', async () => {
+    mockJudgeRow('pairwise-ladder');
+    mockJudgedEntryRows(field);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    mockSelectWinners.mockResolvedValue([
+      { userId: 100, imageId: 1, reason: 'won the round-robin' },
+      { userId: 200, imageId: 2, reason: 'second on win rate' },
+    ]);
+    recapOnly();
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    expect(mockGenerateWinners.mock.calls[0][0].decidedWinners).toEqual([
+      { creatorId: 100, creator: 'Vince_AI', place: 1, reason: 'won the round-robin' },
+      { creatorId: 200, creator: 'ArtisticSoul66', place: 2, reason: 'second on win rate' },
+    ]);
+  });
+
+  it('leaves the recap writer picking for itself when the engine has no opinion', async () => {
+    mockJudgeRow('legacy-absolute');
+    mockJudgedEntryRows(field);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    mockSelectWinners.mockResolvedValue(null);
+    recapOnly();
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    expect(mockGenerateWinners.mock.calls[0][0].decidedWinners).toBeUndefined();
+  });
+
+  it('gives the recap a summary for every creator it is told won', async () => {
+    // An engine winner outside the recap shortlist would otherwise leave the model writing prose
+    // about a creator whose entry it was never shown.
+    mockJudgeRow('pairwise-ladder');
+    mockJudgedEntryRows(field);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    mockSelectWinners.mockResolvedValue([{ userId: 300, imageId: 3, reason: 'won' }]);
+    recapOnly();
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    const call = mockGenerateWinners.mock.calls[0][0];
+    const known = new Set((call.entries as { creatorId: number }[]).map((e) => e.creatorId));
+    for (const winner of call.decidedWinners as { creatorId: number }[]) {
+      expect(known.has(winner.creatorId)).toBe(true);
+    }
+  });
+});

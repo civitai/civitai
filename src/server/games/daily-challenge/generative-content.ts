@@ -477,6 +477,22 @@ type GenerateWinnersInput = {
   theme: string;
   config: JudgingConfig;
   model?: AIModel;
+  /**
+   * Places an engine has ALREADY decided. When present this call stops being a winner pick and
+   * becomes a recap writer: the model is told who won and writes the prose about them.
+   *
+   * 🔴 Without this, an engine-judged challenge published a recap celebrating the wrong people.
+   * The caller discards `winners` when an engine supplied places, but nothing reconciled the PROSE
+   * — so the model picked three names of its own from the shortlist and wrote a narrative about a
+   * winner set that was then thrown away. One live run congratulated ranks 5, 4 and 3 by name and
+   * never mentioned the winner or the runner-up, next to a podium showing the real order.
+   */
+  decidedWinners?: Array<{
+    creatorId: number;
+    creator: string;
+    place: number;
+    reason: string;
+  }>;
 };
 type GeneratedWinners = {
   winners: Array<{
@@ -490,18 +506,27 @@ type GeneratedWinners = {
 export async function generateWinners(
   input: GenerateWinnersInput
 ): Promise<GeneratedWinners & { usage: TokenUsage; model: AIModel }> {
+  const decided = input.decidedWinners?.length ? input.decidedWinners : undefined;
+
+  const placements = decided
+    ? `\n\nFinal placements — ALREADY DECIDED by the judging process. These are the winners. Write the recap about exactly these creators, in this order:\n\`\`\`json \n${JSON.stringify(
+        decided,
+        null,
+        2
+      )}\n\`\`\``
+    : '';
+
   const userText = `${UNTRUSTED_FIELDS_PREAMBLE}\n\nTheme: ${
     input.theme
-  }\nEntries:\n\`\`\`json \n${JSON.stringify(input.entries, null, 2)}\n\`\`\``;
+  }\nEntries:\n\`\`\`json \n${JSON.stringify(input.entries, null, 2)}\n\`\`\`${placements}`;
 
-  const model = input.model ?? DEFAULT_CONTENT_MODEL;
-  const { content: result, usage } = await getCompletionWithUsage<GeneratedWinners>(
-    model,
-    [
-      prepareSystemMessage(
-        input.config,
-        'winner',
-        `{
+  const responseStructure = decided
+    ? `{
+          "process": "<about the judging process and the challenge as markdown>",
+          "outcome": "<summary about the outcome of the challenge as markdown>"
+        }
+        IMPORTANT: The winners are already decided and listed under "Final placements". Do NOT choose winners. Name only those creators as placing, in that order, and do not describe any other entrant as having won or placed.`
+    : `{
           "winners": [
             {"creatorId": <id from entries>, "creator": "<name from entries>", "reason": "<why they won 1st place>"},
             {"creatorId": <id from entries>, "creator": "<name from entries>", "reason": "<why they won 2nd place>"},
@@ -510,8 +535,13 @@ export async function generateWinners(
           "process": "<about your judging process and the challenge as markdown>",
           "outcome": "<summary about the outcome of the challenge as markdown>"
         }
-        IMPORTANT: Select exactly 3 different winners (1st, 2nd, 3rd place) using creatorId and creator values from the entries provided.`
-      ),
+        IMPORTANT: Select exactly 3 different winners (1st, 2nd, 3rd place) using creatorId and creator values from the entries provided.`;
+
+  const model = input.model ?? DEFAULT_CONTENT_MODEL;
+  const { content: result, usage } = await getCompletionWithUsage<GeneratedWinners>(
+    model,
+    [
+      prepareSystemMessage(input.config, 'winner', responseStructure),
       {
         role: 'user' as const,
         content: [
@@ -525,7 +555,13 @@ export async function generateWinners(
     3
   );
 
-  return { ...result, usage, model };
+  // The decided list is the answer, not whatever the model echoed — it was not asked for `winners`
+  // and may not have returned the key at all.
+  const winners = decided
+    ? decided.map(({ creatorId, creator, reason }) => ({ creatorId, creator, reason }))
+    : result.winners ?? [];
+
+  return { ...result, winners, usage, model };
 }
 
 // Helpers

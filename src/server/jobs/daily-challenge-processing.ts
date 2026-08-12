@@ -34,6 +34,7 @@ import {
 import {
   bestPerUserInRankOrder,
   recapField,
+  type JudgedEntryRef,
 } from '~/server/games/daily-challenge/challenge-judging-engine';
 import {
   dedupeWinnersForPayout,
@@ -970,8 +971,12 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     toReview.push(entry);
   }
 
+  // Entries that cleared the theme gate, waiting to be placed into the ladder. Collected during
+  // the concurrent absolute pass and placed SERIALLY afterwards — see the note at the drain below.
+  const awaitingPlacement: { order: number; entry: JudgedEntryRef }[] = [];
+
   // Rate entries
-  const tasks = toReview.map((entry) => async () => {
+  const tasks = toReview.map((entry, submissionOrder) => async () => {
     try {
       log('Reviewing entry:', entry);
 
@@ -1064,26 +1069,16 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         userCategories?.length ? userCategories : FIXED_JUDGING_CATEGORIES
       );
       if (gatedScore !== null) {
-        try {
-          await judgingEngine.recordEntry(engineContext, {
+        awaitingPlacement.push({
+          order: submissionOrder,
+          entry: {
             imageId: entry.imageId,
             userId: entry.userId,
             username: entry.username,
             url: entry.url,
             nsfwLevel: entry.nsfwLevel,
-          });
-          log('Engine recorded entry', judgingEngine.key, entry.imageId);
-        } catch (error) {
-          const err = error as Error;
-          logToAxiom({
-            type: 'error',
-            name: 'challenge-engine-record-entry',
-            message: err.message,
-            challengeId: currentChallenge.challengeId,
-            imageId: entry.imageId,
-            engine: judgingEngine.key,
-          });
-        }
+          },
+        });
       }
     } catch (error) {
       const err = error as Error;
@@ -1092,6 +1087,42 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     }
   });
   await limitConcurrency(tasks, 5);
+
+  // 🔴 Ladder placement is SERIAL, even though the absolute pass above is not.
+  //
+  // `recordEntry` is read-modify-write — getStandings, findSlot, insertStanding — with nothing
+  // serialising it. Run inside the concurrent tasks, up to 5 entries binary-search the SAME
+  // standings snapshot, so every one of them measures itself against whatever was there before the
+  // tick and none of them ever meets another. Measured on a live 6-entry challenge: every single
+  // arrival bout was against the first entry placed, 0/1/1/1/1/1 comparisons where serial placement
+  // costs ~11 across different incumbents. Six entries hanging off one pivot is not a measurement.
+  //
+  // It is invisible from the outside — the standings look complete and `comparisons` faithfully
+  // records the small number — and at small field sizes the close-time rerun repairs it, which is
+  // why the live test passed. On a 284-entry field it will not: the rerun is bounded at
+  // RERUN_TOP_K and the rest keep whatever the burst gave them.
+  //
+  // The absolute pass stays concurrent: it is independent per entry and it is where the latency is.
+  // Placement is ordered by submission so a run is reproducible rather than depending on which LLM
+  // call happened to return first. Same per-entry error boundary as before — a throw costs this
+  // entry's rung and nothing else, and `rankField` places whatever was missed.
+  awaitingPlacement.sort((a, b) => a.order - b.order);
+  for (const { entry } of awaitingPlacement) {
+    try {
+      await judgingEngine.recordEntry(engineContext, entry);
+      log('Engine recorded entry', judgingEngine.key, entry.imageId);
+    } catch (error) {
+      const err = error as Error;
+      logToAxiom({
+        type: 'error',
+        name: 'challenge-engine-record-entry',
+        message: err.message,
+        challengeId: currentChallenge.challengeId,
+        imageId: entry.imageId,
+        engine: judgingEngine.key,
+      });
+    }
+  }
 
   // Reward entry prizes
   // ----------------------------------------------
@@ -1540,19 +1571,39 @@ export async function pickWinnersForChallenge(
         );
 
         log('Sending entries for final judgment');
+        // The recap must cover the podium shortlist, not just the top N: an entry ranked
+        // 11-15 winning the round-robin is the stated reason the podium exists, and a recap
+        // that never saw it would describe a challenge somebody else won.
+        const recapEntries = recapField(rankedField, config.finalReviewAmount, judgingEngine);
+        // The podium draws from that same shortlist, so this union is empty today. It is here so
+        // that an engine returning a winner from outside it produces a recap that still has that
+        // entry's summary to write from, instead of prose about a creator it knows nothing about.
+        const recapPool = [
+          ...recapEntries,
+          ...rankedField.filter(
+            (entry) =>
+              engineWinners?.some((winner) => winner.userId === entry.userId) &&
+              !recapEntries.includes(entry)
+          ),
+        ];
         const generated = await generateWinners({
           theme: currentChallenge.theme,
-          // The recap must cover the podium shortlist, not just the top N: an entry ranked
-          // 11-15 winning the round-robin is the stated reason the podium exists, and a recap
-          // that never saw it would describe a challenge somebody else won.
-          entries: recapField(rankedField, config.finalReviewAmount, judgingEngine).map(
-            (entry) => ({
-              creator: entry.username,
-              creatorId: entry.userId,
-              summary: entry.summary,
-              score: entry.score,
-            })
-          ),
+          entries: recapPool.map((entry) => ({
+            creator: entry.username,
+            creatorId: entry.userId,
+            summary: entry.summary,
+            score: entry.score,
+          })),
+          // Hand the engine's places to the recap writer so the prose and the podium describe the
+          // same people. Without this the model picked its own three from the shortlist and the
+          // published recap congratulated entrants who had not placed.
+          decidedWinners: engineWinners?.map((winner, i) => ({
+            creatorId: winner.userId,
+            creator:
+              rankedField.find((entry) => entry.userId === winner.userId)?.username ?? 'unknown',
+            place: i + 1,
+            reason: winner.reason,
+          })),
           config: judgingConfig,
         });
         process = generated.process;

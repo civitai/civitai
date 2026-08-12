@@ -220,3 +220,50 @@ describe('getStandings', () => {
     expect(sqlOf(queryRaw.mock.calls[0])).toMatch(/ORDER BY "rank" ASC/);
   });
 });
+
+describe('replaceStandings — the comparison count survives a reorder', () => {
+  // Both callers passed no `comparisons`, so every rerun and every podium reset the column to 0.
+  // The count then existed only in ChallengeEntryComparison, and the standing said "never
+  // compared" about an entry that had been compared nine times.
+  it('recounts from the comparison rows instead of writing zero', async () => {
+    queryRaw.mockResolvedValue([
+      { imageId: 10, count: 9n },
+      { imageId: 20, count: 4n },
+    ]);
+
+    await store.replaceStandings(424, [
+      { imageId: 10, userId: 100 },
+      { imageId: 20, userId: 200 },
+    ]);
+
+    const insertCall = executeRaw.mock.calls.find((call) => sqlOf(call).includes('INSERT INTO'))!;
+    const bound = boundValues(insertCall);
+    // (challengeId, imageId, userId, rank, comparisons, winRate) per row.
+    expect(bound).toEqual([424, 10, 100, 1, 9, null, 424, 20, 200, 2, 4, null]);
+  });
+
+  it('counts an image from BOTH sides of the pair', async () => {
+    await store.replaceStandings(424, [{ imageId: 10, userId: 100 }]);
+
+    const countCall = queryRaw.mock.calls.find((call) =>
+      sqlOf(call).includes('ChallengeEntryComparison')
+    )!;
+    const sql = sqlOf(countCall);
+    expect(sql).toContain('"imageIdA" AS "imageId"');
+    expect(sql).toContain('"imageIdB" AS "imageId"');
+    expect(sql).toContain('UNION ALL');
+    expect(paramsOf(countCall)).toEqual([424, 424]);
+  });
+
+  it('writes 0 for an entry that genuinely has no comparisons', async () => {
+    queryRaw.mockResolvedValue([{ imageId: 10, count: 3n }]);
+
+    await store.replaceStandings(424, [
+      { imageId: 10, userId: 100 },
+      { imageId: 99, userId: 990 },
+    ]);
+
+    const insertCall = executeRaw.mock.calls.find((call) => sqlOf(call).includes('INSERT INTO'))!;
+    expect(boundValues(insertCall)).toEqual([424, 10, 100, 1, 3, null, 424, 99, 990, 2, 0, null]);
+  });
+});

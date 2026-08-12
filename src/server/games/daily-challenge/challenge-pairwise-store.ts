@@ -44,15 +44,42 @@ export async function insertStanding(input: {
   ]);
 }
 
-/** Overwrite the whole ladder — the second run and the podium both re-order the entire field. */
+/**
+ * How many distinct comparisons each image took part in, across every phase. Derived from the
+ * comparison rows because they are the only durable record — the arrival count on the standing is
+ * overwritten by every reorder.
+ */
+export async function countComparisonsByImage(challengeId: number): Promise<Map<number, number>> {
+  const rows = await dbWrite.$queryRaw<{ imageId: number; count: bigint }[]>`
+    SELECT "imageId", COUNT(*) AS count
+    FROM (
+      SELECT "imageIdA" AS "imageId" FROM "ChallengeEntryComparison" WHERE "challengeId" = ${challengeId}
+      UNION ALL
+      SELECT "imageIdB" AS "imageId" FROM "ChallengeEntryComparison" WHERE "challengeId" = ${challengeId}
+    ) AS sides
+    GROUP BY "imageId"
+  `;
+  return new Map(rows.map((row) => [row.imageId, Number(row.count)]));
+}
+
+/**
+ * Overwrite the whole ladder — the second run and the podium both re-order the entire field.
+ *
+ * `comparisons` is RECOUNTED here rather than taken from the caller. Both callers used to pass
+ * nothing, so every reorder silently reset the column to 0 and the per-entry count that plan item
+ * 10 asks for survived only in ChallengeEntryComparison — a column that reads as "this entry was
+ * never compared" for an entry that was compared nine times. Deriving it means a third caller
+ * cannot reintroduce that by omission.
+ */
 export async function replaceStandings(
   challengeId: number,
-  rows: { imageId: number; userId: number; comparisons?: number; winRate?: number | null }[]
+  rows: { imageId: number; userId: number; winRate?: number | null }[]
 ): Promise<void> {
+  const comparisonCounts = await countComparisonsByImage(challengeId);
   const values = rows.map(
     (row, i) =>
       Prisma.sql`(${challengeId}, ${row.imageId}, ${row.userId}, ${i + 1}, ${
-        row.comparisons ?? 0
+        comparisonCounts.get(row.imageId) ?? 0
       }, ${row.winRate ?? null})`
   );
   await dbWrite.$transaction([
