@@ -1573,6 +1573,33 @@ describe('persistListingAssetImage (measures the uploaded bytes)', () => {
     expect(validateListingImage(persistedRow(), 'cover')).toEqual({ ok: true });
   });
 
+  it('reports a quarter-turned WEBP the way a renderer shows it', async () => {
+    // 🔴 The container the whole client-side skip exists for, EXECUTED rather than
+    // restated. The JPEG case above and this one differ in exactly one variable —
+    // `.jpeg()` vs `.webp()` — so this pins that the server transposes for WebP too.
+    //
+    // That is the half of the disagreement this side owns: Chromium does NOT apply
+    // EXIF orientation to WebP (asserted against the browser in
+    // `src/components/Apps/ListingAssetStep.browser.test.tsx`), while the server
+    // does — which is precisely why the axis-naming bounds cannot be prechecked for
+    // this container. If sharp ever stopped honouring orientation on WebP, the two
+    // sides would agree again and the skip would become unnecessary; this test is
+    // what would notice.
+    storeObject(
+      await sharp({
+        create: { width: 450, height: 800, channels: 3, background: { r: 8, g: 8, b: 8 } },
+      })
+        .withMetadata({ orientation: 6 })
+        .webp()
+        .toBuffer()
+    );
+
+    await persistListingAssetImage({ input: HONEST_COVER, userId: CALLER });
+
+    expect(persistedRow()).toMatchObject({ width: 800, height: 450, mimeType: 'image/webp' });
+    expect(validateListingImage(persistedRow(), 'cover')).toEqual({ ok: true });
+  });
+
   it('leaves an upright JPEG alone — the transpose is conditional, not per-format', async () => {
     storeObject(
       await sharp({
