@@ -14,6 +14,14 @@ export type PlacedSticker = {
   status: string;
   amount: number;
   data: StickerPlacementData;
+  /**
+   * `Date` over superjson, a string out of anything that stringified the cache
+   * on the way past. Both are accepted rather than normalised on arrival
+   * because the only readers pass it to `new Date()` anyway, and a cast that
+   * claims `Date` for a value that is a string reads correct and compares
+   * wrong.
+   */
+  placedAt: Date | string;
   isPending: boolean;
 };
 

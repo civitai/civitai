@@ -245,6 +245,14 @@ export type StickerPlacementView = {
   status: PlacementStatus;
   amount: number;
   data: StickerPlacementData;
+  /**
+   * When it was placed, which is what decides what covers what — and, on the
+   * detail view, the order and the pacing of the reveal. Carried on the listing
+   * rather than left to `getStickerPlacementDetail`: a client that has to ask
+   * per placement cannot order them until every one of those queries lands, so
+   * the layer order would settle after paint.
+   */
+  placedAt: Date;
   /** True only for the placer's own placement awaiting the owner. */
   isPending: boolean;
 };
@@ -394,6 +402,7 @@ export async function getStickerPlacements({
       status: true,
       amount: true,
       data: true,
+      createdAt: true,
     },
     orderBy: { createdAt: 'asc' },
   });
@@ -407,6 +416,7 @@ export async function getStickerPlacements({
       ownerId: row.ownerId,
       status: row.status as PlacementStatus,
       amount: row.amount,
+      placedAt: row.createdAt,
       data: row.data as StickerPlacementData,
       isPending: row.status === 'pending',
     }));

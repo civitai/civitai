@@ -3,6 +3,7 @@ import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import type { PlacedSticker } from '~/components/Sticker/placement.util';
+import { orderPlacements, placementRevealDelays } from '~/components/Sticker/placement-order';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
 import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
 import {
@@ -11,10 +12,25 @@ import {
   type StickerSurface,
   type StickerTreatmentKey,
 } from '~/components/Sticker/treatments/sticker-treatments';
-import { useMemo } from 'react';
+import styles from '~/components/Sticker/placement-reveal.module.scss';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+
+/**
+ * Below every pending placement's controls, and above every sticker.
+ *
+ * The owner's approve/decline sits outside its sticker's transform so it can
+ * out-rank a sticker placed later — which is the point of the layer order, and
+ * would otherwise bury the buttons under the sticker covering them.
+ */
+const PENDING_CONTROL_Z = 1000;
 
 /**
  * Placed stickers, drawn over the content they were placed on.
+ *
+ * Oldest at the bottom, newest on top. Covering another sticker is a feature —
+ * a hat, a speech bubble, decorating what someone else left — so what a viewer
+ * sees is the image as it was most recently built, and the history panel is
+ * where the buried ones stay reachable.
  *
  * Positions are fractions of the target's bounds, never pixels, so the same
  * overlay is correct at card size in a feed and at full size in the detail view.
@@ -34,6 +50,8 @@ export function StickerPlacementOverlay({
   artworkWidth = 512,
   treatment = STILL_STICKER_TREATMENT,
   surface = 'detail',
+  stagger = false,
+  step = null,
 }: {
   placements: PlacedSticker[];
   viewerId?: number;
@@ -87,6 +105,19 @@ export function StickerPlacementOverlay({
    * detail treatment.
    */
   surface?: StickerSurface;
+  /**
+   * Reveal the stickers one at a time, oldest first, instead of all at once.
+   *
+   * Detail view only. A feed draws dozens of these and a staggered reveal there
+   * is movement across the whole page on every scroll — Justin's call, and the
+   * same reason the treatments drop their animation on a card.
+   */
+  stagger?: boolean;
+  /**
+   * Index of the last sticker to draw, for the history replay. `null` draws all
+   * of them, which is every surface that is not being stepped through.
+   */
+  step?: number | null;
 }) {
   const cosmeticIds = useMemo(
     () =>
@@ -98,13 +129,43 @@ export function StickerPlacementOverlay({
   const { sticker: resolved } = useStickerCosmetics(cosmeticIds);
   const artwork = sticker ?? resolved;
 
+  // Ordered here rather than trusted from the caller: this component decides
+  // what covers what, and the paint order of these elements IS that decision.
+  const ordered = useMemo(() => orderPlacements(placements), [placements]);
+  // Off the full history, not off the visible slice: stepping through a replay
+  // must not re-pace the stickers already on screen.
+  const delays = useMemo(
+    () => (stagger ? placementRevealDelays(ordered) : null),
+    [ordered, stagger]
+  );
+
+  // The arrival reveal belongs to this mount, and a replay is the panel's job
+  // from then on. Without this, ending a replay hands every sticker its arrival
+  // delay back — on elements that are already on screen with their animations
+  // finished, which re-pins the sway mid-cycle and can re-run the pop.
+  const [replayed, setReplayed] = useState(false);
+  useEffect(() => {
+    if (step != null) setReplayed(true);
+  }, [step]);
+
   if (!placements.length) return null;
+
+  const visible = step == null ? ordered : ordered.slice(0, step + 1);
 
   return (
     <div className={clsx('pointer-events-none absolute inset-0 overflow-hidden', className)}>
-      {placements.map((placement) => {
+      {visible.map((placement, index) => {
         const art = artwork.get(placement.data.cosmeticId);
         if (!art) return null;
+
+        // Explicit, rather than left to paint order. Paint order gives the same
+        // answer today, and stops giving it the moment anything here becomes a
+        // portal, gains a transform, or is reordered by a keyed re-render — and
+        // a sticker silently sliding under the one it was placed over is the
+        // one failure this layer exists to prevent.
+        const layer = index + 1;
+        const delay = step == null && !replayed ? delays?.[index] ?? 0 : 0;
+        const delayStyle = delay ? ({ '--sticker-delay': `${delay}ms` } as CSSProperties) : {};
 
         // Pending rows only ever reach a viewer who is party to them — the
         // server scopes them to the placer and the owner — so this decides how
@@ -138,12 +199,18 @@ export function StickerPlacementOverlay({
         const body = (
           <div
             key={placement.id}
-            className={clsx('absolute', interactive && 'pointer-events-auto')}
+            className={clsx(
+              'absolute',
+              interactive && 'pointer-events-auto',
+              stagger && styles.appear
+            )}
             style={{
               left: `${placement.data.x * 100}%`,
               top: `${placement.data.y * 100}%`,
               width: `${placement.data.scale * 100}%`,
               transform: `translate(-50%, -50%) rotate(${placement.data.rotation}deg)`,
+              zIndex: layer,
+              ...delayStyle,
             }}
           >
             {/* The wrapper's own transform makes it a stacking context, so a
@@ -216,17 +283,21 @@ export function StickerPlacementOverlay({
                     the first half; `top-full` is the local bottom edge, which
                     at 180° is the screen top and at 90° is off to the side.
                     Staying upright and staying below are two separate fixes;
-                  - `body`'s transform makes it a stacking context, so a `z-10`
+                  - `body`'s transform makes it a stacking context, so a z-index
                     inside it stops out-ranking other placements — a draft
                     dragged over a pending one then swallows the owner's
                     buttons. Nothing done INSIDE the box can fix that; it needs
                     the badge kept outside the transform (what this does) or a
                     z-index on the pending wrapper itself. */}
             <div
-              className="pointer-events-auto absolute z-10 -translate-x-1/2"
+              className="pointer-events-auto absolute -translate-x-1/2"
               style={{
                 left: `${placement.data.x * 100}%`,
                 top: `calc(${placement.data.y * 100}% + ${placement.data.scale * 50}%)`,
+                // Above every sticker, not just above the one it belongs to:
+                // the layer order means anything placed later covers this
+                // sticker, and it would cover the owner's only way to answer.
+                zIndex: PENDING_CONTROL_Z + layer,
               }}
             >
               {isOwner ? (

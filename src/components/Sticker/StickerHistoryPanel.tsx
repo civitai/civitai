@@ -1,0 +1,289 @@
+import { Button, Popover, ScrollArea, Text, Tooltip } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import {
+  IconChevronLeft,
+  IconChevronRight,
+  IconPlayerPlay,
+  IconPlayerStop,
+  IconScript,
+} from '@tabler/icons-react';
+import clsx from 'clsx';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { orderPlacements, placementRevealDelays } from '~/components/Sticker/placement-order';
+import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
+import type { PlacedSticker } from '~/components/Sticker/placement.util';
+import { useStickerPlacements } from '~/components/Sticker/placement.util';
+import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
+import { useStickerHistoryStore } from '~/store/sticker-history.store';
+import { daysFromNow } from '~/utils/date-helpers';
+
+/**
+ * A replay is watched, not raced. The reveal's own budget is sized so stickers
+ * are not still arriving while someone reads the page; this one is the thing
+ * being looked at, so it gets room to breathe — same dilation, longer ceiling,
+ * so the gaps between placements still read as gaps.
+ */
+const REPLAY_TOTAL_MS = 8_000;
+
+/**
+ * The sticker history: who built this image, in what order, and a replay of it.
+ *
+ * A popover off the reaction bar rather than a panel in the sidebar (Justin,
+ * 2026-08-12). The sidebar is collapsible and often collapsed, and the replay
+ * only makes sense while you can see the image it is playing over — a control
+ * that scrolls away from the thing it drives is a control you lose.
+ */
+export function StickerHistoryButton({
+  imageId,
+  buttonProps,
+}: {
+  imageId: number;
+  buttonProps?: Partial<ButtonProps>;
+}) {
+  const [opened, setOpened] = useState(false);
+  const close = useStickerHistoryStore((state) => state.close);
+
+  // Only the approved ones and the viewer's own pending, same as the overlay —
+  // this reads the same query, so the list cannot show a sticker the image does
+  // not draw.
+  const { byImage } = useStickerPlacements([imageId], opened);
+  const placements = useMemo(() => orderPlacements(byImage.get(imageId) ?? []), [byImage, imageId]);
+
+  // Closing ends the replay. Leaving a step set would hold the image at a point
+  // in its history with nothing on screen explaining why stickers are missing.
+  useEffect(() => {
+    if (!opened) close();
+  }, [opened, close]);
+
+  // The same unmount, on the way out of the page or a slide change. The store
+  // is global and outlives this component.
+  useEffect(() => () => close(), [close]);
+
+  return (
+    <Popover
+      opened={opened}
+      onChange={setOpened}
+      width={320}
+      position="top"
+      shadow="md"
+      withArrow
+      withinPortal
+    >
+      {/* The button is the target directly. A `Tooltip` in between takes the
+          ref and the click handler Popover hands its target and forwards
+          neither, so the popover never opens — `title` carries the label
+          instead. */}
+      <Popover.Target>
+        <Button
+          size="compact-sm"
+          radius="xl"
+          variant="light"
+          color="gray"
+          aria-label="Sticker history"
+          title="Sticker history"
+          onClick={() => setOpened((o) => !o)}
+          {...buttonProps}
+        >
+          <IconScript size={16} stroke={2} />
+        </Button>
+      </Popover.Target>
+
+      <Popover.Dropdown p={0}>
+        <StickerHistoryList imageId={imageId} placements={placements} />
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+
+function StickerHistoryList({
+  imageId,
+  placements,
+}: {
+  imageId: number;
+  placements: PlacedSticker[];
+}) {
+  const step = useStickerHistoryStore((state) => (state.imageId === imageId ? state.step : null));
+  const setStep = useStickerHistoryStore((state) => state.setStep);
+  const close = useStickerHistoryStore((state) => state.close);
+
+  const cosmeticIds = useMemo(
+    () => placements.map((placement) => placement.data.cosmeticId),
+    [placements]
+  );
+  const { sticker: artwork } = useStickerCosmetics(cosmeticIds);
+
+  const delays = useMemo(
+    () => placementRevealDelays(placements, { maxTotalMs: REPLAY_TOTAL_MS }),
+    [placements]
+  );
+
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const [playing, setPlaying] = useState(false);
+
+  const stop = () => {
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    setPlaying(false);
+  };
+
+  // Timers outlive the component otherwise, and each one writes to a store that
+  // is still mounted — a replay left running over whatever image came next.
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+
+  const play = () => {
+    stop();
+    if (placements.length < 2) return;
+    setPlaying(true);
+    setStep(imageId, 0);
+    timers.current = delays.slice(1).map((delay, index) =>
+      setTimeout(() => {
+        setStep(imageId, index + 1);
+        // The last one ends the replay rather than leaving the image pinned to
+        // its final frame, which is the same picture but with the controls
+        // still saying a replay is running.
+        if (index + 1 === placements.length - 1) {
+          setStep(imageId, null);
+          setPlaying(false);
+        }
+      }, delay)
+    );
+  };
+
+  const at = step ?? placements.length - 1;
+  const stepTo = (next: number) => {
+    stop();
+    setStep(imageId, Math.max(0, Math.min(placements.length - 1, next)));
+  };
+
+  if (!placements.length)
+    return (
+      <Text size="xs" c="dimmed" className="p-3">
+        No stickers on this image yet.
+      </Text>
+    );
+
+  return (
+    <div className="flex flex-col">
+      <div className="flex items-center justify-between gap-2 border-b border-gray-3 px-3 py-2 dark:border-dark-4">
+        <Text size="xs" fw={600}>
+          Sticker history
+        </Text>
+        <div className="flex items-center gap-1">
+          <Tooltip label={playing ? 'Stop' : 'Replay'} withArrow>
+            <LegacyActionIcon
+              size="sm"
+              variant="subtle"
+              color="gray"
+              aria-label={playing ? 'Stop replay' : 'Replay the sticker history'}
+              onClick={playing ? () => stop() : play}
+              // One sticker has no build to watch, and a replay of it is a
+              // button that flickers.
+              disabled={placements.length < 2}
+            >
+              {playing ? <IconPlayerStop size={14} /> : <IconPlayerPlay size={14} />}
+            </LegacyActionIcon>
+          </Tooltip>
+          <Tooltip label="Previous sticker" withArrow>
+            <LegacyActionIcon
+              size="sm"
+              variant="subtle"
+              color="gray"
+              aria-label="Previous sticker"
+              onClick={() => stepTo(at - 1)}
+              disabled={at <= 0}
+            >
+              <IconChevronLeft size={14} />
+            </LegacyActionIcon>
+          </Tooltip>
+          <Tooltip label="Next sticker" withArrow>
+            <LegacyActionIcon
+              size="sm"
+              variant="subtle"
+              color="gray"
+              aria-label="Next sticker"
+              onClick={() =>
+                // Past the end is not a step, it is the end of the replay: back
+                // to the image as it stands, which is what closing the panel
+                // would have shown anyway.
+                at >= placements.length - 1 ? setStep(imageId, null) : stepTo(at + 1)
+              }
+            >
+              <IconChevronRight size={14} />
+            </LegacyActionIcon>
+          </Tooltip>
+        </div>
+      </div>
+
+      <ScrollArea.Autosize mah={280}>
+        <ol className="m-0 flex list-none flex-col gap-px p-0">
+          {placements.map((placement, index) => {
+            const art = artwork.get(placement.data.cosmeticId);
+            // Stepping dims what has not been placed yet, so the list and the
+            // image agree about where in the build you are.
+            const shown = step == null || index <= step;
+
+            return (
+              <li key={placement.id}>
+                {/* The same hover card the sticker itself has: who placed it,
+                    when, and their creator card. One component, so the answer
+                    cannot differ depending on which one you hovered. */}
+                <StickerPlacementHoverCard placementId={placement.id} pending={placement.isPending}>
+                  <button
+                    type="button"
+                    onClick={() => stepTo(index)}
+                    className={clsx(
+                      'flex w-full items-center gap-2 border-0 bg-transparent px-3 py-1.5 text-left',
+                      'cursor-pointer hover:bg-gray-1 dark:hover:bg-dark-6',
+                      !shown && 'opacity-40',
+                      step != null && index === step && 'bg-gray-1 dark:bg-dark-6'
+                    )}
+                  >
+                    <Text size="xs" c="dimmed" className="w-4 shrink-0 tabular-nums">
+                      {index + 1}
+                    </Text>
+                    {art ? (
+                      <EdgeImage
+                        src={art.url}
+                        alt={`:${art.slug}:`}
+                        options={{ width: 64, anim: art.animated, optimized: true }}
+                        className="size-8 shrink-0 object-contain"
+                      />
+                    ) : (
+                      <div className="size-8 shrink-0" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <Text size="xs" fw={500} className="truncate">
+                        {art?.name ?? 'Sticker'}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {daysFromNow(new Date(placement.placedAt))}
+                        {placement.isPending && ' · awaiting review'}
+                      </Text>
+                    </div>
+                  </button>
+                </StickerPlacementHoverCard>
+              </li>
+            );
+          })}
+        </ol>
+      </ScrollArea.Autosize>
+
+      {step != null && (
+        <button
+          type="button"
+          onClick={() => {
+            stop();
+            close();
+          }}
+          className="cursor-pointer border-0 border-t border-solid border-gray-3 bg-transparent px-3 py-2 text-left dark:border-dark-4"
+        >
+          <Text size="xs" c="dimmed">
+            Showing {step + 1} of {placements.length} — back to the full image
+          </Text>
+        </button>
+      )}
+    </div>
+  );
+}

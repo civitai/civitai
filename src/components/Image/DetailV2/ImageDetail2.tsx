@@ -57,6 +57,7 @@ import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToMode
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
+import { CollapsibleCard } from '~/components/Image/DetailV2/CollapsibleCard';
 import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
 import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
 import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta';
@@ -654,17 +655,17 @@ export function ImageDetail2() {
                     )}
                     <ImageProcess imageId={image.id} />
                     <RemixGalleryCard imageId={image.id} />
-                    <ImageGenerationData imageId={image.id} />
+                    <ImageGenerationData imageId={image.id} collapsible />
                     {/* <ImageRemixOfDetails imageId={image.id} />
                     <ImageRemixesDetails imageId={image.id} /> */}
                     {/* {!hideAds && <AdUnitSide_3 />} */}
-                    <Card className="flex flex-col gap-3 rounded-xl">
-                      <Text className="flex items-center gap-2 text-xl font-semibold">
-                        <IconBrandWechat />
-                        <span>Discussion</span>
-                      </Text>
+                    <CollapsibleCard
+                      title="Discussion"
+                      icon={<IconBrandWechat />}
+                      storageKey="discussion"
+                    >
                       <ImageDetailComments imageId={image.id} userId={image.user.id} />
-                    </Card>
+                    </CollapsibleCard>
                     <ImageContestCollectionDetails
                       key={currentUser?.id}
                       image={image}

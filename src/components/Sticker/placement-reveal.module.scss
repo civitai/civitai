@@ -1,0 +1,34 @@
+/* The ordered reveal: stickers arriving oldest-first rather than all at once.
+   Deliberately NOT in sticker-treatments.module.scss. That file holds treatment
+   animations and is grepped wholesale by sticker-treatments.test.ts for the
+   pending look — fading is exactly what the guard is watching for, and putting
+   this there would mean either a failing test or a weakened one. */
+
+@keyframes placementAppear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Opacity only: this element carries the placement's own transform, so anything
+   animating transform here moves the sticker off its spot. Keeping it off the
+   treatment also keeps the reveal independent of which treatment is in play —
+   four of the five draw no animation at all, and the ordered reveal is not a
+   treatment option. */
+.appear {
+  animation: placementAppear 220ms ease-out var(--sticker-delay, 0ms) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The stagger IS the motion here — a sticker held back for two seconds is
+     movement on the page whether or not anything eases. `!important` because
+     the delay arrives as an inline custom property, which this would otherwise
+     lose to. */
+  .appear {
+    animation: placementAppear 1ms both;
+    animation-delay: 0ms !important;
+  }
+}

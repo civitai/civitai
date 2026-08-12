@@ -6,6 +6,7 @@ import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerT
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { useStickerRevealStore } from '~/store/sticker-reveal.store';
+import { useStickerHistoryStep } from '~/store/sticker-history.store';
 
 /**
  * The overlay for one image: placed stickers, and the one being positioned.
@@ -30,6 +31,8 @@ export function ImageStickerOverlay({
   const revealed = useStickerRevealStore((state) => state.revealed);
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
   const setSurface = useStickerPlacementDraftStore((state) => state.setSurface);
+
+  const historyStep = useStickerHistoryStep(imageId);
 
   const isPlacing = targetImageId === imageId;
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -56,7 +59,10 @@ export function ImageStickerOverlay({
   // because the count chip counts it and toggles reveal — the fetch above stays
   // ungated so that total is right, which is the part the notification path
   // actually depends on.
-  const placements = revealed || isPlacing ? all : [];
+  // A replay in progress shows them regardless: stepping through the history
+  // with the reveal off would drive a panel against a blank image, and the
+  // person stepping has already asked for exactly this.
+  const placements = revealed || isPlacing || historyStep != null ? all : [];
 
   if (!placements.length && !isPlacing) return null;
   if (width <= 0 || height <= 0) return null;
@@ -72,6 +78,16 @@ export function ImageStickerOverlay({
           placements={placements}
           viewerId={currentUser?.id}
           treatment={treatment}
+          // Every time they become visible, not once per image (Justin,
+          // 2026-08-12): opening the detail view, changing slide and flipping
+          // the reveal on all remount this, and each of those is someone
+          // arriving at the image for the first time as far as they know.
+          //
+          // Not while placing. Watching the existing stickers replay under the
+          // sticker you are dragging is movement in the one moment the surface
+          // has to hold still.
+          stagger={!isPlacing}
+          step={historyStep}
         />
       )}
       {isPlacing && <DraftStickerLayer />}
