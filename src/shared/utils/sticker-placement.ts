@@ -21,6 +21,17 @@ export type StickerPlacementData = {
   scale: number;
   /** Degrees, for a sticker placed at an angle. */
   rotation: number;
+  /** Optional note from the placer, shown beside their creator card on hover. */
+  comment?: string;
+  /**
+   * The owner took the sticker and refused the note.
+   *
+   * A flag rather than deleting the text, because the placer paid for the
+   * placement the note came with and a report has to be able to reach what was
+   * actually written. Absent means never hidden, so an existing row needs no
+   * backfill.
+   */
+  commentHidden?: boolean;
 };
 
 /**
@@ -81,6 +92,47 @@ export const normalizeStickerPlacement = (
   scale: clamp(data.scale, STICKER_PLACEMENT_MIN_SCALE, STICKER_PLACEMENT_MAX_SCALE),
   rotation: clamp(data.rotation, -STICKER_PLACEMENT_MAX_ROTATION, STICKER_PLACEMENT_MAX_ROTATION),
 });
+
+/**
+ * Long enough for a joke or a compliment, short enough that it cannot become a
+ * comment thread nobody can moderate. It sits on a hover card beside a creator
+ * card, so anything longer stops fitting before it stops being allowed.
+ */
+export const STICKER_COMMENT_MAX_LENGTH = 300;
+
+/**
+ * Truncated rather than refused, and whitespace-collapsed on the way through.
+ *
+ * A note is optional decoration on a payment that has already been quoted, so
+ * failing the placement over a long one would cost the placer a round trip
+ * through a Buzz charge for something the field can simply hold less of. The
+ * schema still bounds it; this is what makes the stored value canonical however
+ * it arrived — a hand-written API call, a paste with newlines in it, an
+ * all-spaces string that would otherwise render as an empty comment bubble.
+ */
+export const normalizeStickerComment = (comment?: string | null): string | undefined => {
+  if (typeof comment !== 'string') return undefined;
+  const collapsed = comment.replace(/\s+/g, ' ').trim();
+  return collapsed ? collapsed.slice(0, STICKER_COMMENT_MAX_LENGTH) : undefined;
+};
+
+/**
+ * How long an approved sticker is protected from the owner removing it.
+ *
+ * Approval pays the owner immediately and nothing is refunded on removal, so
+ * without this an owner could accept a sticker, bank the Buzz and wipe it before
+ * anyone saw it — which is indistinguishable from an honest removal and costs
+ * the placer everything they paid. Deliberately the same week the remix gallery
+ * uses; they are the same bargain on two surfaces, and two numbers would drift.
+ *
+ * A moderator is not bound by it: a takedown is a moderation record, not an
+ * owner decision, and the abusive cases are the ones that must not wait.
+ */
+export const STICKER_REMOVAL_LOCK_HOURS = 24 * 7;
+
+/** When a sticker approved at `approvedAt` may be removed by the content owner. */
+export const stickerRemovableAt = (approvedAt: Date | string) =>
+  new Date(new Date(approvedAt).getTime() + STICKER_REMOVAL_LOCK_HOURS * 60 * 60 * 1000);
 
 export const isStickerPlacementData = (value: unknown): value is StickerPlacementData => {
   if (!value || typeof value !== 'object') return false;

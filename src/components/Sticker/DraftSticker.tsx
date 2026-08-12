@@ -1,5 +1,5 @@
-import { Text } from '@mantine/core';
-import { IconX } from '@tabler/icons-react';
+import { Text, Textarea, UnstyledButton } from '@mantine/core';
+import { IconMessage, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -17,6 +17,7 @@ import { useCreateStickerPlacement } from '~/components/Sticker/placement.util';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import type { StickerTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { PLACEMENT_SPEND_TYPES } from '~/shared/constants/placement.constants';
+import { STICKER_COMMENT_MAX_LENGTH } from '~/shared/utils/sticker-placement';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 import {
   pointerToSurfaceFraction,
@@ -25,6 +26,13 @@ import {
 
 /** Enough for the label and the currency badge at the smallest allowed sticker. */
 const BUY_BUTTON_MIN_WIDTH = 132;
+
+/**
+ * Fixed, because the cluster is `w-max` and sized by its widest child — an
+ * autosizing field would widen the whole thing as you type, and the cluster's
+ * width feeds the overlap test that decides which side the button sits on.
+ */
+const NOTE_WIDTH = 220;
 
 /** `mt-2`, in pixels, and the clearance the flipped side is built from. */
 const BUY_BUTTON_GAP = 8;
@@ -91,6 +99,12 @@ export function DraftSticker({
   const select = useStickerPlacementDraftStore((state) => state.select);
   const cancelDraft = useStickerPlacementDraftStore((state) => state.cancelDraft);
   const place = useCreateStickerPlacement(draft.id);
+
+  // Local to the draft rather than in the store: it is written once, read once
+  // at purchase, and putting it in the store would make every keystroke a
+  // store write that re-renders the layer mid-arrangement.
+  const [note, setNote] = useState('');
+  const [writingNote, setWritingNote] = useState(false);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLDivElement>(null);
@@ -396,6 +410,33 @@ export function DraftSticker({
         // on it would also start a move and the click would land mid-drag.
         onPointerDown={(event) => event.stopPropagation()}
       >
+        {/* Optional, and folded away until asked for: a field on every draft
+            would sit over the artwork through the whole arrangement, which is
+            the one thing this overlay is trying not to do. */}
+        {writingNote ? (
+          <Textarea
+            autoFocus
+            size="xs"
+            autosize
+            minRows={2}
+            maxRows={4}
+            w={NOTE_WIDTH}
+            className="whitespace-normal"
+            placeholder="Say something with it (optional)"
+            maxLength={STICKER_COMMENT_MAX_LENGTH}
+            value={note}
+            onChange={(event) => setNote(event.currentTarget.value)}
+          />
+        ) : (
+          <UnstyledButton
+            className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5 text-xs text-white"
+            onClick={() => setWritingNote(true)}
+          >
+            <IconMessage size={12} />
+            Add a note
+          </UnstyledButton>
+        )}
+
         <BuzzTransactionButton
           size="sm"
           style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
@@ -415,6 +456,9 @@ export function DraftSticker({
                 y: draft.y,
                 scale: draft.scale,
                 rotation: draft.rotation,
+                // Sent only when there is something to send, so an opened-then-
+                // abandoned field is the same as never opening it.
+                ...(note.trim() ? { comment: note } : {}),
               },
             })
           }

@@ -55,6 +55,20 @@ export const reportStickerPlacementDetailsSchema = baseDetailSchema.extend({
     .number({ error: 'Choose which sticker you are reporting.' })
     .int()
     .positive(),
+  /**
+   * Which half of the placement is being reported.
+   *
+   * A sticker and the note attached to it are separately objectionable — the
+   * artwork can be fine and the note abusive, which is the griefing case Ellie
+   * raised — and a moderator needs to know which one they are being sent to
+   * look at, because the remedies differ: the owner can hide a note without the
+   * sticker coming off.
+   *
+   * Carried in the details rather than as its own `ReportReason` so this needs
+   * no enum migration, and so both reports still land on the image with the
+   * same placement id a moderator acts on.
+   */
+  target: z.enum(['sticker', 'comment']).default('sticker'),
 });
 
 export const reportAutomatedDetailsSchema = baseDetailSchema.extend({

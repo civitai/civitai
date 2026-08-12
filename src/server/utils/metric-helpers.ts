@@ -10,6 +10,19 @@ const logError = (name: string, details: Record<string, unknown>) => {
   });
 };
 
+/**
+ * What this helper actually needs, which is the tracker and — for the error log
+ * only — who did it.
+ *
+ * Widened from `ProtectedContext` so a metric can be emitted from a settlement
+ * that no request is waiting on: a sticker placement is approved from a review
+ * queue, from an auto-approving space, and from a bulk action, and the money it
+ * moves is the same money in each. Narrowing to a request context would mean
+ * emitting the metric at three call sites that happen to have one, and silently
+ * not emitting it wherever a job settles the same placement.
+ */
+type EntityMetricContext = { track: ProtectedContext['track']; user?: { id: number } | null };
+
 export const updateEntityMetric = async ({
   ctx,
   entityType = 'Image',
@@ -17,7 +30,7 @@ export const updateEntityMetric = async ({
   metricType,
   amount = 1,
 }: {
-  ctx: ProtectedContext;
+  ctx: EntityMetricContext;
   entityType?: EntityMetric_EntityType_Type;
   entityId: number;
   metricType: EntityMetric_MetricType_Type;
@@ -58,6 +71,38 @@ export const updateEntityMetric = async ({
       stack: error.stack,
     });
   }
+};
+
+/**
+ * The same emission, for a caller with no request behind it.
+ *
+ * The tracker is pulled in dynamically rather than imported at the top of this
+ * module: `~/server/clickhouse/client` is a heavy graph to attach to every
+ * module that only wants to move a counter, and importing it statically from a
+ * service drags it into that service's tests, where it is neither mocked nor
+ * wanted. Loaded once by the module cache on first use.
+ */
+export const updateEntityMetricDetached = async ({
+  userId,
+  ...input
+}: Omit<Parameters<typeof updateEntityMetric>[0], 'ctx'> & {
+  /**
+   * Who caused it. Worth threading through rather than letting a request-less
+   * `Tracker` default to 0: `userId` is part of the dedupe key the metric
+   * pipeline replaces rows on, so several events attributed to the same
+   * non-user, on the same entity and metric, within the same millisecond
+   * collapse into one and silently undercount. A real id makes them distinct
+   * for the same reason a tip's does.
+   */
+  userId?: number;
+}) => {
+  const { Tracker } = await import('~/server/clickhouse/client');
+  const track = new Tracker(
+    undefined,
+    undefined,
+    userId ? ({ user: { id: userId } } as ConstructorParameters<typeof Tracker>[2]) : undefined
+  );
+  await updateEntityMetric({ ...input, ctx: { track } });
 };
 
 export const incrementEntityMetric = async ({

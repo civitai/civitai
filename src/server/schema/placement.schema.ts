@@ -3,6 +3,7 @@ import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 import { placementSurfaces } from '~/shared/utils/placement';
 import { REMIX_GALLERY_MAX_PINNED } from '~/shared/utils/remix-gallery';
 import {
+  STICKER_COMMENT_MAX_LENGTH,
   STICKER_PLACEMENT_MAX_ROTATION,
   STICKER_PLACEMENT_MAX_SCALE,
   STICKER_PLACEMENT_MIN_SCALE,
@@ -25,6 +26,13 @@ export const stickerPlacementDataSchema = z.object({
   y: finite.min(0).max(1),
   scale: finite.min(STICKER_PLACEMENT_MIN_SCALE).max(STICKER_PLACEMENT_MAX_SCALE),
   rotation: finite.min(-STICKER_PLACEMENT_MAX_ROTATION).max(STICKER_PLACEMENT_MAX_ROTATION),
+  // Bounded well above what the field allows, because the service trims and
+  // truncates. The limit here is what stops a megabyte of text reaching a JSON
+  // column; the normaliser is what decides the stored value.
+  comment: z
+    .string()
+    .max(STICKER_COMMENT_MAX_LENGTH * 4)
+    .optional(),
 });
 
 export const createStickerPlacementSchema = z.object({
@@ -100,6 +108,13 @@ export const getStickerPlacementDetailSchema = z.object({
 export const actOnStickerPlacementsSchema = z.object({
   placementIds: z.array(z.number().int().positive()).min(1).max(50),
   action: z.enum(['approve', 'decline', 'remove']),
+  /** Partial approval — take the sticker, refuse the note it came with. */
+  hideComment: z.boolean().optional(),
+});
+
+export const setStickerCommentHiddenSchema = z.object({
+  placementId: z.number().int().positive(),
+  hidden: z.boolean(),
 });
 
 export const getPlacementSpaceRowSchema = z.object({

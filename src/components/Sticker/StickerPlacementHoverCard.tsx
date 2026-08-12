@@ -1,6 +1,6 @@
 import { Anchor, Badge, Group, HoverCard, Skeleton, Text, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { IconSticker, IconTrash } from '@tabler/icons-react';
+import { IconEye, IconEyeOff, IconSticker, IconTrash } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -150,10 +150,155 @@ export function StickerPlacementHoverCard({
             <Skeleton height={92} radius="md" />
           </div>
         ) : (
-          <SmartCreatorCard user={data.placer} withActions={false} withBorder={false} />
+          <>
+            {/* Above the creator card rather than below it: the note is the
+                thing the placer said, and the card is who said it. */}
+            {data.comment && (
+              <div className="border-b border-gray-3 px-3 py-2 dark:border-dark-4">
+                <Text size="sm" className="whitespace-pre-wrap break-words">
+                  {data.comment}
+                </Text>
+                {data.commentHidden && (
+                  <Text size="xs" c="dimmed" mt={4}>
+                    Hidden — only you, the person who placed it, and moderators can see this.
+                  </Text>
+                )}
+              </div>
+            )}
+            <SmartCreatorCard user={data.placer} withActions={false} withBorder={false} />
+            {data.viewerIsOwner && (
+              <OwnerControls
+                placementId={placementId}
+                hasComment={!!data.comment}
+                commentHidden={data.commentHidden}
+                isLive={data.status === 'approved'}
+                removableAt={data.removableAt}
+              />
+            )}
+          </>
         )}
       </HoverCard.Dropdown>
     </HoverCard>
+  );
+}
+
+/**
+ * What the content owner can do about a sticker already on their image.
+ *
+ * The two controls are deliberately unequal. Hiding the note is unlocked — it
+ * came free with the placement and is the owner's to refuse at any time, and
+ * being able to put it back is what makes hiding a safe first move. Removing
+ * the sticker waits a week from approval, because approval already paid the
+ * owner and nothing is refunded: without the wait an owner could take the Buzz
+ * and wipe the sticker before anyone saw it.
+ *
+ * Both refusals live on the server. The disabled button and its date are what
+ * the card *says*, not what decides it.
+ */
+function OwnerControls({
+  placementId,
+  hasComment,
+  commentHidden,
+  isLive,
+  removableAt,
+}: {
+  placementId: number;
+  hasComment: boolean;
+  commentHidden: boolean;
+  isLive: boolean;
+  removableAt: Date | string | null;
+}) {
+  const utils = trpc.useUtils();
+  const forget = useForgetStickerPlacement();
+
+  const setHidden = trpc.placement.setStickerCommentHidden.useMutation({
+    onSuccess: () => utils.placement.getStickerPlacementDetail.invalidate({ placementId }),
+    onError: (error) =>
+      showErrorNotification({ title: "Couldn't change the note", error: new Error(error.message) }),
+  });
+
+  const remove = trpc.placement.actOnStickers.useMutation({
+    onSuccess: async () => {
+      showSuccessNotification({ message: 'Sticker removed.' });
+      await forget(placementId);
+    },
+    onError: (error) =>
+      showErrorNotification({ title: "Couldn't remove it", error: new Error(error.message) }),
+  });
+
+  if (!hasComment && !isLive) return null;
+
+  const locked = !!removableAt;
+
+  return (
+    <Group
+      gap="xs"
+      px="sm"
+      py={6}
+      justify="flex-end"
+      className="border-t border-gray-3 dark:border-dark-4"
+    >
+      {hasComment && (
+        <Anchor
+          component="button"
+          type="button"
+          size="xs"
+          onClick={() => setHidden.mutate({ placementId, hidden: !commentHidden })}
+        >
+          <Group gap={4} wrap="nowrap">
+            {commentHidden ? <IconEye size={14} /> : <IconEyeOff size={14} />}
+            {commentHidden ? 'Show the note' : 'Hide the note'}
+          </Group>
+        </Anchor>
+      )}
+
+      {isLive && (
+        <Tooltip
+          withArrow
+          multiline
+          w={240}
+          label={
+            locked
+              ? `Someone paid to place this, so it stays up for a week. You can remove it from ${formatDate(
+                  removableAt as Date
+                )}.`
+              : 'Takes the sticker off your image. No Buzz moves.'
+          }
+        >
+          {/* Wrapped, because a disabled control fires no pointer events and a
+              tooltip on it never opens — which would leave the date explaining
+              the button visible only to people who did not need it. */}
+          <span>
+            <Anchor
+              component="button"
+              type="button"
+              size="xs"
+              c={locked ? 'dimmed' : 'red'}
+              disabled={locked}
+              onClick={() =>
+                openConfirmModal({
+                  title: 'Remove this sticker',
+                  children: (
+                    <Text size="sm">
+                      It comes off your image for everyone. The Buzz you were paid for it stays with
+                      you, and nobody is notified.
+                    </Text>
+                  ),
+                  labels: { confirm: 'Remove', cancel: 'Cancel' },
+                  confirmProps: { color: 'red' },
+                  onConfirm: () => remove.mutate({ placementIds: [placementId], action: 'remove' }),
+                })
+              }
+            >
+              <Group gap={4} wrap="nowrap">
+                <IconTrash size={14} />
+                Remove
+              </Group>
+            </Anchor>
+          </span>
+        </Tooltip>
+      )}
+    </Group>
   );
 }
 
