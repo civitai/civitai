@@ -2,6 +2,7 @@ import {
   Alert,
   Anchor,
   Badge,
+  Button,
   Divider,
   Group,
   SegmentedControl,
@@ -9,8 +10,6 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { IconArrowRight } from '@tabler/icons-react';
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -236,18 +235,26 @@ export function PlacementSpaceSection() {
 
       {/* The queue is otherwise unreachable: the notification links to the image,
           and nothing else in the app points at it. */}
-      <Group gap={6} wrap="nowrap">
-        <Anchor component={Link} href="/user/sticker-placements" size="sm">
-          <Group gap={4} wrap="nowrap">
-            Review pending stickers
-            <IconArrowRight size={14} />
-          </Group>
-        </Anchor>
-        {waiting > 0 && (
-          <Badge size="sm" color="yellow" variant="light">
-            {waiting}
-          </Badge>
-        )}
+      {/* A real button, and `component="a"` rather than `component={Link}` —
+          Mantine's polymorphic button drops its styles through the Next link,
+          which is why this read as bare text. The count rides in the button so
+          it has somewhere to live. */}
+      <Group gap="xs" wrap="nowrap">
+        <Button
+          component="a"
+          href="/user/sticker-placements"
+          variant={waiting > 0 ? 'light' : 'default'}
+          size="sm"
+          rightSection={
+            waiting > 0 ? (
+              <Badge size="sm" color="yellow" variant="filled" circle>
+                {waiting}
+              </Badge>
+            ) : undefined
+          }
+        >
+          Review pending stickers
+        </Button>
       </Group>
 
       {/* Gated on there being no price rather than no row: a row with a null

@@ -5,6 +5,7 @@ import {
   Center,
   Group,
   Skeleton,
+  Stack,
   Text,
   ThemeIcon,
   Tooltip,
@@ -141,21 +142,38 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
         // people see. The pitch sits beside it because an empty grid explains
         // nothing, and most readers have never seen a remix gallery.
         <Group gap="sm" wrap="nowrap" align="center">
-          <Center className="aspect-square w-1/4 shrink-0 rounded-md bg-gray-1 dark:bg-dark-6">
-            <ThemeIcon size={38} radius="xl" variant="light">
-              <IconHierarchy size={20} />
-            </ThemeIcon>
-          </Center>
-          <Text size="sm" c="dimmed">
-            {/* Gated exactly as the submit button is. On `open` alone it told the
-                owner to be the first to add theirs, next to no button, since they
-                are the one person who cannot. */}
-            {isOwner
-              ? 'Remixes featured here are seen by everyone who views this image. Other creators can pay to have theirs appear.'
-              : visibility.open
-              ? 'Everyone who sees this image sees this gallery. Remix it into something of your own, then come back and submit it to be featured here.'
-              : 'This creator is not accepting remixes right now.'}
-          </Text>
+          {/* An unanimated `Skeleton` is the backdrop rather than a colour of our
+              own: it is the same grey the loading row uses, by construction, so
+              the two states cannot drift apart when the palette moves. */}
+          <div className="relative aspect-square w-1/4 shrink-0">
+            <Skeleton animate={false} className="absolute inset-0 size-full rounded-md" />
+            <Center className="absolute inset-0">
+              <ThemeIcon size={38} radius="xl" variant="light">
+                <IconHierarchy size={20} />
+              </ThemeIcon>
+            </Center>
+          </div>
+          {/* Two levels: what this is, then what to do about it. One flat
+              paragraph made the pitch read as fine print. */}
+          <Stack gap={2}>
+            <Text size="sm" fw={600}>
+              {isOwner
+                ? 'Your gallery is open'
+                : visibility.open
+                ? 'Get your remix seen here'
+                : 'Not accepting remixes'}
+            </Text>
+            <Text size="xs" c="dimmed">
+              {/* Gated exactly as the submit button is. On `open` alone it told
+                  the owner to be the first to add theirs, next to no button,
+                  since they are the one person who cannot. */}
+              {isOwner
+                ? 'Other creators can pay to feature their remixes on this image, and everyone who views it sees them. You approve each one.'
+                : visibility.open
+                ? 'Everyone who sees this image sees this gallery. Remix it into something of your own, then come back and submit it.'
+                : 'This creator has closed their gallery for now.'}
+            </Text>
+          </Stack>
         </Group>
       )}
 

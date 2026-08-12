@@ -285,24 +285,31 @@ export const PLACEMENT_PRICE_STEP = 10;
 export function placementPriceCaption(
   surface: PlacementSurface,
   price: number,
-  cap: number | null
+  cap: number | null,
+  /**
+   * Who pays, in the caller's words. Stickers are placed and galleries are
+   * submitted to, and a caption that calls a remix submitter a "placer" reads
+   * as another feature's copy leaking in. Parameterised rather than derived
+   * from `label`, which names the surface and not the person.
+   */
+  payer = 'Placers'
 ): { text: string; warning: boolean } | null {
   if (cap == null) return null;
 
   if (price > cap)
     return {
-      text: `Placers pay ${cap} Buzz — your current cap — until your score or membership raises it`,
+      text: `${payer} pay ${cap} Buzz — your current cap — until your score or membership raises it`,
       warning: true,
     };
 
   const track = placementPriceTrack(surface, cap);
   if (!onPlacementPriceGrid(price, track))
     return {
-      text: `Placers pay ${price} Buzz. The slider moves in ${PLACEMENT_PRICE_STEP}s from ${track.min}, so using it will change this price`,
+      text: `${payer} pay ${price} Buzz. The slider moves in ${PLACEMENT_PRICE_STEP}s from ${track.min}, so using it will change this price`,
       warning: true,
     };
 
-  return { text: `Placers pay ${price} Buzz`, warning: false };
+  return { text: `${payer} pay ${price} Buzz`, warning: false };
 }
 
 export function placementPriceTrack(surface: PlacementSurface, cap: number | null) {

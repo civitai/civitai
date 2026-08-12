@@ -9,13 +9,16 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { PlacementPriceSlider } from '~/components/Placement/PlacementPriceSlider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { PLACEMENT_MIN_PRICE, PLACEMENT_SURFACES } from '~/shared/utils/placement';
+import {
+  placementPriceCaption,
+  PLACEMENT_MIN_PRICE,
+  PLACEMENT_SURFACES,
+} from '~/shared/utils/placement';
 import type { RemixGalleryContentRule } from '~/shared/utils/remix-gallery';
 import { remixGalleryContentRule } from '~/shared/utils/remix-gallery';
 import { showErrorNotification } from '~/utils/notifications';
@@ -80,6 +83,12 @@ export function RemixGallerySettings() {
   // to-do, which is why it is the one badged in yellow.
   const receivedCount = pending?.length ?? 0;
   const sentCount = (sent ?? []).filter((row) => row.status === 'pending').length;
+  const caption = placementPriceCaption(
+    'remixGallery',
+    price === '' ? PLACEMENT_SURFACES.remixGallery.defaultPrice ?? 0 : price,
+    range?.max ?? null,
+    'Submitters'
+  );
 
   const commit = (
     nextMode: string,
@@ -163,13 +172,17 @@ export function RemixGallerySettings() {
         />
         {/* Sits on the same line as the track's min/max marks rather than under
             them — the slider reserves that row, so a caption below it leaves a
-            gap and reads as detached from the control it describes. Matches the
-            sticker section. */}
-        <Text size="xs" ta="center" mt={-22} c="dimmed">
-          {price === ''
-            ? `Submitters pay ${PLACEMENT_SURFACES.remixGallery.defaultPrice} Buzz, the platform default.`
-            : `Submitters pay ${price} Buzz.`}
-        </Text>
+            gap and reads as detached from the control it describes.
+
+            The shared helper, so galleries get the over-cap and off-grid
+            warnings stickers already had; a hand-rolled caption here said only
+            what the price was and stayed silent when the cap had overridden it. */}
+        {caption && (
+          <Text size="xs" ta="center" mt={-22} c={caption.warning ? 'yellow' : 'dimmed'}>
+            {caption.text}
+            {price === '' && ', the platform default'}
+          </Text>
+        )}
       </Stack>
 
       <Stack gap={4}>
@@ -203,14 +216,17 @@ export function RemixGallerySettings() {
           arrow gives a waiting count nowhere to sit, and the received one is the
           number that needs acting on. */}
       <Group gap="xs" wrap="nowrap">
+        {/* `component="a"`, not `component={Link}` — the latter is what the rest
+            of this file used and it renders without Mantine's button styles at
+            all. Every other button-as-link in the app uses the plain anchor. */}
         <Button
-          component={Link}
+          component="a"
           href="/user/remix-submissions?tab=received"
-          variant="default"
-          size="compact-sm"
+          variant="light"
+          size="sm"
           rightSection={
             receivedCount > 0 ? (
-              <Badge size="sm" color="yellow" variant="light">
+              <Badge size="sm" color="yellow" variant="filled" circle>
                 {receivedCount}
               </Badge>
             ) : undefined
@@ -219,13 +235,13 @@ export function RemixGallerySettings() {
           Submitted to you
         </Button>
         <Button
-          component={Link}
+          component="a"
           href="/user/remix-submissions?tab=sent"
           variant="default"
-          size="compact-sm"
+          size="sm"
           rightSection={
             sentCount > 0 ? (
-              <Badge size="sm" variant="light">
+              <Badge size="sm" variant="light" circle>
                 {sentCount}
               </Badge>
             ) : undefined
