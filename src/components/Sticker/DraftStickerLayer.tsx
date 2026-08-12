@@ -154,6 +154,7 @@ export function DraftStickerLayer() {
             dressed={dressed}
             price={space?.price ?? 0}
             ownerShare={space?.ownerShare}
+            ownerUsername={space?.ownerUsername}
             onGesture={onGesture}
           />
         );

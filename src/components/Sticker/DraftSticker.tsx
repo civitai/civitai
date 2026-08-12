@@ -12,6 +12,7 @@ import {
   placeButtonBoxes,
   shouldFlipPlaceButton,
 } from '~/components/Sticker/place-button-position';
+import { payoutCopy } from '~/components/Sticker/payout-copy';
 import { useCreateStickerPlacement } from '~/components/Sticker/placement.util';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import type { StickerTreatment } from '~/components/Sticker/treatments/sticker-treatments';
@@ -21,20 +22,6 @@ import {
   pointerToSurfaceFraction,
   useStickerPlacementDraftStore,
 } from '~/store/sticker-placement-draft.store';
-
-/**
- * Where the placer's Buzz goes, from the resolved share rather than a constant.
- *
- * The shares are operator-tunable at runtime, so a string compiled against
- * today's split is a claim about money that can stop being true with no deploy
- * and nothing failing. Undefined while the space loads: saying nothing is the
- * only honest thing to say before the number arrives.
- */
-const payoutCopy = (ownerShare: number | undefined) => {
-  if (ownerShare == null) return null;
-  if (ownerShare >= 1) return 'All proceeds go to the creator';
-  return `${Math.round(ownerShare * 100)}% of proceeds go to the creator`;
-};
 
 /** Enough for the label and the currency badge at the smallest allowed sticker. */
 const BUY_BUTTON_MIN_WIDTH = 132;
@@ -87,6 +74,7 @@ export function DraftSticker({
   dressed,
   price,
   ownerShare,
+  ownerUsername,
   onGesture,
 }: {
   draft: StickerDraft;
@@ -96,8 +84,10 @@ export function DraftSticker({
   dressed: StickerTreatment;
   price: number;
   ownerShare: number | undefined;
+  ownerUsername: string | null | undefined;
   onGesture: (gesture: Gesture) => void;
 }) {
+  const payout = payoutCopy(ownerShare, ownerUsername);
   const select = useStickerPlacementDraftStore((state) => state.select);
   const cancelDraft = useStickerPlacementDraftStore((state) => state.cancelDraft);
   const place = useCreateStickerPlacement(draft.id);
@@ -397,17 +387,37 @@ export function DraftSticker({
           }
         />
         {/* On its own dark chip rather than over the artwork: this sits on
-                whatever the creator uploaded, and yellow on light work is as
-                unreadable as dimmed was on dark. */}
-        {payoutCopy(ownerShare) && (
-          <Text
-            size="xs"
-            fw={500}
-            c="yellow.4"
-            className="rounded-full bg-black/80 px-2 py-0.5 leading-tight"
+            whatever the creator uploaded, and yellow on light work is as
+            unreadable as dimmed was on dark.
+            Rounded as a box rather than a pill once it is two lines: a
+            full-round radius on a two-line chip bows its short sides inward. */}
+        {payout && (
+          <div
+            className={clsx(
+              'bg-black/80 px-2 py-0.5 text-center',
+              payout.name ? 'rounded-lg' : 'rounded-full'
+            )}
           >
-            {payoutCopy(ownerShare)}
-          </Text>
+            <Text size="xs" fw={500} c="yellow.4" className="leading-tight">
+              {payout.lead}
+            </Text>
+            {/* Capped and truncated, and not only for looks: the wrapper is
+                `w-max`, so an unbounded name widens the whole cluster — and the
+                cluster's width is half of the overlap test that decides whether
+                the button flips above the sticker. A long name would make it
+                flip on images where it does not need to. */}
+            {payout.name && (
+              <Text
+                size="xs"
+                fw={700}
+                c="yellow.4"
+                className="max-w-[168px] truncate leading-tight"
+                title={payout.name}
+              >
+                {payout.name}
+              </Text>
+            )}
+          </div>
         )}
       </div>
     </div>
