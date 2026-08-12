@@ -446,11 +446,13 @@ export async function getStickerPlacementDetail({
     /**
      * When the owner may take this off, so the button can be disabled with a
      * date rather than refusing after the click. `null` once the lock has run
-     * out, and for anything not live. The server refuses independently — this
+     * out, for anything not live, and for anyone but the owner — nobody else has
+     * a control it explains, and it is the only field here that would tell a
+     * stranger when the owner approved. The server refuses independently: this
      * is what the UI says, not what decides it.
      */
     removableAt:
-      placement.status === 'approved'
+      placement.status === 'approved' && viewerId === placement.ownerId
         ? nextRemovableAt(placement.resolvedAt ?? placement.createdAt)
         : null,
     sticker: cosmetic
@@ -680,7 +682,11 @@ export async function actOnStickerPlacement({
 
   if (action === 'remove') return removeApprovedSticker({ placement, userId, isModerator });
 
-  if (action === 'approve' && hideComment) await hideStickerComment(placement, true);
+  // Written with the approve's actual intent, not only when it is `true`. An
+  // approve that failed after hiding would otherwise leave the flag set, and a
+  // second, plain approve would silently keep refusing a note the owner just
+  // chose to accept.
+  if (action === 'approve') await hideStickerComment(placement, hideComment);
 
   const { settled } = await settlePlacement({
     placementId,
