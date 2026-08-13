@@ -88,7 +88,9 @@ vi.mock('~/server/services/model.service', () => ({
   ingestModelById: vi.fn(),
   updateModelLastVersionAt: vi.fn(),
 }));
-vi.mock('~/server/services/model-file.service', () => ({ filesForModelVersionCache: {} }));
+vi.mock('~/server/services/model-file.service', () => ({
+  deleteFilesForModelVersionCache: vi.fn(),
+}));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 
 import { bustPublicModelResponseCache } from '~/server/services/model-version.service';
