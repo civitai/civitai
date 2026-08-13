@@ -7,8 +7,67 @@
  * drives them directly.
  *
  * Nothing in this file reads the filesystem, spawns a process, or exits.
+ *
+ * Nothing in this file reads `path.sep` either, and that is load-bearing rather
+ * than incidental — see `toPosixPath` below.
  */
-import path from 'node:path';
+
+/**
+ * Normalise any path-ish string to forward slashes.
+ *
+ * EVERY path this gate compares is compared as TEXT — against the `/__tests__/`
+ * marker, against `TESTS_PATH_RE`, against the keys of a committed baseline JSON.
+ * So each of those comparisons needs one canonical separator, and the one thing
+ * it must NOT be is the HOST's.
+ *
+ * `tsc` emits forward slashes on every platform it runs on, Windows included.
+ * `path.sep` on Windows is `\`. Building a marker or a normalisation out of
+ * `path.sep` therefore produces a value that matches tsc's output on Linux and
+ * matches nothing at all on Windows — green in CI, red on a developer's machine,
+ * for a reason no amount of extra cases written on Linux could surface.
+ *
+ * Forward slash is the canonical form because it is what the tool actually
+ * emits, what the committed baseline's keys are written in, and what
+ * `TESTS_PATH_RE` is written against. Backslashes are folded into it so a path
+ * that DOES arrive win32-shaped still lands in the same space — a normalisation
+ * that only handled the shape we expect would just move the assumption.
+ */
+export function toPosixPath(p) {
+  return String(p ?? '').replace(/\\/g, '/');
+}
+
+/**
+ * The two path segments the positive control matches on, in canonical form.
+ * They are plain constants, not host-derived: that is the whole fix.
+ */
+export const TESTS_DIR_SEGMENT = '/__tests__/';
+export const NODE_MODULES_SEGMENT = '/node_modules/';
+
+/**
+ * Does this `--listFilesOnly` line name a file the positive control should
+ * count? Both halves normalise — the `node_modules` exclusion was built from
+ * `path.sep` too, and fixing only the marker would leave a control that passes
+ * by counting vendored test files.
+ */
+export function isTestFileLine(line) {
+  const p = toPosixPath(line);
+  return p.includes(TESTS_DIR_SEGMENT) && !p.includes(NODE_MODULES_SEGMENT);
+}
+
+/**
+ * The positive control's measurement: how many files under a `__tests__`
+ * directory the program actually contains, given raw `--listFilesOnly` output.
+ *
+ * It lives here, in the pure module, rather than inline in the gate, because the
+ * gate is only reachable by spawning a process and this is the exact computation
+ * that was wrong. A predicate that can only be exercised end to end is one whose
+ * platform assumptions nobody checks.
+ */
+export function countTestFilesInProgram(output) {
+  return String(output ?? '')
+    .split('\n')
+    .filter(isTestFileLine).length;
+}
 
 /**
  * The root `tsconfig.json` excludes exactly `src/ ** /__tests__/ ** `, anchored at
@@ -87,7 +146,14 @@ export function parseDiagnostics(output) {
     }
     formats.add(plain ? 'plain' : 'pretty');
     total++;
-    const file = m[1].split(path.sep).join('/').replace(/^\.\//, '');
+    // Canonical forward slashes, NOT `split(path.sep)`: these strings become the
+    // keys of the committed baseline and the input to `isGatedTestFile`, whose
+    // regex is anchored on `/`. Splitting on the host separator made a Windows
+    // run's keys and a Linux run's keys equal only by the accident of tsc
+    // emitting one shape — and left a backslash key, if one ever arrived, both
+    // unmatchable against the baseline and silently discarded as "outside
+    // src/**/__tests__/".
+    const file = toPosixPath(m[1]).replace(/^\.\//, '');
     counts.set(file, (counts.get(file) || 0) + 1);
   }
 
