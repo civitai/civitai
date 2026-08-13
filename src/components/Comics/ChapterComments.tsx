@@ -29,8 +29,7 @@ export function ChapterComments({
   const router = useRouter();
   const highlighted = parseNumericString(router.query.highlight);
   const [sort, setSort] = useState<ThreadSort>(ThreadSort.Oldest);
-  const expanded = useNewCommentStore((state) => state.expandedComments);
-  const toggleExpanded = useNewCommentStore((state) => state.toggleExpanded);
+  const setExpanded = useNewCommentStore((state) => state.setExpanded);
   const utils = trpc.useUtils();
 
   const { data: thread, isLoading } = trpc.comics.getChapterThread.useQuery(
@@ -72,9 +71,9 @@ export function ChapterComments({
         isInitialThread: true,
         setInitialThread,
         setRootThread,
-        expanded,
-        toggleExpanded,
+        setExpanded,
         activeComment: undefined,
+        rootEntityType: 'comicChapter',
       }}
     >
       <CommentsCtx.Provider

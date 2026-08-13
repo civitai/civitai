@@ -18,7 +18,9 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
+import { listModelEngagements } from '@civitai/db-queries/model';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { kyselyRead } from '~/server/db/kyselyDb';
 
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { withSpan } from '~/server/utils/otel-helpers';
@@ -635,10 +637,7 @@ export const getUserEngagedModelsByIds = async ({
   modelIds: number[];
 }) => {
   const [engagements, recommendedReviews] = await Promise.all([
-    dbRead.modelEngagement.findMany({
-      where: { userId: id, modelId: { in: modelIds } },
-      select: { modelId: true, type: true },
-    }),
+    listModelEngagements(kyselyRead, { userId: id, modelIds }),
     getResourceReviewsByUserId({ userId: id, recommended: true, modelIds }),
   ]);
 

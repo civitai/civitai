@@ -99,7 +99,28 @@ const reportedPlacementFilter = ({
   if (typeof placementId !== 'number' || !Number.isFinite(placementId))
     throw throwBadRequestError('report: a sticker placement report must name a placement');
 
-  return { details: { path: ['placementId'], equals: placementId } };
+  // A note is reported separately from the sticker it hangs off, and the
+  // discrimination has to run in BOTH directions. Matching on the placement
+  // alone for one of them is not a weaker filter, it is a fold: report the note
+  // on placement 5, then report the artwork on placement 5, and the second
+  // report is appended to the first as "also reported by" — its reason text
+  // discarded, and a moderator shown a complaint about a note while the
+  // complaint about the artwork is invisible.
+  //
+  // The cost is that reports filed before this field existed carry no `target`
+  // key, and `equals: 'sticker'` does not match a missing one, so a new sticker
+  // report will not dedupe against that history. That is a duplicate in the
+  // queue, on a fixed and shrinking set of rows — strictly better than dropping
+  // a complaint, which is what the asymmetric version did.
+  const target =
+    (details as { target?: string } | undefined)?.target === 'comment' ? 'comment' : 'sticker';
+
+  return {
+    AND: [
+      { details: { path: ['placementId'], equals: placementId } },
+      { details: { path: ['target'], equals: target } },
+    ],
+  };
 };
 
 const validateReportCreation = async ({
@@ -257,6 +278,13 @@ export const createReport = async ({
 
   // only mods can create csam reports
   if (data.reason === ReportReason.CSAM && !isModerator) throw throwAuthorizationError();
+
+  // User-only on purpose: reporting your own content is how a creator contests a
+  // rating, so this must not widen to other entity types.
+  if (type === ReportEntity.User && id === userId)
+    throw throwBadRequestError(
+      'You cannot report your own profile. To reach a moderator about your own account, use the Support Portal at /support-portal.'
+    );
 
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
 

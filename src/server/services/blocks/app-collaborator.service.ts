@@ -3,7 +3,12 @@ import type { Prisma } from '@prisma/client';
 
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { ACCEPTED, resolveAppAccess } from '~/server/services/blocks/app-access.service';
+import {
+  ACCEPTED,
+  listingKindSupports,
+  resolveListingAccess,
+  type ListingKind,
+} from '~/server/services/blocks/app-access.service';
 import { notifyAppCollaborator } from '~/server/services/blocks/app-collaborator-notify';
 import { grantAppRepoWrite, revokeAppRepoWrite } from '~/server/services/blocks/app-repo-access';
 import { newAppOwnershipEventId } from '~/server/utils/app-block-ids';
@@ -11,6 +16,10 @@ import { newAppOwnershipEventId } from '~/server/utils/app-block-ids';
 /**
  * App Listing COLLABORATORS — the SEAT lifecycle (invite / accept / reject / remove /
  * leave / byline opt-in).
+ *
+ * 🔴 SEATS ARE KEYED TO THE APP **LISTING**. See `app-access.service`'s header for why
+ * (an off-site listing has no AppBlock, so a block-keyed seat could not exist for one
+ * of the store's two kinds).
  *
  * ## What is copied from `EntityCollaborator`, and what deliberately is not
  *
@@ -36,6 +45,20 @@ import { newAppOwnershipEventId } from '~/server/utils/app-block-ids';
  * a co-owner, but may not seat or unseat anyone (that plus initiating a transfer are
  * the only two owner-reserved actions). An editor MAY remove themselves ({@link
  * leaveApp}) — that is consent, not management.
+ *
+ * ## Forgejo is ON-SITE ONLY
+ *
+ * The repo grant/revoke that rides along with accept / remove / leave fires ONLY when
+ * the listing's KIND supports `submitVersion` AND a repo slug exists. An off-site
+ * listing has no bundle and no repo — the `submitVersion: false` capability cell — so
+ * there is nothing to grant, and calling Forgejo with a store slug that names no repo
+ * would be a guaranteed 404 on every off-site seat decision.
+ *
+ * 🔴 THE KIND IS THE AUTHORITY AND THE SLUG IS ONLY THE PHYSICAL CHECK — see
+ * {@link hasWritableRepo}. Gating on the slug ALONE looks equivalent and is not: an
+ * `offsite` listing CAN carry a backing AppBlock (and therefore a `blockId` slug), so a
+ * slug-only gate would mint repo write on a listing whose kind declares it has no
+ * version surface at all.
  */
 
 export type AppCollaboratorErrorCode =
@@ -69,7 +92,7 @@ export function mapCollaboratorError(err: unknown): unknown {
 }
 
 export type CollaboratorRow = {
-  appBlockId: string;
+  appListingId: string;
   userId: number;
   role: string;
   status: string;
@@ -94,7 +117,7 @@ export async function recordOwnershipEvent(
    */
   tx: Prisma.TransactionClient,
   args: {
-    appBlockId: string;
+    appListingId: string;
     slug: string;
     action:
       | 'invite'
@@ -114,7 +137,7 @@ export async function recordOwnershipEvent(
   await tx.appOwnershipEvent.create({
     data: {
       id: newAppOwnershipEventId(),
-      appBlockId: args.appBlockId,
+      appListingId: args.appListingId,
       slug: args.slug,
       action: args.action,
       actorUserId: args.actorUserId,
@@ -140,24 +163,149 @@ export function shouldNotifyInvite(lastNotifiedAt: Date | null, now: Date): bool
   return lastNotifiedAt.getTime() <= cutoff.getTime();
 }
 
-/** Load the app + assert the caller OWNS it. Editors are refused: seats are owner-managed. */
-async function assertOwner(
-  appBlockId: string,
-  actorUserId: number
-): Promise<{ appBlockId: string; slug: string; ownerUserId: number }> {
-  const block = await dbRead.appBlock.findUnique({
-    where: { id: appBlockId },
-    select: { id: true, blockId: true, app: { select: { userId: true } } },
-  });
-  if (!block?.app) throw new AppCollaboratorError('NOT_FOUND', 'App not found');
-  if (block.app.userId !== actorUserId) {
+/**
+ * The listing a seat operation acts on, already resolved to the SEAT-BEARING PARENT.
+ *
+ * `blockSlug` is the Forgejo repo name and is `null` for an off-site listing — every
+ * repo call is conditioned on it, so an off-site seat decision never reaches Forgejo.
+ */
+type SeatListing = {
+  /** The PARENT listing id — the seat key. */
+  appListingId: string;
+  /** The store slug (audit-event identity, notification copy). */
+  slug: string;
+  kind: ListingKind;
+  /** Backing AppBlock id, or null for off-site. */
+  appBlockId: string | null;
+  /** The AppBlock's `blockId` — the Forgejo repo slug. Null for off-site. */
+  blockSlug: string | null;
+  /** Canonical owner: the OauthClient owner for onsite, the listing column for offsite. */
+  ownerUserId: number;
+  /** True when the id handed in was a SHADOW revision (already hopped to the parent). */
+  wasShadow: boolean;
+};
+
+const seatListingSelect = {
+  id: true,
+  slug: true,
+  kind: true,
+  userId: true,
+  appBlockId: true,
+  revisionOfId: true,
+  appBlock: { select: { blockId: true, app: { select: { userId: true } } } },
+} as const;
+
+type RawSeatListing = {
+  id: string;
+  slug: string;
+  kind: string;
+  userId: number;
+  appBlockId: string | null;
+  revisionOfId: string | null;
+  appBlock: { blockId: string; app: { userId: number } | null } | null;
+};
+
+function toSeatListing(row: RawSeatListing, wasShadow: boolean): SeatListing {
+  return {
+    appListingId: row.id,
+    slug: row.slug,
+    kind: row.kind as ListingKind,
+    appBlockId: row.appBlockId,
+    blockSlug: row.appBlock?.blockId ?? null,
+    // 🔴 ONSITE OWNERSHIP IS CANONICALLY THE OauthClient's. `AppListing.userId` is a
+    // denormalized copy there; for OFFSITE it IS the owner (a connect client is a
+    // linked credential, never the owner). Falling back to the column also covers an
+    // onsite listing whose block has a dangling `app_id`.
+    ownerUserId: row.appBlock?.app?.userId ?? row.userId,
+    wasShadow,
+  };
+}
+
+/**
+ * 🔴 THE ONE PREDICATE for "may a Forgejo repo call fire for this listing?", written
+ * once so the grant (accept) and the two revokes (remove / leave) cannot drift apart.
+ *
+ * BOTH clauses are load-bearing and they are NOT redundant:
+ *   - `listingKindSupports(kind, 'submitVersion')` is the DECLARED capability, and it is
+ *     the authority. `CAPABILITIES_BY_KIND` fails closed on an unrecognised kind, so a
+ *     kind this code does not know is refused rather than granted.
+ *   - `blockSlug != null` is the PHYSICAL check — there must be a repo name to call.
+ *
+ * They disagree on exactly one shape, and it is reachable: `mapAppBlockToListing` mints
+ * `kind:'offsite'` with a non-null `appBlockId` whenever the source AppBlock has an
+ * `externalUrl`, so such a listing HAS a `blockId` slug while declaring
+ * `submitVersion: false`. A slug-only gate would hand that listing's collaborator
+ * Forgejo `write`.
+ *
+ * 🔴 A TYPE PREDICATE, not a `boolean` — and here is EXACTLY what that buys, because an
+ * earlier version of this comment claimed a safety property the compiler does not
+ * provide. The three call sites pass `listing.blockSlug` to a Forgejo call that requires
+ * a `string`, and they used to do it through a `!` non-null assertion justified by a
+ * comment ("safe: `hasWritableRepo` is precisely the null check"). The predicate replaces
+ * that comment with narrowing the compiler performs, so the three `!`s are gone and the
+ * three call sites can no longer be re-written to pass a nullable slug without tsc
+ * objecting.
+ *
+ * 🔴 WHAT IT DOES **NOT** BUY: TypeScript NEVER checks a user-defined predicate's BODY
+ * against the declared predicate. Relaxing this body to a kind-only check is a silent
+ * change — measured on this tree with `pnpm typecheck`: the relaxed body emits **0**
+ * errors, while the positive control (same relaxed body, return type demoted to
+ * `boolean`) emits exactly **3** — `TS2322: Type 'string | null' is not assignable to
+ * type 'string'`, one per call site (`respondToInvite`, `removeCollaborator`,
+ * `leaveApp`) as each loses the narrowing. So the predicate is checked at its CALLERS and
+ * unchecked at its DEFINITION, and the null-slug half of this function has no
+ * compile-time guard at all.
+ *
+ * That half is therefore pinned BEHAVIOURALLY, by `app-collaborator.service.test.ts` →
+ * "🔴 an ON-SITE listing with NO backing block reaches Forgejo NEVER". That case is the
+ * only one that can kill a body relaxed to `listingKindSupports(...)` alone: every other
+ * on-site fixture has a slug, so both clauses agree and either one alone satisfies them.
+ */
+function hasWritableRepo(listing: {
+  kind: string;
+  blockSlug: string | null;
+}): listing is { kind: string; blockSlug: string } {
+  return listingKindSupports(listing.kind, 'submitVersion') && listing.blockSlug != null;
+}
+
+/**
+ * Load the SEAT-BEARING listing for `appListingId`, hopping a shadow revision to its
+ * parent.
+ *
+ * 🔴 THE SINGLE RESOLVE-TO-PARENT PATH for the write side (the read side is
+ * `resolveListingAccess`). A seat may only ever exist on a parent — see
+ * `app-access.service`'s header — so every seat mutation must land there, and handing
+ * one a shadow id must NOT silently create a second, doomed seat namespace.
+ */
+async function loadSeatListing(appListingId: string): Promise<SeatListing> {
+  const row = (await dbRead.appListing.findUnique({
+    where: { id: appListingId },
+    select: seatListingSelect,
+  })) as RawSeatListing | null;
+  if (!row) throw new AppCollaboratorError('NOT_FOUND', 'App listing not found');
+  if (!row.revisionOfId) return toSeatListing(row, false);
+  const parent = (await dbRead.appListing.findUnique({
+    where: { id: row.revisionOfId },
+    select: seatListingSelect,
+  })) as RawSeatListing | null;
+  if (!parent) throw new AppCollaboratorError('NOT_FOUND', 'App listing not found');
+  return toSeatListing(parent, true);
+}
+
+/**
+ * Load the listing + assert the caller OWNS it. Editors are refused: seats are
+ * owner-managed.
+ */
+async function assertOwner(appListingId: string, actorUserId: number): Promise<SeatListing> {
+  const listing = await loadSeatListing(appListingId);
+  if (listing.ownerUserId !== actorUserId) {
     throw new AppCollaboratorError('NOT_OWNER', 'Only the app owner can manage collaborators');
   }
-  return { appBlockId: block.id, slug: block.blockId, ownerUserId: block.app.userId };
+  return listing;
 }
 
 export type InviteCollaboratorResult = {
-  appBlockId: string;
+  appListingId: string;
   userId: number;
   status: string;
   /** True when this call created the row (vs re-touching a standing invite). */
@@ -174,25 +322,50 @@ export type InviteCollaboratorResult = {
  * ALREADY_SEATED. A repeat invite for a `rejected` row RE-OPENS it as `pending` —
  * declining is not permanent, and the invitee must consent again.
  *
+ * 🔴 A SHADOW REVISION IS REFUSED OUTRIGHT — the seat-creation half of the
+ * parent-only invariant. Silently hopping to the parent here would be *safe* but
+ * *wrong to teach*: an owner who thinks they are seating "the revision" would be
+ * seating the live listing, and the UI would have to explain a hop the product does
+ * not have. Refusing names the truth: collaborators are a property of the LISTING.
+ * The other direction — a seat that landed on a shadow being destroyed by
+ * `applyApprovedRevision`'s CASCADE delete — is what makes this a safety guard and not
+ * a nicety.
+ *
  * 🔴 BAN POLICY (decided, and applied consistently across this feature): a BANNED user
- * may neither be invited nor accept. Rationale: a seat grants Forgejo `write` on the
- * app repo plus visibility of the app's earnings, and `getMyAppRepo` already refuses
- * to issue a push credential to a banned account (`blocks.router.ts:5579`). Seating a
- * banned user would mint exactly the credential that gate exists to withhold. An
- * EXISTING seat is NOT auto-revoked on ban (that would need a ban-hook this PR does
- * not add) — but every capability the seat unlocks re-checks `bannedAt` at the proc,
- * so a banned editor can hold an inert row and do nothing with it.
+ * may neither be invited nor accept. Rationale: on an on-site listing a seat grants
+ * Forgejo `write` on the app repo plus visibility of the app's earnings, and
+ * `getMyAppRepo` already refuses to issue a push credential to a banned account
+ * (`blocks.router.ts:5579`). Seating a banned user would mint exactly the credential
+ * that gate exists to withhold. An EXISTING seat is NOT auto-revoked on ban (that
+ * would need a ban-hook this PR does not add) — but every capability the seat unlocks
+ * re-checks `bannedAt` at the proc, so a banned editor can hold an inert row and do
+ * nothing with it.
  */
 export async function inviteCollaborator(opts: {
-  appBlockId: string;
+  appListingId: string;
   targetUserId: number;
   actorUserId: number;
   now?: Date;
 }): Promise<InviteCollaboratorResult> {
   const now = opts.now ?? new Date();
-  const app = await assertOwner(opts.appBlockId, opts.actorUserId);
 
-  if (opts.targetUserId === app.ownerUserId) {
+  // 🔴 SHADOW CHECK FIRST, and on the id AS SUPPLIED — `assertOwner` resolves to the
+  // parent, so asking it afterwards could never see the shadow.
+  const asked = await dbRead.appListing.findUnique({
+    where: { id: opts.appListingId },
+    select: { id: true, revisionOfId: true },
+  });
+  if (!asked) throw new AppCollaboratorError('NOT_FOUND', 'App listing not found');
+  if (asked.revisionOfId != null) {
+    throw new AppCollaboratorError(
+      'INVALID_TARGET',
+      'Collaborators are managed on the live listing, not on a revision draft'
+    );
+  }
+
+  const listing = await assertOwner(opts.appListingId, opts.actorUserId);
+
+  if (opts.targetUserId === listing.ownerUserId) {
     throw new AppCollaboratorError(
       'INVALID_TARGET',
       'The app owner already has full access and cannot be invited as a collaborator'
@@ -213,7 +386,9 @@ export async function inviteCollaborator(opts: {
   }
 
   const existing = await dbRead.appCollaborator.findUnique({
-    where: { appBlockId_userId: { appBlockId: app.appBlockId, userId: opts.targetUserId } },
+    where: {
+      appListingId_userId: { appListingId: listing.appListingId, userId: opts.targetUserId },
+    },
     select: { status: true, lastNotifiedAt: true },
   });
 
@@ -225,7 +400,7 @@ export async function inviteCollaborator(opts: {
   // Skipped when re-touching a row that already exists, since that consumes no new seat.
   if (!existing) {
     const seated = await dbWrite.appCollaborator.count({
-      where: { appBlockId: app.appBlockId, status: { in: ['pending', ACCEPTED] } },
+      where: { appListingId: listing.appListingId, status: { in: ['pending', ACCEPTED] } },
     });
     if (seated >= constants.appCollaborators.maxCollaborators) {
       throw new AppCollaboratorError(
@@ -239,9 +414,11 @@ export async function inviteCollaborator(opts: {
 
   await dbWrite.$transaction(async (tx) => {
     await tx.appCollaborator.upsert({
-      where: { appBlockId_userId: { appBlockId: app.appBlockId, userId: opts.targetUserId } },
+      where: {
+        appListingId_userId: { appListingId: listing.appListingId, userId: opts.targetUserId },
+      },
       create: {
-        appBlockId: app.appBlockId,
+        appListingId: listing.appListingId,
         userId: opts.targetUserId,
         role: 'editor',
         status: 'pending',
@@ -257,12 +434,12 @@ export async function inviteCollaborator(opts: {
       },
     });
     await recordOwnershipEvent(tx, {
-      appBlockId: app.appBlockId,
-      slug: app.slug,
+      appListingId: listing.appListingId,
+      slug: listing.slug,
       action: 'invite',
       actorUserId: opts.actorUserId,
       targetUserId: opts.targetUserId,
-      metadata: { role: 'editor', reopened: existing?.status === 'rejected' },
+      metadata: { role: 'editor', kind: listing.kind, reopened: existing?.status === 'rejected' },
     });
   });
 
@@ -272,8 +449,14 @@ export async function inviteCollaborator(opts: {
       await notifyAppCollaborator({
         type: 'app-collaborator-invited',
         userId: opts.targetUserId,
-        key: `app-collaborator-invited:${app.appBlockId}:${opts.targetUserId}:${now.getTime()}`,
-        details: { slug: app.slug, appBlockId: app.appBlockId },
+        key: `app-collaborator-invited:${listing.appListingId}:${
+          opts.targetUserId
+        }:${now.getTime()}`,
+        details: {
+          slug: listing.slug,
+          appListingId: listing.appListingId,
+          appBlockId: listing.appBlockId,
+        },
       });
     } catch {
       /* best-effort */
@@ -281,7 +464,7 @@ export async function inviteCollaborator(opts: {
   }
 
   return {
-    appBlockId: app.appBlockId,
+    appListingId: listing.appListingId,
     userId: opts.targetUserId,
     status: 'pending',
     created: !existing,
@@ -289,7 +472,7 @@ export async function inviteCollaborator(opts: {
   };
 }
 
-export type RespondToInviteResult = { appBlockId: string; userId: number; status: string };
+export type RespondToInviteResult = { appListingId: string; userId: number; status: string };
 
 /**
  * INVITEE: accept or decline a pending seat.
@@ -300,22 +483,20 @@ export type RespondToInviteResult = { appBlockId: string; userId: number; status
  *
  * On ACCEPT this also grants the collaborator Forgejo `write` on `civitai-apps/<slug>`
  * — the seat is worthless without push access, and the grant is part of accepting, not
- * a follow-up. The grant runs POST-COMMIT and is best-effort-logged: it is an external
- * system, and a Forgejo outage must not roll back a consent decision the user made.
- * `getMyAppRepo` re-grants on demand, so a dropped grant self-heals on first use.
+ * a follow-up. 🔴 ON-SITE ONLY: an off-site listing has no repo, so the grant is
+ * skipped entirely rather than called with a slug that names nothing. The grant runs
+ * POST-COMMIT and is best-effort-logged: it is an external system, and a Forgejo
+ * outage must not roll back a consent decision the user made. `getMyAppRepo` re-grants
+ * on demand, so a dropped grant self-heals on first use.
  */
 export async function respondToInvite(opts: {
-  appBlockId: string;
+  appListingId: string;
   userId: number;
   accept: boolean;
   now?: Date;
 }): Promise<RespondToInviteResult> {
   const now = opts.now ?? new Date();
-  const block = await dbRead.appBlock.findUnique({
-    where: { id: opts.appBlockId },
-    select: { id: true, blockId: true },
-  });
-  if (!block) throw new AppCollaboratorError('NOT_FOUND', 'App not found');
+  const listing = await loadSeatListing(opts.appListingId);
 
   if (opts.accept) {
     const user = await dbRead.user.findUnique({
@@ -334,26 +515,28 @@ export async function respondToInvite(opts: {
 
   await dbWrite.$transaction(async (tx) => {
     const flipped = await tx.appCollaborator.updateMany({
-      where: { appBlockId: block.id, userId: opts.userId, status: 'pending' },
+      where: { appListingId: listing.appListingId, userId: opts.userId, status: 'pending' },
       data: { status: nextStatus, respondedAt: now },
     });
     if (flipped.count === 0) {
       throw new AppCollaboratorError('NO_INVITE', 'There is no pending invitation to respond to');
     }
     await recordOwnershipEvent(tx, {
-      appBlockId: block.id,
-      slug: block.blockId,
+      appListingId: listing.appListingId,
+      slug: listing.slug,
       action: opts.accept ? 'accept' : 'reject',
       actorUserId: opts.userId,
       targetUserId: opts.userId,
     });
   });
 
-  if (opts.accept) {
-    await grantAppRepoWrite({ slug: block.blockId, userId: opts.userId });
+  // 🔴 KIND-GATED, not slug-gated — see {@link hasWritableRepo}. It is a TYPE PREDICATE,
+  // so `blockSlug` narrows to `string` here; no non-null assertion is involved.
+  if (opts.accept && hasWritableRepo(listing)) {
+    await grantAppRepoWrite({ slug: listing.blockSlug, userId: opts.userId });
   }
 
-  return { appBlockId: block.id, userId: opts.userId, status: nextStatus };
+  return { appListingId: listing.appListingId, userId: opts.userId, status: nextStatus };
 }
 
 /**
@@ -363,25 +546,26 @@ export async function respondToInvite(opts: {
  * `AppOwnershipEvent`, and leaving a `rejected`-like tombstone would keep occupying
  * conceptual space in the roster read for no benefit.
  *
- * REVOKES Forgejo write. This is the half with no prior art in the codebase: there was
- * no revoke path at all before this PR (`forgejo.service.ts` had `addCollaborator` and
- * nothing to undo it), which meant a dev who was granted push access kept it forever.
+ * REVOKES Forgejo write (on-site only). This is the half with no prior art in the
+ * codebase: there was no revoke path at all before this feature
+ * (`forgejo.service.ts` had `addCollaborator` and nothing to undo it), which meant a
+ * dev who was granted push access kept it forever.
  */
 export async function removeCollaborator(opts: {
-  appBlockId: string;
+  appListingId: string;
   targetUserId: number;
   actorUserId: number;
-}): Promise<{ appBlockId: string; userId: number; removed: boolean }> {
-  const app = await assertOwner(opts.appBlockId, opts.actorUserId);
+}): Promise<{ appListingId: string; userId: number; removed: boolean }> {
+  const listing = await assertOwner(opts.appListingId, opts.actorUserId);
 
   const removed = await dbWrite.$transaction(async (tx) => {
     const del = await tx.appCollaborator.deleteMany({
-      where: { appBlockId: app.appBlockId, userId: opts.targetUserId },
+      where: { appListingId: listing.appListingId, userId: opts.targetUserId },
     });
     if (del.count === 0) return false;
     await recordOwnershipEvent(tx, {
-      appBlockId: app.appBlockId,
-      slug: app.slug,
+      appListingId: listing.appListingId,
+      slug: listing.slug,
       action: 'remove',
       actorUserId: opts.actorUserId,
       targetUserId: opts.targetUserId,
@@ -389,10 +573,10 @@ export async function removeCollaborator(opts: {
     return true;
   });
 
-  if (removed) {
-    await revokeAppRepoWrite({ slug: app.slug, userId: opts.targetUserId });
+  if (removed && hasWritableRepo(listing)) {
+    await revokeAppRepoWrite({ slug: listing.blockSlug, userId: opts.targetUserId });
   }
-  return { appBlockId: app.appBlockId, userId: opts.targetUserId, removed };
+  return { appListingId: listing.appListingId, userId: opts.targetUserId, removed };
 }
 
 /**
@@ -400,23 +584,19 @@ export async function removeCollaborator(opts: {
  * seat mutation an editor may perform, and it needs no owner check.
  */
 export async function leaveApp(opts: {
-  appBlockId: string;
+  appListingId: string;
   userId: number;
-}): Promise<{ appBlockId: string; userId: number; removed: boolean }> {
-  const block = await dbRead.appBlock.findUnique({
-    where: { id: opts.appBlockId },
-    select: { id: true, blockId: true },
-  });
-  if (!block) throw new AppCollaboratorError('NOT_FOUND', 'App not found');
+}): Promise<{ appListingId: string; userId: number; removed: boolean }> {
+  const listing = await loadSeatListing(opts.appListingId);
 
   const removed = await dbWrite.$transaction(async (tx) => {
     const del = await tx.appCollaborator.deleteMany({
-      where: { appBlockId: block.id, userId: opts.userId },
+      where: { appListingId: listing.appListingId, userId: opts.userId },
     });
     if (del.count === 0) return false;
     await recordOwnershipEvent(tx, {
-      appBlockId: block.id,
-      slug: block.blockId,
+      appListingId: listing.appListingId,
+      slug: listing.slug,
       action: 'leave',
       actorUserId: opts.userId,
       targetUserId: opts.userId,
@@ -424,10 +604,10 @@ export async function leaveApp(opts: {
     return true;
   });
 
-  if (removed) {
-    await revokeAppRepoWrite({ slug: block.blockId, userId: opts.userId });
+  if (removed && hasWritableRepo(listing)) {
+    await revokeAppRepoWrite({ slug: listing.blockSlug, userId: opts.userId });
   }
-  return { appBlockId: block.id, userId: opts.userId, removed };
+  return { appListingId: listing.appListingId, userId: opts.userId, removed };
 }
 
 /**
@@ -444,27 +624,23 @@ export async function leaveApp(opts: {
  * must not be able to pre-arrange public credit for a seat they have not taken.
  */
 export async function setCollaboratorDisplayed(opts: {
-  appBlockId: string;
+  appListingId: string;
   userId: number;
   displayed: boolean;
-}): Promise<{ appBlockId: string; userId: number; displayed: boolean }> {
-  const block = await dbRead.appBlock.findUnique({
-    where: { id: opts.appBlockId },
-    select: { id: true, blockId: true },
-  });
-  if (!block) throw new AppCollaboratorError('NOT_FOUND', 'App not found');
+}): Promise<{ appListingId: string; userId: number; displayed: boolean }> {
+  const listing = await loadSeatListing(opts.appListingId);
 
   await dbWrite.$transaction(async (tx) => {
     const updated = await tx.appCollaborator.updateMany({
-      where: { appBlockId: block.id, userId: opts.userId, status: ACCEPTED },
+      where: { appListingId: listing.appListingId, userId: opts.userId, status: ACCEPTED },
       data: { displayed: opts.displayed },
     });
     if (updated.count === 0) {
       throw new AppCollaboratorError('NO_INVITE', 'You are not an active collaborator on this app');
     }
     await recordOwnershipEvent(tx, {
-      appBlockId: block.id,
-      slug: block.blockId,
+      appListingId: listing.appListingId,
+      slug: listing.slug,
       action: 'display',
       actorUserId: opts.userId,
       targetUserId: opts.userId,
@@ -472,7 +648,11 @@ export async function setCollaboratorDisplayed(opts: {
     });
   });
 
-  return { appBlockId: block.id, userId: opts.userId, displayed: opts.displayed };
+  return {
+    appListingId: listing.appListingId,
+    userId: opts.userId,
+    displayed: opts.displayed,
+  };
 }
 
 export type CollaboratorView = {
@@ -523,27 +703,28 @@ export function filterCollaboratorsForViewer(
 }
 
 /**
- * 🔴 THE ROSTER IS NOT A PUBLIC READ, and `resolveAppAccess` is consulted for its ROLE,
- * not merely for `ownerUserId`.
+ * 🔴 THE ROSTER IS NOT A PUBLIC READ, and `resolveListingAccess` is consulted for its
+ * ROLE, not merely for `ownerUserId`.
  *
- * Reading it back leaks, for any app on the platform: the full ACCEPTED roster
+ * Reading it back leaks, for any listing on the platform: the full ACCEPTED roster
  * INCLUDING seats whose holder opted OUT of the public byline (`displayed: false` — the
  * whole point of that flag is that those people are not listed publicly), plus
  * `invitedBy` and the invite/response timestamps. The status filter below governs
- * pending/rejected ROWS; it never governed whether the CALLER may read the app at all,
- * so without this gate every flagged account could enumerate every app's collaborators.
+ * pending/rejected ROWS; it never governed whether the CALLER may read the listing at
+ * all, so without this gate every flagged account could enumerate every listing's
+ * collaborators.
  *
- * Permitted: the app OWNER, an ACCEPTED editor, or a moderator. A PENDING invitee is
+ * Permitted: the listing OWNER, an ACCEPTED editor, or a moderator. A PENDING invitee is
  * NOT — they read their own standing invitation through `listMyPendingInvites`, which
- * is keyed to their own user id and needs no app-scoped access.
+ * is keyed to their own user id and needs no listing-scoped access.
  */
 export async function listCollaborators(opts: {
-  appBlockId: string;
+  appListingId: string;
   viewerUserId: number | null;
   isModerator: boolean;
 }): Promise<CollaboratorView[]> {
-  const access = await resolveAppAccess(opts.appBlockId, opts.viewerUserId);
-  if (!access) throw new AppCollaboratorError('NOT_FOUND', 'App not found');
+  const access = await resolveListingAccess(opts.appListingId, opts.viewerUserId);
+  if (!access) throw new AppCollaboratorError('NOT_FOUND', 'App listing not found');
   if (!access.role && !opts.isModerator) {
     throw new AppCollaboratorError(
       'NOT_OWNER',
@@ -551,7 +732,9 @@ export async function listCollaborators(opts: {
     );
   }
   const rows = (await dbRead.appCollaborator.findMany({
-    where: { appBlockId: opts.appBlockId },
+    // 🔴 `seatListingId`, not the id asked for: a caller who opened the roster from a
+    // shadow revision must see the parent's seats, not an empty list.
+    where: { appListingId: access.seatListingId },
     select: {
       userId: true,
       role: true,
@@ -571,28 +754,37 @@ export async function listCollaborators(opts: {
 }
 
 /** The caller's own PENDING invitations, for an inbox surface. */
-export async function listMyPendingInvites(
-  userId: number
-): Promise<Array<{ appBlockId: string; slug: string; invitedBy: number; createdAt: Date }>> {
+export async function listMyPendingInvites(userId: number): Promise<
+  Array<{
+    appListingId: string;
+    slug: string;
+    kind: ListingKind;
+    appBlockId: string | null;
+    invitedBy: number;
+    createdAt: Date;
+  }>
+> {
   const rows = await dbRead.appCollaborator.findMany({
     where: { userId, status: 'pending' },
     select: {
-      appBlockId: true,
+      appListingId: true,
       invitedBy: true,
       createdAt: true,
-      appBlock: { select: { blockId: true } },
+      appListing: { select: { slug: true, kind: true, appBlockId: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
   return rows.map(
     (r: {
-      appBlockId: string;
+      appListingId: string;
       invitedBy: number;
       createdAt: Date;
-      appBlock: { blockId: string } | null;
+      appListing: { slug: string; kind: string; appBlockId: string | null } | null;
     }) => ({
-      appBlockId: r.appBlockId,
-      slug: r.appBlock?.blockId ?? '',
+      appListingId: r.appListingId,
+      slug: r.appListing?.slug ?? '',
+      kind: (r.appListing?.kind ?? 'offsite') as ListingKind,
+      appBlockId: r.appListing?.appBlockId ?? null,
       invitedBy: r.invitedBy,
       createdAt: r.createdAt,
     })

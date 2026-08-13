@@ -74,6 +74,8 @@ import type {
   CollectionMode,
   CollectionItemStatus,
   CollectionContributorPermission,
+  CollectionCollaboratorRole,
+  CollectionInviteStatus,
   HomeBlockType,
   Currency,
   BountyType,
@@ -322,12 +324,14 @@ export type AppBlockReview = {
   updated_at: Timestamp;
 };
 export type AppCollaborator = {
-  app_block_id: string;
+  app_listing_id: string;
   user_id: number;
   /**
-   * Capability role. 'editor' today (content + media + submit + app-scoped
-   * analytics/earnings). Owner-only actions (managing collaborators, initiating a
-   * transfer) are NOT a role — they are reserved to the OauthClient owner.
+   * Capability role. 'editor' today. What it actually unlocks is DERIVED from the
+   * listing's kind (`capabilitiesForKind`), not stored here: content + media + submit
+   * for review + analytics on both kinds, plus earnings and submit-version/git on
+   * on-site only. Owner-only actions (managing collaborators, initiating a transfer)
+   * are NOT a role — they are reserved to the listing owner.
    */
   role: Generated<string>;
   /**
@@ -476,9 +480,9 @@ export type AppListingScreenshot = {
 };
 export type AppOwnershipEvent = {
   id: string;
-  app_block_id: string | null;
+  app_listing_id: string | null;
   /**
-   * Denormalized so the event stays self-describing after the app is gone.
+   * Denormalized so the event stays self-describing after the listing is gone.
    */
   slug: string;
   /**
@@ -502,10 +506,10 @@ export type AppOwnershipEvent = {
 };
 export type AppOwnershipTransfer = {
   id: string;
-  app_block_id: string;
+  app_listing_id: string;
   /**
    * Snapshot of the owner at initiate time — re-asserted in-tx at accept, so a
-   * transfer initiated by an owner who has since lost the app cannot complete.
+   * transfer initiated by an owner who has since lost the listing cannot complete.
    */
   from_user_id: number;
   to_user_id: number;
@@ -1747,6 +1751,7 @@ export type Collection = {
   metadata: Generated<unknown>;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
+  collaborationDisabledAt: Timestamp | null;
 };
 export type CollectionContributor = {
   createdAt: Generated<Timestamp | null>;
@@ -1754,6 +1759,16 @@ export type CollectionContributor = {
   userId: number;
   collectionId: number;
   permissions: CollectionContributorPermission[];
+};
+export type CollectionInvite = {
+  id: Generated<number>;
+  collectionId: number;
+  userId: number;
+  invitedById: number;
+  role: CollectionCollaboratorRole;
+  status: Generated<CollectionInviteStatus>;
+  createdAt: Generated<Timestamp>;
+  respondedAt: Timestamp | null;
 };
 export type CollectionItem = {
   id: Generated<number>;
@@ -4213,6 +4228,7 @@ export type DB = {
   ClubTier: ClubTier;
   Collection: Collection;
   CollectionContributor: CollectionContributor;
+  CollectionInvite: CollectionInvite;
   CollectionItem: CollectionItem;
   CollectionItemScore: CollectionItemScore;
   CollectionMetric: CollectionMetric;

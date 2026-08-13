@@ -1,5 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createTag, deleteTag, getTagById, updateTag, upsertTagsByName } from './tag.db';
+import {
+  createTag,
+  deleteTag,
+  getTagById,
+  listImageTagVotes,
+  listImageTagVotesMany,
+  listModelTagVotes,
+  updateTag,
+  upsertTagsByName,
+} from './tag.db';
 import { compileHarness } from './test/harness';
 
 const harness = compileHarness();
@@ -73,5 +82,55 @@ describe('tag.db', () => {
     const ids = await upsertTagsByName(harness.db, [], ['Model']);
     expect(ids).toEqual([]);
     expect(harness.queries).toHaveLength(0);
+  });
+});
+
+// The votable-tag vote lookups. These pin the EXACT SQL because the whole point of the port is that
+// the statement is unchanged: a dropped `userId` predicate here would leak other users' votes, and
+// the compiled SQL is the cheapest place to catch it. Behaviour parity against the Prisma originals
+// is covered separately, against a real database, by
+// src/server/db/__tests__/kysely-prisma-parity.test.ts.
+describe('tag.db votable-tag vote lookups', () => {
+  it('listImageTagVotes filters by BOTH imageId and userId, selecting only tagId + vote', async () => {
+    await listImageTagVotes(harness.db, { imageId: 42, userId: 7 });
+    const { sql, parameters } = harness.lastQuery();
+    expect(sql).toBe(
+      'select "tagId", "vote" from "TagsOnImageVote" where "imageId" = $1 and "userId" = $2'
+    );
+    expect(parameters).toEqual([42, 7]);
+    expect(sql).not.toContain('order by'); // the source query had none; adding one changes the plan
+  });
+
+  it('listModelTagVotes filters by BOTH modelId and userId, selecting only tagId + vote', async () => {
+    await listModelTagVotes(harness.db, { modelId: 42, userId: 7 });
+    const { sql, parameters } = harness.lastQuery();
+    expect(sql).toBe(
+      'select "tagId", "vote" from "TagsOnModelsVote" where "modelId" = $1 and "userId" = $2'
+    );
+    expect(parameters).toEqual([42, 7]);
+  });
+
+  it('listImageTagVotesMany expands the id list and keeps the userId predicate', async () => {
+    await listImageTagVotesMany(harness.db, { imageIds: [1, 2, 3], userId: 7 });
+    const { sql, parameters } = harness.lastQuery();
+    expect(sql).toBe(
+      'select "tagId", "vote" from "TagsOnImageVote" ' +
+        'where "imageId" in ($1, $2, $3) and "userId" = $4'
+    );
+    expect(parameters).toEqual([1, 2, 3, 7]);
+    expect(sql).not.toContain('in ()');
+  });
+
+  it('listImageTagVotesMany short-circuits an empty id list without touching the DB', async () => {
+    const rows = await listImageTagVotesMany(harness.db, { imageIds: [], userId: 7 });
+    expect(rows).toEqual([]);
+    expect(harness.queries).toHaveLength(0); // `in ([])` would compile to the syntax error `IN ()`
+  });
+
+  it('listImageTagVotesMany does not select imageId — the caller keys votes by tagId alone', async () => {
+    // Preserved from the source query verbatim. Widening the select would change what the
+    // votable-tag endpoint returns, which is a behaviour change, not a fix.
+    await listImageTagVotesMany(harness.db, { imageIds: [1], userId: 7 });
+    expect(harness.lastQuery().sql).not.toContain('"imageId",');
   });
 });

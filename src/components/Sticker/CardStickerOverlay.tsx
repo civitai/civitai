@@ -80,14 +80,10 @@ export function CardStickerOverlay({ imageId }: { imageId: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<Box | null>(null);
 
-  const placements = batch
-    ? revealed
-      ? batch.placements
-      : // Pending rows are scoped server-side to the placer and the owner, so
-        // anything pending here belongs to whoever is looking at it — and they
-        // have a decision to make, which the reveal toggle should not hide.
-        batch.pending
-    : [];
+  // Off means off, pending included. The badge still counts the viewer's own
+  // pending, so an owner who came from a notification sees a non-zero chip, one
+  // press from the thing they came to decide on.
+  const placements = batch && revealed ? batch.placements : [];
 
   const hasPlacements = placements.length > 0;
 
@@ -129,7 +125,9 @@ export function CardStickerOverlay({ imageId }: { imageId: number }) {
     return () => observer.disconnect();
   }, [hasPlacements]);
 
-  if (!hasPlacements) return null;
+  // Narrows `batch` as well: `placements` is empty without one, so reaching
+  // here means the provider is present.
+  if (!batch || !hasPlacements) return null;
 
   return (
     <div ref={ref} className="pointer-events-none absolute inset-0 overflow-hidden">
@@ -141,6 +139,8 @@ export function CardStickerOverlay({ imageId }: { imageId: number }) {
             interactive={false}
             sticker={batch?.sticker}
             artworkWidth={CARD_ARTWORK_WIDTH}
+            treatment={batch.treatment}
+            surface="card"
           />
         </div>
       )}

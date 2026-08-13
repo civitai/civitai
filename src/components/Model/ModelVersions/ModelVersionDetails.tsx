@@ -127,6 +127,7 @@ import {
   CAROUSEL_LIMIT,
   constants,
   getEffectiveCommercialUse,
+  getEffectiveDifferentLicense,
   getRestrictedNsfwLevelsForBaseModel,
 } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
@@ -1848,12 +1849,17 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                 ...model,
                 // Permissions are derived per displayed version from its base model:
                 // non-commercial base models (e.g. Ideogram) force commercial use off,
-                // and mature-restricted base models force SFW-only generation.
+                // mature-restricted base models force SFW-only generation, and
+                // same-license base models (e.g. LTXV 2.5) force merges to match.
                 allowCommercialUse: getEffectiveCommercialUse(
                   model.allowCommercialUse,
                   version.baseModel
                 ),
                 sfwOnly: model.sfwOnly || baseModelRestrictsMature,
+                allowDifferentLicense: getEffectiveDifferentLicense(
+                  model.allowDifferentLicense,
+                  version.baseModel
+                ),
               }}
               ml="auto"
             />

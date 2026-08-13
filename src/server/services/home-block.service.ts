@@ -191,6 +191,9 @@ export type PickedFeaturedCollection = {
   items: AsyncReturnType<typeof getCollectionItemsByCollectionId>['items'];
   rows: number;
   limit: number;
+  // Optional because a Redis entry written before this field existed still deserializes
+  // into this type; those render uncapped until the 3-minute block cache turns over.
+  maxPerUser?: number;
 };
 
 export type HomeBlockWithData = {
@@ -302,7 +305,10 @@ export const getHomeBlockData = async ({
             user,
             input: {
               collectionId: collection.id,
-              limit: input.limit || metadata.collection.limit,
+              // Whichever pool is larger. `input.limit` used to win outright, which made a
+              // block's own `limit` unreachable — so raising it to give `maxPerUser` more
+              // creators to pick from had no effect. 100 is getAllCollectionItemsSchema's max.
+              limit: Math.min(100, Math.max(input.limit ?? 0, metadata.collection.limit ?? 0)),
               browsingLevel: sfwBrowsingLevelsFlag,
               collectionTagId: metadata.collection.tagId,
             },
@@ -435,8 +441,14 @@ export const getHomeBlockData = async ({
       }
 
       // Clamp to sane bounds — metadata is mutable JSON, don't trust blindly.
-      const limit = Math.min(50, Math.max(1, input.limit || effectivePool.limit || 8));
+      // Deliberately not `input.limit`: the by-id cache path passes one fixed number for
+      // every block type, and letting it win made this block's own `limit` dead config.
+      const limit = Math.min(
+        100,
+        Math.max(1, effectivePool.limit || FEATURED_COLLECTIONS_DEFAULTS.limit)
+      );
       const rows = Math.min(4, Math.max(1, effectivePool.rows || 2));
+      const maxPerUser = effectivePool.maxPerUser ?? FEATURED_COLLECTIONS_DEFAULTS.maxPerUser;
       const renderCount = Math.min(
         10,
         Math.max(1, effectivePool.renderCount ?? 3),
@@ -468,7 +480,7 @@ export const getHomeBlockData = async ({
           // Drop picks with zero items post-SFW filter — don't render an empty grid block
           // (e.g. a curator whose collection is all R/X would show a ghost section otherwise).
           if (!input.withCoreData && result.items.length === 0) return null;
-          return { collection: col, items: result.items, rows, limit };
+          return { collection: col, items: result.items, rows, limit, maxPerUser };
         })
       );
 
@@ -653,10 +665,13 @@ export const deleteHomeBlockById = async ({
   }
 };
 
-const FEATURED_COLLECTIONS_DEFAULTS = {
-  limit: 8,
+export const FEATURED_COLLECTIONS_DEFAULTS = {
+  // The fetch pool, not the visible count (rows * 7 of these render). Sized well above the
+  // visible slice so `maxPerUser` has other creators to promote instead of leaving holes.
+  limit: 100,
   rows: 2,
   renderCount: 3,
+  maxPerUser: 2,
   title: 'Featured Collection',
 };
 
@@ -678,6 +693,7 @@ async function getOrCreateFeaturedCollectionsSystemBlock() {
           limit: FEATURED_COLLECTIONS_DEFAULTS.limit,
           rows: FEATURED_COLLECTIONS_DEFAULTS.rows,
           renderCount: FEATURED_COLLECTIONS_DEFAULTS.renderCount,
+          maxPerUser: FEATURED_COLLECTIONS_DEFAULTS.maxPerUser,
           nameSnapshots: {},
         },
       },
@@ -730,6 +746,8 @@ async function updateFeaturedPool(
       rows: metadata.featuredCollections?.rows ?? FEATURED_COLLECTIONS_DEFAULTS.rows,
       renderCount:
         metadata.featuredCollections?.renderCount ?? FEATURED_COLLECTIONS_DEFAULTS.renderCount,
+      maxPerUser:
+        metadata.featuredCollections?.maxPerUser ?? FEATURED_COLLECTIONS_DEFAULTS.maxPerUser,
       maxStaleDays: metadata.featuredCollections?.maxStaleDays,
       minRecentItems: metadata.featuredCollections?.minRecentItems,
       nameSnapshots: nextNameSnaps,

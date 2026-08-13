@@ -386,19 +386,21 @@ export const UserContextMenu = ({ username }: { username: string }) => {
             </Menu.Item>
           )}
           <HideUserButton as="menu-item" userId={user.id} />
-          <LoginRedirect reason="report-user">
-            <Menu.Item
-              leftSection={<IconFlag size={14} stroke={1.5} />}
-              onClick={() =>
-                openReportModal({
-                  entityType: ReportEntity.User,
-                  entityId: user.id,
-                })
-              }
-            >
-              Report
-            </Menu.Item>
-          </LoginRedirect>
+          {user.id !== currentUser?.id && (
+            <LoginRedirect reason="report-user">
+              <Menu.Item
+                leftSection={<IconFlag size={14} stroke={1.5} />}
+                onClick={() =>
+                  openReportModal({
+                    entityType: ReportEntity.User,
+                    entityId: user.id,
+                  })
+                }
+              >
+                Report
+              </Menu.Item>
+            </LoginRedirect>
+          )}
         </>
       </Menu.Dropdown>
     </Menu>

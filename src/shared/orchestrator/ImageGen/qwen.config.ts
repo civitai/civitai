@@ -6,6 +6,7 @@ import {
   seedSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
+import { qwenVersionIds } from '~/shared/data-graph/generation/version-ids';
 
 const engine = 'qwen';
 
@@ -19,7 +20,7 @@ export const qwenModelVersionToModelMap = new Map<
   [2110043, { modelId: 1864281, process: 'txt2img', version: '2509' }],
   [2552908, { modelId: 2268063, process: 'txt2img', version: '2512' }],
   [2133258, { modelId: 1884704, process: 'img2img', version: '2509' }],
-  [2558804, { modelId: 2268063, process: 'img2img', version: '2511' }],
+  [qwenVersionIds.imageEdit2511, { modelId: 2268063, process: 'img2img', version: '2511' }],
 ]);
 
 export function getIsQwen(modelVersionId?: number) {

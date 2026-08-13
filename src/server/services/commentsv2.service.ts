@@ -14,6 +14,13 @@ import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { throwIfBlockedByEntityOwner } from '~/server/services/block-check.service';
 import type { NsfwLevel } from '~/server/common/enums';
 import { ThreadSort } from '~/server/common/enums';
+import { constants } from '~/server/common/constants';
+import type { ReplyThread, ReplyThreadRow } from '~/server/services/commentsv2.reply-threads';
+import {
+  getChildlessCommentIds,
+  groupReplyThreads,
+  selectReplyThreadsWithinBudget,
+} from '~/server/services/commentsv2.reply-threads';
 import { withSpan } from '~/server/utils/otel-helpers';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata } from '~/server/schema/media.schema';
@@ -32,6 +39,98 @@ export type CommentThread = {
 export type Comment = CommentV2Model & {
   // childThread?: { id: number; _count?: { comments: number } } | null;
 };
+
+/**
+ * The reply threads nested under `commentIds`, down to `depth` levels and capped at `budget`
+ * comments, in two queries — so a surface can render whole conversations without a request per
+ * comment per level, and without a 1k-comment article turning one page into thousands of nodes.
+ */
+async function getReplyThreads({
+  commentIds,
+  depth,
+  limit,
+  budget,
+  sort,
+  hidden,
+  excludedUserIds,
+}: {
+  commentIds: number[];
+  depth: number;
+  limit: number;
+  budget: number;
+  sort: ThreadSort;
+  hidden: boolean | null;
+  excludedUserIds: number[];
+}): Promise<{ threads: ReplyThread[]; childlessCommentIds: number[] }> {
+  const empty = { threads: [], childlessCommentIds: [] };
+  if (!commentIds.length || depth < 1) return empty;
+
+  const rows = await dbRead.$queryRaw<ReplyThreadRow[]>`
+    WITH RECURSIVE generation AS (
+      SELECT t.id, t."commentId", t.locked, t."commentCount", 1 AS depth
+      FROM "Thread" t
+      WHERE t."commentId" = ANY(${commentIds}::int[])
+
+      UNION ALL
+
+      SELECT c.id, c."commentId", c.locked, c."commentCount", g.depth + 1 AS depth
+      FROM "Thread" c
+      JOIN generation g ON g.id = c."parentThreadId"
+      WHERE g.depth < ${depth}
+    )
+    SELECT id, "commentId", locked, "commentCount", depth
+    FROM generation
+    WHERE "commentId" IS NOT NULL AND "commentCount" > 0
+    ORDER BY depth;
+  `;
+  if (!rows.length) return empty;
+
+  const { selected, completedDepth } = selectReplyThreadsWithinBudget({ rows, limit, budget });
+  if (!selected.length) return empty;
+
+  const threadIds = selected.map((x) => x.id);
+  const [comments, hiddenGroups] = await Promise.all([
+    dbRead.commentV2.findMany({
+      where: {
+        threadId: { in: threadIds },
+        hidden: hidden ?? false,
+        userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
+      },
+      select: commentV2Select,
+    }),
+    dbRead.commentV2.groupBy({
+      by: ['threadId'],
+      where: {
+        threadId: { in: threadIds },
+        hidden: true,
+        userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
+      },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const hiddenCounts = Object.fromEntries(
+    hiddenGroups.map((group) => [group.threadId, group._count._all])
+  );
+
+  const threads = groupReplyThreads({
+    threads: selected,
+    comments: comments as CommentV2Model[],
+    hiddenCounts,
+    sort,
+    limit,
+  });
+
+  return {
+    threads,
+    childlessCommentIds: getChildlessCommentIds({
+      pageCommentIds: commentIds,
+      threads,
+      rows,
+      completedDepth,
+    }),
+  };
+}
 
 export async function getJudgeCommentForImage({
   imageId,
@@ -633,6 +732,8 @@ export async function getCommentsInfinite({
   hidden = false,
   cursor,
   targetCommentId,
+  repliesDepth,
+  repliesLimit = constants.comments.replyPageSize,
   excludedUserIds = [],
 }: GetCommentsInfiniteInput & { excludedUserIds?: number[] }) {
   return withSpan('commentv2:getInfinite', async () => {
@@ -693,10 +794,26 @@ export async function getCommentsInfinite({
     const nextCursor =
       regularComments.length === limit ? regularComments[regularComments.length - 1].id : undefined;
 
+    const comments = !cursor ? [...pinnedComments, ...regularComments] : regularComments;
+
+    const replies = repliesDepth
+      ? await getReplyThreads({
+          commentIds: [...comments, ...(targetComment ? [targetComment] : [])].map((x) => x.id),
+          depth: repliesDepth,
+          limit: repliesLimit,
+          budget: constants.comments.autoExpandBudget,
+          sort,
+          hidden,
+          excludedUserIds,
+        })
+      : { threads: [], childlessCommentIds: [] };
+
     return {
-      comments: !cursor ? [...pinnedComments, ...regularComments] : regularComments,
+      comments,
       nextCursor,
       targetComment,
+      replyThreads: replies.threads,
+      childlessCommentIds: replies.childlessCommentIds,
     };
   });
 }

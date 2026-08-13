@@ -74,7 +74,10 @@ export const upsertEntityCollaborator = async ({
     throw throwBadRequestError('Only posts are currently supported for entity collaborators');
   }
 
-  const entity = await dbRead.post.findUnique({ where: { id: entityId } });
+  const entity = await dbRead.post.findUnique({
+    where: { id: entityId },
+    select: { userId: true },
+  });
   if (!entity) {
     throw throwBadRequestError('Entity not found');
   }
@@ -161,7 +164,14 @@ export const getEntityCollaborators = async ({
 
   switch (entityType) {
     case EntityType.Post:
-      const entity = await dbRead.post.findUnique({ where: { id: entityId } });
+      // Only the owner id is consulted below (the pending/rejected visibility
+      // checks). A bare `findUnique` fetched every Post column, which on this
+      // read path meant three `new Date()` and a `JSON.parse` of `metadata`
+      // per call, all discarded.
+      const entity = await dbRead.post.findUnique({
+        where: { id: entityId },
+        select: { userId: true },
+      });
       if (!entity) {
         return [];
       }
@@ -214,7 +224,10 @@ export const removeEntityCollaborator = async ({
     throw throwBadRequestError('Only posts are currently supported for entity collaborators');
   }
 
-  const entity = await dbRead.post.findUnique({ where: { id: entityId } });
+  const entity = await dbRead.post.findUnique({
+    where: { id: entityId },
+    select: { userId: true },
+  });
 
   if (!entity) {
     throw throwBadRequestError('Entity not found');

@@ -20,6 +20,7 @@ import { Flags } from '~/shared/utils/flags';
 import { getInitials } from '~/utils/string-helpers';
 import classes from './UserAvatarSimple.module.scss';
 import { decorationFrameStyle } from '~/components/UserAvatar/decoration-frame.util';
+import { UserHoverCard } from '~/components/UserAvatar/UserHoverCard';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
@@ -30,6 +31,7 @@ export function UserAvatarSimple({
   deletedAt,
   cosmetics,
   autoplayAnimations,
+  withHoverCard = true,
 }: {
   id: number;
   profilePicture?: ProfileImage | null;
@@ -37,6 +39,7 @@ export function UserAvatarSimple({
   deletedAt?: Date | null;
   cosmetics?: UserWithCosmetics['cosmetics'] | null;
   autoplayAnimations?: boolean;
+  withHoverCard?: boolean;
 }) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
@@ -62,76 +65,78 @@ export function UserAvatarSimple({
   const anim = !autoplayGifs || autoplayAnimations === false ? false : undefined;
 
   return (
-    <UnstyledButton
-      onClick={() => router.push(username ? `/user/${username}` : `/user?id=${id}`)}
-      className="flex w-fit items-center gap-2"
-    >
-      {displayProfilePicture && (
-        <div className="relative ">
-          <div className="flex size-8 items-center justify-center overflow-hidden rounded-full bg-white/30 dark:bg-black/30">
-            {profilePicture &&
-            (!features.canViewNsfw
-              ? currentUser
-                ? hasSafeBrowsingLevel(profilePicture.nsfwLevel)
-                : hasPublicBrowsingLevel(profilePicture.nsfwLevel)
-              : Flags.hasFlag(browsingLevel, profilePicture.nsfwLevel)) ? (
-              <UserAvatarProfilePicture id={id} username={username} image={profilePicture} />
-            ) : (
-              <span className="text-sm font-semibold text-dark-8 dark:text-gray-0">
-                {username ? getInitials(username) : <IconUser size={32} />}
-              </span>
+    <UserHoverCard user={{ id, deletedAt }} disabled={!withHoverCard}>
+      <UnstyledButton
+        onClick={() => router.push(username ? `/user/${username}` : `/user?id=${id}`)}
+        className="flex w-fit items-center gap-2"
+      >
+        {displayProfilePicture && (
+          <div className="relative ">
+            <div className="flex size-8 items-center justify-center overflow-hidden rounded-full bg-white/30 dark:bg-black/30">
+              {profilePicture &&
+              (!features.canViewNsfw
+                ? currentUser
+                  ? hasSafeBrowsingLevel(profilePicture.nsfwLevel)
+                  : hasPublicBrowsingLevel(profilePicture.nsfwLevel)
+                : Flags.hasFlag(browsingLevel, profilePicture.nsfwLevel)) ? (
+                <UserAvatarProfilePicture id={id} username={username} image={profilePicture} />
+              ) : (
+                <span className="text-sm font-semibold text-dark-8 dark:text-gray-0">
+                  {username ? getInitials(username) : <IconUser size={32} />}
+                </span>
+              )}
+            </div>
+
+            {decoration && decoration.data.url && (
+              <EdgeMedia
+                src={decoration.data.url}
+                anim={anim}
+                // original={anim === false ? false : undefined}
+                type="image"
+                name="user avatar decoration"
+                alt=""
+                className="z-[2]"
+                loading="lazy"
+                style={decorationFrameStyle(decoration.data)}
+                optimized
+                width={96}
+                original={false}
+              />
             )}
           </div>
-
-          {decoration && decoration.data.url && (
-            <EdgeMedia
-              src={decoration.data.url}
-              anim={anim}
-              // original={anim === false ? false : undefined}
-              type="image"
-              name="user avatar decoration"
-              alt=""
-              className="z-[2]"
-              loading="lazy"
-              style={decorationFrameStyle(decoration.data)}
-              optimized
-              width={96}
-              original={false}
-            />
-          )}
-        </div>
-      )}
-      {deletedAt ? (
-        <Text size="sm">[deleted]</Text>
-      ) : (
-        <>
-          <Text
-            size="sm"
-            fw={500}
-            lineClamp={1}
-            color="white"
-            className={classes.username}
-            {...additionalTextProps}
-          >
-            {username}
-          </Text>
-          {badge?.data.url && (
-            <Tooltip label={badge.name} withArrow withinPortal>
-              <div style={{ display: 'flex', width: 28 }}>
-                <EdgeMedia
-                  src={badge.data.url}
-                  anim={badge.data.animated && anim}
-                  original={false}
-                  alt={badge.name}
-                  optimized
-                  loading="lazy"
-                  width={96}
-                />
-              </div>
-            </Tooltip>
-          )}
-        </>
-      )}
-    </UnstyledButton>
+        )}
+        {deletedAt ? (
+          <Text size="sm">[deleted]</Text>
+        ) : (
+          <>
+            <Text
+              size="sm"
+              fw={500}
+              lineClamp={1}
+              color="white"
+              className={classes.username}
+              {...additionalTextProps}
+            >
+              {username}
+            </Text>
+            {badge?.data.url && (
+              <Tooltip label={badge.name} withArrow withinPortal>
+                <div style={{ display: 'flex', width: 28 }}>
+                  <EdgeMedia
+                    src={badge.data.url}
+                    anim={badge.data.animated && anim}
+                    original={false}
+                    alt={badge.name}
+                    optimized
+                    loading="lazy"
+                    width={96}
+                  />
+                </div>
+              </Tooltip>
+            )}
+          </>
+        )}
+      </UnstyledButton>
+    </UserHoverCard>
   );
 }

@@ -41,6 +41,7 @@ import {
   trainingDetailsBaseModelsHunyuan,
   trainingDetailsBaseModelsLtx2,
   trainingDetailsBaseModelsLtx23,
+  trainingDetailsBaseModelsLtx25,
   trainingDetailsBaseModelsMageFlow,
   trainingDetailsBaseModelsMiniMaxH3,
   trainingDetailsBaseModelsQwen,
@@ -92,16 +93,17 @@ const ModelSelector = ({
   color: MantineColor;
   name: string;
   value: string | null;
-  baseType: TrainingBaseModelType;
+  baseType: TrainingBaseModelType | TrainingBaseModelType[];
   makeDefaultParams: (data: TrainingRunUpdate) => void;
   isNew?: boolean;
   isCustom?: boolean;
   isVideo?: boolean;
   allowedKeys?: string[];
 }) => {
+  const baseTypes = Array.isArray(baseType) ? baseType : [baseType];
   const versions = Object.entries(trainingModelInfo).filter(
     ([k, v]) =>
-      v.type === baseType && v.disabled !== true && (!allowedKeys || allowedKeys.includes(k))
+      baseTypes.includes(v.type) && v.disabled !== true && (!allowedKeys || allowedKeys.includes(k))
   );
   if (!versions.length) return null;
 
@@ -132,7 +134,7 @@ const ModelSelector = ({
           onChange={(value) => {
             makeDefaultParams({
               base: value,
-              baseType: baseType,
+              baseType: trainingModelInfo[value as TrainingDetailsBaseModelList].type,
               customModel: null,
             });
           }}
@@ -468,6 +470,11 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsLtx23 as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelLtx25 =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsLtx25 as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
   const baseModelMiniMaxH3 =
     !!formBaseModel &&
     (trainingDetailsBaseModelsMiniMaxH3 as ReadonlyArray<string>).includes(formBaseModel)
@@ -766,18 +773,20 @@ export const ModelSelect = ({
                       isNew
                     />
                   )}
-                  {features.ltx23Training && (
-                    <ModelSelector
-                      selectedRun={selectedRun}
-                      color="lime"
-                      name="LTX 2.3"
-                      value={baseModelLtx23}
-                      baseType="ltx23"
-                      makeDefaultParams={makeDefaultParams}
-                      isVideo
-                      isNew
-                    />
-                  )}
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="lime"
+                    name="LTX"
+                    value={baseModelLtx23 ?? baseModelLtx25}
+                    baseType={['ltx23', 'ltx25']}
+                    makeDefaultParams={makeDefaultParams}
+                    isVideo
+                    isNew
+                    allowedKeys={[
+                      ...(features.ltx23Training ? ['ltx23'] : []),
+                      ...(features.ltx25Training ? ['ltx25'] : []),
+                    ]}
+                  />
                   {features.minimaxh3Training && (
                     <ModelSelector
                       selectedRun={selectedRun}
@@ -850,6 +859,7 @@ export const ModelSelect = ({
                   selectedRun.baseType === 'wan' ||
                   selectedRun.baseType === 'ltx2' ||
                   selectedRun.baseType === 'ltx23' ||
+                  selectedRun.baseType === 'ltx25' ||
                   selectedRun.baseType === 'minimaxh3' ||
                   selectedRun.baseType === 'hidream-o1' ||
                   selectedRun.baseType === 'anima' ||

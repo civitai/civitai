@@ -1,8 +1,14 @@
 import { z } from 'zod';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { placementSurfaces } from '~/shared/utils/placement';
+import { REMIX_GALLERY_MAX_PINNED } from '~/shared/utils/remix-gallery';
 import {
+  STICKER_COMMENT_MAX_LENGTH,
+  STICKER_PLACEMENT_DEFAULT_OPACITY,
+  STICKER_PLACEMENT_MAX_OPACITY,
   STICKER_PLACEMENT_MAX_ROTATION,
   STICKER_PLACEMENT_MAX_SCALE,
+  STICKER_PLACEMENT_MIN_OPACITY,
   STICKER_PLACEMENT_MIN_SCALE,
 } from '~/shared/utils/sticker-placement';
 
@@ -23,6 +29,23 @@ export const stickerPlacementDataSchema = z.object({
   y: finite.min(0).max(1),
   scale: finite.min(STICKER_PLACEMENT_MIN_SCALE).max(STICKER_PLACEMENT_MAX_SCALE),
   rotation: finite.min(-STICKER_PLACEMENT_MAX_ROTATION).max(STICKER_PLACEMENT_MAX_ROTATION),
+  // Bounded well above what the field allows, because the service trims and
+  // truncates. The limit here is what stops a megabyte of text reaching a JSON
+  // column; the normaliser is what decides the stored value.
+  comment: z
+    .string()
+    .max(STICKER_COMMENT_MAX_LENGTH * 4)
+    .optional(),
+  // Refused, not clamped, and refused here rather than at the slider: the floor
+  // is what stops a placement being a quiet defacement, and a client-side clamp
+  // is a filter rather than a refusal — it decides nothing about a crafted
+  // request. Defaulted so a client cached from before these existed still
+  // places a sticker instead of failing validation.
+  flip: z.boolean().default(false),
+  opacity: finite
+    .min(STICKER_PLACEMENT_MIN_OPACITY)
+    .max(STICKER_PLACEMENT_MAX_OPACITY)
+    .default(STICKER_PLACEMENT_DEFAULT_OPACITY),
 });
 
 export const createStickerPlacementSchema = z.object({
@@ -40,23 +63,40 @@ export const actOnStickerPlacementSchema = z.object({
   action: z.enum(['approve', 'decline', 'remove']),
 });
 
-export const placementSpaceSchema = z.object({
-  surface: placementSurfaceSchema,
-  entityType: z.enum(['image', 'post', 'user']),
-  entityId: z.number().int().positive(),
-  mode: z.enum(['off', 'review', 'auto']),
-  // Distinguishes "leave whatever is set" from "clear it and inherit", which a
-  // single optional number cannot: `undefined` keeps, `null` clears.
-  price: z.number().int().min(0).nullable().optional(),
-  // Surface-owned. Bounded here so a client cannot store a max size outside the
-  // global limits; the reader clamps too, since the column is editable by hand.
-  settings: z
-    .object({
-      maxScale: z.number().min(STICKER_PLACEMENT_MIN_SCALE).max(STICKER_PLACEMENT_MAX_SCALE),
-    })
-    .partial()
-    .optional(),
-});
+export const placementSpaceSchema = z
+  .object({
+    surface: placementSurfaceSchema,
+    entityType: z.enum(['image', 'post', 'user']),
+    entityId: z.number().int().positive(),
+    mode: z.enum(['off', 'review', 'auto']),
+    // Distinguishes "leave whatever is set" from "clear it and inherit", which a
+    // single optional number cannot: `undefined` keeps, `null` clears.
+    price: z.number().int().min(0).nullable().optional(),
+    // Surface-owned. Bounded here so a client cannot store a max size outside the
+    // global limits; the reader clamps too, since the column is editable by hand.
+    // Each surface reads only its own keys, so the union is carried rather than
+    // discriminated — nothing reads a key belonging to another surface.
+    settings: z
+      .object({
+        maxScale: z.number().min(STICKER_PLACEMENT_MIN_SCALE).max(STICKER_PLACEMENT_MAX_SCALE),
+        contentRule: z.enum(['atOrBelow', 'any']),
+      })
+      .partial()
+      .optional(),
+  })
+  .superRefine((input, ctx) => {
+    // A remix gallery places arbitrary user-uploaded media on someone else's
+    // page. `auto` is safe for stickers because the placed artwork comes from a
+    // moderated catalogue; nothing bounds what an image can be. Refused where
+    // the value is stored rather than merely omitted from the settings picker —
+    // a listing that filters is not a mutation that refuses.
+    if (input.surface === 'remixGallery' && input.mode === 'auto')
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['mode'],
+        message: 'Remix gallery submissions always need review',
+      });
+  });
 
 export const getPlacementSpaceSchema = z.object({
   surface: placementSurfaceSchema,
@@ -81,6 +121,13 @@ export const getStickerPlacementDetailSchema = z.object({
 export const actOnStickerPlacementsSchema = z.object({
   placementIds: z.array(z.number().int().positive()).min(1).max(50),
   action: z.enum(['approve', 'decline', 'remove']),
+  /** Partial approval — take the sticker, refuse the note it came with. */
+  hideComment: z.boolean().optional(),
+});
+
+export const setStickerCommentHiddenSchema = z.object({
+  placementId: z.number().int().positive(),
+  hidden: z.boolean(),
 });
 
 export const getPlacementSpaceRowSchema = z.object({
@@ -99,3 +146,63 @@ export const suspendPlacerSchema = z.object({
 export const placerSchema = z.object({ userId: z.number().int().positive() });
 
 export const removePlacementSchema = z.object({ placementId: z.number().int().positive() });
+
+// ---------------------------------------------------------------------------
+// Remix gallery
+// ---------------------------------------------------------------------------
+
+/**
+ * `browsingLevel` arrives from the client the same way every image listing takes
+ * it (`baseQuerySchema`), and the service narrows it with `onlySelectableLevels`
+ * before it reaches a query. The router additionally clamps it on the SFW
+ * domain, because the gallery renders someone else's content on a page the host
+ * creator does not control.
+ */
+export const getRemixGallerySchema = z.object({
+  imageId: z.number().int().positive(),
+  browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
+  cursor: z.string().max(100).optional(),
+  limit: z.number().int().min(1).max(50).optional(),
+});
+
+export const getRemixGalleryVisibilitySchema = z.object({
+  imageId: z.number().int().positive(),
+  browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
+});
+
+export const submitToRemixGallerySchema = z.object({
+  hostImageId: z.number().int().positive(),
+  imageId: z.number().int().positive(),
+  /**
+   * The price the submitter was shown. Refused if the owner has moved it since,
+   * rather than silently charging the new one — the client can only check
+   * affordability against the number it rendered, so without this an owner
+   * raising their price between the modal opening and the button being pressed
+   * is charged without consent.
+   */
+  expectedPrice: z.number().int().min(0),
+});
+
+export const actOnRemixGallerySubmissionSchema = z.object({
+  placementId: z.number().int().positive(),
+  action: z.enum(['approve', 'decline', 'remove']),
+});
+
+export const retractRemixGallerySubmissionSchema = z.object({
+  placementId: z.number().int().positive(),
+});
+
+/**
+ * The whole pinned set, in order, rather than a per-entry toggle — the cap is a
+ * property of the set, and enforcing it one toggle at a time lets two concurrent
+ * pins both see room for one more.
+ */
+export const setRemixGalleryPinsSchema = z.object({
+  hostImageId: z.number().int().positive(),
+  placementIds: z.array(z.number().int().positive()).max(REMIX_GALLERY_MAX_PINNED),
+});
+
+export const getPendingRemixGallerySubmissionsSchema = z.object({
+  /** Omitted for the account-wide queue; set to scope to one gallery. */
+  hostImageId: z.number().int().positive().optional(),
+});

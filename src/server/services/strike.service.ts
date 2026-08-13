@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { dbReadFallbackCounter } from '~/server/prom/client';
+import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
 import { createNotification } from '~/server/services/notification.service';
 import { updateUserById } from '~/server/services/user.service';
@@ -320,144 +320,150 @@ export async function getUserStandings(input: GetUserStandingsInput) {
 
 export type EscalationAction = 'none' | 'muted' | 'muted-and-flagged' | 'unmuted';
 
+// The escalation ladder, in active strike points. At or above INDEFINITE_MUTE_POINTS the mute has no
+// expiry and the account is flagged for moderator review; at or above TIMED_MUTE_POINTS it expires
+// after TIMED_MUTE_DAYS; below that, a mute this engine applied earlier is lifted again.
+const TIMED_MUTE_POINTS = 2;
+const INDEFINITE_MUTE_POINTS = 3;
+const TIMED_MUTE_DAYS = 3;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 /**
  * Evaluate strike escalation for a user based on their total active points.
  * Handles both escalation (mute/flag) and de-escalation (unmute when points drop).
- * - 3+ points: Indefinite mute + flagged for review
- * - 2 points: 3-day mute (timer resets/extends each time)
- * - <2 points: If currently strike-muted, unmute and clear flag
  */
 export async function evaluateStrikeEscalation(
   userId: number
 ): Promise<{ totalPoints: number; action: EscalationAction }> {
-  // Read points and user state in a single transaction to prevent race conditions
-  const { totalPoints, user } = await dbWrite.$transaction(async (tx) => {
-    const [pointsResult] = await tx.$queryRaw<[{ sum: bigint | null }]>`
-      SELECT SUM(points) as sum
-      FROM "UserStrike"
-      WHERE "userId" = ${userId}
-        AND "status" = ${StrikeStatus.Active}::"StrikeStatus"
-        AND "expiresAt" > NOW()
-      FOR UPDATE
-    `;
-    const txUser = await tx.user.findUnique({
-      where: { id: userId },
-      select: { muted: true, muteExpiresAt: true, meta: true },
-    });
-    return {
-      totalPoints: Number(pointsResult.sum ?? 0),
-      user: txUser,
-    };
-  });
+  // The point total and the mute-state write are one atomic unit. `FOR UPDATE` on the strike rows
+  // only serializes concurrent evaluations while the transaction is open, so the write has to be
+  // inside it — otherwise two callers both read a stale total and the loser's decision lands last.
+  // Notifications and session invalidation stay outside: no I/O in a transaction.
+  const { totalPoints, action, notify } = await dbWrite.$transaction(
+    async (tx): Promise<{ totalPoints: number; action: EscalationAction; notify: boolean }> => {
+      // The lock has to sit at a different query level from the aggregate: Postgres rejects
+      // `FOR UPDATE` on an aggregate query outright (0A000), so `SUM(points) ... FOR UPDATE` throws
+      // on every call. `MATERIALIZED` is load-bearing — inlining the CTE would collapse the two
+      // levels back into one.
+      const [pointsResult] = await tx.$queryRaw<[{ sum: bigint | null }]>`
+        WITH locked AS MATERIALIZED (
+          SELECT points
+          FROM "UserStrike"
+          WHERE "userId" = ${userId}
+            AND "status" = ${StrikeStatus.Active}::"StrikeStatus"
+            AND "expiresAt" > NOW()
+          FOR UPDATE
+        )
+        SELECT SUM(points) as sum FROM locked
+      `;
+      const totalPoints = Number(pointsResult?.sum ?? 0);
 
-  if (!user) {
-    return { totalPoints, action: 'none' };
-  }
-
-  const currentMeta = (user.meta as UserMeta) ?? {};
-
-  if (totalPoints >= 3) {
-    // Indefinite mute + flag for review
-    const alreadyFlagged = user.muted && currentMeta.strikeFlaggedForReview;
-
-    await updateUserById({
-      id: userId,
-      data: {
-        muted: true,
-        muteExpiresAt: null, // Indefinite
-        meta: {
-          ...currentMeta,
-          strikeFlaggedForReview: true,
-          strikeFlaggedAt: new Date(),
-        },
-      },
-      updateSource: 'strike-escalation',
-    });
-
-    // Only send notification if this is a new escalation, not a duplicate
-    if (!alreadyFlagged) {
-      await createNotification({
-        type: 'strike-escalation-muted',
-        category: NotificationCategory.System,
-        key: `strike-escalation-muted:${userId}:${Date.now()}`,
-        userId,
-        details: { muteDays: 'indefinite' },
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { muted: true, muteExpiresAt: true, meta: true },
       });
-    }
+      if (!user) return { totalPoints, action: 'none', notify: false };
 
-    await invalidateSession(userId, 'strike');
+      const currentMeta = (user.meta as UserMeta) ?? {};
 
-    return { totalPoints, action: 'muted-and-flagged' };
-  } else if (totalPoints >= 2) {
-    // 3-day mute (always reset/extend timer)
-    const muteExpiresAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
-    const alreadyTimedMuted = user.muted && user.muteExpiresAt !== null;
+      if (totalPoints >= INDEFINITE_MUTE_POINTS) {
+        const alreadyFlagged = user.muted && currentMeta.strikeFlaggedForReview;
 
-    await updateUserById({
-      id: userId,
-      data: {
-        muted: true,
-        muteExpiresAt,
-        // Clear the review flag if points dropped below 3
-        ...(currentMeta.strikeFlaggedForReview && {
-          meta: {
-            ...currentMeta,
-            strikeFlaggedForReview: false,
+        await tx.user.update({
+          where: { id: userId },
+          data: {
+            muted: true,
+            muteExpiresAt: null, // A null expiry is what makes a mute indefinite
+            meta: {
+              ...currentMeta,
+              strikeFlaggedForReview: true,
+              strikeFlaggedAt: new Date(),
+            },
           },
-        }),
-      },
-      updateSource: 'strike-escalation',
-    });
+        });
 
-    // Only send notification if this is a new mute, not just extending an existing one
-    if (!alreadyTimedMuted) {
-      await createNotification({
-        type: 'strike-escalation-muted',
-        category: NotificationCategory.System,
-        key: `strike-escalation-muted:${userId}:${Date.now()}`,
-        userId,
-        details: { muteDays: 3 },
-      });
+        // Only notify on a new escalation, not a duplicate
+        return { totalPoints, action: 'muted-and-flagged', notify: !alreadyFlagged };
+      }
+
+      if (totalPoints >= TIMED_MUTE_POINTS) {
+        // The window restarts on every evaluation, so a new strike extends an active mute
+        const muteExpiresAt = new Date(Date.now() + TIMED_MUTE_DAYS * DAY_MS);
+        const alreadyTimedMuted = user.muted && user.muteExpiresAt !== null;
+
+        await tx.user.update({
+          where: { id: userId },
+          data: {
+            muted: true,
+            muteExpiresAt,
+            // Coming down from the indefinite tier, so the review flag no longer applies
+            ...(currentMeta.strikeFlaggedForReview && {
+              meta: {
+                ...currentMeta,
+                strikeFlaggedForReview: false,
+              },
+            }),
+          },
+        });
+
+        // Only notify on a new mute, not on extending an existing one
+        return { totalPoints, action: 'muted', notify: !alreadyTimedMuted };
+      }
+
+      // De-escalation: if user is currently muted from strikes, unmute them.
+      // Only unmute if the mute was from strikes (has muteExpiresAt set) or
+      // was flagged for review. Don't touch manual mutes (muteExpiresAt === null
+      // and no strike flag).
+      if (user.muted && (user.muteExpiresAt !== null || currentMeta.strikeFlaggedForReview)) {
+        await tx.user.update({
+          where: { id: userId },
+          data: {
+            muted: false,
+            muteExpiresAt: null,
+            ...(currentMeta.strikeFlaggedForReview && {
+              meta: {
+                ...currentMeta,
+                strikeFlaggedForReview: false,
+              },
+            }),
+          },
+        });
+
+        return { totalPoints, action: 'unmuted', notify: true };
+      }
+
+      return { totalPoints, action: 'none', notify: false };
     }
+  );
 
-    await invalidateSession(userId, 'strike');
+  if (action === 'none') return { totalPoints, action };
 
-    return { totalPoints, action: 'muted' };
+  userUpdateCounter?.inc({ location: 'strike.service:evaluateStrikeEscalation' });
+
+  if (notify) {
+    await createNotification(
+      action === 'unmuted'
+        ? {
+            type: 'strike-de-escalation-unmuted',
+            category: NotificationCategory.System,
+            key: `strike-de-escalation-unmuted:${userId}:${Date.now()}`,
+            userId,
+            details: {},
+          }
+        : {
+            type: 'strike-escalation-muted',
+            category: NotificationCategory.System,
+            key: `strike-escalation-muted:${userId}:${Date.now()}`,
+            userId,
+            details: { muteDays: action === 'muted-and-flagged' ? 'indefinite' : TIMED_MUTE_DAYS },
+          }
+    );
   }
 
-  // De-escalation: if user is currently muted from strikes, unmute them.
-  // Only unmute if the mute was from strikes (has muteExpiresAt set) or
-  // was flagged for review. Don't touch manual mutes (muteExpiresAt === null
-  // and no strike flag).
-  if (user.muted && (user.muteExpiresAt !== null || currentMeta.strikeFlaggedForReview)) {
-    await updateUserById({
-      id: userId,
-      data: {
-        muted: false,
-        muteExpiresAt: null,
-        ...(currentMeta.strikeFlaggedForReview && {
-          meta: {
-            ...currentMeta,
-            strikeFlaggedForReview: false,
-          },
-        }),
-      },
-      updateSource: 'strike-de-escalation',
-    });
+  if (action === 'unmuted') await refreshSession(userId, { caller: 'strike' });
+  else await invalidateSession(userId, 'strike');
 
-    await createNotification({
-      type: 'strike-de-escalation-unmuted',
-      category: NotificationCategory.System,
-      key: `strike-de-escalation-unmuted:${userId}:${Date.now()}`,
-      userId,
-      details: {},
-    });
-
-    await refreshSession(userId, { caller: 'strike' });
-    return { totalPoints, action: 'unmuted' };
-  }
-
-  return { totalPoints, action: 'none' };
+  return { totalPoints, action };
 }
 
 // ============================================================================

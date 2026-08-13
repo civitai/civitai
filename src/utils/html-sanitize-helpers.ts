@@ -28,6 +28,22 @@ const DEFAULT_ALLOWED_TAGS = [
   'edge-media',
 ];
 
+// Must cover everything the comment editor's toolbar can produce: a tag missing
+// here is stripped at save with no error, so the markup just vanishes.
+export const COMMENT_ALLOWED_TAGS = [
+  'div',
+  'strong',
+  'p',
+  'em',
+  'u',
+  's',
+  'a',
+  'br',
+  'span',
+  'code',
+  'pre',
+];
+
 const DEFAULT_ALLOWED_IFRAME_HOSTNAMES = [
   'www.youtube.com',
   'www.instagram.com',

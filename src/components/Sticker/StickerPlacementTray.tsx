@@ -27,7 +27,7 @@ import { trpc } from '~/utils/trpc';
  * three stickers sit in a field of empty panel, and pushed the instructions so
  * far from them that they read as unrelated.
  */
-export function StickerPlacementTray() {
+export function StickerPlacementTray({ imageId }: { imageId: number }) {
   const currentUser = useCurrentUser();
   const { sticker, isLoading } = useOwnedSticker();
   // The sticker they tried to place with nothing left. Buying uses here rather
@@ -38,28 +38,57 @@ export function StickerPlacementTray() {
   // stretch, since nothing is drawn on the image until the pointer arrives.
   const [dragging, setDragging] = useState<number | null>(null);
   const endGrab = useRef<(() => void) | null>(null);
+  const trayRef = useRef<HTMLDivElement>(null);
 
   // A gesture in flight when the tray closes would leave window listeners behind
   // and could drop a sticker onto an image nobody is looking at any more.
   useEffect(() => () => endGrab.current?.(), []);
 
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
-  const draft = useStickerPlacementDraftStore((state) => state.draft);
+  const trayOpen = useStickerPlacementDraftStore((state) => state.trayOpen);
+  const drafts = useStickerPlacementDraftStore((state) => state.drafts);
   const begin = useStickerPlacementDraftStore((state) => state.begin);
-  const close = useStickerPlacementDraftStore((state) => state.close);
+  const closeTray = useStickerPlacementDraftStore((state) => state.closeTray);
   const setInteraction = useStickerPlacementDraftStore((state) => state.setInteraction);
+  const setTray = useStickerPlacementDraftStore((state) => state.setTray);
+
+  // Bound to this bar's own image, not merely to "a session exists". The
+  // carousel keeps every slide's overlay mounted while the bar follows the
+  // visible one, so a session left open on a previous slide would otherwise
+  // keep the panel up showing that image's price and balances — and a drag from
+  // it would measure the off-screen slide's surface and land a sticker on an
+  // image nobody is looking at.
+  const showing = targetImageId === imageId && trayOpen;
+
+  // Registered after the early return below has been passed, so the element in
+  // the store is always one that is actually on screen. `showing` rather than
+  // the target alone: a panel that has been put away is not an obstacle the buy
+  // button should still be avoiding.
+  useEffect(() => {
+    if (!showing) return;
+    setTray(trayRef.current);
+    return () => setTray(null);
+  }, [showing, setTray]);
 
   const { space } = useImagePlacementSpace(targetImageId ?? undefined);
   const { data: balances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
     enabled: !!currentUser && targetImageId != null,
   });
 
-  if (targetImageId == null) return null;
+  if (!showing) return null;
 
   // `null` is unlimited and `undefined` is not loaded yet. Collapsing them
   // flashes "unlimited" on every open.
-  const balanceFor = (cosmeticId: number) =>
-    balances?.find((balance) => balance.cosmeticId === cosmeticId)?.remaining;
+  //
+  // Drafts already on the image are subtracted, because each one will spend a
+  // use when it is bought. Without this you could lay out three with one use
+  // left and only find out at the third purchase, having arranged all of them.
+  const balanceFor = (cosmeticId: number) => {
+    const remaining = balances?.find((balance) => balance.cosmeticId === cosmeticId)?.remaining;
+    if (remaining == null) return remaining;
+    const drafted = drafts.filter((draft) => draft.cosmeticId === cosmeticId).length;
+    return Math.max(remaining - drafted, 0);
+  };
 
   const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
 
@@ -74,18 +103,43 @@ export function StickerPlacementTray() {
    * it, which is the thing being fixed rather than a detail of when it renders.
    */
   const grab = (cosmeticId: number) => (event: React.PointerEvent) => {
+    // No pickup while a drag is already in flight. The layer holds one gesture,
+    // so the sticker this created would be dropped on the image and then never
+    // follow anything — placed, stationary, with no cue that it went wrong.
+    //
+    // Gated on a live gesture rather than on `event.isPrimary`, which looks
+    // equivalent and is not: a mouse is primary no matter how many touches are
+    // down, so a trackpad pickup during a touch drag walked straight past it —
+    // and a palm resting on a tablet makes the dragging finger non-primary, so
+    // it silently dropped pickups that were perfectly fine.
+    if (useStickerPlacementDraftStore.getState().interaction) return;
+
     event.preventDefault();
     endGrab.current?.();
     setDragging(cosmeticId);
+    const { pointerId } = event;
+
+    // Captured here, on the tray button, for the same reason the sticker
+    // captures its own: this drag ends up owned by the layer's gesture, which is
+    // refused outright while another is live, so a pointerup that never arrives
+    // would strand it and refuse everything after. Capture makes that delivery
+    // guaranteed. Released implicitly on the up that ends the drag.
+    try {
+      event.currentTarget.setPointerCapture(pointerId);
+    } catch {
+      // Pointer already gone; teardown below still runs on up/cancel.
+    }
 
     const onMove = (move: PointerEvent) => {
+      if (move.pointerId !== pointerId) return;
       const at = pointerOverSurface(move.clientX, move.clientY);
       if (!at) return;
       begin(cosmeticId, at, maxScale);
-      // Handing the drag to the layer, which owns it from here. Armed only once
-      // the sticker exists on the image, so there is never a live move gesture
-      // with nothing to move.
-      setInteraction('move');
+      // Handing the drag to the layer, which owns it from here — along with the
+      // pointer holding it, so the layer arms against this finger rather than
+      // whichever one moves next. Armed only once the sticker exists on the
+      // image, so there is never a live move gesture with nothing to move.
+      setInteraction('move', pointerId);
       teardown();
     };
 
@@ -104,12 +158,18 @@ export function StickerPlacementTray() {
   };
 
   const price = space?.price ?? 0;
-  const instruction = draft
-    ? 'Drag it where you want it, then buy it under the sticker.'
+  // Says the panel can be got out of the way, and that more than one is allowed,
+  // only once there is something that would survive it. Before that both are
+  // instructions about nothing.
+  const instruction = drafts.length
+    ? 'Drag out as many as you like, then buy the ones you want. Closing this panel leaves them on the image.'
     : 'Drag a sticker onto the image.';
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-30 flex justify-center p-3">
+    // Measured as the obstacle the buy button avoids, and deliberately measured
+    // at full width rather than at the visible panel's `max-w-xl`: this root
+    // spans the viewport and takes the clicks across all of it.
+    <div ref={trayRef} className="fixed inset-x-0 bottom-0 z-30 flex justify-center p-3">
       <div className="w-full max-w-xl overflow-hidden rounded-lg border border-gray-3 bg-white shadow-lg dark:border-dark-4 dark:bg-dark-7">
         <div className="flex items-start gap-2 border-b border-gray-3 px-3 py-2 dark:border-dark-4">
           <div className="flex-1">
@@ -122,7 +182,10 @@ export function StickerPlacementTray() {
                 ' · this creator reviews placements, so only you will see it until they approve. If they decline, part of what you paid stays with them.'}
             </Text>
           </div>
-          <CloseButton onClick={close} aria-label="Cancel placing a sticker" />
+          <CloseButton
+            onClick={closeTray}
+            aria-label={drafts.length ? 'Close the sticker panel' : 'Stop placing a sticker'}
+          />
         </div>
 
         {topUp ? (
@@ -159,7 +222,8 @@ export function StickerPlacementTray() {
                     onPointerDown={exhausted ? () => setTopUp(option) : grab(option.id)}
                     className={clsx(
                       'flex shrink-0 cursor-grab flex-col items-center gap-1 rounded border p-2',
-                      draft?.cosmeticId === option.id || dragging === option.id
+                      drafts.some((draft) => draft.cosmeticId === option.id) ||
+                        dragging === option.id
                         ? 'border-blue-5'
                         : 'border-transparent',
                       exhausted && 'opacity-40'

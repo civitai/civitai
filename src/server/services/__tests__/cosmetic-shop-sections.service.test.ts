@@ -1,4 +1,3 @@
-import type * as PromClient from '~/server/prom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 
@@ -32,6 +31,7 @@ vi.mock('~/server/services/user-preferences.service', () => ({
   getBlockedPairIds: mocks.getBlockedPairIds,
 }));
 
+import { PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
 import { getShopSectionsWithItems } from '../cosmetic-shop.service';
 
 // The regression this file pins: official shop items carry the listing mod's id
@@ -66,10 +66,12 @@ const capturedShopItemWhere = () =>
 // Packs have no cosmetic, so the viewer gating moved into an OR whose second
 // branch carries every cosmetic condition. These read that branch, so the
 // assertions below still describe the same rules.
-const capturedCosmeticWhere = () => {
-  const branches = capturedShopItemWhere().OR as { cosmetic?: Record<string, unknown> }[];
-  return branches.find((b) => b.cosmetic)?.cosmetic;
+const capturedCosmeticBranch = () => {
+  const branches = capturedShopItemWhere().OR as Record<string, unknown>[];
+  return branches.find((b) => 'cosmetic' in b);
 };
+const capturedCosmeticWhere = () =>
+  capturedCosmeticBranch()?.cosmetic as Record<string, unknown> | undefined;
 const capturedPackBranch = () =>
   (capturedShopItemWhere().OR as { cosmeticId?: null }[]).find((b) => 'cosmeticId' in b);
 
@@ -118,6 +120,39 @@ describe('getShopSectionsWithItems viewer gating', () => {
     expect(capturedCosmeticWhere()).toEqual({});
     expect(where.status).toBeUndefined();
     expect(where.AND).toBeUndefined();
+  });
+
+  // Prisma DROPS an empty relation filter rather than reading it as "the
+  // relation is set". At the top level of a `where` that is harmless (`1=1`),
+  // but as an OR arm it erases the arm: `OR: [{ cosmeticId: null }, { cosmetic:
+  // {} }]` compiles to `WHERE "cosmeticId" IS NULL` — packs only. Every
+  // condition under `cosmetic` is conditional, so the arm empties out for any
+  // viewer with stickers on and no type filter, which blanked /shop down to the
+  // community hub for everyone, moderators included.
+  it.each([
+    ['creatorShop + stickers', { creatorShopEnabled: true, stickersEnabled: true }],
+    ['moderator + stickers', { isModerator: true, creatorShopEnabled: true, stickersEnabled: true }],
+    ['stickers only', { stickersEnabled: true }],
+    ['anonymous', {}],
+  ])('the cosmetic arm still constrains something (%s)', async (_label, flags) => {
+    await getShopSectionsWithItems(flags);
+
+    const branch = capturedCosmeticBranch();
+    const constraints = Object.keys({ ...branch, ...capturedCosmeticWhere() }).filter(
+      (key) => key !== 'cosmetic'
+    );
+    expect(constraints.length).toBeGreaterThan(0);
+  });
+
+  it('asking for packs alone drops the cosmetic arm rather than leaving it unconstrained', async () => {
+    await getShopSectionsWithItems({
+      creatorShopEnabled: true,
+      stickersEnabled: true,
+      cosmeticTypes: [PACK_FILTER_VALUE],
+    });
+
+    expect(capturedCosmeticBranch()).toBeUndefined();
+    expect(capturedPackBranch()).toBeDefined();
   });
 
   it('flagged viewer with blocks: creator items from blocked pairs are filtered, official items stay', async () => {

@@ -43,7 +43,7 @@ export const CommentForm = ({
   replyToCommentId?: number;
   borderless?: boolean;
 }) => {
-  const { expanded, toggleExpanded } = useRootThreadContext();
+  const { setExpanded } = useRootThreadContext();
   const {
     entityId: contextEntityId,
     entityType: contextEntityType,
@@ -130,9 +130,7 @@ export const CommentForm = ({
         store.addComment(entityType, entityId, response);
       }
 
-      if (replyToCommentId && !expanded.includes(replyToCommentId)) {
-        toggleExpanded(replyToCommentId);
-      }
+      if (replyToCommentId) setExpanded(replyToCommentId, true);
       // update comment count
       handleCancel();
     },

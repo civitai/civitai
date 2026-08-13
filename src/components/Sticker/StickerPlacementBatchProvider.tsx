@@ -1,4 +1,6 @@
 import { createContext, useContext, useMemo } from 'react';
+import type { StickerTreatmentKey } from '~/components/Sticker/treatments/sticker-treatments';
+import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
 import type { PlacedSticker } from '~/components/Sticker/placement.util';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
@@ -14,6 +16,7 @@ type StickerPlacementBatch = {
   counts: Record<number, number>;
   byImage: Map<number, PlacedSticker[]>;
   sticker: Map<number, ResolvedSticker>;
+  treatment: StickerTreatmentKey;
 };
 
 const StickerPlacementBatchContext = createContext<StickerPlacementBatch | null>(null);
@@ -119,7 +122,16 @@ export function StickerPlacementBatchProvider({
 
   const { sticker } = useStickerCosmetics(cosmeticIds);
 
-  const value = useMemo(() => ({ counts, byImage, sticker }), [counts, byImage, sticker]);
+  // Resolved once for the surface, like everything else here. Per card it would
+  // be N subscriptions to the user's settings, and — because it reads
+  // `useRouter` — N context consumers that re-render THROUGH `React.memo` on
+  // every routed dialog, defeating the memo the feed has for exactly that.
+  const treatment = useStickerTreatment();
+
+  const value = useMemo(
+    () => ({ counts, byImage, sticker, treatment }),
+    [counts, byImage, sticker, treatment]
+  );
 
   if (!enabled) return <>{children}</>;
 
@@ -149,6 +161,7 @@ export function useStickerPlacementBatch(imageId: number) {
       placements,
       pending: placements.filter((placement) => placement.isPending),
       sticker: batch.sticker,
+      treatment: batch.treatment,
     };
   }, [batch, imageId]);
 }

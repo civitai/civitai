@@ -119,6 +119,19 @@ export enum CollectionSort {
   Newest = 'Newest',
 }
 
+// Order of any cosmetic shop grid — the official /shop sections, a creator's
+// storefront, and the community hub all offer the same list. "Newest" is
+// approval order, not submission order: an item stuck in review for a week
+// would otherwise publish already buried.
+export enum CosmeticShopSort {
+  Newest = 'Newest',
+  Oldest = 'Oldest',
+  PriceLowToHigh = 'Price: Low to High',
+  PriceHighToLow = 'Price: High to Low',
+  MostPopular = 'Most Popular',
+  Name = 'Name (A-Z)',
+}
+
 export enum SignalMessages {
   BuzzUpdate = 'buzz:update',
   ImageGenStatusUpdate = 'image-gen:status-update',
@@ -302,7 +315,9 @@ export enum EntityAccessPermission {
 // domain now). Re-exported here so the ~90 existing `~/server/common/enums` importers are unchanged and
 // there is ONE definition shared with the package — no enum-vs-union mismatch across the seam.
 // nb: when updating the values, similar updates must be made to the notification DB.
-export { NotificationCategory } from '@civitai/notifications';
+// Deep path, not the package barrel: the barrel re-exports `./client`, an HTTP client for the
+// internal notifications service, and this module has 56 client-side importers.
+export { NotificationCategory } from '@civitai/notifications/constants';
 
 export enum BanReasonCode {
   SexualMinor = 'SexualMinor',

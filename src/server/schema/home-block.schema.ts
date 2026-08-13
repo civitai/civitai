@@ -22,6 +22,30 @@ const cosmeticShopSectionSchema = z.object({
   maxItems: z.number().optional(),
 });
 
+export type AutoFeatureSchema = z.infer<typeof autoFeatureSchema>;
+/**
+ * Config for the job that tops the Featured Images collection up from the featured pool.
+ * Lives on the FeaturedCollections block so it can be tuned through the admin home-block
+ * endpoints instead of a deploy — including `intervalHours`, which is why the job's own cron
+ * is hourly rather than the real cadence.
+ */
+export const autoFeatureSchema = z.object({
+  collectionId: z.number().int().positive(),
+  dryRun: z.boolean().default(true),
+  perRun: z.number().int().min(1).max(50).default(5),
+  intervalHours: z.number().min(1).max(168).default(6),
+  windowDays: z.number().int().min(1).max(90).default(7),
+  recencyOffsetHours: z.number().min(0).max(720).default(12),
+  decayExponent: z.number().min(0).max(3).default(0.8),
+  maxPerCreatorPerRun: z.number().int().min(1).max(50).default(1),
+  maxPerCreatorInWindow: z.number().int().min(1).max(50).default(2),
+  maxPerCollectionInWindow: z.number().int().min(1).max(500).optional(),
+  minReactions: z.number().int().min(0).default(0),
+  // `global` scores every candidate together, which lets the busiest collection dominate
+  // (measured: 17 of 40 slots). Kept selectable so that can be re-tested without a deploy.
+  strategy: z.enum(['round-robin', 'global']).default('round-robin'),
+});
+
 export const homeBlockMetaSchema = z
   .object({
     title: z.string(),
@@ -81,13 +105,18 @@ export const homeBlockMetaSchema = z
     cosmeticShopSection: cosmeticShopSectionSchema,
     featuredCollections: z.object({
       collectionIds: z.array(z.number()).default([]),
-      limit: z.number().int().min(1).max(50).default(8),
+      // Fetch pool per rendered collection, ceilinged at getAllCollectionItemsSchema's max.
+      limit: z.number().int().min(1).max(100).default(100),
       rows: z.number().int().min(1).max(4).default(2),
       renderCount: z.number().int().min(1).max(10).default(3),
+      // Per-curator cap inside each rendered collection, same knob Collection blocks have.
+      // 0 opts a block out; unset falls back to FEATURED_COLLECTIONS_DEFAULTS.maxPerUser.
+      maxPerUser: z.number().int().min(0).max(50).optional(),
       maxStaleDays: z.number().int().min(1).max(365).optional(),
       minRecentItems: z.number().int().min(1).max(100).optional(),
       nameSnapshots: z.record(z.string(), z.string()).default({}),
       writeSnapshots: z.record(z.string(), z.string()).default({}),
+      autoFeature: autoFeatureSchema.optional(),
     }),
     footer: z.string().optional(),
   })

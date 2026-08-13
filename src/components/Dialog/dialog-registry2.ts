@@ -91,6 +91,11 @@ export const dialogs = dialogFactory({
   'article-rating-review': {
     component: dynamic(() => import('~/components/Article/ArticleRatingReviewModal')),
   },
+  'collection-collaborators': {
+    component: dynamic(
+      () => import('~/components/Collections/CollectionCollaborators/CollectionCollaboratorsModal')
+    ),
+  },
 });
 
 export type DialogRegistry = typeof dialogs;
