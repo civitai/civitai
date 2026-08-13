@@ -210,7 +210,10 @@ export function parsePlacementQueueCursor(cursor?: string | null): PlacementQueu
   if (!cursor) return null;
 
   const parts = cursor.split(':');
-  if (parts.length !== 2) return null;
+  // Length AND emptiness: `''.split(':')` is `['', '']` and `Number('')` is 0,
+  // so `':'` would otherwise pass every check below and reach the query as a
+  // keyset from 1970 — harmless, and a counterexample to what this says it does.
+  if (parts.length !== 2 || parts.some((part) => !part.length)) return null;
 
   const [createdAt, id] = parts.map(Number);
   if (![createdAt, id].every((value) => Number.isSafeInteger(value) && value >= 0)) return null;

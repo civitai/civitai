@@ -121,6 +121,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
   const {
     data: pendingPages,
     isLoading: pendingLoading,
+    isError: pendingFailed,
     fetchNextPage: fetchMorePending,
     hasNextPage: hasMorePending,
     isFetchingNextPage: fetchingMorePending,
@@ -240,6 +241,13 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
               <Group justify="center" py="md">
                 <Loader size="sm" />
               </Group>
+            ) : pendingFailed ? (
+              // No pages means `hasMorePending` is false too, so without this the
+              // branch below would say "nothing waiting" over a queue that failed
+              // to load.
+              <Text size="sm" c="red" mt="sm">
+                Couldn&rsquo;t load the review queue. Refresh to try again.
+              </Text>
             ) : forThisImage.length || hasMorePending ? (
               <Stack gap="xs" mt="sm">
                 {/* A page can come back empty with a cursor still set — every

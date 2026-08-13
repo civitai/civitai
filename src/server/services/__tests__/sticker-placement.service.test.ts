@@ -1191,6 +1191,21 @@ describe('getPendingStickerPlacements paging', () => {
     expect(result.nextCursor).toBe(`${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`);
   });
 
+  it('still hands back a cursor when EVERY row on the page was filtered out', async () => {
+    // Same contract the remix twin pins, and the one the empty-state guard in
+    // the page reads: no items is not the same as no more.
+    placementFindMany.mockResolvedValue([
+      queueRow(1, { nonsense: true }, '2026-01-01T00:00:00.000Z'),
+      queueRow(2, { nonsense: true }, '2026-01-02T00:00:00.000Z'),
+      queueRow(3, good, '2026-01-03T00:00:00.000Z'),
+    ]);
+
+    const result = await getPendingStickerPlacements({ ownerId: OWNER, limit: 2 });
+
+    expect(result.items).toEqual([]);
+    expect(result.nextCursor).toBe(`${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`);
+  });
+
   it('reports no next page when the queue ends exactly on the page boundary', async () => {
     placementFindMany.mockResolvedValue([
       queueRow(1, good, '2026-01-01T00:00:00.000Z'),

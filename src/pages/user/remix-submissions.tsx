@@ -73,6 +73,7 @@ export default function RemixSubmissions() {
   const {
     data: received,
     isLoading: receivedLoading,
+    isError: receivedFailed,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
@@ -103,7 +104,7 @@ export default function RemixSubmissions() {
               <Tabs.Tab
                 value="received"
                 rightSection={
-                  waiting ? (
+                  waiting || hasNextPage ? (
                     <Badge size="sm" variant="filled" circle>
                       {hasNextPage ? `${waiting}+` : waiting}
                     </Badge>
@@ -119,6 +120,7 @@ export default function RemixSubmissions() {
               <ReceivedTab
                 rows={receivedRows}
                 isLoading={receivedLoading}
+                isError={receivedFailed}
                 hasMore={!!hasNextPage}
                 isFetchingMore={isFetchingNextPage}
                 onLoadMore={() => fetchNextPage()}
@@ -140,12 +142,14 @@ type ReceivedRow = RouterOutput['placement']['getPendingRemixGallerySubmissions'
 function ReceivedTab({
   rows,
   isLoading,
+  isError,
   hasMore,
   isFetchingMore,
   onLoadMore,
 }: {
   rows: ReceivedRow[];
   isLoading: boolean;
+  isError: boolean;
   hasMore: boolean;
   isFetchingMore: boolean;
   onLoadMore: () => void;
@@ -179,6 +183,16 @@ function ReceivedTab({
       <Group justify="center" py="xl">
         <Loader />
       </Group>
+    );
+
+  // A failed read has no pages, so `hasMore` is false and the empty state below
+  // would say "nothing is waiting" over a queue nobody could load. Said out loud
+  // instead — the owner can retry; escrow they never hear about expires.
+  if (isError)
+    return (
+      <Alert color="red">
+        <Text size="sm">Couldn&rsquo;t load your review queue. Refresh to try again.</Text>
+      </Alert>
     );
 
   // `&& !hasMore` is the whole point. A page whose rows were all dropped —

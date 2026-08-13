@@ -32,7 +32,7 @@ import { trpc } from '~/utils/trpc';
  * and to clear a backlog in one pass.
  */
 export default function StickerPlacements() {
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+  const { data, isLoading, isError, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.placement.getPending.useInfiniteQuery(
       {},
       { getNextPageParam: (lastPage) => lastPage.nextCursor }
@@ -86,13 +86,26 @@ export default function StickerPlacements() {
           )}
 
           {isLoading && <Text size="sm">Loading…</Text>}
+          {/* A failed read has no pages, so `hasNextPage` is false and the
+              empty state below would claim the queue is clear. */}
+          {isError && (
+            <Alert color="red">
+              <Text size="sm">Couldn&rsquo;t load your queue. Refresh to try again.</Text>
+            </Alert>
+          )}
           {/* `&& !hasNextPage`: a page whose rows were all dropped returns
               nothing with a cursor still set, and "nothing waiting" over a
               queue that has more is the failure paging exists to end. */}
-          {!isLoading && !rows.length && !hasNextPage && (
+          {!isLoading && !isError && !rows.length && !hasNextPage && (
             <Alert>
               <Text size="sm">Nothing waiting. Placements you approve show up on your images.</Text>
             </Alert>
+          )}
+
+          {!rows.length && hasNextPage && (
+            <Text size="sm" c="dimmed">
+              Nothing on this page can be shown. There are more waiting.
+            </Text>
           )}
 
           {rows.map((row) => {

@@ -1104,6 +1104,40 @@ describe('getPendingRemixGallerySubmissions paging', () => {
     expect(result.nextCursor).toBe(`${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`);
   });
 
+  it('still hands back a cursor when EVERY row on the page was filtered out', async () => {
+    // The state the UI now depends on. Return `nextCursor: null` here and the
+    // owner is told "nothing is waiting" over a queue with entries behind it —
+    // the original bug, one layer up, with every other test still green.
+    placementFindMany.mockResolvedValue([
+      queueRow(1, 101, '2026-01-01T00:00:00.000Z'),
+      queueRow(2, 102, '2026-01-02T00:00:00.000Z'),
+      queueRow(3, 103, '2026-01-03T00:00:00.000Z'),
+    ]);
+    queryRaw.mockResolvedValue([]);
+
+    const result = await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2 });
+
+    expect(result.items).toEqual([]);
+    expect(result.nextCursor).toBe(`${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`);
+  });
+
+  it('hands back a cursor on the early return too, when no row even names an image', async () => {
+    // The `!imageIds.length` short-circuit is a second exit from this function
+    // and it has to carry the cursor for the same reason the main one does. The
+    // test above cannot reach it — those rows name images that simply are not
+    // visible, so it leaves by the filter at the end instead.
+    placementFindMany.mockResolvedValue([
+      { ...queueRow(1, 0, '2026-01-01T00:00:00.000Z'), data: { nonsense: true } },
+      { ...queueRow(2, 0, '2026-01-02T00:00:00.000Z'), data: { nonsense: true } },
+      { ...queueRow(3, 0, '2026-01-03T00:00:00.000Z'), data: { nonsense: true } },
+    ]);
+
+    const result = await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2 });
+
+    expect(result.items).toEqual([]);
+    expect(result.nextCursor).toBe(`${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`);
+  });
+
   it('reports no next page when the queue ends inside the page', async () => {
     placementFindMany.mockResolvedValue([queueRow(1, 101, '2026-01-01T00:00:00.000Z')]);
     onlyFirstImageVisible(101);
@@ -1161,7 +1195,7 @@ describe('getPendingRemixGallerySubmissions paging', () => {
     const accepted = placementFindMany.mock.calls.at(-1)?.[0] as { where: { OR?: unknown[] } };
     expect(accepted.where.OR).toHaveLength(2);
 
-    for (const cursor of ['nonsense', '1e21:1', '1700000000000:1.5', '1:2:3', '-1:2']) {
+    for (const cursor of ['nonsense', '1e21:1', '1700000000000:1.5', '1:2:3', '-1:2', ':']) {
       await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2, cursor });
 
       const { where } = placementFindMany.mock.calls.at(-1)?.[0] as { where: { OR?: unknown[] } };
