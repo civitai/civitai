@@ -20,11 +20,19 @@ import type * as TrpcMod from '~/utils/trpc';
  * tabs' rule is pinned as present in the same test.
  */
 
+// 🔴 The viewer MUST be one the sub-nav renders for. `AppsSubNav` now hides itself
+// entirely below two qualifying tabs, and the summary query is stubbed empty here, so
+// an anonymous / non-author viewer would render NO `<nav>` at all and every assertion
+// below would fail on a null lookup rather than on the geometry it is about. An author
+// (`appBlocksAuthor`) yields Marketplace + Create — the same two-tab bar this file was
+// written against.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
-  useFeatureFlags: () => ({ appBlocks: true }),
+  useFeatureFlags: () => ({ appBlocks: true, appBlocksAuthor: true }),
 }));
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => ({ id: 1, username: 'author', isModerator: false }),
+}));
 // Spread the REAL module and override only `trpc` (local-rules/no-wholesale-
 // module-mock): a hand-written replacement silently breaks every importer the day
 // '~/utils/trpc' grows an export this factory omits — the whole FILE then fails to

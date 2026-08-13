@@ -173,6 +173,18 @@ export default defineConfig({
             'vitest-browser-react',
             'react/jsx-dev-runtime',
             'react/jsx-runtime',
+            // `react-dom/server` — used by the SSR→hydrate tests
+            // (`*.ssrHydration.browser.test.tsx`) to produce real server HTML and
+            // hydrate it. WITHOUT this entry Vite discovers it mid-run and emits a
+            // SEPARATE optimized chunk that carries its OWN copy of `react`, so
+            // `ReactCurrentDispatcher.current` is null inside it and every hook call
+            // during `renderToString` throws
+            // `Cannot read properties of null (reading 'useState')` — the dual-React
+            // failure the `dedupe` above exists to prevent, arriving through the
+            // optimizer rather than through a transitive dependency. Listing it here
+            // pre-bundles it in the same pass as `react`/`react-dom`, so all three
+            // share one instance.
+            'react-dom/server',
           ],
           // `@vitest/browser` seeds optimizeDeps.entries from EVERY `*.browser.test.tsx` file
           // (globTestFiles), not just the one you ran. The review app-listing browser tests
