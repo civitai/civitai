@@ -140,9 +140,31 @@ export const rollingSwissEngine: ChallengeJudgingEngine = {
 
     let calls = 0;
     for (let pass = 0; pass < MAX_SETTLE_PASSES; pass++) {
-      const spent = await runGroups(ctx, eligible, Number.MAX_SAFE_INTEGER, 1);
-      calls += spent;
-      if (spent === 0) break;
+      // The spend ceiling has to be re-read each pass and applied here too. Settling at close was
+      // originally unbounded, which would have made the budget a limit on ticks only — the one
+      // moment a runaway is most likely is the moment it was exempt.
+      const { remaining, spent } = await operationBudgetRemaining(ctx.challengeId);
+      const { callsSoFar } = await challengeClock(ctx.challengeId);
+      const affordable = budgetCallCap({
+        budgetRemaining: remaining,
+        spentSoFar: spent,
+        callsSoFar,
+      });
+      if (affordable < 1) {
+        logToAxiom({
+          type: 'warning',
+          name: 'challenge-swiss-budget-exhausted',
+          challengeId: ctx.challengeId,
+          stage: 'close',
+          field: eligible.length,
+          spent,
+        }).catch(() => undefined);
+        break;
+      }
+
+      const spentCalls = await runGroups(ctx, eligible, affordable, 1);
+      calls += spentCalls;
+      if (spentCalls === 0) break;
     }
 
     const state = await store.getSwissState(ctx.challengeId);

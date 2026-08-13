@@ -85,7 +85,7 @@ beforeEach(() => {
   incrementOperationSpent.mockResolvedValue(undefined);
 });
 
-describe('advance', () => {
+describe('advance and rankField', () => {
   it('records every relation a ranked group yields, and bills the call ONCE', async () => {
     getStandings.mockResolvedValue(standings(GROUP_SIZE));
     stubQueries(GROUP_SIZE);
@@ -195,6 +195,32 @@ describe('advance', () => {
     // Stopping silently is the failure mode this subsystem is already full of.
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'challenge-swiss-budget-exhausted', type: 'warning' })
+    );
+  });
+
+  it('applies the spend ceiling at close too, not only on ticks', async () => {
+    // 🔴 The close-time settle was originally unbounded, which made the budget a limit on ticks
+    // only — exempting the exact moment a runaway is most likely.
+    getStandings.mockResolvedValue(standings(GROUP_SIZE * 8));
+    stubQueries(GROUP_SIZE * 8);
+    operationBudgetRemaining.mockResolvedValue({ remaining: 0, spent: 500 });
+
+    const ranked = await rollingSwissEngine.rankField(
+      ctx,
+      Array.from({ length: GROUP_SIZE * 8 }, (_, i) => ({
+        imageId: i + 1,
+        userId: i + 1,
+        username: `u${i}`,
+        weightedRating: 0,
+      }))
+    );
+
+    expect(compareGroup).not.toHaveBeenCalled();
+    // It still returns a full ranking from what it already knows — an exhausted budget must not
+    // silently shorten the field.
+    expect(ranked).toHaveLength(GROUP_SIZE * 8);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'challenge-swiss-budget-exhausted', stage: 'close' })
     );
   });
 
