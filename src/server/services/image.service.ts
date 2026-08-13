@@ -2409,8 +2409,15 @@ export const getAllImages = async (
         model3dId: i.model3dId != null && visibleModel3DIds?.has(i.model3dId) ? i.model3dId : null,
         meta: imageMeta?.[i.id] ?? null,
         nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, i.nsfwLevel),
-        modelVersionIds: imageResources?.[i.id]?.resources?.map((r) => r.modelVersionId) ?? [],
-        modelVersionIdsManual: [],
+        // `modelVersionIds` is auto-detected only and `modelVersionIdsManual` is uploader-asserted,
+        // matching what the search-index path serves — consumers gate on the difference.
+        modelVersionIds:
+          imageResources?.[i.id]?.resources?.filter((r) => r.detected).map((r) => r.modelVersionId) ??
+          [],
+        modelVersionIdsManual:
+          imageResources?.[i.id]?.resources
+            ?.filter((r) => !r.detected)
+            .map((r) => r.modelVersionId) ?? [],
         publishedAt: i.publishedAt ? i.sortAt : undefined,
         baseModel: imageResources
           ? getBaseModelFromResources(imageResources[i.id]?.resources)
