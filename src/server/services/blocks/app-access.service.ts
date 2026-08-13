@@ -7,8 +7,10 @@ import type {
   ListingKind,
 } from '~/shared/constants/app-capabilities.constants';
 import {
+  AUTHORABLE_LISTING_STATUSES,
   CAPABILITIES_BY_KIND,
   capabilitiesForKind,
+  isAuthorableListingStatus,
   listingKindSupports,
 } from '~/shared/constants/app-capabilities.constants';
 
@@ -107,6 +109,7 @@ import {
  */
 export type { AppRole, ListingKind, ListingCapability };
 export { CAPABILITIES_BY_KIND, capabilitiesForKind, listingKindSupports };
+export { AUTHORABLE_LISTING_STATUSES, isAuthorableListingStatus };
 
 export type AppAccess = {
   appBlockId: string;
@@ -819,6 +822,15 @@ export async function getAppListingAuthoringContext(opts: {
   });
   if (!row) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'App listing not found' });
+  }
+  // 🔴 STATUS GATE — see {@link AUTHORABLE_LISTING_STATUSES}. A moderator-removed listing
+  // must not open the authoring page at all; leaving it open left a live Collaborators tab
+  // on a delisted app, where accepting an invite still mints repo write.
+  if (!isAuthorableListingStatus(row.status)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'This listing can no longer be edited',
+    });
   }
   return {
     appListingId: access.seatListingId,

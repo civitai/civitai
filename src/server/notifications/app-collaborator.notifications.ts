@@ -65,11 +65,22 @@ export const appCollaboratorNotifications = createNotificationProcessor({
       const details = notification.details as AppCollaboratorNotificationDetails;
       return {
         message: `You were invited to collaborate on ${appLabel(details)}.`,
-        // 🔴 THE INVITE INBOX, not `appUrl`. A PENDING invitee owns nothing and holds no
-        // accepted seat, so every `/apps/<id>/…` page resolves their role, finds none and
-        // refuses — pointing this notification at the app would land them on a 404 for
-        // the app they were just invited to. `/apps/invites` is keyed to their own user
-        // id (`listMyPendingInvites`) and is the only surface that can show it.
+        // 🔴 THE INVITE INBOX, not `appUrl`.
+        //
+        // A PENDING invitee owns nothing and holds no accepted seat, so no authoring
+        // surface is reachable for them. `appUrl` would send them to `/apps/<appBlockId>`,
+        // which for an approved app REDIRECTS to the public store detail
+        // (`/apps/store-preview/<slug>`) — a page that renders perfectly well and says
+        // NOTHING about the invitation, with no way to accept or decline it. For an
+        // OFF-SITE listing there is no block id at all and the fallback is `/apps`, the
+        // marketplace. Neither 404s; both are dead ends, which is the actual problem.
+        //
+        // (An earlier version of this comment claimed a 404. It was wrong — the block
+        // route redirects rather than refusing — and a wrong mechanism sends the next
+        // reader to the wrong file.)
+        //
+        // `/apps/invites` is keyed to the recipient's own user id
+        // (`listMyPendingInvites`), which is the only key an invitee's own invitation has.
         url: APP_INVITES_URL,
       };
     },

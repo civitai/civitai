@@ -1,7 +1,11 @@
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import type { CollaboratorRosterRow } from '~/components/Apps/AppCollaboratorsPanelView';
-import { AppCollaboratorsPanelView } from '~/components/Apps/AppCollaboratorsPanelView';
+import {
+  AppCollaboratorsPanelView,
+  inviteBlockedReason,
+  pickerExcludedUserIds,
+} from '~/components/Apps/AppCollaboratorsPanelView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { AppRole, ListingCapability } from '~/shared/constants/app-capabilities.constants';
@@ -84,12 +88,21 @@ export function AppCollaboratorsPanel({
           placeholder="Search for a community member to invite"
           onItemSelected={(_entity, item) => {
             const selected = item as SearchIndexDataMap['users'][number];
-            if (rows.some((r) => r.userId === selected.id)) return;
+            // Both the guard and the picker filter read the SAME two pure helpers, so they
+            // cannot disagree about who is offerable — and a REJECTED seat is offerable.
+            const blocked = inviteBlockedReason(rows, selected.id);
+            if (blocked) {
+              showErrorNotification({
+                title: blocked.title,
+                error: new Error(blocked.message),
+              });
+              return;
+            }
             invite.mutate({ appListingId, targetUserId: selected.id });
           }}
-          filters={[{ id: currentUser?.id }, ...rows.map((r) => ({ id: r.userId }))]
-            .filter((x) => !!x?.id)
-            .map((x) => `AND NOT id=${x.id}`)
+          filters={[currentUser?.id, ...pickerExcludedUserIds(rows)]
+            .filter((id): id is number => !!id)
+            .map((id) => `AND NOT id=${id}`)
             .join(' ')
             .slice(4)}
         />

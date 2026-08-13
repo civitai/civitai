@@ -117,3 +117,22 @@ export function capabilitiesForKind(
 export function listingKindSupports(kind: string, capability: ListingCapability): boolean {
   return capabilitiesForKind(kind as ListingKind)[capability] === true;
 }
+
+/**
+ * The listing statuses the CANONICAL AUTHORING PAGE may be opened on.
+ *
+ * 🔴 MIRRORS `getMyListingForEdit`'s existing switch, deliberately, so the entry point and
+ * the first thing it loads cannot disagree: that proc already refuses `removed` with
+ * FORBIDDEN ('removed by a moderator and can no longer be edited') and `rejected` with
+ * MUST_RESUBMIT. Before this gate the authoring page opened happily on a moderator-REMOVED
+ * listing — every tab rendered, and the Collaborators tab was fully live, so an owner
+ * could still invite someone onto a delisted app and the acceptance would mint Forgejo
+ * `write` on its repo. The procs were always going to refuse the CONTENT edits; it is this
+ * PR that made the page reachable, so the gate belongs here.
+ */
+export const AUTHORABLE_LISTING_STATUSES = ['draft', 'pending', 'approved'] as const;
+
+/** Is this listing in a state its owner may still author? */
+export function isAuthorableListingStatus(status: string): boolean {
+  return (AUTHORABLE_LISTING_STATUSES as readonly string[]).includes(status);
+}

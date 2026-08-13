@@ -100,6 +100,34 @@ export function inviteDisclosureItems(
   return items;
 }
 
+/**
+ * Why an invite for `userId` cannot be sent, or `null` when it can. PURE.
+ *
+ * 🔴 A `rejected` SEAT IS RE-INVITABLE. `inviteCollaborator` documents and implements
+ * re-opening a declined invite — "declining is not permanent, and the invitee must consent
+ * again" — but the picker excluded EVERY roster row, so a user who declined once could
+ * never be asked again. The service path existed and the UI made it unreachable.
+ *
+ * 🔴 It returns a REASON rather than a boolean because the caller must be able to SAY
+ * something: the original guard was a silent `return`, which makes a legitimate click look
+ * like a broken picker.
+ */
+export function inviteBlockedReason(
+  rows: CollaboratorRosterRow[],
+  userId: number
+): { title: string; message: string } | null {
+  const row = rows.find((r) => r.userId === userId);
+  if (!row || row.status === 'rejected') return null;
+  return row.status === 'accepted'
+    ? { title: 'Already on this app', message: 'That user is already a collaborator.' }
+    : { title: 'Already invited', message: 'That user already has a pending invitation.' };
+}
+
+/** The roster ids the picker hides. A REJECTED seat stays offerable — see above. */
+export function pickerExcludedUserIds(rows: CollaboratorRosterRow[]): number[] {
+  return rows.filter((r) => r.status !== 'rejected').map((r) => r.userId);
+}
+
 /** `pending`/`rejected` are inert; say so rather than letting a badge imply access. */
 function statusBadge(status: string) {
   if (status === 'accepted') return <Badge color="green">Collaborator</Badge>;

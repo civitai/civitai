@@ -86,3 +86,33 @@ describe('myAppListingHref — the row cannot deep-link a tab its kind refuses',
     );
   });
 });
+
+/**
+ * 🔴 A row whose editor would refuse must not link to it. `getAppListingAuthoringContext`
+ * throws FORBIDDEN on a non-authorable status, and before the status gate the canonical
+ * page opened on a moderator-REMOVED listing with a fully live Collaborators tab — an
+ * owner could invite someone onto a delisted app and the acceptance would mint repo write.
+ */
+describe('MyAppListingsPanelView — non-authorable listings are listed, not linked', () => {
+  for (const status of ['removed', 'rejected'] as const) {
+    test(`a \`${status}\` listing renders WITHOUT a link`, async () => {
+      renderWithProviders(
+        <MyAppListingsPanelView rows={[appRow({ appListingId: 'apl_x', status })]} />
+      );
+      // The row itself is the commit proof — it must still be listed.
+      await expect.element(page.getByTestId('apps-mine-row-apl_x')).toBeInTheDocument();
+      await expect.element(page.getByTestId('apps-mine-unlinked-apl_x')).toBeInTheDocument();
+      expect(page.getByTestId('apps-mine-link-apl_x').elements()).toHaveLength(0);
+    });
+  }
+
+  for (const status of ['draft', 'pending', 'approved'] as const) {
+    test(`an \`${status}\` listing DOES link (the control)`, async () => {
+      renderWithProviders(
+        <MyAppListingsPanelView rows={[appRow({ appListingId: 'apl_y', status })]} />
+      );
+      await expect.element(page.getByTestId('apps-mine-link-apl_y')).toBeInTheDocument();
+      expect(page.getByTestId('apps-mine-unlinked-apl_y').elements()).toHaveLength(0);
+    });
+  }
+});

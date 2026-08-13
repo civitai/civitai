@@ -20,7 +20,7 @@ import type {
  * to `AppListing`: an OFF-SITE listing has no AppBlock at all, so a block-keyed route is
  * structurally unable to address one of the store's two kinds.
  */
-export type EditorTab = 'details' | 'media' | 'manifest' | 'collaborators';
+export type EditorTab = 'details' | 'media' | 'manifest' | 'earnings' | 'collaborators';
 
 /** The tab a bare `/edit` (no `?tab=`) lands on. Always in the allowed set. */
 export const DEFAULT_EDITOR_TAB: EditorTab = 'details';
@@ -34,13 +34,20 @@ export const DEFAULT_EDITOR_TAB: EditorTab = 'details';
  * sanitiser wide is what preserves a legacy deep-link's tab across the hop instead of
  * flattening every one of them to the default.
  */
-export const ALL_EDITOR_TABS: EditorTab[] = ['details', 'media', 'manifest', 'collaborators'];
+export const ALL_EDITOR_TABS: EditorTab[] = [
+  'details',
+  'media',
+  'manifest',
+  'earnings',
+  'collaborators',
+];
 
 /** What the caller sees on each tab. Rendered in this order. */
 export const EDITOR_TAB_LABELS: Readonly<Record<EditorTab, string>> = Object.freeze({
   details: 'Details',
   media: 'Media',
   manifest: 'Manifest',
+  earnings: 'Earnings',
   collaborators: 'Collaborators',
 });
 
@@ -82,6 +89,14 @@ export type EditorTabContext = {
  *
  *   - `manifest`      — BOTH `capabilities.submitVersion` AND a backing block.
  *
+ *   - `earnings`      — BOTH `capabilities.earnings` AND a backing block, MIRRORING the
+ *                       proc's own refusal exactly: `getAppEarnings` returns
+ *                       `unsupportedKind` when `!listingKindSupports(kind,'earnings') ||
+ *                       !appBlockId`, so any other predicate here would render a tab whose
+ *                       query is guaranteed to refuse. Visible to an accepted EDITOR as
+ *                       well as the owner — that is the capability the invite disclosure
+ *                       promises, and this panel is what makes the promise true.
+ *
  * 🔴 NEITHER TWO-CLAUSE ARM IS REDUNDANT, and the reason is the same for both: the
  * capability and the block-presence check disagree in OPPOSITE directions, so each clause
  * is the sole cause of an answer somewhere and each is individually killable.
@@ -107,6 +122,7 @@ export function editorTabsFor(ctx: EditorTabContext): EditorTab[] {
   const tabs: EditorTab[] = ['details'];
   if (ctx.capabilities.listingMedia === true && ctx.appBlockId != null) tabs.push('media');
   if (ctx.capabilities.submitVersion === true && ctx.appBlockId != null) tabs.push('manifest');
+  if (ctx.capabilities.earnings === true && ctx.appBlockId != null) tabs.push('earnings');
   tabs.push('collaborators');
   return tabs;
 }

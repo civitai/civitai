@@ -24,10 +24,10 @@ const onsite = capabilitiesForKind('onsite');
 const offsite = capabilitiesForKind('offsite');
 
 describe('editorTabsFor — kind-derived tabs, pinned both directions', () => {
-  it('ON-SITE owner: Details, Media, Manifest, Collaborators — in order', () => {
+  it('ON-SITE owner: Details, Media, Manifest, Earnings, Collaborators — in order', () => {
     expect(
       editorTabsFor({ kind: 'onsite', appBlockId: 'ab_1', role: 'owner', capabilities: onsite })
-    ).toEqual(['details', 'media', 'manifest', 'collaborators']);
+    ).toEqual(['details', 'media', 'manifest', 'earnings', 'collaborators']);
   });
 
   it('OFF-SITE owner: NO Manifest and NO Media — only Details + Collaborators', () => {
@@ -79,6 +79,11 @@ describe('editorTabsFor — kind-derived tabs, pinned both directions', () => {
     });
     expect(tabs).not.toContain('manifest');
     expect(tabs).not.toContain('media');
+    // 🔴 And no EARNINGS: `BlockBuzzAttribution` is keyed on `appBlockId` + a snapshotted
+    // owner, so an off-site listing has no row that could ever be attributed to it and
+    // `getAppEarnings` refuses it with `unsupportedKind`. Rendering the tab would be
+    // rendering a guaranteed refusal.
+    expect(tabs).not.toContain('earnings');
     expect(tabs).toEqual(['details', 'collaborators']);
   });
 

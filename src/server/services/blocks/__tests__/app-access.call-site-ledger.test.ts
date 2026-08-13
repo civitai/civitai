@@ -784,7 +784,9 @@ describe('app-ownership gate ledger', () => {
       for (const [file, rationale] of Object.entries(KIND_CAPABILITY_LEDGER)) {
         expect(rationale.length, `${file} rationale is too terse`).toBeGreaterThan(80);
         expect(
-          /earnings|submitVersion|analytics|listingContent|submitForReview/.test(rationale),
+          /earnings|submitVersion|analytics|listingContent|listingMedia|submitForReview/.test(
+            rationale
+          ),
           `${file} must name which capability it consumes`
         ).toBe(true);
       }

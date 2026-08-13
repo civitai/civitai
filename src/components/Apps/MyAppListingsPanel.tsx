@@ -9,6 +9,7 @@ import type {
   ListingCapability,
   ListingKind,
 } from '~/shared/constants/app-capabilities.constants';
+import { isAuthorableListingStatus } from '~/shared/constants/app-capabilities.constants';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -43,6 +44,14 @@ export type MyAppListingsPanelViewProps = {
  * 🔴 THE ROW LINKS TO A TAB THE ROW'S OWN KIND ALLOWS. `editorTabsFor` is the single
  * derivation, so a card can never deep-link an off-site listing at `?tab=manifest` — the
  * href is built from the same list the destination page will render.
+ *
+ * 🔴 AND THAT IS A WEAKER CLAIM THAN IT LOOKS, stated honestly because an earlier version
+ * of this comment overclaimed: `tabs[0]` is `'details'` for EVERY shape, since Details is
+ * the one tab every kind and role can always open. So this call currently cannot produce a
+ * kind-specific href, and a test asserting "never `?tab=manifest` for off-site" passes
+ * whatever the capability table says. It is written this way so it STAYS correct if the
+ * first tab ever becomes conditional — not because it is doing work today. The real
+ * kind-derivation guard is `appListingEditorTabs.test.ts`.
  */
 export function myAppListingHref(row: MyAppListingRow): string {
   const tabs: EditorTab[] = editorTabsFor({
@@ -102,9 +111,24 @@ export function MyAppListingsPanelView({
         >
           <Group justify="space-between" wrap="wrap" gap="sm">
             <Stack gap={2}>
-              <Link href={myAppListingHref(row)} data-testid={`apps-mine-link-${row.appListingId}`}>
-                <Text fw={600}>{row.name}</Text>
-              </Link>
+              {/* 🔴 NO LINK when the editor would refuse. `getAppListingAuthoringContext`
+                  throws FORBIDDEN on a non-authorable status (a moderator-REMOVED or a
+                  REJECTED listing), so linking there would be offering a guaranteed 403 —
+                  and on a removed listing the page used to open with a fully live
+                  Collaborators tab. The row still LISTS, because an owner needs to see
+                  that the app exists and what became of it. */}
+              {isAuthorableListingStatus(row.status) ? (
+                <Link
+                  href={myAppListingHref(row)}
+                  data-testid={`apps-mine-link-${row.appListingId}`}
+                >
+                  <Text fw={600}>{row.name}</Text>
+                </Link>
+              ) : (
+                <Text fw={600} c="dimmed" data-testid={`apps-mine-unlinked-${row.appListingId}`}>
+                  {row.name}
+                </Text>
+              )}
               <Text size="xs" c="dimmed">
                 {row.slug}
               </Text>

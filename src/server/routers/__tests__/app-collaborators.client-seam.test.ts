@@ -3,6 +3,9 @@ import path from 'path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { stripCommentsAndStrings } from '../../../../test/strip-comments';
+
 /**
  * 🔴 THE PROC↔CLIENT SEAM. Every `appCollaborators.*` procedure must have at least one
  * CALLER in the app, except the four ownership-TRANSFER procs, which are deliberately
@@ -104,9 +107,34 @@ function readDeclaredProcs(): string[] {
   return names;
 }
 
-/** `appCollaborators.<proc>` occurrences in `text`. */
+/**
+ * The two shapes a real tRPC client call takes here: `trpc.appCollaborators.<proc>.…`
+ * and `utils.appCollaborators.<proc>.invalidate()`.
+ *
+ * 🔴 THE NAMESPACE IS DISAMBIGUATED, not merely matched. `constants.appCollaborators` is
+ * a DIFFERENT object — the config bag holding `maxCollaborators`,
+ * `inviteNotifyThrottleHours` and `transferExpiryDays` — and a bare
+ * `\bappCollaborators\.(\w+)` matched it too, in the very files that read it.
+ *
+ * Requiring an explicit `trpc.`/`utils.` receiver is fail-SAFE: a client written in some
+ * third shape (a differently-named `useUtils()` binding, say) would not be counted, so
+ * its proc would read as UNWIRED and turn this guard RED. Red is the direction someone
+ * looks at; a regex loose enough to count prose is not.
+ */
+const PROC_REFERENCE_RE = /\b(?:trpc|utils)\.appCollaborators\.([A-Za-z_$][\w$]*)/g;
+
+/**
+ * `appCollaborators.<proc>` CALL SITES in `text`.
+ *
+ * 🔴 STRUCTURAL, NOT SPELLED — comments and string literals are removed BEFORE matching.
+ * This guard previously reported `getAppEarnings` as WIRED on the strength of a backticked
+ * mention inside a JSDoc block, and the prose propping it up was the INVITE DISCLOSURE:
+ * the copy promising owners that an editor can read earnings. A user-facing promise with
+ * no surface behind it, holding up the guard whose whole job is to notice a missing
+ * surface. A guard a COMMENT can satisfy is not a guard.
+ */
 export function findCollaboratorProcReferences(text: string): string[] {
-  return [...text.matchAll(/\bappCollaborators\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1]);
+  return [...stripCommentsAndStrings(text).matchAll(PROC_REFERENCE_RE)].map((m) => m[1]);
 }
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -157,6 +185,59 @@ describe('appCollaborators proc↔client seam', () => {
     ).toEqual(['listMyPendingInvites']);
     // …and does NOT match a different router with a similar name.
     expect(findCollaboratorProcReferences('trpc.appListings.list.useQuery()')).toEqual([]);
+  });
+
+  /**
+   * 🔴 NEGATIVE CONTROLS — the four shapes that used to satisfy this guard with no code
+   * behind them. Each is a real defect the scanner shipped with, not a hypothetical:
+   * `getAppEarnings` read as WIRED for the whole of this PR on the strength of the first.
+   */
+  describe('the scanner is STRUCTURAL — prose cannot wire a proc', () => {
+    it('a JSDoc mention does NOT count as a client', () => {
+      expect(
+        findCollaboratorProcReferences(
+          '/**\n * An editor can read earnings (`trpc.appCollaborators.getAppEarnings`).\n */'
+        )
+      ).toEqual([]);
+    });
+
+    it('a LINE comment does NOT count as a client', () => {
+      expect(
+        findCollaboratorProcReferences('// TODO: call trpc.appCollaborators.getAppEarnings here')
+      ).toEqual([]);
+    });
+
+    it('a STRING LITERAL does NOT count as a client', () => {
+      for (const quoted of [
+        "const doc = 'trpc.appCollaborators.getAppEarnings';",
+        'const doc = "trpc.appCollaborators.getAppEarnings";',
+        'const doc = `trpc.appCollaborators.getAppEarnings`;',
+      ]) {
+        expect(findCollaboratorProcReferences(quoted), quoted).toEqual([]);
+      }
+    });
+
+    it('🔴 `constants.appCollaborators.*` is a DIFFERENT namespace and does NOT count', () => {
+      // The config bag (maxCollaborators / inviteNotifyThrottleHours / transferExpiryDays).
+      // A bare `appCollaborators.` match swept these in, in the very files that read them.
+      expect(
+        findCollaboratorProcReferences('if (seated >= constants.appCollaborators.maxCollaborators)')
+      ).toEqual([]);
+      expect(
+        findCollaboratorProcReferences('constants.appCollaborators.transferExpiryDays * 86_400_000')
+      ).toEqual([]);
+    });
+
+    it('a real call SURVIVES stripping even when the file is mostly prose', () => {
+      // The other direction, and it is what stops the four controls above from passing by
+      // deleting everything: over-stripping would make every proc read as unwired.
+      const file = [
+        '/** Calls `trpc.appCollaborators.getAppEarnings` — prose only. */',
+        "// const legacy = 'trpc.appCollaborators.remove';",
+        'const q = trpc.appCollaborators.getAppEarnings.useQuery({ appListingId });',
+      ].join('\n');
+      expect(findCollaboratorProcReferences(file)).toEqual(['getAppEarnings']);
+    });
   });
 
   /**

@@ -4,7 +4,11 @@ import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type { CollaboratorRosterRow } from '~/components/Apps/AppCollaboratorsPanelView';
-import { AppCollaboratorsPanelView } from '~/components/Apps/AppCollaboratorsPanelView';
+import {
+  AppCollaboratorsPanelView,
+  inviteBlockedReason,
+  pickerExcludedUserIds,
+} from '~/components/Apps/AppCollaboratorsPanelView';
 import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constants';
 
 /**
@@ -342,5 +346,55 @@ describe('AppCollaboratorsPanelView — roster states', () => {
       />
     );
     await expect.element(page.getByTestId('apps-collaborators-empty')).toBeInTheDocument();
+  });
+});
+
+/**
+ * 🔴 RE-INVITING A DECLINED USER. `inviteCollaborator` implements re-opening a `rejected`
+ * seat — "declining is not permanent, and the invitee must consent again" — but the picker
+ * excluded EVERY roster row and the guard returned silently, so that service path was
+ * unreachable from the UI and the click looked like a broken picker.
+ */
+describe('inviteBlockedReason / pickerExcludedUserIds', () => {
+  const rows = [
+    seat({ userId: 1, status: 'accepted' }),
+    seat({ userId: 2, status: 'pending' }),
+    seat({ userId: 3, status: 'rejected' }),
+  ];
+
+  test('a REJECTED seat is re-invitable and stays offerable in the picker', () => {
+    expect(inviteBlockedReason(rows, 3)).toBeNull();
+    expect(pickerExcludedUserIds(rows)).not.toContain(3);
+  });
+
+  test('a user with NO seat is invitable', () => {
+    expect(inviteBlockedReason(rows, 99)).toBeNull();
+    expect(pickerExcludedUserIds(rows)).not.toContain(99);
+  });
+
+  test('an ACCEPTED and a PENDING seat are both blocked, with DISTINCT reasons', () => {
+    const accepted = inviteBlockedReason(rows, 1);
+    const pending = inviteBlockedReason(rows, 2);
+    expect(accepted).not.toBeNull();
+    expect(pending).not.toBeNull();
+    // 🔴 Distinct copy: "already a collaborator" and "already invited" are different
+    // situations, and a shared message would tell an owner the wrong one.
+    expect(accepted!.message).not.toBe(pending!.message);
+    expect(accepted!.message).toMatch(/already a collaborator/i);
+    expect(pending!.message).toMatch(/pending invitation/i);
+  });
+
+  test('the picker hides exactly the live seats — accepted and pending, not rejected', () => {
+    expect(pickerExcludedUserIds(rows).sort()).toEqual([1, 2]);
+  });
+
+  test('🔴 the guard and the picker AGREE on every row (one rule, two readers)', () => {
+    // The defect shape this prevents: a user the picker offers but the guard then refuses
+    // (a dead click), or one the picker hides but the guard would allow (unreachable).
+    for (const row of rows) {
+      const blocked = inviteBlockedReason(rows, row.userId) !== null;
+      const hidden = pickerExcludedUserIds(rows).includes(row.userId);
+      expect(blocked, `disagreement on user ${row.userId}`).toBe(hidden);
+    }
   });
 });

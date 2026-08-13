@@ -13,6 +13,8 @@ import {
 import { IconAlertTriangle, IconCoin, IconMailOpened } from '@tabler/icons-react';
 
 import { inviteDisclosureItems } from '~/components/Apps/AppCollaboratorsPanelView';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import type { ReactNode } from 'react';
 import { listingEditHref } from '~/components/Apps/appListingEditorTabs';
 import type { ListingKind } from '~/shared/constants/app-capabilities.constants';
 import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constants';
@@ -49,6 +51,12 @@ export type AppInvitesBodyViewProps = {
   errorMessage?: string | null;
   busyListingId?: string | null;
   onRespond?: (appListingId: string, accept: boolean) => void;
+  /**
+   * Renders the inviter's identity. INJECTED, like the roster panel's `renderUser`, so
+   * this View keeps no data-layer dependency — `UserAvatar` self-fetches over tRPC, and
+   * importing it here would drag that into every test of this component.
+   */
+  renderInviter?: (userId: number) => ReactNode;
 };
 
 /** Props-only view — no tRPC, no session, so every branch is directly renderable. */
@@ -58,7 +66,15 @@ export function AppInvitesBodyView({
   errorMessage = null,
   busyListingId = null,
   onRespond,
+  renderInviter,
 }: AppInvitesBodyViewProps) {
+  const inviter =
+    renderInviter ??
+    ((userId: number) => (
+      <Text size="xs" c="dimmed">
+        user #{userId}
+      </Text>
+    ));
   if (errorMessage) {
     return (
       <Alert
@@ -114,9 +130,20 @@ export function AppInvitesBodyView({
                     {invite.kind === 'onsite' ? 'On-site app' : 'External app'}
                   </Badge>
                 </Group>
-                <Text size="xs" c="dimmed">
-                  Invited by user #{invite.invitedBy}
-                </Text>
+                {/* A real chip, like every sibling surface — a raw numeric id told the
+                    invitee nothing about who is asking. The container supplies
+                    `UserAvatar`, which self-fetches from the id, so the proc's projection
+                    does not have to widen to carry a username. */}
+                <Group
+                  gap={4}
+                  wrap="nowrap"
+                  data-testid={`apps-invite-inviter-${invite.appListingId}`}
+                >
+                  <Text size="xs" c="dimmed">
+                    Invited by
+                  </Text>
+                  {inviter(invite.invitedBy)}
+                </Group>
               </Group>
               <Alert
                 color="yellow"
@@ -176,9 +203,11 @@ export function AppInvitesBody() {
       });
       void utils.appCollaborators.listMyPendingInvites.invalidate();
       void utils.appListings.listMine.invalidate();
-      if (result.status === 'accepted') {
-        void utils.blocks.getNavSummary.invalidate();
-      }
+      // 🔴 ALWAYS, not only on accept. `getNavSummary.hasPendingInvites` drives the
+      // "Invites" sub-nav tab, so DECLINING the last invitation used to leave the tab
+      // pointing at an empty page until a reload — the one case where the count actually
+      // reaches zero.
+      void utils.blocks.getNavSummary.invalidate();
     },
     onError: (error) =>
       showErrorNotification({
@@ -194,6 +223,7 @@ export function AppInvitesBody() {
       errorMessage={invitesQuery.error?.message ?? null}
       busyListingId={respond.isPending ? respond.variables?.appListingId ?? null : null}
       onRespond={(appListingId, accept) => respond.mutate({ appListingId, accept })}
+      renderInviter={(userId) => <UserAvatar userId={userId} withUsername size="xs" />}
     />
   );
 }

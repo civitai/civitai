@@ -405,6 +405,54 @@ describe('getAppListingAuthoringContext', () => {
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
+  /**
+   * 🔴 STATUS GATE. Before it, a moderator-REMOVED listing opened the canonical authoring
+   * page with every tab live — including Collaborators, so an owner could invite someone
+   * onto a delisted app and the acceptance would mint Forgejo `write` on its repo. The
+   * content procs would have refused the edits; nothing refused the PAGE.
+   */
+  describe('the listing STATUS gate', () => {
+    function withStatus(status: string) {
+      mockDb.appListing.findUnique.mockImplementation(async (...a: unknown[]) =>
+        (a[0] as { select?: { slug?: boolean } }).select?.slug
+          ? { id: 'apl_1', slug: 'my-app', name: 'My App', status }
+          : listingFixture()
+      );
+    }
+
+    for (const status of ['removed', 'rejected', 'withdrawn']) {
+      it(`refuses a \`${status}\` listing with FORBIDDEN`, async () => {
+        withStatus(status);
+        await expect(
+          getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER })
+        ).rejects.toMatchObject({
+          code: 'FORBIDDEN',
+          message: 'This listing can no longer be edited',
+        });
+      });
+    }
+
+    for (const status of ['draft', 'pending', 'approved']) {
+      it(`ADMITS a \`${status}\` listing (the control)`, async () => {
+        withStatus(status);
+        await expect(
+          getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER })
+        ).resolves.toMatchObject({ appListingId: 'apl_1', status });
+      });
+    }
+
+    it('🔴 the refusal is DISTINCT from the no-role refusal', async () => {
+      // Both are FORBIDDEN, so only the message separates "you may not edit this" from
+      // "this can no longer be edited" — and a mutant that routes one into the other
+      // would otherwise be unattributable.
+      withStatus('removed');
+      mockDb.appCollaborator.findFirst.mockImplementation(async () => null);
+      await expect(
+        getAppListingAuthoringContext({ appListingId: 'apl_1', userId: STRANGER })
+      ).rejects.toMatchObject({ message: 'You do not have access to this app' });
+    });
+  });
+
   it('a missing listing is NOT_FOUND', async () => {
     mockDb.appListing.findUnique.mockImplementation(async () => null);
     await expect(

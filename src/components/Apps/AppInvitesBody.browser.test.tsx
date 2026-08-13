@@ -107,3 +107,27 @@ describe('AppInvitesBodyView', () => {
     expect(acceptedInviteHref('apl_1')).toBe('/apps/listing/apl_1/edit');
   });
 });
+
+describe('AppInvitesBodyView — the inviter', () => {
+  test('renders an injected inviter chip rather than a raw id', async () => {
+    renderWithProviders(
+      <AppInvitesBodyView
+        invites={[invite({ appListingId: 'apl_1', invitedBy: 42 })]}
+        renderInviter={(userId) => <span data-testid={`chip-${userId}`}>alice</span>}
+      />
+    );
+    await expect.element(page.getByTestId('chip-42')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-invite-inviter-apl_1')).toHaveTextContent(/alice/);
+  });
+
+  test('falls back to a plain id label when no renderer is injected', async () => {
+    // The default keeps the View renderable with no data layer at all — but production
+    // always injects `UserAvatar`, so this is the test-only path.
+    renderWithProviders(
+      <AppInvitesBodyView invites={[invite({ appListingId: 'apl_1', invitedBy: 42 })]} />
+    );
+    await expect
+      .element(page.getByTestId('apps-invite-inviter-apl_1'))
+      .toHaveTextContent(/user #42/);
+  });
+});

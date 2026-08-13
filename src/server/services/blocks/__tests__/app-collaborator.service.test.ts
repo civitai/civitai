@@ -1275,6 +1275,62 @@ describe('setCollaboratorDisplayed — OWNER control (targetUserId)', () => {
     });
   });
 
+  /**
+   * 🔴 TWO ASSERTIONS THAT CLOSE SURVIVED MUTANTS. Both lines were added by this feature
+   * and both survived the first mutation sweep — i.e. they were unpinned behaviour that
+   * looked pinned because the surrounding tests were green.
+   */
+  it('the NO_INVITE message names the TARGET when an owner acts on someone else', async () => {
+    // Self and owner-driven failures are different situations: "you are not an active
+    // collaborator" is simply wrong copy to show an owner who picked a stale row.
+    mockDb.appCollaborator.updateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      setCollaboratorDisplayed({
+        appListingId: LISTING,
+        userId: OWNER,
+        targetUserId: TARGET,
+        displayed: false,
+      })
+    ).rejects.toMatchObject({
+      code: 'NO_INVITE',
+      message: 'That user is not an active collaborator on this app',
+    });
+  });
+
+  it('…and keeps the SELF wording on the self path', async () => {
+    mockDb.appCollaborator.updateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      setCollaboratorDisplayed({ appListingId: LISTING, userId: TARGET, displayed: false })
+    ).rejects.toMatchObject({
+      code: 'NO_INVITE',
+      message: 'You are not an active collaborator on this app',
+    });
+  });
+
+  it('the audit metadata records `byOwner` — the two paths are distinguishable', async () => {
+    // Without it the log cannot tell an owner un-crediting a collaborator from the
+    // collaborator opting out, which is the one question this event exists to answer.
+    await setCollaboratorDisplayed({
+      appListingId: LISTING,
+      userId: OWNER,
+      targetUserId: TARGET,
+      displayed: false,
+    });
+    const owned = mockDb.appOwnershipEvent.create.mock.calls[0][0] as {
+      data: { metadata: { byOwner: boolean; displayed: boolean } };
+    };
+    expect(owned.data.metadata.byOwner).toBe(true);
+    expect(owned.data.metadata.displayed).toBe(false);
+
+    vi.clearAllMocks();
+    mockDb.appCollaborator.updateMany.mockResolvedValue({ count: 1 });
+    await setCollaboratorDisplayed({ appListingId: LISTING, userId: TARGET, displayed: true });
+    const self = mockDb.appOwnershipEvent.create.mock.calls[0][0] as {
+      data: { metadata: { byOwner: boolean } };
+    };
+    expect(self.data.metadata.byOwner).toBe(false);
+  });
+
   it('an OFF-SITE listing’s owner may set a seat’s flag — the column IS canonical there', async () => {
     // The control that keeps the canonical resolution from over-reaching: an off-site
     // listing has no OauthClient in its ownership chain, so `AppListing.userId` is the
