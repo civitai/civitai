@@ -9,8 +9,11 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  *   1. the metadata fields (`size`, `fileType`, `fileName`, `hashes`) were read
  *      off the file this handler picked (`getPrimaryFile` over the version's
  *      files, with hardcoded default preferences), and
- *   2. `downloadUrl` was emitted as `?primary=true`, which DELEGATES the choice
- *      to `/api/download/models/[modelVersionId]` — a route that re-runs
+ *   2. `downloadUrl` was emitted as a BARE `/api/download/models/[modelVersionId]`
+ *      with no query string — `createModelFileDownloadUrl`'s `primary` flag only
+ *      SUPPRESSES the other selectors, and `QS.stringify` has no `primary` key,
+ *      so no `primary=true` was ever on the url. A bare url names no file, so
+ *      the download route resolves one independently: it re-runs
  *      `getPrimaryFile` itself, over a DIFFERENT population (visibility-filtered)
  *      and with DIFFERENT preferences (the requesting user's `filePreferences`
  *      merged in).
@@ -19,7 +22,9 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * advertises file A's SHA256/size/name next to a URL that serves file B. Any
  * consumer that verifies the hash fails, permanently.
  *
- * The contract pinned here: the URL names the file whose metadata was returned.
+ * The contract pinned here: the URL names the file whose metadata was returned,
+ * and the BRANCH (epoch artifact vs civitai file) — which fixes the AIR — does
+ * not vary with the caller's preferences.
  */
 
 const {
@@ -66,6 +71,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
       handler(req, res, currentUser.value),
 }));
 
+import { Air } from '@civitai/client';
 import handler from '~/pages/api/v1/model-versions/mini/[id]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
@@ -93,7 +99,7 @@ const SAFETENSOR = {
   type: 'Model',
   visibility: 'Public',
   url: 'https://example.invalid/a.safetensors',
-  metadata: { format: 'SafeTensor', size: 'full', fp: 'fp16' },
+  metadata: { format: 'SafeTensor', size: 'full', fp: 'fp16' } as const,
   sizeKB: 2_097_152,
   name: 'model-fp16.safetensors',
   hashes: { SHA256: 'A'.repeat(64) },
@@ -103,7 +109,7 @@ const GGUF = {
   type: 'Model',
   visibility: 'Public',
   url: 'https://example.invalid/b.gguf',
-  metadata: { format: 'GGUF', quantType: 'Q4_K_M' },
+  metadata: { format: 'GGUF', quantType: 'Q4_K_M' } as const,
   sizeKB: 1_048_576,
   name: 'model-Q4_K_M.gguf',
   hashes: { SHA256: 'B'.repeat(64) },
@@ -113,10 +119,33 @@ const PRIVATE_MODEL = {
   type: 'Model',
   visibility: 'Private',
   url: 'https://example.invalid/c.safetensors',
-  metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp16' },
+  metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp16' } as const,
   sizeKB: 4_194_304,
   name: 'private-pruned.safetensors',
   hashes: { SHA256: 'C'.repeat(64) },
+};
+
+/**
+ * A PUBLIC file whose `ModelFile.type` maps through `fileTypeUrnMap`
+ * ('Diffusion Model' -> `diffusionmodel`), unlike every other fixture here
+ * (type 'Model', which falls through to the MODEL-type-derived `checkpoint`).
+ *
+ * That difference is what makes the AIR's `fileType` argument observable. It is
+ * scored to LOSE to PRIVATE_MODEL and to be indistinguishable from SAFETENSOR
+ * on preferences, so on `[PRIVATE_MODEL, PUBLIC_DIFFUSION]` the two selections
+ * genuinely disagree: `requestedFile` (ungated) is PRIVATE_MODEL while
+ * `targetFile` (gated) is this file — the exact state a
+ * `targetFile.type` -> `requestedFile?.type` mutant would misread.
+ */
+const PUBLIC_DIFFUSION = {
+  id: 606,
+  type: 'Diffusion Model',
+  visibility: 'Public',
+  url: 'https://example.invalid/e.safetensors',
+  metadata: { format: 'SafeTensor', size: 'full', fp: 'fp16' } as const,
+  sizeKB: 3_145_728,
+  name: 'diffusion-fp16.safetensors',
+  hashes: { SHA256: 'F'.repeat(64) },
 };
 
 /**
@@ -137,7 +166,7 @@ const TRAINING_FILE = {
   visibility: 'Private',
   url: 'https://example.invalid/d.safetensors',
   metadata: {
-    format: 'SafeTensor',
+    format: 'SafeTensor' as const,
     // Two epochs, so "the LAST epoch is the one served" is an observable
     // property rather than a tautology on a single-element array.
     trainingResults: {
@@ -214,11 +243,13 @@ async function run(
   versionOverrides: Partial<typeof versionRow> = {}
 ) {
   // Call 1 = the version row, call 2 = the version's ModelFile rows.
-  // Deep-clone: the handler's epoch selection ends in `epochs?.pop()`, which
-  // MUTATES the metadata it was handed. A real request re-reads the rows from
-  // Postgres every time, so sharing a module-level fixture across tests would be
-  // the only place that mutation is observable — and it would drain the epochs
-  // array after the first use.
+  // Deep-clone so a handler that mutates the rows it was handed cannot leak that
+  // mutation into the next test through a shared module-level fixture. A real
+  // request re-reads the rows from Postgres every time, so an in-place mutation
+  // there is invisible in prod and would only ever show up as cross-test
+  // contamination here. (The epoch selection used to end in `epochs?.pop()`,
+  // which did exactly that; it is now a non-mutating last-element read. The
+  // clone stays as the guard against the class, not that one instance.)
   mockQueryRaw
     .mockResolvedValueOnce([{ ...versionRow, ...versionOverrides }])
     .mockResolvedValueOnce(structuredClone(files));
@@ -249,6 +280,21 @@ function urlFileId(body: Body): string | null {
   return new URL(body.downloadUrls[0]).searchParams.get('fileId');
 }
 
+/**
+ * The arguments of the LAST `Air.stringify` call.
+ *
+ * `src/__tests__/setup.ts` globally stubs `Air.stringify = vi.fn(() => '')`, so
+ * `stringifyAIR` returns `''` in every unit suite and `body.air` carries no
+ * information — asserting on it can only ever compare `'' === ''`. The stub's
+ * ARGUMENTS are fully observable though, and they are precisely what the handler
+ * derives from its own state (which branch it took, which file it settled on),
+ * so that is the assertable surface. Do NOT "fix" this by unstubbing the module:
+ * the stub is global and shared by every unit suite.
+ */
+function lastAirArgs() {
+  return vi.mocked(Air.stringify).mock.calls.at(-1)?.[0];
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   currentUser.value = undefined;
@@ -271,8 +317,13 @@ describe('createModelFileDownloadUrl', () => {
     });
     const params = new URL(url, 'https://civitai.com').searchParams;
     expect(params.get('fileId')).toBe(String(SAFETENSOR.id));
-    for (const k of ['type', 'format', 'size', 'fp', 'quantType', 'primary'])
+    // `primary` is deliberately NOT in this list: `QS.stringify` is never handed
+    // a `primary` key, so asserting its absence guards a string that cannot
+    // exist and passes under every mutation. The falsifiable statement is that
+    // `fileId` is the ONLY param — assert that instead.
+    for (const k of ['type', 'format', 'size', 'fp', 'quantType'])
       expect(params.get(k), `${k} must not be emitted alongside fileId`).toBeNull();
+    expect([...params.keys()]).toEqual(['fileId']);
   });
 });
 
@@ -300,6 +351,15 @@ describe('the fixture is discriminating', () => {
     // whether the population was filtered.
     expect(getPrimaryFile([PRIVATE_MODEL, SAFETENSOR, GGUF])?.id).toBe(PRIVATE_MODEL.id);
     expect(getPrimaryFile([SAFETENSOR, GGUF])?.id).toBe(SAFETENSOR.id);
+  });
+
+  it('the diffusion-model fixture also loses to the private file, and maps to a different AIR type', () => {
+    // Makes `[PRIVATE_MODEL, PUBLIC_DIFFUSION]` a population on which the
+    // ungated and gated selections disagree...
+    expect(getPrimaryFile([PRIVATE_MODEL, PUBLIC_DIFFUSION])?.id).toBe(PRIVATE_MODEL.id);
+    expect(getPrimaryFile([PUBLIC_DIFFUSION])?.id).toBe(PUBLIC_DIFFUSION.id);
+    // ...and on which `ModelFile.type` is what tells them apart.
+    expect(PUBLIC_DIFFUSION.type).not.toBe(PRIVATE_MODEL.type);
   });
 });
 
@@ -454,6 +514,87 @@ describe("GET /api/v1/model-versions/mini/[id] — the caller's file preferences
   });
 });
 
+describe('GET /api/v1/model-versions/mini/[id] — the AIR handed to Air.stringify', () => {
+  /**
+   * `body.air` is always `''` under the global `Air.stringify` stub, so these
+   * assert the stub's ARGUMENTS instead (see `lastAirArgs`). Everything below is
+   * a MUTANT GUARD, not regression coverage: the AIR-building code is unchanged
+   * by this PR and these pass on both sides of it. They exist because two
+   * mutations of it survived the entire suite.
+   */
+  it('the epoch path names the orchestrator JOB as id and the ASSET as version, not the reverse', async () => {
+    const { status } = await run([TRAINING_FILE], {}, { availability: 'Private' });
+    expect(status).toBe(200);
+
+    const air = lastAirArgs();
+    // Positive control: a zero/undefined here would make every assertion below
+    // vacuous, so prove the handler reached `stringifyAIR` at all.
+    expect(air, 'stringifyAIR was never called — the assertions below prove nothing').toBeDefined();
+
+    expect(air).toMatchObject({
+      source: 'orchestrator',
+      id: 'job-abc-123',
+      version: 'epoch-000010.safetensors',
+    });
+    // Operand-order guard. Swapping `modelId: jobId` / `id: fileName` yields a
+    // structurally VALID but unresolvable URN, and nothing in the response body
+    // changes — only these two assertions can see it.
+    expect(air?.id).not.toBe('epoch-000010.safetensors');
+    expect(air?.version).not.toBe('job-abc-123');
+  });
+
+  it('the download path names the model id and the version id', async () => {
+    const { status } = await run([SAFETENSOR, GGUF]);
+    expect(status).toBe(200);
+
+    const air = lastAirArgs();
+    expect(air).toBeDefined();
+    expect(air).toMatchObject({
+      source: 'civitai',
+      id: String(versionRow.modelId),
+      version: String(VERSION_ID),
+    });
+  });
+
+  it("the AIR type is derived from the ADVERTISED file's type, not the ungated pick's", async () => {
+    // `requestedFile` (ungated) is PRIVATE_MODEL, type 'Model' -> `checkpoint`.
+    // `targetFile` (gated, and what the response describes) is PUBLIC_DIFFUSION,
+    // type 'Diffusion Model' -> `diffusionmodel`. So binding the AIR's
+    // `fileType` to `requestedFile?.type` instead of `targetFile.type` is
+    // observable here and nowhere else.
+    const { status, body } = await run([PRIVATE_MODEL, PUBLIC_DIFFUSION]);
+    expect(status).toBe(200);
+    expect(body.fileName).toBe(PUBLIC_DIFFUSION.name);
+    expect(body.fileType).toBe(PUBLIC_DIFFUSION.type);
+
+    const air = lastAirArgs();
+    expect(air).toBeDefined();
+    expect(air?.type).toBe('diffusionmodel');
+  });
+
+  it("the AIR's fileId is the QUERY PARAM, absent when the caller omitted it", async () => {
+    // Pins a deliberate non-change. `fileId` comes from `modelFileId`, not from
+    // `targetFile.id`, so a request that omits the param gets an AIR with no
+    // `+<fileId>` disambiguator even though the url names a specific file. The
+    // two never CONTRADICT each other — when the param is supplied, `targetFile`
+    // was looked up by it — the AIR is merely silent. Binding it to
+    // `targetFile.id` instead would append `+<fileId>` to essentially every mini
+    // response's AIR, and that identifier is logged, cached and handed to the
+    // orchestrator. If that is ever wanted, it is its own change with its own
+    // blast radius; this test is what makes the drift visible.
+    const omitted = await run([SAFETENSOR, GGUF]);
+    expect(omitted.status).toBe(200);
+    expect(lastAirArgs()?.modelFileId).toBeUndefined();
+    // Positive control on the same population: when the param IS supplied the
+    // AIR does carry it, so the assertion above is about the param and not about
+    // `modelFileId` being unreadable here.
+    const supplied = await run([SAFETENSOR, GGUF], { modelFileId: String(GGUF.id) });
+    expect(supplied.status).toBe(200);
+    expect(lastAirArgs()?.modelFileId).toBe(String(GGUF.id));
+    expect(urlFileId(supplied.body)).toBe(String(GGUF.id));
+  });
+});
+
 describe('GET /api/v1/model-versions/mini/[id] — the training-results/epoch path', () => {
   /**
    * REGRESSION for the visibility gate being applied too early. A Private
@@ -505,21 +646,88 @@ describe('GET /api/v1/model-versions/mini/[id] — the training-results/epoch pa
     expect(urlFileId(body)).toBe(String(PUBLIC_TRAINING_FILE.id));
   });
 
-  it("the caller's preferences decide WHICH branch is taken on a Private version", async () => {
-    // TRAINING_FILE wins under the defaults (SafeTensor) and would produce an
-    // epoch url; GGUF wins for a GGUF-preferring user and is Public, so that
-    // caller must get the ordinary download-route url instead. If the branch
-    // decision ignored the caller's preferences, this caller would be handed
-    // someone else's epoch.
+  /**
+   * The branch selects which KIND of resource the response addresses — an
+   * orchestrator epoch artifact or a civitai ModelFile — and that choice fixes
+   * the AIR, an identifier that is logged, cached and handed to the
+   * orchestrator. A stored per-user preference must not move it: preference
+   * answers "which variant do I want", not "which resource is this". (It would
+   * also make `?epoch=N` silently a no-op for a caller whose preference happened
+   * to steer them off the epoch branch.)
+   *
+   * So the branch is decided with the DEFAULT preferences, and the caller's
+   * preferences are applied only once the download-route arm has been chosen —
+   * which the next two cases pin.
+   */
+  it('the BRANCH is preference-INDEPENDENT — same branch, same AIR, for every caller', async () => {
+    // The population is chosen so that preferences WOULD move the pick if they
+    // were consulted: TRAINING_FILE wins under the defaults, GGUF wins under
+    // GGUF preferences, and only TRAINING_FILE carries training results.
     expect(getPrimaryFile([TRAINING_FILE, GGUF])?.id).toBe(TRAINING_FILE.id);
     expect(getPrimaryFile([TRAINING_FILE, GGUF], { metadata: GGUF_PREFERENCES })?.id).toBe(GGUF.id);
 
+    currentUser.value = { id: OTHER_USER_ID };
+    const plain = await run([TRAINING_FILE, GGUF], {}, { availability: 'Private' });
+    const plainAir = lastAirArgs();
+
     currentUser.value = { id: OTHER_USER_ID, filePreferences: GGUF_PREFERENCES };
-    const { status, body } = await run([TRAINING_FILE, GGUF], {}, { availability: 'Private' });
+    const preferring = await run([TRAINING_FILE, GGUF], {}, { availability: 'Private' });
+    const preferringAir = lastAirArgs();
+
+    expect(plain.status).toBe(200);
+    expect(preferring.status).toBe(200);
+
+    // Same branch: both get the orchestrator epoch url.
+    expect(plain.body.downloadUrls[0]).toBe(EPOCH_URL);
+    expect(preferring.body.downloadUrls[0]).toBe(EPOCH_URL);
+    expect(preferring.body.downloadUrls[0]).not.toContain('/api/download/models/');
+
+    // Same resource described.
+    expect(preferring.body.fileName).toBe(plain.body.fileName);
+    expect(preferring.body.hashes.SHA256).toBe(plain.body.hashes.SHA256);
+
+    // Same AIR — the whole point. Positive control first, so a pair of
+    // `undefined`s cannot satisfy the equality below.
+    expect(plainAir).toBeDefined();
+    expect(plainAir?.source).toBe('orchestrator');
+    expect(preferringAir?.source).toBe('orchestrator');
+    expect(preferringAir).toEqual(plainAir);
+  });
+
+  it('preferences DO still choose the file on the download-route arm of a Private version', async () => {
+    // Same Private version, but the default-preference pick carries no training
+    // results, so the branch is the download route — and there the caller's
+    // preferences are applied exactly as before, with the url still naming the
+    // file whose hash was advertised.
+    expect(getPrimaryFile([SAFETENSOR, GGUF])?.id).toBe(SAFETENSOR.id);
+
+    currentUser.value = { id: OTHER_USER_ID, filePreferences: GGUF_PREFERENCES };
+    const { status, body } = await run([SAFETENSOR, GGUF], {}, { availability: 'Private' });
     expect(status).toBe(200);
     expect(body.fileName).toBe(GGUF.name);
-    expect(body.downloadUrls[0]).not.toContain('/jobs/');
+    expect(body.hashes.SHA256).toBe(GGUF.hashes.SHA256);
     expect(urlFileId(body)).toBe(String(GGUF.id));
+    expect(lastAirArgs()?.source).toBe('civitai');
+  });
+
+  it('a Private version whose primary file has NO training results stays on the GATED download route', async () => {
+    // Pins the `trainingResults` half of `useEpochUrl`. Dropping that conjunct
+    // makes `useEpochUrl` true for ANY Private version, which then takes
+    // `targetFile = requestedFile` — the UNGATED pick — and, with no training
+    // results to follow, falls through to the download-route arm advertising a
+    // non-Public file's hash/name/size to a non-owner and emitting a url the
+    // download route answers 404 for.
+    currentUser.value = { id: OTHER_USER_ID };
+    const { status, body } = await run(
+      [PRIVATE_MODEL, SAFETENSOR, GGUF],
+      {},
+      { availability: 'Private' }
+    );
+    expect(status).toBe(200);
+    expect(body.fileName).toBe(SAFETENSOR.name);
+    expect(body.hashes.SHA256).toBe(SAFETENSOR.hashes.SHA256);
+    expect(urlFileId(body)).toBe(String(SAFETENSOR.id));
+    expect(body.downloadUrls[0]).not.toContain('/jobs/');
   });
 
   it('a version with NO visible file still 404s — the gate has no ungated fallback', async () => {

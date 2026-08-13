@@ -220,13 +220,25 @@ export default MixedAuthEndpoint(async function handler(
   // apply the preferences itself or a caller's format/size/fp choice is silently
   // dropped. (The download route also merges explicit `format`/`size`/`fp`/
   // `quantType` query params; this endpoint accepts none of those.)
+  //
+  // 🔴 …but ONLY on the download-route arm. The branch below selects which KIND
+  // of resource this response addresses — an orchestrator epoch artifact vs a
+  // civitai ModelFile — and that choice determines the AIR, a shared identifier
+  // that is logged, cached and handed to the orchestrator. It must not vary per
+  // caller: a preference answers "which variant do I want", not "which resource
+  // is this". So the branch is decided with the DEFAULT preferences and is
+  // identical for every caller; the caller's preferences are applied only once
+  // the download-route arm has been chosen. Hash/url consistency is unaffected —
+  // `targetFile` still governs both on that arm.
   const filePreferences = { metadata: user?.filePreferences };
 
   // Caller-specified file overrides the version's primary file. Falls back to
   // primary when modelFileId is omitted, preserving legacy behavior.
+  // Default preferences deliberately — see the note above; this value only ever
+  // decides `useEpochUrl` and, on the epoch arm, names the training file.
   const requestedFile = modelFileId
     ? files.find((f) => f.id === modelFileId)
-    : getPrimaryFile(files, filePreferences);
+    : getPrimaryFile(files);
   const useEpochUrl =
     modelVersion.availability === Availability.Private && !!requestedFile?.metadata.trainingResults;
 
@@ -260,7 +272,13 @@ export default MixedAuthEndpoint(async function handler(
         }
 
         return e.epochNumber === results.data.epoch;
-      }) ?? trainingResults.epochs?.pop();
+      }) ??
+      // Non-mutating last-element read. `epochs?.pop()` would MUTATE the
+      // metadata object this handler was handed, and it is the only reader here
+      // that does; `model-version.service.ts` already expresses the same
+      // "latest epoch" selection as `epochs?.[epochs.length - 1]`. Consolidated
+      // on the non-mutating form.
+      trainingResults.epochs?.[trainingResults.epochs.length - 1];
 
     if (!epoch) {
       return res.status(404).json({ error: 'Missing epoch' });
@@ -283,14 +301,27 @@ export default MixedAuthEndpoint(async function handler(
     // this does not work for things like Flux
     // if (targetFile.type !== 'Model') return res.status(404).json({ error: 'File is not a model' });
 
+    // `fileId` is the QUERY PARAM, deliberately — not `targetFile.id`. The two
+    // agree whenever the caller supplied one (`targetFile` was looked up BY that
+    // id); when the caller omitted it the AIR simply carries no `+<fileId>`
+    // disambiguator, so it under-specifies rather than contradicting the url.
+    // Switching it to `targetFile.id` would append `+<fileId>` to the AIR of
+    // every mini response that omits the param — i.e. essentially all of them —
+    // and the AIR is a shared identifier that is logged, cached and handed to
+    // the orchestrator. That is a deliberate non-change here; see the
+    // AIR-arguments test that pins the current shape both ways.
     air = stringifyAIR({ ...modelVersion, fileId: modelFileId, fileType: targetFile.type });
-    // Pin the url to the file this response actually describes. Emitting
-    // `primary=true` instead delegates the choice to
-    // /api/download/models/[modelVersionId], which re-runs `getPrimaryFile` over
-    // a different population (visibility-filtered) with different preferences
-    // (the requesting user's `filePreferences`) — so on a multi-file version the
-    // url could serve a file other than the one whose hash/size/name is returned
-    // here, and any consumer verifying the hash fails.
+    // Pin the url to the file this response actually describes. What this
+    // replaced was a BARE `/api/download/models/[modelVersionId]` with no query
+    // string at all (`createModelFileDownloadUrl`'s `primary` flag only
+    // SUPPRESSES the other selectors — `QS.stringify` has no `primary` key, so
+    // none was ever emitted). A bare url names no file, so
+    // /api/download/models/[modelVersionId] resolves one independently: it
+    // re-runs `getPrimaryFile` over a different population (visibility-filtered)
+    // with different preferences (the requesting user's `filePreferences`) — so
+    // on a multi-file version the url could serve a file other than the one
+    // whose hash/size/name is returned here, and any consumer verifying the hash
+    // fails.
     downloadUrl = `${baseUrl}${createModelFileDownloadUrl({
       versionId: modelVersion.id,
       fileId: targetFile.id,
