@@ -14,6 +14,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // (delete-image-from-s3-logging.test.ts): stub env + infra clients + the event-engine-common
 // submodule so importing it boots no real infra.
 
+// Mutable so a test can remove the secret without rebuilding the whole env mock.
+const { envOverrides } = vi.hoisted(() => ({
+  envOverrides: { IMAGE_CACHER_ADMIN_SECRET: 'test-shared-secret' as string | undefined },
+}));
+
 const { mockLogToAxiom, mockFindFirst, mockFetch } = vi.hoisted(() => ({
   mockLogToAxiom: vi.fn(async () => undefined),
   mockFindFirst: vi.fn(),
@@ -61,7 +66,9 @@ vi.mock('~/env/server', () => ({
       LOGGING: [] as string[],
       DATABASE_IS_PROD: true,
       IMAGE_CACHER_URL: 'https://image-cacher.test',
-      IMAGE_CACHER_ADMIN_SECRET: 'test-shared-secret',
+      get IMAGE_CACHER_ADMIN_SECRET() {
+        return envOverrides.IMAGE_CACHER_ADMIN_SECRET;
+      },
     } as Record<string, unknown>,
     {
       get: (target, prop) => {
@@ -121,6 +128,7 @@ describe('purgeResizeCache', () => {
     vi.clearAllMocks();
     vi.stubGlobal('fetch', mockFetch);
     mockFetch.mockResolvedValue({ ok: true, status: 202 } as any);
+    envOverrides.IMAGE_CACHER_ADMIN_SECRET = 'test-shared-secret';
   });
 
   describe('scope', () => {
@@ -155,6 +163,34 @@ describe('purgeResizeCache', () => {
 
       const headers = lastInit().headers as Record<string, string>;
       expect(headers['X-Admin-Secret']).toBe('test-shared-secret');
+    });
+
+    // 🔴 THE CLAIM THIS PR LEANS HARDEST ON, and it was the one thing nothing pinned. Dropping the
+    // `if (env.IMAGE_CACHER_ADMIN_SECRET)` guard passes every other test here while sending the
+    // literal header `X-Admin-Secret: undefined` — which the service compares constant-time and
+    // rejects. The moment its delete flag flips that is a PERMANENT 401 with invalidation dead,
+    // and (before the status check added in this same PR) it would have been silent.
+    // The secret must not be able to ride a redirect. `fetch` strips Authorization and Cookie on a
+    // cross-origin hop but forwards CUSTOM headers verbatim, so following a 30x would hand
+    // X-Admin-Secret to wherever it pointed. Asserted because it is an init option no other test
+    // inspects — without this the hardening is invisible to the suite.
+    it('refuses to follow redirects while carrying the secret', async () => {
+      await purgeResizeCache({ url: UUID });
+
+      expect(lastInit().redirect).toBe('error');
+    });
+
+    it('sends NO secret header when none is configured', async () => {
+      vi.stubEnv('IMAGE_CACHER_ADMIN_SECRET', '');
+      envOverrides.IMAGE_CACHER_ADMIN_SECRET = undefined;
+
+      await purgeResizeCache({ url: UUID });
+
+      const headers = (lastInit().headers ?? {}) as Record<string, string>;
+      expect(headers).not.toHaveProperty('X-Admin-Secret');
+      // ...and specifically not the stringified-undefined form, which is what a dropped guard
+      // actually produces and what a `toBeUndefined()` assertion would happily accept.
+      expect(Object.values(headers)).not.toContain('undefined');
     });
   });
 

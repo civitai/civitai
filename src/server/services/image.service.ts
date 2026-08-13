@@ -334,9 +334,24 @@ export async function purgeResizeCache({
   if (env.IMAGE_CACHER_URL && url) {
     // `keep=hm` asks the service to retain the post-flip (hideMeta) variants. Omitted entirely for
     // the `all` scope so this call is byte-identical to the one that has always been sent.
-    const query =
-      `imageKey=${encodeURIComponent(url)}` +
-      (scope === 'hidden-meta-orphans' ? '&keep=hm' : '');
+    // Exhaustive on purpose. A ternary here fails OPEN: any value that is not the exact literal
+    // degrades to the WIDEST blast radius, so adding a third scope later would silently mean
+    // "delete everything" instead of failing to compile. The counterpart service rejects an
+    // unrecognised value outright; this is the client-side half of the same stance.
+    const keepParam = ((): string => {
+      switch (scope) {
+        case 'all':
+          return '';
+        case 'hidden-meta-orphans':
+          return '&keep=hm';
+        default: {
+          const unreachable: never = scope;
+          throw new Error(`unhandled purgeResizeCache scope: ${String(unreachable)}`);
+        }
+      }
+    })();
+
+    const query = `imageKey=${encodeURIComponent(url)}${keepParam}`;
 
     // The endpoint requires this header once its destructive mode is enabled, and rejects the
     // call outright without it. Sending it whenever it is configured means enabling that mode is
@@ -349,6 +364,11 @@ export async function purgeResizeCache({
     fetch(`${env.IMAGE_CACHER_URL}/admin/invalidate?${query}`, {
       method: 'POST',
       headers,
+      // Never follow a redirect while carrying the shared secret. `fetch` strips Authorization and
+      // Cookie on a cross-origin hop but forwards CUSTOM headers verbatim, so a 30x from this
+      // endpoint would hand X-Admin-Secret to wherever it pointed. It only ever answers
+      // 202/400/401, so a redirect here is already anomalous — fail instead of chasing it.
+      redirect: 'error',
       // Invalidation must not slow down the delete flow.
       signal: AbortSignal.timeout(2000),
     })

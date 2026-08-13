@@ -184,6 +184,12 @@ describe('updatePostImage — image-delivery metadata cache bust wiring', () => 
 
     // This is the case the adjacent purgeResizeCache guard MISSES — the bust must still fire.
     expect(mockBustImageDeliveryMetadataCache).toHaveBeenCalledTimes(1);
+
+    // 🔴 AND NO PURGE. `keep=hm` retains the _hm variants, which on a true -> false flip are the
+    // ORPHANS, not the live set — the scope is inverted in this direction and the cache service
+    // says so in its own rejection message. Widening the guard to fire on both directions passed
+    // every other test in this suite, so without this the invariant rested on nothing.
+    expect(mockPurgeResizeCache).not.toHaveBeenCalled();
     expect(mockBustImageDeliveryMetadataCache).toHaveBeenCalledWith(KEY_URL);
   });
 
