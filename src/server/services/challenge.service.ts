@@ -3042,6 +3042,7 @@ export async function checkImageEligibility(
       nsfwLevel: number;
       createdAt: Date;
       modelVersionIds: number[] | null;
+      manualModelVersionIds: number[] | null;
     }>
   >(
     `
@@ -3049,7 +3050,8 @@ export async function checkImageEligibility(
       i.id,
       i."nsfwLevel",
       i."createdAt",
-      array_agg(DISTINCT ir."modelVersionId") FILTER (WHERE ir."modelVersionId" IS NOT NULL) AS "modelVersionIds"
+      array_agg(DISTINCT ir."modelVersionId") FILTER (WHERE ir."modelVersionId" IS NOT NULL AND ir.detected IS TRUE) AS "modelVersionIds",
+      array_agg(DISTINCT ir."modelVersionId") FILTER (WHERE ir."modelVersionId" IS NOT NULL AND ir.detected IS NOT TRUE) AS "manualModelVersionIds"
     FROM "Image" i
     LEFT JOIN "ImageResourceNew" ir ON ir."imageId" = i.id
     WHERE i.id = ANY($1::int[])
@@ -3076,14 +3078,20 @@ export async function checkImageEligibility(
       reasons.push('Created before challenge');
     }
 
-    // Check model version requirement
+    // Check model version requirement. Only auto-detected resources count — a `detected: false` row
+    // is asserted by the uploader (post model-version link, or the hand-credit mutation), so it
+    // cannot certify the requirement. The two failures are told apart because they mean different
+    // things to the entrant: "wrong model" is their mistake, "not detected" means the image carries
+    // no generation metadata naming the model, which is what an off-site upload looks like.
     if (challenge.modelVersionIds.length > 0) {
-      const imageVersionIds = image.modelVersionIds ?? [];
-      const hasEligibleModel = imageVersionIds.some((vid) =>
-        challenge.modelVersionIds.includes(vid)
-      );
+      const detectedIds = image.modelVersionIds ?? [];
+      const hasEligibleModel = detectedIds.some((vid) => challenge.modelVersionIds.includes(vid));
       if (!hasEligibleModel) {
-        reasons.push('Wrong model');
+        const manualIds = image.manualModelVersionIds ?? [];
+        const claimsEligibleModel = manualIds.some((vid) =>
+          challenge.modelVersionIds.includes(vid)
+        );
+        reasons.push(claimsEligibleModel ? 'Model not detected' : 'Wrong model');
       }
     }
 

@@ -43,12 +43,17 @@ function getEligibility(
     reasons.push('Created before challenge');
   }
 
-  // Check model version requirement
+  // Check model version requirement. Mirrors checkImageEligibility: only auto-detected resources
+  // satisfy it, and an image whose ONLY claim to the required model is an uploader-asserted resource
+  // gets the distinct reason — it is not the entrant picking the wrong model, it is the image
+  // carrying no generation metadata that names it.
   if (challenge.modelVersionIds.length > 0) {
-    const imageVersionIds = image.modelVersionIds ?? [];
-    const hasEligibleModel = imageVersionIds.some((vid) => challenge.modelVersionIds.includes(vid));
+    const detectedIds = image.modelVersionIds ?? [];
+    const hasEligibleModel = detectedIds.some((vid) => challenge.modelVersionIds.includes(vid));
     if (!hasEligibleModel) {
-      reasons.push('Wrong model');
+      const manualIds = image.modelVersionIdsManual ?? [];
+      const claimsEligibleModel = manualIds.some((vid) => challenge.modelVersionIds.includes(vid));
+      reasons.push(claimsEligibleModel ? 'Model not detected' : 'Wrong model');
     }
   }
 

@@ -2805,17 +2805,26 @@ export const validateContestCollectionEntry = async ({
       select: { modelVersionIds: true },
     });
     if (resourceChallenge) {
+      // `detected: true` only — the resource has to have been read out of the image's own generation
+      // metadata. A `detected: false` row is asserted by the uploader, by either route that writes
+      // one: linking the post to the model version (unrestricted — about half of version-linked
+      // posts point at someone else's model), or `addResourceToPostImage`, which credits a resource
+      // by hand and refuses on-site generations. Counting those would make the requirement
+      // self-certifiable on a challenge with a real prize pool.
       const withRequiredResource = await dbRead.imageResourceNew.findMany({
         where: {
           imageId: { in: imageIds },
           modelVersionId: { in: resourceChallenge.modelVersionIds },
+          detected: true,
         },
         select: { imageId: true },
         distinct: ['imageId'],
       });
       const validImageIds = new Set(withRequiredResource.map((r) => r.imageId));
       if (imageIds.some((id) => !validImageIds.has(id))) {
-        throw throwBadRequestError('This image does not use a required model for this challenge.');
+        throw throwBadRequestError(
+          'This image does not use a required model for this challenge, or the model could not be detected from its metadata.'
+        );
       }
     }
   }

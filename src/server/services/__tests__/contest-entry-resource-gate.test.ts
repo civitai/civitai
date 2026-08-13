@@ -158,13 +158,41 @@ describe('contest entry resource gate (Task 11)', () => {
         imageIds: [IMAGE_ID],
         metadata: {},
       })
-    ).rejects.toThrow('This image does not use a required model for this challenge.');
+    ).rejects.toThrow('This image does not use a required model for this challenge');
 
     expect(mockImageResourceNewFindMany).toHaveBeenCalledWith({
-      where: { imageId: { in: [IMAGE_ID] }, modelVersionId: { in: [REQUIRED_VERSION_ID] } },
+      where: {
+        imageId: { in: [IMAGE_ID] },
+        modelVersionId: { in: [REQUIRED_VERSION_ID] },
+        detected: true,
+      },
       select: { imageId: true },
       distinct: ['imageId'],
     });
+    expect(mockChargeEntryFees).not.toHaveBeenCalled();
+  });
+
+  it('does not accept a manually-attached resource as satisfying the requirement', async () => {
+    wireChallengeFindFirst({ hasResourceChallenge: true, hasFeeChallenge: true });
+    // The query is what enforces this: `detected: true` means an uploader-asserted row never comes
+    // back, so an image carrying the required model ONLY on such a row returns empty here. Without
+    // the filter the requirement is self-certified — link a post to the required version, or credit
+    // it by hand via addResourceToPostImage, and enter.
+    mockImageResourceNewFindMany.mockResolvedValue([]);
+
+    await expect(
+      validateContestCollectionEntry({
+        collectionId: COLLECTION_ID,
+        userId: USER_ID,
+        canAccessUserChallenges: true,
+        imageIds: [IMAGE_ID],
+        metadata: {},
+      })
+    ).rejects.toThrow('the model could not be detected from its metadata');
+
+    expect(mockImageResourceNewFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ detected: true }) })
+    );
     expect(mockChargeEntryFees).not.toHaveBeenCalled();
   });
 

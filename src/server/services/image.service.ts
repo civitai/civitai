@@ -2332,8 +2332,18 @@ export const getAllImages = async (
         model3dId: i.model3dId != null && visibleModel3DIds?.has(i.model3dId) ? i.model3dId : null,
         meta: imageMeta?.[i.id] ?? null,
         nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, i.nsfwLevel),
-        modelVersionIds: imageResources?.[i.id]?.resources?.map((r) => r.modelVersionId) ?? [],
-        modelVersionIdsManual: [],
+        // Split by `detected` to match what the search-index path serves: `modelVersionIds` is
+        // auto-detected only, `modelVersionIdsManual` is what the owner attached by hand. Lumping
+        // both into the first field made a consumer that distinguishes them (the challenge entry
+        // gate) read a manual claim as a detected resource on the DB feed path and not on the index
+        // path, i.e. the same image judged differently depending on which backend served the feed.
+        modelVersionIds:
+          imageResources?.[i.id]?.resources?.filter((r) => r.detected).map((r) => r.modelVersionId) ??
+          [],
+        modelVersionIdsManual:
+          imageResources?.[i.id]?.resources
+            ?.filter((r) => !r.detected)
+            .map((r) => r.modelVersionId) ?? [],
         publishedAt: i.publishedAt ? i.sortAt : undefined,
         baseModel: imageResources
           ? getBaseModelFromResources(imageResources[i.id]?.resources)
