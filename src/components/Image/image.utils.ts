@@ -190,6 +190,21 @@ export const useQueryImages = (
     }
   );
 
+  // Which backend served what is currently on screen. Emitted by the server
+  // branch that actually returned the data (getAllImagesIndex), so it stays
+  // honest when BitDex is in primary but falls back to Meili mid-session; the
+  // DB branch emits nothing. 'bitdex' wins over a later Meili page because the
+  // BitDex-served results are still in the list the user is looking at.
+  const feedSource = useMemo(() => {
+    const sources = (data?.pages ?? []).map(
+      // Only the index branch of the handler's union carries `source`, so the
+      // read is a cast rather than a narrowing.
+      (page) => (page as { source?: string } | undefined)?.source
+    );
+    if (sources.includes('bitdex')) return 'bitdex';
+    return [...sources].reverse().find(Boolean);
+  }, [data]);
+
   // Deduplicate items to prevent duplicates from offset pagination drift
   const flatData = useMemo(() => {
     const allItems = data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [];
@@ -224,6 +239,8 @@ export const useQueryImages = (
   return {
     data,
     flatData,
+    feedSource,
+    pagesLoaded: data?.pages.length ?? 0,
     images: items,
     removedImages: hiddenCount,
     fetchedImages: flatData?.length,

@@ -11,6 +11,7 @@ import { Flags } from '~/shared/utils/flags';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { SearchRetryBanner } from '~/components/EndOfFeed/SearchRetryBanner';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
+import { FeedbackPrompt } from '~/components/Feedback/FeedbackPrompt';
 import type { ImagesQueryParamSchema } from '~/components/Image/image.utils';
 import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
 import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
@@ -97,6 +98,8 @@ export function ImagesInfiniteContent({
     isError,
     debugRetryActive,
     debugDelayMs,
+    feedSource,
+    pagesLoaded,
   } = useQueryImages(
     { ...filters, browsingLevel, include: ['cosmetics'] },
     { keepPreviousData: true }
@@ -211,6 +214,22 @@ export function ImagesInfiniteContent({
 
   return (
     <>
+      <FeedbackPrompt
+        area="bitdex-image-feed"
+        active={feedSource === 'bitdex'}
+        notice="We're testing a new system behind this feed. If anything looks off, tell us."
+        placeholder="What looked wrong? Missing images, odd ordering, repeats, anything."
+        context={{
+          path: typeof window !== 'undefined' ? window.location.pathname : undefined,
+          reportedSource: feedSource,
+          pagesLoaded,
+          filters: {
+            sort: String(filters.sort ?? ''),
+            period: String(filters.period ?? ''),
+            browsingLevel,
+          },
+        }}
+      />
       {!images.length && isFetching && !isRetrying ? (
         <Center p="xl">
           <Loader />

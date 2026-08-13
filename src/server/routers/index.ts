@@ -33,6 +33,7 @@ export const appRouter = router({
   common: lazy(() => import('~/server/routers/common.router').then((m) => m.commonRouter)),
   content: lazy(() => import('./content.router').then((m) => m.contentRouter)),
   download: lazy(() => import('./download.router').then((m) => m.downloadRouter)),
+  feedback: lazy(() => import('./feedback.router').then((m) => m.feedbackRouter)),
   homeBlock: lazy(() => import('./home-block.router').then((m) => m.homeBlockRouter)),
   image: lazy(() => import('./image.router').then((m) => m.imageRouter)),
   merch: lazy(() => import('./merch.router').then((m) => m.merchRouter)),
