@@ -1,10 +1,12 @@
 import { Anchor, Badge, Group, HoverCard, Skeleton, Text, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { IconEye, IconEyeOff, IconSticker, IconTrash } from '@tabler/icons-react';
+import { IconEye, IconEyeOff, IconFlag, IconSticker, IconTrash } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { openReportModal } from '~/components/Dialog/triggers/report';
 import { useForgetStickerPlacement } from '~/components/Sticker/placement.util';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { ReactElement } from 'react';
 import { useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -54,10 +56,22 @@ const placedLabel = (placedAt: Date | string) => {
  */
 export function StickerPlacementHoverCard({
   placementId,
+  imageId,
+  placerId,
   pending = false,
   children,
 }: {
   placementId: number;
+  /**
+   * The image the sticker sits on. A sticker report is filed against the image
+   * carrying the placement id — one reason, one queue — so the flag needs both.
+   */
+  imageId: number;
+  /** Who placed it, so the flag can stay off the reporter's own sticker. Taken
+   * from the listing rather than the detail query, which lands after the card
+   * opens: keyed off that, the flag would appear on your own sticker and then
+   * vanish. */
+  placerId: number;
   pending?: boolean;
   children: ReactElement;
 }) {
@@ -138,6 +152,7 @@ export function StickerPlacementHoverCard({
               Awaiting review
             </Badge>
           )}
+          <ReportPlacement placementId={placementId} imageId={imageId} placerId={placerId} />
           <ModeratorRemove placementId={placementId} />
         </Group>
 
@@ -155,9 +170,21 @@ export function StickerPlacementHoverCard({
                 thing the placer said, and the card is who said it. */}
             {data.comment && (
               <div className="border-b border-gray-3 px-3 py-2 dark:border-dark-4">
-                <Text size="sm" className="whitespace-pre-wrap break-words">
-                  {data.comment}
-                </Text>
+                {/* The note carries its own flag, so neither flow asks which
+                    half is being reported. A fine sticker can carry an abusive
+                    note, and the remedies differ — the owner can hide a note
+                    without the sticker coming off. */}
+                <Group gap={6} align="flex-start" wrap="nowrap">
+                  <Text size="sm" className="min-w-0 flex-1 whitespace-pre-wrap break-words">
+                    {data.comment}
+                  </Text>
+                  <ReportPlacement
+                    placementId={placementId}
+                    imageId={imageId}
+                    placerId={placerId}
+                    target="comment"
+                  />
+                </Group>
                 {data.commentHidden && (
                   <Text size="xs" c="dimmed" mt={4}>
                     Hidden — only you, the person who placed it, and moderators can see this.
@@ -179,6 +206,63 @@ export function StickerPlacementHoverCard({
         )}
       </HoverCard.Dropdown>
     </HoverCard>
+  );
+}
+
+/**
+ * Reporting one sticker, from that sticker.
+ *
+ * The report opens with the placement already set, which is the whole point.
+ * The route this replaced was the image's report menu, where the reporter picked
+ * from a list of the stickers on the image — several copies of one sticker are
+ * indistinguishable there, so reporting one of them was a guess a moderator then
+ * acted on. Starting here there is nothing to identify.
+ *
+ * Not offered on the reporter's own placement. There is a real "I regret this"
+ * case and it is not a report; it belongs to whoever builds placer-side removal.
+ */
+function ReportPlacement({
+  placementId,
+  imageId,
+  placerId,
+  target = 'sticker',
+}: {
+  placementId: number;
+  imageId: number;
+  placerId: number;
+  target?: 'sticker' | 'comment';
+}) {
+  const currentUser = useCurrentUser();
+
+  if (!currentUser || currentUser.id === placerId) return null;
+
+  const label = target === 'comment' ? 'Report this note' : 'Report this sticker';
+
+  return (
+    <Tooltip label={label} withArrow>
+      <LegacyActionIcon
+        color="gray"
+        variant="subtle"
+        size="sm"
+        className="shrink-0"
+        aria-label={label}
+        onClick={() =>
+          openReportModal({
+            // Still an Image report carrying a placement id, not a new entity
+            // type: the reason, the mod queue and the dedupe all already work
+            // that way, and a second shape for the same complaint would give
+            // moderators two queues for one sticker.
+            entityType: ReportEntity.Image,
+            entityId: imageId,
+            reportKey: 'sticker-placement',
+            placementId,
+            placementTarget: target,
+          })
+        }
+      >
+        <IconFlag size={14} />
+      </LegacyActionIcon>
+    </Tooltip>
   );
 }
 
