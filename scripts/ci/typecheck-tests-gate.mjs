@@ -110,6 +110,7 @@ import {
   classifyEmptyAllowance,
   classifyRun,
   compare,
+  countTestFilesInProgram,
   diffExcludes,
   isGatedTestFile,
   parseDiagnostics,
@@ -142,8 +143,6 @@ const WRAPPER = process.env.TYPECHECK_TESTS_WRAPPER || path.join(REPO_ROOT, 'scr
 // END, i.e. to pin that the gate ACTS on `diffExcludes`, not merely that
 // `diffExcludes` computes the right answer.
 const CONFIG_DIR = process.env.TYPECHECK_TESTS_CONFIG_DIR || REPO_ROOT;
-
-const TEST_PATH_MARKER = `${path.sep}__tests__${path.sep}`;
 
 function fail(msg, code) {
   console.error(msg);
@@ -298,10 +297,12 @@ const listed = runWrapper(['--listFilesOnly']);
 if (!listed.verdict.ok) {
   cannotMeasure(`the positive control could not run: ${listed.verdict.reason}`);
 }
-const testFilesInProgram = listed.output
-  .split('\n')
-  .filter((line) => line.includes(TEST_PATH_MARKER) && !line.includes(`${path.sep}node_modules${path.sep}`))
-  .length;
+// The count is computed in the pure module, on forward slashes. It used to be an
+// inline filter against a marker built from `path.sep` — which is `\` on Windows
+// while `tsc --listFilesOnly` emits `/` on every platform, so the marker matched
+// ZERO of 948 `__tests__` lines there and this control refused every run on a
+// Windows machine while passing in CI. See `toPosixPath`.
+const testFilesInProgram = countTestFilesInProgram(listed.output);
 
 const recordedTestFiles = baseline.testFilesInProgram ?? previous?.testFilesInProgram;
 const floorResult = testFileFloor(recordedTestFiles);
