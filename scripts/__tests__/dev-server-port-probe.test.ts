@@ -17,21 +17,20 @@ afterEach(async () => {
   while (held.length) await close(held.pop()!);
 });
 
-// A port the OS itself refuses to bind (EACCES) — a Hyper-V excluded range on Windows, a
-// privileged port when running unprivileged. Nothing is listening on one, so connect alone
-// calls it free. Returns null when the host hands out everything it is asked for.
-async function findBindRefusedPort(): Promise<number | null> {
-  const candidates = [1, 80, 443, ...Array.from({ length: 60 }, (_, i) => 49700 + i * 10)];
-  for (const port of candidates) {
-    const code = await new Promise<string | null>((resolve) => {
-      const server = createServer();
-      server.once('error', (err: NodeJS.ErrnoException) => resolve(err.code ?? 'UNKNOWN'));
-      server.once('listening', () => server.close(() => resolve(null)));
-      server.listen({ port, host: '0.0.0.0' });
-    });
-    if (code === 'EACCES') return port;
-  }
-  return null;
+// Load the probe against a patched `net.createServer`. Real hosts differ too much to drive
+// the bind half honestly — an OS-reserved port exists on this Windows box and on no CI
+// container, and a privileged port is bindable as root and connectable when something is
+// already serving on it, either of which turns the assertion vacuous or absent.
+async function loadProbeWith(
+  patch: (server: Server) => Server
+): Promise<(port: number) => Promise<boolean>> {
+  vi.resetModules();
+  vi.doMock('net', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('net')>();
+    return { ...actual, default: actual, createServer: () => patch(actual.createServer()) };
+  });
+  const mod = await import('../../.claude/skills/dev-server/scripts/port-probe.mjs');
+  return mod.isPortFree;
 }
 
 // Bind port 0 to have the OS hand out a port nothing else is using, then rebind that same
@@ -92,13 +91,27 @@ describe('dev-server port probe', () => {
   }
 
   // Every case above is caught by the connect half alone, so without this one the three
-  // binds could be deleted and the suite would stay green. A port the OS has reserved is
-  // the state only the binds see: nothing is listening, so connect gets refused, but the
+  // binds could be deleted and the suite would stay green. A port the OS refuses to hand out
+  // is the state only the binds see: nothing is listening, so connect gets refused, but the
   // bind is refused too and the port is unusable.
-  it('reports a port the OS refuses to hand out as busy', async (ctx) => {
-    const reserved = await findBindRefusedPort();
-    if (reserved === null) return ctx.skip();
-    expect(await isPortFree(reserved)).toBe(false);
+  it('reports a port the OS refuses to hand out as busy', async () => {
+    const probe = await loadProbeWith((server) => {
+      server.listen = ((...args: unknown[]) => {
+        const err: NodeJS.ErrnoException = new Error('listen EACCES');
+        err.code = 'EACCES';
+        void args;
+        setImmediate(() => server.emit('error', err));
+        return server;
+      }) as typeof server.listen;
+      return server;
+    });
+    try {
+      // Free by every other measure: nothing is listening, so both connects are refused.
+      expect(await probe(await reserveEphemeralPort())).toBe(false);
+    } finally {
+      vi.doUnmock('net');
+      vi.resetModules();
+    }
   });
 
   // The probe's transient listener accepts anything that arrives in its bind window, and
@@ -108,27 +121,18 @@ describe('dev-server port probe', () => {
   //
   // Driving that with a real connection does not work: the bind window is sub-millisecond,
   // so a racing client lands on the probe listener too rarely to assert on. Withholding the
-  // callback directly is the same defect, deterministically.
+  // acknowledgement directly is the same defect, deterministically. The socket must still
+  // really close, or the probe's three sequential binds collide with each other on Linux.
   it('does not wait for close() to acknowledge before reporting a port free', async () => {
-    vi.resetModules();
-    vi.doMock('net', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('net')>();
-      return {
-        ...actual,
-        default: actual,
-        createServer: () => {
-          const server = actual.createServer();
-          const realClose = server.close.bind(server);
-          server.close = (() => server) as typeof server.close; // never acknowledges
-          held.push({ close: realClose } as unknown as Server); // still torn down in afterEach
-          return server;
-        },
-      };
+    const probe = await loadProbeWith((server) => {
+      const realClose = server.close.bind(server);
+      server.close = (() => {
+        realClose();
+        return server;
+      }) as typeof server.close;
+      return server;
     });
     try {
-      const { isPortFree: probe } = await import(
-        '../../.claude/skills/dev-server/scripts/port-probe.mjs'
-      );
       const port = await reserveEphemeralPort();
       const verdict = await Promise.race([
         probe(port),
