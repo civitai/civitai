@@ -79,10 +79,18 @@ export function StickerPlacementHoverCard({
 }) {
   const [opened, setOpened] = useState(false);
 
-  const { data, isLoading } = trpc.placement.getStickerPlacementDetail.useQuery(
+  const { data, isLoading, error } = trpc.placement.getStickerPlacementDetail.useQuery(
     { placementId },
     { enabled: opened, staleTime: 5 * 60_000 }
   );
+
+  // "Gone" and "could not ask" are different claims, and only the server can
+  // tell them apart: the service throws a not-found for a placement that is no
+  // longer live, and everything else here is a failed request. Batching runs
+  // these with no retries and fails a whole cohort together, so treating any
+  // error as a takedown would tell a viewer their sticker was removed because
+  // an unrelated query in the same batch fell over.
+  const gone = error?.data?.code === 'NOT_FOUND';
 
   // Both come from the service already resolved. Nothing here builds a URL from
   // a username, which is what produced a live link to `/user/null/shop`.
@@ -160,7 +168,12 @@ export function StickerPlacementHoverCard({
               </Text>
             )}
           </Group>
-          {pending && (
+          {/* The listing's answer until the card has its own, then retracted if
+              they disagree. The prop is what lets the badge be right on the
+              first frame; letting it stand afterwards is what had the card
+              saying "Awaiting review" beside a confirmation that correctly
+              treats the placement as live. */}
+          {pending && (!data || data.status === 'pending') && (
             <Badge size="xs" color="yellow" variant="light">
               Awaiting review
             </Badge>
@@ -221,7 +234,9 @@ export function StickerPlacementHoverCard({
           // rather than as gone, on a sticker that no longer exists.
           <div className="p-3">
             <Text size="sm" c="dimmed">
-              This sticker is no longer on the image.
+              {gone
+                ? 'This sticker is no longer on the image.'
+                : "We couldn't load this sticker just now."}
             </Text>
           </div>
         ) : (
