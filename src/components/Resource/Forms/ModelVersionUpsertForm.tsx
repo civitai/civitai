@@ -90,6 +90,7 @@ import {
   monetizationLimits,
   ratioToFee,
   resolveCapTier,
+  separateGenerationPriceMissing,
   suggestedFee,
 } from '@civitai/buzz';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
@@ -479,6 +480,11 @@ export function ModelVersionUpsertForm({
     existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash ||
     !!currentUser?.isModerator;
 
+  // Models that may not be gated at all. One source for both the hidden editor (`showPaidAccessInput`) and
+  // the submitted gate: hiding alone leaves the stored config intact (`shouldUnregister: false`) and
+  // resubmits a gate the creator can neither see nor clear, which is what POI did.
+  const gateSuppressed = model?.availability === Availability.Private || !!model?.poi;
+
   // Asked once per version, the first time it earns anything — a version already on record keeps its
   // affirmation, so editing a price later doesn't ask again.
   //
@@ -488,9 +494,7 @@ export function ModelVersionUpsertForm({
   // The cast is the input-vs-output type of the form schema; both seed paths write concrete values.
   const gateCharges = paidAccessCharges(
     toPaidAccessInput(
-      model?.availability === Availability.Private
-        ? null
-        : (paidAccessConfig as FormPaidAccessConfig | null | undefined),
+      gateSuppressed ? null : (paidAccessConfig as FormPaidAccessConfig | null | undefined),
       usageControl
     )
   );
@@ -710,6 +714,28 @@ export function ModelVersionUpsertForm({
       return;
     }
 
+    const gatedConfig = gateSuppressed ? null : data.paidAccessConfig;
+    // Keyed to the gate the submit actually sends, not to the config: a usage control that can't be gated
+    // leaves the pricing controls unmounted with their values intact, and refusing over a price nobody can
+    // see (for a gate that would be dropped anyway) is a save the creator has no way to unblock.
+    const submittedGate = toPaidAccessInput(gatedConfig, data.usageControl);
+
+    // A generation grant with no price of its own is charged at the DOWNLOAD price (see `generationPrice`),
+    // so an empty box under "a cheaper generation-only price" bills the full access price while the screen
+    // says cheaper. Nothing downstream can tell that apart from a deliberate "same as access price", so the
+    // refusal has to happen here, where the creator's choice still exists.
+    if (
+      genMode === 'separate' &&
+      submittedGate &&
+      data.usageControl !== ModelUsageControl.Generation &&
+      separateGenerationPriceMissing(data.paidAccessConfig?.generationPrice)
+    ) {
+      const message = 'Enter a generation-only price, or choose "Same as the access price"';
+      form.setError('paidAccessConfig.generationPrice', { message });
+      showErrorNotification({ error: new Error(message), title: 'Generation price required' });
+      return;
+    }
+
     if (requiresRightsAffirmation && !data.rightsAffirmed) {
       const message = 'You must confirm you hold the rights to monetize this model';
       form.setError('rightsAffirmed', { message });
@@ -741,8 +767,6 @@ export function ModelVersionUpsertForm({
           settings: { strength },
         })) ?? [];
 
-      const gatedConfig =
-        model?.availability === Availability.Private ? null : data.paidAccessConfig;
       const result = await upsertVersionMutation.mutateAsync({
         ...data,
         // Don't persist a stale clip skip for base models that don't use it.
@@ -750,7 +774,7 @@ export function ModelVersionUpsertForm({
         epochs: data.epochs ?? null,
         steps: data.steps ?? null,
         modelId: model?.id ?? -1,
-        paidAccess: toPaidAccessInput(gatedConfig, data.usageControl),
+        paidAccess: submittedGate,
         donationGoal: toDonationGoalInput(gatedConfig),
         trainedWords: skipTrainedWords ? [] : trainedWords,
         baseModelType: data.baseModelType,
@@ -868,8 +892,7 @@ export function ModelVersionUpsertForm({
       (!isPublished || atEarlyAccess)) ||
     isPublished;
   const showPaidAccessInput =
-    !model?.poi && // POI models won't allow EA.
-    !isPrivateModel &&
+    !gateSuppressed &&
     !isNonCommercial && // Non-commercial base models can't be monetized.
     paidAccessUsageOk &&
     canConfigurePaidAccess;
@@ -906,7 +929,7 @@ export function ModelVersionUpsertForm({
 
   // A private model, or a usage control that can't be gated, loses its gate on save no matter what the
   // creator does — the submit substitutes null either way. Nothing to offer them, so say why instead.
-  const gateRemovalIsStructural = removingStoredGate && (isPrivateModel || !paidAccessUsageOk);
+  const gateRemovalIsStructural = removingStoredGate && (gateSuppressed || !paidAccessUsageOk);
   // Whether the control each sentence is about is actually on screen (see the colour rule below).
   const removalControlsVisible =
     (!removingStoredFee || (showChargeSettings && showLicensingFeeBlock)) &&
@@ -1223,7 +1246,10 @@ export function ModelVersionUpsertForm({
               )}
             </Stack>
           </Card>
-          {(showPaidAccessInput || showLicensingFeeBlock || requiresRightsAffirmation) && (
+          {(showPaidAccessInput ||
+            showLicensingFeeBlock ||
+            requiresRightsAffirmation ||
+            removingStoredCharge) && (
             <Card withBorder p="md">
               <Stack gap={0}>
                 <Text fw={600} mb="sm">
@@ -1260,6 +1286,8 @@ export function ModelVersionUpsertForm({
                         <Text size="xs" c="red">
                           {isPrivateModel
                             ? "A private model can't have paid access, so this can't be kept."
+                            : model?.poi
+                            ? "A model depicting a real person can't have paid access, so this can't be kept."
                             : "This version's usage control can't be gated, so this can't be kept."}
                         </Text>
                       ) : (
@@ -1576,6 +1604,7 @@ export function ModelVersionUpsertForm({
                                       )}
                                       step={100}
                                       leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                                      withAsterisk
                                       disabled={isEarlyAccessOver}
                                     />
                                   )}

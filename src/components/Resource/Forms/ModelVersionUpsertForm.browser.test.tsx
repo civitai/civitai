@@ -422,6 +422,85 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     expect(page.getByText(/A private model can't have paid access/).elements()).toHaveLength(1);
   });
 
+  // `model.poi` hid the paid-access editor without touching what the submit sent, so a POI model
+  // re-asserted its stored gate from a control that never rendered. The PAYLOAD is the assertion that
+  // matters here: the warning alone would still read green while the gate shipped.
+  test('a POI model warns about its stored gate, and submits none', async () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={{ ...model, poi: true } as typeof model}
+        version={chargingVersion}
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    // Present at first render, so anchor on the switch and then read synchronously.
+    await expect.element(chargeSwitch()).toBeChecked();
+    expect(page.getByText(/Saving now removes this version's paid access/).elements()).toHaveLength(
+      1
+    );
+    expect(
+      page.getByText(/A model depicting a real person can't have paid access/).elements()
+    ).toHaveLength(1);
+    // The gate editor is off screen — which is why the warning has to carry the message.
+    expect(accessSwitch().elements()).toHaveLength(0);
+
+    // An edit elsewhere: the stored config is unchanged, so without this the save short-circuits as
+    // pristine and the payload assertion below would never run.
+    await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect((mutateAsync.mock.calls[0][0] as { paidAccess?: unknown }).paidAccess).toBeNull();
+  });
+
+  // "A cheaper generation-only price" with an empty box used to save a generation grant carrying no price
+  // of its own — which `generationPrice` charges at the DOWNLOAD price. The stored terms are identical to a
+  // deliberate "same as the access price", so nothing after this form can tell the two apart.
+  test('refuses a blank generation-only price, and saves the one that is typed', async () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm model={model} version={chargingVersion} onSubmit={vi.fn()}>
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    await userEvent.click(page.getByRole('radio', { name: 'A cheaper generation-only price' }));
+    // By placeholder: the label text also matches the radio that reveals this input.
+    const genPrice = page.getByPlaceholder('Generation-only price');
+    await expect.element(genPrice).toBeInTheDocument();
+
+    // An edit elsewhere, so the save is not short-circuited as pristine: without it the unfixed build
+    // writes nothing either, and the test would pass against the bug it exists to catch.
+    await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    // Both outcomes in one poll, on a short budget. `expect.element` alone would spend the full 15 s
+    // matcher timeout on a revert and then report only that some text never appeared; this names the thing
+    // that actually went wrong — the blank price was saved — in about a second.
+    await vi.waitFor(
+      () => {
+        if (mutateAsync.mock.calls.length)
+          throw new Error('saved a blank generation-only price instead of refusing it');
+        expect(page.getByText(/Enter a generation-only price/).elements()).toHaveLength(1);
+      },
+      { timeout: 3000 }
+    );
+
+    // The positive control: the same save goes through once the price exists, so the refusal above is the
+    // missing price and not the form being unsavable for some unrelated reason.
+    // 400, not a round 1000: the free tier's paid-access cap bounds this input at 500, and a value above
+    // it is clamped rather than rejected — which would make the payload assertion below read as a bug.
+    await userEvent.fill(genPrice, '400');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const terms = (mutateAsync.mock.calls[0][0] as { paidAccess?: { terms?: ModelVersionTerms } })
+      .paidAccess?.terms;
+    expect(terms?.generation).toMatchObject({ price: 400 });
+    expect(terms?.download?.price).toBe(5000);
+  });
+
   // A grandfathered version — priced before the affirmation existed — has to tick the box to save at all.
   // Clearing that tick on a switch round-trip that changed nothing puts the creator back in front of
   // "Confirmation required", which is the error this ticket was filed about.
