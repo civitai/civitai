@@ -114,6 +114,28 @@ describe('dev-server port probe', () => {
     }
   });
 
+  // The other side of that classifier. A host with no IPv6 answers the `::` bind with
+  // EAFNOSUPPORT, and reading that as a conflict would make every port busy and every start
+  // fail with "No available ports found within range".
+  it('reports a port free when a bind fails for want of an address family', async () => {
+    const probe = await loadProbeWith((server) => {
+      server.listen = ((...args: unknown[]) => {
+        const err: NodeJS.ErrnoException = new Error('listen EAFNOSUPPORT');
+        err.code = 'EAFNOSUPPORT';
+        void args;
+        setImmediate(() => server.emit('error', err));
+        return server;
+      }) as typeof server.listen;
+      return server;
+    });
+    try {
+      expect(await probe(await reserveEphemeralPort())).toBe(true);
+    } finally {
+      vi.doUnmock('net');
+      vi.resetModules();
+    }
+  });
+
   // The probe's transient listener accepts anything that arrives in its bind window, and
   // close() withholds its callback until every accepted connection is gone. Resolving from
   // that callback made one stray connection enough to wedge the picker, which the daemon
