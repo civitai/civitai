@@ -94,43 +94,51 @@ export function RemoveReportedPlacement({
 
   return (
     <Stack gap="xs">
-      {target === 'comment' && (
-        // The subject of the complaint, quoted where the action is taken. The
-        // service hands moderators the text even when the owner has hidden it,
-        // for exactly this: the alternative is answering a report about words
-        // nobody in the queue can read.
+      {!!placement.comment && (
+        // Shown whenever there is a note, not only when the reporter said the
+        // note was the problem. The service hands moderators the text even when
+        // the owner has hidden it, for exactly this — and the two reports on one
+        // placement do not dedupe, so the sticker-target one often arrives
+        // first, from someone who classified it differently to what a moderator
+        // finds when they look. `target` says what was reported; it does not
+        // decide which remedies exist.
         <Stack gap={4}>
           <Text size="xs" c="dimmed">
-            Reported: the note attached to this sticker
+            {target === 'comment' ? 'Reported: the note attached to this sticker' : 'Its note'}
             {placement.commentHidden ? ' (already hidden)' : ''}
           </Text>
           <div className="rounded-md bg-gray-2 px-2 py-1.5 dark:bg-dark-5">
             <Text size="sm" className="whitespace-pre-wrap break-words">
-              {/* Says what is true without guessing which: a report can name a
-                  note that has since gone, and one can be filed about a sticker
-                  that never carried a note at all. */}
-              {placement.comment ?? 'There is no note on this sticker.'}
+              {placement.comment}
             </Text>
           </div>
           <Group gap="xs" justify="space-between">
             <Text size="xs" c="dimmed">
-              Hiding leaves the sticker up and is reversible. Removing takes the whole sticker off.
+              Hiding leaves the sticker up and is reversible, and the owner can put it back.
+              Removing takes the whole sticker off.
             </Text>
-            {!!placement.comment && (
-              <Button
-                variant="default"
-                size="compact-sm"
-                leftSection={
-                  placement.commentHidden ? <IconEye size={14} /> : <IconEyeOff size={14} />
-                }
-                loading={setHidden.isPending}
-                onClick={() => setHidden.mutate({ placementId, hidden: !placement.commentHidden })}
-              >
-                {placement.commentHidden ? 'Restore note' : 'Hide note'}
-              </Button>
-            )}
+            <Button
+              variant="default"
+              size="compact-sm"
+              leftSection={
+                placement.commentHidden ? <IconEye size={14} /> : <IconEyeOff size={14} />
+              }
+              loading={setHidden.isPending}
+              onClick={() => setHidden.mutate({ placementId, hidden: !placement.commentHidden })}
+            >
+              {placement.commentHidden ? 'Restore note' : 'Hide note'}
+            </Button>
           </Group>
         </Stack>
+      )}
+      {!placement.comment && target === 'comment' && (
+        // The report says the note is the problem and there is no note. Nothing
+        // cross-checks the two at submit, and a note cannot be edited away, so
+        // this is a forged or mistaken classification rather than a race — and
+        // the moderator should see that rather than an empty panel.
+        <Text size="xs" c="dimmed">
+          This report names a note, but the sticker has none.
+        </Text>
       )}
       <Group justify="space-between">
         <Text size="sm">
