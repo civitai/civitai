@@ -76,7 +76,7 @@ const SORT_OPTIONS: { value: ListingSort; label: string }[] = [
 
 export function AppListingsMarketplaceBody() {
   const features = useFeatureFlags();
-  const { filters, setFilters, isWritePending } = useAppsStoreQueryParams();
+  const { filters, setFilters, hasPendingWrite } = useAppsStoreQueryParams();
   const { kind, category, sort } = filters;
 
   // 🔴 The search input is LOCAL, seeded ONCE from the URL. It is not a
@@ -116,20 +116,56 @@ export function AppListingsMarketplaceBody() {
    * guard is what makes it timing-independent.
    *
    * The two early returns are what stop it fighting the viewer or our own echo:
-   *   - `isWritePending` — our write is still on its way to the URL, so the URL
-   *     disagreeing is expected and must not be adopted;
+   *   - `hasPendingWrite()` — our write is still on its way to the URL, so the
+   *     URL disagreeing is expected and must not be adopted;
    *   - `searchInput !== debouncedSearch` — the viewer is mid-keystroke, and
    *     adopting now would yank characters out from under the caret.
    * Only when both are settled does a disagreement mean the URL genuinely moved.
+   *
+   * 🔴 `hasPendingWrite()` IS CALLED, NOT READ FROM A RENDER-TIME BOOLEAN — and
+   * that one character is the whole fix for the unbounded `replaceState`
+   * ping-pong measured on production 2026-08-13 (~1.8 route writes/sec, forever,
+   * with the URL ending on `/apps` and the term never sticking).
+   *
+   * MECHANISM. The debounce landing produces ONE commit in which BOTH effects
+   * run, in declaration order:
+   *   1. the echo effect above sees `debouncedSearch` ('benchmark') differ from
+   *      `filters.query` (still '', the pre-write URL) and calls `setFilters` —
+   *      which bumps the hook's in-flight counter and fires an async
+   *      `router.replace`;
+   *   2. THIS effect then runs — in the same commit, so `filters.query` is still
+   *      the pre-write '' and, when the guard was a render-time boolean, the
+   *      pending flag was still the `false` captured BEFORE step 1 incremented
+   *      it. Both guards passed, the stale URL looked like an external
+   *      navigation, and the box was wiped to ''.
+   * 300 ms later the debounce echoes that wipe back into the URL, this effect
+   * sees the disagreement again and restores 'benchmark', and the two writers
+   * ping-pong in anti-phase forever. Measured with a deliberately slowed
+   * `router.replace`: the box cleared 6 ms after the replace CALL and 410 ms
+   * BEFORE the URL changed — i.e. same commit, not a later router render.
+   *
+   * So the guard was never wrong about WHAT to check, only about WHEN: a value
+   * sampled during render cannot describe a write issued during that render's
+   * effect phase. Reading the ref at effect time makes it cover the window it
+   * was always meant to cover — from the instant we issue a write until we
+   * observe it arrive.
+   *
+   * ⚠️ ORDER-SENSITIVE BY DESIGN. React runs a component's effects in
+   * declaration order, so the echo effect above MUST stay declared before this
+   * one — that is what guarantees the counter is already incremented when this
+   * effect asks. Do not reorder them. (A value-only guard cannot replace this:
+   * "we are about to move the URL" and "the viewer pressed Back" produce the
+   * IDENTICAL value disagreement — see the v1/v2 post-mortem in
+   * `useAppsStoreQueryParams.ts`.)
    */
-  // The rule's own suggestion here — "pass [isWritePending, searchInput,
+  // The rule's own suggestion here — "pass [hasPendingWrite, searchInput,
   // debouncedSearch, filters.query]" — is exactly the dependency-array form that
   // does NOT work (see above): under render coalescing `filters.query` never
   // appears to change and the effect never fires. The three guards inside are
   // what make this terminate, not the dep list.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (isWritePending) return;
+    if (hasPendingWrite()) return;
     if (searchInput !== debouncedSearch) return;
     if (filters.query !== searchInput) setSearchInput(filters.query);
   });
