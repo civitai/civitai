@@ -225,7 +225,6 @@ import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
 import { removeEmpty } from '~/utils/object-helpers';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
-import { getImageS3Client } from '~/utils/s3-client';
 import { serverUploadImage, getB2ImageS3Client } from '~/utils/s3-utils';
 import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
@@ -360,23 +359,36 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
 
     if (!!otherImagesWithSameUrl) return;
 
-    // Check storage-resolver for backend location (during media migration)
+    // B2 is the only backend an image can be on: the DigitalOcean-Spaces bucket was deleted
+    // 2026-05-18 and `ImageUploadBackend` has exactly one member. So the registry is consulted
+    // for observability, not to choose a destination — a miss means "unregistered", never
+    // "somewhere else". This used to branch to a DO delete on a miss, which is how 2,545 objects
+    // outlived their rows: `resolveMediaLocation` returns null on a 404, a service error AND a
+    // timeout, and the DO endpoint answers `404 page not found` as text/plain, which the SDK's
+    // XML error deserializer throws on. The row was already gone, so the object stayed public.
     const location = await resolveMediaLocation(url);
-    if (location?.backend === 'backblaze' && env.S3_IMAGE_B2_ACCESS_KEY) {
-      const b2Client = getB2ImageS3Client();
-      await withRetries(() =>
-        b2Client.send(
-          new DeleteObjectCommand({
-            Bucket: env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads',
-            Key: url,
-          })
-        )
-      );
-    } else if (env.S3_IMAGE_UPLOAD_BUCKET) {
-      await withRetries(() =>
-        getImageS3Client().deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET!, key: url })
-      );
+    if (!location) {
+      // Not a failure — the delete proceeds against B2 below. But an unregistered image is a
+      // registry gap (or a storage-resolver outage), and silently treating it as B2 is exactly
+      // what made the gap invisible for three months. Rate of this line is the health signal.
+      await logToAxiom({
+        type: 'warning',
+        name: 'delete-image-from-s3-unresolved-location',
+        message: 'storage-resolver returned no location; deleting from B2 anyway',
+        imageId: id,
+        url,
+      }).catch(() => undefined);
     }
+
+    const b2Client = getB2ImageS3Client();
+    await withRetries(() =>
+      b2Client.send(
+        new DeleteObjectCommand({
+          Bucket: env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads',
+          Key: url,
+        })
+      )
+    );
   } catch (error) {
     // Nothing retries this: deleteImages drops the DB row first, so a lost object stays
     // publicly reachable (CDN urls are unsigned) with only this line to find it by.
