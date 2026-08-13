@@ -146,30 +146,42 @@ function isRestServerFault(status: number): boolean {
  * right axis is "is this a response a cache should keep", and for an error the
  * answer is always no.
  *
- * **Accepted trade.** Which routes lose edge absorption on a 404:
+ * **Accepted trade.** 🔴 **Do not trust a list here — three successive attempts to
+ * enumerate the affected routes were each wrong, in the same way.** v1 asserted
+ * without checking ("these routes are not under that kind of load"); v2 gave a
+ * "measured" count of ONE, having surveyed only `PublicEndpoint`; v3 added the
+ * `MixedAuthEndpoint` by-id routes but missed `v1/models/index.ts` and then made a
+ * false blanket claim about rate limiters. Each version was more precise and more
+ * quotable than the last, and wrong.
  *
- *   - `v1/content/[[...slug]]`   — `PublicEndpoint`; low volume, small slug space
- *   - `v1/articles/[id]`         — `MixedAuthEndpoint`; `throwNotFoundError`
- *   - `v1/collections/[id]`      — `MixedAuthEndpoint`; `throwNotFoundError`
+ * So: the RULE, and how to re-derive the set yourself.
  *
- * plus any other caller that 404s through this helper. `v1/models/[id]` — the
- * highest-traffic one — is NOT affected: it answers its common 404 directly
- * (`res.status(404).json(...)`) without reaching here.
+ * **Rule** — a route loses 404 edge absorption iff (a) its wrapper stamps the
+ * public cache header, and (b) its 404 reaches THIS helper.
+ *   (a) `PublicEndpoint` stamps it unconditionally; `MixedAuthEndpoint` stamps it
+ *       on every ANONYMOUS request (`if (!session) addPublicCacheHeaders(...)`
+ *       below) — that second one is what keeps getting missed.
+ *   (b) a route that answers 404 itself (`res.status(404).json(...)`) is
+ *       unaffected. `v1/models/[id]` — the highest-traffic caller — does exactly
+ *       that at `:197`, so it keeps its edge cache.
  *
- * 🔴 **`MixedAuthEndpoint` is the easy one to miss, and I missed it twice.** The
- * first version of this note asserted, without checking, that "these routes are
- * not under that kind of load". The second replaced it with a *measured* claim of
- * exactly ONE affected route — arrived at by surveying only the six
- * `PublicEndpoint` callers. But `MixedAuthEndpoint` calls `addPublicCacheHeaders`
- * on **every anonymous request** (`if (!session) addPublicCacheHeaders(...)`
- * below), so its by-id routes carry the same header. A precise wrong number is
- * more quotable than a vague one — and this file already said so 250 lines down,
- * where the 5xx arm names "`GET /api/v1/articles/{id}` (a public
- * MixedAuthEndpoint)" as unauthenticated-reachable.
+ * **Re-derive:** grep `handleEndpointError` under `src/pages/api`, keep the
+ * `PublicEndpoint`/`MixedAuthEndpoint` ones, and check which can reach a
+ * `throwNotFoundError` (directly or through a service).
  *
- * Worth knowing if you extend `noStore` further: the six `PublicEndpoint` callers
- * have NO rate limiter, so edge absorption is the only thing in front of them;
- * the `MixedAuthEndpoint` ones do have one.
+ * Known examples at time of writing, NOT a complete set: `v1/content/[[...slug]]`
+ * (PublicEndpoint), `v1/articles/[id]`, `v1/collections/[id]`, and
+ * `v1/models/index.ts` — the last via `?username=<nonexistent>`, which reaches
+ * `throwNotFoundError('User not found')` in `model.service.ts`.
+ *
+ * **Rate limiting is NOT a blanket reassurance.** Measured: the six
+ * `PublicEndpoint` callers have none, so edge absorption was the only thing in
+ * front of them. Of the seven `MixedAuthEndpoint` callers, six are limited
+ * (`checkPublicApiRateLimit`, `enforceAppsCatalogRateLimit`) and
+ * **`v1/models/index.ts` is not** — which makes it the sharp case: unlimited,
+ * anonymous, and its miss costs two user lookups, the second against the PRIMARY
+ * (`model.service.ts` falls back to `dbWrite` when the read misses, and a
+ * nonexistent username always misses).
  *
  * Uniform application also removes a **fault-classification oracle**: with the
  * narrower version, `no-store` vs `s-maxage=300` on the same status told a caller
