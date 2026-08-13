@@ -93,6 +93,13 @@ export function reduceToBasicFileMetadata(
  * now builds a new array (`model.service.ts`). So no caller in the tree mutates the returned
  * `files` today, and this copy is deliberately kept as belt-and-braces for the NEXT one.
  *
+ * 🔴 That does NOT make the two halves circular. The call site is pinned INDEPENDENTLY of this
+ * copy by `model.service.vae-append-no-mutation.test.ts`, which stubs this accessor to hand back
+ * the raw cache-owned array — the copy removed — so restoring the `push` turns it red on its own.
+ * Deleting this copy is therefore a real decision, not a no-op, and one that must be argued
+ * against the cache layer's own contract below (relevant if the deep-clone in issue #3872 lands:
+ * a clone THERE would make this copy redundant, but only once it is actually in place).
+ *
  * What it protects against is the shared cache layer, whose contract is genuinely unsafe here:
  * `createCachedArray` only ever SHALLOW-clones a record before handing it out, and says so —
  * "shallow only protects TOP-LEVEL fields — nested refs are shared … consumers MUST treat

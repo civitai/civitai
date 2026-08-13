@@ -306,8 +306,13 @@ describe('getFilesForModelVersionCache — nested files array is caller-owned', 
 
     const first = await getFilesForModelVersionCache([42]);
     expect(first['42'].files).toHaveLength(1);
-    // exactly what model.service.ts getModelsWithVersions does with the linked VAE
-    first['42'].files.push({ id: 999, name: 'linked.vae.safetensors' });
+    // exactly what model.service.ts getModelsWithVersions does with the linked VAE.
+    // 🔴 `as unknown[]` on the ARRAY, not `as never` on the element and not `any`: `files` is
+    // typed as the full Prisma-derived model-file row, and these fixtures are deliberately
+    // two-field stubs — identity is all these tests read. Widening the receiver keeps the cast
+    // to the push call alone, so every other read of `files` in this file stays fully typed
+    // (same pattern as the H2b block in `cache-helpers-failopen.test.ts`).
+    (first['42'].files as unknown[]).push({ id: 999, name: 'linked.vae.safetensors' });
 
     const second = await getFilesForModelVersionCache([42]);
     expect(second['42'].files).toHaveLength(1);
@@ -327,7 +332,7 @@ describe('getFilesForModelVersionCache — nested files array is caller-owned', 
     ]);
     expect(a['42'].files).not.toBe(b['42'].files);
 
-    a['42'].files.push({ id: 999, name: 'linked.vae.safetensors' });
+    (a['42'].files as unknown[]).push({ id: 999, name: 'linked.vae.safetensors' });
     expect(b['42'].files).toHaveLength(1);
   });
 
@@ -357,7 +362,7 @@ describe('getFilesForModelVersionCache — nested files array is caller-owned', 
     expect(Object.keys(result)).toEqual(['42', '43', '44']);
     for (const id of ['42', '43', '44'] as const) {
       expect(result[id].files).not.toBe(cached[id].files);
-      result[id].files.push({ id: 999, name: 'linked.vae.safetensors' });
+      (result[id].files as unknown[]).push({ id: 999, name: 'linked.vae.safetensors' });
       expect(cached[id].files).toHaveLength(1);
     }
   });
