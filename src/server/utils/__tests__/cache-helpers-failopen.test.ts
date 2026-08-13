@@ -34,8 +34,25 @@ vi.mock('~/server/redis/client', () => ({
     del: (...args: unknown[]) => delMock(...args),
   },
   sysRedis: {},
-  REDIS_KEYS: { CACHE_LOCKS: 'caches:lock', TAG: 'caches:tag' },
+  REDIS_KEYS: {
+    CACHE_LOCKS: 'caches:lock',
+    TAG: 'caches:tag',
+    // model-file.service dereferences this at MODULE scope to build
+    // filesForModelVersionCache; the H2b block below drives that real cache.
+    CACHES: { FILES_FOR_MODEL_VERSION: 'caches:files-for-model-version' },
+  },
 }));
+
+// --- H2b support: import the REAL model-file.service accessor -----------------------------------
+// The H2b block drives the genuine seam — real createCachedObject + real degraded single-flight +
+// real lookupFn + real getFilesForModelVersionCache — so only the leaves it cannot reach in a unit
+// test (prisma, cloudflare) are stubbed. `cache-helpers` is deliberately NOT mocked here: the whole
+// point is that the cache layer is real.
+const { mockDbRead } = vi.hoisted(() => ({
+  mockDbRead: { modelFile: { findMany: vi.fn() } },
+}));
+vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
+vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn() }));
 
 // Keep the fail-open logger inert (fire-and-forget Axiom/Loki, not under test).
 vi.mock('~/server/redis/fail-open-log', () => ({
@@ -58,6 +75,7 @@ vi.mock('~/server/prom/client', () => ({
 }));
 
 import { createCachedArray, createCachedObject } from '~/server/utils/cache-helpers';
+import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 
 type Row = { id: number; name: string };
 
@@ -255,6 +273,126 @@ describe('createCachedArray.fetch — degraded shared-object isolation (H2)', ()
     // Without the clone, id 2's shared object would be appended TWICE ("db-2-appended-appended").
     expect(r1.find((r) => r.id === 2)?.name).toBe('db-2-appended');
     expect(r2.find((r) => r.id === 2)?.name).toBe('db-2-appended');
+  });
+});
+
+/**
+ * H2b — the degraded window OBSERVED, not inferred.
+ *
+ * H2 above pins the TOP-LEVEL clone. This block pins what that clone does NOT do: the record it
+ * hands each caller is `{ ...r }`, so every NESTED field is still one shared reference across
+ * every caller that joined the same degraded single-flight
+ * (`packages/civitai-redis/src/cached-array.ts`, the `degraded.add({ ...r })` loop).
+ *
+ * Nothing is hand-constructed here. A rejecting `mGet` forces the real fail-open path, a gated
+ * `dbRead.modelFile.findMany` holds the real `lookupFn` open so a second caller joins the same
+ * in-flight promise, and the assertions read what the real `getFilesForModelVersionCache` returns.
+ * The first test is the POSITIVE CONTROL: it proves this harness can actually observe nested
+ * sharing, so the isolation assertions below are not passing vacuously.
+ */
+describe('degraded single-flight — nested `files` isolation through the real accessor (H2b)', () => {
+  const VERSION_ID = 42;
+  const dbRow = () => ({
+    id: 1,
+    name: 'base.safetensors',
+    modelVersionId: VERSION_ID,
+    metadata: {},
+    hashes: [],
+  });
+
+  // Hold lookupFn open so a second caller reaches the fail-open path and JOINS the in-flight
+  // promise rather than starting its own. Returns the gate itself as well, so a cache that does
+  // NOT go through dbRead (the raw control below) can be held open by the SAME barrier — without
+  // that, its first lookup resolves immediately and the second caller starts a fresh flight, which
+  // yields two independent arrays and a control that "fails" for a harness reason.
+  function gateOrigin() {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    mockDbRead.modelFile.findMany.mockImplementation(async () => {
+      await gate;
+      return [dbRow()];
+    });
+    return { gate, release: () => release() };
+  }
+
+  beforeEach(() => {
+    mockDbRead.modelFile.findMany.mockReset();
+    mGetMock.mockRejectedValue(REDIS_TIMEOUT());
+  });
+
+  /**
+   * POSITIVE CONTROL — the hazard, at the layer, as it exists today.
+   *
+   * 🔴 If this test ever FAILS, the shared cache layer has been fixed to deep-clone the degraded
+   * record. That is the desired outcome (it is filed as a follow-up on `cached-array.ts`); when it
+   * lands, delete THIS test and keep the two below — do not "repair" it by weakening them.
+   */
+  it('CONTROL: the RAW cache layer hands both callers the SAME nested array', async () => {
+    const { gate, release } = gateOrigin();
+    type Rec = { modelVersionId: number; files: { id: number }[] };
+    const rawLookup = vi.fn(async (ids: number[]) => {
+      await gate; // SAME barrier as the accessor tests → a real joined single-flight
+      return Object.fromEntries(
+        ids.map((id) => [id, { modelVersionId: id, files: [{ id: 1 }] }])
+      ) as Record<string, Rec>;
+    });
+    const raw = createCachedObject<Rec>({
+      key: 'test:h2b-raw' as never,
+      idKey: 'modelVersionId',
+      lookupFn: rawLookup,
+    });
+
+    const p1 = raw.fetch([VERSION_ID]);
+    await flush();
+    const p2 = raw.fetch([VERSION_ID]);
+    await flush();
+    release();
+    const [r1, r2] = await Promise.all([p1, p2]);
+
+    // One lookup for two callers → they genuinely joined the same degraded flight.
+    expect(rawLookup).toHaveBeenCalledTimes(1);
+    // Same nested array object — the shallow clone protected only the top level.
+    expect(r1[VERSION_ID].files).toBe(r2[VERSION_ID].files);
+    // ...and it is genuinely ONE window, not two sequential fetches.
+    expect(r1[VERSION_ID]).not.toBe(r2[VERSION_ID]);
+  });
+
+  it('two callers joining ONE degraded single-flight get their OWN `files` array', async () => {
+    const { release } = gateOrigin();
+
+    const p1 = getFilesForModelVersionCache([VERSION_ID]);
+    await flush();
+    const p2 = getFilesForModelVersionCache([VERSION_ID]);
+    await flush();
+    release();
+    const [r1, r2] = await Promise.all([p1, p2]);
+
+    // ONE origin lookup served BOTH callers → they really did share a single flight. Without this
+    // the two `not.toBe` assertions below would pass trivially (two independent fetches).
+    expect(mockDbRead.modelFile.findMany).toHaveBeenCalledTimes(1);
+    expect(degradedInc).toHaveBeenCalledTimes(2); // both callers took the degraded path
+    expect(r1[VERSION_ID].files).toHaveLength(1);
+    expect(r2[VERSION_ID].files).toHaveLength(1);
+    expect(r1[VERSION_ID].files).not.toBe(r2[VERSION_ID].files);
+  });
+
+  it('one caller appending a linked VAE file is INVISIBLE to the other', async () => {
+    const { release } = gateOrigin();
+
+    const p1 = getFilesForModelVersionCache([VERSION_ID]);
+    await flush();
+    const p2 = getFilesForModelVersionCache([VERSION_ID]);
+    await flush();
+    release();
+    const [r1, r2] = await Promise.all([p1, p2]);
+
+    expect(mockDbRead.modelFile.findMany).toHaveBeenCalledTimes(1);
+    // The behaviour `getModelsWithVersions` used to perform in place on this very array.
+    (r1[VERSION_ID].files as unknown[]).push({ id: 999, name: 'linked.vae.safetensors' });
+
+    expect(r1[VERSION_ID].files).toHaveLength(2);
+    expect(r2[VERSION_ID].files).toHaveLength(1);
+    expect(r2[VERSION_ID].files.map((f) => f.name)).toEqual(['base.safetensors']);
   });
 });
 

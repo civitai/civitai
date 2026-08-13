@@ -3862,14 +3862,15 @@ export async function getModelsWithVersions({
               const vaeFile = vaeVersionId
                 ? vaeFiles.filter((x) => x.modelVersionId === vaeVersionId)
                 : [];
-              // This append is safe ONLY because getFilesForModelVersionCache hands back a
-              // per-caller copy of `files`. The cache layer shallow-clones records and
-              // documents nested fields as read-only, and its fail-open degraded path gives
-              // one shared `files` array to every concurrent reader of that version — so a
-              // push straight onto `filesForModelVersionCache.fetch(...)` output leaks this
-              // VAE into other in-flight requests. Don't bypass the accessor.
-              const files = groupedFiles[version.id]?.files ?? [];
-              files.push(...vaeFile);
+              // Build a NEW array rather than pushing onto the cached record's own. The cache
+              // layer shallow-clones records and documents nested fields as read-only, and its
+              // fail-open degraded path hands one shared `files` array to every concurrent
+              // reader of that version — a `push` here would leak this VAE into other in-flight
+              // requests (and, via the 180s origin response cache on
+              // `src/pages/api/v1/models/[id].ts`, into every later reader of that model id).
+              // The next statement rebuilds the list with `.map()` anyway, so nothing downstream
+              // wanted the mutation.
+              const files = [...(groupedFiles[version.id]?.files ?? []), ...vaeFile];
 
               // `earlyAccessTimeFrame` is dead — no write path has touched it since the PaidAccess
               // cutover, so the deadline has to come from PaidAccess.

@@ -49,7 +49,13 @@ export async function fetchModelFilesForCache(ids: number[]) {
     );
 }
 
-export const filesForModelVersionCache = createCachedObject({
+/**
+ * NOT EXPORTED — on purpose. Every read must go through `getFilesForModelVersionCache` (which
+ * hands back a caller-owned `files` array) and every bust through
+ * `deleteFilesForModelVersionCache`. Keeping the cache object module-private makes bypassing
+ * the accessor structurally impossible rather than merely discouraged by a comment.
+ */
+const filesForModelVersionCache = createCachedObject({
   key: REDIS_KEYS.CACHES.FILES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',
   ttl: CacheTTL.day,
@@ -82,35 +88,44 @@ export function reduceToBasicFileMetadata(
  * Read the per-version file lists, returning records whose nested `files` array is the
  * CALLER'S OWN — safe to append to, sort, or splice.
  *
- * 🔴 WHY THE COPY. `createCachedArray` only ever SHALLOW-clones a record before handing it
- * out, and says so: "shallow only protects TOP-LEVEL fields — nested refs are shared …
- * consumers MUST treat returned values as read-only for nested fields"
- * (`packages/civitai-redis/src/cached-array.ts`). So the contract the cache offers is
- * read-only-for-`files`, while `getModelsWithVersions` appends the linked VAE file to
- * exactly that array. This function is the seam that converts one contract into the other.
+ * 🔴 THE COPY IS FORWARD-PROTECTION, NOT A FIX FOR A LIVE MUTATOR. The one mutator that
+ * existed — `getModelsWithVersions` doing `files.push(...vaeFile)` — is gone; that call site
+ * now builds a new array (`model.service.ts`). So no caller in the tree mutates the returned
+ * `files` today, and this copy is deliberately kept as belt-and-braces for the NEXT one.
  *
- * The healthy Redis path is NOT the concern — every hit msgpack-decodes a fresh object per
- * read, so nothing is shared there. The live sharing path is the FAIL-OPEN DEGRADED fetch
- * (taken whenever a cluster read rejects): its per-id single-flight resolves ONE record for
- * every caller that joins the in-flight lookup, and the shallow clone it then makes leaves
- * every one of those callers holding the SAME `files` array. Without this copy, one
- * request's VAE append is visible to every other request sharing that flight — including
- * `generation.service` and the `modelFile.getByVersionId` handler, which never expected a
- * VAE file in the list at all. (An in-process L1 hit would share it too, but this cache
- * sets no `localTtl`, so that path is latent rather than live.)
+ * What it protects against is the shared cache layer, whose contract is genuinely unsafe here:
+ * `createCachedArray` only ever SHALLOW-clones a record before handing it out, and says so —
+ * "shallow only protects TOP-LEVEL fields — nested refs are shared … consumers MUST treat
+ * returned values as read-only for nested fields"
+ * (`packages/civitai-redis/src/cached-array.ts`). Its FAIL-OPEN DEGRADED fetch (taken whenever
+ * a cluster read rejects) resolves ONE record per id for every caller that joins the in-flight
+ * lookup, so the shallow clone leaves all of them holding the SAME `files` array. An in-process
+ * L1 hit shares it the same way; this cache sets no `localTtl`, so that path is latent.
  *
- * Array-level is the right DEPTH: no consumer mutates an individual file object, only the
- * list. Guarded rather than unconditional so a record without a `files` array keeps its
- * pre-existing shape instead of throwing on a hot public-API path.
+ * Because `filesForModelVersionCache` is module-private, EVERY read routes through here, which
+ * is what makes this the single place a future appender can be made safe. Cost is one array
+ * copy per record (~a few hundred short-lived allocations per feed hydration) — negligible
+ * against the msgpack unpack already done on the same path.
+ *
+ * Array-level is the right DEPTH: no consumer mutates an individual file object, only the list.
+ * Guarded rather than unconditional so a record without a `files` array keeps its pre-existing
+ * shape instead of throwing on a hot public-API path. NOTE: with the real cache that guard is
+ * not reachable — `lookupFn` above always initialises `files: []`, and marker records are
+ * skipped inside the cache layer — so its test is an invariant guard, not regression coverage.
+ *
+ * The result is built into a `typeof records`-annotated object rather than cast: the annotation
+ * is the only thing that makes dropping a field from the returned shape a type error.
  */
 export async function getFilesForModelVersionCache(modelVersionIds: number[]) {
   const records = await filesForModelVersionCache.fetch(modelVersionIds);
-  return Object.fromEntries(
-    Object.entries(records).map(([id, record]) => [
-      id,
-      { ...record, files: Array.isArray(record.files) ? [...record.files] : record.files },
-    ])
-  ) as typeof records;
+  const isolated: typeof records = {};
+  for (const [id, record] of Object.entries(records)) {
+    isolated[id] = {
+      ...record,
+      files: Array.isArray(record.files) ? [...record.files] : record.files,
+    };
+  }
+  return isolated;
 }
 export async function deleteFilesForModelVersionCache(modelVersionId: number) {
   await filesForModelVersionCache.bust(modelVersionId);

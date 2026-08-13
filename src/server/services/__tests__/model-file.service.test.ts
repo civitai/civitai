@@ -29,6 +29,7 @@ vi.mock('~/server/redis/client', () => ({
   REDIS_KEYS: { CACHES: { FILES_FOR_MODEL_VERSION: 'files-for-model-version' } },
 }));
 
+import * as modelFileService from '~/server/services/model-file.service';
 import {
   hasOfficialFileOfSize,
   findOfficialFileByHash,
@@ -242,23 +243,45 @@ describe('fetchModelFilesForCache', () => {
 });
 
 /**
- * REGRESSION — the accessor must not hand a caller a `files` array that is shared with the
- * cache layer.
+ * ACCESSOR CONTRACT — the accessor must not hand a caller a `files` array that is shared with
+ * the cache layer.
  *
- * `createCachedArray` (packages/civitai-redis/src/cached-array.ts) only ever SHALLOW-clones a
- * record before handing it out, and documents that nested refs stay shared: "shallow only
- * protects TOP-LEVEL fields … consumers MUST treat returned values as read-only for nested
- * fields". The healthy Redis path is fine — each hit msgpack-decodes a fresh object. The live
- * sharing path is the FAIL-OPEN DEGRADED fetch: its per-id single-flight resolves ONE record
- * for every caller that joins the in-flight lookup, so all of them end up holding the same
- * `files` array. (An L1 hit would share it too, but this cache sets no `localTtl`.)
- * `getModelsWithVersions` does `files.push(...vaeFile)` on that array, so without a copy one
- * request's VAE append is visible to every other request sharing the flight.
+ * 🔴 READ THIS BEFORE TRUSTING THE COVERAGE BELOW. These tests drive a MOCKED
+ * `createCachedObject` (see the wholesale `~/server/utils/cache-helpers` mock at the top of this
+ * file) and hand-construct the aliasing they then assert against. That makes them a contract test
+ * for THIS FUNCTION — they would pass against a completely broken cache layer and fail against a
+ * fixed one, because the cache layer is not present.
  *
- * These tests drive the cache mock to return records that share ONE nested array — exactly
- * what the degraded path produces — and assert the accessor isolates the caller from it.
- * Before the fix the accessor returned `filesForModelVersionCache.fetch(...)` verbatim.
+ * The REAL degraded window — rejecting `mGet` → genuine fail-open → genuine per-id single-flight
+ * joined by two callers → the real `lookupFn` → the real accessor — is driven in the "H2b" block
+ * of `src/server/utils/__tests__/cache-helpers-failopen.test.ts`. That is where the hazard is
+ * OBSERVED; this block only pins the accessor's own behaviour.
+ *
+ * Why the accessor copies at all: `createCachedArray`
+ * (`packages/civitai-redis/src/cached-array.ts`) only ever SHALLOW-clones a record before handing
+ * it out, and documents that nested refs stay shared — "shallow only protects TOP-LEVEL fields …
+ * consumers MUST treat returned values as read-only for nested fields". The one consumer that
+ * mutated the array (`getModelsWithVersions` doing `files.push(...vaeFile)`) has been fixed to
+ * build a new array instead, so the copy here is FORWARD-PROTECTION for the next consumer, not a
+ * fix for a live mutator.
  */
+/**
+ * The cache object itself must stay module-private, so the caller-owned-`files` contract cannot be
+ * bypassed by reaching past the accessor. This reads the module's ACTUAL export namespace (not the
+ * source text), so it fails the moment an `export` keyword is put back on it — which is the only
+ * way the bypass can reappear.
+ */
+describe('module export surface', () => {
+  it('does NOT export the raw filesForModelVersionCache — reads go through the accessor', () => {
+    const exports = Object.keys(modelFileService);
+    // positive control: the accessor/wrapper pair IS exported, so an empty/undefined namespace
+    // cannot make the negative assertion below pass vacuously.
+    expect(exports).toContain('getFilesForModelVersionCache');
+    expect(exports).toContain('deleteFilesForModelVersionCache');
+    expect(exports).not.toContain('filesForModelVersionCache');
+  });
+});
+
 describe('getFilesForModelVersionCache — nested files array is caller-owned', () => {
   beforeEach(() => mockCacheFetch.mockReset());
 
@@ -339,9 +362,16 @@ describe('getFilesForModelVersionCache — nested files array is caller-owned', 
     }
   });
 
-  // The copy is guarded so a record that somehow carries no `files` array keeps its shape
-  // rather than throwing on a public-API read path.
-  it('passes through a record with no files array instead of throwing', async () => {
+  // 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE. With the real cache this state is UNREACHABLE:
+  // `lookupFn` always initialises `files: []` (model-file.service.ts), and marker records
+  // (`notFound`/`debounce`) are `continue`d inside the cache layer before they can be returned
+  // (packages/civitai-redis/src/cached-array.ts). So the `Array.isArray` guard cannot fire in
+  // production, and this test only pins a shape the MOCK above can produce. It is kept because a
+  // future cache-layer or lookupFn change could make the state reachable, and because throwing on
+  // a hot public-API read path is a worse failure than passing the record through — but it must
+  // not be counted as evidence of a demonstrated hazard, and in a mutation battery it is the sole
+  // kill for the guard-removal mutant, i.e. that arm scores against an unreachable state.
+  it('INVARIANT GUARD (unreachable with the real cache): passes through a record with no files array instead of throwing', async () => {
     mockCacheFetch.mockImplementation(async () => ({ '42': { modelVersionId: 42 } }));
     const result = await getFilesForModelVersionCache([42]);
     expect(result['42']).toEqual({ modelVersionId: 42 });
