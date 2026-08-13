@@ -41,29 +41,56 @@ on which directory you happened to put it in.
 
 ## 2. Why the exclusion exists
 
-It is neither a performance decision nor an accident. It was a migration shortcut, and the
-history is unambiguous.
+It is not a performance decision. What it *is* has been corrected once already — see the
+correction note below, which changes the reading materially.
 
 The `exclude` entry has been touched exactly **once** in the repository's history:
 
 ```
-1a7f89df98  2026-02-26  "fix broken automatic metadata parsing"
+1a7f89df98  2026-02-26  "fix broken automatic metadata parsing"   (Briant Diehl)
 ```
 
 That commit's diff on `tsconfig.json` is the single added line. The same commit also adds
-`src/utils/metadata/__tests__/exif-parser.test.ts` — **the first file the repository ever put
-in a `src/**/__tests__/` directory.** The exclusion and the convention were born together, in
-a commit whose subject is about neither.
+`src/utils/metadata/__tests__/exif-parser.test.ts`, so the exclusion arrived alongside a test
+file, in a commit whose subject is about neither.
 
-So the reading is: an author adding the first test under a new directory convention hit
-typecheck noise from it, silenced it in the config, and shipped the feature the commit was
-actually about. There is no comment, no linked discussion, and no perf rationale anywhere in
-the file. Nobody decided that test files should not be typechecked; the decision was never
-framed as a decision at all.
+> ### 🔴 Correction (2026-08-13): this file previously claimed that `exif-parser.test.ts` was
+> "the first file the repository ever put in a `src/**/__tests__/` directory", and that
+> "nobody decided that test files should not be typechecked". **Both are false.** Verified:
+>
+> ```
+> $ git ls-tree -r 1a7f89df98^ --name-only | grep -E '^src/.*/__tests__/'
+> src/env/__tests__/other.test.ts                                        (2026-02-06, b2a862e9d2)
+> src/server/games/daily-challenge/__tests__/challenge-helpers.test.ts   (2026-02-13, 768bb18136)
+> src/server/games/daily-challenge/__tests__/winner-cooldown.test.ts     (2026-02-12, 9eb0d79003)
+> src/server/jobs/__tests__/prepaid-membership-jobs.test.ts              (2026-01-23, 3f93c4a359)
+> src/server/services/__tests__/challenge-review.service.test.ts         (2026-02-13, 47910c946e)
+> src/server/services/__tests__/coinbase.service.test.ts                 (2026-02-25, 3968c33229)
+> src/server/services/__tests__/redeemableCode.service.test.ts           (2026-01-23, 3f93c4a359)
+> src/shared/utils/__tests__/creator-program.utils.test.ts               (2026-02-17, f28ea5ea67)
+> ```
+>
+> **Eight such files already existed** when the exclude line was added, the earliest on
+> **2026-01-23** — over a month earlier, across six separate commits by different authors.
+> The convention was established and in use; the exclusion came *afterwards*.
 
-That matters for the recommendation: there is no constituency to argue with, and nothing was
-traded away for it. But it also means nothing has ever held the line, which is exactly what
-§3 measures.
+That changes the likely reading, and the honest thing is to label the new reading as
+**inference, not established fact** — the commit carries no comment, no linked discussion and
+no rationale, so its author's intent is not recoverable from the record. The inference: with
+eight test files already in the program, the typecheck was **already red**, and adding a ninth
+made that unavoidable. The one-line exclude was then a deliberate, undocumented **silencing**
+of an existing failure — not an author unknowingly closing a door nobody had opened yet.
+
+**This strengthens the recommendation in §4 rather than weakening it.** "Just delete the
+exclude and require green" (option B) is not an untried idea whose consequences are unknown; it
+is an option the repository has effectively **already rejected once**, under exactly the
+pressure that makes people reject it — a red check standing between them and shipping. A
+ratchet is the shape that survives that pressure, because it is never red for work you did not
+cause.
+
+What survives unchanged from the original reading: there is no comment, no linked discussion,
+and no perf rationale anywhere in the file, and nothing has ever held the line since — which is
+exactly what §3 measures.
 
 ### The performance cost of removing it
 
@@ -325,7 +352,7 @@ names the file, the error count, and how to reproduce:
   TYPECHECK-TESTS GATE: BLOCKED
 ================================================================
   1 test file(s) have type errors and are NOT in the baseline:
-    src/env/__tests__/server-schema-moderation-timeout.test.ts  (1)
+    src/__tests__/node-version-consistency.test.ts  (1)
 
   These are real type errors in test files. `pnpm typecheck` cannot see them
   because the root tsconfig excludes src/**/__tests__/**.
@@ -342,20 +369,73 @@ success while a file went unexamined.
 
 ### Instrument validation, built into the gate
 
-The characteristic failure of a gate like this is a confident zero, so the gate refuses to
-produce a verdict until two controls pass:
+The characteristic failure of a gate like this is a **confident zero**, and the first version of
+this gate had exactly that bug — in four places at once. It is worth stating what they were,
+because the class is more instructive than the fix: **every one of them treated "I parsed no
+diagnostics" as evidence of cleanliness.** All four were demonstrated live against this
+repository, not against a stub:
 
-- **Positive control.** `tsc --listFilesOnly` must show at least 400 files under a `__tests__/`
-  directory in the program (measured: 938). A mistyped `-p`, a future edit to the
-  exclude list, or a rename of the `__tests__` convention would otherwise yield "0 new errors"
-  and pass — indistinguishable from a gate wired to nothing. Below the floor the gate exits 3
-  ("cannot measure"), never 0.
-- **A crash is not a clean run.** The gate runs through `scripts/typecheck.mjs`, which already
-  distinguishes a V8 heap abort from a clean run (both emit zero diagnostics). If that wrapper
-  reports a crash, the gate exits 3.
+| condition | old gate | new gate |
+|---|---|---|
+| `TYPECHECK_HEAP_MB=abc` (wrapper exits 2, prints no crash marker) | `PASS`, exit 0 | exit 3, names the exit status |
+| wrapper exits 127 (binary missing) | `PASS`, exit 0 | exit 3 |
+| wrapper exits 134 (V8 heap abort) | `PASS`, exit 0 | exit 3 |
+| tsc `pretty` output — 801 real diagnostics | `0 error(s) across 0 file(s) … PASS`, exit 0 | `801 error(s) across 141 file(s)` |
+| `--write-baseline` while the check cannot run | writes `0 error(s) across 0 file(s)`, exit 0 | exit 3, file untouched |
+
+The old "CRASH IS NOT CLEAN" control was **spelled, not structural**: it matched the literal
+string `TYPECHECK CRASHED`, which `scripts/typecheck.mjs` emits from exactly one of its four
+failure exits. The other three — a rejected `TYPECHECK_HEAP_MB`, an unresolvable `typescript`,
+and a spawn error — print no such marker and sailed straight through.
+
+Five controls now stand between a run and a verdict, and none depends on a downstream tool
+remembering to print a particular string:
+
+1. **Exit-status truth table.** The outcome is decided by *(exit status, signal, parsed
+   diagnostic count)*. A non-zero exit with zero parsed diagnostics is a **failure to run**,
+   never a clean tree — one rule covering exits 2, 127, 134 and any future sibling.
+2. **Parse control.** `pretty` is a legal `compilerOptions` key, inherited through `extends`,
+   and tsc also enables it under a TTY. It reshapes every diagnostic from
+   `path(l,c): error TS…` to `path:l:c - error TS…`. It is now forced off on the command line
+   (`--pretty false` beats the config), **both** formats are parsed anyway, ANSI is stripped
+   first, and output containing the literal `error TS` that parses to zero is refused.
+3. **Plausibility.** A parsed total of `0` against a baseline of `N > 0` is refused; the escape
+   is the explicit `TYPECHECK_TESTS_ALLOW_EMPTY=1`. "Everything got fixed" and "the instrument
+   is broken" produce the same number, and only one of them is common.
+4. **Positive control on the measurement arm.** `--listFilesOnly` proves the program actually
+   reads test files — and it now runs through the **same wrapper, the same `-p`, and the same
+   flags** as the verdict run. The old control shelled out to `tsc.js` directly with different
+   arguments, so it structurally could not witness the arm it was validating. Its floor is
+   derived from the file count **stored in the baseline** (938 → 844), not a magic 400: at a
+   fixed 400, 57% of the test tree could vanish with the control still green, and vanished
+   files score as `fixed`, i.e. **PASS**.
+5. **Config-drift control.** `tsconfig.tests.json` must be `tsconfig.json`'s exclude list minus
+   exactly one entry. Both lists are written out verbatim, so without this check an addition to
+   the base list silently fails to reach the measurement program and the one-line-delta property
+   quietly stops being true.
+
+`--write-baseline` runs behind all five, because regeneration is the operation that can destroy
+the ratchet outright.
+
+**Tested, not asserted.** The pure half of the gate (parse / classify / plausibility / compare /
+drift) lives in `scripts/ci/typecheck-tests-compare.mjs` and is covered by 77 cases in
+`scripts/__tests__/typecheck-tests-gate.test.ts`, which also drives the gate end-to-end through
+a `TYPECHECK_TESTS_WRAPPER` seam with stub typecheckers that exit the way each real failure
+does. Twelve mutations — one per guard — were each confirmed to turn the suite red, and red for
+*that guard's* cases rather than incidentally.
 
 Exit codes: `0` pass · `1` regression (blocking) · `2` usage/baseline error · `3` the
 environment could not run the check.
+
+### Known behaviour: a pure `git mv` blocks
+
+A renamed test file is a new path with no baseline entry (→ **BLOCK**) plus an old path that
+disappeared (→ scored `fixed`). The gate cannot see file *content*, so it will not
+auto-forgive "this looks like a rename" — that is a hole a genuine regression fits through.
+What it does instead is **name the probable former path** in the block output, so the author is
+told the remedy (`--write-baseline` in the same PR) rather than hunting a regression that is not
+there. The match is on basename plus identical count, and an ambiguous match (two candidates
+sharing a basename) produces no claim at all rather than a confident wrong one.
 
 ---
 
@@ -374,7 +454,8 @@ as a clean typecheck by an exit-code reader.)
 
 ```
 $ node scripts/ci/typecheck-tests-gate.mjs
-typecheck-tests-gate: positive control OK — 938 test file(s) in the program.
+typecheck-tests-gate: positive control OK — 938 test file(s) in the program (floor 844, derived from the baseline).
+typecheck-tests-gate: parsed 801 diagnostic(s) in plain format.
 
 typecheck-tests-gate: 801 error(s) across 141 file(s) (baseline: 801 across 141).
 typecheck-tests-gate: PASS — no new or worsened test-file type errors.
@@ -383,15 +464,21 @@ gate exit=0
 
 Counted: **801** `error TS` lines, **141** files, matching the committed baseline exactly.
 The positive control confirms 938 test files were actually in the program — so the pass is a
-statement about the test tree, not about an empty one.
+statement about the test tree, not about an empty one — and the run now states which diagnostic
+FORMAT it parsed, because a format the parser cannot read is the difference between 801 and a
+confident zero.
+
+**Baseline regeneration is byte-stable.** `--write-baseline` run twice against the same tree
+produces a byte-identical file (`cmp` clean), and the committed baseline's per-file map is
+identical to a fresh measurement.
 
 ### (b) FAIL with one planted type error in a previously-clean test file
 
-The plant, in `src/env/__tests__/server-schema-moderation-timeout.test.ts` — a file with **0**
-errors in the baseline:
+The plant, in `src/__tests__/node-version-consistency.test.ts` — a file with **0** errors in
+the baseline:
 
 ```ts
-const plantedNegativeControl: number = 'not a number';
+const __planted: number = 'not a number';
 ```
 
 **First, the gap itself, measured on that exact tree.** This is the whole reason the document
@@ -399,7 +486,7 @@ exists:
 
 ```
 $ pnpm typecheck                       # the check that actually gates today
-typecheck: OK — 0 type errors in 13s (heap cap 8192 MB).
+typecheck: OK — 0 type errors in 189s (heap cap 8192 MB).
 root exit=0
 root 'error TS' lines: 0
 root mentions of the planted file: 0
@@ -413,7 +500,8 @@ occurrences of the filename.
 
 ```
 $ node scripts/ci/typecheck-tests-gate.mjs
-typecheck-tests-gate: positive control OK — 938 test file(s) in the program.
+typecheck-tests-gate: positive control OK — 938 test file(s) in the program (floor 844, derived from the baseline).
+typecheck-tests-gate: parsed 802 diagnostic(s) in plain format.
 
 typecheck-tests-gate: 802 error(s) across 142 file(s) (baseline: 801 across 141).
 
@@ -421,7 +509,7 @@ typecheck-tests-gate: 802 error(s) across 142 file(s) (baseline: 801 across 141)
   TYPECHECK-TESTS GATE: BLOCKED
 ================================================================
   1 test file(s) have type errors and are NOT in the baseline:
-    src/env/__tests__/server-schema-moderation-timeout.test.ts  (1)
+    src/__tests__/node-version-consistency.test.ts  (1)
 
   These are real type errors in test files. `pnpm typecheck` cannot see them
   because the root tsconfig excludes src/**/__tests__/**.
@@ -440,7 +528,8 @@ the one new file is named. 801 → 802 is the smallest possible regression, and 
 ```
 $ git diff --name-only          # (empty — the plant is fully reverted)
 $ node scripts/ci/typecheck-tests-gate.mjs
-typecheck-tests-gate: positive control OK — 938 test file(s) in the program.
+typecheck-tests-gate: positive control OK — 938 test file(s) in the program (floor 844, derived from the baseline).
+typecheck-tests-gate: parsed 801 diagnostic(s) in plain format.
 
 typecheck-tests-gate: 801 error(s) across 141 file(s) (baseline: 801 across 141).
 typecheck-tests-gate: PASS — no new or worsened test-file type errors.
@@ -452,10 +541,43 @@ Back to **801 / 141**. The gate is not stuck red, and its verdict tracks the tre
 **What the three runs establish, and what they do not.** They establish that the gate can go
 red, that it goes red for the right reason (the planted file is named, and the delta is exactly
 +1/+1), and that it returns green when the cause is removed — i.e. it is not a check wired to
-nothing, and not one that is red regardless. They do **not** establish behaviour on a
-*worsened baselined file* or on a baseline that has drifted; those paths are implemented and
-readable but were not exercised here, and a unit suite around the pure comparison step is the
-obvious follow-up before this is relied on.
+nothing, and not one that is red regardless. What they cannot establish is anything about the
+paths they do not touch, which is why they are no longer the only evidence here.
+
+### The unit suite (the follow-up this document previously deferred)
+
+`scripts/__tests__/typecheck-tests-gate.test.ts` — 78 cases, running under the existing `unit`
+Vitest project (its `include` already covers `scripts/**/*.test.ts`), sub-second per case
+because the gate is driven through a `TYPECHECK_TESTS_WRAPPER` seam with stub typecheckers
+rather than a multi-minute `tsc`.
+
+It covers exactly the branches the three runs above never exercised: a baselined file whose
+count **rose**, **fell**, went **clean**, was **deleted**, or was **renamed**; two files sharing
+a basename; an **empty**, **malformed**, **absent** and **wrong-config** baseline; both
+diagnostic formats; and every cell of the exit-status truth table.
+
+**The suite was mutation-tested, not merely run.** Thirteen mutations — one per guard — were
+each applied to the real source and confirmed to turn the suite **red for that guard's own
+cases**, with the tree checksum-verified back to pristine afterwards:
+
+| mutant | guard broken | cases failed |
+|---|---|---|
+| M1 | non-zero exit + 0 diagnostics must not read as clean | 9 |
+| M2 | a measured zero against a non-empty baseline is refused | 3 |
+| M3 | pretty-format diagnostics are still counted | 3 |
+| M4 | the file-count floor tracks the baseline, not a magic 400 | 4 |
+| M5 | `packages/*/src/**/__tests__` is not this gate's business | 4 |
+| M6 | a rename is reported as a rename | 2 |
+| M7 | the two tsconfig exclude lists differ by exactly one entry | 3 |
+| M8 | a baseline measured against another config is rejected | 2 |
+| M9 | a run killed by a signal is refused | 1 |
+| M10 | a coloured pretty run is still counted | 1 |
+| M11 | `--write-baseline` refuses an implausible measurement | 1 |
+| M12 | the gate acts on the run classification | 4 |
+| M13 | `--write-baseline` borrows the floor from the baseline it replaces | 1 |
+
+A guard that no mutation can turn red is not a guard, and 78 green assertions say nothing on
+their own about which of them are load-bearing.
 
 ---
 
