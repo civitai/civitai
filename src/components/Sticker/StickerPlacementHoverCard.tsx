@@ -179,7 +179,13 @@ export function StickerPlacementHoverCard({
             placementId={placementId}
             imageId={imageId}
             placerId={placerId}
-            hasComment={hasComment}
+            // The listing's answer, corrected by the card's own once it lands.
+            // They disagree for a moderator on a hidden note: the listing scopes
+            // `hasComment` to the placer and the owner, while this query hands
+            // moderators the text — so without the second half, the one viewer
+            // who can read that note is the one who cannot report it. The
+            // control looks identical either way, so nothing moves.
+            hasComment={hasComment || !!data?.comment}
           />
           {/* One remove control, in one place. A moderator's remove and an
               owner's are different powers over the same sticker — the moderator
@@ -311,7 +317,12 @@ function ReportPlacement({
     );
 
   return (
-    <Menu withinPortal position="bottom-end" withArrow>
+    // `withinPortal={false}` is load-bearing, not a preference. A portalled
+    // dropdown is not a DOM descendant of the hover card, so moving the cursor
+    // onto a menu item leaves the card, the card closes, and the item the
+    // reporter is reaching for unmounts under them. Rendered inside, the pointer
+    // never leaves.
+    <Menu withinPortal={false} position="bottom-end" withArrow>
       <Menu.Target>
         <LegacyActionIcon
           color="gray"
