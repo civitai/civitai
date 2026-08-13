@@ -424,6 +424,7 @@ export function StickerPlacementOverlay({
                 placementId={placement.id}
                 imageId={placement.imageId}
                 placerId={placement.placerId}
+                hasComment={placement.hasComment}
               >
                 {body}
               </StickerPlacementHoverCard>
@@ -517,6 +518,7 @@ export function StickerPlacementOverlay({
               placementId={placement.id}
               imageId={placement.imageId}
               placerId={placement.placerId}
+              hasComment={placement.hasComment}
               pending
             >
               {body}
