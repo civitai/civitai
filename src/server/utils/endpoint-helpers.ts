@@ -120,25 +120,46 @@ function isRestServerFault(status: number): boolean {
 }
 
 /**
- * Mark a genericized error response uncacheable.
+ * Mark an error response uncacheable. Applied to EVERY response this helper
+ * writes — there is no such thing as an error worth serving from a shared cache.
  *
  * 🔴 `PublicEndpoint` sets `Cache-Control: public, s-maxage=300,
  * stale-while-revalidate=150` on EVERY response, unconditionally, BEFORE the
  * handler runs — errors included. That was survivable while every failure on
  * those routes was a 5xx, because shared caches do not cache 5xx by default. It
  * stops being survivable the moment an error answers **404**: 404 IS in the
- * default cacheable set, so a `NOT_FOUND` produced by a transient condition
- * (replica lag, a `throwDbError`-mapped P2001/P2025) would be pinned at the edge
- * for 300s + 150s SWR — serving "no such thing" for five minutes after the thing
- * exists.
+ * default cacheable set, so a `NOT_FOUND` from a transient condition (replica
+ * lag, a `throwDbError`-mapped P2001/P2025) would be pinned at the edge for 300s
+ * + 150s SWR — serving "no such thing" for five minutes after the thing exists.
  *
- * This PR creates exactly that situation (`v1/content` 500 → real status, and the
- * driver-authored 4xx arm), so the genericized arms opt out. The route-level 503
- * arm in `v1/users/index.ts` already does the same thing for the same reason.
+ * 🔴 **An earlier version of this scoped the opt-out to the GENERICIZED arms, and
+ * that missed the case it was written for.** Measured, per arm, against a `res`
+ * pre-stamped with `PublicEndpoint`'s header:
  *
- * Deliberately NOT applied to the 4xx pass-through arm: that arm's headers are
- * byte-identical to pre-PR behaviour, and widening the change to responses this
- * PR does not otherwise touch would be scope this cannot claim to have tested.
+ *   pass-through 404 (`throwNotFoundError`)  →  public, s-maxage=300   ← the hazard
+ *   non-TRPCError 500 (else-branch)          →  public, s-maxage=300
+ *   genericized 5xx                          →  no-store
+ *
+ * The routes this change touches answer 404 mostly via `throwNotFoundError`,
+ * whose message is OURS — so it takes the pass-through arm and never reached the
+ * genericized one. Scoping by "did we rewrite the body" was the wrong axis; the
+ * right axis is "is this a response a cache should keep", and for an error the
+ * answer is always no.
+ *
+ * **Accepted trade:** a 404 flood (scrapers hitting bad slugs) now reaches the
+ * origin instead of being absorbed at the edge for 5 minutes. Correctness on a
+ * transient 404 is worth more than cache efficiency on an error path, and these
+ * routes are not the ones under that kind of load. Stated so the next person
+ * knows it was a decision, not an oversight.
+ *
+ * Uniform application also removes a **fault-classification oracle**: with the
+ * narrower version, `no-store` vs `s-maxage=300` on the same status told a caller
+ * whether the message had been rewritten — one bit of exactly the kind the 5xx
+ * arm's own comment says genericizing exists to remove.
+ *
+ * `v1/users/index.ts` and `v1/images/index.ts` already do this at their 503 arms.
+ * They emit bare `no-store` where this emits `no-store, max-age=0`; both are
+ * correct, and their tests pin the exact string, so they are left alone.
  */
 function noStore(res: NextApiResponse) {
   if (!res.headersSent) res.setHeader('Cache-Control', 'no-store, max-age=0');
@@ -351,7 +372,7 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     // navigated away), cancelling the request signal. Not a server fault: respond
     // 499 (client closed request) so it stays out of the 5xx SLO + the
     // civitai_app_http_errors_total counter and isn't logged as a spurious 500.
-    if (!res.headersSent) res.status(499).end();
+    if (!res.headersSent) noStore(res).status(499).end();
     return;
   }
   if (e instanceof TRPCError) {
@@ -430,7 +451,7 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     } catch {
       body = { message: apiError.message };
     }
-    return res.status(status).json(body);
+    return noStore(res).status(status).json(body);
   } else {
     const error = e as Error;
     // This branch increments the http-errors counter (via the wrapper's
@@ -455,7 +476,7 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     // above (structured, cause-walked, queryable in `_axiom`) — this genericizes
     // the RESPONSE only, never the LOG. Pinned by
     // `src/server/utils/__tests__/endpoint-helpers-error-envelope.test.ts`.
-    return res
+    return noStore(res)
       .status(500)
       .json(restErrorBody(REST_ERROR_CODE.INTERNAL_SERVER_ERROR, GENERIC_SERVER_ERROR_MESSAGE));
   }

@@ -310,7 +310,39 @@ describe('handleEndpointError — driver-authored text at a 4xx (civitai#3845 in
     ).not.toHaveBeenCalled();
   });
 
-  // ── The genericized response must not be edge-cached ───────────────────────
+  // ── NO error response may be edge-cached, on ANY arm ───────────────────────
+  it('a PASS-THROUGH 404 is marked no-store — the case the first fix missed', () => {
+    // 🔴 This is the shape that actually motivated the header work and was NOT
+    // covered by scoping it to the genericized arms. `v1/content` now answers a
+    // real 404 where it used to answer 500, and it does so via
+    // `throwNotFoundError` — whose message is OURS, so it takes the PASS-THROUGH
+    // arm and never reaches the genericized one. Measured before the fix:
+    // `public, s-maxage=300, stale-while-revalidate=150` on a 404.
+    const res = createRes();
+    handleEndpointError(
+      res as never,
+      new TRPCError({ code: 'NOT_FOUND', message: 'Could not find entity' })
+    );
+
+    expect(res._status()).toBe(404);
+    expect(res._json(), 'the body must still pass through byte-identically').toEqual({
+      message: 'Could not find entity',
+    });
+    expect(
+      res._header('Cache-Control'),
+      'a transient 404 pinned at the edge for 300s + 150s SWR serves "no such thing" ' +
+        'for five minutes after the thing exists'
+    ).toBe('no-store, max-age=0');
+  });
+
+  it('a NON-TRPCError 500 (the else-branch) is marked no-store', () => {
+    const res = createRes();
+    handleEndpointError(res as never, new Error('plain boom'));
+
+    expect(res._status()).toBe(500);
+    expect(res._header('Cache-Control')).toBe('no-store, max-age=0');
+  });
+
   it.each([
     { label: 'a genericized 4xx', code: 'P2025', status: 404 },
     { label: 'a genericized 5xx', code: 'P2022', status: 500 },

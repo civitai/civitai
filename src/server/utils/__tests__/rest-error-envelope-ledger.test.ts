@@ -73,9 +73,23 @@ function jsonBodies(source: string): string[] {
   for (let m = call.exec(source); m; m = call.exec(source)) {
     const start = source.indexOf('{', m.index);
     let depth = 0;
+    let quote: string | null = null;
     for (let i = start; i < source.length; i++) {
-      if (source[i] === '{') depth++;
-      else if (source[i] === '}') {
+      const ch = source[i];
+      // Skip string/template literals: a `}` inside `'oops }'` used to close the
+      // body early and silently TRUNCATE what got matched — a false negative in
+      // the mechanism itself.
+      if (quote) {
+        if (ch === '\\') i++;
+        else if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === "'" || ch === '"' || ch === '`') {
+        quote = ch;
+        continue;
+      }
+      if (ch === '{') depth++;
+      else if (ch === '}') {
         depth--;
         if (depth === 0) {
           out.push(source.slice(start, i + 1));
@@ -87,78 +101,179 @@ function jsonBodies(source: string): string[] {
   return out;
 }
 
-/** An identifier a `catch (…)` binding realistically uses. */
-const CAUGHT = String.raw`(?:e|err|error|ex)`;
+/**
+ * Strip NESTED object literals, leaving only the body's top-level keys.
+ *
+ * The shapes below anchor on `[{,]`, which without this matches a key at ANY
+ * depth: `res.status(200).json({ items, summary: { error, warnings } })` and
+ * `{ incident: { cause: 'flood' } }` were both flagged as leaks. A guard that
+ * matches everything is as useless as one that matches nothing — it just trains
+ * the next author to edit the baseline instead of the code.
+ *
+ * Nesting an error object one level down (`{ data: { detail: err.message } }`)
+ * is consequently NOT detected. That is a stated blind spot, not an oversight;
+ * see the JSDoc on the offender-set test.
+ */
+function topLevelKeys(body: string): string {
+  let out = '';
+  let depth = 0;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (ch === '{') {
+      depth++;
+      if (depth === 1) out += ch;
+      continue;
+    }
+    if (ch === '}') {
+      depth--;
+      if (depth === 0) out += ch;
+      continue;
+    }
+    if (depth === 1) out += ch;
+  }
+  return out;
+}
+
+/**
+ * Any identifier, not a fixed spelling.
+ *
+ * 🔴 A delta audit defeated the previous version — `(?:e|err|error|ex)` — with a
+ * REAL, live, unauthenticated leak: `v1/images/index.ts` binds its caught error
+ * to `trpcError` and serves `{ error: trpcError.message, code: trpcError.code }`
+ * from a `PublicEndpoint`. Anchoring on the variable NAME was the same species of
+ * spelled guard as the literal-message regex it replaced, just a smaller hole.
+ *
+ * Widening to any identifier costs false positives on legitimate string-valued
+ * bodies (`{ error: message }`), so the value must additionally end in `.message`
+ * / be the bare binding / be `.cause` — and an allowlist below exempts the
+ * identifiers that are known NOT to be errors.
+ */
+const IDENT = String.raw`[A-Za-z_$][\w$]*`;
+
+/**
+ * Identifiers that name a STRING we wrote, not a caught error. Without these the
+ * widened pattern flags `{ error: message }` and `{ error: reason }`, which
+ * disclose nothing.
+ */
+const NOT_AN_ERROR = ['message', 'msg', 'reason', 'detail', 'text', 'status', 'code', 'label'];
 
 /**
  * The value shapes that put a whole error object — or its driver-authored text —
  * on the wire. A string-literal value (`{ error: 'Forbidden' }`) is deliberately
  * NOT matched: the hazard is serializing an Error, not using the key.
  */
-const LEAKING_BODY_SHAPES: { name: string; re: RegExp }[] = [
+const LEAKING_BODY_SHAPES: { name: string; test: (body: string) => boolean }[] = [
   {
     name: '`error` bound to a caught error object (its enumerable own props serialize)',
     // `{ error }` shorthand, `{ error: err }`, `{ error: e as Error }`.
-    re: new RegExp(
-      String.raw`(?:^|[{,])\s*error\s*(?:\}|,|:\s*\(?${CAUGHT}\)?(?:\s+as\s+\w+)?\s*[,}\)])`
-    ),
+    test: (b) =>
+      new RegExp(
+        String.raw`(?:^|[{,])\s*error\s*(?:\}|,|:\s*\(?(${IDENT})\)?(?:\s+as\s+\w+)?\s*[,}\)])`
+      ).test(b) &&
+      !NOT_AN_ERROR.includes(
+        new RegExp(String.raw`(?:^|[{,])\s*error\s*:\s*\(?(${IDENT})`).exec(b)?.[1] ?? ''
+      ),
   },
   {
     name: '`cause` in a response body (the wrapped driver error, under a second key)',
-    re: /(?:^|[{,])\s*cause\s*(?:\}|,|:)/,
+    test: (b) => /(?:^|[{,])\s*cause\s*(?:\}|,|:)/.test(b),
   },
   {
     name: '`error: <expr>.cause` (serves the error the TRPCError wrapped)',
-    re: new RegExp(String.raw`(?:^|[{,])\s*error\s*:\s*[A-Za-z_$][\w$]*\.cause\b`),
+    test: (b) => new RegExp(String.raw`(?:^|[{,])\s*error\s*:\s*${IDENT}\.cause\b`).test(b),
   },
   {
     name: "`error`/`message` set to a caught error's `.message` (verbatim driver text)",
-    re: new RegExp(
-      String.raw`(?:^|[{,])\s*(?:error|message)\s*:\s*\(?${CAUGHT}\)?(?:\s+as\s+\w+)?\)?\.message\b`
-    ),
+    // Any identifier, `?.` allowed, optional cast/parens. This is the shape the
+    // widened IDENT exists for — `{ error: trpcError.message }` on a public route.
+    // 🔴 The NOT_AN_ERROR allowlist deliberately does NOT apply here. It exists for
+    // the BARE-identifier shape (`{ error: message }` is a string we wrote), and
+    // applying it to `.message` ACCESS exempted `(reason as Error).message` —
+    // unmistakably an error, exempted only because `reason` was on a list of
+    // string-ish names. Reading `.message` off something is itself the signal.
+    test: (b) =>
+      new RegExp(
+        String.raw`(?:^|[{,])\s*(?:error|message)\s*:\s*\(?${IDENT}\)?(?:\s+as\s+[\w.<>\[\]]+)?\)?\??\.message\b`
+      ).test(b),
   },
 ];
+
+/** Does this response body serve an error object or its text? */
+function bodyLeaks(body: string): boolean {
+  const top = topLevelKeys(body);
+  return LEAKING_BODY_SHAPES.some((s) => s.test(top));
+}
 
 /**
  * 🔴 Sites of the SAME class this change does not fix — enumerated, not glossed.
  *
- * Making the guard structural surfaced this: the class was never confined to the
- * 11 routes civitai#3845 enumerated. Every entry is recorded rather than
- * exempted-by-glob, so the list fails if it GROWS (a new site) or SHRINKS (one
- * was fixed — delete its line). Ordered by exposure, which is the order to fix in:
+ * This list has now been re-derived TWICE, and grew each time the guard got less
+ * spelled: 3 regexes → 41 sites → **52**. That trajectory is the finding. Each
+ * widening was driven by an audit defeating the previous version with a real
+ * shape, most recently `v1/images/index.ts` — a `PublicEndpoint` serving
+ * `{ error: trpcError.message }`, invisible only because the variable was not
+ * named `e`/`err`/`error`/`ex`.
+ *
+ * 🔴 **KNOWN BLIND SPOTS — this list is a floor, not a ceiling.** The extractor
+ * cannot see: a body built in a variable and passed as `res.json(body)`; an error
+ * nested below the top level (`{ data: { detail: err.message } }`); `String(e)` /
+ * `e.toString()` / `{ ...error }`; `res.send({ error })`. Do not read a green run
+ * as "no leaks exist" — read it as "no leak of a shape this guard knows".
+ *
+ * Every entry is recorded rather than exempted-by-glob, so the list fails if it
+ * GROWS (a new site) or SHRINKS (one was fixed — delete its line). Ordered by
+ * exposure, which is the order to fix in:
  *
  * 🔴 TIER 1 — UNAUTHENTICATED. Same severity as the routes this change fixes.
+ *   v1/images/index.ts                    PublicEndpoint; `{ error: trpcError.message }`
  *   generation/{data,resources}.ts        PublicEndpoint; catch-all → 400 + e.message
  *   v1/model-files/[id]/tensor-metadata   MixedAuthEndpoint (public read) → 422 + err.message
  * NOT fixed here because the fix is not a delegation: each answers 4xx for EVERY
  * failure including zod-parse rejections, so routing them through the helper turns
  * a legitimate client 400 into a 500. That needs its own red/green and review.
+ * `v1/images/index.ts` is pre-existing and unrelated to this change's diff.
  *
  * 🟡 TIER 2 — session-authed: a logged-in user can trigger it, the public cannot.
+ * Includes `orchestrator/refreshBlobs.ts`: `OrchestratorEndpoint` is
+ * `AuthedEndpoint` + a per-user token (`endpoint-helpers.ts`), with NO moderator
+ * check — an earlier draft filed it under TIER 3, which would have dispositioned a
+ * session-authed disclosure as "arguably the point". It is not.
+ * The `v1/blocks/*` entries are `withAxiom` + block-scope auth.
+ *
  * 🟢 TIER 3 — operator surfaces behind JOB_TOKEN / WEBHOOK_TOKEN / moderator auth
- * (`WebhookEndpoint`, `ModEndpoint`, `OrchestratorEndpoint`). There the driver
- * detail is arguably the POINT — admin/backfill/debug tools whose caller is us.
- * Listed for completeness; fixing them is optional and may be undesirable.
+ * (`WebhookEndpoint`, `ModEndpoint` ONLY). There the driver detail is arguably the
+ * POINT — admin/backfill/debug tools whose caller is us. Listed for completeness;
+ * fixing them is optional and may be undesirable.
  */
 const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   // TIER 1 — unauthenticated
   'generation/data.ts',
   'generation/resources.ts',
+  'v1/images/index.ts',
   'v1/model-files/[id]/tensor-metadata.ts',
   // TIER 2 — session-authed
   'blocks/submit-version.ts',
   'download/user-transactions.ts',
   'image/ingest.ts',
   'media/ingest/[mediaId].ts',
+  'orchestrator/refreshBlobs.ts',
   'upload/abort.ts',
   'upload/complete.ts',
   'upload/sign-part.ts',
+  'v1/blocks/collections/[id]/follow.ts',
+  'v1/blocks/images.ts',
   'v1/blocks/models.ts',
+  'v1/blocks/shared-storage/increment.ts',
+  'v1/blocks/shared-storage/top.ts',
   'v1/blocks/submit-version.ts',
   'v1/blocks/withdraw.ts',
+  'v1/creator-program/join.ts',
   'v1/image-upload/multipart/index.ts',
+  'v1/model-versions/early-access.ts',
   // TIER 3 — operator / token-gated
   'admin/temp/backfill-b2-file-locations.ts',
+  'admin/temp/backfill-metric-agg.ts',
+  'admin/temp/backfill-user-downloads.ts',
   'admin/temp/dedupe-official-files.ts',
   'admin/temp/migrate-article-images.ts',
   'admin/temp/migrate-model-flags.ts',
@@ -173,14 +288,15 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   'mod/reconcile-nowpayments.ts',
   'mod/reprocess-buzz-purchases.ts',
   'mod/reprocess-order.ts',
+  'mod/resource-training-v2.ts',
   'mod/scanner-policies/export-dataset.ts',
   'mod/unblock-images.ts',
   'mod/withdraw-from-bank.ts',
-  'orchestrator/refreshBlobs.ts',
   'testing/blue-buzz-paid-access.ts',
   'testing/model-file-scan.ts',
   'testing/redis-cluster.ts',
   'testing/xguard-test.ts',
+  'webhooks/resource-training-v2/[modelVersionId].ts',
   'webhooks/resource-training.ts',
   'webhooks/run-jobs/[[...run]].ts',
   'webhooks/scanner-policy-result.ts',
@@ -228,11 +344,7 @@ describe('LEDGER: no REST route serializes an error object or its text (civitai#
 
   it('the offender set is EXACTLY the recorded baseline — a new one fails here', () => {
     const offenders = files
-      .filter((f) =>
-        jsonBodies(stripLineComments(readFileSync(f, 'utf8'))).some((b) =>
-          LEAKING_BODY_SHAPES.some((s) => s.re.test(b))
-        )
-      )
+      .filter((f) => jsonBodies(stripLineComments(readFileSync(f, 'utf8'))).some(bodyLeaks))
       .map((f) => path.relative(API_ROOT, f).split(path.sep).join('/'))
       .sort();
 
@@ -258,9 +370,10 @@ describe('LEDGER: no REST route serializes an error object or its text (civitai#
         stripLineComments(readFileSync(path.join(API_ROOT, rel), 'utf8'))
       );
       for (const shape of LEAKING_BODY_SHAPES) {
-        expect(bodies.some((b) => shape.re.test(b)), `${rel} still matches "${shape.name}"`).toBe(
-          false
-        );
+        expect(
+          bodies.some((b) => shape.test(topLevelKeys(b))),
+          `${rel} still matches "${shape.name}"`
+        ).toBe(false);
       }
     }
   });
@@ -277,12 +390,17 @@ describe('LEDGER: no REST route serializes an error object or its text (civitai#
       [`return res.status(500).json({ error: error.cause });`, 2],
       [`res.status(500).json({ message: 'x', error: err.message });`, 3],
       [`res.status(422).json({ error: (err as Error).message });`, 3],
+      // 🔴 The delta-audit probes. Each of these walked through the previous
+      // version untouched, and one of them is a LIVE unauthenticated route.
+      [`res.status(500).json({ error: trpcError.message, code: trpcError.code });`, 3],
+      [`res.status(500).json({ error: (reason as Error).message });`, 3],
+      [`res.status(500).json({ error: err?.message ?? 'failed' });`, 3],
     ];
     for (const [sample, shapeIndex] of mustMatch) {
       const body = jsonBodies(sample)[0];
       expect(body, `extractor failed on: ${sample}`).toBeDefined();
       expect(
-        LEAKING_BODY_SHAPES[shapeIndex].re.test(body),
+        LEAKING_BODY_SHAPES[shapeIndex].test(topLevelKeys(body)),
         `shape "${LEAKING_BODY_SHAPES[shapeIndex].name}" failed on its own exemplar: ${sample}`
       ).toBe(true);
     }
@@ -297,11 +415,20 @@ describe('LEDGER: no REST route serializes an error object or its text (civitai#
       `res.status(400).json({ error: z.prettifyError(result.error) ?? 'Invalid file id' });`,
       `res.status(400).json({ error: parsed.error.flatten() });`,
       `res.status(200).json({ items, metadata });`,
+      // 🔴 Delta-audit false positives: a key at a NESTED depth is not a leak of
+      // the top-level envelope, and flagging it would make the ledger
+      // permanently red for the wrong reason.
+      `res.status(200).json({ items, summary: { error, warnings } });`,
+      `res.status(200).json({ incident: { cause: 'flood' } });`,
+      // A string we wrote, bound to a normal identifier.
+      `res.status(400).json({ error: reason });`,
     ];
     for (const sample of mustNotMatch) {
       const body = jsonBodies(sample)[0];
       for (const shape of LEAKING_BODY_SHAPES) {
-        expect(shape.re.test(body), `"${shape.name}" false-positives on: ${sample}`).toBe(false);
+        expect(shape.test(topLevelKeys(body)), `"${shape.name}" false-positives on: ${sample}`).toBe(
+          false
+        );
       }
     }
   });
