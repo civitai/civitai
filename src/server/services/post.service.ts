@@ -85,7 +85,11 @@ import {
 import { isValidAIGeneration } from '~/utils/image-utils';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { applyVerifiedProvenance } from '~/server/services/orchestrator/remix-provenance';
+import {
+  resolveVerifiedSourceImageIds,
+  sanitizeProvenance,
+  storedSourceImageIds,
+} from '~/server/services/orchestrator/remix-provenance';
 import { getMetadata } from '~/utils/metadata';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -1235,11 +1239,16 @@ export const addPostImage = async ({
   }
 
   const { generationWorkflowId, ...imageProps } = props;
-  meta = await applyVerifiedProvenance({ meta, userId: user.id, generationWorkflowId });
+  const verifiedSourceImageIds = await resolveVerifiedSourceImageIds({
+    userId: user.id,
+    provenance: (meta?.extra as { provenance?: unknown } | undefined)?.provenance,
+    workflowId: generationWorkflowId,
+  });
 
   const partialResult = await createImage({
     ...imageProps,
     meta,
+    verifiedSourceImageIds,
     userId: user.id,
     toolIds: toolId ? [toolId] : undefined,
     techniqueIds: techniqueId ? [techniqueId] : undefined,
@@ -1347,8 +1356,23 @@ export async function bustCachesForPosts(postIds: number | number[]) {
 export const updatePostImage = async (image: UpdatePostImageInput) => {
   const currentImage = await dbWrite.image.findUniqueOrThrow({
     where: { id: image.id },
-    select: { hideMeta: true, ingestion: true, blockedFor: true, metadata: true, nsfwLevel: true },
+    select: {
+      hideMeta: true,
+      ingestion: true,
+      blockedFor: true,
+      metadata: true,
+      nsfwLevel: true,
+      meta: true,
+    },
   });
+
+  // This edit replaces meta wholesale from client input, so provenance has to be
+  // re-derived from the row rather than accepted: otherwise editing an image you
+  // already own is a way to assert a derivation you never made.
+  const meta = sanitizeProvenance(
+    image.meta as Record<string, unknown> | null | undefined,
+    storedSourceImageIds(currentImage.meta)
+  );
 
   const blockedForVerification = currentImage.blockedFor === BlockedReason.AiNotVerified;
   const updatedIsVerifiable = isValidAIGeneration({
@@ -1365,7 +1389,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
       ...image,
       id: undefined, // prevent updating the id!
       updatedAt: new Date(),
-      meta: image.meta !== null ? (image.meta as Prisma.JsonObject) : Prisma.JsonNull,
+      meta: meta != null ? (meta as Prisma.JsonObject) : Prisma.JsonNull,
       // If this image was blocked due to missing metadata, we need to set it back to pending
       ingestion: shouldIngest ? 'Pending' : undefined,
       blockedFor: shouldIngest ? null : undefined,

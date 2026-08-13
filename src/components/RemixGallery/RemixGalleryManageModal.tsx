@@ -25,6 +25,7 @@ import {
   IconRotate,
   IconShieldCheck,
   IconTrash,
+  IconWand,
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -35,6 +36,8 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { RemixGalleryItem } from '~/components/RemixGallery/remix-gallery.utils';
 import { dedupeGalleryItems } from '~/components/RemixGallery/remix-gallery.utils';
 import { SubmissionThumb } from '~/components/RemixGallery/SubmissionThumb';
+import { VerifiedRemixBadge } from '~/components/RemixGallery/VerifiedRemixBadge';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Currency } from '~/shared/utils/prisma/enums';
 import {
@@ -212,43 +215,35 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                     <Group justify="space-between" wrap="nowrap" align="center">
                       <Group gap="sm" wrap="nowrap" className="min-w-0">
                         {row.image && <SubmissionThumb image={row.image} />}
-                        <Stack gap={2} className="min-w-0">
+                        <Stack gap={6} className="min-w-0">
+                          {/* What arrived and when, above who sent it — the queue
+                              is read top-down and the age is what decides which
+                              row to answer first. */}
                           <Group gap={6} wrap="nowrap" className="min-w-0">
-                            <Text size="sm" fw={500} className="truncate">
-                              {row.placer?.username ?? 'Someone'}
+                            <IconWand size={14} className="shrink-0 text-yellow-6" />
+                            <Text size="xs" c="dimmed" className="truncate">
+                              Remix submitted {sentLabel(row.createdAt)}
                             </Text>
-                            {/* Shown only when we resolved it ourselves. There is
-                                deliberately no counterpart for its absence: an
-                                off-site remix can never earn this, and marking
-                                those would turn a missing signal into a verdict. */}
-                            {row.data.derivedFromHost && (
-                              <Tooltip
-                                label="Our generator recorded your image as an input to this generation"
-                                withArrow
-                                multiline
-                                w={240}
-                              >
-                                <Badge
-                                  size="sm"
-                                  variant="light"
-                                  color="green"
-                                  leftSection={<IconShieldCheck size={12} />}
-                                  className="shrink-0"
-                                >
-                                  Made from yours
-                                </Badge>
-                              </Tooltip>
-                            )}
+                            <Group gap={2} wrap="nowrap" className="shrink-0">
+                              <CurrencyIcon currency={Currency.BUZZ} size={12} />
+                              <Text size="xs" c="dimmed">
+                                {row.amount}
+                              </Text>
+                            </Group>
                           </Group>
-                          <Group gap={4} wrap="nowrap">
-                            <CurrencyIcon currency={Currency.BUZZ} size={12} />
-                            <Text size="xs" c="dimmed">
-                              {row.amount}
+                          {row.placer ? (
+                            <UserAvatar user={row.placer} withUsername size="sm" linkToProfile />
+                          ) : (
+                            <Text size="sm" fw={500}>
+                              Someone
                             </Text>
-                          </Group>
-                          <Text size="xs" c="dimmed">
-                            Sent {sentLabel(row.createdAt)}
-                          </Text>
+                          )}
+                          {/* Its own line, and shown only when we resolved it
+                              ourselves. There is deliberately no counterpart for
+                              its absence: an off-site remix can never earn this,
+                              and marking those would turn a missing signal into a
+                              verdict. */}
+                          {row.data.derivedFromHost && <VerifiedRemixBadge />}
                         </Stack>
                       </Group>
                       {/* Stacked, and the same width, so the pair reads as one

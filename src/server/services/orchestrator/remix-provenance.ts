@@ -174,39 +174,37 @@ export async function sourceImageIdsFromWorkflow({
 }
 
 /**
- * Rewrites `meta.extra` so provenance in a stored image is only ever what this
- * server verified. Both inputs are attacker-controlled — the file's embedded
- * metadata is just bytes a user can author — so the claimed fields come out
- * regardless of whether anything replaces them.
+ * Rewrites `meta.extra` so a stored image's provenance is only ever what the
+ * server put there. Applied at the write sinks (`createImage`, `updatePostImage`)
+ * rather than at one entry point: every caller that reaches those sinks carries
+ * client-authored meta, and a path that skipped this would let a user assert a
+ * derivation by editing an image they already own.
+ *
+ * `verified` is what the caller proved, and the only thing that can put
+ * `sourceImageIds` back. Passing nothing strips the claim and writes no link.
  */
-export async function applyVerifiedProvenance<
-  T extends Record<string, unknown> | null | undefined
->({
-  meta,
-  userId,
-  generationWorkflowId,
-}: {
-  meta: T;
-  userId: number;
-  generationWorkflowId?: string;
-}): Promise<T> {
+export function sanitizeProvenance<T extends Record<string, unknown> | null | undefined>(
+  meta: T,
+  verified?: number[] | null
+): T {
   if (!meta) return meta;
 
   const extra = meta.extra as Record<string, unknown> | undefined;
   const carriesClaim = !!extra && ('provenance' in extra || 'sourceImageIds' in extra);
-  if (!carriesClaim && !generationWorkflowId) return meta;
+  if (!carriesClaim && !verified?.length) return meta;
 
-  const { provenance, sourceImageIds: _claimed, ...rest } = extra ?? {};
-  const verified = await resolveVerifiedSourceImageIds({
-    userId,
-    provenance,
-    workflowId: generationWorkflowId,
-  });
+  const { provenance: _token, sourceImageIds: _claimed, ...rest } = extra ?? {};
 
   return {
     ...meta,
-    extra: { ...rest, ...(verified ? { sourceImageIds: verified } : {}) },
+    extra: { ...rest, ...(verified?.length ? { sourceImageIds: verified } : {}) },
   } as T;
+}
+
+/** The ids already verified for a stored image, to carry across an edit of its meta. */
+export function storedSourceImageIds(meta: unknown): number[] | null {
+  const extra = (meta as { extra?: unknown } | null | undefined)?.extra;
+  return readSourceImageIds(extra);
 }
 
 /**

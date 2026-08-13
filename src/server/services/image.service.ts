@@ -273,6 +273,7 @@ import type { FeedQueryInput } from '../../../event-engine-common/feeds/types';
 import type { ImageQueryInput } from '../../../event-engine-common/types/image-feed-types';
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { getGenerationDisplayKeys } from '~/server/services/orchestrator/legacy-metadata-mapper';
+import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
 
 const {
   cacheHitRequestsTotal,
@@ -6052,13 +6053,27 @@ export async function createImage({
   toolIds,
   techniqueIds,
   skipIngestion,
+  verifiedSourceImageIds,
   ...image
-}: ImageSchema & { userId: number; skipIngestion?: boolean }) {
+}: ImageSchema & {
+  userId: number;
+  skipIngestion?: boolean;
+  /**
+   * Derivation the caller proved (see remix-provenance.ts). Nothing else can put
+   * `meta.extra.sourceImageIds` on a row — every other caller's claim is stripped
+   * here, so a new image path can't grant itself provenance by accident.
+   */
+  verifiedSourceImageIds?: number[] | null;
+}) {
+  const meta = sanitizeProvenance(
+    image.meta as Record<string, unknown> | null | undefined,
+    verifiedSourceImageIds
+  );
   const result = await dbWrite.image.create({
     data: {
       ...image,
-      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-      generationProcess: image.meta ? getImageGenerationProcess(image.meta) : null,
+      meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      generationProcess: meta ? getImageGenerationProcess(meta as ImageMetaProps) : null,
       tools: !!toolIds?.length
         ? { createMany: { data: toolIds.map((toolId) => ({ toolId })) } }
         : undefined,

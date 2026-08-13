@@ -24,8 +24,14 @@ vi.mock('~/server/logging/client', () => ({
   logToAxiom: vi.fn(() => Promise.resolve()),
 }));
 
-const { applyVerifiedProvenance, resolveSourceImageIds, signProvenance, verifyProvenance } =
-  await import('~/server/services/orchestrator/remix-provenance');
+const {
+  resolveSourceImageIds,
+  resolveVerifiedSourceImageIds,
+  sanitizeProvenance,
+  signProvenance,
+  storedSourceImageIds,
+  verifyProvenance,
+} = await import('~/server/services/orchestrator/remix-provenance');
 
 const UUID_A = '11111111-2222-3333-4444-555555555555';
 
@@ -100,70 +106,78 @@ describe('signProvenance / verifyProvenance', () => {
   });
 });
 
-describe('applyVerifiedProvenance', () => {
-  it('writes the ids a valid token vouches for and drops the token itself', async () => {
+describe('resolveVerifiedSourceImageIds', () => {
+  it('takes the ids a valid token vouches for without reading the workflow', async () => {
     const provenance = signProvenance({ userId: 42, sourceImageIds: [7] });
 
-    const meta = await applyVerifiedProvenance({
-      meta: { prompt: 'cat', extra: { provenance, remixOfId: 7 } },
-      userId: 42,
-    });
-
-    expect(meta.extra).toEqual({ remixOfId: 7, sourceImageIds: [7] });
+    expect(await resolveVerifiedSourceImageIds({ userId: 42, provenance })).toEqual([7]);
     expect(getWorkflowMock).not.toHaveBeenCalled();
   });
 
-  it('discards source ids the client supplied on its own', async () => {
-    const meta = await applyVerifiedProvenance({
-      meta: { extra: { sourceImageIds: [999], remixOfId: 999 } },
-      userId: 42,
-    });
-
-    expect(meta.extra).toEqual({ remixOfId: 999 });
-  });
-
-  it('discards ids from a token that belongs to someone else', async () => {
+  it('refuses a token that belongs to someone else', async () => {
     const provenance = signProvenance({ userId: 1, sourceImageIds: [7] });
 
-    const meta = await applyVerifiedProvenance({
-      meta: { extra: { provenance } },
-      userId: 42,
-    });
-
-    expect(meta.extra).toEqual({});
+    expect(await resolveVerifiedSourceImageIds({ userId: 42, provenance })).toBeNull();
   });
 
-  it('falls back to the workflow the user owns when the file carries nothing', async () => {
+  it('falls back to the workflow, read with the caller’s own token', async () => {
     getWorkflowMock.mockResolvedValue({ metadata: { sourceImageIds: [11, 12] } });
 
-    const meta = await applyVerifiedProvenance({
-      meta: { prompt: 'cat' },
-      userId: 42,
-      generationWorkflowId: 'wf-1',
-    });
-
-    expect(meta.extra).toEqual({ sourceImageIds: [11, 12] });
+    expect(await resolveVerifiedSourceImageIds({ userId: 42, workflowId: 'wf-1' })).toEqual([
+      11, 12,
+    ]);
+    expect(getTokenMock).toHaveBeenCalledWith(42, expect.anything());
     expect(getWorkflowMock).toHaveBeenCalledWith(
       expect.objectContaining({ token: 'token', path: { workflowId: 'wf-1' } })
     );
   });
 
-  it('records nothing when the workflow is not the caller’s to read', async () => {
+  it('resolves nothing when the workflow is not the caller’s to read', async () => {
     getWorkflowMock.mockRejectedValue(new Error('not found'));
 
-    const meta = await applyVerifiedProvenance({
-      meta: { extra: { sourceImageIds: [999] } },
-      userId: 42,
-      generationWorkflowId: 'someone-elses-workflow',
-    });
+    expect(
+      await resolveVerifiedSourceImageIds({ userId: 42, workflowId: 'someone-elses-workflow' })
+    ).toBeNull();
+  });
+});
 
-    expect(meta.extra).toEqual({});
+describe('sanitizeProvenance', () => {
+  it('writes the verified ids and drops the token that proved them', () => {
+    const meta = sanitizeProvenance({ prompt: 'cat', extra: { provenance: 'tok', remixOfId: 7 } }, [
+      7,
+    ]);
+
+    expect(meta.extra).toEqual({ remixOfId: 7, sourceImageIds: [7] });
   });
 
-  it('leaves an ordinary upload untouched', async () => {
+  it('discards source ids nothing verified — the whole forgery surface', () => {
+    // A user editing their own image's meta, or any write path that never proved
+    // anything, must not be able to assert a derivation.
+    expect(sanitizeProvenance({ extra: { sourceImageIds: [999], remixOfId: 999 } }).extra).toEqual({
+      remixOfId: 999,
+    });
+    expect(sanitizeProvenance({ extra: { sourceImageIds: [999] } }, null).extra).toEqual({});
+    expect(sanitizeProvenance({ extra: { sourceImageIds: [999] } }, []).extra).toEqual({});
+  });
+
+  it('keeps the ids already verified on the row when meta is edited', () => {
+    const stored = storedSourceImageIds({ extra: { sourceImageIds: [7] } });
+
+    expect(
+      sanitizeProvenance({ prompt: 'edited', extra: { sourceImageIds: [999] } }, stored).extra
+    ).toEqual({ sourceImageIds: [7] });
+  });
+
+  it('reads nothing off a row that never had a verified link', () => {
+    expect(storedSourceImageIds(null)).toBeNull();
+    expect(storedSourceImageIds({ extra: {} })).toBeNull();
+    expect(storedSourceImageIds({ extra: { sourceImageIds: ['7'] } })).toBeNull();
+  });
+
+  it('leaves an ordinary upload untouched', () => {
     const meta = { prompt: 'cat', extra: { remixOfId: 3 } };
 
-    expect(await applyVerifiedProvenance({ meta, userId: 42 })).toBe(meta);
-    expect(await applyVerifiedProvenance({ meta: null, userId: 42 })).toBeNull();
+    expect(sanitizeProvenance(meta)).toBe(meta);
+    expect(sanitizeProvenance(null)).toBeNull();
   });
 });
