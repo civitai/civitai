@@ -325,7 +325,42 @@ Comments are not type-checked, so they rot silently and become misleading. Write
 3. Start dev server: Use `/dev-server` skill
 
 ### Git Worktrees
-When you create a new worktree (`git worktree add …`), **always initialize the `event-engine-common` submodule
+
+Create one with (place it under the repos root — `scripts/defender-exclusions.ps1` excludes that path
+from Defender real-time scanning, and a tree outside it silently runs slow):
+
+```bash
+git fetch origin main
+git worktree add <repos-root>/wt-<name> -b <branch> origin/main   # origin/main, not a stale local main
+git -C <repos-root>/model-share submodule sync --recursive
+git -C <repos-root>/wt-<name> submodule update --init event-engine-common
+printf 'use flake\n' > <repos-root>/wt-<name>/.envrc && direnv allow   # from inside the worktree
+pnpm install
+```
+
+**Remove one when its PR merges** — don't hand-roll this, and don't reach for `git worktree remove`
+(it refuses whenever `event-engine-common` is checked out):
+
+```bash
+node .claude/skills/dev-server/cli.mjs wt stale        # what's finished, and what's blocking each keeper
+node .claude/skills/dev-server/cli.mjs wt rm <path>    # stops the server, unlinks links, deletes, prunes
+```
+
+`wt rm` refuses the primary worktree, a tree with uncommitted changes (`--force`), and a tree with a
+running dev server (`--stop-server`). It deletes the branch only when `gh` reports a **merged** PR, keeps
+it when commits exist on no remote, and prints the SHA when it does delete. Left alone, worktrees
+accumulate: 22 stale ones were removed in one sweep on 2026-08-12, 15 with already-merged PRs.
+
+**Two checks that fail *clean* if you verify merge state yourself.** Both return success-shaped output
+while telling you nothing:
+- `git merge-base --is-ancestor <branch> origin/main` — this repo squash-merges, so a merged branch's tip
+  is never an ancestor. It reported "not merged" for 24 of 26 branches, including ones demonstrably in
+  `main`. Use `gh pr list --state all --head <branch>`.
+- `git log --not --remotes` with **no positive rev** prints nothing, which reads as "no unpushed commits."
+  It has nothing to list commits *from*. Use `git rev-list --count <branch> --not --remotes` — run
+  correctly, six branches turned out to hold commits that existed on no remote at all.
+
+When you create a new worktree, **always initialize the `event-engine-common` submodule
 in it**: `git submodule sync --recursive && git submodule update --init event-engine-common`.
 Worktrees don't check out submodules automatically,
 and without it `pnpm typecheck`/`build` fail with a wall of `Cannot find module '.../event-engine-common/...'`
