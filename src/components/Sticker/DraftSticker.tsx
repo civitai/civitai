@@ -132,10 +132,10 @@ export function DraftSticker({
   const [{ flipped, flippedOffset, panelsInside }, setPosition] = useState({
     flipped: false,
     flippedOffset: 0,
-    // Starts outside, which is the layout that cannot collide with anything.
-    // The first measure runs before the artwork has loaded, when the box is
-    // near-zero — starting inside would put delete on top of opacity for that
-    // frame, which is one misclick away from throwing the draft away.
+    // Starts false, which puts the controls in the buy cluster — the layout
+    // that is correct at any size. The real value lands from the layout effect
+    // before paint, so this is never seen; it is the safe direction to be wrong
+    // in if that ever stops being true.
     panelsInside: false,
   });
   const trayElement = useStickerPlacementDraftStore((state) => state.tray);
@@ -337,6 +337,84 @@ export function DraftSticker({
       }
     };
 
+  // Selects as well as stopping the drag, so the lower of two stacked drafts
+  // does not have controls buried under its neighbour — `selected` is the only
+  // input to z-order. Gated on there being no live gesture, the same rule
+  // `take()` applies: a press that arrives while another finger is dragging must
+  // not move the selection, or the sticker being dragged drops behind its
+  // neighbour under the finger holding it.
+  const pressPanel = (event: React.PointerEvent) => {
+    event.stopPropagation();
+    if (!useStickerPlacementDraftStore.getState().interaction) select(draft.id);
+  };
+
+  const flipControl = (
+    <Tooltip label={draft.flip ? 'Unflip' : 'Flip'} withinPortal>
+      <ActionIcon
+        size="sm"
+        radius="xl"
+        variant="subtle"
+        color={draft.flip ? 'blue' : 'gray'}
+        aria-label={draft.flip ? 'Unflip this sticker' : 'Flip this sticker'}
+        onClick={() => move(draft.id, { flip: !draft.flip })}
+      >
+        <IconFlipHorizontal size={14} />
+      </ActionIcon>
+    </Tooltip>
+  );
+
+  // The slider is behind a control rather than always on screen: it is set once,
+  // and a slider parked on the artwork would be in the way of every later drag.
+  const opacityControl = (
+    <Popover width={210} position="top" withArrow withinPortal shadow="md">
+      <Popover.Target>
+        <ActionIcon
+          size="sm"
+          radius="xl"
+          variant="subtle"
+          color={draft.opacity < 1 ? 'blue' : 'gray'}
+          aria-label="Set this sticker's opacity"
+        >
+          <IconDropletHalf2 size={14} />
+        </ActionIcon>
+      </Popover.Target>
+      <Popover.Dropdown p="sm">
+        <Text size="xs" c="dimmed" className="mb-2">
+          Opacity
+        </Text>
+        {/* The floor is the slider's own minimum, so the range you can drag
+            through is the range the server accepts — the value can never be one
+            the purchase would then refuse. The refusal still lives in the
+            schema; this only keeps the two from disagreeing in front of the
+            person placing it. */}
+        <Slider
+          min={Math.round(STICKER_PLACEMENT_MIN_OPACITY * 100)}
+          max={100}
+          step={5}
+          value={Math.round(draft.opacity * 100)}
+          onChange={(value) => move(draft.id, { opacity: value / 100 })}
+          label={(value) => `${value}%`}
+          aria-label="Sticker opacity"
+        />
+      </Popover.Dropdown>
+    </Popover>
+  );
+
+  const removeControl = (
+    <Tooltip label="Remove" withinPortal>
+      <ActionIcon
+        size="sm"
+        radius="xl"
+        variant="subtle"
+        color="gray"
+        aria-label="Remove this sticker"
+        onClick={() => cancelDraft(draft.id)}
+      >
+        <IconTrash size={14} />
+      </ActionIcon>
+    </Tooltip>
+  );
+
   const artworkImage = (
     <EdgeImage
       src={art.url}
@@ -413,112 +491,40 @@ export function DraftSticker({
           the draft throws work away, and it should not sit a thumb's width from
           the two controls you press while arranging one.
 
-          Each is flush with its own edge of the sticker and grows inward, so the
-          pair reads as bracketing the box rather than floating beside it. They
-          sit above the top edge, clear of the corner handles — all four corners
-          resize, so none of them can be spent on a button. Dark rather than the
-          handles' blue: these act on the sticker, they are not part of
-          positioning it.
+          Each is flush with its own edge and grows inward, so the pair reads as
+          bracketing the box. They clear the corner handles — all four resize, so
+          none can be spent on a button — and the buy button clears their band
+          through `flippedButtonOffset`. Dark rather than the handles' blue:
+          these act on the sticker, they are not part of positioning it.
 
-          Flush is conditional, and the fallback is not decoration. Every element
-          above the sticker except these two is sized as a FRACTION of it — the
-          rotate knob at `KNOB_OFFSET` of the height, the flipped buy button from
-          that — while the panels are a fixed 36px band. So on a small sticker the
-          three converge: the knob ends up under a panel, and the two panels reach
-          past each other with DELETE on top of opacity, because it paints last.
-          Below `STICKER_PANEL_MIN_WIDTH_PX` they move outside the corners, where
-          they can reach neither the knob nor each other at any size. The buy
-          button clears the band through `flippedButtonOffset`. */}
-      <div
-        className={clsx(
-          'absolute -top-9 flex cursor-auto items-center gap-0.5 rounded-full bg-dark-7 px-1 py-0.5',
-          panelsInside ? 'left-0' : 'right-full mr-1'
-        )}
-        // Selects as well as stopping the drag, like the sticker body does: with
-        // two drafts overlapping, only the selected one is raised, so without
-        // this the lower one's controls stay buried under its neighbour and the
-        // press that would have freed them is the one being swallowed here.
-        onPointerDown={(event) => {
-          event.stopPropagation();
-          select(draft.id);
-        }}
-      >
-        <Tooltip label={draft.flip ? 'Unflip' : 'Flip'} withinPortal>
-          <ActionIcon
-            size="sm"
-            radius="xl"
-            variant="subtle"
-            color={draft.flip ? 'blue' : 'gray'}
-            aria-label={draft.flip ? 'Unflip this sticker' : 'Flip this sticker'}
-            onClick={() => move(draft.id, { flip: !draft.flip })}
+          Only while the sticker is wide enough to hold them. Every other piece
+          of chrome up here is a FRACTION of the sticker (the knob at
+          `KNOB_OFFSET` of the height, the flipped button derived from it) while
+          these are a fixed band, so on a small sticker all three converge: the
+          knob ends up under a panel and DELETE lands on opacity, because it
+          paints later. Narrow drafts hand their controls to the buy cluster
+          instead — see `controlRow` below. */}
+      {panelsInside && (
+        <>
+          <div
+            className="absolute -top-9 left-0 flex cursor-auto items-center gap-0.5 rounded-full bg-dark-7 px-1 py-0.5"
+            onPointerDown={pressPanel}
           >
-            <IconFlipHorizontal size={14} />
-          </ActionIcon>
-        </Tooltip>
+            {flipControl}
+            {opacityControl}
+          </div>
 
-        {/* The slider is behind a control rather than always on screen: it is set
-            once, and a slider parked on the artwork would be in the way of every
-            later drag. */}
-        <Popover width={210} position="top" withArrow withinPortal shadow="md">
-          <Popover.Target>
-            <ActionIcon
-              size="sm"
-              radius="xl"
-              variant="subtle"
-              color={draft.opacity < 1 ? 'blue' : 'gray'}
-              aria-label="Set this sticker's opacity"
-            >
-              <IconDropletHalf2 size={14} />
-            </ActionIcon>
-          </Popover.Target>
-          <Popover.Dropdown p="sm">
-            <Text size="xs" c="dimmed" className="mb-2">
-              Opacity
-            </Text>
-            {/* The floor is the slider's own minimum, so the range you can drag
-                through is the range the server accepts — the value can never be
-                one the purchase would then refuse. The refusal still lives in
-                the schema; this only keeps the two from disagreeing in front of
-                the person placing it. */}
-            <Slider
-              min={Math.round(STICKER_PLACEMENT_MIN_OPACITY * 100)}
-              max={100}
-              step={5}
-              value={Math.round(draft.opacity * 100)}
-              onChange={(value) => move(draft.id, { opacity: value / 100 })}
-              label={(value) => `${value}%`}
-              aria-label="Sticker opacity"
-            />
-          </Popover.Dropdown>
-        </Popover>
-      </div>
-
-      <div
-        // Padding equal on both axes, unlike its two-icon sibling: a single icon
-        // in a pill sized `px`/`py` comes out wider than it is tall, so the
-        // `rounded-full` reads as a lozenge rather than a circle.
-        className={clsx(
-          'absolute -top-9 flex cursor-auto items-center rounded-full bg-dark-7 p-0.5',
-          panelsInside ? 'right-0' : 'left-full ml-1'
-        )}
-        onPointerDown={(event) => {
-          event.stopPropagation();
-          select(draft.id);
-        }}
-      >
-        <Tooltip label="Remove" withinPortal>
-          <ActionIcon
-            size="sm"
-            radius="xl"
-            variant="subtle"
-            color="gray"
-            aria-label="Remove this sticker"
-            onClick={() => cancelDraft(draft.id)}
+          <div
+            // Padding equal on both axes, unlike its two-icon sibling: a single
+            // icon in a pill sized `px`/`py` comes out wider than it is tall, so
+            // `rounded-full` reads as a lozenge rather than a circle.
+            className="absolute -top-9 right-0 flex cursor-auto items-center rounded-full bg-dark-7 p-0.5"
+            onPointerDown={pressPanel}
           >
-            <IconTrash size={14} />
-          </ActionIcon>
-        </Tooltip>
-      </div>
+            {removeControl}
+          </div>
+        </>
+      )}
 
       <div
         ref={buttonRef}
@@ -536,13 +542,39 @@ export function DraftSticker({
         )}
         style={{
           minWidth: BUY_BUTTON_MIN_WIDTH,
-          // Scales with the sticker because the knob it has to clear does.
+          // Clears whichever obstacle is taller: the knob, which scales with the
+          // sticker, or the panel band, which does not. Below ~164px the
+          // constant wins, so this does NOT simply scale.
           ...(flipped ? { marginBottom: flippedOffset } : null),
         }}
         // The button is inside the draggable body, so without this every press
         // on it would also start a move and the click would land mid-drag.
         onPointerDown={(event) => event.stopPropagation()}
       >
+        {/* Where a narrow draft's controls live, rather than a second position
+            for the panels above it.
+
+            Anything anchored to a small sticker's own box is in trouble twice
+            over: inside it, the panels reach past each other and the knob;
+            outside it, they hang off the sticker and the carousel's viewport
+            clips them away near the image edges — which on a phone-width media
+            box is most of the frame, because almost every draft there is narrow.
+            This cluster is the one piece of chrome that already knows where it
+            is on screen: it measures itself against the tray and the clipping
+            ancestor and moves to whichever side is visible. Handing it the
+            controls means they inherit that, instead of a third set of
+            hand-derived offsets to get wrong. */}
+        {!panelsInside && (
+          <div
+            className="flex items-center gap-0.5 rounded-full bg-dark-7 px-1 py-0.5"
+            onPointerDown={pressPanel}
+          >
+            {flipControl}
+            {opacityControl}
+            {removeControl}
+          </div>
+        )}
+
         {/* Optional, and folded away until asked for: a field on every draft
             would sit over the artwork through the whole arrangement, which is
             the one thing this overlay is trying not to do. */}

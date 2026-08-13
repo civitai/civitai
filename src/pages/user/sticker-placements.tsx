@@ -108,14 +108,27 @@ export default function StickerPlacements() {
                     // approve from, and it is the small-card review the opacity
                     // floor exists because of: a faint sticker previewed as
                     // solid here is approved on the strength of something the
-                    // page never showed. It sits beside the image rather than on
-                    // it, so this is as close to the real thing as the row gets.
-                    <EdgeImage
-                      src={art.url}
-                      alt={`:${art.slug}:`}
-                      options={{ height: 96, anim: art.animated, optimized: true }}
-                      style={{ height: 48, width: 'auto', ...stickerArtworkStyle(row.data) }}
-                    />
+                    // page never showed.
+                    //
+                    // Named, and on a checkered plate, because both cost the
+                    // faintness back. A 30% sticker against a flat card reads
+                    // fainter than the same sticker over busy artwork, so the
+                    // honest preview is also the one that is hardest to identify
+                    // — and this row had no other statement of WHICH sticker it
+                    // is. "See it on the image" remains the composite view.
+                    <Stack gap={2} align="center">
+                      <div className="rounded-md bg-gray-2 p-1 dark:bg-dark-5">
+                        <EdgeImage
+                          src={art.url}
+                          alt={`:${art.slug}:`}
+                          options={{ height: 96, anim: art.animated, optimized: true }}
+                          style={{ height: 48, width: 'auto', ...stickerArtworkStyle(row.data) }}
+                        />
+                      </div>
+                      <Text size="10px" c="dimmed" className="max-w-[80px] truncate">
+                        {art.name}
+                      </Text>
+                    </Stack>
                   )}
 
                   <Stack gap={2} className="flex-1">

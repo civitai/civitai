@@ -201,8 +201,10 @@ export const isStickerPlacementData = (value: unknown): value is StickerPlacemen
  * schema, and a stored `0` would be an invisible sticker that is still clickable.
  *
  * Not every reader: `hideStickerComment` deliberately keeps the raw payload,
- * because it writes the row back and normalising on that path would resize a
- * legacy sticker as a side effect of hiding a note.
+ * because it writes the row back, and a write path that normalises would edit
+ * geometry as a side effect of hiding a note. Only a hand-seeded out-of-bounds
+ * row could actually move today — the schema and the clamp share their limits —
+ * so this is about which path is allowed to rewrite a stored value.
  */
 export const parseStickerPlacementData = (value: unknown): StickerPlacementData | null => {
   if (!isStickerPlacementData(value)) return null;

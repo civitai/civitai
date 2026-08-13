@@ -67,12 +67,17 @@ export const flippedButtonOffset = ({
   stickerHeight,
   knobOffset,
   gap,
-  panelBand = 0,
+  panelBand,
 }: {
   stickerHeight: number;
   knobOffset: number;
   gap: number;
-  panelBand?: number;
+  /**
+   * Required, with no default. The whole bug class here was an obstacle nobody
+   * accounted for, and a caller that forgets this would silently get the old
+   * behaviour back — pass 0 deliberately if a surface truly has no panels.
+   */
+  panelBand: number;
 }) => Math.max(knobOffset * stickerHeight, panelBand) + gap;
 
 /**

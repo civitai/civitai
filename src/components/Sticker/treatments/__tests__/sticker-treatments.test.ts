@@ -68,6 +68,12 @@ describe('sticker treatments', () => {
   // sticker and silently drop the flip on a flipped one. Same argument as the
   // pending-look guard above, and the same failure mode — it arrives with a
   // sixth option written by someone who never read this file.
+  //
+  // Inline styles only, deliberately — do NOT add the stylesheet half the way
+  // the pending guard has one. `animationClassName` lands on a wrapper div, not
+  // on the artwork carrying the flip, so a class-based transform cannot clobber
+  // it; and `.motion` is built from transforms, so the symmetric check would
+  // fail on day one against a treatment that is behaving correctly.
   it.each(STICKER_TREATMENT_KEYS)('%s leaves transform to the placer', (key) => {
     expect(styleText(key)).not.toContain('transform');
   });

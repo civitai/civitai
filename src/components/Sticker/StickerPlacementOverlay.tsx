@@ -401,6 +401,10 @@ export function StickerPlacementOverlay({
                     // an edge-placed sticker is clipped while the artwork it marks
                     // is still visible — and a card shows none of the other
                     // pending cues, so that ring is the whole signal there.
+                    //
+                    // Reduces that, does not close it: a `cover` crop can still
+                    // land the sticker's interior in frame with its edges out,
+                    // and the ring goes with the edges.
                     surface === 'card' ? 'inset-0' : '-inset-1'
                   )}
                 />

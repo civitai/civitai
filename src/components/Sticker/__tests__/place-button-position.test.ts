@@ -26,13 +26,21 @@ describe('flippedButtonOffset', () => {
   // clearance has to scale with the sticker. A constant is what made the knob
   // dead at the default size, and a constant is what these cases forbid.
   it('scales with the sticker so the button clears the rotate knob', () => {
-    expect(flippedButtonOffset({ stickerHeight: 100, knobOffset: 0.22, gap: 8 })).toBe(30);
-    expect(flippedButtonOffset({ stickerHeight: 300, knobOffset: 0.22, gap: 8 })).toBe(74);
+    expect(
+      flippedButtonOffset({ stickerHeight: 100, knobOffset: 0.22, gap: 8, panelBand: 0 })
+    ).toBe(30);
+    expect(
+      flippedButtonOffset({ stickerHeight: 300, knobOffset: 0.22, gap: 8, panelBand: 0 })
+    ).toBe(74);
   });
 
   it('tracks the knob offset and the gap independently', () => {
-    expect(flippedButtonOffset({ stickerHeight: 100, knobOffset: 0.5, gap: 8 })).toBe(58);
-    expect(flippedButtonOffset({ stickerHeight: 100, knobOffset: 0.22, gap: 20 })).toBe(42);
+    expect(flippedButtonOffset({ stickerHeight: 100, knobOffset: 0.5, gap: 8, panelBand: 0 })).toBe(
+      58
+    );
+    expect(
+      flippedButtonOffset({ stickerHeight: 100, knobOffset: 0.22, gap: 20, panelBand: 0 })
+    ).toBe(42);
   });
 
   it('clears the knob at every size in the measured dead band', () => {
@@ -40,7 +48,7 @@ describe('flippedButtonOffset', () => {
     // the flipped button's bottom sits at -offset. Measured on the real page,
     // heights from ~73 to ~236 put the knob's centre inside the button.
     for (const stickerHeight of [73, 94, 150, 200, 236]) {
-      const offset = flippedButtonOffset({ stickerHeight, knobOffset: 0.22, gap: 8 });
+      const offset = flippedButtonOffset({ stickerHeight, knobOffset: 0.22, gap: 8, panelBand: 0 });
       expect(offset).toBeGreaterThan(0.22 * stickerHeight);
     }
   });
@@ -148,7 +156,12 @@ describe('candidateDistance', () => {
     const stickerHeight = 94;
     const buttonHeight = 52;
     const gap = 8;
-    const flippedOffset = flippedButtonOffset({ stickerHeight, knobOffset: 0.22, gap });
+    const flippedOffset = flippedButtonOffset({
+      stickerHeight,
+      knobOffset: 0.22,
+      gap,
+      panelBand: 0,
+    });
 
     const unflippedTop = stickerHeight + gap;
     const flippedTop = -flippedOffset - buttonHeight;
