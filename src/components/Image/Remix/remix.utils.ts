@@ -38,14 +38,22 @@ export type RemixSourceImage = {
 
 /**
  * Ingestion states meaning the classifiers produced no verdict for this image.
- * `Rescan` and `PendingManualAssignment` are excluded on purpose — both are
- * states an already-classified image passes through, and a re-ingestion sweep
- * can put a large slice of the catalogue into `Rescan` at once.
+ *
+ * `PendingManualAssignment` is IN here: two other modules treat it as a
+ * non-terminal in-flight state (`app-listing-assets.service.ts` calls it
+ * exactly that; `prom/client.ts` counts it among the working states), so an
+ * image can hold it without a verdict. It is also a bounded moderator queue,
+ * so including it cannot mass-refuse anything.
+ *
+ * `Rescan` is OUT: a rescan by definition follows a completed scan, so the
+ * earlier verdict still stands, and a re-ingestion sweep can put a large slice
+ * of the catalogue into it at once.
  */
 const UNVERDICTED_INGESTION = new Set<string>([
   ImageIngestionStatus.Pending,
   ImageIngestionStatus.Error,
   ImageIngestionStatus.NotFound,
+  ImageIngestionStatus.PendingManualAssignment,
 ]);
 
 const FALLBACK_DIMENSIONS = { width: 512, height: 512 };

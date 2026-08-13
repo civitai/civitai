@@ -41,14 +41,16 @@ describe('getEngineRefusal', () => {
     expect(getEngineRefusal(searchDoc)).toBeUndefined();
   });
 
+  // Unrated (the fixture default here is level 0 via the override) routes safe,
+  // so no ingestion state produces a refusal for it.
   it.each([
     ImageIngestionStatus.Pending,
     ImageIngestionStatus.Error,
     ImageIngestionStatus.NotFound,
     ImageIngestionStatus.Rescan,
     ImageIngestionStatus.PendingManualAssignment,
-  ])('does not refuse on ingestion status %s', (ingestion) => {
-    expect(getEngineRefusal(image({ ingestion }))).toBeUndefined();
+  ])('does not refuse an unrated image on ingestion status %s', (ingestion) => {
+    expect(getEngineRefusal(image({ nsfwLevel: 0, ingestion }))).toBeUndefined();
   });
 
   // `minor`/`poi` are NOT NULL columns defaulting to false, so they cannot
@@ -59,6 +61,7 @@ describe('getEngineRefusal', () => {
     ImageIngestionStatus.Pending,
     ImageIngestionStatus.Error,
     ImageIngestionStatus.NotFound,
+    ImageIngestionStatus.PendingManualAssignment,
   ])('refuses a mature image whose scan is %s', (ingestion) => {
     expect(getEngineRefusal(image({ nsfwLevel: 8, ingestion }))).toMatch(/still being reviewed/);
   });
@@ -70,12 +73,14 @@ describe('getEngineRefusal', () => {
   // A re-ingestion sweep can put a large slice of the catalogue into Rescan at
   // once; those images keep their earlier verdict, so refusing them would be a
   // self-inflicted outage rather than a safety gain.
-  it.each([ImageIngestionStatus.Rescan, ImageIngestionStatus.PendingManualAssignment])(
-    'allows a mature image in %s, which keeps its earlier verdict',
-    (ingestion) => {
-      expect(getEngineRefusal(image({ nsfwLevel: 8, ingestion }))).toBeUndefined();
-    }
-  );
+  // A rescan follows a completed scan, so the earlier verdict still stands —
+  // and a re-ingestion sweep can put a large slice of the catalogue into this
+  // state at once, so refusing it would be a self-inflicted outage.
+  it('allows a mature image in Rescan, which keeps its earlier verdict', () => {
+    expect(
+      getEngineRefusal(image({ nsfwLevel: 8, ingestion: ImageIngestionStatus.Rescan }))
+    ).toBeUndefined();
+  });
 
   // The unrated case Justin asked for: routes safe, so it never reaches the
   // clause above even though its scan has not finished either.
