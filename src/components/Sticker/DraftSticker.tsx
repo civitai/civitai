@@ -7,12 +7,7 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
-import {
-  IconDropletHalf2,
-  IconFlipHorizontal,
-  IconMessage,
-  IconTrash,
-} from '@tabler/icons-react';
+import { IconDropletHalf2, IconFlipHorizontal, IconMessage, IconTrash } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -391,16 +386,24 @@ export function DraftSticker({
         style={{ top: `-${KNOB_OFFSET * 100}%` }}
       />
 
-      {/* Offset diagonally out past the top-right corner rather than replacing
-          the handle there — all four corners resize, and losing one to a
-          destructive action on the corner a right-hander reaches first is worse
-          than the crowding. It grows to the RIGHT from that point, away from the
-          rotate knob: the knob is centred over the top edge, and a row that grew
-          leftward would reach it on any sticker narrower than twice the row.
-          Dark rather than the handles' blue: these act on the sticker, they are
-          not part of positioning it. */}
+      {/* Two panels, one per top corner, and the split is the point: removing
+          the draft throws work away, and it should not sit a thumb's width from
+          the two controls you press while arranging one.
+
+          Each is flush with its own edge of the sticker and grows inward, so the
+          pair reads as bracketing the box rather than floating beside it. They
+          sit above the top edge, clear of the corner handles — all four corners
+          resize, so none of them can be spent on a button. Dark rather than the
+          handles' blue: these act on the sticker, they are not part of
+          positioning it.
+
+          ⚠️ Growing inward means they approach the rotate knob, which is centred
+          over the top edge. On a sticker near the 5% floor the two panels and the
+          knob are competing for the same span; the knob keeps its own offset and
+          wins on z-order, but that is the case to look at first if these ever
+          feel cramped. */}
       <div
-        className="absolute -top-7 left-full ml-1 flex cursor-auto items-center gap-0.5 rounded-full border-2 border-white bg-dark-7 px-1 py-0.5"
+        className="absolute -top-9 left-0 flex cursor-auto items-center gap-0.5 rounded-full bg-dark-7 px-1 py-0.5"
         onPointerDown={(event) => event.stopPropagation()}
       >
         <Tooltip label={draft.flip ? 'Unflip' : 'Flip'} withinPortal>
@@ -451,7 +454,15 @@ export function DraftSticker({
             />
           </Popover.Dropdown>
         </Popover>
+      </div>
 
+      <div
+        // Padding equal on both axes, unlike its two-icon sibling: a single icon
+        // in a pill sized `px`/`py` comes out wider than it is tall, so the
+        // `rounded-full` reads as a lozenge rather than a circle.
+        className="absolute -top-9 right-0 flex cursor-auto items-center rounded-full bg-dark-7 p-0.5"
+        onPointerDown={(event) => event.stopPropagation()}
+      >
         <Tooltip label="Remove" withinPortal>
           <ActionIcon
             size="sm"

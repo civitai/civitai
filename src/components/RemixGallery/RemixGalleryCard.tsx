@@ -367,13 +367,17 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
               ) : null
             )}
           </Group>
+          {/* No username: it wrapped this to two lines, and it was saying what
+              the page already does — this card sits on that creator's own image.
+              The link carries `tab=sent` because the page defaults to `received`,
+              which is the queue of submissions TO you: without it "withdraw"
+              landed on a tab that does not contain the thing being withdrawn. */}
           <Text size="xs" c="dimmed">
-            {visibility.ownerUsername ? `@${visibility.ownerUsername}` : 'The creator'} decides
-            whether it appears here. You can{' '}
-            <Anchor href="/user/remix-submissions" size="xs">
-              withdraw it
+            Waiting on the creator. You can{' '}
+            <Anchor href="/user/remix-submissions?tab=sent" size="xs">
+              {viewerPending.length === 1 ? 'withdraw it' : 'withdraw them'}
             </Anchor>{' '}
-            until they do.
+            until they decide.
           </Text>
         </Stack>
       )}
