@@ -293,10 +293,10 @@ export async function purgeResizeCache({ url }: { url: string }) {
   // request) and must never fail the caller's mutation.
   //
   // NOTE: this used to also do a direct S3 listObjects+deleteManyObjects against
-  // env.S3_IMAGE_CACHE_BUCKET ("civitai-media-cache") via getImageS3Client().
+  // env.S3_IMAGE_CACHE_BUCKET ("civitai-media-cache") via the legacy image S3 client.
   // That path was DEAD in prod and has been removed: the cache bucket now lives
   // on Backblaze B2 (us-west-004) and is owned by the image-cacher service,
-  // while getImageS3Client() points at the DigitalOcean-Spaces object-read proxy
+  // while that client pointed at the DigitalOcean-Spaces object-read proxy
   // (S3_IMAGE_UPLOAD_ENDPOINT). That proxy does not implement ListObjectsV2 — a
   // path-style list request returns a plain-text "404 page not found", which the
   // AWS SDK's XML error deserializer chokes on (`char '4' is not expected.:1:1`).
@@ -366,7 +366,10 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
     // outlived their rows: `resolveMediaLocation` returns null on a 404, a service error AND a
     // timeout, and the DO endpoint answers `404 page not found` as text/plain, which the SDK's
     // XML error deserializer throws on. The row was already gone, so the object stayed public.
-    const location = await resolveMediaLocation(url);
+    // Belt and braces with the `await` fix in resolveMediaLocation: the lookup is observability, so
+    // no failure of it may stop the delete. Inlining the guard here keeps that true even if the
+    // resolver later grows a throwing path again.
+    const location = await resolveMediaLocation(url).catch(() => null);
     if (!location) {
       // Not a failure — the delete proceeds against B2 below. But an unregistered image is a
       // registry gap (or a storage-resolver outage), and silently treating it as B2 is exactly

@@ -9,18 +9,28 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // (unblock-image-nsfwlevel-reset.test.ts): stub env + infra clients + the event-engine-common
 // submodule so importing it boots no real infra.
 
-const { mockLogToAxiom, mockFindFirst, mockFetch, mockB2Send, mockResolveMediaLocation } =
-  vi.hoisted(() => ({
-    mockLogToAxiom: vi.fn(async () => undefined),
-    mockFindFirst: vi.fn(),
-    mockFetch: vi.fn(async () => ({ ok: true })),
-    // Typed to take the command so `mock.calls[0][0].input` is assertable — an untyped `vi.fn()`
-    // here gives `calls` an empty tuple type and the bucket/key assertions stop compiling.
-    mockB2Send: vi.fn(async (command: { input: Record<string, unknown> }) => ({
-      Key: command.input.Key,
-    })),
-    mockResolveMediaLocation: vi.fn(),
-  }));
+const {
+  mockLogToAxiom,
+  mockFindFirst,
+  mockFetch,
+  mockB2Send,
+  mockResolveMediaLocation,
+  mockGetB2ImageS3Client,
+} = vi.hoisted(() => ({
+  mockLogToAxiom: vi.fn(async () => undefined),
+  mockFindFirst: vi.fn(),
+  mockFetch: vi.fn(async () => ({ ok: true })),
+  // Typed to take the command so `mock.calls[0][0].input` is assertable — an untyped `vi.fn()`
+  // here gives `calls` an empty tuple type and the bucket/key assertions stop compiling.
+  mockB2Send: vi.fn(async (command: { input: Record<string, unknown> }) => ({
+    Key: command.input.Key,
+  })),
+  mockResolveMediaLocation: vi.fn(),
+  // A vi.fn rather than a fixed arrow so a test can make the client CONSTRUCTOR throw — the real
+  // one does exactly that when B2 credentials are absent, which is the case the removed
+  // `env.S3_IMAGE_B2_ACCESS_KEY` guard used to swallow.
+  mockGetB2ImageS3Client: vi.fn(),
+}));
 
 function makePermissive(overrides: Record<string, unknown> = {}): any {
   const handler: ProxyHandler<any> = {
@@ -59,7 +69,7 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 // mocked explicitly rather than left to fall out of the permissive scaffolding below.
 vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  getB2ImageS3Client: () => ({ send: mockB2Send }),
+  getB2ImageS3Client: mockGetB2ImageS3Client,
 }));
 
 vi.mock('~/server/services/storage-resolver', () => ({
@@ -74,14 +84,20 @@ vi.mock('~/server/services/storage-resolver', () => ({
 // any name it does not recognise, and the delete used to sit behind `env.S3_IMAGE_B2_ACCESS_KEY`
 // — so before this fixture existed, every test in this file ran with BOTH delete branches
 // unreachable and every "the delete throws" case actually threw at the db refcount query. The
-// suite was green and covered the S3 call zero times. Assert against this constant, not a literal.
+// suite was green and covered the S3 call zero times.
+//
+// 🔴 And it must DIFFER from the code's own fallback (`?? 'civitai-media-uploads'`). Setting it to
+// the same string makes "reads the env var" and "hardcodes the literal" byte-identical in every
+// assertion — measured: with both set to 'civitai-media-uploads', replacing the whole expression
+// with the bare literal passed all 11 tests. A fixture of default/matching values collapses
+// distinct implementations into the same output.
 vi.mock('~/env/server', () => ({
   env: new Proxy(
     {
       LOGGING: [] as string[],
       DATABASE_IS_PROD: true,
       IMAGE_CACHER_URL: 'https://image-cacher.test',
-      S3_IMAGE_B2_BUCKET: 'civitai-media-uploads',
+      S3_IMAGE_B2_BUCKET: 'test-b2-bucket',
       S3_IMAGE_B2_ACCESS_KEY: 'test-b2-key',
       S3_IMAGE_B2_SECRET_KEY: 'test-b2-secret',
     } as Record<string, unknown>,
@@ -140,6 +156,7 @@ describe('deleteImageFromS3', () => {
     // Default to the registered case; the tests that care set their own.
     mockResolveMediaLocation.mockResolvedValue({ backend: 'backblaze', url: 'https://b2/x' });
     mockB2Send.mockResolvedValue({ Key: 'abc-def/original.jpeg' });
+    mockGetB2ImageS3Client.mockReturnValue({ send: mockB2Send });
   });
 
   it('logs the image id and url when the delete throws', async () => {
@@ -209,7 +226,7 @@ describe('deleteImageFromS3', () => {
     expect(mockB2Send).toHaveBeenCalledTimes(1);
     const command = mockB2Send.mock.calls[0][0] as { input: Record<string, unknown> };
     expect(command.input).toMatchObject({
-      Bucket: 'civitai-media-uploads',
+      Bucket: 'test-b2-bucket',
       Key: 'abc-def/original.jpeg',
     });
     expect(mockLogToAxiom).not.toHaveBeenCalled();
@@ -229,7 +246,7 @@ describe('deleteImageFromS3', () => {
     expect(mockB2Send).toHaveBeenCalledTimes(1);
     const command = mockB2Send.mock.calls[0][0] as { input: Record<string, unknown> };
     expect(command.input).toMatchObject({
-      Bucket: 'civitai-media-uploads',
+      Bucket: 'test-b2-bucket',
       Key: 'abc-def/original.jpeg',
     });
     expect(mockLogToAxiom).not.toHaveBeenCalledWith(
@@ -284,6 +301,46 @@ describe('deleteImageFromS3', () => {
       })
     );
     expect(invalidateCalls()).toHaveLength(1);
+  });
+
+  // This PR removed the `env.S3_IMAGE_B2_ACCESS_KEY` half of the old guard, so a deployment with
+  // no B2 credentials now reaches getB2ImageS3Client(), which throws by design. That must be a
+  // LOUD failure rather than the silent no-op the old `else if` produced when neither bucket var
+  // was set — and the cache invalidation still has to run, because the object is still there.
+  it('logs loudly when B2 credentials are missing instead of skipping silently', async () => {
+    mockFindFirst.mockResolvedValue(null);
+    mockGetB2ImageS3Client.mockImplementation(() => {
+      throw new Error('B2 image upload credentials not configured');
+    });
+
+    await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg' });
+
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'delete-image-from-s3-failed',
+        imageId: 4242,
+      })
+    );
+    expect(mockB2Send).not.toHaveBeenCalled();
+    expect(invalidateCalls()).toHaveLength(1);
+  });
+
+  // resolveMediaLocation is typed `| null` and callers are written as if it cannot throw, but a
+  // `return res.json()` inside its try let a rejection escape that try entirely (a 200 carrying a
+  // non-JSON body — an ingress error page — is exactly that). Reaching this delete through a
+  // REJECTING resolver is the case that produced the very orphan this change exists to stop, so
+  // the delete must survive it rather than be skipped by it.
+  it('still deletes from B2 when the resolver rejects outright', async () => {
+    mockFindFirst.mockResolvedValue(null);
+    mockResolveMediaLocation.mockRejectedValue(new Error('unexpected end of JSON input'));
+
+    await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg' });
+
+    expect(mockB2Send).toHaveBeenCalledTimes(1);
+    expect(mockLogToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'delete-image-from-s3-failed' })
+    );
   });
 
   // The guard above is safe only while no row holds a url for a bucket we own. Nothing enforces
