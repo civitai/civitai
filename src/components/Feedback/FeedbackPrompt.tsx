@@ -2,7 +2,6 @@ import { ActionIcon, Button, Group, Paper, Stack, Text, Textarea } from '@mantin
 import { IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useStorage } from '~/hooks/useStorage';
 import type { CreateFeedbackInput } from '~/server/schema/feedback.schema';
 import type { FeedbackArea } from '~/shared/constants/feedback.constants';
 import { FEEDBACK_MESSAGE_MAX_LENGTH } from '~/shared/constants/feedback.constants';
@@ -10,6 +9,28 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 const dismissKey = (area: FeedbackArea) => `feedback-dismissed-${area}`;
+
+// Per-tab, so a dismissal survives navigation within the visit and is gone on the
+// next one. Both halves are guarded: storage access THROWS outright in a sandboxed
+// iframe or with storage disabled, and this renders inside the feed — an unguarded
+// read would take the whole page to the error boundary to save one banner. Read
+// synchronously (not in an effect) so a dismissed prompt never flashes back or
+// fires its query for a frame.
+function readDismissed(area: FeedbackArea) {
+  try {
+    return window.sessionStorage.getItem(dismissKey(area)) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function writeDismissed(area: FeedbackArea) {
+  try {
+    window.sessionStorage.setItem(dismissKey(area), 'true');
+  } catch {
+    // Dismissal is then per-mount rather than per-tab. Not worth a failed render.
+  }
+}
 
 type FeedbackPromptProps = {
   area: FeedbackArea;
@@ -34,11 +55,7 @@ export function FeedbackPrompt({
   // directly: storage access throws outright in a sandboxed iframe or with
   // storage disabled, and this renders inside the feed — a throw there takes
   // the whole page to the error boundary instead of costing one banner.
-  const [dismissed, setDismissed] = useStorage({
-    type: 'sessionStorage',
-    key: dismissKey(area),
-    defaultValue: false,
-  });
+  const [dismissed, setDismissed] = useState(readDismissed(area));
   const [message, setMessage] = useState('');
   const [sent, setSent] = useState(false);
 
@@ -53,7 +70,10 @@ export function FeedbackPrompt({
 
   if (!enabled || !data?.enabled) return null;
 
-  const handleDismiss = () => setDismissed(true);
+  const handleDismiss = () => {
+    writeDismissed(area);
+    setDismissed(true);
+  };
 
   return (
     <Paper withBorder p="sm" radius="md" mb="md">

@@ -135,18 +135,45 @@ export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesIn
   };
 };
 
+/** A page that reported no backend at all. Not the same as "served by the DB" — the
+ * index branch also returns sourceless on an empty terminal page, and the two are
+ * indistinguishable from here. */
+export const FEED_SOURCE_NONE = 'none';
+
+/** Which backend served each loaded page, as emitted by the server branch that
+ * actually returned the data (getAllImagesIndex). */
+export function getFeedSources(pages: unknown[] | undefined): string[] {
+  return (pages ?? []).map(
+    (page) => (page as { source?: string } | undefined)?.source ?? FEED_SOURCE_NONE
+  );
+}
+
 /**
- * Which backend served each loaded page, as emitted by the server branch that
- * actually returned the data (getAllImagesIndex); the DB branch emits nothing,
- * reported here as 'db'.
+ * The backend currently serving the feed.
  *
  * BitDex falls back to Meili PER PAGE — on an error, and routinely whenever a
- * pass accumulates zero documents — so a feed can start on BitDex and finish on
- * Meili. Callers that ask "is BitDex serving this feed" must read the LAST
- * entry, not whether the list contains 'bitdex'.
+ * pass accumulates zero documents — so the answer is the LAST page's backend,
+ * not whether any page was BitDex. Sourceless pages are skipped rather than
+ * treated as a switch: an empty terminal page is what scrolling to the end of a
+ * feed looks like, and it must not retract a notice the whole scroll earned.
  */
-export function getFeedSources(pages: unknown[] | undefined): string[] {
-  return (pages ?? []).map((page) => (page as { source?: string } | undefined)?.source ?? 'db');
+export function resolveFeedSource(sources: string[]): string | undefined {
+  for (let i = sources.length - 1; i >= 0; i--) {
+    if (sources[i] !== FEED_SOURCE_NONE) return sources[i];
+  }
+  return undefined;
+}
+
+/** Run-length summary (`bitdex×28,meili×12`) so a deep scroll still fits a bounded
+ * column — a head-truncated raw list drops the tail, which is the half the gate read. */
+export function summarizeFeedSources(sources: string[]): string {
+  const runs: { source: string; count: number }[] = [];
+  for (const source of sources) {
+    const last = runs[runs.length - 1];
+    if (last?.source === source) last.count++;
+    else runs.push({ source, count: 1 });
+  }
+  return runs.map(({ source, count }) => (count > 1 ? `${source}x${count}` : source)).join(',');
 }
 
 export const useQueryImages = (
@@ -204,8 +231,23 @@ export const useQueryImages = (
     }
   );
 
-  const feedSources = useMemo(() => getFeedSources(data?.pages), [data]);
-  const feedSource = feedSources[feedSources.length - 1];
+  // Stamped together, keyed on `data` alone: under keepPreviousData the merged
+  // `filters` update synchronously while `data` still holds the previous query's
+  // pages, so reading them from separate renders produces a report describing a
+  // feed that never existed. Recomputing only when `data` changes keeps the
+  // filters with the pages they actually fetched.
+  const feedSnapshot = useMemo(() => {
+    const sources = getFeedSources(data?.pages);
+    return {
+      sources,
+      source: resolveFeedSource(sources),
+      pagesLoaded: data?.pages.length ?? 0,
+      sort: String(filters.sort ?? ''),
+      period: String(filters.period ?? ''),
+      browsingLevel: filters.browsingLevel ?? contextBrowsingLevel,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see comment above
+  }, [data]);
 
   // Deduplicate items to prevent duplicates from offset pagination drift
   const flatData = useMemo(() => {
@@ -241,9 +283,7 @@ export const useQueryImages = (
   return {
     data,
     flatData,
-    feedSource,
-    feedSources,
-    pagesLoaded: data?.pages.length ?? 0,
+    feedSnapshot,
     images: items,
     removedImages: hiddenCount,
     fetchedImages: flatData?.length,

@@ -13,7 +13,11 @@ import { SearchRetryBanner } from '~/components/EndOfFeed/SearchRetryBanner';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
 import { FeedbackPrompt } from '~/components/Feedback/FeedbackPrompt';
 import type { ImagesQueryParamSchema } from '~/components/Image/image.utils';
-import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
+import {
+  summarizeFeedSources,
+  useImageFilters,
+  useQueryImages,
+} from '~/components/Image/image.utils';
 import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
 import type { ImagesContextState } from '~/components/Image/Providers/ImagesProvider';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
@@ -105,9 +109,7 @@ export function ImagesInfiniteContent({
     isError,
     debugRetryActive,
     debugDelayMs,
-    feedSource,
-    feedSources,
-    pagesLoaded,
+    feedSnapshot,
   } = useQueryImages(
     { ...filters, browsingLevel, include: ['cosmetics'] },
     { keepPreviousData: true }
@@ -225,18 +227,18 @@ export function ImagesInfiniteContent({
       {showFeedbackPrompt && (
         <FeedbackPrompt
           area="bitdex-image-feed"
-          active={feedSource === 'bitdex'}
+          active={feedSnapshot.source === 'bitdex'}
           notice="We're testing a new system behind this feed. If anything looks off, tell us."
           placeholder="What looked wrong? Missing images, odd ordering, repeats, anything."
           context={{
             path: typeof window !== 'undefined' ? window.location.pathname : undefined,
-            reportedSource: feedSource,
-            reportedPageSources: feedSources.join(',').slice(0, 200),
-            pagesLoaded,
+            reportedSource: feedSnapshot.source,
+            reportedPageSources: summarizeFeedSources(feedSnapshot.sources).slice(0, 200),
+            pagesLoaded: feedSnapshot.pagesLoaded,
             filters: {
-              sort: String(filters.sort ?? ''),
-              period: String(filters.period ?? ''),
-              browsingLevel,
+              sort: feedSnapshot.sort,
+              period: feedSnapshot.period,
+              browsingLevel: feedSnapshot.browsingLevel,
             },
           }}
         />

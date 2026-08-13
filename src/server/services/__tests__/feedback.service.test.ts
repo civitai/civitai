@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FEEDBACK_RATE_LIMIT } from '~/shared/constants/feedback.constants';
 
-const { incrByMock, expireMock, ttlMock, countMock, createMock } = vi.hoisted(() => ({
+const { incrByMock, decrByMock, expireMock, ttlMock, countMock, createMock } = vi.hoisted(() => ({
   incrByMock: vi.fn(),
+  decrByMock: vi.fn(),
   expireMock: vi.fn(),
   ttlMock: vi.fn(),
   countMock: vi.fn(),
@@ -17,9 +18,11 @@ vi.mock('~/server/db/client', () => ({
 }));
 
 vi.mock('~/server/redis/client', () => ({
-  sysRedis: { incrBy: incrByMock, expire: expireMock, ttl: ttlMock },
+  sysRedis: { incrBy: incrByMock, decrBy: decrByMock, expire: expireMock, ttl: ttlMock },
   REDIS_SYS_KEYS: { FEEDBACK: { RATE_LIMIT: 'system:feedback:rate-limit' } },
 }));
+
+vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 
 vi.mock('~/server/flipt/client', () => ({
   getFliptBoolean: vi.fn().mockResolvedValue(false),
@@ -35,6 +38,54 @@ describe('createFeedback rate limit', () => {
     vi.clearAllMocks();
     createMock.mockResolvedValue({ id: 1 });
     ttlMock.mockResolvedValue(3600);
+    decrByMock.mockResolvedValue(0);
+  });
+
+  // Without an expiry the window never rolls: the fifth submission bars the user
+  // for good. Deleting either expire call is invisible to every other assertion.
+  it('arms the window expiry on the first submission of a window', async () => {
+    incrByMock.mockResolvedValue(1);
+
+    await createFeedback(input);
+
+    expect(expireMock).toHaveBeenCalledWith(expect.any(String), 3600);
+  });
+
+  it('re-arms an expiry that went missing on a later submission', async () => {
+    incrByMock.mockResolvedValue(2);
+    ttlMock.mockResolvedValue(-1);
+
+    await createFeedback(input);
+
+    expect(expireMock).toHaveBeenCalledWith(expect.any(String), 3600);
+  });
+
+  it('leaves a healthy expiry alone', async () => {
+    incrByMock.mockResolvedValue(2);
+    ttlMock.mockResolvedValue(1800);
+
+    await createFeedback(input);
+
+    expect(expireMock).not.toHaveBeenCalled();
+  });
+
+  // A slot is spent on the write, not the attempt: five failed inserts must not
+  // lock someone out for an hour with no row to show for it.
+  it('refunds the reserved slot when the insert fails', async () => {
+    incrByMock.mockResolvedValue(1);
+    createMock.mockRejectedValue(new Error('relation "Feedback" does not exist'));
+
+    await expect(createFeedback(input)).rejects.toThrow('relation "Feedback" does not exist');
+    expect(decrByMock).toHaveBeenCalledWith(expect.any(String), 1);
+  });
+
+  it('does not refund a slot it never reserved (redis was down)', async () => {
+    incrByMock.mockRejectedValue(new Error('redis down'));
+    countMock.mockResolvedValue(0);
+    createMock.mockRejectedValue(new Error('db blip'));
+
+    await expect(createFeedback(input)).rejects.toThrow('db blip');
+    expect(decrByMock).not.toHaveBeenCalled();
   });
 
   it('writes the row when the counter is under the hourly cap', async () => {
