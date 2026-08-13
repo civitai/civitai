@@ -467,11 +467,10 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     renderWithProviders(
       <ModelVersionUpsertForm
         model={model}
-        version={
-          { ...(chargingVersion as object), licensingFee: 0 } as React.ComponentProps<
-            typeof ModelVersionUpsertForm
-          >['version']
-        }
+        // `chargingVersion` as-is: it carries a licensing fee AND a gate, which is the shape that
+        // exercises the Restore link — `removingStoredFee` is a left-hand OR in its condition, so a
+        // fee-free fixture would pass while the affordance still rendered.
+        version={chargingVersion}
         onSubmit={vi.fn()}
       >
         {() => <button type="submit">Save</button>}
@@ -488,14 +487,16 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     // reason is simply the wrong sentence, and waiting for the right one would spend the full matcher
     // timeout only to report that some text never appeared.
     await expect
-      .element(page.getByText(/Saving now removes this version's paid access/))
+      .element(page.getByText(/Saving now removes this version's license fee and paid access/))
       .toBeInTheDocument();
     expect(
       page.getByText(/This base model is licensed for non-commercial use/).elements()
     ).toHaveLength(1);
     // The wrong sentence for this removal: nothing here is about early access ending.
     expect(page.getByText(/your payment for early access will be lost/).elements()).toHaveLength(0);
-    // And no restore: it would re-apply a gate the server rejects for this base model.
+    // And no restore: it would re-apply a fee and a gate the server rejects for this base model — the
+    // fee behind an editor that is unmounted for non-commercial base models, which is the hidden charge
+    // the disclosure work exists to prevent.
     expect(
       page.getByRole('button', { name: 'Restore the stored settings' }).elements()
     ).toHaveLength(0);

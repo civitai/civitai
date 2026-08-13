@@ -1305,8 +1305,10 @@ export function ModelVersionUpsertForm({
                         </Text>
                       ))}
                     {/* No affordance for a removal the creator cannot prevent: the submit substitutes
-                        null for these regardless, so restoring would clear nothing and read as broken. */}
-                    {(removingStoredFee || !gateRemovalIsStructural) && (
+                        null for these regardless, so restoring would clear nothing and read as broken.
+                        A non-commercial base model rejects BOTH charges server-side, and its fee editor is
+                        unmounted — restoring there re-applies a fee nobody can see to a save that fails. */}
+                    {!isNonCommercial && (removingStoredFee || !gateRemovalIsStructural) && (
                       <Anchor
                         component="button"
                         type="button"
