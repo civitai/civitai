@@ -45,10 +45,12 @@ const dieCutEdge = (px: number): CSSProperties => ({
 });
 
 /**
- * Distinctness from *pending* is a constraint, not a preference: pending is 60%
- * opacity plus a dashed yellow outline, and a treatment that reads as pending
- * tells an owner they have a decision waiting that they do not. Every option
- * here stays fully opaque and uses no dashes and no yellow — enforced by
+ * Distinctness from *pending* is a constraint, not a preference: pending is a
+ * dashed yellow outline, and a treatment that reads as pending tells an owner
+ * they have a decision waiting that they do not. Every option here stays fully
+ * opaque and uses no dashes and no yellow — fully opaque because opacity now
+ * belongs to the placer, and a treatment that spent some of it would move where
+ * their floor lands. Enforced by
  * `sticker-treatments.test.ts` over both the inline styles here and the
  * stylesheet behind `animationClassName`, because a sixth option added later is
  * exactly when a rule that lives only in comments gets broken.

@@ -3,8 +3,12 @@ import type { Box } from '~/components/Sticker/place-button-position';
 import {
   candidateDistance,
   flippedButtonOffset,
+  panelBandFor,
+  panelsFitInsideEdges,
   placeButtonBoxes,
   shouldFlipPlaceButton,
+  STICKER_PANEL_BAND_PX,
+  STICKER_PANEL_MIN_WIDTH_PX,
 } from '~/components/Sticker/place-button-position';
 
 /** The real page at 1400x900: tray band, and the carousel viewport that clips. */
@@ -23,13 +27,21 @@ describe('flippedButtonOffset', () => {
   // clearance has to scale with the sticker. A constant is what made the knob
   // dead at the default size, and a constant is what these cases forbid.
   it('scales with the sticker so the button clears the rotate knob', () => {
-    expect(flippedButtonOffset({ stickerHeight: 100, knobOffset: 0.22, gap: 8 })).toBe(30);
-    expect(flippedButtonOffset({ stickerHeight: 300, knobOffset: 0.22, gap: 8 })).toBe(74);
+    expect(
+      flippedButtonOffset({ stickerHeight: 100, knobOffset: 0.22, gap: 8, panelBand: 0 })
+    ).toBe(30);
+    expect(
+      flippedButtonOffset({ stickerHeight: 300, knobOffset: 0.22, gap: 8, panelBand: 0 })
+    ).toBe(74);
   });
 
   it('tracks the knob offset and the gap independently', () => {
-    expect(flippedButtonOffset({ stickerHeight: 100, knobOffset: 0.5, gap: 8 })).toBe(58);
-    expect(flippedButtonOffset({ stickerHeight: 100, knobOffset: 0.22, gap: 20 })).toBe(42);
+    expect(flippedButtonOffset({ stickerHeight: 100, knobOffset: 0.5, gap: 8, panelBand: 0 })).toBe(
+      58
+    );
+    expect(
+      flippedButtonOffset({ stickerHeight: 100, knobOffset: 0.22, gap: 20, panelBand: 0 })
+    ).toBe(42);
   });
 
   it('clears the knob at every size in the measured dead band', () => {
@@ -37,9 +49,95 @@ describe('flippedButtonOffset', () => {
     // the flipped button's bottom sits at -offset. Measured on the real page,
     // heights from ~73 to ~236 put the knob's centre inside the button.
     for (const stickerHeight of [73, 94, 150, 200, 236]) {
-      const offset = flippedButtonOffset({ stickerHeight, knobOffset: 0.22, gap: 8 });
+      const offset = flippedButtonOffset({ stickerHeight, knobOffset: 0.22, gap: 8, panelBand: 0 });
       expect(offset).toBeGreaterThan(0.22 * stickerHeight);
     }
+  });
+
+  // The knob is not the only thing up there any more. The two control panels
+  // occupy a band that does NOT scale with the sticker, so on a short one the
+  // knob clearance is the smaller of the two and clearing only it puts the
+  // button over the panels — where it paints last and swallows the pointer, so
+  // flip, opacity and delete are visibly present and completely dead.
+  it('clears the panel band on a sticker too short for the knob to be the obstacle', () => {
+    // 72px: a 2:1 sticker at the DEFAULT 18% scale on an 800px media box. The
+    // knob wants 15.8px of clearance and the panels want 36.
+    const offset = flippedButtonOffset({
+      stickerHeight: 72,
+      knobOffset: 0.22,
+      gap: 8,
+      panelBand: STICKER_PANEL_BAND_PX,
+    });
+
+    expect(offset).toBeGreaterThan(STICKER_PANEL_BAND_PX);
+    expect(offset).toBe(44);
+  });
+
+  it('still clears the knob once the sticker is tall enough for it to win', () => {
+    const stickerHeight = 400;
+    const offset = flippedButtonOffset({
+      stickerHeight,
+      knobOffset: 0.22,
+      gap: 8,
+      panelBand: STICKER_PANEL_BAND_PX,
+    });
+
+    expect(offset).toBeGreaterThan(0.22 * stickerHeight);
+    expect(offset).toBe(96);
+  });
+
+  // Every height in the range a sticker can actually take, against BOTH
+  // obstacles at once — the pair above pins the two regimes, this pins that
+  // there is no gap between them.
+  it('clears both obstacles across the whole scale range', () => {
+    for (const stickerHeight of [20, 51, 72, 100, 127, 150, 236, 400]) {
+      const offset = flippedButtonOffset({
+        stickerHeight,
+        knobOffset: 0.22,
+        gap: 8,
+        panelBand: STICKER_PANEL_BAND_PX,
+      });
+
+      expect(offset).toBeGreaterThan(0.22 * stickerHeight);
+      expect(offset).toBeGreaterThan(STICKER_PANEL_BAND_PX);
+    }
+  });
+});
+
+describe('panelsFitInsideEdges', () => {
+  // Flush with the edges is the intended look, and it is only safe while the
+  // sticker is wide enough that the two panels cannot reach past each other —
+  // the delete button paints last, so an overlap means it lands on the opacity
+  // button and a misclick throws the draft away.
+  it('refuses the flush layout on the sizes where delete would cover opacity', () => {
+    // The 5% scale floor on a 1024px media box, and the default 18% on a
+    // phone-width one. Both are states the product actually produces.
+    expect(panelsFitInsideEdges(51)).toBe(false);
+    expect(panelsFitInsideEdges(65)).toBe(false);
+  });
+
+  // The rotate knob is centred and 16px wide, and the left panel reaches 54px
+  // in: below 124 the knob ends up under it, and the panel swallows the press.
+  it('is bounded by the knob, not merely by the two panels touching', () => {
+    expect(panelsFitInsideEdges(STICKER_PANEL_MIN_WIDTH_PX - 1)).toBe(false);
+    expect(panelsFitInsideEdges(STICKER_PANEL_MIN_WIDTH_PX)).toBe(true);
+    // 92 is where the panels alone stop overlapping (54 + 26 + a gap). Wide
+    // enough for them, still too narrow for the knob — the case a fix aimed at
+    // the panels alone would get wrong.
+    expect(panelsFitInsideEdges(92)).toBe(false);
+  });
+
+  it('allows it at the sizes the flush layout was designed for', () => {
+    expect(panelsFitInsideEdges(144)).toBe(true);
+    expect(panelsFitInsideEdges(400)).toBe(true);
+  });
+
+  // The band exists only where the panels do. Clearing one that is not there is
+  // not harmful in itself, but it shrinks the flipped candidate box and so makes
+  // the button decline a flip it could have taken.
+  it('reports no band to clear where no panels are drawn', () => {
+    expect(panelBandFor(51)).toBe(0);
+    expect(panelBandFor(144)).toBe(STICKER_PANEL_BAND_PX);
   });
 });
 
@@ -67,7 +165,12 @@ describe('candidateDistance', () => {
     const stickerHeight = 94;
     const buttonHeight = 52;
     const gap = 8;
-    const flippedOffset = flippedButtonOffset({ stickerHeight, knobOffset: 0.22, gap });
+    const flippedOffset = flippedButtonOffset({
+      stickerHeight,
+      knobOffset: 0.22,
+      gap,
+      panelBand: 0,
+    });
 
     const unflippedTop = stickerHeight + gap;
     const flippedTop = -flippedOffset - buttonHeight;

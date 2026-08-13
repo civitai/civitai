@@ -4,8 +4,11 @@ import { placementSurfaces } from '~/shared/utils/placement';
 import { REMIX_GALLERY_MAX_PINNED } from '~/shared/utils/remix-gallery';
 import {
   STICKER_COMMENT_MAX_LENGTH,
+  STICKER_PLACEMENT_DEFAULT_OPACITY,
+  STICKER_PLACEMENT_MAX_OPACITY,
   STICKER_PLACEMENT_MAX_ROTATION,
   STICKER_PLACEMENT_MAX_SCALE,
+  STICKER_PLACEMENT_MIN_OPACITY,
   STICKER_PLACEMENT_MIN_SCALE,
 } from '~/shared/utils/sticker-placement';
 
@@ -33,6 +36,16 @@ export const stickerPlacementDataSchema = z.object({
     .string()
     .max(STICKER_COMMENT_MAX_LENGTH * 4)
     .optional(),
+  // Refused, not clamped, and refused here rather than at the slider: the floor
+  // is what stops a placement being a quiet defacement, and a client-side clamp
+  // is a filter rather than a refusal — it decides nothing about a crafted
+  // request. Defaulted so a client cached from before these existed still
+  // places a sticker instead of failing validation.
+  flip: z.boolean().default(false),
+  opacity: finite
+    .min(STICKER_PLACEMENT_MIN_OPACITY)
+    .max(STICKER_PLACEMENT_MAX_OPACITY)
+    .default(STICKER_PLACEMENT_DEFAULT_OPACITY),
 });
 
 export const createStickerPlacementSchema = z.object({

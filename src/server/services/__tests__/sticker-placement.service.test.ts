@@ -423,7 +423,19 @@ describe('what gets written to the row', () => {
           sellerId: SELLER,
           amount: PRICE,
           status: 'pending',
-          data: { cosmeticId: COSMETIC, x: 1, y: 0, scale: 0.2, rotation: 15 },
+          // `flip` and `opacity` are written even though this call omits them:
+          // the row is what every later reader draws from, and a key that is
+          // absent there is one each of those readers has to remember to
+          // default. Full strength and unmirrored is what an omission means.
+          data: {
+            cosmeticId: COSMETIC,
+            x: 1,
+            y: 0,
+            scale: 0.2,
+            rotation: 15,
+            flip: false,
+            opacity: 1,
+          },
         }),
       })
     );

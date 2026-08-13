@@ -1,5 +1,13 @@
-import { Text, Textarea, UnstyledButton } from '@mantine/core';
-import { IconMessage, IconX } from '@tabler/icons-react';
+import {
+  ActionIcon,
+  Popover,
+  Slider,
+  Text,
+  Textarea,
+  Tooltip,
+  UnstyledButton,
+} from '@mantine/core';
+import { IconDropletHalf2, IconFlipHorizontal, IconMessage, IconTrash } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -9,15 +17,21 @@ import { KNOB_OFFSET, rotate } from '~/components/Sticker/draft-gesture';
 import {
   candidateDistance,
   flippedButtonOffset,
+  panelBandFor,
+  panelsFitInsideEdges,
   placeButtonBoxes,
   shouldFlipPlaceButton,
 } from '~/components/Sticker/place-button-position';
 import { payoutCopy } from '~/components/Sticker/payout-copy';
+import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { useCreateStickerPlacement } from '~/components/Sticker/placement.util';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import type { StickerTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { PLACEMENT_SPEND_TYPES } from '~/shared/constants/placement.constants';
-import { STICKER_COMMENT_MAX_LENGTH } from '~/shared/utils/sticker-placement';
+import {
+  STICKER_COMMENT_MAX_LENGTH,
+  STICKER_PLACEMENT_MIN_OPACITY,
+} from '~/shared/utils/sticker-placement';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 import {
   pointerToSurfaceFraction,
@@ -98,6 +112,7 @@ export function DraftSticker({
   const payout = payoutCopy(ownerShare, ownerUsername);
   const select = useStickerPlacementDraftStore((state) => state.select);
   const cancelDraft = useStickerPlacementDraftStore((state) => state.cancelDraft);
+  const move = useStickerPlacementDraftStore((state) => state.move);
   const place = useCreateStickerPlacement(draft.id);
 
   // Local to the draft rather than in the store: it is written once, read once
@@ -111,7 +126,18 @@ export function DraftSticker({
 
   // Both the tray and the carousel's clipped viewport can swallow the button, so
   // it moves above the sticker when that is the better of the two positions.
-  const [{ flipped, flippedOffset }, setPosition] = useState({ flipped: false, flippedOffset: 0 });
+  // `panelsInside` rides along because it is decided from the same measurement:
+  // the panels sit against the sticker's edges while there is room for them
+  // there, and a narrower draft hands its controls to the buy cluster instead.
+  const [{ flipped, flippedOffset, panelsInside }, setPosition] = useState({
+    flipped: false,
+    flippedOffset: 0,
+    // Starts false, which puts the controls in the buy cluster — the layout
+    // that is correct at any size. The real value lands from the layout effect
+    // before paint, so this is never seen; it is the safe direction to be wrong
+    // in if that ever stops being true.
+    panelsInside: false,
+  });
   const trayElement = useStickerPlacementDraftStore((state) => state.tray);
 
   // `measure` is what the ResizeObserver and the window listener are bound to,
@@ -131,10 +157,19 @@ export function DraftSticker({
     const { flipped, rotation } = frame.current;
     const tray = useStickerPlacementDraftStore.getState().tray;
     const height = element.offsetHeight;
+    // Layout size, not the bounding box: `offsetWidth` ignores the CSS rotation,
+    // and the panels are children of the rotated element — they are laid out
+    // against the sticker's own width whatever angle it is at.
+    const width = element.offsetWidth;
     const offset = flippedButtonOffset({
       stickerHeight: height,
       knobOffset: KNOB_OFFSET,
       gap: BUY_BUTTON_GAP,
+      // The panels are the other thing above the sticker, and the only one that
+      // does not scale with it — and on a narrow draft they are not drawn at
+      // all, so there is nothing there to clear. Clearing a band that is not
+      // there only costs the button a flip it could have taken.
+      panelBand: panelBandFor(width),
     });
     // From the button's own measured rect, both times: the pair that comes out
     // is the same whichever side the button is currently on, which is what stops
@@ -159,12 +194,15 @@ export function DraftSticker({
         clip: clip.current?.getBoundingClientRect() ?? null,
       }),
       flippedOffset: offset,
+      panelsInside: panelsFitInsideEdges(width),
     };
 
     // Every pointer move re-measures, so bail on an unchanged result rather
     // than handing React a new object to re-render for.
     setPosition((current) =>
-      current.flipped === next.flipped && current.flippedOffset === next.flippedOffset
+      current.flipped === next.flipped &&
+      current.flippedOffset === next.flippedOffset &&
+      current.panelsInside === next.panelsInside
         ? current
         : next
     );
@@ -222,9 +260,14 @@ export function DraftSticker({
   // The cheap half, and the only one a gesture reaches: rect and offset reads,
   // no style recalc. Which ancestor clips is a property of the tree, not of the
   // sticker's own transform, so none of these deps can change it.
+  //
+  // `panelsInside` is in here because it moves the controls between the panels
+  // and the cluster, which changes the cluster's height — an input to the flip
+  // decision. The ResizeObserver would catch it a beat later; this measures on
+  // the same commit that moved them.
   useLayoutEffect(() => {
     measure();
-  }, [measure, draft.x, draft.y, draft.scale, draft.rotation, flipped]);
+  }, [measure, draft.x, draft.y, draft.scale, draft.rotation, flipped, panelsInside]);
 
   const begin =
     (mode: Gesture['mode'], corner?: { sx: number; sy: number }) => (event: React.PointerEvent) => {
@@ -301,6 +344,84 @@ export function DraftSticker({
       }
     };
 
+  // Selects as well as stopping the drag, so the lower of two stacked drafts
+  // does not have controls buried under its neighbour — `selected` is the only
+  // input to z-order. Gated on there being no live gesture, the same rule
+  // `take()` applies: a press that arrives while another finger is dragging must
+  // not move the selection, or the sticker being dragged drops behind its
+  // neighbour under the finger holding it.
+  const pressPanel = (event: React.PointerEvent) => {
+    event.stopPropagation();
+    if (!useStickerPlacementDraftStore.getState().interaction) select(draft.id);
+  };
+
+  const flipControl = (
+    <Tooltip label={draft.flip ? 'Unflip' : 'Flip'} withinPortal>
+      <ActionIcon
+        size="sm"
+        radius="xl"
+        variant="subtle"
+        color={draft.flip ? 'blue' : 'gray'}
+        aria-label={draft.flip ? 'Unflip this sticker' : 'Flip this sticker'}
+        onClick={() => move(draft.id, { flip: !draft.flip })}
+      >
+        <IconFlipHorizontal size={14} />
+      </ActionIcon>
+    </Tooltip>
+  );
+
+  // The slider is behind a control rather than always on screen: it is set once,
+  // and a slider parked on the artwork would be in the way of every later drag.
+  const opacityControl = (
+    <Popover width={210} position="top" withArrow withinPortal shadow="md">
+      <Popover.Target>
+        <ActionIcon
+          size="sm"
+          radius="xl"
+          variant="subtle"
+          color={draft.opacity < 1 ? 'blue' : 'gray'}
+          aria-label="Set this sticker's opacity"
+        >
+          <IconDropletHalf2 size={14} />
+        </ActionIcon>
+      </Popover.Target>
+      <Popover.Dropdown p="sm">
+        <Text size="xs" c="dimmed" className="mb-2">
+          Opacity
+        </Text>
+        {/* The floor is the slider's own minimum, so the range you can drag
+            through is the range the server accepts — the value can never be one
+            the purchase would then refuse. The refusal still lives in the
+            schema; this only keeps the two from disagreeing in front of the
+            person placing it. */}
+        <Slider
+          min={Math.round(STICKER_PLACEMENT_MIN_OPACITY * 100)}
+          max={100}
+          step={5}
+          value={Math.round(draft.opacity * 100)}
+          onChange={(value) => move(draft.id, { opacity: value / 100 })}
+          label={(value) => `${value}%`}
+          aria-label="Sticker opacity"
+        />
+      </Popover.Dropdown>
+    </Popover>
+  );
+
+  const removeControl = (
+    <Tooltip label="Remove" withinPortal>
+      <ActionIcon
+        size="sm"
+        radius="xl"
+        variant="subtle"
+        color="gray"
+        aria-label="Remove this sticker"
+        onClick={() => cancelDraft(draft.id)}
+      >
+        <IconTrash size={14} />
+      </ActionIcon>
+    </Tooltip>
+  );
+
   const artworkImage = (
     <EdgeImage
       src={art.url}
@@ -312,6 +433,7 @@ export function DraftSticker({
         display: 'block',
         pointerEvents: 'none',
         ...dressed.imageStyle?.detail,
+        ...stickerArtworkStyle(draft),
       }}
       draggable={false}
     />
@@ -341,7 +463,7 @@ export function DraftSticker({
         <span
           aria-hidden
           className={dressed.behind.className}
-          style={{ zIndex: -1, ...dressed.behind.style }}
+          style={{ zIndex: -1, ...dressed.behind.style, opacity: draft.opacity }}
         />
       )}
 
@@ -372,20 +494,44 @@ export function DraftSticker({
         style={{ top: `-${KNOB_OFFSET * 100}%` }}
       />
 
-      {/* Offset diagonally out past the corner handle rather than replacing it —
-          all four corners resize, and losing one to a destructive action on the
-          only corner a right-hander reaches first is worse than the crowding.
-          Dark rather than the handles' blue: it is the one control here that
-          throws work away. */}
-      <button
-        type="button"
-        aria-label="Remove this sticker"
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={() => cancelDraft(draft.id)}
-        className="absolute -right-7 -top-7 flex size-5 cursor-pointer items-center justify-center rounded-full border-2 border-white bg-dark-7 text-white"
-      >
-        <IconX size={10} stroke={3} />
-      </button>
+      {/* Two panels, one per top corner, and the split is the point: removing
+          the draft throws work away, and it should not sit a thumb's width from
+          the two controls you press while arranging one.
+
+          Each is flush with its own edge and grows inward, so the pair reads as
+          bracketing the box. They clear the corner handles — all four resize, so
+          none can be spent on a button — and the buy button clears their band
+          through `flippedButtonOffset`. Dark rather than the handles' blue:
+          these act on the sticker, they are not part of positioning it.
+
+          Only while the sticker is wide enough to hold them. Every other piece
+          of chrome up here is a FRACTION of the sticker (the knob at
+          `KNOB_OFFSET` of the height, the flipped button derived from it) while
+          these are a fixed band, so on a small sticker all three converge: the
+          knob ends up under a panel and DELETE lands on opacity, because it
+          paints later. Narrow drafts hand their controls to the buy cluster
+          instead — the `!panelsInside` row inside `buttonRef` below. */}
+      {panelsInside && (
+        <>
+          <div
+            className="absolute -top-9 left-0 flex cursor-auto items-center gap-0.5 rounded-full bg-dark-7 px-1 py-0.5"
+            onPointerDown={pressPanel}
+          >
+            {flipControl}
+            {opacityControl}
+          </div>
+
+          <div
+            // Padding equal on both axes, unlike its two-icon sibling: a single
+            // icon in a pill sized `px`/`py` comes out wider than it is tall, so
+            // `rounded-full` reads as a lozenge rather than a circle.
+            className="absolute -top-9 right-0 flex cursor-auto items-center rounded-full bg-dark-7 p-0.5"
+            onPointerDown={pressPanel}
+          >
+            {removeControl}
+          </div>
+        </>
+      )}
 
       <div
         ref={buttonRef}
@@ -403,13 +549,39 @@ export function DraftSticker({
         )}
         style={{
           minWidth: BUY_BUTTON_MIN_WIDTH,
-          // Scales with the sticker because the knob it has to clear does.
+          // Clears whichever obstacle is taller: the knob, which scales with the
+          // sticker, or the panel band, which does not. Below ~164px the
+          // constant wins, so this does NOT simply scale.
           ...(flipped ? { marginBottom: flippedOffset } : null),
         }}
         // The button is inside the draggable body, so without this every press
         // on it would also start a move and the click would land mid-drag.
         onPointerDown={(event) => event.stopPropagation()}
       >
+        {/* Where a narrow draft's controls live, rather than a second position
+            for the panels above it.
+
+            Anything anchored to a small sticker's own box is in trouble twice
+            over: inside it, the panels reach past each other and the knob;
+            outside it, they hang off the sticker and the carousel's viewport
+            clips them away near the image edges — which on a phone-width media
+            box is most of the frame, because almost every draft there is narrow.
+            This cluster is the one piece of chrome that already knows where it
+            is on screen: it measures itself against the tray and the clipping
+            ancestor and moves to whichever side is visible. Handing it the
+            controls means they inherit that, instead of a third set of
+            hand-derived offsets to get wrong. */}
+        {!panelsInside && (
+          <div
+            className="flex items-center gap-0.5 rounded-full bg-dark-7 px-1 py-0.5"
+            onPointerDown={pressPanel}
+          >
+            {flipControl}
+            {opacityControl}
+            {removeControl}
+          </div>
+        )}
+
         {/* Optional, and folded away until asked for: a field on every draft
             would sit over the artwork through the whole arrangement, which is
             the one thing this overlay is trying not to do. */}
@@ -456,6 +628,8 @@ export function DraftSticker({
                 y: draft.y,
                 scale: draft.scale,
                 rotation: draft.rotation,
+                flip: draft.flip,
+                opacity: draft.opacity,
                 // Sent only when there is something to send, so an opened-then-
                 // abandoned field is the same as never opening it.
                 ...(note.trim() ? { comment: note } : {}),
