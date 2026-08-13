@@ -392,7 +392,18 @@ export function StickerPlacementOverlay({
                 from a sticker they chose to place faint. A border is a deliberate
                 mark at any size and against any background. */}
               {placement.isPending && (
-                <span className="pointer-events-none absolute -inset-1 rounded border-2 border-dashed border-yellow-6" />
+                <span
+                  className={clsx(
+                    'pointer-events-none absolute rounded border-2 border-dashed border-yellow-6',
+                    // Inside the artwork's own box on a card, outside it in the
+                    // detail view. A card draws this inside two `overflow-hidden`
+                    // layers over `object-fit: cover` media, so an outset ring on
+                    // an edge-placed sticker is clipped while the artwork it marks
+                    // is still visible — and a card shows none of the other
+                    // pending cues, so that ring is the whole signal there.
+                    surface === 'card' ? 'inset-0' : '-inset-1'
+                  )}
+                />
               )}
             </div>
           );

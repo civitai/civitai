@@ -62,6 +62,16 @@ describe('sticker treatments', () => {
   // anything about the styles. These tests close the paths a treatment is
   // actually written along today; they do not close the space.
 
+  // `transform` belongs to the placer, not to a treatment: the flip is written
+  // as `scaleX(-1)` on the artwork and is spread AFTER `imageStyle`, so a
+  // treatment that set one would have it silently dropped on an unflipped
+  // sticker and silently drop the flip on a flipped one. Same argument as the
+  // pending-look guard above, and the same failure mode — it arrives with a
+  // sixth option written by someone who never read this file.
+  it.each(STICKER_TREATMENT_KEYS)('%s leaves transform to the placer', (key) => {
+    expect(styleText(key)).not.toContain('transform');
+  });
+
   it('covers every declared key, so the table cannot drift from the union', () => {
     expect(Object.keys(STICKER_TREATMENTS).sort()).toEqual([...STICKER_TREATMENT_KEYS].sort());
   });

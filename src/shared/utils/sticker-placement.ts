@@ -193,12 +193,16 @@ export const isStickerPlacementData = (value: unknown): value is StickerPlacemen
 /**
  * A stored placement, with the keys it may not have.
  *
- * The one way to read `Placement.data`. Readers used to cast the JSON straight to
- * `StickerPlacementData`, which types a key as present that a row can simply not
- * have — so a missing `opacity` reached a style as `undefined` and drew nothing.
- * Clamped as well as defaulted, because this is JSON on a row: a hand-edit or a
- * backfill reaches it without passing the schema, and a stored `0` would be an
- * invisible sticker that is still clickable.
+ * How every surface that DRAWS a placement reads `Placement.data`. Readers used
+ * to cast the JSON straight to `StickerPlacementData`, which types a key as
+ * present that a row can simply not have — so a missing `opacity` reached a
+ * style as `undefined` and drew nothing. Clamped as well as defaulted, because
+ * this is JSON on a row: a hand-edit or a backfill reaches it without passing the
+ * schema, and a stored `0` would be an invisible sticker that is still clickable.
+ *
+ * Not every reader: `hideStickerComment` deliberately keeps the raw payload,
+ * because it writes the row back and normalising on that path would resize a
+ * legacy sticker as a side effect of hiding a note.
  */
 export const parseStickerPlacementData = (value: unknown): StickerPlacementData | null => {
   if (!isStickerPlacementData(value)) return null;

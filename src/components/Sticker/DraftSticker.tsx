@@ -17,8 +17,10 @@ import { KNOB_OFFSET, rotate } from '~/components/Sticker/draft-gesture';
 import {
   candidateDistance,
   flippedButtonOffset,
+  panelsFitInsideEdges,
   placeButtonBoxes,
   shouldFlipPlaceButton,
+  STICKER_PANEL_BAND_PX,
 } from '~/components/Sticker/place-button-position';
 import { payoutCopy } from '~/components/Sticker/payout-copy';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
@@ -124,7 +126,18 @@ export function DraftSticker({
 
   // Both the tray and the carousel's clipped viewport can swallow the button, so
   // it moves above the sticker when that is the better of the two positions.
-  const [{ flipped, flippedOffset }, setPosition] = useState({ flipped: false, flippedOffset: 0 });
+  // `panelsInside` rides along because it is decided from the same measurement
+  // and changes with it: the panels sit against the sticker's edges while there
+  // is room for them there, and move outside the corners when there is not.
+  const [{ flipped, flippedOffset, panelsInside }, setPosition] = useState({
+    flipped: false,
+    flippedOffset: 0,
+    // Starts outside, which is the layout that cannot collide with anything.
+    // The first measure runs before the artwork has loaded, when the box is
+    // near-zero — starting inside would put delete on top of opacity for that
+    // frame, which is one misclick away from throwing the draft away.
+    panelsInside: false,
+  });
   const trayElement = useStickerPlacementDraftStore((state) => state.tray);
 
   // `measure` is what the ResizeObserver and the window listener are bound to,
@@ -144,10 +157,17 @@ export function DraftSticker({
     const { flipped, rotation } = frame.current;
     const tray = useStickerPlacementDraftStore.getState().tray;
     const height = element.offsetHeight;
+    // Layout size, not the bounding box: `offsetWidth` ignores the CSS rotation,
+    // and the panels are children of the rotated element — they are laid out
+    // against the sticker's own width whatever angle it is at.
+    const width = element.offsetWidth;
     const offset = flippedButtonOffset({
       stickerHeight: height,
       knobOffset: KNOB_OFFSET,
       gap: BUY_BUTTON_GAP,
+      // The panels are the other thing above the sticker, and the only one that
+      // does not scale with it.
+      panelBand: STICKER_PANEL_BAND_PX,
     });
     // From the button's own measured rect, both times: the pair that comes out
     // is the same whichever side the button is currently on, which is what stops
@@ -172,12 +192,15 @@ export function DraftSticker({
         clip: clip.current?.getBoundingClientRect() ?? null,
       }),
       flippedOffset: offset,
+      panelsInside: panelsFitInsideEdges(width),
     };
 
     // Every pointer move re-measures, so bail on an unchanged result rather
     // than handing React a new object to re-render for.
     setPosition((current) =>
-      current.flipped === next.flipped && current.flippedOffset === next.flippedOffset
+      current.flipped === next.flipped &&
+      current.flippedOffset === next.flippedOffset &&
+      current.panelsInside === next.panelsInside
         ? current
         : next
     );
@@ -397,14 +420,28 @@ export function DraftSticker({
           handles' blue: these act on the sticker, they are not part of
           positioning it.
 
-          ⚠️ Growing inward means they approach the rotate knob, which is centred
-          over the top edge. On a sticker near the 5% floor the two panels and the
-          knob are competing for the same span; the knob keeps its own offset and
-          wins on z-order, but that is the case to look at first if these ever
-          feel cramped. */}
+          Flush is conditional, and the fallback is not decoration. Every element
+          above the sticker except these two is sized as a FRACTION of it — the
+          rotate knob at `KNOB_OFFSET` of the height, the flipped buy button from
+          that — while the panels are a fixed 36px band. So on a small sticker the
+          three converge: the knob ends up under a panel, and the two panels reach
+          past each other with DELETE on top of opacity, because it paints last.
+          Below `STICKER_PANEL_MIN_WIDTH_PX` they move outside the corners, where
+          they can reach neither the knob nor each other at any size. The buy
+          button clears the band through `flippedButtonOffset`. */}
       <div
-        className="absolute -top-9 left-0 flex cursor-auto items-center gap-0.5 rounded-full bg-dark-7 px-1 py-0.5"
-        onPointerDown={(event) => event.stopPropagation()}
+        className={clsx(
+          'absolute -top-9 flex cursor-auto items-center gap-0.5 rounded-full bg-dark-7 px-1 py-0.5',
+          panelsInside ? 'left-0' : 'right-full mr-1'
+        )}
+        // Selects as well as stopping the drag, like the sticker body does: with
+        // two drafts overlapping, only the selected one is raised, so without
+        // this the lower one's controls stay buried under its neighbour and the
+        // press that would have freed them is the one being swallowed here.
+        onPointerDown={(event) => {
+          event.stopPropagation();
+          select(draft.id);
+        }}
       >
         <Tooltip label={draft.flip ? 'Unflip' : 'Flip'} withinPortal>
           <ActionIcon
@@ -460,8 +497,14 @@ export function DraftSticker({
         // Padding equal on both axes, unlike its two-icon sibling: a single icon
         // in a pill sized `px`/`py` comes out wider than it is tall, so the
         // `rounded-full` reads as a lozenge rather than a circle.
-        className="absolute -top-9 right-0 flex cursor-auto items-center rounded-full bg-dark-7 p-0.5"
-        onPointerDown={(event) => event.stopPropagation()}
+        className={clsx(
+          'absolute -top-9 flex cursor-auto items-center rounded-full bg-dark-7 p-0.5',
+          panelsInside ? 'right-0' : 'left-full ml-1'
+        )}
+        onPointerDown={(event) => {
+          event.stopPropagation();
+          select(draft.id);
+        }}
       >
         <Tooltip label="Remove" withinPortal>
           <ActionIcon

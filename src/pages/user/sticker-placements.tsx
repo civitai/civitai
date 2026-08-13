@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { Meta } from '~/components/Meta/Meta';
+import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -102,11 +103,18 @@ export default function StickerPlacements() {
                   )}
 
                   {art && (
+                    // Drawn with the placer's own opacity and flip, not at full
+                    // strength. This is the queue an owner is most likely to
+                    // approve from, and it is the small-card review the opacity
+                    // floor exists because of: a faint sticker previewed as
+                    // solid here is approved on the strength of something the
+                    // page never showed. It sits beside the image rather than on
+                    // it, so this is as close to the real thing as the row gets.
                     <EdgeImage
                       src={art.url}
                       alt={`:${art.slug}:`}
                       options={{ height: 96, anim: art.animated, optimized: true }}
-                      style={{ height: 48, width: 'auto' }}
+                      style={{ height: 48, width: 'auto', ...stickerArtworkStyle(row.data) }}
                     />
                   )}
 
