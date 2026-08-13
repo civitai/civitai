@@ -2,6 +2,11 @@ import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, relative, sep } from 'path';
 import { describe, expect, it } from 'vitest';
 
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { stripCommentsAndStrings } from '../../../../../test/strip-comments';
+// Client-safe constants module (no `~/server/db/client` in its graph) — see its header.
+import { CAPABILITIES_BY_KIND } from '~/shared/constants/app-capabilities.constants';
+
 /**
  * 🔴 SEAM GUARD for app-ownership gating.
  *
@@ -418,16 +423,90 @@ function sourceFiles(): string[] {
 const FILES = sourceFiles();
 
 /**
- * Source with comments removed — there is a LOT of prose about ownership in this
- * codebase, and only real code should count as a gate site.
+ * Source with comments AND string literals removed — there is a LOT of prose about
+ * ownership in this codebase, and only real code should count as a gate site.
+ *
+ * 🔴 CONSOLIDATED onto the shared `stripCommentsAndStrings`. This file carried its own
+ * private, comments-only stripper; `app-collaborators.client-seam.test.ts` had no
+ * stripper at all and reported a proc as WIRED on the strength of a JSDoc mention. Two
+ * guards, one rule, applied at neither site consistently — so the rule now lives in one
+ * module that both import.
+ *
+ * 🔴 MEASURED BEFORE THE SWITCH, because a stricter stripper could have changed this
+ * ledger's verdicts: every one of its six scans returns an IDENTICAL set under both
+ * strippers (GATE_RE 16, DENORM_OWNER_RE 3, CAP_RE 6, seat-query files 3, 19 seat calls
+ * across 3 files, 0 `appBlockId_userId` hits). So the ledger was NOT counting or missing
+ * sites through string literals today — it simply had no protection against it, and now
+ * cannot acquire one silently.
  */
 function code(file: string): string {
-  return readFileSync(join(ROOT, file), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+  return stripCommentsAndStrings(readFileSync(join(ROOT, file), 'utf8'));
 }
 
 const CODE = new Map(FILES.map((f) => [f, code(f)] as const));
+
+/**
+ * 🔴 THE STRIPPER IS PART OF THIS GUARD, so it is pinned here. Every scan below asks
+ * "does this file contain a gate?", and the answer is only meaningful if prose cannot
+ * supply one. Without these assertions, reverting `code()` to a private comments-only
+ * stripper is invisible: the ledger's verdicts happen to be identical today (measured),
+ * so nothing else in this file would go red.
+ */
+describe('the source stripper is shared and STRUCTURAL', () => {
+  it('removes block comments, line comments AND string literals', () => {
+    expect(stripCommentsAndStrings('/** listing.userId !== x */').trim()).toBe('');
+    expect(stripCommentsAndStrings('// listing.userId !== x').trim()).toBe('');
+    expect(stripCommentsAndStrings("const s = 'listing.userId !== x';")).not.toContain('userId');
+    expect(stripCommentsAndStrings('const s = `listing.userId !== x`;')).not.toContain('userId');
+  });
+
+  it('POSITIVE CONTROL: real code SURVIVES it', () => {
+    // The failure direction that would make every scan below vacuously empty.
+    const kept = stripCommentsAndStrings(
+      '/** prose */\nif (listing.userId !== user.id) return null;'
+    );
+    expect(kept).toContain('listing.userId !== user.id');
+  });
+
+  it('the scanned corpus is non-empty (so an empty CODE map cannot pass everything)', () => {
+    expect(FILES.length).toBeGreaterThan(100);
+    expect([...CODE.values()].some((c) => c.length > 0)).toBe(true);
+  });
+
+  /**
+   * 🔴 THIS FILE'S OWN `code()` GOES THROUGH THE SHARED STRIPPER — asserted on the CODE
+   * map, not on the module.
+   *
+   * The three assertions above call `stripCommentsAndStrings` DIRECTLY, so they pin the
+   * MODULE and say nothing about whether this ledger uses it. Reverting `code()` to a
+   * private comments-only stripper survived all of them, and survived every other scan
+   * too (the verdicts are identical today) — a consolidation that was documented but not
+   * pinned, which is the same shape as the bug the module was written to fix.
+   */
+  const CAPS_FILE = 'src/shared/constants/app-capabilities.constants.ts';
+
+  it('🔴 `code()` strips STRING LITERALS out of a real corpus file', () => {
+    const stripped = CODE.get(CAPS_FILE);
+    expect(stripped, `${CAPS_FILE} is not in the scanned population`).toBeDefined();
+    // These are string literals in that module's `ListingKind` union + status list. The
+    // OLD comments-only stripper leaves them; the shared one removes them.
+    expect(stripped).not.toContain("'onsite'");
+    expect(stripped).not.toContain("'draft'");
+  });
+
+  it('POSITIVE CONTROL: the same file keeps its real CODE', () => {
+    // Without this, "the literals are gone" would also pass on a `code()` that returned
+    // an empty string for every file.
+    const stripped = CODE.get(CAPS_FILE)!;
+    expect(stripped).toContain('CAPABILITIES_BY_KIND');
+    expect(stripped).toContain('export function capabilitiesForKind');
+    // …and the raw file really does contain the literals, so their absence above is the
+    // stripper's doing and not a fact about the file.
+    const raw = readFileSync(join(ROOT, CAPS_FILE), 'utf8');
+    expect(raw).toContain("'onsite'");
+    expect(raw).toContain("'draft'");
+  });
+});
 const GATES = FILES.filter((f) => GATE_RE.test(CODE.get(f)!)).sort();
 
 describe('app-ownership gate ledger', () => {
@@ -750,6 +829,8 @@ describe('app-ownership gate ledger', () => {
 
   describe('🔴 kind-derived capabilities — the second closed population', () => {
     const CAP_RE = /listingKindSupports|capabilitiesForKind|CAPABILITIES_BY_KIND/;
+    /** Every capability CELL, read off the table itself. See the note on the check below. */
+    const CAPABILITY_NAMES = Object.keys(CAPABILITIES_BY_KIND.onsite);
     const CAP_SITES = FILES.filter((f) => CAP_RE.test(CODE.get(f)!)).sort();
 
     it('POSITIVE CONTROL: CAP_RE matches every spelling that appears in production', () => {
@@ -781,14 +862,35 @@ describe('app-ownership gate ledger', () => {
     });
 
     it('every capability-ledger entry names the capability it reads', () => {
+      // 🔴 THE CAPABILITY NAMES ARE DERIVED FROM THE TABLE, not from a hand-maintained
+      // alternation. That regex had `listingMedia` added to it when the cell was split
+      // out — a widening that pinned NOTHING, because no entry consumed only that cell,
+      // so narrowing it back changed no answer. Reading the names off
+      // `CAPABILITIES_BY_KIND` makes the check correct for every cell automatically,
+      // including any added later, and makes it impossible to add a cell the ledger
+      // cannot express.
       for (const [file, rationale] of Object.entries(KIND_CAPABILITY_LEDGER)) {
         expect(rationale.length, `${file} rationale is too terse`).toBeGreaterThan(80);
         expect(
-          /earnings|submitVersion|analytics|listingContent|listingMedia|submitForReview/.test(
-            rationale
-          ),
-          `${file} must name which capability it consumes`
+          CAPABILITY_NAMES.some((c) => rationale.includes(c)),
+          `${file} must name which capability it consumes (one of: ${CAPABILITY_NAMES.join(', ')})`
         ).toBe(true);
+      }
+    });
+
+    it('POSITIVE CONTROL: the derived capability-name list is real and complete', () => {
+      // A silently-empty list would make the assertion above vacuously true for every
+      // entry, which is exactly the failure the hand-written regex could not have.
+      expect(CAPABILITY_NAMES.length).toBeGreaterThanOrEqual(6);
+      for (const expected of [
+        'listingContent',
+        'listingMedia',
+        'submitForReview',
+        'analytics',
+        'earnings',
+        'submitVersion',
+      ]) {
+        expect(CAPABILITY_NAMES).toContain(expected);
       }
     });
 

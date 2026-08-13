@@ -170,9 +170,11 @@ beforeEach(() => {
   // would make every assertion about those filters vacuous — and this fake DID ignore
   // them, which is why a banned collaborator sat in the byline fixture unnoticed.
   mockDb.user.findMany.mockImplementation(async (args: unknown) => {
-    const w = (args as {
-      where: { id: { in: number[] }; bannedAt?: null; deletedAt?: null };
-    }).where;
+    const w = (
+      args as {
+        where: { id: { in: number[] }; bannedAt?: null; deletedAt?: null };
+      }
+    ).where;
     return w.id.in
       .map((id) => USERS[id])
       .filter(Boolean)

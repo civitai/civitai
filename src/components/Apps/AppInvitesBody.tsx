@@ -187,6 +187,38 @@ export function AppInvitesBodyView({
   );
 }
 
+/**
+ * What a settled `respondToInvite` must invalidate. PURE, and extracted from the mutation
+ * callback so it is testable without a tRPC client — the callback itself is where the
+ * "only on accept" bug lived, invisible to every test because only the View had any.
+ *
+ * 🔴 `blocks.getNavSummary` is invalidated on BOTH verdicts. It carries
+ * `hasPendingInvites`, which drives the "Invites" sub-nav tab, and DECLINING is the case
+ * that can take the count to zero — so gating the invalidation on `accepted` left the tab
+ * pointing at an empty page until a reload, in exactly the situation where it should
+ * disappear.
+ */
+export type InviteInvalidationKey =
+  | 'appCollaborators.listMyPendingInvites'
+  | 'appListings.listMine'
+  | 'blocks.getNavSummary';
+
+export function invalidationsForInviteResponse(status: string): InviteInvalidationKey[] {
+  // 🔴 `status` is deliberately IGNORED, and that is the whole assertion: the set is
+  // identical for accept and decline. It stays a parameter so a test can pin the two as
+  // EQUAL rather than pin one and assume the other. Referenced here so the signature
+  // reads as intentional to a linter without implying a branch that does not exist.
+  void status;
+  return [
+    // The inbox itself — the responded row leaves it on either verdict.
+    'appCollaborators.listMyPendingInvites',
+    // "My apps" gains a row on accept; cheap and harmless to refresh on decline.
+    'appListings.listMine',
+    // The sub-nav counts. BOTH verdicts — see above.
+    'blocks.getNavSummary',
+  ];
+}
+
 /** Data container: `listMyPendingInvites` + `respondToInvite`. Never `list`. */
 export function AppInvitesBody() {
   const utils = trpc.useUtils();
@@ -201,13 +233,16 @@ export function AppInvitesBody() {
             ? 'Invitation accepted — the app is now in My apps.'
             : 'Invitation declined.',
       });
-      void utils.appCollaborators.listMyPendingInvites.invalidate();
-      void utils.appListings.listMine.invalidate();
-      // 🔴 ALWAYS, not only on accept. `getNavSummary.hasPendingInvites` drives the
-      // "Invites" sub-nav tab, so DECLINING the last invitation used to leave the tab
-      // pointing at an empty page until a reload — the one case where the count actually
-      // reaches zero.
-      void utils.blocks.getNavSummary.invalidate();
+      // 🔴 DRIVEN FROM the exported list, not a parallel copy of it. A pure function that
+      // merely DESCRIBES what the callback does is a declaration, not a code path — it
+      // would pass its own test while the callback quietly invalidated something else.
+      const invalidators: Record<InviteInvalidationKey, () => Promise<unknown>> = {
+        'appCollaborators.listMyPendingInvites': () =>
+          utils.appCollaborators.listMyPendingInvites.invalidate(),
+        'appListings.listMine': () => utils.appListings.listMine.invalidate(),
+        'blocks.getNavSummary': () => utils.blocks.getNavSummary.invalidate(),
+      };
+      for (const key of invalidationsForInviteResponse(result.status)) void invalidators[key]();
     },
     onError: (error) =>
       showErrorNotification({

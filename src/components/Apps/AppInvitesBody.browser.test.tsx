@@ -3,7 +3,11 @@ import { page, userEvent } from 'vitest/browser';
 
 import { renderWithProviders } from '../../../test/component-setup';
 import type { PendingInviteRow } from '~/components/Apps/AppInvitesBody';
-import { acceptedInviteHref, AppInvitesBodyView } from '~/components/Apps/AppInvitesBody';
+import {
+  acceptedInviteHref,
+  AppInvitesBodyView,
+  invalidationsForInviteResponse,
+} from '~/components/Apps/AppInvitesBody';
 
 /** `/apps/invites` — the invitee's inbox. Props-only view; no tRPC. */
 
@@ -129,5 +133,36 @@ describe('AppInvitesBodyView — the inviter', () => {
     await expect
       .element(page.getByTestId('apps-invite-inviter-apl_1'))
       .toHaveTextContent(/user #42/);
+  });
+});
+
+/**
+ * 🔴 THE INVALIDATION SET. `getNavSummary` carries `hasPendingInvites`, which drives the
+ * "Invites" sub-nav tab — and DECLINING is the verdict that can take that count to zero.
+ * Gating the invalidation on `accepted` (the shipped shape) left the tab pointing at an
+ * empty page until a reload, in exactly the case where it should disappear. Only the View
+ * had tests, so the container callback was unpinned.
+ */
+describe('invalidationsForInviteResponse', () => {
+  test('🔴 ACCEPT and DECLINE invalidate the SAME set', () => {
+    expect(invalidationsForInviteResponse('declined')).toEqual(
+      invalidationsForInviteResponse('accepted')
+    );
+  });
+
+  test('the nav summary is in the set for BOTH verdicts', () => {
+    for (const status of ['accepted', 'declined', 'rejected']) {
+      expect(invalidationsForInviteResponse(status)).toContain('blocks.getNavSummary');
+    }
+  });
+
+  test('the inbox and My apps are invalidated too, and nothing else', () => {
+    expect(invalidationsForInviteResponse('accepted').sort()).toEqual(
+      [
+        'appCollaborators.listMyPendingInvites',
+        'appListings.listMine',
+        'blocks.getNavSummary',
+      ].sort()
+    );
   });
 });

@@ -116,10 +116,28 @@ function readDeclaredProcs(): string[] {
  * `inviteNotifyThrottleHours` and `transferExpiryDays` — and a bare
  * `\bappCollaborators\.(\w+)` matched it too, in the very files that read it.
  *
- * Requiring an explicit `trpc.`/`utils.` receiver is fail-SAFE: a client written in some
- * third shape (a differently-named `useUtils()` binding, say) would not be counted, so
- * its proc would read as UNWIRED and turn this guard RED. Red is the direction someone
- * looks at; a regex loose enough to count prose is not.
+ * Requiring an explicit `trpc.`/`utils.` receiver is fail-SAFE **for the "every proc has a
+ * client" direction**: a client written in some third shape (a differently-named
+ * `useUtils()` binding, say) would not be counted, so its proc would read as UNWIRED and
+ * turn this guard RED. Red is the direction someone looks at; a regex loose enough to
+ * count prose is not.
+ *
+ * 🔴 BUT IT IS FAIL-OPEN FOR THE OPPOSITE DIRECTION — the `DEFERRED_PROCS` "must have ZERO
+ * clients" assertion — AND THAT MATTERS FOR PR2, WHICH WIRES TRANSFER.
+ *
+ * A transfer proc reached through a shape this regex does not recognise —
+ * `const { initiateTransfer } = trpc.appCollaborators;`, or an aliased
+ * `const u = trpc.useUtils(); u.appCollaborators.…` — would NOT be counted, so the
+ * deferred-set check would keep passing while the proc was in fact wired. The old bare
+ * `\bappCollaborators\.(\w+)` was STRICTER here (it would have caught the destructured
+ * receiver), and the trade was made knowingly: that regex also counted comments, strings
+ * and `constants.appCollaborators.*`, which is how `getAppEarnings` shipped "wired".
+ *
+ * Left as-is DELIBERATELY, because the fix belongs with the work it protects: PR2 should
+ * either widen `PROC_REFERENCE_RE` to recognise the destructured/aliased shapes, or —
+ * better — assert on the DELETION of the `DEFERRED_PROCS` entries themselves, which is
+ * the event that PR actually performs. Do not assume this guard will notice transfer
+ * being wired behind an unusual receiver.
  */
 const PROC_REFERENCE_RE = /\b(?:trpc|utils)\.appCollaborators\.([A-Za-z_$][\w$]*)/g;
 
