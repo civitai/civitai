@@ -680,6 +680,45 @@ describe('civitai#3845 TIER 1 — no unauthenticated route serves a caught error
     }
   );
 
+  it.each([
+    ['out-of-range (int4 overflow)', '1e30'],
+    ['non-integer', '1.5'],
+    ['negative', '-1'],
+    ['zero', '0'],
+  ])('tensor-metadata rejects an %s ?id= as a 400, never reaching the database', async (_n, id) => {
+    // 🔴 Found by the blind audit. `z.preprocess(v => Number(v), z.number())`
+    // ACCEPTS all four of these — `Number()` coerces them and neither an
+    // out-of-range float nor a non-integer is a `.number()` failure. The value
+    // then bound to `ModelFile.id` (int4) and Postgres threw from
+    // `dbRead.modelFile.findUnique`, which sits BEFORE the handler's `try`, so the
+    // throw escaped every civitai handler: a bare 500 with NO `logToAxiom` record.
+    // Not a disclosure (measured), but an anonymous caller could mint
+    // fault-record-free 500s at will — the forensic guarantee the rest of
+    // civitai#3845 depends on. Bounded to int4 at the schema; this pins that the
+    // DB is never reached.
+    mockModelFileFindUnique.mockImplementation(unreachable);
+    const { req, res } = createMocks({ query: { id } });
+    await tensorMetadataHandler(req, res, undefined);
+
+    expect(res._status()).toBe(400);
+    expect(mockModelFileFindUnique, 'the query must be rejected BEFORE the DB call').
+      not.toHaveBeenCalled();
+    // Caller feedback is retained — this is a rejection we wrote, not a disclosure.
+    expect((res._json() as { error?: unknown }).error).toBeTruthy();
+  });
+
+  it('INVARIANT: tensor-metadata still accepts a legitimate integer id', async () => {
+    // The counterpart control: a bound that rejects everything would pass the four
+    // cases above while breaking the route. `buildTensorMetadataUrl` only ever
+    // sends a real file id, and that must still reach the lookup.
+    mockModelFileFindUnique.mockResolvedValue(null);
+    const { req, res } = createMocks({ query: { id: '2147483647' } });
+    await tensorMetadataHandler(req, res, undefined);
+
+    expect(mockModelFileFindUnique, 'a valid int4 id must reach the DB').toHaveBeenCalled();
+    expect(res._status(), 'and a missing row is a 404, not a 400').toBe(404);
+  });
+
   it('INVARIANT: v1/images keeps its transient-search 503 ahead of the delegation', async () => {
     mockGetServerAuthSession.mockResolvedValue(null);
     mockRunImageSearch.mockImplementation((() => {
@@ -718,12 +757,25 @@ describe('LEDGER: download/models `errorResponse` is never called with caught-er
   // reported the live code as still leaking. A guard that reads its own
   // documentation as evidence is worse than none.
   const source = readFileSync(ROUTE, 'utf8')
+    // 🔴 `/* … */` on ONE line is stripped too. The blind audit showed the
+    // line-comment filter alone let a `/* errorResponse(500, err.message) */`
+    // reach the scan as live code — the same "a guard reading its own
+    // documentation as evidence" failure the `//` filter was added for.
+    .replace(/\/\*[^\n]*?\*\//g, '')
     .split('\n')
     .filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*'))
     .join('\n');
 
-  /** `errorResponse(<status>, <arg>)` — arg captured up to the closing paren. */
-  const CALL = /(?<!function\s)errorResponse\(\s*(\d{3})\s*,\s*(?<arg>[\s\S]*?)\)\s*[;,\n]/g;
+  /**
+   * `errorResponse(<status>, <arg>)` — arg captured up to the closing paren.
+   *
+   * 🔴 The status group is `[^,)]+`, not `\d{3}`. A three-digit-literal group is a
+   * SPELLED guard: `errorResponse(status, err.message)` — a variable status —
+   * matched nothing and was silently exempt. What makes a call site safe is its
+   * MESSAGE argument, so nothing about the status should decide whether the site
+   * is inspected at all.
+   */
+  const CALL = /(?<!function\s)errorResponse\(\s*[^,)]+\s*,\s*(?<arg>[\s\S]*?)\)\s*[;,\n]/g;
 
   function callArgs(src: string) {
     return [...src.matchAll(CALL)].map((m) => (m.groups?.arg ?? '').trim());
@@ -743,6 +795,37 @@ describe('LEDGER: download/models `errorResponse` is never called with caught-er
     expect(args.some(isCallerFacingText), 'the detector must reject `err.message`').toBe(false);
   });
 
+  it('CAN detect the two evasions a blind audit found', () => {
+    // 🔴 Both of these walked through the previous version of this guard.
+    // (a) A VARIABLE status defeated a `\d{3}` status group — the call site was
+    //     never even extracted, so `every(...)` was vacuously true over it.
+    const variableStatus = callArgs(`return errorResponse(status, err.message);\n`);
+    expect(variableStatus, 'a variable status must not hide the call site').toEqual([
+      'err.message',
+    ]);
+    expect(variableStatus.every(isCallerFacingText)).toBe(false);
+
+    // (b) A CONCATENATION satisfied first/last-character anchoring while splicing
+    //     the driver's text into the middle.
+    expect(
+      isCallerFacingText(`'Error: ' + err.message + ''`),
+      'a concatenated value is not text we wrote'
+    ).toBe(false);
+    expect(isCallerFacingText('`prefix ${err.message}`')).toBe(false);
+
+    // …and the counterpart: the genuinely-safe forms must still pass, or the
+    // guard just forces the next author to work around it.
+    expect(isCallerFacingText(`'File not found'`)).toBe(true);
+    expect(isCallerFacingText('GENERIC_SERVER_ERROR_MESSAGE')).toBe(true);
+  });
+
+  it('does not read a single-line /* */ comment as live code', () => {
+    // The `//` filter alone let a commented-out call reach the scan.
+    const commented = `/* return errorResponse(500, err.message); */\nreturn errorResponse(500, 'ok');\n`;
+    const stripped = commented.replace(/\/\*[^\n]*?\*\//g, '');
+    expect(callArgs(stripped)).toEqual([`'ok'`]);
+  });
+
   it('every call site passes a string literal or the shared generic constant', () => {
     for (const arg of callArgs(source))
       expect(isCallerFacingText(arg), `errorResponse called with \`${arg}\` — that is not text we wrote`)
@@ -757,9 +840,15 @@ describe('LEDGER: download/models `errorResponse` is never called with caught-er
    * is what hid this route in the first place.
    */
   function isCallerFacingText(arg: string): boolean {
+    // 🔴 Reject a CONCATENATION before anything else. The audit defeated the
+    // first/last-character anchoring below with `'Error: ' + err.message + ''`,
+    // which starts and ends with a quote and so read as a literal while splicing
+    // the driver's text into the middle. Any `+` or `${` means the value is
+    // assembled, and an assembled value is not a literal we wrote.
+    if (/[+]|\$\{/.test(arg)) return false;
     if (arg === 'GENERIC_SERVER_ERROR_MESSAGE') return true;
-    const quoted = /^(['"])[\s\S]*\1$/.test(arg);
-    const plainTemplate = /^`[^`]*`$/.test(arg) && !arg.includes('${');
+    const quoted = /^(['"])[^'"]*\1$/.test(arg);
+    const plainTemplate = /^`[^`]*`$/.test(arg);
     return quoted || plainTemplate;
   }
 });

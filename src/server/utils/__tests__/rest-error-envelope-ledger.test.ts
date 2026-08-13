@@ -574,8 +574,42 @@ describe('LEDGER: GENERIC_CLIENT_ERROR_BY_STATUS covers every 4xx a driver can r
     // All 17 sites are fixed. An entry reappearing here means the gap re-opened.
     const KNOWN_BYPASS: [string, number][] = [];
 
-    const TRPC_CTOR = /new TRPCError\(\{(?<body>[^{}]*?)\}\)/gs;
     const fromCaught = /message:\s*\(?(?:e|err|error|ex)\)?(?:\s+as\s+\w+)?\)?\.message/;
+
+    /**
+     * Every `new TRPCError({…})` constructor body, BRACE-MATCHED.
+     *
+     * 🔴 This replaced `/new TRPCError\(\{(?<body>[^{}]*?)\}\)/gs`, which a blind
+     * audit showed was blind to any body containing a nested `{}` or a `${}`
+     * template — the `s` flag handles multi-line fine, but `[^{}]*?` cannot cross
+     * a nested brace, so those sites matched NOTHING and were silently exempt.
+     * Measured across `src/server`: the regex saw **401** sites, brace matching
+     * sees **485** — a 17% hole in a guard whose entire job is to be exhaustive.
+     *
+     * None of the 84 newly-visible sites is a bypass, so the baseline below is
+     * unchanged at zero — which is the point: closing this cost no churn, and
+     * leaving it would have meant a future `new TRPCError({ code, message:
+     * err.message, meta: { … } })` was exempt by punctuation.
+     */
+    function trpcErrorBodies(source: string): string[] {
+      const out: string[] = [];
+      const open = /new TRPCError\(\s*\{/g;
+      for (let m = open.exec(source); m; m = open.exec(source)) {
+        const start = source.indexOf('{', m.index);
+        let depth = 0;
+        for (let i = start; i < source.length; i++) {
+          if (source[i] === '{') depth++;
+          else if (source[i] === '}') {
+            depth--;
+            if (depth === 0) {
+              out.push(source.slice(start + 1, i));
+              break;
+            }
+          }
+        }
+      }
+      return out;
+    }
 
     /**
      * A `cause` that CANNOT carry the driver error is no better than none.
@@ -606,8 +640,7 @@ describe('LEDGER: GENERIC_CLIENT_ERROR_BY_STATUS covers every 4xx a driver can r
     /** The WHOLE detector, over one source string — so a control can drive it. */
     function bypassCount(source: string): number {
       let n = 0;
-      for (const m of stripLineComments(source).matchAll(TRPC_CTOR)) {
-        const body = m.groups?.body ?? '';
+      for (const body of trpcErrorBodies(stripLineComments(source))) {
         if (fromCaught.test(body) && !hasUsefulCause(body)) n++;
       }
       return n;
@@ -624,12 +657,22 @@ describe('LEDGER: GENERIC_CLIENT_ERROR_BY_STATUS covers every 4xx a driver can r
     expect(files.length, 'the src/server walk returned nothing — the ledger is inert').
       toBeGreaterThan(200);
     expect(
-      files.reduce(
-        (acc, f) => acc + [...readFileSync(f, 'utf8').matchAll(TRPC_CTOR)].length,
-        0
-      ),
+      files.reduce((acc, f) => acc + trpcErrorBodies(readFileSync(f, 'utf8')).length, 0),
       'no `new TRPCError({…})` bodies extracted — the detector is wired to nothing'
-    ).toBeGreaterThan(50);
+    ).toBeGreaterThan(400);
+
+    // 🔴 The nesting control. The regex this replaced (`[^{}]*?`) matched NEITHER
+    // of these — a nested object literal and a `${}` template both contain braces
+    // — so both sites were silently exempt from the ledger. Pinned by exemplar so
+    // a revert to any brace-naive matcher fails here rather than going quiet.
+    expect(
+      bypassCount(`new TRPCError({ code: 'BAD_REQUEST', message: err.message, meta: { id: 1 } })`),
+      'a nested object literal must not hide a bypass'
+    ).toBe(1);
+    expect(
+      bypassCount('new TRPCError({ code: `BAD_${x}`, message: err.message })'),
+      'a template literal must not hide a bypass'
+    ).toBe(1);
 
     // 🔴 The one that makes a ZERO mean something: the number must MOVE.
     const bypassSample = `throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });`;

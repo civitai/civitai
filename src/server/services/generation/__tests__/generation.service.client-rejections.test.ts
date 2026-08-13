@@ -37,7 +37,17 @@ vi.mock('~/server/redis/client', () => {
   };
 });
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
+const imageFindUnique = vi.fn();
+vi.mock('~/server/db/client', () => ({
+  dbRead: {
+    image: { findUnique: (...args: unknown[]) => imageFindUnique(...args) },
+    // No stored resource rows: `getResourceData([])` short-circuits, so the whole
+    // resource-enrichment path stays out of this test and `getBaseModelFromResources`
+    // returns undefined — which is what leaves `type` equal to `media.type`.
+    imageResourceNew: { findMany: vi.fn().mockResolvedValue([]) },
+  },
+  dbWrite: {},
+}));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
@@ -86,6 +96,41 @@ describe('generation.service — caller rejections are TRPCErrors, not plain Err
     // The text is client feedback and must survive verbatim — `handleEndpointError`
     // passes a non-JSON 4xx message through as `{ message: <this> }`.
     expect((thrown as TRPCError).message).toBe('unsupported generation data type');
+  });
+
+  it('an audio MEDIA item raises BAD_REQUEST with its own text', async () => {
+    // 🔴 The SECOND converted throw, in `getMediaGenerationData`. The blind audit
+    // found this arm was a MUTATION SURVIVOR: reverting it to `throw new Error(…)`
+    // left the entire 15.4k-test suite green, because the sibling arm at the top
+    // of `getGenerationData` was the only one with coverage. The two are converted
+    // for the same reason and must be pinned the same way.
+    //
+    // Reached the way production reaches it: `?type=image&id=…` pointing at a
+    // media row whose OWN type is audio. `type` is derived as
+    // `baseModel ? getBaseModelMediaType(baseModel) ?? media.type : media.type`,
+    // and with no resource rows there is no baseModel — so it is `media.type`.
+    imageFindUnique.mockResolvedValue({
+      id: 7,
+      type: 'audio',
+      url: 'some-url',
+      meta: {},
+      hideMeta: false,
+      userId: 555,
+      height: 0,
+      width: 0,
+      createdAt: new Date('2026-01-01'),
+    });
+    const query = { type: 'image', id: 7, generation: false } as unknown as GetGenerationDataSchema;
+
+    const thrown = await getGenerationData({ query }).then(
+      () => undefined,
+      (e: unknown) => e
+    );
+
+    expect(thrown, 'the audio-media arm must still throw').toBeInstanceOf(TRPCError);
+    expect((thrown as TRPCError).code).toBe('BAD_REQUEST');
+    expect(getHTTPStatusCodeFromError(thrown as TRPCError)).toBe(400);
+    expect((thrown as TRPCError).message).toBe('not implemented');
   });
 
   it('INVARIANT: it is not a driver-authored message, so it is never genericized', async () => {
