@@ -48,7 +48,7 @@ Review: [oauth-scoped-tokens-review.md](./oauth-scoped-tokens-review.md)
 - [x] Search all calls to `addApiKey` / key creation in services
 - [x] Identify hidden generation/orchestrator keys — all use `type: 'System'` with `scope: ['Generate']`
 - [x] Verify: internal keys get `Full` tokenScope via DB column default — no changes needed
-- [x] Callers audited: `orchestrator-key.ts`, `get-orchestrator-token.ts`, `admin/orchestrator/timings.ts`, `admin/orchestrator/index.ts`
+- [x] Callers audited: `orchestrator-key.ts`, `get-orchestrator-token.ts` (the two `admin/orchestrator/*` endpoints were audited too, and have since been deleted)
 
 ### 1.6 Update `/api/v1/me` Endpoint
 

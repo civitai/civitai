@@ -44,10 +44,6 @@ vi.mock('~/server/orchestrator/orchestrator-token-cache', () => ({
   getOrMintCachedToken: mockGetOrMint,
 }));
 vi.mock('~/server/services/api-key.service', () => ({ getTemporaryUserApiKey: mockGetTempKey }));
-vi.mock('~/server/utils/cookie-encryption', () => ({
-  getEncryptedCookie: vi.fn(),
-  setEncryptedCookie: vi.fn(),
-}));
 
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 
