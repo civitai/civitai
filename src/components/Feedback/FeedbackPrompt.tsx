@@ -1,5 +1,6 @@
-import { ActionIcon, Button, Group, Paper, Stack, Text, Textarea } from '@mantine/core';
-import { IconX } from '@tabler/icons-react';
+import { ActionIcon, Button, Divider, Group, Paper, Text, Textarea } from '@mantine/core';
+import { IconAlertTriangle, IconX } from '@tabler/icons-react';
+import type { CSSProperties } from 'react';
 import { useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { CreateFeedbackInput } from '~/server/schema/feedback.schema';
@@ -8,14 +9,16 @@ import { FEEDBACK_MESSAGE_MAX_LENGTH } from '~/shared/constants/feedback.constan
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
+const cardStyle: CSSProperties = {
+  background: 'light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))',
+  boxShadow: 'light-dark(0 1px 3px rgba(0,0,0,0.12), 0 1px 3px rgba(0,0,0,0.5))',
+};
+
 const dismissKey = (area: FeedbackArea) => `feedback-dismissed-${area}`;
 
-// Per-tab, so a dismissal survives navigation within the visit and is gone on the
-// next one. Both halves are guarded: storage access THROWS outright in a sandboxed
-// iframe or with storage disabled, and this renders inside the feed — an unguarded
-// read would take the whole page to the error boundary to save one banner. Read
-// synchronously (not in an effect) so a dismissed prompt never flashes back or
-// fires its query for a frame.
+// Storage access throws outright in a sandboxed iframe or with storage disabled,
+// and this renders inside the feed — an unguarded read would take the whole page
+// to the error boundary to save one banner.
 function readDismissed(area: FeedbackArea) {
   try {
     return window.sessionStorage.getItem(dismissKey(area)) === 'true';
@@ -28,7 +31,7 @@ function writeDismissed(area: FeedbackArea) {
   try {
     window.sessionStorage.setItem(dismissKey(area), 'true');
   } catch {
-    // Dismissal is then per-mount rather than per-tab. Not worth a failed render.
+    // Dismissal is then per-mount rather than per-tab.
   }
 }
 
@@ -51,6 +54,7 @@ export function FeedbackPrompt({
 }: FeedbackPromptProps) {
   const currentUser = useCurrentUser();
   const [dismissed, setDismissed] = useState(() => readDismissed(area));
+  const [open, setOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [sent, setSent] = useState(false);
 
@@ -65,44 +69,77 @@ export function FeedbackPrompt({
 
   if (!enabled || !data?.enabled) return null;
 
-  const handleDismiss = () => {
+  const handleClose = () => {
+    if (open && !sent) {
+      setOpen(false);
+      return;
+    }
     writeDismissed(area);
     setDismissed(true);
   };
 
   return (
-    <Paper withBorder p="sm" radius="md" mb="md">
-      <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm">
-        <Stack gap="xs" style={{ flex: 1 }}>
+    <Paper withBorder radius="md" style={cardStyle}>
+      <Group p="sm" justify="space-between" align="center" wrap="nowrap" gap="sm">
+        <Group gap="xs" wrap="nowrap" align="center" style={{ flex: 1, minWidth: 0 }}>
+          <IconAlertTriangle size={16} className="text-yellow-500" style={{ flexShrink: 0 }} />
           <Text size="sm">{sent ? `Got it, thanks. We'll take a look.` : notice}</Text>
-          {!sent && (
-            <>
-              <Textarea
-                value={message}
-                onChange={(event) => setMessage(event.currentTarget.value)}
-                placeholder={placeholder}
-                maxLength={FEEDBACK_MESSAGE_MAX_LENGTH}
-                autosize
-                minRows={2}
-                maxRows={6}
-              />
-              <Group>
-                <Button
-                  size="compact-sm"
-                  disabled={!message.trim()}
-                  loading={createFeedback.isPending}
-                  onClick={() => createFeedback.mutate({ area, message: message.trim(), context })}
-                >
-                  Send feedback
-                </Button>
-              </Group>
-            </>
+        </Group>
+        <Group gap="xs" wrap="nowrap">
+          {!open && !sent && (
+            <Button size="compact-sm" radius="xl" variant="light" onClick={() => setOpen(true)}>
+              Give feedback
+            </Button>
           )}
-        </Stack>
-        <ActionIcon variant="subtle" color="gray" onClick={handleDismiss} aria-label="Dismiss">
-          <IconX size={16} />
-        </ActionIcon>
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            onClick={handleClose}
+            aria-label={open && !sent ? 'Cancel feedback' : 'Dismiss'}
+          >
+            <IconX size={16} />
+          </ActionIcon>
+        </Group>
       </Group>
+      {open && !sent && (
+        <>
+          <Divider />
+          <Group p="sm" gap="xs" align="flex-start" wrap="nowrap">
+            <Textarea
+              style={{ flex: 1, minWidth: 0 }}
+              value={message}
+              onChange={(event) => setMessage(event.currentTarget.value)}
+              placeholder={placeholder}
+              maxLength={FEEDBACK_MESSAGE_MAX_LENGTH}
+              autosize
+              minRows={1}
+              maxRows={6}
+              autoFocus
+              styles={{
+                input: {
+                  background:
+                    'light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-7))',
+                },
+              }}
+            />
+            <Button
+              // `sm` is 36px, matching a one-row `sm` Textarea; compact does not.
+              size="sm"
+              radius="xl"
+              style={{ flexShrink: 0 }}
+              disabled={!message.trim()}
+              // Mantine's disabled fill is near-invisible on this card surface.
+              classNames={{
+                root: 'data-[disabled]:!bg-blue-6 data-[disabled]:!text-white data-[disabled]:!opacity-50',
+              }}
+              loading={createFeedback.isPending}
+              onClick={() => createFeedback.mutate({ area, message: message.trim(), context })}
+            >
+              Send feedback
+            </Button>
+          </Group>
+        </>
+      )}
     </Paper>
   );
 }

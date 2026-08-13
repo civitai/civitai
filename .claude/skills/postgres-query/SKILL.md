@@ -77,9 +77,21 @@ Once the tunnel is up, set `DEV_DATABASE_URL` in
 # Read-only (default — writes are blocked client-side)
 node .claude/skills/postgres-query/query.mjs --dev "SELECT count(*) FROM \"User\""
 
-# Writable (the dev postgres role is a superuser; needs user permission)
+# Writable DML (needs user permission)
 node .claude/skills/postgres-query/query.mjs --dev --writable "UPDATE ..."
 ```
+
+**DDL does not work through this credential.** `DEV_DATABASE_URL` connects as a
+non-superuser role, and the dev database has a `ddl_command_end` event trigger that
+reassigns each new object's ownership to the schema owner — which the connecting
+role cannot become. Any `CREATE TABLE` therefore rolls back with:
+
+```
+must be able to SET ROLE "<schema owner>"
+```
+
+Having `CREATE` on the schema is not enough and does not indicate otherwise. Ask an
+infra owner to run the DDL, or for a role that is a member of the schema owner.
 
 ## Querying the notifications-db
 

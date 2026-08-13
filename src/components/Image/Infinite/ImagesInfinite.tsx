@@ -232,7 +232,7 @@ export function ImagesInfiniteContent({
           context={{
             path: typeof window !== 'undefined' ? window.location.pathname : undefined,
             reportedSource: feedSnapshot.source,
-            reportedPageSources: feedSnapshot.summary,
+            reportedPageSources: feedSnapshot.sources,
             pagesLoaded: feedSnapshot.pagesLoaded,
             filters: {
               sort: feedSnapshot.sort,

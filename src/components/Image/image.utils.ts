@@ -164,27 +164,12 @@ export function resolveFeedSource(sources: string[]): string | undefined {
   return undefined;
 }
 
-/** Run-length summary (`bitdex×28,meili×12`) so a deep scroll still fits a bounded
- * column — a head-truncated raw list drops the tail, which is the half the gate read. */
-export function summarizeFeedSources(sources: string[]): string {
-  const runs: { source: string; count: number }[] = [];
-  for (const source of sources) {
-    const last = runs[runs.length - 1];
-    if (last?.source === source) last.count++;
-    else runs.push({ source, count: 1 });
-  }
-  return runs.map(({ source, count }) => (count > 1 ? `${source}x${count}` : source)).join(',');
-}
-
 export type FeedSnapshot = ReturnType<typeof buildFeedSnapshot>;
 
 /**
- * The pages and the filters that fetched them, read in one place.
- *
- * Callers must not assemble this from separate reads: under keepPreviousData the
- * merged filters update synchronously while `data` still holds the previous
- * query's pages, and a report pairing new filters with old pages describes a feed
- * that never existed.
+ * The pages and the filters that fetched them, built together. Assembling these
+ * from separate reads pairs new filters with old pages under keepPreviousData,
+ * describing a feed that never existed.
  */
 export function buildFeedSnapshot(
   pages: unknown[] | undefined,
@@ -195,9 +180,6 @@ export function buildFeedSnapshot(
   return {
     sources,
     source: resolveFeedSource(sources),
-    // Keeps the TAIL: the head is what a fixed slice would have kept, and the
-    // tail is the half the gate actually read.
-    summary: summarizeFeedSources(sources).slice(-200),
     pagesLoaded: pages?.length ?? 0,
     sort: String(filters.sort ?? ''),
     period: String(filters.period ?? ''),

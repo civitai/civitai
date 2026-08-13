@@ -9,7 +9,7 @@ export const feedbackAreaSchema = z.enum(FEEDBACK_AREAS);
 const feedbackContextSchema = z.object({
   path: z.string().max(300).optional(),
   reportedSource: z.string().max(50).optional(),
-  reportedPageSources: z.string().max(200).optional(),
+  reportedPageSources: z.array(z.string().max(50)).max(500).optional(),
   pagesLoaded: z.number().int().min(0).max(10_000).optional(),
   filters: z
     .record(z.string().max(50), z.union([z.string().max(200), z.number(), z.boolean()]))

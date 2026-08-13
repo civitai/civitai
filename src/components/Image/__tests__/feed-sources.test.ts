@@ -3,7 +3,6 @@ import {
   buildFeedSnapshot,
   getFeedSources,
   resolveFeedSource,
-  summarizeFeedSources,
 } from '~/components/Image/image.utils';
 
 // The BitDex feed notice is gated on resolveFeedSource. BitDex falls back to
@@ -77,35 +76,17 @@ describe('buildFeedSnapshot', () => {
     });
   });
 
-  // Run-length encoding only compresses RUNS, and per-page fallback means an
-  // alternating feed is ordinary here. A head-first cut would drop the tail —
-  // the half `source` was read from — leaving a row contradicting itself.
-  it('keeps the tail of an alternating 40-page feed inside the width limit', () => {
+  // Per-page fallback makes an alternating feed ordinary here, and the report has
+  // to agree with itself: the last entry is what `source` was read from.
+  it('records every page of a deep alternating scroll, ending where source did', () => {
     const pages = Array.from({ length: 40 }, (_, i) => ({
       source: i % 2 === 0 ? 'bitdex' : 'meili',
     }));
 
     const snapshot = buildFeedSnapshot(pages, filters, 1);
 
-    expect(snapshot.summary.length).toBeLessThanOrEqual(200);
-    expect(snapshot.summary.endsWith('meili')).toBe(true);
+    expect(snapshot.sources).toHaveLength(40);
+    expect(snapshot.sources[snapshot.sources.length - 1]).toBe('meili');
     expect(snapshot.source).toBe('meili');
-  });
-});
-
-describe('summarizeFeedSources', () => {
-  // A raw join truncated to a fixed width drops the tail — which is the half the
-  // gate reads, so the record would contradict its own reportedSource.
-  it('keeps both ends of a deep scroll inside a bounded width', () => {
-    const sources = [...Array(28).fill('bitdex'), ...Array(12).fill('meili')];
-
-    const summary = summarizeFeedSources(sources);
-
-    expect(summary).toBe('bitdexx28,meilix12');
-    expect(summary.length).toBeLessThanOrEqual(200);
-  });
-
-  it('keeps runs distinct when a feed flips back and forth', () => {
-    expect(summarizeFeedSources(['bitdex', 'meili', 'bitdex'])).toBe('bitdex,meili,bitdex');
   });
 });
