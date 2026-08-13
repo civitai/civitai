@@ -75,9 +75,16 @@ const bulkPaidAccessSchema = z
     // gets a PRICED generation tier with a zero trial limit — the opposite of what was picked.
     freeGeneration: checkbox,
     acceptsBlueBuzz: checkbox,
+    // Same reason as the per-version schema: without the chosen mode, "a cheaper generation-only price"
+    // with an empty box is indistinguishable from "same as the access price", and lands as a generation
+    // tier charged at the download price. In bulk that mis-prices every selected version at once.
+    genMode: z.enum(['bundled', 'separate', 'free']).optional(),
   })
   .refine((v) => v.generationPrice == null || v.generationPrice <= v.accessPrice, {
     message: 'Generation-only price cannot be greater than the access price.',
+  })
+  .refine((v) => v.genMode !== 'separate' || v.generationPrice != null, {
+    message: 'Enter a generation-only price, or choose "Same as the access price".',
   });
 const modelsQuerySchema = z.object({
   q: z.string().optional(),

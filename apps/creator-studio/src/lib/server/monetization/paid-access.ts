@@ -10,7 +10,6 @@ import {
 import { env } from '$env/dynamic/private';
 import { dbRead, dbWrite } from '$lib/server/db';
 import { mapWithConcurrency, MAIN_APP_WRITE_CONCURRENCY } from '$lib/server/concurrency';
-import { checkbox, optionalBuzz, freePreviewsField } from './form-fields';
 import {
   GENERATION_ONLY_HINT,
   isCreatorUsageControl,
@@ -32,33 +31,7 @@ export { isCreatorUsageControl, type CreatorUsageControl } from '$lib/monetizati
 
 export type PaidAccessResult = { ok: true } | { ok: false; status: number; error: string };
 
-// Validates the paid-access editor form → a PaidAccessConfig. Light shape validation only; the main-app
-// endpoint (updateEarlyAccessConfigSchema) is the source of truth for prices, per-user limits, side effects.
-export const paidAccessFormSchema = z
-  .object({
-    timeframe: z.coerce.number().int().min(0),
-    permanent: checkbox,
-    // On-site-generation-only versions charge via the generation price (no download tier).
-    usageControl: z.string().optional(),
-    accessPrice: optionalBuzz,
-    generationPrice: optionalBuzz,
-    freeGeneration: checkbox,
-    acceptsBlueBuzz: checkbox,
-    freePreviewGenerations: freePreviewsField(),
-    donationGoalEnabled: checkbox,
-    donationGoal: optionalBuzz,
-  })
-  .refine((v) => v.permanent || v.timeframe > 0, {
-    message: 'Set an early access duration, or make it permanent.',
-  })
-  // Every gated version needs an access price. For a gen-only version it's written as the generation price.
-  .refine((v) => v.accessPrice != null && v.accessPrice > 0, {
-    message: 'Enter a price for access.',
-  })
-  .refine(
-    (v) => v.generationPrice == null || v.accessPrice == null || v.generationPrice <= v.accessPrice,
-    { message: 'Generation-only price cannot be greater than the access price.' }
-  );
+export { paidAccessFormSchema } from './paid-access-schema';
 
 // versionId + config (null clears the gate). `cookie` is the incoming request's raw Cookie header,
 // forwarded verbatim for auth. `genOnly` = the version is on-site-generation-only (no download tier), so
