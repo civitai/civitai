@@ -185,6 +185,103 @@
   </a>
 {/if}
 
+<!-- Above the queue board, not below it: a pile-up on one item is a live incident and the counts
+     are a backlog. The mod team asked for the table itself to lead, not a banner pointing at it. -->
+<h2 id="most-reported" class="mb-1 scroll-mt-4 text-base font-semibold text-white">
+  Most reported
+</h2>
+<p class="mb-3 text-sm text-dark-2">
+  Pending reports from the last week with more than one reporter, worst first. Already-blocked images are
+  excluded. Resolving closes the <em>report</em> — it does not remove the content.
+</p>
+
+{#if reported === null}
+  <div class="h-24 animate-pulse rounded-xl border border-dark-4 bg-dark-6"></div>
+{:else if reported.length === 0}
+  <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
+    <p class="text-sm text-dark-2">
+      Nothing is piling up — no content has drawn more than one report in the last week.
+    </p>
+  </section>
+{:else}
+  <div class="overflow-x-auto">
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead class="w-16">Reports</TableHead>
+          <TableHead>Content</TableHead>
+          <TableHead>Reason</TableHead>
+          <TableHead>First reported</TableHead>
+          <TableHead>By</TableHead>
+          <TableHead class="w-px"></TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {#each reported as row (row.id)}
+          {@const done = outcome[row.id]}
+          <TableRow class={done && done !== 'failed' ? 'opacity-40' : undefined}>
+            <TableCell><Badge variant="secondary">{row.reportCount}</Badge></TableCell>
+            <TableCell>
+              {#if contentUrl(row)}
+                <a
+                  href={contentUrl(row)}
+                  target="_blank"
+                  rel="noreferrer"
+                  class="text-blue-4 hover:underline"
+                >
+                  {row.entity} {row.entityId}
+                </a>
+              {:else}
+                <span class="text-dark-2">{row.entity} {row.entityId ?? ''}</span>
+              {/if}
+            </TableCell>
+            <TableCell class="text-sm">{row.reason}</TableCell>
+            <TableCell class="text-sm whitespace-nowrap">{age(row.createdAt)}</TableCell>
+            <TableCell class="text-sm">{row.reportedByUsername ?? '—'}</TableCell>
+            <TableCell>
+              {#if done === 'failed'}
+                <span class="text-sm whitespace-nowrap text-red-400">failed — retry</span>
+              {:else if done}
+                <span class="text-sm whitespace-nowrap text-dark-2">
+                  {done === 'Actioned' ? 'actioned' : 'dismissed'}
+                </span>
+              {:else}
+                <div class="flex gap-1.5">
+                  {#each [{ status: 'Actioned', label: 'Actioned' }, { status: 'Unactioned', label: 'Dismiss' }] as choice (choice.status)}
+                    <form
+                      method="POST"
+                      action="?/actionReport"
+                      use:enhance={() => {
+                        outcome = { ...outcome, [row.id]: choice.status as 'Actioned' | 'Unactioned' };
+                        return async ({ result }) => {
+                          // Only the row's own state changes — no invalidateAll, which would rerun every
+                          // load on the page for a change nothing else reads.
+                          if (result.type !== 'success')
+                            outcome = { ...outcome, [row.id]: 'failed' };
+                        };
+                      }}
+                    >
+                      <input type="hidden" name="id" value={row.id} />
+                      <input type="hidden" name="status" value={choice.status} />
+                      <Button
+                        type="submit"
+                        size="sm"
+                        variant={choice.status === 'Actioned' ? 'default' : 'outline'}
+                      >
+                        {choice.label}
+                      </Button>
+                    </form>
+                  {/each}
+                </div>
+              {/if}
+            </TableCell>
+          </TableRow>
+        {/each}
+      </TableBody>
+    </Table>
+  </div>
+{/if}
+
 {#if loading}
   <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
     {#each { length: 4 } as _, i (i)}
@@ -368,98 +465,3 @@
     Could not load the queue board. The counts above are unaffected.
   </p>
 {/await}
-
-<h2 id="most-reported" class="mt-8 mb-1 scroll-mt-4 text-base font-semibold text-white">
-  Most reported
-</h2>
-<p class="mb-3 text-sm text-dark-2">
-  Pending reports from the last week with more than one reporter, worst first. Already-blocked images are
-  excluded. Resolving closes the <em>report</em> — it does not remove the content.
-</p>
-
-{#if reported === null}
-  <div class="h-24 animate-pulse rounded-xl border border-dark-4 bg-dark-6"></div>
-{:else if reported.length === 0}
-  <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
-    <p class="text-sm text-dark-2">
-      Nothing is piling up — no content has drawn more than one report in the last week.
-    </p>
-  </section>
-{:else}
-  <div class="overflow-x-auto">
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead class="w-16">Reports</TableHead>
-          <TableHead>Content</TableHead>
-          <TableHead>Reason</TableHead>
-          <TableHead>First reported</TableHead>
-          <TableHead>By</TableHead>
-          <TableHead class="w-px"></TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {#each reported as row (row.id)}
-          {@const done = outcome[row.id]}
-          <TableRow class={done && done !== 'failed' ? 'opacity-40' : undefined}>
-            <TableCell><Badge variant="secondary">{row.reportCount}</Badge></TableCell>
-            <TableCell>
-              {#if contentUrl(row)}
-                <a
-                  href={contentUrl(row)}
-                  target="_blank"
-                  rel="noreferrer"
-                  class="text-blue-4 hover:underline"
-                >
-                  {row.entity} {row.entityId}
-                </a>
-              {:else}
-                <span class="text-dark-2">{row.entity} {row.entityId ?? ''}</span>
-              {/if}
-            </TableCell>
-            <TableCell class="text-sm">{row.reason}</TableCell>
-            <TableCell class="text-sm whitespace-nowrap">{age(row.createdAt)}</TableCell>
-            <TableCell class="text-sm">{row.reportedByUsername ?? '—'}</TableCell>
-            <TableCell>
-              {#if done === 'failed'}
-                <span class="text-sm whitespace-nowrap text-red-400">failed — retry</span>
-              {:else if done}
-                <span class="text-sm whitespace-nowrap text-dark-2">
-                  {done === 'Actioned' ? 'actioned' : 'dismissed'}
-                </span>
-              {:else}
-                <div class="flex gap-1.5">
-                  {#each [{ status: 'Actioned', label: 'Actioned' }, { status: 'Unactioned', label: 'Dismiss' }] as choice (choice.status)}
-                    <form
-                      method="POST"
-                      action="?/actionReport"
-                      use:enhance={() => {
-                        outcome = { ...outcome, [row.id]: choice.status as 'Actioned' | 'Unactioned' };
-                        return async ({ result }) => {
-                          // Only the row's own state changes — no invalidateAll, which would rerun every
-                          // load on the page for a change nothing else reads.
-                          if (result.type !== 'success')
-                            outcome = { ...outcome, [row.id]: 'failed' };
-                        };
-                      }}
-                    >
-                      <input type="hidden" name="id" value={row.id} />
-                      <input type="hidden" name="status" value={choice.status} />
-                      <Button
-                        type="submit"
-                        size="sm"
-                        variant={choice.status === 'Actioned' ? 'default' : 'outline'}
-                      >
-                        {choice.label}
-                      </Button>
-                    </form>
-                  {/each}
-                </div>
-              {/if}
-            </TableCell>
-          </TableRow>
-        {/each}
-      </TableBody>
-    </Table>
-  </div>
-{/if}

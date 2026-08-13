@@ -851,9 +851,10 @@ that reporter to that build.
 
 ### 12c. Dashboard
 
-- [ ] **Move *Most reported* to the top of the page.** (`1537513088067043459`) Open — the table is at
-      `+page.svelte:372` of 465, below the whole queue board. §8b's *Urgent content* banner sits at
-      line 178 and is the same instinct, but the ask is for the table itself, not a jump link to it.
+- [x] **Move *Most reported* to the top of the page.** (`1537513088067043459`, 2026-08-13.) It sat
+      below the whole queue board; §8b's *Urgent content* banner was the same instinct, but the ask was
+      for the table itself rather than a jump link to it. Verified in a browser: `Dashboard` (48px) →
+      `Most reported` (136px) → the board (1087px).
 - [x] 🔴 **Show the reporter count per row** — **it was already built, and wrong by one** (fixed
       2026-08-13). The table's first column *is* the count. But `fetchMostReported` derived it as
       `array_length(t."alsoReportedBy", 1)`, and `alsoReportedBy` **excludes the original reporter** —
@@ -1036,26 +1037,53 @@ that reporter to that build.
       it is now asked for twice by two people, so re-decide rather than inherit that.
 - [ ] **Buzz: list the account's payouts.** Filed with the open question *"Tipalti connection
       needed?"* — answer that before scoping.
-- [ ] **Copy-all-IDs button on *Addresses & linked accounts*** (`1537543755110944799`), so a linked-
-      account set can be pasted straight into Bulk Ban. This is the seam between the two pages and it
-      is currently manual.
+- [x] **Copy-all-IDs button on *Addresses & linked accounts*** (`1537543755110944799`, 2026-08-13).
+      Both halves: a **Check N in Bulk Ban** link that opens that page with the ids already loaded, and
+      a copy disclosure for anything else. **The ids need deduping to be any use** — the list is one row
+      per (account, address), so an account seen on two addresses appears twice. Verified against a
+      stubbed response: 3 rows, `Check 2 in Bulk Ban`, `?ids=111%0A222`.
 
 ### 12h. Bulk Ban (`1537543755110944799`)
 
 Filed against the page ported in §0, by the mod who uses it on bot chains.
 
-- [ ] **The IP check lists matched accounts with no way to copy their ids.** Accounts land in the
-      *in common* section and then have to be transcribed by hand into the ban list below. Same
-      copy-all button as §12g.
-- [ ] **No way to drop one entry from the pasted ban list.** Removing an id today means editing the
-      textarea and re-running the check. The motivating case is precise and worth keeping: a bot IP
-      that a genuine user logged in from once or twice.
-- [ ] **"Note on all matched accounts" includes already-banned accounts** — wanted: a toggle for
-      unbanned only.
-- [ ] **The per-account note section is redundant** with the note field directly above it.
-- [ ] **The paste boxes grow without bound instead of scrolling.** With the check section above the
-      ban section, a large line-by-line id set pushes the actual controls off screen. Draggable today;
-      the ask is that scrolling be the default.
+- [x] **The IP check lists matched accounts with no way to copy their ids.** (2026-08-13.) Both
+      *in common* lists now carry **Add N to the list** — which merges into the paste box, dedupes
+      against what is already there and re-checks — and a **Copy these IDs** disclosure beside it, so
+      the set can also leave for something else.
+- [x] **No way to drop one entry from the pasted ban list.** (2026-08-13 — a ✕ per row, held
+      client-side, so it costs no re-check; an *N dropped from this run* line with Undo says what
+      happened, and the exclusions clear when the checked list itself changes.) Verified: dropping a
+      row took the heading from 6 to 5 matched **without the URL changing**, which is the whole point
+      — the old way paid for the scan again to remove one row.
+- [x] **"Note on all matched accounts" includes already-banned accounts** (2026-08-13 — *Skip accounts
+      that are already banned or deleted*, with the button's own count following the toggle so the
+      target is never implied). Verified: 6 accounts → 4 with it ticked.
+- [x] **The per-account note section is redundant** (2026-08-13 — removed). It wrote the same string to
+      every account in the run, which is what `detailsInternal` beside it already does. The endpoint
+      takes `note` as optional, so nothing else changed. Verified: the ban form now posts `userIds`,
+      `removeMedia`, `reasonCode`, `detailsInternal` and nothing else.
+- [x] **The paste boxes grow without bound instead of scrolling.** (2026-08-13.) **The cause is one
+      class on the shared `Textarea`** — `field-sizing-content`, which grows the element with its
+      content and has no ceiling. Capped per-box here (`max-h-40 overflow-y-auto`) rather than removed
+      from the shared component, where auto-grow is right for a short reason field. The candidate list
+      and both *in common* lists got the same treatment, since a bot chain makes all three long.
+
+### 12j. Found while working the round, not reported
+
+- [x] 🔴 **An unreachable ClickHouse took the whole Bulk Ban page down with a 500** (fixed 2026-08-13).
+      Six sources loaded in one `Promise.all`, three of them ClickHouse-backed, so a DNS failure on the
+      IP-clustering query failed the `load` — taking the candidate list, the email-domain clustering,
+      the notes form and the ban button with it. On the page whose job is stopping a ring, losing the
+      IP panel is a degraded investigation; losing the ban path is an outage.
+      Each ClickHouse source now degrades to empty and the page names which one, because an empty IP
+      panel otherwise reads as *"this account shares nothing with anyone"* — the same reasoning as
+      `2002b4bfc7`. Found because the page 500'd while testing §12h; it reproduces anywhere ClickHouse
+      is unreachable, which is every local dev machine.
+- [x] **`Accepted TOS` was a truthiness test on a bitfield** — see §12g's Creator Program entry. Any
+      completed onboarding step rendered the account as having accepted the TOS.
+- [x] **The Most-reported count is short by one, and its filter hides two-reporter items** — see §12c.
+      Asked for as a missing column; it was a present, wrong one.
 
 ### 12i. Permissions — sub-permissions inside a page (`1537519380148133980`)
 

@@ -1,11 +1,18 @@
 <script lang="ts">
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import type { Signals } from './signals';
 
   let { signals }: { signals: Promise<Signals> | null } = $props();
 
   const SHOWN = 12;
+
+  // The list is capped at SHOWN for reading; the ids are not. One account per row is the display, but
+  // the same account appears once per shared address, so the set has to be deduped before it is any
+  // use as a ban list.
+  const uniqueIds = (accounts: { userId: number }[]) => [...new Set(accounts.map((a) => a.userId))];
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -80,6 +87,32 @@
                 Capped — this address is shared widely, so matches here may be coincidental.
               </p>
             {/if}
+
+            <!-- This panel is where a ring gets identified and Bulk Ban is where it gets dealt with;
+                 the ids in between were reachable only one row link at a time. -->
+            {#key result.ips.accounts}
+              {@const ids = uniqueIds(result.ips.accounts)}
+              <div class="mt-3 flex flex-wrap items-center gap-2">
+                <Button
+                  size="xs"
+                  variant="outline"
+                  href="/retool/bulk-ban?ids={encodeURIComponent(ids.join('\n'))}"
+                >
+                  Check {num(ids.length)} in Bulk Ban
+                </Button>
+              </div>
+              <details class="mt-2">
+                <summary class="cursor-pointer text-xs text-dark-2">
+                  Copy {num(ids.length)} unique ID{ids.length === 1 ? '' : 's'}
+                </summary>
+                <Textarea
+                  readonly
+                  rows={4}
+                  class="mt-2 max-h-40 overflow-y-auto font-mono text-xs"
+                  value={ids.join('\n')}
+                />
+              </details>
+            {/key}
           {/if}
         </div>
       </div>

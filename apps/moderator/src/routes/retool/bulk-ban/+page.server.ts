@@ -55,19 +55,34 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   const fromNames = names ? await resolveUsernamesToIds(splitList(names)) : [];
   const userIds = [...new Set([...parseIdList(ids.replace(/[\s\n]+/g, ',')), ...fromNames])];
 
+  // Three of these six read ClickHouse, and a `Promise.all` made the whole page 500 when it was
+  // unreachable — including the pure-Postgres halves that are the actual ban path. Losing the IP
+  // clustering is a degraded investigation; losing the candidate list and the ban button on a page
+  // whose job is stopping a ring is an outage. Each ClickHouse source now fails to empty and says so.
+  const clickhouseDown: string[] = [];
+  const degrade = <T>(label: string, p: Promise<T[]>) =>
+    p.catch((e) => {
+      console.error(`[bulk-ban] ${label} unavailable`, e);
+      clickhouseDown.push(label);
+      return [] as T[];
+    });
+
   const [candidates, registrationIps, domains, ipAccounts, domainAccounts, tippers] =
     await Promise.all([
       getBanCandidates(userIds),
-      getRegistrationIps(userIds),
+      degrade('registration IPs', getRegistrationIps(userIds)),
       getEmailDomains(userIds),
-      ips ? getAccountsOnIps(splitList(ips)) : Promise.resolve([]),
+      ips ? degrade('accounts on IPs', getAccountsOnIps(splitList(ips))) : Promise.resolve([]),
       domainTerms ? getAccountsOnDomains(splitList(domainTerms)) : Promise.resolve([]),
       tippedTo
-        ? getTippersTo(parseIdList(tippedTo.replace(/[\s\n]+/g, ',')), {
-            minAmount: minTip,
-            minAccountId,
-            days: tipDays,
-          })
+        ? degrade(
+            'tippers',
+            getTippersTo(parseIdList(tippedTo.replace(/[\s\n]+/g, ',')), {
+              minAmount: minTip,
+              minAccountId,
+              days: tipDays,
+            })
+          )
         : Promise.resolve([]),
     ]);
 
@@ -87,6 +102,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     registrationIps,
     domains,
     ipAccounts,
+    clickhouseDown,
     // Ids that matched no account at all — a typo in a pasted list is otherwise invisible.
     unmatched: userIds.filter((id) => !candidates.some((c) => c.id === id)),
     wide: true,
