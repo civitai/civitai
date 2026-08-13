@@ -191,17 +191,28 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
     }
   });
 
-  // 🔴 THE FOUR SUMMARY PREDICATES ARE UNCHANGED BY THE AUTHOR GATE. Only
-  // `Create` reads `context`; the rest still read the summary alone. Asserted
-  // against a NON-author so a predicate that accidentally picked up `isAuthor`
-  // (e.g. `(s, c) => c.isAuthor && s.hasInstalls`) fails here even though the
+  // 🔴 THE FOUR SUMMARY PREDICATES ARE UNCHANGED BY THE AUTHOR GATE. THREE tabs
+  // read `context` — `Create`, `My apps` and `Invites` — and the four asserted
+  // below still read the summary alone. Asserted against a NON-author so a
+  // predicate that accidentally picked up `isAuthor` (e.g.
+  // `(s, c) => c.isAuthor && s.hasInstalls`) fails here even though the
   // author-context tests above would stay green.
+  //
+  // 🔴 Do NOT "simplify" `My apps` / `Invites` back to a summary-only predicate.
+  // They were exactly that until a merge with main silently reverted them: main
+  // widened `visible` to `(summary, context)`, this branch had added both against
+  // the OLD one-argument signature, and git merged the two edits with no conflict.
+  // It compiled and the whole suite passed while both tabs were un-gated. Their
+  // dedicated non-author tests above are what pin them now.
   test('the four summary-driven tabs are independent of isAuthor (non-author, all-true summary)', async () => {
     renderWithProviders(<AppsSubNavView summary={ALL} context={NOT_AUTHOR} currentPath="/apps" />);
     for (const name of ['Marketplace', 'Installed', 'My submissions', 'Revenue', 'Review']) {
       await expect.element(tab(name)).toBeInTheDocument();
     }
-    // …and Create is the ONLY one the author gate removes.
+    // …while the author gate removes Create (asserted here) along with `My apps`
+    // and `Invites`, which have their own dedicated non-author tests above.
+    // (The awaited loop above is this assertion's positive control — without a
+    // present element first, `.elements()` is synchronous and would pass vacuously.)
     expect(tab('Create').elements()).toHaveLength(0);
   });
 });
