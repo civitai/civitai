@@ -38,12 +38,7 @@ import {
   bulkSetUsageControl,
   versionsLosingFreeGeneration,
 } from '$lib/server/monetization/paid-access';
-import {
-  checkbox,
-  optionalBuzzField,
-  requiredBuzzField,
-  freePreviewsField,
-} from '$lib/server/monetization/form-fields';
+import { checkbox } from '$lib/server/monetization/form-fields';
 import { resolveModelsScore, TEST_MODELS_SCORE_COOKIE } from '$lib/server/creator-score';
 import { canSetGenerationOnlyFresh } from '$lib/server/generation-only';
 import {
@@ -51,8 +46,6 @@ import {
   earlyAccessQuantityForScore,
   maxPermanentAccessModels,
   maxPaidAccessPrice,
-  MIN_ACCESS_PRICE,
-  MIN_GENERATION_PRICE,
 } from '$lib/monetization/paid-access';
 
 // --- input schemas: every load/action input is zod-validated ---
