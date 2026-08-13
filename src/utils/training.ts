@@ -31,6 +31,7 @@ export const trainingBaseModelTypesVideo = [
   'wan',
   'ltx2',
   'ltx23',
+  'ltx25',
   'minimaxh3',
 ] as const;
 export const trainingBaseModelTypesAudio = ['acestep15', 'acestep15xl'] as const;
@@ -57,7 +58,11 @@ export const aiToolkitSaveEveryDefault = (steps: number): number =>
   Math.max(AI_TOOLKIT_SAVE_EVERY.min, Math.round(steps / AI_TOOLKIT_EPOCHS.default));
 
 export const aiToolkitStepDefault = (baseType: TrainingBaseModelType): number =>
-  baseType === 'ltx2' || baseType === 'ltx23' || baseType === 'boogu' || baseType === 'minimaxh3'
+  baseType === 'ltx2' ||
+  baseType === 'ltx23' ||
+  baseType === 'ltx25' ||
+  baseType === 'boogu' ||
+  baseType === 'minimaxh3'
     ? 3000
     : baseType === 'anima'
     ? 1500
@@ -404,7 +409,7 @@ export const trainingModelInfo: {
     aiToolkit: { ecosystem: 'ltx2' },
   },
   ltx23: {
-    label: 'LTX 2.3',
+    label: '2.3',
     pretty: 'LTX 2.3',
     type: 'ltx23',
     description: 'Next generation LTX video model with improved quality.',
@@ -412,6 +417,20 @@ export const trainingModelInfo: {
     baseModel: 'LTXV 2.3',
     isNew: true,
     aiToolkit: { ecosystem: 'ltx23' },
+  },
+  ltx25: {
+    label: '2.5',
+    pretty: 'LTX 2.5',
+    type: 'ltx25',
+    description: 'Latest LTX video model with improved quality.',
+    // Placeholder AIR — swap in the canonical civitai checkpoint URN
+    // (urn:air:ltxv25:checkpoint:civitai:<modelId>@<versionId>) once LTX 2.5 is uploaded.
+    // LTX 2.5 is AI-Toolkit-only, so this is not sent as the orchestrator `model` (the
+    // ecosystem resolves the base model); it's used for UI display / getModel.
+    air: 'urn:air:ltxv25:repository:huggingface:Lightricks/LTX-Video@main.tar',
+    baseModel: 'LTXV 2.5',
+    isNew: true,
+    aiToolkit: { ecosystem: 'ltx25' },
   },
   minimaxh3: {
     label: 'Base',
@@ -565,6 +584,7 @@ const baseTypeToEcosystem: Partial<Record<TrainingBaseModelType, string>> = {
   flux2klein: 'flux2klein',
   ltx2: 'ltx2',
   ltx23: 'ltx23',
+  ltx25: 'ltx25',
   minimaxh3: 'minimaxh3',
   'hidream-o1': 'hidream-o1',
   anima: 'anima',
@@ -665,6 +685,7 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
     'flux2klein',
     'ltx2',
     'ltx23',
+    'ltx25',
     'minimaxh3',
     'hidream-o1',
     'anima',
@@ -686,6 +707,7 @@ export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean =
     'flux2klein',
     'ltx2',
     'ltx23',
+    'ltx25',
     'minimaxh3',
     'hidream-o1',
     'anima',
@@ -716,6 +738,7 @@ export const getDefaultEngine = (
   if (baseType === 'flux2klein') return 'ai-toolkit'; // Flux2 Klein requires AI Toolkit
   if (baseType === 'ltx2') return 'ai-toolkit'; // LTX2 requires AI Toolkit
   if (baseType === 'ltx23') return 'ai-toolkit'; // LTX 2.3 requires AI Toolkit
+  if (baseType === 'ltx25') return 'ai-toolkit'; // LTX 2.5 requires AI Toolkit
   if (baseType === 'minimaxh3') return 'ai-toolkit'; // MiniMax H3 requires AI Toolkit
   if (baseType === 'hidream-o1') return 'ai-toolkit'; // HiDream O1 requires AI Toolkit
   if (baseType === 'anima') return 'ai-toolkit'; // Anima requires AI Toolkit

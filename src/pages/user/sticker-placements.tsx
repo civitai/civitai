@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { Meta } from '~/components/Meta/Meta';
+import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -102,12 +103,32 @@ export default function StickerPlacements() {
                   )}
 
                   {art && (
-                    <EdgeImage
-                      src={art.url}
-                      alt={`:${art.slug}:`}
-                      options={{ height: 96, anim: art.animated, optimized: true }}
-                      style={{ height: 48, width: 'auto' }}
-                    />
+                    // Drawn with the placer's own opacity and flip, not at full
+                    // strength. This is the queue an owner is most likely to
+                    // approve from, and it is the small-card review the opacity
+                    // floor exists because of: a faint sticker previewed as
+                    // solid here is approved on the strength of something the
+                    // page never showed.
+                    //
+                    // Named, and on a checkered plate, because both cost the
+                    // faintness back. A 30% sticker against a flat card reads
+                    // fainter than the same sticker over busy artwork, so the
+                    // honest preview is also the one that is hardest to identify
+                    // — and this row had no other statement of WHICH sticker it
+                    // is. "See it on the image" remains the composite view.
+                    <Stack gap={2} align="center">
+                      <div className="rounded-md bg-gray-2 p-1 dark:bg-dark-5">
+                        <EdgeImage
+                          src={art.url}
+                          alt={`:${art.slug}:`}
+                          options={{ height: 96, anim: art.animated, optimized: true }}
+                          style={{ height: 48, width: 'auto', ...stickerArtworkStyle(row.data) }}
+                        />
+                      </div>
+                      <Text size="10px" c="dimmed" className="max-w-[80px] truncate">
+                        {art.name}
+                      </Text>
+                    </Stack>
                   )}
 
                   <Stack gap={2} className="flex-1">
@@ -125,6 +146,14 @@ export default function StickerPlacements() {
                       Placed {formatDate(row.createdAt)}
                       {row.expiresAt ? ` · expires ${formatDate(row.expiresAt)}` : ''}
                     </Text>
+                    {/* Shown here because this is where the note is decided on.
+                        An owner choosing "Approve without note" needs to have
+                        read the note in the same glance as the sticker. */}
+                    {row.data.comment && (
+                      <Text size="sm" className="whitespace-pre-wrap break-words">
+                        &ldquo;{row.data.comment}&rdquo;
+                      </Text>
+                    )}
                     <Anchor
                       component={Link}
                       href={`/images/${row.targetId}`}
@@ -138,7 +167,12 @@ export default function StickerPlacements() {
                     </Anchor>
                   </Stack>
 
-                  <StickerPlacementActions placementIds={[row.id]} compact />
+                  <StickerPlacementActions
+                    placementIds={[row.id]}
+                    hasComment={!!row.data.comment}
+                    stacked
+                    compact
+                  />
                 </Group>
               </Card>
             );

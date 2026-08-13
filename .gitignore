@@ -103,6 +103,12 @@ src/pages/api/dev-local/*
 # Vitest browser-mode failure screenshots (written next to *.browser.test.tsx)
 **/__screenshots__/
 
+# feature-walkthrough captures. The skill defaults to a temp dir, but SHOTS_DIR is configurable
+# and a relative value lands here — these are screenshots of dev accounts and their content, and
+# this repo is public and permanent.
+/shots/
+**/walkthrough-shots/
+
 # Ladle (local dev artifacts)
 .ladle/stubs/
 

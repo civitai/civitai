@@ -26,6 +26,21 @@ export async function isLeaderboardPopulated() {
   return populated;
 }
 
+export async function getUnpopulatedLeaderboards() {
+  const rows = await dbWrite.$queryRaw<{ id: string }[]>`
+      SELECT l.id
+      FROM "Leaderboard" l
+      WHERE l.query != '' AND l.active
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "LeaderboardResult" lr
+          WHERE lr."leaderboardId" = l.id AND lr.date = current_date::date
+        )
+    `;
+
+  return rows.map((x) => x.id);
+}
+
 // A board is visible on a domain when its `domain` array contains that color or
 // `all`.
 //

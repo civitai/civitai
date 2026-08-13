@@ -1,9 +1,7 @@
 import {
   Badge,
   Center,
-  Divider,
   Group,
-  NavLink,
   ScrollArea,
   Select,
   Skeleton,
@@ -11,70 +9,72 @@ import {
   Text,
   TextInput,
   ThemeIcon,
+  UnstyledButton,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
+import clsx from 'clsx';
 import { CollectionContributorPermission, CollectionType } from '~/shared/utils/prisma/enums';
-import { IconFilter, IconPlaylistX, IconSearch } from '@tabler/icons-react';
+import {
+  IconChevronDown,
+  IconFilter,
+  IconPlaylistX,
+  IconSearch,
+  IconUsers,
+} from '@tabler/icons-react';
 import { createElement, useMemo, useState } from 'react';
-import classes from './MyCollections.module.scss';
+import { CollectionInviteList } from '~/components/Collections/CollectionCollaborators/CollectionInviteList';
+import { CollectionListMenu } from '~/components/Collections/CollectionListMenu';
+import { CollectionListRow } from '~/components/Collections/CollectionListRow';
+import {
+  buildCollectionSections,
+  roleLabelFor,
+  sortCollections,
+} from '~/components/Collections/collection-list.utils';
+import { useCollectionListPreferences } from '~/components/Collections/useCollectionListPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { CollectionGetAllUserModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
-import { collectionTypeData } from './collection.utils';
+import { collectionTypeData, useCollectionsPermissionsMap } from './collection.utils';
+import classes from './MyCollections.module.scss';
 
-// Reusable collection nav link component
-function CollectionNavLink({
-  collection,
-  isActive,
-  onClick,
+function SectionHeader({
+  label,
+  count,
+  collapsed,
+  onToggle,
 }: {
-  collection: CollectionGetAllUserModel;
-  isActive: boolean;
-  onClick: () => void;
+  label: string;
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
 }) {
   return (
-    <NavLink
-      radius="sm"
-      onClick={onClick}
-      active={isActive}
-      className={classes.navLinkWrapper}
-      label={
-        <Group gap="xs" justify="space-between" w="100%" wrap="nowrap">
-          <Group gap="xs" className={classes.nameGroup} wrap="nowrap">
-            {collection.type && (
-              <ThemeIcon
-                size={18}
-                variant="subtle"
-                color={collectionTypeData[collection.type].color}
-                className={classes.typeIcon}
-              >
-                {createElement(collectionTypeData[collection.type].icon, { size: 14 })}
-              </ThemeIcon>
-            )}
-            <Text lineClamp={1} inherit className={classes.nameText}>
-              {collection.name}
-            </Text>
-          </Group>
-          {collection.type && (
-            <Badge
-              size="xs"
-              variant="dot"
-              color={collectionTypeData[collection.type].color}
-              className={classes.typeBadge}
-            >
-              {collectionTypeData[collection.type].label}
-            </Badge>
-          )}
-        </Group>
-      }
-    />
+    <UnstyledButton
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+      className={clsx(classes.sectionHeader, 'w-full')}
+    >
+      <Group gap={6} px="xs" py={6} wrap="nowrap">
+        <IconChevronDown
+          size={14}
+          className={clsx(classes.sectionChevron, collapsed && classes.sectionChevronCollapsed)}
+        />
+        <Text size="xs" fw={700} c="dimmed" tt="uppercase" className="tracking-wide">
+          {label}
+        </Text>
+        <Badge size="xs" variant="light" color="gray">
+          {count}
+        </Badge>
+      </Group>
+    </UnstyledButton>
   );
 }
 
-export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyCollectionsProps) {
+export function MyCollections({ children, onSelect }: MyCollectionsProps) {
   const [query, setQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  const [roleFilter, setRoleFilter] = useState<string | null>(null);
   const [debouncedQuery] = useDebouncedValue(query, 300);
   const currentUser = useCurrentUser();
   const router = useRouter();
@@ -88,37 +88,33 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
     onSelect?.(collections.find((c) => c.id === id)!);
   };
 
-  const filteredCollections = useMemo(() => {
-    let filtered = collections;
-
-    // Filter by search query
-    if (debouncedQuery) {
-      filtered = filtered.filter((c) =>
-        c.name.toLowerCase().includes(debouncedQuery.toLowerCase())
-      );
-    }
-
-    // Filter by type
-    if (typeFilter) {
-      filtered = filtered.filter((c) => c.type === typeFilter);
-    }
-
-    return filtered;
-  }, [debouncedQuery, collections, typeFilter]);
-
-  const sortedCollections = useMemo(() => {
-    if (!filteredCollections) return [];
-
-    return [...filteredCollections].sort((a, b) =>
-      sortOrder === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name)
-    );
-  }, [filteredCollections, sortOrder]);
-
-  const noCollections = !isLoading && sortedCollections.length === 0;
-  const ownedFilteredCollections = sortedCollections.filter((collection) => collection.isOwner);
-  const contributingFilteredCollections = sortedCollections.filter(
-    (collection) => !collection.isOwner
+  const nonOwnedIds = useMemo(
+    () => collections.filter((c) => !c.isOwner).map((c) => c.id),
+    [collections]
   );
+  const { map: permissionsMap, isLoading: permissionsLoading } =
+    useCollectionsPermissionsMap(nonOwnedIds);
+
+  const { view, setView, sort, setSort, collapsed, toggleSection } = useCollectionListPreferences();
+
+  const sections = useMemo(() => {
+    const filtered = collections.filter((c) => {
+      if (debouncedQuery && !c.name.toLowerCase().includes(debouncedQuery.toLowerCase()))
+        return false;
+      if (typeFilter && c.type !== typeFilter) return false;
+      if (roleFilter) {
+        const role = c.isOwner ? 'Owner' : roleLabelFor(permissionsMap.get(c.id)) ?? 'Follower';
+        if (role !== roleFilter) return false;
+      }
+      return true;
+    });
+
+    return buildCollectionSections(sortCollections(filtered, sort), permissionsMap);
+  }, [collections, debouncedQuery, typeFilter, roleFilter, permissionsMap, sort]);
+
+  const visibleCollections = useMemo(() => sections.flatMap((s) => s.rows), [sections]);
+
+  const noCollections = !isLoading && visibleCollections.length === 0;
 
   const FilterBox = (
     <TextInput
@@ -126,13 +122,13 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
       leftSection={<IconSearch size={20} />}
       onChange={(e) => setQuery(e.target.value)}
       value={query}
-      placeholder="Search"
+      placeholder="Search collections"
     />
   );
 
   const TypeFilter = (
     <Select
-      placeholder="Filter by type"
+      placeholder="All types"
       value={typeFilter}
       onChange={setTypeFilter}
       data={Object.values(CollectionType).map((type) => ({
@@ -156,27 +152,55 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
     />
   );
 
+  const ListMenu = (
+    <CollectionListMenu sort={sort} setSort={setSort} view={view} setView={setView} />
+  );
+
+  const RoleFilter = (
+    <Select
+      placeholder="Any role"
+      value={roleFilter}
+      onChange={setRoleFilter}
+      data={['Owner', 'Manager', 'Contributor', 'Follower']}
+      clearable
+      size="xs"
+      leftSection={<IconUsers size={14} />}
+    />
+  );
+
+  const Filters = (
+    <Group gap="xs" grow wrap="nowrap">
+      {TypeFilter}
+      {RoleFilter}
+    </Group>
+  );
+
   const Collections = (
-    <Skeleton visible={isLoading} animate>
-      {ownedFilteredCollections.map((c) => (
-        <CollectionNavLink
-          key={c.id}
-          collection={c}
-          isActive={router.query?.collectionId === c.id.toString()}
-          onClick={() => selectCollection(c.id)}
-        />
-      ))}
-      {contributingFilteredCollections.length > 0 && (
-        <Divider label="Collections you follow" labelPosition="left" mt="md" mb="xs" ml="sm" />
+    <Skeleton visible={isLoading || permissionsLoading} animate>
+      {sections.map(
+        ({ key, label, rows }) =>
+          rows.length > 0 && (
+            <div key={key}>
+              <SectionHeader
+                label={label}
+                count={rows.length}
+                collapsed={collapsed.includes(key)}
+                onToggle={() => toggleSection(key)}
+              />
+              {!collapsed.includes(key) &&
+                rows.map((c) => (
+                  <CollectionListRow
+                    key={c.id}
+                    collection={c}
+                    view={view}
+                    isActive={router.query?.collectionId === c.id.toString()}
+                    roleLabel={roleLabelFor(permissionsMap.get(c.id))}
+                    onClick={() => selectCollection(c.id)}
+                  />
+                ))}
+            </div>
+          )
       )}
-      {contributingFilteredCollections.map((c) => (
-        <CollectionNavLink
-          key={c.id}
-          collection={c}
-          isActive={router.query?.collectionId === c.id.toString()}
-          onClick={() => selectCollection(c.id)}
-        />
-      ))}
       {noCollections && (
         <Center py="xl">
           <Stack gap="xs" align="center">
@@ -186,7 +210,7 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
             <Text c="dimmed" size="sm" ta="center">
               No collections found
             </Text>
-            {(typeFilter || debouncedQuery) && (
+            {(typeFilter || roleFilter || debouncedQuery) && (
               <Text size="xs" c="dimmed">
                 Try changing your filters
               </Text>
@@ -197,38 +221,45 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
     </Skeleton>
   );
 
+  const InviteList = <CollectionInviteList />;
+
   if (children) {
     return children({
       FilterBox,
-      TypeFilter,
+      Filters,
+      ListMenu,
       Collections,
-      collections: sortedCollections,
-      isLoading,
+      InviteList,
+      collections: visibleCollections,
+      isLoading: isLoading || permissionsLoading,
       noCollections,
     });
   }
 
   return (
     <Stack gap={4}>
-      {FilterBox}
-      {TypeFilter}
+      {InviteList}
+      <Group gap="xs" wrap="nowrap">
+        <div style={{ flex: 1 }}>{FilterBox}</div>
+        {ListMenu}
+      </Group>
+      {Filters}
       <ScrollArea>{Collections}</ScrollArea>
     </Stack>
   );
 }
 
-type SortOrder = 'asc' | 'desc';
-
 type MyCollectionsProps = {
   children?: (elements: {
     FilterBox: React.ReactNode;
-    TypeFilter: React.ReactNode;
+    Filters: React.ReactNode;
+    ListMenu: React.ReactNode;
     Collections: React.ReactNode;
+    InviteList: React.ReactNode;
     collections: CollectionGetAllUserModel[];
     isLoading: boolean;
     noCollections: boolean;
   }) => JSX.Element;
   onSelect?: (collection: CollectionGetAllUserModel) => void;
   pathnameOverride?: string;
-  sortOrder?: SortOrder;
 };

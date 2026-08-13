@@ -134,6 +134,18 @@ export const imageGenerationSchema = z.object({
   extra: z
     .object({
       remixOfId: z.number().optional(),
+      /**
+       * Signed at submit, baked into the output file by the orchestrator, read
+       * back here. Declared so the parser keeps it; the upload path verifies it
+       * and then drops it in favour of `sourceImageIds`.
+       */
+      provenance: z.string().optional(),
+      /**
+       * Images this one was actually generated from. Server-written only — a
+       * client-supplied value is discarded on the way in. Absent means unknown,
+       * never "not a remix".
+       */
+      sourceImageIds: z.number().array().optional(),
     })
     .optional()
     .catch(undefined),

@@ -10,6 +10,9 @@ export const appRouter = router({
   appListings: lazy(() =>
     import('~/server/routers/app-listings.router').then((m) => m.appListingsRouter)
   ),
+  appCollaborators: lazy(() =>
+    import('~/server/routers/app-collaborators.router').then((m) => m.appCollaboratorsRouter)
+  ),
   blockImageUpload: lazy(() =>
     import('~/server/routers/block-image-upload.router').then((m) => m.blockImageUploadRouter)
   ),

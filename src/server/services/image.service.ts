@@ -268,6 +268,7 @@ import type { FeedQueryInput } from '../../../event-engine-common/feeds/types';
 import type { ImageQueryInput } from '../../../event-engine-common/types/image-feed-types';
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { getGenerationDisplayKeys } from '~/server/services/orchestrator/legacy-metadata-mapper';
+import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
 
 const {
   cacheHitRequestsTotal,
@@ -1947,9 +1948,15 @@ export const getAllImages = async (
     const prioritizseIsSystemUser = prioritizedUserIds.length === 1 && prioritizedUserIds[0] === -1;
 
     // Confirm system user has posts:
+    // Existence check only — `select: { id }` keeps this from decoding the
+    // whole Post row (three DateTimes plus the `metadata` Json) to answer a
+    // boolean.
     const hasSystemPosts =
       prioritizseIsSystemUser && modelVersionId
-        ? await dbRead.post.findFirst({ where: { userId: -1, modelVersionId } })
+        ? await dbRead.post.findFirst({
+            where: { userId: -1, modelVersionId },
+            select: { id: true },
+          })
         : false;
 
     if (prioritizseIsSystemUser && !hasSystemPosts)
@@ -2764,6 +2771,35 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   //modelId?: number;
   //reviewId?: number;
 };
+
+/**
+ * Strip the session user off a search input before it reaches a log sink.
+ *
+ * `getInfiniteImagesHandler` spreads the whole `ctx.user` into the search input
+ * for business logic, so logging the input verbatim shipped `email`,
+ * `emailVerified`, `username` and `createdAt` for every erroring search — 331k
+ * records/day in production, each naming a real account.
+ *
+ * Nothing diagnostic is lost: of the session user, `getAllImagesIndex` forwards
+ * exactly `currentUserId` (= `user?.id`) and `isModerator` into this function as
+ * separate top-level keys, and both survive redaction untouched. (It also reads
+ * `user?.username` for `enforceBlockedBrowsingTags`, but that is consumed in the
+ * caller and never reaches this input — so the redacted payload still carries
+ * every session-user field the search path actually had.)
+ *
+ * The user object is dropped WHOLE rather than having its known PII keys
+ * deleted. A denylist fails open — the next field added to the session user
+ * would silently start shipping to logs again, which is exactly how this
+ * regressed. Do not "improve" this by re-adding `user` minus some keys.
+ *
+ * `user.id` is deliberately NOT remapped onto a `userId` key: `userId` is
+ * already a *search filter* on this input (feed-by-creator), and overwriting it
+ * would corrupt the logged query.
+ */
+export function redactSearchInputForLog<T extends Record<string, unknown>>(input: T) {
+  const { user: _sessionUser, ...rest } = input as T & { user?: unknown };
+  return removeEmpty(rest);
+}
 
 /**
  * Defense-in-depth post-filter for BitDex results. The main query uses strict
@@ -3898,7 +3934,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
         type: 'search-error',
         error: err.message,
         cause: err.cause,
-        input: removeEmpty(input),
+        input: redactSearchInputForLog(input),
         request,
       },
       'temp-search'
@@ -4979,7 +5015,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
         type: 'search-error',
         error: err.message,
         cause: err.cause,
-        input: removeEmpty(input),
+        input: redactSearchInputForLog(input),
         request,
       },
       'temp-search'
@@ -6008,13 +6044,27 @@ export async function createImage({
   toolIds,
   techniqueIds,
   skipIngestion,
+  verifiedSourceImageIds,
   ...image
-}: ImageSchema & { userId: number; skipIngestion?: boolean }) {
+}: ImageSchema & {
+  userId: number;
+  skipIngestion?: boolean;
+  /**
+   * Derivation the caller proved (see remix-provenance.ts). Nothing else can put
+   * `meta.extra.sourceImageIds` on a row — every other caller's claim is stripped
+   * here, so a new image path can't grant itself provenance by accident.
+   */
+  verifiedSourceImageIds?: number[] | null;
+}) {
+  const meta = sanitizeProvenance(
+    image.meta as Record<string, unknown> | null | undefined,
+    verifiedSourceImageIds
+  );
   const result = await dbWrite.image.create({
     data: {
       ...image,
-      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-      generationProcess: image.meta ? getImageGenerationProcess(image.meta) : null,
+      meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      generationProcess: meta ? getImageGenerationProcess(meta as ImageMetaProps) : null,
       tools: !!toolIds?.length
         ? { createMany: { data: toolIds.map((toolId) => ({ toolId })) } }
         : undefined,
@@ -6071,7 +6121,14 @@ export const createEntityImages = async ({
   await dbClient.image.createMany({
     data: images.map((image) => ({
       ...image,
-      meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      // Same strip as `createImage`: nothing that reaches an Image row keeps a
+      // provenance claim it didn't prove. These rows have no post, so they can't
+      // reach a remix gallery today — but the invariant is "no unproven claim on
+      // any row", not "on the rows that currently matter".
+      meta:
+        (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
+          | Prisma.JsonObject
+          | undefined) ?? Prisma.JsonNull,
       userId,
       resources: undefined,
     })),
@@ -6379,7 +6436,10 @@ export const updateEntityImages = async ({
     await dbClient.image.createMany({
       data: newImages.map((image) => ({
         ...image,
-        meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+        meta:
+          (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
+            | Prisma.JsonObject
+            | undefined) ?? Prisma.JsonNull,
         userId,
         resources: undefined,
       })),

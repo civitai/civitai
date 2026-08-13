@@ -93,6 +93,7 @@ export function PostImageDropzone({
             width: props.metadata.width,
             height: props.metadata.height,
             hash: props.metadata.hash,
+            generationWorkflowId: props.generationWorkflowId,
             externalDetailsUrl,
           });
 
@@ -115,7 +116,9 @@ export function PostImageDropzone({
   // #endregion
 
   // #region [handlers]
-  function handleUpload(fileData: { file: File; meta?: Record<string, unknown> }[]) {
+  function handleUpload(
+    fileData: { file: File; meta?: Record<string, unknown>; generationWorkflowId?: string }[]
+  ) {
     if (currentUser?.muted) return;
     if (post) upload(fileData);
     else {
@@ -127,7 +130,10 @@ export function PostImageDropzone({
             // Refresh the version's post list so re-entering the post step (e.g. via
             // the wizard's back/next) reuses this post instead of creating a new one.
             if (modelVersionId) {
-              await queryUtils.modelVersion.getById.invalidate({ id: modelVersionId, withFiles: true });
+              await queryUtils.modelVersion.getById.invalidate({
+                id: modelVersionId,
+                withFiles: true,
+              });
             }
             await onCreatePost?.(data);
             upload(fileData, { postId: data.id });

@@ -73,7 +73,9 @@ describe('a sticker report is deduped by placement, not by image', () => {
     // The query must carry the placement, or it would match the existing report
     // about PLACEMENT_ONE and return it instead.
     const [query] = reportFindFirst.mock.calls[0] as [{ where: MixedObject }];
-    expect(query.where.details).toEqual({ path: ['placementId'], equals: PLACEMENT_TWO });
+    expect(query.where.AND).toContainEqual({
+      details: { path: ['placementId'], equals: PLACEMENT_TWO },
+    });
 
     // The row that gets written has to carry the NEW placement. Asserting only
     // that create ran proves nothing here — `findFirst` is mocked to null, so it
@@ -97,6 +99,36 @@ describe('a sticker report is deduped by placement, not by image', () => {
         data: expect.objectContaining({ alsoReportedBy: [REPORTER_A, REPORTER_B] }),
       })
     );
+  });
+
+  /**
+   * A sticker and the note hanging off it are separately objectionable, and the
+   * discrimination has to run in BOTH directions. Matching on the placement
+   * alone for either one is not a weaker filter — it is a fold: the second
+   * report is appended to the first as "also reported by", its reason text
+   * discarded, and a moderator is shown a complaint about one while the
+   * complaint about the other is invisible.
+   */
+  it('asks for the note and the sticker separately, whichever is reported', async () => {
+    reportFindFirst.mockResolvedValue(null);
+
+    await createReport({
+      ...stickerReport(PLACEMENT_ONE, REPORTER_A),
+      details: { placementId: PLACEMENT_ONE, target: 'comment', comment: 'nope' },
+    });
+    const [noteQuery] = reportFindFirst.mock.calls[0] as [{ where: MixedObject }];
+    expect(noteQuery.where.AND).toContainEqual({
+      details: { path: ['target'], equals: 'comment' },
+    });
+
+    reportFindFirst.mockClear();
+    await createReport(stickerReport(PLACEMENT_ONE, REPORTER_B));
+    const [artQuery] = reportFindFirst.mock.calls[0] as [{ where: MixedObject }];
+    // Not merely "no comment predicate" — the sticker arm has to assert its own
+    // value, or it matches the note report about the same placement.
+    expect(artQuery.where.AND).toContainEqual({
+      details: { path: ['target'], equals: 'sticker' },
+    });
   });
 
   it('leaves every other reason deduping exactly as it did', async () => {

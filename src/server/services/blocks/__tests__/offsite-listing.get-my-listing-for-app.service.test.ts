@@ -48,6 +48,11 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
     appListingPublishRequest: {
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
     },
+    // 🔴 SEATS ARE LISTING-KEYED, so every non-owner path consults this table — and since
+    // the owner half of the gate is resolved too (never compared against the
+    // denormalized AppListing.userId), the resolver is on EVERY path. Default: no seat,
+    // i.e. exactly the owner-only behaviour these cases assert.
+    appCollaborator: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
   });
   const mockRead = makeClient();
   const mockWrite = makeClient() as ReturnType<typeof makeClient> & {
@@ -119,7 +124,13 @@ function editViewRow(ssRowId: string, overrides: Record<string, unknown> = {}) {
  * Route `appListing.findUnique` by call shape, on BOTH pools:
  *   - `where.appBlockId`   → the entry resolve (id/userId/status/contentRating)
  *   - `select` has `icon`  → `loadListingEditView`, keyed by `where.id`
- *   - otherwise            → the owner/editable load (`beginListingRevision`)
+ *   - otherwise            → the owner/editable load (`beginListingRevision`), AND the
+ *     ownership resolve. The gate no longer compares the caller against the entry row's
+ *     denormalized `userId`; it re-reads the listing BY ID through `resolveListingAccess`
+ *     so the canonical (`appBlock.app.userId`) owner decides. `owned` therefore defaults
+ *     to `entry`: a case that does not care about the editable load still has to serve
+ *     the ownership read, and serving the same row is what "these are the same listing"
+ *     means here.
  *
  * `replicaLagsOn` makes the REPLICA miss on the given ids while the PRIMARY still
  * serves them — i.e. real replication lag, the condition that decides whether a
@@ -143,7 +154,7 @@ function wireFindUnique(opts: {
       if (isReplica && (opts.replicaLagsOn ?? []).includes(id)) return null;
       return opts.viewByListingId?.[id] ?? null;
     }
-    return opts.owned ?? null;
+    return opts.owned ?? opts.entry ?? null;
   };
   mockRead.appListing.findUnique.mockImplementation(impl(true));
   mockWrite.appListing.findUnique.mockImplementation(impl(false));
@@ -180,6 +191,8 @@ beforeEach(() => {
   mockRead.appListing.findFirst.mockResolvedValue(null);
   mockRead.appListingScreenshot.findMany.mockResolvedValue([]);
   mockRead.appListingPublishRequest.findFirst.mockResolvedValue(null);
+  mockRead.appCollaborator.findFirst.mockResolvedValue(null);
+  mockWrite.appCollaborator.findFirst.mockResolvedValue(null);
   mockWrite.appListing.findFirst.mockResolvedValue(null);
   mockWrite.appListingScreenshot.findMany.mockResolvedValue([]);
 });
@@ -505,15 +518,27 @@ describe('getMyListingForApp', () => {
 // slug fallback: the owner reaches their pending draft; ownership is still enforced.
 describe('getMyListingForApp — pre-approval DRAFT slug resolver (pending, no AppBlock)', () => {
   it('resolves the pending draft BY SLUG when only a slug is given (no appBlockId lookup)', async () => {
-    mockRead.appListing.findFirst.mockResolvedValue({
+    // 🔴 The pre-approval draft carries `appBlockId: null`, so it has no OauthClient in
+    // its ownership chain and `AppListing.userId` IS its canonical owner — the resolver's
+    // fallback. The row is served on `findUnique` too because the gate resolves the
+    // listing BY ID rather than trusting the row the slug lookup handed it.
+    const draft = {
       id: 'apl_draft',
       userId: OWNER,
+      kind: 'onsite',
+      appBlockId: null,
+      revisionOfId: null,
       status: 'draft',
       contentRating: 'g',
-    });
+    };
+    mockRead.appListing.findFirst.mockResolvedValue(draft);
     // A draft is NOT approved → no shadow revision; it is its own EFFECTIVE edit target,
     // so the edit-view assets are read straight off `apl_draft` (#3476 projection).
-    wireFindUnique({ entry: null, viewByListingId: { apl_draft: editViewRow('apls_draft') } });
+    wireFindUnique({
+      entry: null,
+      owned: draft,
+      viewByListingId: { apl_draft: editViewRow('apls_draft') },
+    });
 
     const res = await getMyListingForApp({ slug: 'my-app', userId: OWNER });
 
@@ -544,14 +569,22 @@ describe('getMyListingForApp — pre-approval DRAFT slug resolver (pending, no A
   });
 
   it('falls back to the slug draft when the appBlockId lookup misses', async () => {
-    // Entry resolve by appBlockId MISSES (no approved listing yet) → slug fallback wins.
-    wireFindUnique({ entry: null, viewByListingId: { apl_draft: editViewRow('apls_draft') } });
-    mockRead.appListing.findFirst.mockResolvedValue({
+    const draft = {
       id: 'apl_draft',
       userId: OWNER,
+      kind: 'onsite',
+      appBlockId: null,
+      revisionOfId: null,
       status: 'draft',
       contentRating: 'pg',
+    };
+    // Entry resolve by appBlockId MISSES (no approved listing yet) → slug fallback wins.
+    wireFindUnique({
+      entry: null,
+      owned: draft,
+      viewByListingId: { apl_draft: editViewRow('apls_draft') },
     });
+    mockRead.appListing.findFirst.mockResolvedValue(draft);
 
     const res = await getMyListingForApp({ appBlockId: 'maybe', slug: 'my-app', userId: OWNER });
 
@@ -561,12 +594,21 @@ describe('getMyListingForApp — pre-approval DRAFT slug resolver (pending, no A
   });
 
   it('a draft owned by ANOTHER user → NOT_OWNED (ownership still enforced on the slug path)', async () => {
-    mockRead.appListing.findFirst.mockResolvedValue({
+    // The row is wired on BOTH lookups so the refusal is attributable to OWNERSHIP. With
+    // only the slug lookup wired, the ownership resolve finds nothing and denies for
+    // "listing not found" — the right verdict for the wrong reason, which would survive a
+    // mutant that deleted the owner comparison entirely.
+    const draft = {
       id: 'apl_draft',
       userId: OTHER,
+      kind: 'onsite',
+      appBlockId: null,
+      revisionOfId: null,
       status: 'draft',
       contentRating: 'g',
-    });
+    };
+    mockRead.appListing.findFirst.mockResolvedValue(draft);
+    wireFindUnique({ entry: null, owned: draft });
 
     await expect(getMyListingForApp({ slug: 'my-app', userId: OWNER })).rejects.toMatchObject({
       name: 'OffsiteRequestError',

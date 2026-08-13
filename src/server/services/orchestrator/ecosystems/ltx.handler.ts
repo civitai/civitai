@@ -1,7 +1,7 @@
 /**
- * LTX Ecosystem Handler (LTXV2 + LTXV23)
+ * LTX Ecosystem Handler (LTXV2 + LTXV23 + LTXV25)
  *
- * Consolidated handler for LTX Video 2 and LTX Video 2.3 ecosystems.
+ * Consolidated handler for the LTX Video 2, 2.3 and 2.5 ecosystems.
  * Routes by `data.ecosystem` and `data.workflow`:
  * - LTXV2 / txt2vid → ltx2 createVideo
  * - LTXV2 / img2vid → ltx2 firstLastFrameToVideo
@@ -9,6 +9,11 @@
  * - LTXV23 / img2vid → ltx2.3 firstLastFrameToVideo
  * - LTXV23 / vid2vid:edit → ltx2.3 editVideo
  * - LTXV23 / vid2vid:extend → ltx2.3 extendVideo
+ * - LTXV25 / txt2vid (and ref2vid) → ltx2.5 createVideo
+ * - LTXV25 / img2vid → ltx2.5 firstLastFrameToVideo
+ *
+ * The ltx2.5 engine also exposes editVideo, extendVideo, videoToVideo and
+ * audioToVideo; none are wired because no enabled workflow routes to them.
  */
 
 import type {
@@ -16,6 +21,8 @@ import type {
   ComfyLtx23EditVideoInput,
   ComfyLtx23ExtendVideoInput,
   ComfyLtx23FirstLastFrameToVideoInput,
+  ComfyLtx25CreateVideoInput,
+  ComfyLtx25FirstLastFrameToVideoInput,
   ComfyLtx2CreateVideoInput,
   ComfyLtx2FirstLastFrameToVideoInput,
   VideoGenStepTemplate,
@@ -27,6 +34,7 @@ import type { AspectRatioOption, ResourceData } from '~/shared/data-graph/genera
 import {
   ltxv2AspectRatios,
   ltxv23AspectRatiosByResolution,
+  ltxv25AspectRatiosByResolution,
   LTXV2_DISTILLED_ID,
   DISTILLED_IDS,
   SULPHUR2_IDS,
@@ -39,7 +47,7 @@ import { createChainedPromptEnhancementStep } from '~/server/services/orchestrat
 // Use Extract (a distributive conditional) rather than `& { ecosystem: ... }`
 // so that `data.ecosystem === 'LTXV23'` narrows cleanly to the LTXV23 branch
 // (including v23-only fields like `video`, `cannyLowThreshold`, etc.).
-type LTXCtx = Extract<GenerationGraphTypes['Ctx'], { ecosystem: 'LTXV2' | 'LTXV23' }>;
+type LTXCtx = Extract<GenerationGraphTypes['Ctx'], { ecosystem: 'LTXV2' | 'LTXV23' | 'LTXV25' }>;
 
 type HandlerExtCtx = Parameters<Parameters<typeof defineHandler>[0]>[1];
 
@@ -124,6 +132,68 @@ export const createLTXInput = defineHandler<LTXCtx, StepInput[]>((data, ctx) => 
     // Only follow the enhanced-negative ref when the user actually wrote one —
     // otherwise the step has nothing to enhance and the ref resolves to null.
     if (negativePrompt) negativePrompt = negativePromptRef;
+  }
+
+  if (data.ltxVersion === 'v25') {
+    const distilled = DISTILLED_IDS.has(data.model?.id ?? -1);
+    const model = distilled ? '22b-distilled' : '22b-dev';
+    const resolution = data.resolution ?? '720p';
+    const aspectRatios =
+      ltxv25AspectRatiosByResolution[resolution] ?? ltxv25AspectRatiosByResolution['720p'];
+    const guidanceScale = distilled ? 1 : data.cfgScale;
+    const stepCount = distilled ? 8 : data.steps;
+
+    let videoStep: VideoGenStepTemplate;
+    if (data.workflow === 'img2vid') {
+      const images = data.images;
+      const { width, height } = resolveImageDimensions(images?.[0], aspectRatios, data.aspectRatio);
+      videoStep = {
+        $type: 'videoGen',
+        input: removeEmpty({
+          engine: 'ltx2.5',
+          operation: 'firstLastFrameToVideo',
+          prompt,
+          negativePrompt,
+          width,
+          height,
+          model,
+          guidanceScale,
+          steps: stepCount,
+          duration: data.duration,
+          firstFrame: images?.[0]?.url,
+          lastFrame: images && images.length > 1 ? images[1]?.url : undefined,
+          frameGuideStrength: data.frameGuideStrength,
+          quantity: data.quantity,
+          seed: data.seed,
+          generateAudio: data.generateAudio,
+          loras,
+        }) as ComfyLtx25FirstLastFrameToVideoInput,
+      };
+    } else {
+      videoStep = {
+        $type: 'videoGen',
+        input: removeEmpty({
+          engine: 'ltx2.5',
+          operation: 'createVideo',
+          prompt,
+          negativePrompt,
+          width: data.aspectRatio?.width,
+          height: data.aspectRatio?.height,
+          model,
+          guidanceScale,
+          steps: stepCount,
+          duration: data.duration,
+          quantity: data.quantity,
+          seed: data.seed,
+          images: data.images?.map((x) => x.url),
+          generateAudio: data.generateAudio,
+          loras,
+        }) as ComfyLtx25CreateVideoInput,
+      };
+    }
+
+    steps.push(videoStep);
+    return steps;
   }
 
   if (data.ltxVersion === 'v23') {

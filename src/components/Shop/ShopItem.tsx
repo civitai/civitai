@@ -29,14 +29,13 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
+import { stickerPurchaseTerms } from '~/components/Sticker/sticker.util';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import type { CosmeticShopItemGetById } from '~/types/router';
-import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
-import { numberWithCommas } from '~/utils/number-helpers';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import classes from './ShopItem.module.scss';
@@ -72,8 +71,6 @@ export const ShopItem = ({
   const { toggleWishlist, togglingWishlist } = useToggleWishlistShopItem();
   const domain = useDomainColor();
   const itemMeta = item.meta as CosmeticShopItemMeta;
-  const stickerUses =
-    cosmetic?.type === CosmeticType.Sticker ? stickerUsesFromCosmeticData(cosmetic.data) : null;
 
   const remaining =
     item.availableQuantity !== null
@@ -107,6 +104,9 @@ export const ShopItem = ({
     lastViewed &&
     sectionItemCreatedAt &&
     dayjs(sectionItemCreatedAt).isAfter(dayjs(lastViewed));
+
+  const stickerTerms =
+    cosmetic?.type === CosmeticType.Sticker ? stickerPurchaseTerms(cosmetic.data) : null;
 
   return (
     <Paper className={clsx(classes.card, isNew && classes.newItem)}>
@@ -208,11 +208,7 @@ export const ShopItem = ({
               </div>
               <Text size="xs" c="dimmed" px={6} component="div" className={classes.type}>
                 {cosmetic
-                  ? // A sticker is sold by the use, so the count is part of what
-                    // the card is offering.
-                    `${getDisplayName(cosmetic.type)}${
-                      stickerUses ? ` · ${numberWithCommas(stickerUses)} uses` : ''
-                    }`
+                  ? getDisplayName(cosmetic.type)
                   : `Pack of ${itemMeta.packMemberCount ?? 0}`}
               </Text>
               {cosmetic && cosmetic.type !== CosmeticType.ContentDecoration && alreadyOwned && (
@@ -238,6 +234,12 @@ export const ShopItem = ({
                 className={clsx('!px-0', classes.price)}
               />
             </div>
+            {stickerTerms && (
+              <Text size="xs" c="dimmed">
+                {stickerTerms.usesLabel}
+                {stickerTerms.extraUseLabel ? ` · ${stickerTerms.extraUseLabel}` : ''}
+              </Text>
+            )}
             {creator?.username && (
               <Text size="xs" c="dimmed">
                 by{' '}

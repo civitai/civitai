@@ -15,6 +15,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { UserHoverCard } from '~/components/UserAvatar/UserHoverCard';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
 import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditorComponent';
 import { StickerPicker } from '~/components/Sticker/StickerPicker';
@@ -123,10 +124,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
           reaction,
           user: {
             id: currentUser.id,
-            deletedAt: null,
             username: currentUser.username ?? '',
-            image: currentUser.image ?? '',
-            profilePicture: null, // not really necessary for reactions
           },
         };
         const reacted = previousReactions.find(
@@ -162,9 +160,16 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
           <Stack gap={0}>
             <Group gap={8} align="center">
               {!comment.user.deletedAt ? (
-                <Text component={Link} href={`/user/${comment.user.username}`} size="sm" fw="bold">
-                  <Username {...comment.user} />
-                </Text>
+                <UserHoverCard user={comment.user}>
+                  <Text
+                    component={Link}
+                    href={`/user/${comment.user.username}`}
+                    size="sm"
+                    fw="bold"
+                  >
+                    <Username {...comment.user} />
+                  </Text>
+                </UserHoverCard>
               ) : (
                 <Username {...comment.user} />
               )}

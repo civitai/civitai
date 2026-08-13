@@ -138,6 +138,10 @@ export type CollectionItemStatus = "ACCEPTED" | "REVIEW" | "REJECTED";
 
 export type CollectionContributorPermission = "VIEW" | "ADD" | "ADD_REVIEW" | "MANAGE";
 
+export type CollectionCollaboratorRole = "Contributor" | "Manager";
+
+export type CollectionInviteStatus = "Pending" | "Accepted" | "Declined";
+
 export type HomeBlockType = "Collection" | "Announcement" | "Leaderboard" | "Social" | "Event" | "CosmeticShop" | "FeaturedModelVersion" | "FeaturedCollections" | "Feed";
 
 export type Currency = "USD" | "BUZZ" | "USDC";
@@ -560,6 +564,8 @@ export interface User {
   collectionItems?: CollectionItem[];
   reviewedCollectionItems?: CollectionItem[];
   contributingCollections?: CollectionContributor[];
+  collectionInvitesReceived?: CollectionInvite[];
+  collectionInvitesSent?: CollectionInvite[];
   homeBlocks?: HomeBlock[];
   bounties?: Bounty[];
   bountyEntries?: BountyEntry[];
@@ -656,6 +662,12 @@ export interface User {
   appListingReportsReported?: AppListingReport[];
   appListingReportsResolved?: AppListingReport[];
   appListingModerationEvents?: AppListingModerationEvent[];
+  appCollaboratorSeats?: AppCollaborator[];
+  appCollaboratorInvitesSent?: AppCollaborator[];
+  appOwnershipEventsActed?: AppOwnershipEvent[];
+  appOwnershipEventsTargeted?: AppOwnershipEvent[];
+  appOwnershipTransfersFrom?: AppOwnershipTransfer[];
+  appOwnershipTransfersTo?: AppOwnershipTransfer[];
   targetedAnnouncements?: AnnouncementUser[];
   placementSuspension?: PlacementSuspension | null;
   placementsReceived?: Placement[];
@@ -1896,6 +1908,49 @@ export interface AppBlockReview {
   updatedAt: Date;
 }
 
+export interface AppCollaborator {
+  appListingId: string;
+  appListing?: AppListing;
+  userId: number;
+  user?: User;
+  role: string;
+  status: string;
+  displayed: boolean;
+  invitedBy: number;
+  inviter?: User;
+  lastNotifiedAt: Date | null;
+  createdAt: Date;
+  respondedAt: Date | null;
+}
+
+export interface AppOwnershipEvent {
+  id: string;
+  appListingId: string | null;
+  appListing?: AppListing | null;
+  slug: string;
+  action: string;
+  actorUserId: number | null;
+  actor?: User | null;
+  targetUserId: number | null;
+  target?: User | null;
+  metadata: JsonValue | null;
+  createdAt: Date;
+}
+
+export interface AppOwnershipTransfer {
+  id: string;
+  appListingId: string;
+  appListing?: AppListing;
+  fromUserId: number;
+  fromUser?: User;
+  toUserId: number;
+  toUser?: User;
+  status: string;
+  expiresAt: Date;
+  createdAt: Date;
+  respondedAt: Date | null;
+}
+
 export interface AppBlockPublishRequest {
   id: string;
   appBlockId: string | null;
@@ -1963,6 +2018,9 @@ export interface AppListing {
   publishRequests?: AppListingPublishRequest[];
   reports?: AppListingReport[];
   moderationEvents?: AppListingModerationEvent[];
+  collaborators?: AppCollaborator[];
+  ownershipEvents?: AppOwnershipEvent[];
+  ownershipTransfers?: AppOwnershipTransfer[];
 }
 
 export interface AppListingScreenshot {
@@ -2900,8 +2958,10 @@ export interface Collection {
   metadata: JsonValue;
   availability: Availability;
   nsfwLevel: number;
+  collaborationDisabledAt: Date | null;
   items?: CollectionItem[];
   contributors?: CollectionContributor[];
+  invites?: CollectionInvite[];
   tags?: TagsOnCollection[];
   post?: Post[];
   reports?: CollectionReport[];
@@ -2956,6 +3016,20 @@ export interface CollectionContributor {
   collectionId: number;
   collection?: Collection;
   permissions: CollectionContributorPermission[];
+}
+
+export interface CollectionInvite {
+  id: number;
+  collectionId: number;
+  collection?: Collection;
+  userId: number;
+  user?: User;
+  invitedById: number;
+  invitedBy?: User;
+  role: CollectionCollaboratorRole;
+  status: CollectionInviteStatus;
+  createdAt: Date;
+  respondedAt: Date | null;
 }
 
 export interface TagsOnCollection {

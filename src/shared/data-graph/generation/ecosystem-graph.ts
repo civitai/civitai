@@ -18,6 +18,7 @@ import {
   EXPERIMENTAL_MODE_SUPPORTED_MODELS,
   SDCPP_SUPPORTED_ECOSYSTEMS,
   SDCPP_EXCLUDED_MODEL_IDS,
+  VID_QUANTITY_ECOSYSTEMS,
   fluxUltraAirId,
 } from '~/shared/constants/generation.constants';
 import {
@@ -416,7 +417,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Kling'] as const, graph: klingGraph },
     { values: ['MiniMaxH3'] as const, graph: minimaxGraph },
     { values: ['HyV1'] as const, graph: hunyuanGraph },
-    { values: ['LTXV2', 'LTXV23'] as const, graph: ltxGraph },
+    { values: ['LTXV2', 'LTXV23', 'LTXV25'] as const, graph: ltxGraph },
     { values: ['Mochi'] as const, graph: mochiGraph },
     { values: ['Sora2'] as const, graph: soraGraph },
     { values: ['Veo3'] as const, graph: veo3Graph },
@@ -449,8 +450,8 @@ export const ecosystemGraph = new DataGraph<
     ['workflow', 'ecosystem', 'model']
   )
   // Quantity node - shown for image output, plus the small set of video
-  // ecosystems that batch multiple outputs in a single job (currently LTXV23,
-  // which generates extra videos via Seed + slotIndex).
+  // ecosystems that batch multiple outputs in a single job (see
+  // VID_QUANTITY_ECOSYSTEMS — they generate extra videos via Seed + slotIndex).
   //
   // Step: draft=4, BOGO-enabled w/ enhancedCompatibility off=2, else=1.
   // The step=2 path is gated by the `enhancedCompatibilitySdcpp` feature flag and
@@ -466,11 +467,12 @@ export const ecosystemGraph = new DataGraph<
         supportsSdcpp(ctx.ecosystem, modelId) &&
         ctx.enhancedCompatibility !== true;
       const step = isDraft ? 4 : bogoActive ? 2 : 1;
-      const supportsVideoQuantity = ctx.output === 'video' && ctx.ecosystem === 'LTXV23';
-      // LTXV23 uses tier-gated vidQuantity (free=1, bronze=2, silver=3, gold=4)
+      const batchesVideos = VID_QUANTITY_ECOSYSTEMS.has(ctx.ecosystem);
+      const supportsVideoQuantity = ctx.output === 'video' && batchesVideos;
+      // These use tier-gated vidQuantity (free=1, bronze=2, silver=3, gold=4)
       // so the upsell popover can fire when non-gold users try to bump past
       // their cap. Other ecosystems keep the standard maxQuantity.
-      const max = ctx.ecosystem === 'LTXV23' ? ext.limits.vidQuantity : ext.limits.maxQuantity;
+      const max = batchesVideos ? ext.limits.vidQuantity : ext.limits.maxQuantity;
       return {
         ...quantityNode({ step, max }),
         when: ctx.output === 'image' || supportsVideoQuantity,

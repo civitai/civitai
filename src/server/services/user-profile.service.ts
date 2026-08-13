@@ -14,6 +14,7 @@ import { isDefined } from '~/utils/type-guards';
 import { enqueueImageIngestion } from '~/server/services/image.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
+import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
   getUserContentOverview as getUserContentOverviewFromCache,
@@ -259,7 +260,10 @@ export const updateUserProfile = async ({
               where: { id: image.id ?? -1 },
               create: {
                 ...image,
-                meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                meta:
+                  (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
+                    | Prisma.JsonObject
+                    | undefined) ?? Prisma.JsonNull,
                 metadata: { coverImage: true, userId },
                 userId,
                 resources: undefined,

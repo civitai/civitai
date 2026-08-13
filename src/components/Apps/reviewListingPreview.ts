@@ -125,6 +125,11 @@ export function buildListingDetailPreview(
     serialId: 0,
     tagline: null,
     description: null,
+    // The mod REVIEW preview intentionally shows no collaborator byline: this row is
+    // built from an in-review publish request, not from a live listing, so there is no
+    // accepted-and-displayed set to read yet. An empty array is the honest answer, not
+    // a placeholder.
+    collaborators: [],
     screenshots: images?.screenshots ?? [],
     kindData: detailKindData(row),
   };

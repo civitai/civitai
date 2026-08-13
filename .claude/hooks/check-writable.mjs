@@ -10,6 +10,54 @@
 
 import { stdin } from 'process';
 
+// `prettier --write <targets>`: the incident was a repo-WIDE rewrite, not formatting a directory
+// this change owns. Read the targets instead of matching `--write`, so a scoped path just runs.
+function prettierWriteTargets(command) {
+  return command
+    .split(/[;&|]+/)
+    .filter((seg) => /\bprettier\b/.test(seg) && /--write/.test(seg))
+    .flatMap((seg) =>
+      seg
+        .slice(seg.indexOf('--write') + '--write'.length)
+        // Drop redirections and their operands (`2>&1`, `> out.log`) — they are not format targets.
+        .replace(/\d*[<>]+&?\s*[^\s]*/g, ' ')
+        .split(/\s+/)
+        .map((t) => t.replace(/^['"]|['"]$/g, ''))
+        // Not targets: flags, and redirections (`2>&1`, `> out.txt`) that survive the segment split.
+        .filter((t) => t && !t.startsWith('-') && !/[<>]/.test(t))
+    );
+}
+
+// The rule from CLAUDE.md is about BREADTH, not about prettier: a run may only reach files this
+// change owns, because the repo is not Prettier-clean (789 of 4,116 `src` files) and a broad `--write`
+// both buries the change and rewrites colleagues' uncommitted work in place. So a named file or a
+// directory deep enough to belong to one feature runs; anything that could sweep an app or the repo
+// asks first. `pnpm run prettier:write` (dirty files only) always runs.
+const OWNED_DIR_DEPTH = 3; // e.g. src/components/Sticker — an app or a top-level dir is not owned
+
+// Depth alone is not ownership: apps/moderator/src is three deep and is still a whole app. A
+// directory named after the tree it holds, rather than after a feature, needs one more level.
+const CONTAINER_DIRS = new Set([
+  'src', 'app', 'apps', 'lib', 'libs', 'packages', 'components', 'pages', 'routes', 'server',
+  'scripts', 'utils', 'hooks', 'store', 'stores', 'types', 'styles', 'public', 'tests', 'test',
+]);
+
+function isUnscoped(target) {
+  const t = target.replace(/\\/g, '/').replace(/\/+$/, '');
+  if (t === '' || t === '.' || t === '*' || t.startsWith('**')) return true;
+
+  // Judge a glob by the fixed prefix it can never escape: src/**/*.tsx is still all of src.
+  const dir = t.includes('*') ? t.slice(0, t.indexOf('*')).replace(/\/+$/, '') : t;
+  const segments = dir.split('/').filter(Boolean);
+  const leaf = segments[segments.length - 1] || '';
+
+  // A named file is one file, at any depth.
+  if (!t.includes('*') && /\.[a-z0-9]+$/i.test(leaf)) return false;
+
+  const required = CONTAINER_DIRS.has(leaf.toLowerCase()) ? OWNED_DIR_DEPTH + 1 : OWNED_DIR_DEPTH;
+  return segments.length < required;
+}
+
 // Patterns that would kill Claude Code or critical processes - BLOCK OUTRIGHT
 const DANGEROUS_PATTERNS = [
   { pattern: /taskkill\s+\/\/F\s+\/\/IM\s+node\.exe/i, reason: 'This would kill all Node.js processes including Claude Code itself' },
@@ -24,7 +72,7 @@ const DANGEROUS_PATTERNS = [
       'Ad-hoc prettier with prettier-plugin-svelte EMPTIES .svelte files to zero bytes while reporting success (28 components lost, 2026-08-07). Use `pnpm run prettier:write`.',
   },
   {
-    pattern: /prettier[^;&|]*--write[^;&|]*\*\*/i,
+    check: (command) => prettierWriteTargets(command).some((t) => t === '*' || t.replace(/\\/g, '/').startsWith('**')),
     reason:
       "A repo-wide `prettier --write` rewrites ~1000 committed files (the repo is not prettier-2-clean) and reformats other people's uncommitted work in place. Use `pnpm run prettier:write`, which scopes to dirty files.",
   },
@@ -50,12 +98,14 @@ const GUARDED_PATTERNS = [
     reason:
       'A SvelteKit build writes ~1,800 files into the workspace and is NOT a verification step — use `pnpm --filter ./apps/<app> run typecheck`. Confirm only if you are diagnosing a build-only failure or producing a real artifact.',
   },
-  // NOTE: `prettier --write` is deliberately NOT guarded here. Formatting files the session has
-  // already changed is routine and was being confirmed dozens of times a session for no decision.
-  // The three DANGEROUS_PATTERNS above already refuse everything this guard was protecting against —
-  // the plugin-svelte form, a `**` glob, and any target that is not an explicit file with an
-  // extension — and those are blocks, not prompts. Re-adding a blanket ask here just reintroduces
-  // the friction without adding a check.
+  {
+    // Only the unscoped shapes ask. `prettier --write src/components/Sticker/` runs.
+    check: (command) => {
+      const targets = prettierWriteTargets(command);
+      return targets.length === 0 ? false : targets.some(isUnscoped);
+    },
+    reason: 'Formatting outside `pnpm run prettier:write` can reach files this change does not own. Confirm the target is scoped.',
+  },
 ];
 
 let input = '';
@@ -75,15 +125,15 @@ stdin.on('end', () => {
       .replace(/-m\s+(['"])[\s\S]*?\1/g, ' ');
 
     // Check for dangerous commands that should be blocked outright (no confirmation possible)
-    for (const { pattern, reason } of DANGEROUS_PATTERNS) {
-      if (pattern.test(command)) {
+    for (const { pattern, check, reason } of DANGEROUS_PATTERNS) {
+      if (check ? check(command) : pattern.test(command)) {
         console.error(`BLOCKED: ${reason}\nCommand: ${rawCommand}`);
         process.exit(2); // Exit code 2 blocks the command immediately
       }
     }
 
-    for (const { pattern, reason } of GUARDED_PATTERNS) {
-      if (pattern.test(command)) {
+    for (const { pattern, check, reason } of GUARDED_PATTERNS) {
+      if (check ? check(command) : pattern.test(command)) {
         console.log(JSON.stringify({
           hookSpecificOutput: {
             hookEventName: 'PreToolUse',

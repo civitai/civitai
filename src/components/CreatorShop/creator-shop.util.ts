@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { trpc } from '~/utils/trpc';
 import type { RouterOutput } from '~/types/router';
 import type {
@@ -55,15 +56,19 @@ export const useQueryPublicShopItems = (filters: Partial<GetPublicShopItemsInput
   return { items, ...rest };
 };
 
-// Site-wide community cosmetics hub feed (/shop marketplace section).
+// Site-wide community cosmetics hub (/shop marketplace section). Paged rather
+// than infinite: a few hundred animated cosmetics mounted at once make the page
+// crawl.
 export type CommunityCosmeticItem =
   RouterOutput['creatorShop']['getCommunityCosmetics']['items'][number];
 export const useQueryCommunityCosmetics = (filters: Partial<GetCommunityCosmeticsInput> = {}) => {
-  const { data, ...rest } = trpc.creatorShop.getCommunityCosmetics.useInfiniteQuery(filters, {
-    getNextPageParam: (lastPage) => lastPage.nextCursor,
-  });
-  const items = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data]);
-  return { items, ...rest };
+  const { data, ...rest } = trpc.creatorShop.getCommunityCosmetics.useQuery(
+    filters,
+    // Keeps the current page rendered while the next one loads, so paging
+    // doesn't collapse the grid to a spinner and jump the scroll position.
+    withPlaceholderData({ keepPreviousData: true })
+  );
+  return { items: data?.items ?? [], totalPages: data?.totalPages ?? 0, ...rest };
 };
 
 // The creator's own resell listings in saved order (for the manage/reorder UI).

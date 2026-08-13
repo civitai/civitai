@@ -48,7 +48,7 @@ vi.mock('~/store/remix.store', () => ({
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 // Imported after mocks are declared above (vitest hoists vi.mock calls).
-import { useGenerationGraphStore } from '~/store/generation-graph.store';
+import { useGenerationGraphStore, withExternalFetch } from '~/store/generation-graph.store';
 
 function resetStore() {
   useGenerationGraphStore.setState({
@@ -169,9 +169,7 @@ describe('useGenerationGraphStore — funnel attribution', () => {
     });
     fetchMock.mockReturnValueOnce(pendingA);
 
-    const openAPromise = useGenerationGraphStore
-      .getState()
-      .open({ type: 'image', id: 100 } as any);
+    const openAPromise = useGenerationGraphStore.getState().open({ type: 'image', id: 100 } as any);
 
     // Open B: no-input navbar Create. Synchronous — runs to completion
     // before A's fetch resolves.
@@ -218,7 +216,7 @@ describe('useGenerationGraphStore — funnel attribution', () => {
 
   // ----------- LOADING-STUCK REGRESSION GUARDS ---------------------------
 
-  it("REGRESSION: superseded resolve path clears loading when no-input open() runs in between", async () => {
+  it('REGRESSION: superseded resolve path clears loading when no-input open() runs in between', async () => {
     // Open A: image remix — fetch deferred via a manually-resolvable promise.
     // A sets loading=true on entry.
     let resolveA: (v: unknown) => void = () => undefined;
@@ -227,9 +225,7 @@ describe('useGenerationGraphStore — funnel attribution', () => {
     });
     fetchMock.mockReturnValueOnce(pendingA);
 
-    const openAPromise = useGenerationGraphStore
-      .getState()
-      .open({ type: 'image', id: 300 } as any);
+    const openAPromise = useGenerationGraphStore.getState().open({ type: 'image', id: 300 } as any);
 
     expect(useGenerationGraphStore.getState().loading).toBe(true);
 
@@ -282,12 +278,8 @@ describe('useGenerationGraphStore — funnel attribution', () => {
     });
     fetchMock.mockReturnValueOnce(pendingA).mockReturnValueOnce(pendingB);
 
-    const openAPromise = useGenerationGraphStore
-      .getState()
-      .open({ type: 'image', id: 500 } as any);
-    const openBPromise = useGenerationGraphStore
-      .getState()
-      .open({ type: 'image', id: 501 } as any);
+    const openAPromise = useGenerationGraphStore.getState().open({ type: 'image', id: 500 } as any);
+    const openBPromise = useGenerationGraphStore.getState().open({ type: 'image', id: 501 } as any);
 
     expect(useGenerationGraphStore.getState().loading).toBe(true);
 
@@ -305,7 +297,7 @@ describe('useGenerationGraphStore — funnel attribution', () => {
 
   // ----------- WILDCARD RACE ---------------------------------------------
 
-  it("REGRESSION: wildcard open clears loading even when an image fetch is pending", async () => {
+  it('REGRESSION: wildcard open clears loading even when an image fetch is pending', async () => {
     // Open A: image remix — fetch deferred via a manually-resolvable promise.
     // A sets loading=true on entry and bumps inFlightFetchCount to 1.
     let resolveA: (v: unknown) => void = () => undefined;
@@ -314,9 +306,7 @@ describe('useGenerationGraphStore — funnel attribution', () => {
     });
     fetchMock.mockReturnValueOnce(pendingA);
 
-    const openAPromise = useGenerationGraphStore
-      .getState()
-      .open({ type: 'image', id: 600 } as any);
+    const openAPromise = useGenerationGraphStore.getState().open({ type: 'image', id: 600 } as any);
 
     expect(useGenerationGraphStore.getState().loading).toBe(true);
 
@@ -376,5 +366,91 @@ describe('useGenerationGraphStore — funnel attribution', () => {
       .open({ type: 'modelVersion', id: 42 } as any, { preserveEntryAction: true });
 
     expect(useGenerationGraphStore.getState().lastEntryAction).toBe('remix');
+  });
+  // ----------- EXTERNAL FETCH PARTICIPATION ------------------------------
+  //
+  // `withExternalFetch` exists so a caller that fetches its own data (the
+  // remix menu seeding a chosen engine) shares the `loading` bookkeeping
+  // rather than writing the flag from outside. Writing it from outside was a
+  // real bug: an unrelated superseded open() reaching inFlightFetchCount === 0
+  // would clear a spinner whose fetch was still running.
+
+  it('REGRESSION: a superseded open() bail does NOT clear loading while an external fetch is pending', async () => {
+    // A: the user clicks "Reuse prompt & resources" — a store fetch.
+    let resolveA: (v: unknown) => void = () => undefined;
+    fetchMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveA = resolve;
+      })
+    );
+    const openAPromise = useGenerationGraphStore.getState().open({ type: 'image', id: 700 } as any);
+
+    // B: before A resolves, the user picks an engine from the menu. That path
+    // opens the panel with no input (bumping the sequence, clearing loading)
+    // and then runs its own fetch through withExternalFetch.
+    await useGenerationGraphStore.getState().open(undefined, { preserveEntryAction: true });
+
+    let resolveB: (v: unknown) => void = () => undefined;
+    const externalPromise = withExternalFetch(
+      () =>
+        new Promise((resolve) => {
+          resolveB = resolve;
+        })
+    );
+    expect(useGenerationGraphStore.getState().loading).toBe(true);
+
+    // A resolves and takes the bail-out. Before this participated in the
+    // counter, A saw count === 0 and cleared B's spinner here.
+    resolveA({ resources: [], params: {}, remixOfId: undefined });
+    await openAPromise;
+    expect(useGenerationGraphStore.getState().loading).toBe(true);
+
+    // B is the last to settle, so it owns the flag.
+    resolveB('done');
+    const { superseded } = await externalPromise;
+    expect(superseded).toBe(false);
+    expect(useGenerationGraphStore.getState().loading).toBe(false);
+  });
+
+  it('reports superseded and leaves the flag to the newer owner', async () => {
+    await useGenerationGraphStore.getState().open(undefined, { preserveEntryAction: true });
+
+    let resolveExternal: (v: unknown) => void = () => undefined;
+    const externalPromise = withExternalFetch(
+      () =>
+        new Promise((resolve) => {
+          resolveExternal = resolve;
+        })
+    );
+    expect(useGenerationGraphStore.getState().loading).toBe(true);
+
+    // A newer input-bearing open takes over while the external fetch runs.
+    let resolveNewer: (v: unknown) => void = () => undefined;
+    fetchMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveNewer = resolve;
+      })
+    );
+    const newerPromise = useGenerationGraphStore.getState().open({ type: 'image', id: 701 } as any);
+
+    resolveExternal('done');
+    const { superseded } = await externalPromise;
+    expect(superseded).toBe(true);
+    // The newer fetch is still pending and owns the spinner.
+    expect(useGenerationGraphStore.getState().loading).toBe(true);
+
+    resolveNewer({ resources: [], params: {}, remixOfId: undefined });
+    await newerPromise;
+    expect(useGenerationGraphStore.getState().loading).toBe(false);
+  });
+
+  it('clears loading when an external fetch throws and nothing else is pending', async () => {
+    await useGenerationGraphStore.getState().open(undefined, { preserveEntryAction: true });
+
+    await expect(
+      withExternalFetch(() => Promise.reject(new Error('engine lookup failed')))
+    ).rejects.toThrow('engine lookup failed');
+
+    expect(useGenerationGraphStore.getState().loading).toBe(false);
   });
 });

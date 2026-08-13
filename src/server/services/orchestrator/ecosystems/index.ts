@@ -198,8 +198,8 @@ export type MiniMaxCtx = EcosystemGraphOutput & { ecosystem: 'MiniMaxH3' };
 /** Hunyuan (HyV1) context */
 export type HunyuanCtx = EcosystemGraphOutput & { ecosystem: 'HyV1' };
 
-/** LTX (LTXV2 + LTXV23) context */
-export type LTXCtx = EcosystemGraphOutput & { ecosystem: 'LTXV2' | 'LTXV23' };
+/** LTX (LTXV2 + LTXV23 + LTXV25) context */
+export type LTXCtx = EcosystemGraphOutput & { ecosystem: 'LTXV2' | 'LTXV23' | 'LTXV25' };
 
 /** Mochi context */
 export type MochiCtx = EcosystemGraphOutput & { ecosystem: 'Mochi' };
@@ -481,9 +481,10 @@ async function createEcosystemStep(
     case 'HyV1':
       return createHunyuanInput(normalizedData, handlerCtx);
 
-    // LTX (v2 + v2.3)
+    // LTX (v2 + v2.3 + v2.5)
     case 'LTXV2':
     case 'LTXV23':
+    case 'LTXV25':
       return createLTXInput(normalizedData, handlerCtx);
 
     // Mochi

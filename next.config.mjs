@@ -10,7 +10,6 @@ const isProd = process.env.NODE_ENV === 'production';
 const isDev = process.env.NODE_ENV === 'development';
 const analyze = process.env.ANALYZE === 'true';
 const includeCircularDependencyPlugin = process.env.CIRCULAR_DEPENDENCY_PLUGIN === 'true';
-const shouldOptimizeImports = (isDev && analyze) || isProd;
 
 const withBundleAnalyzer = bundlAnalyzer({
   enabled: analyze,
@@ -158,9 +157,17 @@ export default defineNextConfig(
     ],
     // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
     serverExternalPackages: [
-      'redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series',
-      '@opentelemetry/sdk-node', '@opentelemetry/instrumentation', '@opentelemetry/instrumentation-http',
-      '@opentelemetry/instrumentation-redis', '@prisma/instrumentation',
+      'redis',
+      '@redis/client',
+      '@redis/bloom',
+      '@redis/json',
+      '@redis/search',
+      '@redis/time-series',
+      '@opentelemetry/sdk-node',
+      '@opentelemetry/instrumentation',
+      '@opentelemetry/instrumentation-http',
+      '@opentelemetry/instrumentation-redis',
+      '@prisma/instrumentation',
       // Bundling this gives the app layer its own copy of the Prisma runtime while
       // `dbRead`/`dbWrite` (reached through the transpiled `@civitai/db-schema`) hold a
       // second one. `$queryRaw` identifies its template argument with `instanceof Sql`,
@@ -173,7 +180,8 @@ export default defineNextConfig(
       // gate. The logs bridge does not depend on it: it binds to the Logs API lazily, so
       // a second bundled module copy is survivable, and `no_provider` on its skip counter
       // is the runtime signal if one ever appears.
-      '@pyroscope/nodejs', '@datadog/pprof',
+      '@pyroscope/nodejs',
+      '@datadog/pprof',
     ],
     // Several entry points read markdown from src/static-content at runtime via fs
     // (dynamic string paths that @vercel/nft can't trace). With output:'standalone'
@@ -221,9 +229,23 @@ export default defineNextConfig(
       // in exchange for ~+8% CI build time and ~+33% peak builder RSS. Measurements live
       // in the PR rather than here, so they don't rot when Next's chunker changes.
       //
-      // Build only. It buys nothing in dev — chunk size is irrelevant to a dev server — and
-      // the walk over dynamic-import paths is paid on a graph that `_app` already makes large.
-      turbopackServerSideNestedAsyncChunking: isProd,
+      // Off because the builder's memory ceiling is now enforced and that ~+33% peak RSS is
+      // what puts the release build over it. Re-enable only with a measured peak-RSS margin.
+      turbopackServerSideNestedAsyncChunking: false,
+      // Not the same as omitting it: Next 16.3.0 defaults this to true, and turbopack-build
+      // derives `dependencyTracking` from it, so the flag governs what turbo-tasks retains in
+      // memory and not just what lands on disk.
+      turbopackFileSystemCacheForBuild: false,
+      // NB: `lodash-es`, `@tabler/icons-react` and `@headlessui/react` are already in Next's
+      // built-in default list (config.js merges ours into it) — kept here only as intent.
+      //
+      // 🔴 Do NOT add a package that creates React context — `@mantine/core`, `@mantine/modals`,
+      // `@mantine/notifications`. This rewrites barrel imports into deep per-component imports,
+      // which can put the provider and its consumers on DIFFERENT module instances: the provider
+      // is in the tree, but consumers read a context object created by another copy. Adding
+      // `@mantine/core` here 500'd every Mantine-heavy route in preview with "MantineProvider was
+      // not found in component tree" (PR #3802). Nothing local catches it — typecheck, lint and
+      // both vitest projects stayed green; only a real build renders the provider.
       optimizePackageImports: [
         '@civitai/client',
         './src/libs/form',

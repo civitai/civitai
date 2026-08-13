@@ -192,6 +192,7 @@ const CreatorCardSimpleContent = ({
                             },
                           }}
                           user={creatorWithCosmetics}
+                          withHoverCard={false}
                         />
                       </Box>
                       <Stack gap={0} ml={70} style={{ minWidth: 0 }}>

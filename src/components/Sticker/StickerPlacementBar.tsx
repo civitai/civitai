@@ -1,7 +1,9 @@
-import { Button, Text, Tooltip } from '@mantine/core';
-import { IconPlus, IconSticker } from '@tabler/icons-react';
+import { Button, Tooltip } from '@mantine/core';
+import { IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettingsProvider';
+import { StickerCountChip, useStickerInviteStyle } from '~/components/Sticker/StickerCountChip';
+import { StickerHistoryButton } from '~/components/Sticker/StickerHistoryPanel';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
 import {
   useImagePlacementSpace,
@@ -37,15 +39,20 @@ export function StickerPlacementBar({
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const { buttonStyling } = useReactionSettingsContext();
+  const inviteStyle = useStickerInviteStyle();
 
-  const counts = useStickerPlacementCounts([imageId]);
+  const {
+    counts,
+    isLoading: countsLoading,
+    isError: countsError,
+  } = useStickerPlacementCounts([imageId]);
   const count = counts[imageId] ?? 0;
   const { space } = useImagePlacementSpace(imageId);
 
   // The count is approved-only, so an owner whose first placement is still
   // pending had no entry here at all — and therefore no reveal toggle on the
   // page the notification just sent them to.
-  const { byImage } = useStickerPlacements([imageId], !!currentUser);
+  const { byImage, isLoading: placementsLoading } = useStickerPlacements([imageId], !!currentUser);
   const pending = (byImage.get(imageId) ?? []).filter((placement) => placement.isPending).length;
 
   const openTray = useStickerPlacementDraftStore((state) => state.open);
@@ -66,6 +73,14 @@ export function StickerPlacementBar({
   // Approved plus the viewer's own pending, which is what the toggle reveals.
   const total = count + pending;
 
+  // The invitation needs a zero that is KNOWN to be zero. `total` is fed by two
+  // separate queries and a failure of either reads as empty, so an image with
+  // stickers would otherwise show the invitation — and a press there opens a
+  // purchase tray instead of revealing what is already on it. Both queries must
+  // have arrived, and the counts one must not have failed.
+  const settled = !countsLoading && !placementsLoading && !countsError;
+  const inviting = !total && canPlace && settled;
+
   if (!total && !canPlace) return null;
 
   return (
@@ -75,27 +90,41 @@ export function StickerPlacementBar({
           between them is the shared border rather than a drawn line. */}
       <Button.Group className={clsx(className)}>
         {total > 0 && (
-          <Tooltip
-            label={revealed ? 'Hide stickers on all images' : 'Show stickers on all images'}
-            withArrow
-          >
-            <Button
-              size="compact-sm"
-              radius="xl"
-              variant={revealed ? 'light' : 'subtle'}
-              color="gray"
-              onClick={toggle}
-              leftSection={<IconSticker size={16} />}
-              // Revealed reads as `hasReacted`, so the toggle's on state borrows
-              // the same tint the row already uses for "you did this" instead of
-              // introducing a second visual language for on/off.
-              {...buttonStyling?.('AddReaction', revealed)}
-            >
-              <Text size="xs" fw={600}>
-                {total} {total === 1 ? 'sticker' : 'stickers'}
-              </Text>
-            </Button>
-          </Tooltip>
+          <StickerCountChip
+            count={total}
+            revealed={revealed}
+            showLabel
+            tooltip={revealed ? 'Hide stickers on all images' : 'Show stickers on all images'}
+            onClick={toggle}
+            // Revealed reads as `hasReacted`, so the toggle's on state borrows
+            // the same tint the row already uses for "you did this" instead of
+            // introducing a second visual language for on/off.
+            buttonProps={buttonStyling?.('AddReaction', revealed)}
+          />
+        )}
+
+        {/* At zero the chip is the invitation, not a reveal toggle: there is
+            nothing to reveal, and a control that visibly does nothing is worse
+            than the bare plus it replaced. */}
+        {inviting && (
+          <StickerCountChip
+            count={0}
+            revealed={revealed}
+            tooltip={`Place a sticker · ${space?.price} Buzz`}
+            // Distinct from the plus beside it, which is also "Place a sticker".
+            // They share a Button.Group and an action, so identical names read
+            // to a screen reader as the same control announced twice.
+            ariaLabel="No stickers yet — place the first one"
+            onClick={() => openTray(imageId)}
+            buttonProps={buttonStyling?.('BuzzTip')}
+          />
+        )}
+
+        {/* Only where there is a history to read. At zero the group is an
+            invitation to place the first one, and a history button beside it
+            opens onto nothing. */}
+        {total > 0 && (
+          <StickerHistoryButton imageId={imageId} buttonProps={buttonStyling?.('AddReaction')} />
         )}
 
         {canPlace && (
@@ -111,6 +140,10 @@ export function StickerPlacementBar({
               // stickers it reads as "add one" without a word, which is what
               // keeps the fused control narrow enough to belong in this row.
               {...buttonStyling?.('BuzzTip')}
+              // Last, and merged over whatever the row's styling set: at zero
+              // the plus is half the invitation, so it has to carry the same
+              // tint the chip does or the pair reads as two unrelated controls.
+              style={{ ...buttonStyling?.('BuzzTip')?.style, ...(inviting ? inviteStyle : null) }}
             >
               <IconPlus size={16} stroke={2.5} />
             </Button>
@@ -118,7 +151,10 @@ export function StickerPlacementBar({
         )}
       </Button.Group>
 
-      <StickerPlacementTray />
+      {/* Told which image this bar is for, so a session left open on another
+          slide cannot keep the panel on screen bound to an image nobody is
+          looking at. */}
+      <StickerPlacementTray imageId={imageId} />
     </>
   );
 }

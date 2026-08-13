@@ -12,6 +12,7 @@ import { IsClient } from '~/components/IsClient/IsClient';
 import { TourPopover } from '~/components/Tour/TourPopover';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import type { StepData } from '~/types/tour';
+import { tourOverlayZIndex } from '~/shared/constants/app-layout.constants';
 
 const completeStatus: string[] = [STATUS.SKIPPED, STATUS.FINISHED];
 const nextEvents: string[] = [EVENTS.STEP_AFTER, EVENTS.TARGET_NOT_FOUND];
@@ -74,7 +75,7 @@ export default function LazyTours({ getHelpers }: Pick<JoyrideProps, 'getHelpers
         callback={handleJoyrideCallback}
         styles={{
           options: {
-            zIndex: 100000,
+            zIndex: tourOverlayZIndex,
             arrowColor:
               colorScheme === 'dark' ? 'var(--mantine-color-dark-6)' : 'var(--mantine-color-white)',
           },

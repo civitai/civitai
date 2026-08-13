@@ -8,31 +8,45 @@ import clsx from 'clsx';
 const CUSTOM_VARIANTS = ['white'] as const;
 type CustomVariantType = (typeof CUSTOM_VARIANTS)[number];
 
-const HoverActionButton = ({
-  label,
-  children,
-  size,
-  themeIconProps = {},
-  color = 'green',
-  variant = 'filled',
-  onClick,
-  keepIconOnHover = false,
-  style,
-  ...props
-}: Props) => {
+// forwardRef so it can be a Mantine `Menu.Target`.
+const HoverActionButton = React.forwardRef<HTMLButtonElement, Props>(function HoverActionButton(
+  {
+    label,
+    children,
+    size,
+    themeIconProps = {},
+    color = 'green',
+    variant = 'filled',
+    onClick,
+    keepIconOnHover = false,
+    style,
+    className,
+    ...props
+  },
+  ref
+) {
   const isCustomVariant = CUSTOM_VARIANTS.includes(color as CustomVariantType);
   const colorCustomVariant = color as CustomVariantType;
 
   return (
     <button
+      ref={ref}
       style={{
         ...style,
         // @ts-ignore
         '--size': `${size}px`,
       }}
       onClick={onClick}
-      className={clsx(classes.wrapper, isCustomVariant ? classes[colorCustomVariant] : undefined)}
       {...props}
+      // After the spread, and merged rather than replaced: as a Mantine
+      // `Menu.Target` this component is cloned with a `className` of the
+      // popover's own, which would otherwise drop `wrapper` and take the icon
+      // layout and hover-expand animation with it.
+      className={clsx(
+        classes.wrapper,
+        isCustomVariant ? classes[colorCustomVariant] : undefined,
+        className
+      )}
     >
       <Badge className={classes.label} size="xs" variant={variant} color={color}>
         {label}
@@ -61,7 +75,7 @@ const HoverActionButton = ({
       )}
     </button>
   );
-};
+});
 
 type Props = UnstyledButtonProps & {
   label: string;

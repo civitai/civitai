@@ -10,6 +10,10 @@ import {
   PLACEMENT_SURFACES,
   placementOutcomeFromStatus,
   placementPriceCap,
+  onPlacementPriceGrid,
+  PLACEMENT_PRICE_STEP,
+  placementPriceUsable,
+  placementPriceTrack,
   placementSurfaces,
   placementTransactionId,
   resolvePlacementSpace,
@@ -93,6 +97,23 @@ describe('splitPlacementPayment — the Buzz-conservation invariant', () => {
     expect(split.toPlatform).toBe(33);
     expect(split.toOwner).toBe(35);
     expect(split.toPlacer).toBe(0);
+  });
+
+  // The place button tells the placer their whole payment reaches the creator.
+  // Reintroducing a platform or seller cut on this surface makes that a false
+  // statement about money, and nothing else asserts the compiled defaults --
+  // the escrow suite mocks the config accessor.
+  it('pays the space owner the entire amount at the compiled sticker defaults', () => {
+    const amount = 1000;
+    const split = splitPlacementPayment({
+      amount,
+      outcome: 'approved',
+      declineFeeRate: PLACEMENT_SURFACES.sticker.defaultDeclineFeeRate,
+      sellerShare: PLACEMENT_SURFACES.sticker.defaultSellerShare,
+      platformShare: PLACEMENT_SURFACES.sticker.defaultPlatformShare,
+    });
+
+    expect(split).toEqual({ toOwner: amount, toSeller: 0, toPlatform: 0, toPlacer: 0 });
   });
 
   it('returns everything on expiry and on owner removal of an auto-approved placement', () => {
@@ -276,6 +297,107 @@ describe('space resolution', () => {
 
   it('falls back to the surface default when nothing is configured', () => {
     expect(resolvePlacementSpace('sticker', {}).mode).toBe(PLACEMENT_SURFACES.sticker.defaultMode);
+  });
+
+  // `setPlacementSpace` refuses to write a mode above `off` with no price, so a
+  // surface whose defaults are that pair produces, by default, the one state a
+  // creator is forbidden to create: the space reads open and the place
+  // affordance renders nothing, because `effectivePlacementPrice(null, cap)` is
+  // null by design. The two values have to move together.
+  it('never defaults a surface to an open mode with no price', () => {
+    for (const surface of placementSurfaces) {
+      const { defaultMode, defaultPrice } = PLACEMENT_SURFACES[surface];
+      if (defaultMode === 'off') continue;
+
+      expect(defaultPrice, `${surface} opens by default with no default price`).not.toBeNull();
+      expect(resolvePlacementSpace(surface, {}).price).toBe(defaultPrice);
+
+      // Zero is not null and survives the check above, but
+      // `effectivePlacementPrice(0, cap)` is 0 rather than null, so the space
+      // reads open, `canPlace` is true, and the escrow short-circuits: free
+      // placements on every creator's work, platform-wide, by default.
+      expect(defaultPrice, `${surface} defaults to free placements`).toBeGreaterThan(0);
+
+      // A default of `auto` removes the review step for every creator who never
+      // opted in — the placement lands on their work before they see it.
+      expect(defaultMode, `${surface} defaults to accepting without review`).not.toBe('auto');
+    }
+  });
+
+  it('resolves an unconfigured sticker space to the surface default price', () => {
+    expect(resolvePlacementSpace('sticker', {})).toEqual({
+      mode: PLACEMENT_SURFACES.sticker.defaultMode,
+      price: PLACEMENT_SURFACES.sticker.defaultPrice,
+      settings: {},
+    });
+  });
+
+  // The track does NOT re-derive from what is stored. It did, and every commit
+  // refetched the row and recomputed the floor, so a legacy price ratcheted
+  // upward one drag at a time: 10 -> 55 leaves the floor at 50 and 10 is gone.
+  it('does not depend on the stored price', () => {
+    const track = placementPriceTrack('sticker', 500);
+    expect(track).toEqual({ min: PLACEMENT_SURFACES.sticker.trackMinPrice, max: 500 });
+
+    // Same cap, same track, whatever the creator is currently charging.
+    for (const cap of [100, 500, 2_500]) {
+      expect(placementPriceTrack('sticker', cap).min).toBe(
+        PLACEMENT_SURFACES.sticker.trackMinPrice
+      );
+    }
+  });
+
+  // "Within the bounds" is not "reachable". The slider steps from `min`, so the
+  // landable values are `min + 5k` — prod's stored 67 sits between two of them
+  // and the first nudge rounds it away.
+  it('produces a track whose bounds are on its own grid', () => {
+    // Operator caps come from a `KeyValue` override and are not required to be
+    // multiples of the step, so 333 and 51 are as real as 100.
+    for (const cap of [null, 0, 1, 49, 50, 51, 55, 100, 333, 2_500]) {
+      const track = placementPriceTrack('sticker', cap);
+      expect(track.max, `cap=${cap} zero-width track`).toBeGreaterThan(track.min);
+      expect(onPlacementPriceGrid(track.min, track), `cap=${cap} min off-grid`).toBe(true);
+      expect(onPlacementPriceGrid(track.max, track), `cap=${cap} max off-grid`).toBe(true);
+      // Never offer a price above the cap the server will clamp to anyway —
+      // except where the cap leaves no room for even one step, which is the
+      // degenerate track `placementPriceUsable` exists to keep off the screen.
+      if (cap != null && placementPriceUsable('sticker', cap))
+        expect(track.max, `cap=${cap} over cap`).toBeLessThanOrEqual(cap);
+    }
+  });
+
+  // The floor is per-surface so stickers and galleries can diverge later. They
+  // are both 50 today, so this drives the function with a table of its own
+  // rather than asserting a difference the shipped table does not have.
+  it('takes its floor from the surface, not from a constant', () => {
+    for (const surface of placementSurfaces)
+      expect(placementPriceTrack(surface, 500).min).toBe(PLACEMENT_SURFACES[surface].trackMinPrice);
+  });
+
+  // A floor off its own grid puts the bottom of the track where the slider
+  // cannot land, exactly as an operator cap does at the top.
+  it('keeps every surface floor on the step grid', () => {
+    for (const surface of placementSurfaces)
+      expect(
+        PLACEMENT_SURFACES[surface].trackMinPrice % PLACEMENT_PRICE_STEP,
+        `${surface} floor is off the step grid`
+      ).toBe(0);
+  });
+
+  it('reports a stored price the slider cannot land on', () => {
+    const track = placementPriceTrack('sticker', 500);
+
+    // Real prices from production: 67 is off any grid wider than 1, and 10 sits
+    // below the floor entirely.
+    expect(onPlacementPriceGrid(67, track)).toBe(false);
+    expect(onPlacementPriceGrid(10, track)).toBe(false);
+
+    // Derived rather than written down, so changing the step cannot leave this
+    // asserting something that is no longer the boundary. `min + 1` is off the
+    // grid for every step above 1.
+    expect(onPlacementPriceGrid(track.min + PLACEMENT_PRICE_STEP, track)).toBe(true);
+    expect(onPlacementPriceGrid(track.min + 1, track)).toBe(false);
+    expect(onPlacementPriceGrid(track.min, track)).toBe(true);
   });
 
   it('keeps an account-level price when only the image mode was changed', () => {

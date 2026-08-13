@@ -53,7 +53,12 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
       const event = e as CustomEvent;
       if (event.detail) {
         const eventState = event.detail[0];
-        stateRef.current = resolveLocationChangeState(eventState, history.state, window.location);
+        stateRef.current = resolveLocationChangeState(
+          eventState,
+          history.state,
+          window.location,
+          Router.pathname
+        );
         if (!usingNextRouter) useBrowserRouterState.setState(stateRef.current);
       }
     };

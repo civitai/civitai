@@ -32,6 +32,10 @@ const { mockDb, ids } = vi.hoisted(() => ({
       create: vi.fn(async (args: { data: unknown }) => args.data),
       update: vi.fn(async (args: { data: unknown }) => ({ ...(args as object) })),
     },
+    // 🔴 SEATS ARE LISTING-KEYED, so EVERY non-owner path now consults this table —
+    // there is no longer an "this listing has no AppBlock" short-circuit to skip it.
+    // Default: no seat, i.e. exactly the owner-only behaviour these cases assert.
+    appCollaborator: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
     image: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
@@ -937,6 +941,12 @@ describe('screenshot CRUD', () => {
   });
 
   it('removeScreenshot rejects a non-owner of the parent listing', async () => {
+    // The parent listing must be wired: ownership is decided by `loadOwnedListing`, which
+    // LOADS the listing and resolves its canonical owner. (This case used to pass off an
+    // earlier, denormalized-column copy of the same check that read `appListing.userId`
+    // straight off the screenshot row; that copy is gone — see
+    // `app-access.denormalized-owner-drift.test.ts`.)
+    mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.appListingScreenshot.findUnique.mockResolvedValue({
       id: 'b', appListingId: 'apl_1', appListing: { userId: 42 },
     });

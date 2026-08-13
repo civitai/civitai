@@ -1,74 +1,101 @@
-import { Alert, Text } from '@mantine/core';
+import { Alert, Group, Skeleton, Stack, Text } from '@mantine/core';
+import { useEffect } from 'react';
+import type { UseFormReturn } from 'react-hook-form';
+import type * as z from 'zod';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { useReportTarget } from '~/components/Report/report-target.context';
 import { createReportForm } from '~/components/Report/create-report-form';
-import { useStickerPlacements } from '~/components/Sticker/placement.util';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
-import { InputRadioGroup, InputTextArea } from '~/libs/form';
+import { InputTextArea } from '~/libs/form';
 import { reportStickerPlacementDetailsSchema } from '~/server/schema/report.schema';
-import { Radio, Stack, Group } from '@mantine/core';
+import { trpc } from '~/utils/trpc';
 
 /**
- * Reporting a sticker someone placed on this image.
+ * Reporting a sticker someone placed on this image, or the note hanging off it.
  *
- * The reporter picks the placement. An image can carry several, and a report
- * that only says "a sticker here is abusive" makes a moderator guess — the wrong
- * guess removes an innocent person's sticker and takes their Buzz with it.
+ * The form asks nothing about which one. It is only reached from a flag on the
+ * sticker itself, so the placement and the half being reported both arrive with
+ * the modal — the picker this replaced could not tell four copies of the same
+ * sticker apart, and a moderator acted on the guess.
  */
-function StickerPlacementFields() {
-  const target = useReportTarget();
-  const imageIds = target ? [target.entityId] : [];
-  const { byImage } = useStickerPlacements(imageIds, !!target);
-  const placements = target ? byImage.get(target.entityId) ?? [] : [];
-  const { sticker } = useStickerCosmetics(placements.map((p) => p.data.cosmeticId));
+type DetailsSchema = typeof reportStickerPlacementDetailsSchema;
 
-  // The field stays mounted with no options rather than being replaced by the
-  // alert. `placementId` is required and Submit lives in the parent modal, so an
-  // unmounted field meant pressing Submit failed validation with nowhere to
-  // render the error — the button simply did nothing.
-  if (!placements.length)
+function StickerPlacementFields({
+  context,
+}: {
+  context: { form: UseFormReturn<z.input<DetailsSchema>, any, z.output<DetailsSchema>> };
+}) {
+  const target = useReportTarget();
+  const placementId = target?.placementId;
+  const half = target?.placementTarget ?? 'sticker';
+
+  const { data, isLoading, isError } = trpc.placement.getStickerPlacementDetail.useQuery(
+    { placementId: placementId as number },
+    { enabled: !!placementId, staleTime: 5 * 60_000 }
+  );
+  const cosmeticId = data?.sticker?.id;
+  const { sticker } = useStickerCosmetics(cosmeticId ? [cosmeticId] : []);
+  const art = cosmeticId ? sticker.get(cosmeticId) : undefined;
+
+  const { setValue } = context.form;
+
+  // Written into the form rather than assembled beside it at submit, so the
+  // value the report carries is the value the schema validated. Two sources of
+  // truth for the one field that decides which sticker a moderator acts on is
+  // how the wrong person loses a sticker and the Buzz under it.
+  useEffect(() => {
+    if (placementId) setValue('placementId', placementId);
+    setValue('target', half);
+  }, [placementId, half, setValue]);
+
+  // Unreachable from the app: nothing opens this form without a placement. Said
+  // out loud anyway, because the alternative is a Submit button that fails
+  // validation on a field with nowhere to render the error and so does nothing.
+  if (!placementId)
     return (
-      <Stack gap="xs">
-        <Alert color="yellow">
-          <Text size="xs">
-            There are no stickers on this image right now. If one was just removed, there is nothing
-            left to report.
-          </Text>
-        </Alert>
-        <InputRadioGroup name="placementId" label="Which sticker?" withAsterisk>
-          <div />
-        </InputRadioGroup>
-      </Stack>
+      <Alert color="yellow">
+        <Text size="xs">
+          Report a sticker from the flag on the sticker itself, so we know which one you mean.
+        </Text>
+      </Alert>
     );
 
   return (
     <Stack gap="xs">
-      <InputRadioGroup name="placementId" label="Which sticker?" withAsterisk>
-        <Stack gap={4}>
-          {placements.map((placement) => {
-            const art = sticker.get(placement.data.cosmeticId);
-            return (
-              <Radio
-                key={placement.id}
-                value={String(placement.id)}
-                label={
-                  <Group gap={6} wrap="nowrap">
-                    {art && (
-                      <EdgeImage
-                        src={art.url}
-                        alt={`:${art.slug}:`}
-                        options={{ height: 64, anim: art.animated, optimized: true }}
-                        style={{ height: 32, width: 'auto' }}
-                      />
-                    )}
-                    <Text size="xs">{art ? `:${art.slug}:` : `Placement ${placement.id}`}</Text>
-                  </Group>
-                }
-              />
-            );
-          })}
-        </Stack>
-      </InputRadioGroup>
+      {isLoading ? (
+        <Skeleton height={48} radius="sm" />
+      ) : isError || !data ? (
+        // Named or nothing. The line below is the reporter's only confirmation
+        // that the right sticker was flagged, and rendering the generic version
+        // of it over a failed lookup is the form claiming to have checked
+        // something it could not. The report still sends: a sticker taken down
+        // between the flag and the modal is exactly what someone might be
+        // reporting, and the queue shows a moderator that it is already gone.
+        <Alert color="yellow">
+          <Text size="xs">
+            We couldn&apos;t load this sticker — it may have just been removed. You can still send
+            the report.
+          </Text>
+        </Alert>
+      ) : (
+        <Group gap={8} wrap="nowrap">
+          {art && (
+            <EdgeImage
+              src={art.url}
+              alt={`:${art.slug}:`}
+              options={{ height: 96, anim: art.animated, optimized: true }}
+              style={{ height: 48, width: 'auto' }}
+            />
+          )}
+          {/* Named back, not chosen. Showing the sticker is the confirmation
+              that the right one was flagged, which is the job the list did
+              badly. */}
+          <Text size="sm">
+            Reporting {half === 'comment' ? 'the note on ' : ''}
+            {data?.sticker?.name ? <strong>{data.sticker.name}</strong> : 'this sticker'}.
+          </Text>
+        </Group>
+      )}
 
       <InputTextArea
         name="comment"

@@ -32,7 +32,6 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { getDisplayName } from '~/utils/string-helpers';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { StickerPlacementForm } from '~/components/Report/StickerPlacementForm';
 import { ReportTargetProvider } from '~/components/Report/report-target.context';
 
@@ -134,7 +133,9 @@ const reports = [
     // report exists to carry.
     key: 'sticker-placement',
     reason: ReportReason.StickerPlacement,
-    label: 'Bad sticker placement',
+    // Never rendered in the reason list — this entry is reachable only from the
+    // flag on a sticker — so the label is the modal's title and nothing else.
+    label: 'Report this sticker',
     Element: StickerPlacementForm,
     availableFor: [ReportEntity.Image],
   },
@@ -170,15 +171,27 @@ const SEND_REPORT_ID = 'sending-report';
 export type ReportModalProps = {
   entityType: ReportEntity;
   entityId: number;
+  /**
+   * Open straight onto one form instead of the reason list.
+   *
+   * For a report that starts from the thing being reported rather than from the
+   * page it sits on: the flag on a sticker already knows the reason and the
+   * sticker, so a list of reasons is a question with one answer.
+   */
+  reportKey?: string;
+  /** The placement the flag was on, when the report started there. */
+  placementId?: number;
+  /** Which half of that placement the flag was on. */
+  placementTarget?: 'sticker' | 'comment';
 };
 
 export default function ReportModal({
   entityType,
   entityId,
-}: {
-  entityType: ReportEntity;
-  entityId: number;
-}) {
+  reportKey: initialReportKey,
+  placementId,
+  placementTarget,
+}: ReportModalProps) {
   const dialog = useDialogContext();
 
   // #region [temp for gallery image reports]
@@ -192,7 +205,7 @@ export default function ReportModal({
   // sticker — and keying on the reason silently resolved to whichever was
   // declared first, so picking the sticker option ran the generic TOS form and
   // filed a report with no placement id in it.
-  const [reportKey, setReportKey] = useState<string>();
+  const [reportKey, setReportKey] = useState<string | undefined>(initialReportKey);
   const [uploading, setUploading] = useState(false);
   const selected = useMemo(
     () => reports.find((x) => x.key === reportKey && x.availableFor.includes(entityType)) ?? null,
@@ -200,7 +213,10 @@ export default function ReportModal({
   );
   const reason = selected?.reason;
   const ReportForm = selected?.Element ?? null;
-  const title = selected?.label ?? `Report ${getDisplayName(entityType)}`;
+  const title =
+    selected?.key === 'sticker-placement' && placementTarget === 'comment'
+      ? 'Report this note'
+      : selected?.label ?? `Report ${getDisplayName(entityType)}`;
   const handleVote = useVoteForTags({ entityType: entityType as 'image' | 'model', entityId });
 
   const queryUtils = trpc.useUtils();
@@ -320,7 +336,6 @@ export default function ReportModal({
   };
 
   const currentUser = useCurrentUser();
-  const features = useFeatureFlags();
   useEffect(() => {
     if (currentUser) return;
     router.push(getLoginLink({ returnUrl: router.asPath, reason: 'report-content' }));
@@ -332,7 +347,10 @@ export default function ReportModal({
       <Stack>
         <Group justify="space-between" wrap="nowrap">
           <Group gap={4}>
-            {!!selected && (
+            {/* No way back when the reason arrived with the modal: the list
+                behind it was never shown, so "back" would land on a choice the
+                reporter did not make. */}
+            {!!selected && !initialReportKey && (
               <LegacyActionIcon onClick={() => setReportKey(undefined)}>
                 <IconArrowLeft size={16} />
               </LegacyActionIcon>
@@ -362,10 +380,12 @@ export default function ReportModal({
                         return !data?.reportStats?.ownershipPending;
                       }
                     }
-                    // Offering a reason for a feature the reporter cannot see is
-                    // an invitation to a form with nothing in it.
-                    if (item.reason === ReportReason.StickerPlacement)
-                      return !!features.stickerPlacement;
+                    // Reachable only from the flag on the sticker itself, never
+                    // from the image. Offered here it would have to ask which
+                    // sticker, and several copies of one sticker on an image are
+                    // indistinguishable in a list — the guess a moderator then
+                    // acts on is what the flag exists to remove.
+                    if (item.reason === ReportReason.StickerPlacement) return false;
                     return true;
                   }) // TEMP FIX
                   .map(({ key, label }) => (
@@ -376,7 +396,7 @@ export default function ReportModal({
           )
         )}
         {ReportForm && (
-          <ReportTargetProvider value={{ entityType, entityId }}>
+          <ReportTargetProvider value={{ entityType, entityId, placementId, placementTarget }}>
             <ReportForm onSubmit={handleSubmit} setUploading={setUploading}>
               <Group grow>
                 <Button variant="default" onClick={dialog.onClose}>

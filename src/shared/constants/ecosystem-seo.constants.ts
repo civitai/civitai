@@ -2216,7 +2216,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
   LTXV: {
     key: 'LTXV',
     updatedAt: '2026-07-23',
-    additionalEcosystemKeys: ['LTXV2', 'LTXV23'],
+    additionalEcosystemKeys: ['LTXV2', 'LTXV23', 'LTXV25'],
     name: 'LTX Video',
     metaDescription:
       "Generate LTX Video on Civitai — Lightricks' fast open video model makes cinematic clips from text or an image at near real-time. Browse models & example clips.",
@@ -3960,7 +3960,7 @@ export const ECOSYSTEM_SEO_PAGES: EcosystemSeoPage[] = [
   { slug: 'illustrious', label: 'Illustrious', ecosystemKeys: ['Illustrious'] },
   { slug: 'noobai', label: 'NoobAI', ecosystemKeys: ['NoobAI'] },
   { slug: 'wan', label: 'Wan', ecosystemKeys: ['WanVideo'] },
-  { slug: 'ltxv', label: 'LTX Video', ecosystemKeys: ['LTXV', 'LTXV2', 'LTXV23'] },
+  { slug: 'ltxv', label: 'LTX Video', ecosystemKeys: ['LTXV', 'LTXV2', 'LTXV23', 'LTXV25'] },
   { slug: 'kling', label: 'Kling', ecosystemKeys: ['Kling'] },
   { slug: 'seedance', label: 'Seedance', ecosystemKeys: ['Seedance'] },
   { slug: 'grok', label: 'Grok Imagine', ecosystemKeys: ['Grok'] },

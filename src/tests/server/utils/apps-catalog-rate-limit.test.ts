@@ -117,6 +117,21 @@ describe('enforceAppsCatalogRateLimit', () => {
     expect((res as { _headers: () => Record<string, string> })._headers()['Retry-After']).toBeDefined();
   });
 
+  it('the 429 body conforms to the shared app-catalog error envelope (civitai#3845)', async () => {
+    mockMulti.value = 61; // > 60
+    const { req, res } = makeReqRes();
+    await enforceAppsCatalogRateLimit({ req, res, user: MOD });
+    const body = (res as { _json: () => unknown })._json() as Record<string, unknown>;
+    // Structural: the same {code, message, error} contract every other non-2xx
+    // on `GET /api/v1/apps{,/{slug}}` carries, so a client can branch on shape.
+    expect(body.code, '429 must carry the `code` discriminator').toBe('TOO_MANY_REQUESTS');
+    expect(typeof body.message, '429 `message` must be a string').toBe('string');
+    expect(typeof body.error, '429 `error` must be a string (the CLI prefers it)').toBe('string');
+    // The pre-existing informational fields are retained, not replaced.
+    expect(body.limit).toBe(60);
+    expect(body.windowSeconds).toBe(60);
+  });
+
   it('FAILS OPEN (proceeds, no 503) when the limiter exec throws — public-read divergence', async () => {
     mockMulti.throwExec = true;
     const warn = vi.fn();

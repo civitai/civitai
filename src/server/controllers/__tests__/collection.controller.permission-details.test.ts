@@ -10,8 +10,8 @@ const { mockCollectionFindMany } = vi.hoisted(() => ({
   mockCollectionFindMany: vi.fn(),
 }));
 
-const { mockGetUserCollectionPermissionsById } = vi.hoisted(() => ({
-  mockGetUserCollectionPermissionsById: vi.fn(),
+const { mockGetUserCollectionPermissionsByIds } = vi.hoisted(() => ({
+  mockGetUserCollectionPermissionsByIds: vi.fn(),
 }));
 
 vi.mock('~/server/db/client', () => ({
@@ -20,7 +20,7 @@ vi.mock('~/server/db/client', () => ({
 }));
 vi.mock('~/server/services/collection.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CollectionService>()),
-  getUserCollectionPermissionsById: mockGetUserCollectionPermissionsById,
+  getUserCollectionPermissionsByIds: mockGetUserCollectionPermissionsByIds,
 }));
 
 import { getPermissionDetailsHandler } from '../collection.controller';
@@ -58,8 +58,8 @@ describe('getPermissionDetailsHandler', () => {
       collectionRow(10, 'public one'),
       collectionRow(11, "someone else's private one"),
     ]);
-    mockGetUserCollectionPermissionsById.mockImplementation(async ({ id }: { id: number }) =>
-      permissions(id, id === 10)
+    mockGetUserCollectionPermissionsByIds.mockImplementation(async ({ ids }: { ids: number[] }) =>
+      ids.map((id) => permissions(id, id === 10))
     );
 
     const result = await getPermissionDetailsHandler({ input: { ids: [10, 11] }, ctx });
@@ -70,7 +70,7 @@ describe('getPermissionDetailsHandler', () => {
 
   it('returns the readable collection with its permissions attached', async () => {
     mockCollectionFindMany.mockResolvedValue([collectionRow(10, 'public one')]);
-    mockGetUserCollectionPermissionsById.mockResolvedValue(permissions(10, true));
+    mockGetUserCollectionPermissionsByIds.mockResolvedValue([permissions(10, true)]);
 
     const result = await getPermissionDetailsHandler({ input: { ids: [10] }, ctx });
 

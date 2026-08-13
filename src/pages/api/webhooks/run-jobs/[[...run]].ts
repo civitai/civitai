@@ -16,6 +16,7 @@ import { checkProcessingResourceTrainingV2 } from '~/server/jobs/check-processin
 import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
 import { reconcileVaultStorage } from '~/server/jobs/reconcile-vault-storage';
+import { reconcileCollectionCollaboration } from '~/server/jobs/reconcile-collection-collaboration';
 import { contestCollectionVimeoUpload } from '~/server/jobs/collection-contest-vimeo-upload';
 import { contestCollectionYoutubeUpload } from '~/server/jobs/collection-contest-youtube-upload';
 import { collectionAiReview } from '~/server/jobs/collection-ai-review';
@@ -83,6 +84,7 @@ import { reconcileWildcardSetsJob } from '~/server/jobs/reconcile-wildcard-sets'
 import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
 import { refreshAuctionCache } from '~/server/jobs/refresh-auction-cache';
 import { refreshFeaturedCollectionsEligibility } from '~/server/jobs/refresh-featured-collections-eligibility';
+import { autoFeatureImages } from '~/server/jobs/auto-feature-images';
 import { reemitBitdexOps } from '~/server/jobs/reemit-bitdex-ops';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { reindexRecentScheduledImages } from '~/server/jobs/reindex-recent-scheduled-images';
@@ -149,6 +151,7 @@ export const jobs: Job[] = [
   purgeReplacedFilesJob,
   updateCollectionItemRandomId,
   refreshFeaturedCollectionsEligibility,
+  autoFeatureImages,
   ...metricJobs,
   ...searchIndexJobs,
   searchIndexUserCleanupJob,
@@ -168,6 +171,7 @@ export const jobs: Job[] = [
   // processCreatorProgramImageGenerationRewards,
   processVaultItems,
   reconcileVaultStorage,
+  reconcileCollectionCollaboration,
   clearVaultItems,
   reconcileWildcardSetsJob,
   auditWildcardSetCategoriesJob,

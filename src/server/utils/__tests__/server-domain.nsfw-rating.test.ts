@@ -4,25 +4,21 @@ import { describe, expect, it, vi } from 'vitest';
  * NSFW-APP-RED-ONLY helper tests — `isMatureContentRating` + `ratingAllowedOnHost`
  * (src/server/utils/server-domain.ts).
  *
- * server-domain.ts builds `serverDomainMap` from the validated server env AT
- * IMPORT, so we stub `~/env/server` with a realistic multi-color config that
- * mirrors production: civitai.red is configured as BOTH a blue and a red domain
- * (the exact shape that makes `getRequestDomainColor('civitai.red')` return
- * `blue` while `isHostForColor('civitai.red', 'red')` returns true). The host
- * gate must key off RED capability, not the color walk.
+ * server-domain.ts builds `serverDomainMap` from `process.env` AT IMPORT, so we
+ * stub a realistic multi-color config that mirrors production: civitai.red is
+ * configured as BOTH a blue and a red domain (the exact shape that makes
+ * `getRequestDomainColor('civitai.red')` return `blue` while
+ * `isHostForColor('civitai.red', 'red')` returns true). The host gate must key off
+ * RED capability, not the color walk.
  */
-vi.mock('~/env/server', () => ({
-  env: {
-    SERVER_DOMAIN_GREEN: 'civitai.green',
-    SERVER_DOMAIN_GREEN_ALIASES: '',
-    // blue's primary is civitai.com, and civitai.red is also a blue alias — this
-    // is what makes the color-walk return blue for .red.
-    SERVER_DOMAIN_BLUE: 'civitai.com',
-    SERVER_DOMAIN_BLUE_ALIASES: 'civitai.red',
-    SERVER_DOMAIN_RED: 'civitai.red',
-    SERVER_DOMAIN_RED_ALIASES: 'www.civitai.red',
-  },
-}));
+vi.stubEnv('SERVER_DOMAIN_GREEN', 'civitai.green');
+vi.stubEnv('SERVER_DOMAIN_GREEN_ALIASES', '');
+// blue's primary is civitai.com, and civitai.red is also a blue alias — this
+// is what makes the color-walk return blue for .red.
+vi.stubEnv('SERVER_DOMAIN_BLUE', 'civitai.com');
+vi.stubEnv('SERVER_DOMAIN_BLUE_ALIASES', 'civitai.red');
+vi.stubEnv('SERVER_DOMAIN_RED', 'civitai.red');
+vi.stubEnv('SERVER_DOMAIN_RED_ALIASES', 'www.civitai.red');
 
 const RED_HOST = 'civitai.red';
 const RED_ALIAS = 'www.civitai.red';

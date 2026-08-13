@@ -4,6 +4,7 @@ import { getListingDetail } from '~/server/services/blocks/app-listing.service';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { enforceAppsCatalogRateLimit } from '~/server/utils/apps-catalog-rate-limit';
 import { isHostForColor } from '~/server/utils/server-domain';
+import { REST_ERROR_CODE, restErrorBody } from '~/server/utils/rest-error-envelope';
 
 /**
  * GET /api/v1/apps/{slug}
@@ -28,6 +29,19 @@ import { isHostForColor } from '~/server/utils/server-domain';
  * A missing slug, a non-approved listing, an onsite listing under
  * `public-external` scope, or a mature listing off a non-red host all resolve to
  * the SAME 404 as a genuinely absent app — no existence oracle.
+ *
+ * ## Error envelope — ONE shape for every non-2xx (civitai#3845)
+ * 400 / 404 / 429 / 500 all carry `{ error, message, code }`:
+ *   - `code` is the stable machine-readable discriminator a client branches on
+ *     (`BAD_REQUEST` | `NOT_FOUND` | `TOO_MANY_REQUESTS` | `INTERNAL_SERVER_ERROR`),
+ *     and is NEVER present on a 2xx.
+ *   - `message` is always a string.
+ *   - `error` is RETAINED with its historical per-status value — including the
+ *     zod `.flatten()` OBJECT on 400, which the shipped Go CLI special-cases to
+ *     render per-field errors. See `~/server/utils/rest-error-envelope`.
+ * The 500 body is generic BY DESIGN: `handleEndpointError` must never place
+ * driver text on this public, unauthenticated surface (#3845 leaked a Prisma
+ * invocation with the table and column name). Attribution lives in the log.
  */
 
 /** Single query-param value (Next gives `string | string[] | undefined`); '' → undefined. */
@@ -46,25 +60,38 @@ const slugSchema = z.object({ slug: z.string().min(1).max(64) });
 export default MixedAuthEndpoint(async function handler(req, res, user) {
   const parsed = slugSchema.safeParse({ slug: firstQuery(req.query.slug) });
   if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.flatten() });
+    // `error` stays the zod flatten OBJECT — the shipped Go CLI special-cases
+    // that exact shape (`{formErrors, fieldErrors}`) to render per-field errors.
+    return res
+      .status(400)
+      .json(restErrorBody(REST_ERROR_CODE.BAD_REQUEST, 'Invalid slug', parsed.error.flatten()));
   }
 
-  const limited = await enforceAppsCatalogRateLimit({ req, res, user, log: req.log });
-  if (limited) return;
-
-  // DEFAULT-CLOSED scope gate — pass the resolved scope EXPLICITLY to the service.
-  const scope = await resolveStoreVisibilityScope({ user });
-  if (scope === 'none') {
-    return res.status(404).json({ error: 'App not found' });
-  }
-
+  // Everything that can throw lives INSIDE the try. The rate limiter and the
+  // scope gate used to sit outside it: both are `await`ed calls into Redis / the
+  // Flipt client, and a throw from either would escape `handleEndpointError`
+  // entirely — no envelope, no `code`, no fault log, just Next.js's default 500.
+  // Neither has a known throw path today (the limiter catches its own Redis
+  // errors and fails open; `isFlipt` swallows init + eval failures and returns
+  // false), so this closes a STRUCTURAL gap rather than an observed bug — but
+  // "no envelope on this path" should not depend on a dependency's internals
+  // staying that defensive.
   try {
+    const limited = await enforceAppsCatalogRateLimit({ req, res, user, log: req.log });
+    if (limited) return;
+
+    // DEFAULT-CLOSED scope gate — pass the resolved scope EXPLICITLY to the service.
+    const scope = await resolveStoreVisibilityScope({ user });
+    if (scope === 'none') {
+      return res.status(404).json(restErrorBody(REST_ERROR_CODE.NOT_FOUND, 'App not found'));
+    }
+
     const detail = await getListingDetail(
       { slug: parsed.data.slug },
       { redCapable: isRedCapableRequest(req.headers.host), scope }
     );
     if (!detail) {
-      return res.status(404).json({ error: 'App not found' });
+      return res.status(404).json(restErrorBody(REST_ERROR_CODE.NOT_FOUND, 'App not found'));
     }
     return res.status(200).json(detail);
   } catch (e) {

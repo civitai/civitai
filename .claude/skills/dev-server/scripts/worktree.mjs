@@ -1,0 +1,271 @@
+/**
+ * Worktree teardown and staleness reporting.
+ *
+ * Links are unlinked before the recursive delete for SPEED, not safety: pnpm makes nearly every
+ * package a reparse point (8,180 under node_modules in one measured tree), and removing them as
+ * links avoids walking ~200k files through them. Seven delete instruments were tested against a
+ * sentinel behind a junction on 2026-08-12 and none followed the link, so the widely-repeated
+ * "recursive delete eats the junction target" did not reproduce — don't restore that claim without
+ * a fixture that shows it. The assert-zero gate stays as insurance against a tool or link type
+ * that behaves differently.
+ */
+
+import { execFileSync } from 'child_process';
+import { readdirSync, lstatSync, rmdirSync, rmSync, existsSync } from 'fs';
+import { resolve, sep } from 'path';
+
+function git(args, cwd) {
+  return execFileSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+
+function gitQuiet(args, cwd) {
+  try {
+    return git(args, cwd);
+  } catch {
+    return null;
+  }
+}
+
+export function listWorktrees(primary) {
+  const out = git(['worktree', 'list', '--porcelain'], primary);
+  const trees = [];
+  let cur = null;
+  for (const line of out.split(/\r?\n/)) {
+    if (line.startsWith('worktree ')) {
+      cur = { path: resolve(line.slice(9)), branch: null, detached: false, locked: false };
+      trees.push(cur);
+    } else if (!cur) {
+      continue;
+    } else if (line.startsWith('branch refs/heads/')) {
+      cur.branch = line.slice('branch refs/heads/'.length);
+    } else if (line === 'detached') {
+      cur.detached = true;
+    } else if (line.startsWith('locked')) {
+      cur.locked = true;
+    }
+  }
+  return trees;
+}
+
+/** Depth-first, and deliberately does NOT descend into reparse points. */
+function findReparsePoints(root) {
+  const found = [];
+  const stack = [root];
+  while (stack.length) {
+    const dir = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      const full = dir + sep + entry.name;
+      let link = false;
+      try {
+        link = lstatSync(full).isSymbolicLink();
+      } catch {
+        continue;
+      }
+      if (link) found.push(full);
+      else if (entry.isDirectory()) stack.push(full);
+    }
+  }
+  return found.sort((a, b) => b.split(sep).length - a.split(sep).length);
+}
+
+/**
+ * `--is-ancestor` is useless here: the repo squash-merges, so a merged branch's tip is never an
+ * ancestor of origin/main. It reported "not merged" for 24 of 26 branches on one run.
+ */
+function mergedPr(branch, cwd) {
+  const raw = spawnGh(
+    ['pr', 'list', '--state', 'all', '--head', branch, '--json', 'number,state', '--limit', '5'],
+    cwd
+  );
+  if (!raw) return null;
+  let rows;
+  try {
+    rows = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const merged = rows.find((r) => r.state === 'MERGED');
+  return merged ? merged.number : null;
+}
+
+function spawnGh(args, cwd) {
+  try {
+    return execFileSync('gh', args, {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/** `git log --not --remotes` with no positive rev prints nothing and reads as "clean". */
+function unpushedCount(branch, cwd) {
+  const n = gitQuiet(['rev-list', '--count', branch, '--not', '--remotes'], cwd);
+  return n === null ? null : Number(n);
+}
+
+function dirtyCount(worktreePath) {
+  const out = gitQuiet(['status', '--porcelain'], worktreePath);
+  if (out === null) return null;
+  return out === '' ? 0 : out.split(/\r?\n/).length;
+}
+
+function lastCommit(worktreePath) {
+  return gitQuiet(['log', '-1', '--format=%ci'], worktreePath);
+}
+
+async function sessionsFor(worktreePath, daemonRequest) {
+  const res = await daemonRequest('/sessions');
+  if (!res.ok) return [];
+  const target = resolve(worktreePath).toLowerCase();
+  return (res.data.sessions || []).filter((s) => resolve(s.worktree).toLowerCase() === target);
+}
+
+export async function inspect(primary, daemonRequest) {
+  const trees = listWorktrees(primary);
+  const primaryPath = resolve(primary);
+  const rows = [];
+  for (const t of trees) {
+    const isPrimary = t.path === primaryPath;
+    const sessions = await sessionsFor(t.path, daemonRequest);
+    rows.push({
+      path: t.path,
+      branch: t.branch,
+      detached: t.detached,
+      isPrimary,
+      mergedPr: t.branch ? mergedPr(t.branch, primary) : null,
+      dirty: dirtyCount(t.path),
+      unpushed: t.branch ? unpushedCount(t.branch, primary) : null,
+      lastCommit: lastCommit(t.path),
+      sessions: sessions.map((s) => ({ id: s.id, port: s.port, status: s.status })),
+    });
+  }
+  return rows;
+}
+
+export async function cmdStale(primary, daemonRequest) {
+  const rows = await inspect(primary, daemonRequest);
+  const candidates = rows.filter((r) => !r.isPrimary);
+
+  const removable = candidates.filter((r) => r.mergedPr && !r.dirty && r.sessions.length === 0);
+  const blocked = candidates.filter((r) => !removable.includes(r));
+
+  console.log(`\nSAFE TO REMOVE (${removable.length}) - merged PR, clean tree, no dev server\n`);
+  if (!removable.length) console.log('  (none)');
+  for (const r of removable) {
+    const age = r.lastCommit ? r.lastCommit.slice(0, 10) : '?';
+    const warn = r.unpushed
+      ? `  [!] ${r.unpushed} commit(s) on no remote - branch will be KEPT`
+      : '';
+    console.log(`  ${r.path}`);
+    console.log(`      ${r.branch || '(detached)'}  PR #${r.mergedPr}  last commit ${age}${warn}`);
+  }
+
+  console.log(`\nKEEP (${blocked.length})\n`);
+  for (const r of blocked) {
+    const why = [];
+    if (r.sessions.length)
+      why.push(`dev server ${r.sessions.map((s) => `${s.id}:${s.port}`).join(',')}`);
+    if (r.dirty) why.push(`${r.dirty} uncommitted`);
+    if (!r.mergedPr) why.push(r.branch ? 'no merged PR' : 'detached');
+    console.log(`  ${r.path}`);
+    console.log(`      ${r.branch || '(detached)'}  ${why.join('; ')}`);
+  }
+  console.log('\nRemove one with:  node .claude/skills/dev-server/cli.mjs wt rm <path>\n');
+}
+
+export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
+  const primaryPath = resolve(primary);
+  const target = resolve(targetArg);
+
+  if (target === primaryPath) fail('refusing to remove the primary worktree');
+
+  const trees = listWorktrees(primary);
+  const entry = trees.find((t) => t.path === target);
+  if (!entry) fail(`not a registered worktree: ${target}\nrun: git worktree list`);
+
+  const sessions = await sessionsFor(target, daemonRequest);
+  const live = sessions.filter((s) => s.status === 'running');
+  if (live.length && !opts.stopServer) {
+    fail(
+      `dev server running for this worktree (${live
+        .map((s) => `${s.id} on ${s.port}`)
+        .join(', ')})\n` + `stop it first, or re-run with --stop-server`
+    );
+  }
+  for (const s of sessions) {
+    await daemonRequest(`/sessions/${s.id}`, { method: 'DELETE' });
+    console.log(`stopped session ${s.id}`);
+  }
+
+  const dirty = dirtyCount(target);
+  if (dirty && !opts.force) {
+    fail(`${dirty} uncommitted change(s) in ${target}\ninspect them, or re-run with --force`);
+  }
+
+  const unpushed = entry.branch ? unpushedCount(entry.branch, primary) : null;
+
+  if (!existsSync(target)) {
+    console.log('directory already gone; pruning');
+  } else {
+    const links = findReparsePoints(target);
+    console.log(`reparse points: ${links.length}`);
+    for (const link of links) {
+      rmdirSync(link); // link-only; a recursive delete would walk THROUGH it
+    }
+    const left = findReparsePoints(target);
+    if (left.length) {
+      fail(
+        `${left.length} reparse point(s) still present - refusing to delete\n  ${left
+          .slice(0, 5)
+          .join('\n  ')}`
+      );
+    }
+    console.log('reparse points remaining: 0');
+
+    try {
+      rmSync(target, { recursive: true, force: true });
+    } catch (err) {
+      fail(
+        `could not delete ${target}: ${err.message}\nsomething is holding it open (a shell cwd'd inside it?)`
+      );
+    }
+    if (existsSync(target)) fail(`directory still present after delete: ${target}`);
+    console.log('directory deleted');
+  }
+
+  console.log(git(['worktree', 'prune', '-v'], primary) || 'pruned');
+
+  if (!entry.branch) return;
+
+  const pr = mergedPr(entry.branch, primary);
+  if (!pr) {
+    console.log(`branch KEPT: ${entry.branch} (no merged PR found)`);
+  } else if (unpushed) {
+    console.log(
+      `branch KEPT: ${entry.branch} (PR #${pr} merged, but ${unpushed} commit(s) exist on no remote)`
+    );
+  } else {
+    const sha = gitQuiet(['rev-parse', entry.branch], primary);
+    git(['branch', '-D', entry.branch], primary);
+    console.log(`branch deleted: ${entry.branch} (PR #${pr}, was ${sha})`);
+  }
+}
+
+function fail(msg) {
+  console.error(`\n${msg}\n`);
+  process.exit(1);
+}

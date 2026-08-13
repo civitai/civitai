@@ -88,6 +88,8 @@ export type SelectedImage = {
   label: string;
   type: MediaType;
   meta?: Record<string, unknown>;
+  /** Generator selections only — lets the server verify what the job was made from. */
+  generationWorkflowId?: string;
 };
 
 type UploadedImage = Omit<ImageGetMyInfinite[number], 'meta'> & { meta: ImageMetaProps | null };
@@ -467,6 +469,7 @@ const ImageGridMedia = ({
                 : '',
             type: type === 'training' ? 'image' : img.type,
             meta,
+            generationWorkflowId: type === 'generation' ? img.workflowId : undefined,
           },
         ];
       } else {

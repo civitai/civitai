@@ -1,6 +1,8 @@
-import { Loader, NumberInput, SegmentedControl, Stack, Text } from '@mantine/core';
+import { Anchor, Group, Loader, SegmentedControl, Stack, Text } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { PlacementPriceSlider } from '~/components/Placement/PlacementPriceSlider';
+import { placementPriceCaption, PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -32,8 +34,16 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
   const features = useFeatureFlags();
   const utils = trpc.useUtils();
 
-  const { data: row, isLoading } = trpc.placement.getSpaceRow.useQuery(
+  const {
+    data: row,
+    isPending: rowPending,
+    isError: rowFailed,
+  } = trpc.placement.getSpaceRow.useQuery(
     { surface: 'sticker', entityType: level, entityId },
+    { enabled: !!features.stickerPlacement }
+  );
+  const { data: range } = trpc.placement.getPriceRange.useQuery(
+    { surface: 'sticker' },
     { enabled: !!features.stickerPlacement }
   );
 
@@ -45,8 +55,14 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
     setPrice(row?.price ?? '');
   }, [row]);
 
-  const onError = (error: { message: string }) =>
+  // A refused write leaves the control asserting a price the server did not
+  // take. Rolling back to the row is the same failure the price guard exists to
+  // prevent, moved from the database to the screen.
+  const onError = (error: { message: string }) => {
+    setMode(row?.mode ?? 'inherit');
+    setPrice(row?.price ?? '');
     showErrorNotification({ title: "Couldn't save that", error: new Error(error.message) });
+  };
 
   const save = trpc.placement.setSpace.useMutation({
     onSuccess: () => utils.placement.invalidate(),
@@ -58,7 +74,11 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
   });
 
   if (!features.stickerPlacement) return null;
-  if (isLoading) return <Loader size="xs" />;
+  if (rowPending) return <Loader size="xs" />;
+  // `row` is undefined after a failed read exactly as it is for a level with no
+  // row of its own, and the control cannot tell them apart. Showing `inherit`
+  // means one click clears or overwrites a setting the creator never saw.
+  if (rowFailed) return null;
 
   const commit = (nextMode: string, nextPrice: number | '') => {
     // Inheriting is the absence of a row, so it deletes rather than writing
@@ -82,6 +102,10 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
       price: nextPrice === '' ? null : nextPrice,
     });
   };
+
+  const defaultPrice = PLACEMENT_SURFACES.sticker.defaultPrice;
+  const cap = range?.max ?? null;
+  const caption = typeof price === 'number' ? placementPriceCaption('sticker', price, cap) : null;
 
   return (
     <Stack gap={4}>
@@ -109,15 +133,39 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
         </Text>
       ) : (
         mode !== 'off' && (
-          <NumberInput
-            size="xs"
-            label="Price"
-            description="Leave empty to use the price from the level above."
-            value={price}
-            min={0}
-            onChange={(value) => setPrice(typeof value === 'number' ? value : '')}
-            onBlur={() => commit(mode, price)}
-          />
+          <Stack gap={2}>
+            <Group justify="space-between" gap="xs">
+              <Text size="xs" fw={500}>
+                Price
+              </Text>
+              {price !== '' && (
+                <Anchor component="button" type="button" size="xs" onClick={() => commit(mode, '')}>
+                  Use the price from the level above
+                </Anchor>
+              )}
+            </Group>
+            <PlacementPriceSlider
+              size="xs"
+              surface="sticker"
+              cap={cap}
+              value={price}
+              fallback={defaultPrice}
+              onChange={setPrice}
+              onCommit={(value) => {
+                setPrice(value);
+                commit(mode, value);
+              }}
+            />
+            {/* Pulled up into the row the marks already reserve and centred
+                between them, so the caption costs no extra height. */}
+            {(price === '' || caption) && (
+              <Text size="xs" ta="center" mt={-22} c={caption?.warning ? 'yellow' : 'dimmed'}>
+                {price === ''
+                  ? `Following the price from the level above, or ${defaultPrice} Buzz if none is set.`
+                  : caption?.text}
+              </Text>
+            )}
+          </Stack>
         )
       )}
     </Stack>

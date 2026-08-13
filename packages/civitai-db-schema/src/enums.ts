@@ -680,6 +680,21 @@ export const CollectionContributorPermission = {
 
 export type CollectionContributorPermission = (typeof CollectionContributorPermission)[keyof typeof CollectionContributorPermission];
 
+export const CollectionCollaboratorRole = {
+  Contributor: 'Contributor',
+  Manager: 'Manager',
+} as const;
+
+export type CollectionCollaboratorRole = (typeof CollectionCollaboratorRole)[keyof typeof CollectionCollaboratorRole];
+
+export const CollectionInviteStatus = {
+  Pending: 'Pending',
+  Accepted: 'Accepted',
+  Declined: 'Declined',
+} as const;
+
+export type CollectionInviteStatus = (typeof CollectionInviteStatus)[keyof typeof CollectionInviteStatus];
+
 export const HomeBlockType = {
   Collection: 'Collection',
   Announcement: 'Announcement',
