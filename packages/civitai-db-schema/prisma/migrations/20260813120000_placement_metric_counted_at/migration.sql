@@ -23,6 +23,7 @@
 -- 1.
 ALTER TABLE "Placement" ADD COLUMN IF NOT EXISTS "metricCountedAt" TIMESTAMP(3);
 ALTER TABLE "Placement" ADD COLUMN IF NOT EXISTS "metricClaimedAt" TIMESTAMP(3);
+ALTER TABLE "Placement" ADD COLUMN IF NOT EXISTS "metricAttempts" INTEGER NOT NULL DEFAULT 0;
 
 -- 2. Everything already settled was counted (or lost) by the best-effort emit
 --    that shipped in #3849, and the two are indistinguishable from here.

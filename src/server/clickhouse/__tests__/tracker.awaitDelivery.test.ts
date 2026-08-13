@@ -73,24 +73,27 @@ describe('awaitDelivery', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('bounds each attempt, so a wedged tracker cannot hold the caller open', async () => {
-    await new Tracker().entityMetric(metric(), { awaitDelivery: true });
+  it('gives each attempt its own budget, not one budget for the whole retry loop', async () => {
+    fetchMock = respond(500);
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(new Tracker().entityMetric(metric(), { awaitDelivery: true })).rejects.toThrow();
 
     // Nothing configures an undici dispatcher, so an unsignalled fetch inherits
     // a 300s header timeout — three of those on one row is a wedge, not a retry.
-    const [, init] = fetchMock.mock.calls[0] as [string, { signal?: AbortSignal }];
-    expect(init.signal).toBeInstanceOf(AbortSignal);
+    const signals = fetchMock.mock.calls.map(
+      (call) => (call as [string, { signal?: AbortSignal }])[1].signal
+    );
+    expect(signals.every((signal) => signal instanceof AbortSignal)).toBe(true);
+    // One signal hoisted out of the loop would be worse than none: `fetch`
+    // rejects immediately on an already-aborted signal, so the first slow
+    // attempt would silently consume the other two.
+    expect(signals[0]).not.toBe(signals[1]);
+    expect(signals[1]).not.toBe(signals[2]);
   });
 });
 
 describe('fire and forget', () => {
-  it('swallows an exhausted failure, because nothing is waiting on it', async () => {
-    fetchMock = respond(500);
-    vi.stubGlobal('fetch', fetchMock);
-
-    await expect(new Tracker().entityMetric(metric())).resolves.toBe(true);
-  });
-
   it('leaves the request unsignalled — nobody is holding a response open for it', async () => {
     await new Tracker().entityMetric(metric());
     // The dispatch is not awaited, so let its first attempt reach fetch.
@@ -98,5 +101,15 @@ describe('fire and forget', () => {
 
     const [, init] = fetchMock.mock.calls[0] as [string, { signal?: AbortSignal }];
     expect(init.signal).toBeUndefined();
+  });
+
+  // LAST on purpose. Its retry chain outlives the test by ~750ms and `fetch` is
+  // resolved from the global at call time, so a later test's stub would receive
+  // this one's third attempt.
+  it('swallows an exhausted failure, because nothing is waiting on it', async () => {
+    fetchMock = respond(500);
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(new Tracker().entityMetric(metric())).resolves.toBe(true);
   });
 });

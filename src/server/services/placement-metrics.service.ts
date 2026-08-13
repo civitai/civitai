@@ -62,11 +62,14 @@ import { updateEntityMetricDetached } from '~/server/utils/metric-helpers';
  * `updateMany` with the NULL guard rather than `update`, so a row two runs both
  * reached does not have its original stamp overwritten.
  */
-async function markPlacementsCounted(placementIds: number[]) {
+async function markPlacementsCounted(placementIds: number[], lease: Date) {
   if (!placementIds.length) return 0;
 
   const { count } = await dbWrite.placement.updateMany({
-    where: { id: { in: placementIds }, metricCountedAt: null },
+    // Fenced on the lease. A run slower than `CLAIM_RETRY_MS` has had its own
+    // claim expire and another run may hold these rows now; writing without the
+    // token would let the loser confirm work the winner is still doing.
+    where: { id: { in: placementIds }, metricCountedAt: null, metricClaimedAt: lease },
     data: { metricCountedAt: new Date() },
   });
 
@@ -77,10 +80,24 @@ async function markPlacementsCounted(placementIds: number[]) {
  * How long a claim stands before another run may take the row back.
  *
  * The recovery window for a process that claimed rows and died before it could
- * confirm them. Long enough that a slow run is never overtaken by the next tick,
- * short enough that a crash does not park the Buzz for a day.
+ * confirm them. **Not load-bearing for correctness** — a run slower than this
+ * loses its lease, and every write it makes afterwards is fenced on the exact
+ * claim timestamp it was handed, so the row belongs to whoever holds the lease
+ * now. Picking a number that "should" be long enough is what this replaced: the
+ * worst case is bounded by a timeout times a retry count times a page size, and
+ * that product was already larger than any duration worth waiting for.
  */
 const CLAIM_RETRY_MS = 15 * 60 * 1000;
+
+/**
+ * How many times a row may be claimed before the sweep leaves it alone.
+ *
+ * A payload the tracker rejects fails identically on every retry, and the claim
+ * is ordered oldest-first, so without a ceiling one poisoned row sits at the
+ * head of the queue forever and starves the whole backlog behind it. Past the
+ * ceiling the row is reported and skipped rather than retried.
+ */
+const MAX_CLAIM_ATTEMPTS = 10;
 
 /**
  * The durable path: count every placement that reached `approved` and never made
@@ -93,8 +110,8 @@ const CLAIM_RETRY_MS = 15 * 60 * 1000;
  * write `removed`. Getting that wrong makes a counter that decrements, which is
  * the one thing it must never do.
  *
- * **The claim is a separate write from the confirmation, and that is the whole
- * design.** Two sweeps can run at once — the job lock fails open when Redis is
+ * **The claim is a lease, and every write afterwards carries its token.** That
+ * is the whole design. Two sweeps can run at once — the job lock fails open when Redis is
  * unavailable, and `?noCheck=1` bypasses it — and with a single column both runs
  * read the same unstamped rows and both emit before either stamps. The counter
  * never reverses, so that over-count is permanent. `FOR UPDATE SKIP LOCKED` plus
@@ -148,7 +165,14 @@ export async function sweepUncountedPlacements({
    * placement sets it.
    */
   const claimed = await dbWrite.$queryRaw<
-    { id: number; targetId: number; placerId: number; amount: number }[]
+    {
+      id: number;
+      targetId: number;
+      placerId: number;
+      amount: number;
+      metricClaimedAt: Date;
+      metricAttempts: number;
+    }[]
   >`
     WITH candidate AS (
       SELECT id
@@ -158,22 +182,35 @@ export async function sweepUncountedPlacements({
         AND "resolvedAt" IS NOT NULL
         AND (status = 'approved' OR (status = 'removed' AND "takenDownAt" IS NOT NULL))
         AND ("metricClaimedAt" IS NULL OR "metricClaimedAt" < ${staleBefore})
+        AND "metricAttempts" < ${MAX_CLAIM_ATTEMPTS}
       ORDER BY "resolvedAt" ASC
       LIMIT ${limit}
       FOR UPDATE SKIP LOCKED
     )
     UPDATE "Placement" p
-    SET "metricClaimedAt" = now()
+    SET "metricClaimedAt" = now(), "metricAttempts" = p."metricAttempts" + 1
     FROM candidate c
     WHERE p.id = c.id
-    RETURNING p.id, p."targetId", p."placerId", p.amount
+    RETURNING p.id, p."targetId", p."placerId", p.amount, p."metricClaimedAt", p."metricAttempts"
   `;
 
   if (!claimed.length) return idle;
 
+  // One statement, so `now()` is the transaction timestamp and every row in the
+  // page carries the same value. That is the lease token every write below is
+  // fenced on.
+  const lease = claimed[0].metricClaimedAt;
+
   const groups = new Map<
     string,
-    { key: string; imageId: number; placerId: number; amount: number; ids: number[] }
+    {
+      key: string;
+      imageId: number;
+      placerId: number;
+      amount: number;
+      ids: number[];
+      attempts: number;
+    }
   >();
 
   for (const row of claimed) {
@@ -184,9 +221,11 @@ export async function sweepUncountedPlacements({
       placerId: row.placerId,
       amount: 0,
       ids: [],
+      attempts: 0,
     };
     group.amount += row.amount;
     group.ids.push(row.id);
+    group.attempts = Math.max(group.attempts, row.metricAttempts);
     groups.set(key, group);
   }
 
@@ -221,7 +260,7 @@ export async function sweepUncountedPlacements({
       if (!delivered) continue;
 
       alreadyEmitted?.add(group.key);
-      counted += await markPlacementsCounted(group.ids);
+      counted += await markPlacementsCounted(group.ids, lease);
       amount += group.amount;
     } catch (error) {
       await logToAxiom({
@@ -232,6 +271,11 @@ export async function sweepUncountedPlacements({
         placerId: group.placerId,
         placementIds: group.ids,
         amount: group.amount,
+        attempts: group.attempts,
+        // Named so a poisoned row is visible before it is abandoned rather than
+        // after: past the ceiling the claim stops selecting it entirely, and the
+        // only remaining symptom is a counter that is quietly short.
+        abandonedAfterThis: group.attempts >= MAX_CLAIM_ATTEMPTS,
         error: (error as Error).message,
       }).catch(() => null);
     }
@@ -241,7 +285,10 @@ export async function sweepUncountedPlacements({
   // arriving in the same second as a group that has already gone out.
   if (deferredIds.length)
     await dbWrite.placement.updateMany({
-      where: { id: { in: deferredIds }, metricCountedAt: null },
+      // Fenced for the same reason the confirmation is: releasing a claim we no
+      // longer hold would hand rows another run is actively emitting for to a
+      // third one.
+      where: { id: { in: deferredIds }, metricCountedAt: null, metricClaimedAt: lease },
       data: { metricClaimedAt: null },
     });
 

@@ -3067,6 +3067,13 @@ export type Placement = {
    * writes turning into the loss this whole feature exists to end.
    */
   metricClaimedAt: Timestamp | null;
+  /**
+   * How many times a sweep has taken this row. A row the tracker rejects fails
+   * identically on every retry, and the claim orders by `resolvedAt`, so
+   * without a ceiling one poisoned row sits at the head of the queue being
+   * re-claimed forever and starves everything behind it.
+   */
+  metricAttempts: Generated<number>;
 };
 export type PlacementSpace = {
   id: Generated<number>;

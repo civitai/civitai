@@ -122,6 +122,11 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   // config poll alone. Evaluated once per model-file scan and once per nightly
   // job run — nowhere near hot enough for the cache to be worth the extra lag.
   FLIPT_FEATURE_FLAGS.MINOR_HASH_AUTO_FLAG,
+  // The stop button for a sweep that can permanently double production counters
+  // — nothing takes a counter back down. Evaluated about ten times per
+  // five-minute tick, so the cache saves nothing measurable and the staleness is
+  // all cost at the moment someone is trying to turn it off.
+  FLIPT_FEATURE_FLAGS.PLACEMENT_METRIC_SWEEP,
 ]);
 
 const flipt = createFliptClient({

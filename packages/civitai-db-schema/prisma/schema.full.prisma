@@ -7889,6 +7889,11 @@ model Placement {
   /// the recovery window is retried, which is what stops a crash between the two
   /// writes turning into the loss this whole feature exists to end.
   metricClaimedAt       DateTime?
+  /// How many times a sweep has taken this row. A row the tracker rejects fails
+  /// identically on every retry, and the claim orders by `resolvedAt`, so
+  /// without a ceiling one poisoned row sits at the head of the queue being
+  /// re-claimed forever and starves everything behind it.
+  metricAttempts        Int       @default(0)
   transactions          PlacementTransaction[]
 
   @@index([surface, targetType, targetId, status])

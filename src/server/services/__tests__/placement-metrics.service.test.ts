@@ -25,12 +25,23 @@ vi.mock('~/server/logging/client', () => ({ logToAxiom }));
 
 const { sweepUncountedPlacements } = await import('~/server/services/placement-metrics.service');
 
-type Row = { id: number; targetId: number; placerId: number; amount: number };
+type Row = {
+  id: number;
+  targetId: number;
+  placerId: number;
+  amount: number;
+  metricClaimedAt: Date;
+  metricAttempts: number;
+};
+
+const LEASE = new Date('2026-08-13T12:00:00.000Z');
 
 const row = (over: Partial<Row> & { id: number }): Row => ({
   targetId: 10,
   placerId: 20,
   amount: 100,
+  metricClaimedAt: LEASE,
+  metricAttempts: 1,
   ...over,
 });
 
@@ -50,6 +61,9 @@ const releasedIds = () =>
 
 /** The claim statement's SQL, reassembled from the tagged template. */
 const claimSql = () => ((queryRaw.mock.calls[0]?.[0] as string[]) ?? []).join(' ? ');
+
+/** The values Prisma interpolates into it, in order. */
+const claimValues = () => (queryRaw.mock.calls[0] ?? []).slice(1);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -83,6 +97,48 @@ describe('sweepUncountedPlacements', () => {
     // either stamps, and the counter never comes back down.
     expect(sql).toMatch(/FOR UPDATE SKIP LOCKED/);
     expect(sql).toMatch(/SET "metricClaimedAt" = now\(\)/);
+    // Every clause the sweep's correctness rests on, because nothing downstream
+    // of this query can tell that one of them is missing. Deleting the stale
+    // check makes the claim decorative; deleting the counted check re-emits
+    // finished rows forever; deleting the approved leg silently counts only
+    // takedowns; deleting the targetType check emits Image metrics for
+    // placements that are not on images.
+    expect(sql).toMatch(/"metricCountedAt" IS NULL/);
+    expect(sql).toMatch(/"metricClaimedAt" IS NULL OR "metricClaimedAt" </);
+    expect(sql).toMatch(/status = 'approved' OR/);
+    expect(sql).toMatch(/"targetType" = 'image'/);
+    expect(sql).toMatch(/"metricAttempts" </);
+    expect(sql).toMatch(/ORDER BY "resolvedAt" ASC/);
+    expect(sql).toMatch(/LIMIT/);
+    // The bindings, so an interpolation dropped from the template shows up as a
+    // missing value rather than as a query that quietly matches everything.
+    const [staleBefore, attempts, limit] = claimValues();
+    expect(staleBefore).toBeInstanceOf(Date);
+    expect(attempts).toBeGreaterThan(0);
+    expect(limit).toBe(100);
+  });
+
+  it('fences every write on the lease it was handed', async () => {
+    claims([row({ id: 1 })]);
+
+    await sweepUncountedPlacements({ limit: 100 });
+
+    // A run slower than the stale window has lost its claim, and another run may
+    // hold these rows. Confirming without the token lets the loser write over
+    // work the winner is still doing.
+    expect(updateMany.mock.calls[0][0].where.metricClaimedAt).toEqual(LEASE);
+  });
+
+  it('releases a deferred claim only while it still holds it', async () => {
+    const alreadyEmitted = new Set<string>();
+    claims([row({ id: 1 })]);
+    await sweepUncountedPlacements({ limit: 100, alreadyEmitted });
+    claims([row({ id: 2 })]);
+
+    await sweepUncountedPlacements({ limit: 100, alreadyEmitted });
+
+    const release = updateMany.mock.calls.find((call) => call[0].data.metricClaimedAt === null);
+    expect(release?.[0].where.metricClaimedAt).toEqual(LEASE);
   });
 
   it('excludes a placement that went straight from pending to removed', async () => {
@@ -181,9 +237,12 @@ describe('sweepUncountedPlacements', () => {
     expect(result.counted).toBe(0);
   });
 
-  it('reports an idle run when nothing is claimable', async () => {
+  it('reports an idle run when nothing is claimable, having tried to claim', async () => {
     const result = await sweepUncountedPlacements({ limit: 100 });
 
+    // The claim ran and came back empty — distinct from the flag case above,
+    // which must not touch the table at all.
+    expect(queryRaw).toHaveBeenCalledTimes(1);
     expect(updateEntityMetricDetached).not.toHaveBeenCalled();
     expect(updateMany).not.toHaveBeenCalled();
     expect(result).toEqual({ considered: 0, counted: 0, amount: 0, deferred: 0, skipped: false });
