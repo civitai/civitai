@@ -41,6 +41,7 @@ import {
   createCheckpointGraph,
 } from './common';
 import { isWorkflowOrVariant } from './config/workflows';
+import { ltxVersionIds } from './version-ids';
 
 // =============================================================================
 // Constants
@@ -51,7 +52,7 @@ const LTXV2_DEV_ID = 2578325;
 const LTXV2_DISTILLED_ID = 2600562;
 
 /** LTXV23 model version IDs */
-const LTXV23_DEV_ID = 2749908;
+const LTXV23_DEV_ID = ltxVersionIds.v23Dev;
 const LTXV23_DISTILLED_ID = 2749948;
 
 /** LTXV25 model version IDs */
@@ -59,7 +60,7 @@ const LTXV25_DEV_ID = 3220143;
 const LTXV25_DISTILLED_ID = 3220250;
 
 /** Sulphur 2 model version IDs (LTXV23 ecosystem) */
-const SULPHUR2_DEV_ID = 2921800;
+const SULPHUR2_DEV_ID = ltxVersionIds.sulphur2Dev;
 const SULPHUR2_DISTILLED_ID = 2923808;
 
 /** Set of all distilled version IDs (across every LTX ecosystem) */

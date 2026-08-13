@@ -57,6 +57,19 @@ vi.mock('~/components/Sticker/placement.util', async (importOriginal) => ({
 vi.mock('~/components/Sticker/StickerPlacementTray', () => ({
   StickerPlacementTray: () => null,
 }));
+// The history panel is the same case, and leaving it in broke the `enabled`
+// assertion below rather than anything it was testing: it calls
+// `useStickerPlacements` too, with `enabled: opened` — false until someone opens
+// it — and the mock above collects EVERY caller's argument into one array. So
+// the bar's own `enabled: true` arrived alongside the panel's `false`.
+//
+// Mocked out rather than relaxing the assertion to `.some(...)`: `.some` passes
+// even when the bar's own query is disabled, which is the exact regression the
+// test exists to catch.
+vi.mock('~/components/Sticker/StickerHistoryPanel', () => ({
+  StickerHistoryButton: () => null,
+  StickerHistoryPanel: () => null,
+}));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ stickerPlacement: true }),
 }));

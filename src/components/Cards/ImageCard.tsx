@@ -6,7 +6,7 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
-import { RemixButton } from '~/components/Cards/components/RemixButton';
+import { CardRemixButton } from '~/components/Image/Remix/CardRemixButton';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
@@ -39,7 +39,7 @@ export function ImageCard({ data }: Props) {
           )}
           <div className="ml-auto flex flex-col gap-2">
             <ImageContextMenu image={data} />
-            <RemixButton type={data.type} id={data.id} canGenerate={data.hasMeta} />
+            <CardRemixButton image={data} />
           </div>
         </div>
       }

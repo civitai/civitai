@@ -5,6 +5,7 @@ import {
   settlePlacement,
   MAX_LEG_ATTEMPTS,
 } from '~/server/services/placement-escrow.service';
+import { recordPlacementTip } from '~/server/services/placement-metrics.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { spendStickerUsesFor } from '~/server/services/sticker.service';
@@ -21,8 +22,11 @@ import type {
 } from '~/shared/utils/sticker-placement';
 import {
   isStickerPlacementData,
+  normalizeStickerComment,
   normalizeStickerPlacement,
+  parseStickerPlacementData,
   stickerMaxScale,
+  stickerRemovableAt,
 } from '~/shared/utils/sticker-placement';
 
 const SURFACE = 'sticker' as const;
@@ -36,6 +40,33 @@ const TARGET_TYPE = 'image' as const;
  * through. Their remedy for the rest is block, which declines all of them.
  */
 const MAX_PENDING_PER_OWNER = 10;
+
+/**
+ * The note on a placement, if this viewer may read it.
+ *
+ * A hidden note stays readable to the three parties who have a reason to see it
+ * — the owner who hid it, the placer who wrote and paid for it, and a moderator
+ * acting on a report about it — and to nobody else. Hiding is the owner's
+ * judgement about their own image, not a deletion: the text is what a report is
+ * about, so a moderator opening one must be able to see what was said.
+ *
+ * Both fields are re-checked here rather than trusted from the payload.
+ * `isStickerPlacementData` validates the geometry and stops there, which is
+ * right — a row with a malformed note should still draw its sticker — so this
+ * is the boundary where the note has to prove it is a string. `commentHidden`
+ * is compared against `true` for the same reason: a hand-edited `"false"` is
+ * truthy, and would hide a note nobody refused.
+ */
+const visibleStickerComment = (data: StickerPlacementData, isParty: boolean) => {
+  if (typeof data.comment !== 'string' || !data.comment) return undefined;
+  return data.commentHidden === true && !isParty ? undefined : data.comment;
+};
+
+/** The lock's expiry, or `null` once it has already passed. */
+const nextRemovableAt = (approvedAt: Date) => {
+  const removableAt = stickerRemovableAt(approvedAt);
+  return removableAt > new Date() ? removableAt : null;
+};
 
 /**
  * The sticker the placer chose, from the primary, with ownership resolved.
@@ -78,6 +109,17 @@ export type CreateStickerPlacement = {
   /** Moderators may exceed a creator's size limit. Justin's call. */
   isModerator?: boolean;
 };
+
+/**
+ * A placer's optional note travels with the placement it belongs to.
+ *
+ * Not a `CommentV2` thread: this is one immutable line bought with the
+ * placement, and giving it the comment system's identity would give it that
+ * system's edit, reply and notification behaviour — none of which anyone asked
+ * for, all of which would then need their own answer to "the owner accepted the
+ * sticker and refused the note".
+ */
+const commentFrom = (data: { comment?: string | null }) => normalizeStickerComment(data.comment);
 
 /**
  * Places a sticker on an image, charging a use and the owner's price.
@@ -161,6 +203,8 @@ export async function createStickerPlacement({
   const sticker = await loadPlaceableSticker({ cosmeticId: data.cosmeticId, placerId });
   await assertHasUse({ userId: placerId, cosmeticId: sticker.id });
 
+  const comment = commentFrom(data);
+
   const placement = await dbWrite.placement.create({
     data: {
       surface: SURFACE,
@@ -177,6 +221,9 @@ export async function createStickerPlacement({
       data: {
         cosmeticId: sticker.id,
         ...normalizeStickerPlacement(data),
+        // Omitted rather than stored as an empty string, so "left the field
+        // blank" and "wrote nothing but spaces" are the same row.
+        ...(comment ? { comment } : {}),
       },
     },
     select: { id: true },
@@ -209,8 +256,19 @@ export async function createStickerPlacement({
 
   // `auto` settles immediately, which is what makes the placement live. `review`
   // leaves it pending, visible only to its placer, until the owner acts.
-  if (space.mode === 'auto')
-    await settlePlacement({ placementId: placement.id, action: 'approve', actorId: space.ownerId });
+  if (space.mode === 'auto') {
+    const { settled } = await settlePlacement({
+      placementId: placement.id,
+      action: 'approve',
+      actorId: space.ownerId,
+    });
+    // Gated on the settle actually claiming the transition, not on reaching this
+    // line: `settlePlacement` returns `settled: false` when something else got
+    // there first, and counting then would add the placement's Buzz to the image
+    // twice for one payment.
+    if (settled)
+      await recordPlacementTip({ surface: SURFACE, imageId, amount: space.price, placerId });
+  }
 
   return { placementId: placement.id, status: space.mode === 'auto' ? 'approved' : 'pending' };
 }
@@ -245,8 +303,18 @@ export type StickerPlacementView = {
   status: PlacementStatus;
   amount: number;
   data: StickerPlacementData;
+  /**
+   * When it was placed, which is what decides what covers what — and, on the
+   * detail view, the order and the pacing of the reveal. Carried on the listing
+   * rather than left to `getStickerPlacementDetail`: a client that has to ask
+   * per placement cannot order them until every one of those queries lands, so
+   * the layer order would settle after paint.
+   */
+  placedAt: Date;
   /** True only for the placer's own placement awaiting the owner. */
   isPending: boolean;
+  /** Whether this placement carries a note the viewer may read. */
+  hasComment: boolean;
 };
 
 /**
@@ -304,8 +372,11 @@ export async function getStickerPlacementDetail({
     select: {
       id: true,
       createdAt: true,
+      resolvedAt: true,
       status: true,
       data: true,
+      ownerId: true,
+      placerId: true,
       placer: { select: userWithCosmeticsSelect },
     },
   });
@@ -314,9 +385,12 @@ export async function getStickerPlacementDetail({
 
   // Read off the placement's own payload rather than joined in the query above:
   // `data` is JSON, so the cosmetic id is not a relation Prisma can follow.
-  const cosmeticId = isStickerPlacementData(placement.data)
-    ? (placement.data as StickerPlacementData).cosmeticId
-    : null;
+  const data = parseStickerPlacementData(placement.data);
+  const cosmeticId = data?.cosmeticId ?? null;
+
+  const isParty =
+    isModerator ||
+    (!!viewerId && (viewerId === placement.ownerId || viewerId === placement.placerId));
 
   const cosmetic = cosmeticId
     ? await dbRead.cosmetic.findUnique({
@@ -333,6 +407,36 @@ export async function getStickerPlacementDetail({
     placedAt: placement.createdAt,
     status: placement.status as PlacementStatus,
     placer: placement.placer,
+    comment: data ? visibleStickerComment(data, isParty) ?? null : null,
+    /**
+     * Whether this viewer owns the content, so the card can offer the controls
+     * that belong to the owner. Emitted as the answer rather than as `ownerId`
+     * for the caller to compare: the id is not otherwise on this card, and a
+     * page that has it will eventually compare it somewhere the server does not.
+     */
+    viewerIsOwner: !!viewerId && viewerId === placement.ownerId,
+    /**
+     * Whether the note is currently refused — for the owner whose control it
+     * labels and the placer who would otherwise think their note was live.
+     *
+     * `false` for everyone else rather than the truth. A stranger has nothing to
+     * do with the answer, and a hover card that draws no text but says a note
+     * was refused tells them a note existed and how the owner judged it, which
+     * is the fact withholding the text was protecting.
+     */
+    commentHidden: isParty && !!data?.commentHidden,
+    /**
+     * When the owner may take this off, so the button can be disabled with a
+     * date rather than refusing after the click. `null` once the lock has run
+     * out, for anything not live, and for anyone but the owner — nobody else has
+     * a control it explains, and it is the only field here that would tell a
+     * stranger when the owner approved. The server refuses independently: this
+     * is what the UI says, not what decides it.
+     */
+    removableAt:
+      placement.status === 'approved' && viewerId === placement.ownerId
+        ? nextRemovableAt(placement.resolvedAt ?? placement.createdAt)
+        : null,
     sticker: cosmetic
       ? {
           id: cosmetic.id,
@@ -394,22 +498,36 @@ export async function getStickerPlacements({
       status: true,
       amount: true,
       data: true,
+      createdAt: true,
     },
     orderBy: { createdAt: 'asc' },
   });
 
-  return rows
-    .filter((row) => isStickerPlacementData(row.data))
-    .map((row) => ({
-      id: row.id,
-      imageId: row.targetId,
-      placerId: row.placerId,
-      ownerId: row.ownerId,
-      status: row.status as PlacementStatus,
-      amount: row.amount,
-      data: row.data as StickerPlacementData,
-      isPending: row.status === 'pending',
-    }));
+  return rows.flatMap((row) => {
+    const data = parseStickerPlacementData(row.data);
+    if (!data) return [];
+
+    const isParty = !!viewerId && (viewerId === row.ownerId || viewerId === row.placerId);
+
+    return [
+      {
+        id: row.id,
+        imageId: row.targetId,
+        placerId: row.placerId,
+        ownerId: row.ownerId,
+        status: row.status as PlacementStatus,
+        amount: row.amount,
+        placedAt: row.createdAt,
+        // The note's text is deliberately NOT in the listing, which runs for
+        // every image on a feed page — only whether there is one, so an overlay
+        // can mark the sticker without the page carrying everyone's comments.
+        // The text comes with the hover, from `getStickerPlacementDetail`.
+        data: { ...data, comment: undefined, commentHidden: undefined },
+        isPending: row.status === 'pending',
+        hasComment: !!visibleStickerComment(data, isParty),
+      },
+    ];
+  });
 }
 
 /** Approved placements per image, for the reaction-bar count. */
@@ -499,25 +617,49 @@ type OwnerAction = 'approve' | 'decline' | 'remove';
 /**
  * The owner acting on a placement on their own content.
  *
- * `remove` maps to `removeByOwner`, which refunds the placer in full and pays
- * the owner nothing. That asymmetry with decline is deliberate: a fee for
- * after-the-fact removal would pay creators to accept placements, bank the
- * money, and sweep them off later.
+ * `approve` and `decline` settle a pending placement. `remove` is a different
+ * operation on a different state — a live placement whose money is already
+ * paid — and goes through `removeApprovedSticker`, which explains why.
  */
 export async function actOnStickerPlacement({
   placementId,
   action,
   userId,
   isModerator = false,
+  hideComment,
 }: {
   placementId: number;
   action: OwnerAction;
   userId: number;
   isModerator?: boolean;
+  /**
+   * Partial approval: take the sticker, refuse the note (Justin's call in the
+   * 2026-08-12 review). Carried on the approve rather than left to a second
+   * call, so an owner who refuses a note never has a moment where it is live.
+   *
+   * **`undefined` means "don't touch it", and that is load-bearing.** An owner
+   * can already have hidden the note from the hover card while the placement
+   * sat pending; defaulting this to `false` would make the ordinary Approve
+   * button publish a note they had explicitly refused. Where the two readings
+   * disagree, the safe one is the note staying hidden — it is someone else's
+   * text on the owner's image, and the owner can put it back in one click.
+   */
+  hideComment?: boolean;
 }) {
   const placement = await dbWrite.placement.findUnique({
     where: { id: placementId },
-    select: { id: true, ownerId: true, status: true, surface: true },
+    select: {
+      id: true,
+      ownerId: true,
+      placerId: true,
+      targetId: true,
+      amount: true,
+      status: true,
+      surface: true,
+      data: true,
+      createdAt: true,
+      resolvedAt: true,
+    },
   });
 
   if (!placement || placement.surface !== SURFACE)
@@ -530,10 +672,155 @@ export async function actOnStickerPlacement({
   if (action !== 'remove' && placement.status !== 'pending')
     throw throwBadRequestError('placement: that placement has already been actioned');
 
-  const settleAction =
-    action === 'approve' ? 'approve' : action === 'decline' ? 'decline' : 'removeByOwner';
+  if (action === 'remove') return removeApprovedSticker({ placement, userId, isModerator });
 
-  return settlePlacement({ placementId, action: settleAction, actorId: userId });
+  // Before the settle, so a refused note is never live for the window between
+  // the two writes.
+  if (action === 'approve' && hideComment !== undefined)
+    await hideStickerComment(placement, hideComment);
+
+  const { settled } = await settlePlacement({
+    placementId,
+    action: action === 'approve' ? 'approve' : 'decline',
+    actorId: userId,
+  });
+
+  // Gated on the settle claiming the transition rather than on the action asked
+  // for: two owners' tabs both pressing approve would otherwise count the same
+  // payment on the image twice.
+  if (action === 'approve' && settled)
+    await recordPlacementTip({
+      surface: SURFACE,
+      imageId: placement.targetId,
+      amount: placement.amount,
+      placerId: placement.placerId,
+    });
+
+  return { settled };
+}
+
+type ActionablePlacement = {
+  id: number;
+  ownerId: number;
+  status: string;
+  data: unknown;
+  createdAt: Date;
+  resolvedAt: Date | null;
+};
+
+/**
+ * The owner taking a live sticker off, once it has been up for its week.
+ *
+ * **Not `settlePlacement`, which cannot do this.** That claims its transition
+ * with `WHERE status = 'pending'`, so an approved row matches nothing: the
+ * removal reported success, moved no money and left the sticker exactly where it
+ * was. The direct write is the same one `removePlacementByModerator` and the
+ * remix gallery already use for a live row, and reusing their shape is what
+ * stops a third meaning of "removed" existing.
+ *
+ * No money moves, which is the whole reason for the lock. Approval already paid
+ * the owner, and a removal that refunded would let them bank the Buzz and wipe
+ * the sticker before anyone saw it — indistinguishable from an honest removal,
+ * and it costs the placer everything they paid. So the sticker stays up for a
+ * week and then comes off for free, rather than coming off at once for a refund
+ * the owner controls the timing of.
+ */
+async function removeApprovedSticker({
+  placement,
+  userId,
+  isModerator,
+}: {
+  placement: ActionablePlacement;
+  userId: number;
+  isModerator: boolean;
+}) {
+  // A moderator acting on someone else's content is a takedown, not an owner
+  // decision. An owner who also happens to be a moderator is still the owner —
+  // the exemption follows the role being exercised, not the account.
+  const isModeratorTakedown = isModerator && placement.ownerId !== userId;
+
+  if (!isModeratorTakedown) {
+    // Falls back to `createdAt` rather than skipping the check when `resolvedAt`
+    // is absent. Gating on the column being set fails OPEN: a hand-seeded row,
+    // or anything predating the approval path writing it, could be removed
+    // immediately — the exact case the lock exists to prevent. `createdAt` is
+    // never null, so there is always a time to measure from.
+    const removableAt = stickerRemovableAt(placement.resolvedAt ?? placement.createdAt);
+    if (removableAt > new Date())
+      throw throwBadRequestError(
+        `placement: this sticker can be removed from ${removableAt.toISOString()}. Someone paid to place it, so it stays up for a week after you accept it.`
+      );
+  }
+
+  const { count } = await dbWrite.placement.updateMany({
+    where: { id: placement.id, status: 'approved' },
+    data: {
+      status: 'removed',
+      removedBy: isModeratorTakedown ? 'moderator' : 'owner',
+      // Not `resolvedAt`/`resolvedById`: those record who approved it, and
+      // overwriting them here would destroy the approval trail.
+      takenDownAt: new Date(),
+      takenDownById: userId,
+    },
+  });
+
+  return { settled: count > 0 };
+}
+
+/**
+ * Writes the note's hidden flag, preserving the rest of the payload.
+ *
+ * Read-modify-write rather than a JSON path update because `data` is the
+ * surface's whole payload — position, scale, rotation, the cosmetic id — and a
+ * client-supplied replacement would let an owner move someone's sticker while
+ * refusing their note.
+ */
+async function hideStickerComment(placement: { id: number; data: unknown }, hidden: boolean) {
+  if (!isStickerPlacementData(placement.data)) return;
+  const data = placement.data as StickerPlacementData;
+  // Nothing to hide and nothing to say about it. Writing the flag anyway would
+  // put `commentHidden` on placements that never carried a note, which reads as
+  // a refusal that never happened.
+  if (!data.comment) return;
+
+  await dbWrite.placement.update({
+    where: { id: placement.id },
+    data: { data: { ...data, commentHidden: hidden } },
+  });
+}
+
+/**
+ * The owner changing their mind about a note after the fact, either way.
+ *
+ * Unlocked, unlike removing the sticker: the week protects what the placer paid
+ * for, which is the placement. The note came with it and is the owner's to
+ * refuse at any time — and being able to put one back is what makes hiding a
+ * safe first move on something ambiguous.
+ */
+export async function setStickerCommentHidden({
+  placementId,
+  hidden,
+  userId,
+  isModerator = false,
+}: {
+  placementId: number;
+  hidden: boolean;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  const placement = await dbWrite.placement.findUnique({
+    where: { id: placementId },
+    select: { id: true, ownerId: true, surface: true, data: true },
+  });
+
+  if (!placement || placement.surface !== SURFACE)
+    throw throwBadRequestError('placement: that placement no longer exists');
+  if (placement.ownerId !== userId && !isModerator)
+    throw throwAuthorizationError('placement: that placement is not on your content');
+
+  await hideStickerComment(placement, hidden);
+
+  return { hidden };
 }
 
 /**
@@ -572,13 +859,12 @@ export async function getPendingStickerPlacements({
   });
   const byId = new Map(images.map((image) => [image.id, image]));
 
-  return rows
-    .filter((row) => isStickerPlacementData(row.data))
-    .map((row) => ({
-      ...row,
-      data: row.data as StickerPlacementData,
-      image: byId.get(row.targetId) ?? null,
-    }));
+  return rows.flatMap((row) => {
+    const data = parseStickerPlacementData(row.data);
+    if (!data) return [];
+
+    return [{ ...row, data, image: byId.get(row.targetId) ?? null }];
+  });
 }
 
 /**
@@ -598,18 +884,27 @@ export async function actOnStickerPlacements({
   action,
   userId,
   isModerator = false,
+  hideComment,
 }: {
   placementIds: number[];
   action: OwnerAction;
   userId: number;
   isModerator?: boolean;
+  /** `undefined` leaves each note as it is — see `actOnStickerPlacement`. */
+  hideComment?: boolean;
 }) {
   const failed: number[] = [];
   let settled = 0;
 
   for (const placementId of placementIds) {
     try {
-      const result = await actOnStickerPlacement({ placementId, action, userId, isModerator });
+      const result = await actOnStickerPlacement({
+        placementId,
+        action,
+        userId,
+        isModerator,
+        hideComment,
+      });
       if (result.settled) settled++;
     } catch (error) {
       failed.push(placementId);

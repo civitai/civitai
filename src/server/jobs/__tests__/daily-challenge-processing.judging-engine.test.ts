@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { freshPersistedWinner } from '~/server/games/daily-challenge/__tests__/persisted-winner.fixture';
 import type * as EngineRegistry from '~/server/games/daily-challenge/challenge-engine-registry';
 import type * as Flipt from '~/server/flipt/client';
+import type * as ChallengeHelpers from '~/server/games/daily-challenge/challenge-helpers';
 import type * as Logging from '~/server/logging/client';
 
 // Where the judging engine meets the job. Two things are load-bearing and neither is visible from
@@ -36,6 +37,7 @@ const {
   mockRankField,
   mockSelectWinners,
   mockLogToAxiom,
+  mockCompleteChallengeIfClaimHeld,
 } = vi.hoisted(() => ({
   mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
   mockDbReadQueryRaw: vi.fn(),
@@ -64,6 +66,7 @@ const {
   mockRecordEntry: vi.fn().mockResolvedValue(undefined),
   mockRankField: vi.fn(),
   mockSelectWinners: vi.fn().mockResolvedValue(null),
+  mockCompleteChallengeIfClaimHeld: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock('~/server/db/client', () => ({
@@ -110,8 +113,18 @@ vi.mock('~/server/games/daily-challenge/daily-challenge.utils', async () => {
   };
 });
 
-vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
+// Spread the real module and override only what this suite drives. Hand-listed, it broke the
+// moment the completion-claim guard added an export the job legitimately calls — the failure was
+// `No "challengeClaimStillHeld" export is defined on the ... mock`, which reads like a missing
+// function rather than a mock that had fallen behind.
+vi.mock('~/server/games/daily-challenge/challenge-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof ChallengeHelpers>()),
   claimChallengeForCompletion: mockClaimChallengeForCompletion,
+  // This suite is about which entries reach the engine and who picks the places, not about claim
+  // ownership — that has its own tests. Left real, it issues an extra query these cases do not
+  // stub and fails on the destructure rather than on anything they assert.
+  challengeClaimStillHeld: vi.fn().mockResolvedValue(true),
+  completeChallengeIfClaimHeld: mockCompleteChallengeIfClaimHeld,
   computeDynamicPool: vi.fn(),
   distributePrizes: vi.fn(),
   createChallengeRecord: vi.fn(),
@@ -414,10 +427,12 @@ describe('pickWinnersForChallenge — who picks the places', () => {
     await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
 
     expect(mockGenerateWinners).toHaveBeenCalledTimes(1);
-    const update = mockDbWriteChallengeUpdate.mock.calls.at(-1)?.[0] as {
-      data: { metadata: { completionSummary: { judgingProcess: string; outcome: string } } };
+    // The completion write is claim-conditional now, so the recap travels as `metadata` on that
+    // statement rather than through a plain challenge.update.
+    const completion = mockCompleteChallengeIfClaimHeld.mock.calls.at(-1)?.[0] as {
+      metadata: { completionSummary: { judgingProcess: string; outcome: string } };
     };
-    expect(update.data.metadata.completionSummary).toMatchObject({
+    expect(completion.metadata.completionSummary).toMatchObject({
       judgingProcess: 'how I judged',
       outcome: 'what happened',
     });

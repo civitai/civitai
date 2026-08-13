@@ -3,8 +3,12 @@ import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 import { placementSurfaces } from '~/shared/utils/placement';
 import { REMIX_GALLERY_MAX_PINNED } from '~/shared/utils/remix-gallery';
 import {
+  STICKER_COMMENT_MAX_LENGTH,
+  STICKER_PLACEMENT_DEFAULT_OPACITY,
+  STICKER_PLACEMENT_MAX_OPACITY,
   STICKER_PLACEMENT_MAX_ROTATION,
   STICKER_PLACEMENT_MAX_SCALE,
+  STICKER_PLACEMENT_MIN_OPACITY,
   STICKER_PLACEMENT_MIN_SCALE,
 } from '~/shared/utils/sticker-placement';
 
@@ -25,6 +29,23 @@ export const stickerPlacementDataSchema = z.object({
   y: finite.min(0).max(1),
   scale: finite.min(STICKER_PLACEMENT_MIN_SCALE).max(STICKER_PLACEMENT_MAX_SCALE),
   rotation: finite.min(-STICKER_PLACEMENT_MAX_ROTATION).max(STICKER_PLACEMENT_MAX_ROTATION),
+  // Bounded well above what the field allows, because the service trims and
+  // truncates. The limit here is what stops a megabyte of text reaching a JSON
+  // column; the normaliser is what decides the stored value.
+  comment: z
+    .string()
+    .max(STICKER_COMMENT_MAX_LENGTH * 4)
+    .optional(),
+  // Refused, not clamped, and refused here rather than at the slider: the floor
+  // is what stops a placement being a quiet defacement, and a client-side clamp
+  // is a filter rather than a refusal — it decides nothing about a crafted
+  // request. Defaulted so a client cached from before these existed still
+  // places a sticker instead of failing validation.
+  flip: z.boolean().default(false),
+  opacity: finite
+    .min(STICKER_PLACEMENT_MIN_OPACITY)
+    .max(STICKER_PLACEMENT_MAX_OPACITY)
+    .default(STICKER_PLACEMENT_DEFAULT_OPACITY),
 });
 
 export const createStickerPlacementSchema = z.object({
@@ -100,6 +121,13 @@ export const getStickerPlacementDetailSchema = z.object({
 export const actOnStickerPlacementsSchema = z.object({
   placementIds: z.array(z.number().int().positive()).min(1).max(50),
   action: z.enum(['approve', 'decline', 'remove']),
+  /** Partial approval — take the sticker, refuse the note it came with. */
+  hideComment: z.boolean().optional(),
+});
+
+export const setStickerCommentHiddenSchema = z.object({
+  placementId: z.number().int().positive(),
+  hidden: z.boolean(),
 });
 
 export const getPlacementSpaceRowSchema = z.object({

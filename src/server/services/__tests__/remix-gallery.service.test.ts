@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
+import type * as MetricHelpers from '~/server/utils/metric-helpers';
+
+const updateEntityMetricDetached = vi.fn(async () => undefined);
+vi.mock('~/server/utils/metric-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof MetricHelpers>()),
+  updateEntityMetricDetached,
+}));
 
 /**
  * Every quantity distinct, so a value reaching the wrong place cannot pass by
@@ -15,9 +22,17 @@ const PRICE = 700;
 
 const holdPlacementEscrow = vi.fn(async () => ({ fee: 210, principal: 490 }));
 const settlePlacement = vi.fn(async () => ({ settled: true }));
+
+/** What the refund tests below read back off the last settle call. */
+type SettleArgs = { placementId: number; action: string };
+const lastSettleArgs = () => settlePlacement.mock.calls.at(-1)?.[0] as SettleArgs | undefined;
+const FEE_WAIVING_ACTIONS = ['declineByBlock', 'declineUnshowableHost'];
 vi.mock('~/server/services/placement-escrow.service', () => ({
   holdPlacementEscrow,
   settlePlacement,
+  // Real, not a stand-in. The refund test asserts membership of this list, so a
+  // fake one would let the test pass against an action that charges the fee.
+  FEE_WAIVING_ACTIONS: ['declineByBlock', 'declineUnshowableHost'],
 }));
 
 const assertCanPlace = vi.fn(async () => undefined);
@@ -27,6 +42,10 @@ const resolvePlacementSpaceFor = vi.fn();
 vi.mock('~/server/services/placement-space.service', () => ({ resolvePlacementSpaceFor }));
 
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
+
+vi.mock('~/server/services/placement.service', () => ({
+  getPlacementConfig: async () => ({ declineFeeRate: () => 0.3 }),
+}));
 
 /**
  * The mutation's ordering is its design — the row must exist before the escrow
@@ -63,7 +82,12 @@ vi.mock('~/server/db/client', () => ({
   },
   dbRead: {
     $queryRaw: (...args: unknown[]) => queryRaw(...args),
-    placement: { findMany: placementFindMany, findUnique: placementFindUnique },
+    placement: {
+      findMany: placementFindMany,
+      findUnique: placementFindUnique,
+      count: placementCount,
+    },
+    user: { findUnique: async () => ({ username: 'someone' }) },
   },
 }));
 
@@ -73,10 +97,16 @@ const {
   retractRemixGallerySubmission,
   setRemixGalleryPins,
   parseGalleryCursor,
+  getRemixGallery,
+  getRemixGalleryVisibility,
 } = await import('~/server/services/remix-gallery.service');
 
-const { remixGalleryLevelAllowed, REMIX_GALLERY_MAX_PINNED, REMIX_GALLERY_REMOVAL_LOCK_HOURS } =
-  await import('~/shared/utils/remix-gallery');
+const {
+  remixGalleryLevelAllowed,
+  remixGalleryMaxSubmissionLevel,
+  REMIX_GALLERY_MAX_PINNED,
+  REMIX_GALLERY_REMOVAL_LOCK_HOURS,
+} = await import('~/shared/utils/remix-gallery');
 
 /** A submission that passes every check, so each test breaks exactly one thing. */
 const goodSubmission = {
@@ -109,12 +139,22 @@ const openSpace = {
 function primeQueries({
   submission = goodSubmission,
   hostLevel = NsfwLevel.PG,
-}: { submission?: typeof goodSubmission | null; hostLevel?: number | null } = {}) {
+  hostMinor = false,
+  hostShowable = true,
+}: {
+  submission?: typeof goodSubmission | null;
+  hostLevel?: number | null;
+  hostMinor?: boolean;
+  hostShowable?: boolean;
+} = {}) {
   let call = 0;
   queryRaw.mockImplementation(async () => {
     call += 1;
     if (call === 1) return submission ? [submission] : [];
-    if (call === 2) return hostLevel == null ? [] : [{ nsfwLevel: hostLevel }];
+    if (call === 2)
+      return hostLevel == null
+        ? []
+        : [{ nsfwLevel: hostLevel, minor: hostMinor, showable: hostShowable }];
     return [];
   });
 }
@@ -147,9 +187,14 @@ describe('content level rules', () => {
     // safe, and admitting it under `any` is how an unscanned image lands on
     // someone else's page.
     for (const rule of ['atOrBelow', 'any'] as const)
-      expect(remixGalleryLevelAllowed({ rule, submissionLevel: 0, hostLevel: NsfwLevel.XXX })).toBe(
-        false
-      );
+      expect(
+        remixGalleryLevelAllowed({
+          rule,
+          submissionLevel: 0,
+          hostLevel: NsfwLevel.XXX,
+          hostMinor: false,
+        })
+      ).toBe(false);
   });
 
   it('refuses a Blocked submission under both rules', () => {
@@ -159,6 +204,7 @@ describe('content level rules', () => {
           rule,
           submissionLevel: NsfwLevel.Blocked,
           hostLevel: NsfwLevel.XXX,
+          hostMinor: false,
         })
       ).toBe(false);
   });
@@ -169,6 +215,7 @@ describe('content level rules', () => {
         rule: 'atOrBelow',
         submissionLevel: NsfwLevel.R,
         hostLevel: NsfwLevel.X,
+        hostMinor: false,
       })
     ).toBe(true);
     expect(
@@ -176,6 +223,7 @@ describe('content level rules', () => {
         rule: 'atOrBelow',
         submissionLevel: NsfwLevel.X,
         hostLevel: NsfwLevel.R,
+        hostMinor: false,
       })
     ).toBe(false);
   });
@@ -186,6 +234,7 @@ describe('content level rules', () => {
         rule: 'atOrBelow',
         submissionLevel: NsfwLevel.PG,
         hostLevel: 0,
+        hostMinor: false,
       })
     ).toBe(false);
   });
@@ -209,6 +258,205 @@ describe('content level rules', () => {
       hostLevel: NsfwLevel.PG,
     });
     await expect(submit()).resolves.toEqual({ id: PLACEMENT });
+  });
+});
+
+describe('minor-flagged host ceiling', () => {
+  // The gap this closes: the submitted image's own `minor` flag was refused, the
+  // host's was never read. A remix can come from an external generation, so the
+  // generator's refusals are not in this path.
+  const ABOVE_PG13 = [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
+
+  it('refuses anything above PG-13 under BOTH content rules', () => {
+    for (const rule of ['atOrBelow', 'any'] as const)
+      for (const submissionLevel of ABOVE_PG13)
+        expect(
+          remixGalleryLevelAllowed({
+            rule,
+            submissionLevel,
+            // An XXX host is the case that matters: `atOrBelow` alone would
+            // admit every one of these.
+            hostLevel: NsfwLevel.XXX,
+            hostMinor: true,
+          })
+        ).toBe(false);
+  });
+
+  it('caps the ceiling the picker filters on, under both rules', () => {
+    // The picker and the mutation have to agree, or a submitter is offered an
+    // image they will then be refused for — after paying.
+    expect(
+      remixGalleryMaxSubmissionLevel({ rule: 'any', hostLevel: NsfwLevel.XXX, hostMinor: true })
+    ).toBe(NsfwLevel.PG13);
+    expect(
+      remixGalleryMaxSubmissionLevel({ rule: 'atOrBelow', hostLevel: NsfwLevel.X, hostMinor: true })
+    ).toBe(NsfwLevel.PG13);
+    expect(
+      remixGalleryMaxSubmissionLevel({ rule: 'any', hostLevel: NsfwLevel.PG, hostMinor: false })
+    ).toBe(NsfwLevel.XXX);
+    // Nothing is submittable to an unrated host under `atOrBelow`.
+    expect(
+      remixGalleryMaxSubmissionLevel({ rule: 'atOrBelow', hostLevel: 0, hostMinor: false })
+    ).toBe(0);
+  });
+
+  it('still allows PG and PG-13 into a minor-flagged host', () => {
+    for (const submissionLevel of [NsfwLevel.PG, NsfwLevel.PG13])
+      expect(
+        remixGalleryLevelAllowed({
+          rule: 'any',
+          submissionLevel,
+          hostLevel: NsfwLevel.PG13,
+          hostMinor: true,
+        })
+      ).toBe(true);
+  });
+
+  it('refuses through the mutation even when the owner opted into any rating', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, settings: { contentRule: 'any' } });
+    primeQueries({
+      submission: { ...goodSubmission, nsfwLevel: NsfwLevel.XXX },
+      hostLevel: NsfwLevel.XXX,
+      hostMinor: true,
+    });
+
+    await expect(submit()).rejects.toThrow(/PG-13 or below/i);
+    expect(placementCreate).not.toHaveBeenCalled();
+    expect(holdPlacementEscrow).not.toHaveBeenCalled();
+  });
+
+  it('refuses on approval when the host is flagged after the submission was sent', async () => {
+    // Approval is the moment the entry becomes public, and a host can be flagged
+    // between the two. Without the re-check the escrow settles and an XXX entry
+    // goes live on a minor-flagged image.
+    placementFindUnique
+      .mockResolvedValueOnce({
+        id: PLACEMENT,
+        ownerId: OWNER,
+        status: 'pending',
+        surface: 'remixGallery',
+        data: { imageId: REMIX_IMAGE },
+        resolvedAt: null,
+        createdAt: new Date('2026-01-01'),
+      })
+      .mockResolvedValueOnce({ targetId: HOST_IMAGE });
+    primeQueries({
+      submission: { ...goodSubmission, nsfwLevel: NsfwLevel.XXX },
+      hostLevel: NsfwLevel.XXX,
+      hostMinor: true,
+    });
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, settings: { contentRule: 'any' } });
+
+    await expect(
+      actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
+    ).rejects.toThrow(/PG-13 or below/i);
+    expect(settlePlacement).not.toHaveBeenCalled();
+  });
+});
+
+it('refuses a submission to a host that cannot show a gallery', async () => {
+  // The host was never checked for anything but its rating. A blocked or
+  // unscanned host is hidden from everyone but its owner, so this took Buzz for
+  // a placement that could never render.
+  primeQueries({ hostShowable: false });
+
+  await expect(submit()).rejects.toThrow(/cannot show a gallery/i);
+  expect(placementCreate).not.toHaveBeenCalled();
+  expect(holdPlacementEscrow).not.toHaveBeenCalled();
+});
+
+describe('declining on a host that cannot show a gallery', () => {
+  const pending = {
+    id: PLACEMENT,
+    ownerId: OWNER,
+    status: 'pending',
+    surface: 'remixGallery',
+    targetId: HOST_IMAGE,
+    data: { imageId: REMIX_IMAGE },
+    resolvedAt: null,
+    createdAt: new Date('2026-01-01'),
+  };
+
+  const declineWithHost = async (showable: boolean) => {
+    placementFindUnique.mockResolvedValue(pending);
+    // Only `loadHostImage` runs on this path, so the fake answers with the host
+    // row rather than the submission-then-host pair the submit path expects.
+    queryRaw.mockImplementation(async () => [{ nsfwLevel: NsfwLevel.PG, minor: false, showable }]);
+    await actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'decline', userId: OWNER });
+  };
+
+  it('refunds in full instead of charging the decline fee', async () => {
+    // The fee prices the owner's attention. An unshowable host refuses approval,
+    // so the owner was never offered a choice — and without this the outcome
+    // fair to the submitter was the one where the owner ignored their queue.
+    await declineWithHost(false);
+
+    // Asserted as a property rather than as the action name. The name is a
+    // choice; "the submitter is not charged" is the thing that must hold, and an
+    // assertion on the string would go green against any future action that
+    // happens to be spelled the same and charges the fee.
+    const call = lastSettleArgs();
+    expect(FEE_WAIVING_ACTIONS).toContain(call?.action);
+    expect(call?.placementId).toBe(PLACEMENT);
+  });
+
+  it('still charges the fee on a normal host', async () => {
+    await declineWithHost(true);
+
+    expect(FEE_WAIVING_ACTIONS).not.toContain(lastSettleArgs()?.action);
+  });
+});
+
+describe('the ceiling is applied on read, not only on the mutation', () => {
+  // Without this the display-side half is a silent revert: delete the predicate
+  // from a read query and every other test in this file still passes, while
+  // entries approved before a host was flagged keep rendering — and the owner
+  // cannot take them down for a week.
+  //
+  // Nested `Prisma.sql` fragments arrive as VALUES rather than as part of the
+  // template's string array, so flattening them is what makes this see the
+  // predicate at all.
+  const flatten = (value: unknown): string => {
+    if (Array.isArray(value)) return value.map(flatten).join(' ');
+    if (value && typeof value === 'object' && 'strings' in value)
+      return [
+        flatten((value as { strings: unknown }).strings),
+        flatten((value as { values?: unknown }).values ?? []),
+      ].join(' ');
+    return typeof value === 'string' ? value : '';
+  };
+
+  const sqlFrom = () => queryRaw.mock.calls.map(flatten).join(' ');
+
+  /**
+   * Asserted on rather than `minor` or `needsReview`, both of which the gallery
+   * CTE already contains as filters on the *entry* — so asserting those would
+   * hold with the host ceiling deleted entirely. These two strings appear only
+   * inside `minorHostCeiling`.
+   */
+  const expectCeiling = (sql: string) => {
+    expect(sql).toContain('acceptableMinor');
+    expect(sql).toContain('NOT EXISTS');
+    expect(sql).toMatch(/nsfwLevel"\s*<=/);
+  };
+
+  beforeEach(() => {
+    queryRaw.mockImplementation(async () => []);
+  });
+
+  it('carries it in the gallery read', async () => {
+    await getRemixGallery({ hostImageId: HOST_IMAGE, browsingLevel: 1 });
+    expectCeiling(sqlFrom());
+  });
+
+  // Its own case, because the two readers are separate queries and the earlier
+  // version of this test only reached the first. Deleting the predicate from
+  // `galleryHasEntries` alone left the owner shown a card for entries the
+  // gallery query will not return.
+  it('carries it in the has-entries read', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue(openSpace);
+    await getRemixGalleryVisibility({ hostImageId: HOST_IMAGE, browsingLevel: 1 });
+    expectCeiling(sqlFrom());
   });
 });
 
@@ -719,5 +967,71 @@ describe('gallery cursor', () => {
     // expression, which selects a different but stable permutation and looks
     // like nothing is wrong.
     expect(parseGalleryCursor(cursor as string | undefined)).toBeNull();
+  });
+});
+
+/**
+ * A gallery entry is a paid placement on the host image, so it counts toward the
+ * same Buzz counter a sticker does (Justin, 2026-08-12). Same rule on both
+ * surfaces, because a single counter that means different things depending on
+ * which surface you asked has lost the only property it needs.
+ */
+describe('an approved submission counts toward the host image buzz counter', () => {
+  const pending = {
+    id: PLACEMENT,
+    ownerId: OWNER,
+    placerId: PLACER,
+    status: 'pending',
+    surface: 'remixGallery',
+    data: { imageId: REMIX_IMAGE },
+    targetId: HOST_IMAGE,
+    amount: PRICE,
+    resolvedAt: null,
+    createdAt: new Date(0),
+  };
+
+  it('counts what the submitter paid, against the host image', async () => {
+    placementFindUnique.mockResolvedValue(pending);
+
+    await actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER });
+
+    expect(updateEntityMetricDetached).toHaveBeenCalledWith({
+      entityType: 'Image',
+      // The HOST, not the submitted image. The submitter's own image gained
+      // nothing; the creator was paid to have it shown on theirs.
+      entityId: HOST_IMAGE,
+      metricType: 'Buzz',
+      amount: PRICE,
+      // The submitter, not the host's owner: attribution follows who paid.
+      userId: PLACER,
+    });
+    // Exactly once, which the payload assertion above cannot see. The two
+    // negative tests in this block would both pass against a full revert, so
+    // without this the whole commit rests on an assertion that a second,
+    // duplicate emission would satisfy just as happily.
+    expect(updateEntityMetricDetached).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * A decline still moves 30% of the fee to the owner and still counts nothing
+   * (Justin, 2026-08-12). Counting it would grow the counter fastest for a
+   * creator who refuses everything.
+   */
+  it('counts nothing when the owner declines, though the fee is kept', async () => {
+    placementFindUnique.mockResolvedValue(pending);
+
+    await actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'decline', userId: OWNER });
+
+    expect(updateEntityMetricDetached).not.toHaveBeenCalled();
+  });
+
+  it('counts nothing when the settle lost the race', async () => {
+    placementFindUnique.mockResolvedValue(pending);
+    settlePlacement.mockResolvedValue({ settled: false });
+
+    await expect(
+      actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
+    ).rejects.toThrow(/already resolved/i);
+    expect(updateEntityMetricDetached).not.toHaveBeenCalled();
   });
 });

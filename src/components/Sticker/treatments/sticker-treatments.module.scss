@@ -24,8 +24,8 @@
    transform here would overwrite it. Both keyframes drive an inner element that
    exists only for this treatment. */
 .motion {
-  animation: stickerPop 420ms cubic-bezier(0.34, 1.56, 0.64, 1) both,
-    stickerSway 6s ease-in-out 420ms infinite;
+  animation: stickerPop 420ms cubic-bezier(0.34, 1.56, 0.64, 1) var(--sticker-delay, 0ms) both,
+    stickerSway 6s ease-in-out calc(var(--sticker-delay, 0ms) + 420ms) infinite;
   transform-origin: 50% 85%;
   will-change: transform;
 }

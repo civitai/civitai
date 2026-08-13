@@ -42,8 +42,7 @@ import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrap
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesAsPostModel } from '~/server/controllers/image.controller';
-import { generationGraphPanel } from '~/store/generation-graph.store';
-import { useTrackEvent } from '~/components/TrackView/track.utils';
+import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
 import { isDefined } from '~/utils/type-guards';
 import { SimpleImageCarousel } from '~/components/SimpleImageCarousel/SimpleImageCarousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
@@ -268,27 +267,11 @@ function ImagesAsPostsCardHeader({
 
 function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
   const features = useFeatureFlags();
-  const { trackAction } = useTrackEvent();
   const postId = data.postId ?? undefined;
   const image = data.images[0];
-  // Not wrapping in useCallback: the returned inner closure captures
-  // `selectedImage` and is recreated per call regardless, so the outer
-  // `useCallback` would provide no stability benefit.
-  const handleRemixClick = (selectedImage: typeof image) => (e: React.MouseEvent) => {
+  const handleRemixClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    trackAction({
-      type: 'Image_Remix_Click',
-      details: {
-        imageId: selectedImage.id,
-        imageType: selectedImage.type,
-        source: 'remix:model-gallery',
-      },
-    }).catch(() => undefined);
-    generationGraphPanel.open({
-      type: selectedImage.type,
-      id: selectedImage.id,
-    });
   };
 
   return data.images.length === 1 ? (
@@ -300,17 +283,19 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
           {safe && (
             <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">
               <ImagesAsPostsContextMenu image={image} />
-              {features.imageGeneration && (image.hasPositivePrompt ?? image.hasMeta) && (
-                <HoverActionButton
-                  label="Remix"
-                  size={30}
-                  color="white"
-                  variant="filled"
-                  data-activity="remix:model-gallery"
-                  onClick={handleRemixClick(image)}
-                >
-                  <IconBrush stroke={2.5} size={16} />
-                </HoverActionButton>
+              {features.imageGeneration && isRemixMenuVisible(image) && (
+                <RemixMenu image={image} source="remix:model-gallery">
+                  <HoverActionButton
+                    label="Remix"
+                    size={30}
+                    color="white"
+                    variant="filled"
+                    data-activity="remix:model-gallery"
+                    onClick={handleRemixClick}
+                  >
+                    <IconBrush stroke={2.5} size={16} />
+                  </HoverActionButton>
+                </RemixMenu>
               )}
             </div>
           )}
@@ -403,15 +388,9 @@ function PostCarouselSlide({
   dialogImages: ImagesAsPostModel['images'];
 }) {
   const features = useFeatureFlags();
-  const { trackAction } = useTrackEvent();
   const handleRemixClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    trackAction({
-      type: 'Image_Remix_Click',
-      details: { imageId: image.id, imageType: image.type, source: 'remix:model-gallery' },
-    }).catch(() => undefined);
-    generationGraphPanel.open({ type: image.type, id: image.id });
   };
 
   return (
@@ -423,17 +402,19 @@ function PostCarouselSlide({
           {safe && (
             <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">
               <ImagesAsPostsContextMenu image={image} />
-              {features.imageGeneration && (image.hasPositivePrompt ?? image.hasMeta) && (
-                <HoverActionButton
-                  label="Remix"
-                  size={30}
-                  color="white"
-                  variant="filled"
-                  data-activity="remix:model-gallery"
-                  onClick={handleRemixClick}
-                >
-                  <IconBrush stroke={2.5} size={16} />
-                </HoverActionButton>
+              {features.imageGeneration && isRemixMenuVisible(image) && (
+                <RemixMenu image={image} source="remix:model-gallery">
+                  <HoverActionButton
+                    label="Remix"
+                    size={30}
+                    color="white"
+                    variant="filled"
+                    data-activity="remix:model-gallery"
+                    onClick={handleRemixClick}
+                  >
+                    <IconBrush stroke={2.5} size={16} />
+                  </HoverActionButton>
+                </RemixMenu>
               )}
             </div>
           )}

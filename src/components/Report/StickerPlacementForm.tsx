@@ -70,6 +70,20 @@ function StickerPlacementFields() {
         </Stack>
       </InputRadioGroup>
 
+      {/* Offered only where a note exists to report. The two are separately
+          objectionable — a fine sticker can carry an abusive note — and they
+          have different remedies, since the owner can hide a note without the
+          sticker coming off. Hidden entirely when no placement here has one,
+          rather than asked and ignored. */}
+      {placements.some((placement) => placement.hasComment) && (
+        <InputRadioGroup name="target" label="What are you reporting?">
+          <Stack gap={4}>
+            <Radio value="sticker" label="The sticker itself" />
+            <Radio value="comment" label="The note attached to it" />
+          </Stack>
+        </InputRadioGroup>
+      )}
+
       <InputTextArea
         name="comment"
         label="What's wrong with it? (optional)"

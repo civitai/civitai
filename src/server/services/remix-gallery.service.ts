@@ -1,15 +1,17 @@
 import { Prisma } from '@prisma/client';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
-import { ImageSort } from '~/server/common/enums';
+import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import type { SessionUser } from '~/types/session';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getAllImages } from '~/server/services/image.service';
 import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
+import { recordPlacementTip } from '~/server/services/placement-metrics.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
+import { imageReviewedSql } from '~/server/common/image-visibility';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { onlySelectableLevels } from '~/shared/constants/browsingLevel.constants';
 import { declineFeeAmount, PLACEMENT_SURFACES } from '~/shared/utils/placement';
@@ -18,9 +20,13 @@ import {
   isRemixGalleryPlacementData,
   REMIX_GALLERY_MAX_PENDING_PER_OWNER,
   REMIX_GALLERY_MAX_PINNED,
+  REMIX_GALLERY_MINOR_HOST_MAX_LEVEL,
   REMIX_GALLERY_PAGE_SIZE,
+  REMIX_GALLERY_QUEUE_LIMIT,
+  remixGalleryBlockedByMinorHost,
   remixGalleryContentRule,
   remixGalleryLevelAllowed,
+  remixGalleryMaxSubmissionLevel,
   remixGalleryRemovableAt,
   remixGalleryShuffleSeed,
 } from '~/shared/utils/remix-gallery';
@@ -57,6 +63,30 @@ async function loadSubmissionImage(imageId: number): Promise<SubmissionImage> {
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE i.id = ${imageId}
+  `;
+
+  if (!row) throw throwBadRequestError('remix gallery: that image no longer exists');
+  return row;
+}
+
+/**
+ * Names a ceiling rather than the host's flag. The flag is a moderation state of
+ * someone else's image and the submitter has no business reading it off an error.
+ */
+const MINOR_HOST_REFUSAL =
+  'remix gallery: this image only accepts submissions rated PG-13 or below';
+
+/**
+ * The host image's rating and minor flag, from the primary for the same reason
+ * `loadSubmissionImage` is.
+ *
+ * The flag is loaded here rather than at the call sites so no submission path
+ * can decide a rating without it — `remixGalleryLevelAllowed` requires it.
+ */
+async function loadHostImage(hostImageId: number) {
+  const [row] = await dbWrite.$queryRaw<{ nsfwLevel: number; minor: boolean; showable: boolean }[]>`
+    SELECT i."nsfwLevel", ${hostIsMinor()} AS minor, ${hostIsShowable()} AS showable
+    FROM "Image" i WHERE i.id = ${hostImageId}
   `;
 
   if (!row) throw throwBadRequestError('remix gallery: that image no longer exists');
@@ -144,10 +174,9 @@ export async function createRemixGallerySubmission({
   if (submission.tosViolation || submission.minor || submission.poi)
     throw throwBadRequestError('remix gallery: that image cannot be submitted');
 
-  const [host] = await dbWrite.$queryRaw<{ nsfwLevel: number }[]>`
-    SELECT "nsfwLevel" FROM "Image" WHERE id = ${hostImageId}
-  `;
-  if (!host) throw throwBadRequestError('remix gallery: that image no longer exists');
+  const host = await loadHostImage(hostImageId);
+  if (!host.showable)
+    throw throwBadRequestError('remix gallery: this image cannot show a gallery right now');
 
   const rule = remixGalleryContentRule(space.settings);
   if (
@@ -155,10 +184,16 @@ export async function createRemixGallerySubmission({
       rule,
       submissionLevel: submission.nsfwLevel,
       hostLevel: host.nsfwLevel,
+      hostMinor: host.minor,
     })
   )
     throw throwBadRequestError(
-      rule === 'any'
+      remixGalleryBlockedByMinorHost({
+        submissionLevel: submission.nsfwLevel,
+        hostMinor: host.minor,
+      })
+        ? MINOR_HOST_REFUSAL
+        : rule === 'any'
         ? 'remix gallery: that image has no rating yet'
         : "remix gallery: this creator only accepts submissions rated at or below their image's rating"
     );
@@ -265,6 +300,9 @@ export async function actOnRemixGallerySubmission({
     select: {
       id: true,
       ownerId: true,
+      placerId: true,
+      targetId: true,
+      amount: true,
       status: true,
       surface: true,
       data: true,
@@ -353,9 +391,24 @@ export async function actOnRemixGallerySubmission({
     return { settled: true, removed: true };
   }
 
+  // A decline charges the submitter the non-refundable share, and that share
+  // prices the owner's attention: a spammer costs them a review. When the host
+  // cannot show a gallery the owner was never offered a choice — approve is
+  // refused above — so there is no judgement to charge for, and the submitter is
+  // refunded in full — but recorded as a decline, because that is what happened.
+  // Settling it as an expiry would have written the same money and then told
+  // every later reader that the hold timed out with nobody acting.
+  //
+  // Without this, the fair outcome for the submitter was the one where the owner
+  // ignored their queue: doing nothing expires the hold and returns everything,
+  // while tidying up took 30% for a refusal caused entirely by the host's state.
+  const declineRefundsInFull =
+    action === 'decline' && !(await loadHostImage(placement.targetId)).showable;
+
   const result = await settlePlacement({
     placementId,
-    action: action === 'approve' ? 'approve' : 'decline',
+    action:
+      action === 'approve' ? 'approve' : declineRefundsInFull ? 'declineUnshowableHost' : 'decline',
     actorId: userId,
   });
 
@@ -365,6 +418,25 @@ export async function actOnRemixGallerySubmission({
   // appeared to work and did not is what this cost us on chunk D.
   if (!result.settled)
     throw throwBadRequestError('remix gallery: that submission was already resolved elsewhere');
+
+  // A gallery entry is a paid placement on this image, so it counts toward the
+  // same Buzz counter a sticker does (Justin, 2026-08-12). A decline counts
+  // nothing even though its fee reaches the owner — see `recordPlacementTip`.
+  //
+  // `result.settled` is re-checked even though the throw above already covers
+  // it, and not as belt and braces: it is the gate the sticker twin actually
+  // uses, so writing it here keeps the two surfaces the same shape. The throw
+  // is the kind of thing that gets softened into a returned value — the
+  // moderator removal path already made exactly that change — and whoever does
+  // that would otherwise be introducing a double count with nothing beside it
+  // to say so.
+  if (action === 'approve' && result.settled)
+    await recordPlacementTip({
+      surface: SURFACE,
+      imageId: placement.targetId,
+      amount: placement.amount,
+      placerId: placement.placerId,
+    });
 
   return result;
 }
@@ -402,16 +474,19 @@ async function assertStillAcceptable({
     targetId: placement.targetId,
   });
 
-  const [host] = await dbWrite.$queryRaw<{ nsfwLevel: number }[]>`
-    SELECT "nsfwLevel" FROM "Image" WHERE id = ${placement.targetId}
-  `;
-  if (!host) throw throwBadRequestError('remix gallery: that image no longer exists');
+  const host = await loadHostImage(placement.targetId);
+  // Refused rather than approved into a gallery that cannot render. The escrow
+  // is released by expiry, which refunds in full, so waiting costs the submitter
+  // nothing — approving costs them everything.
+  if (!host.showable)
+    throw throwBadRequestError('remix gallery: this image cannot show a gallery right now');
 
   if (
     !remixGalleryLevelAllowed({
       rule: remixGalleryContentRule(space.settings),
       submissionLevel: submission.nsfwLevel,
       hostLevel: host.nsfwLevel,
+      hostMinor: host.minor,
     })
   )
     // Names both possibilities, because the rule is as likely to have moved as
@@ -419,7 +494,12 @@ async function assertStillAcceptable({
     // arrive gets this on approval, and blaming the image would send them
     // looking at the wrong thing.
     throw throwBadRequestError(
-      "remix gallery: that image's rating no longer fits this gallery's content rule"
+      remixGalleryBlockedByMinorHost({
+        submissionLevel: submission.nsfwLevel,
+        hostMinor: host.minor,
+      })
+        ? MINOR_HOST_REFUSAL
+        : "remix gallery: that image's rating no longer fits this gallery's content rule"
     );
 }
 
@@ -702,7 +782,7 @@ export async function getRemixGallery({
         AND NOT i.minor
         AND NOT i.poi
         AND (i."nsfwLevel" & ${levels}) != 0
-        AND i."nsfwLevel" != 0
+        AND i."nsfwLevel" != 0${minorHostCeiling(hostImageId)}
     )
     SELECT * FROM e
     WHERE TRUE ${keyset}
@@ -743,6 +823,100 @@ export async function getRemixGallery({
         : null,
   };
 }
+
+/**
+ * What counts as a host depicting a minor. Three columns, because each catches a
+ * population the others miss.
+ *
+ * `acceptableMinor` is the moderator checkbox "Realistic depiction of a minor",
+ * and it is the load-bearing one. It is written by a function that touches no
+ * other column, so it is independent of `minor` — and every other minor-related
+ * gate in this codebase checks it, several without checking `minor` at all.
+ *
+ * `minor` alone is narrower than it looks: resolving a minor review without
+ * `removeMinorFlag` writes `CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE`, so
+ * a set `minor` is nearly always a PG/PG-13 image already under this ceiling.
+ * The R-and-above host the cap exists for lands in `acceptableMinor`.
+ *
+ * `needsReview = 'minor'` is the unresolved case, included because the
+ * resolution can go either way and fail-closed is the posture everywhere else.
+ *
+ * Parameterised by alias rather than written twice. The second copy — one for
+ * the `h` alias in the gallery read — was a hand-written duplicate, which is
+ * exactly the shape that drifts silently and fails open.
+ */
+const hostIsMinor = (alias = 'i') => {
+  const t = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`((${t}.minor OR ${t}."acceptableMinor" OR ${t}."needsReview" = 'minor') IS TRUE)`;
+};
+
+/**
+ * Whether the host can display a gallery at all.
+ *
+ * Every check on this surface asked what the *submission* was, and none asked
+ * whether the host could show it. A blocked or unscanned host is hidden from
+ * everyone but its owner, yet nothing required the submitter to be able to see
+ * it — so Buzz went into escrow for a placement that could never render, and
+ * the submitter's only ways out were withdrawing or being charged the decline
+ * fee. Not a safety hole, since display is gated either way; it is money taken
+ * for something structurally unshowable.
+ *
+ * Built on `imageReviewedSql` rather than on `ingestion = 'Scanned'`, which is
+ * what this originally said. That is *stricter* than the rule it claims to
+ * track, and stricter in the direction that costs a creator revenue: a stalled
+ * scan that a moderator rated, or a routine `Rescan` of a published image, is
+ * visible to every viewer through that helper's second arm and would have been
+ * refused here. Same mistake as reading `minor` alone — a hand-rolled predicate
+ * where the repo already has the canonical one.
+ *
+ * The trailing `IS TRUE` matches its sibling. Every input here is NOT NULL
+ * today, so it changes nothing — but that is a property of four column
+ * defaults rather than of this expression, and a NULL leaking through a future
+ * `NOT` would drop rows silently instead of keeping them.
+ */
+const hostIsShowable = (alias = 'i') => {
+  const t = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`((
+    ${t}."needsReview" IS NULL
+    AND ${imageReviewedSql(alias)}
+    AND NOT ${t}."tosViolation"
+    AND ${t}."nsfwLevel" != ${NsfwLevel.Blocked}
+  ) IS TRUE)`;
+};
+
+/**
+ * The host's rating and flags from the replica, for display decisions.
+ *
+ * Deliberately not `loadHostImage`: that reads the primary because it decides a
+ * mutation, and this runs on every image-detail view. The predicates are shared,
+ * so the two cannot disagree about *what* a minor or showable host is — only,
+ * under replica lag, about a flag set in the last moment. The mutation still
+ * refuses, so the cost of that window is a picker offering an image that is then
+ * declined.
+ */
+async function readHostImage(hostImageId: number) {
+  const [row] = await dbRead.$queryRaw<{ nsfwLevel: number; minor: boolean; showable: boolean }[]>`
+    SELECT i."nsfwLevel", ${hostIsMinor()} AS minor, ${hostIsShowable()} AS showable
+    FROM "Image" i WHERE i.id = ${hostImageId}
+  `;
+  return row ?? null;
+}
+
+/**
+ * The display-side half of the minor-host ceiling.
+ *
+ * The mutation refuses an over-rating submission, but a host can be flagged as
+ * depicting a minor *after* entries were approved, and approval is irreversible
+ * for a week. So the ceiling is applied on read too — an entry that becomes
+ * inadmissible stops rendering rather than waiting on a takedown.
+ */
+const minorHostCeiling = (hostImageId: number) => Prisma.sql`
+        AND (
+          i."nsfwLevel" <= ${REMIX_GALLERY_MINOR_HOST_MAX_LEVEL}
+          OR NOT EXISTS (
+            SELECT 1 FROM "Image" h WHERE h.id = ${hostImageId} AND ${hostIsMinor('h')}
+          )
+        )`;
 
 export function parseGalleryCursor(cursor?: string | null) {
   if (!cursor) return null;
@@ -804,12 +978,71 @@ async function galleryHasEntries({
         AND NOT i.minor
         AND NOT i.poi
         AND (i."nsfwLevel" & ${levels}) != 0
-        AND i."nsfwLevel" != 0
+        AND i."nsfwLevel" != 0${minorHostCeiling(hostImageId)}
     ) AS "exists"
   `;
 
   return row?.exists ?? false;
 }
+
+/**
+ * What the viewer has waiting on this gallery, so submitting is not a button
+ * that appears to do nothing.
+ *
+ * Scoped to the viewer's own rows: how many submissions an owner is sitting on
+ * is the owner's business, and `pendingCount` above is the owner-only number.
+ * Rows whose image no longer resolves are kept — an unpublished or re-flagged
+ * image is exactly when the submitter needs to see the row and withdraw it.
+ */
+async function getViewerPendingSubmissions({
+  hostImageId,
+  viewerId,
+}: {
+  hostImageId: number;
+  viewerId: number;
+}) {
+  const rows = await dbRead.placement.findMany({
+    where: {
+      surface: SURFACE,
+      targetType: TARGET_TYPE,
+      targetId: hostImageId,
+      placerId: viewerId,
+      status: 'pending',
+    },
+    select: { id: true, amount: true, data: true, createdAt: true, expiresAt: true },
+    orderBy: { createdAt: 'asc' },
+    take: REMIX_GALLERY_MAX_PENDING_PER_OWNER,
+  });
+
+  const entries = rows.filter((row) => isRemixGalleryPlacementData(row.data));
+  const imageIds = entries.map((row) => (row.data as RemixGalleryPlacementData).imageId);
+  if (!imageIds.length) return [];
+
+  const images = await dbRead.$queryRaw<GalleryThumbImage[]>`
+    SELECT i.id, i.url, i.width, i.height, i.type, i.metadata, i."nsfwLevel"
+    FROM "Image" i
+    WHERE i.id IN (${Prisma.join(imageIds)})
+  `;
+  const byId = new Map(images.map((image) => [image.id, image]));
+
+  return entries.map((row) => ({
+    placementId: row.id,
+    amount: row.amount,
+    createdAt: row.createdAt,
+    expiresAt: row.expiresAt,
+    image: byId.get((row.data as RemixGalleryPlacementData).imageId) ?? null,
+  }));
+}
+
+type GalleryThumbImage = {
+  id: number;
+  url: string;
+  width: number | null;
+  height: number | null;
+  type: MediaType;
+  metadata: MixedObject | null;
+  nsfwLevel: number;
+};
 
 export async function getRemixGalleryVisibility({
   hostImageId,
@@ -821,9 +1054,10 @@ export async function getRemixGalleryVisibility({
   /** Decides whether the pending count is computed at all. */
   viewerId?: number;
 }) {
-  const [space, hasEntries] = await Promise.all([
+  const [space, hasEntries, host] = await Promise.all([
     resolvePlacementSpaceFor({ surface: SURFACE, targetType: TARGET_TYPE, targetId: hostImageId }),
     galleryHasEntries({ hostImageId, browsingLevel }),
+    readHostImage(hostImageId),
   ]);
 
   // Counted here rather than by a second round trip from the card, and only for
@@ -842,6 +1076,38 @@ export async function getRemixGalleryVisibility({
           },
         })
       : 0;
+
+  // The submitter's own pending rows. Without this, submitting shows nothing at
+  // all on the image it was sent to — the money left and the page looked
+  // unchanged. Skipped for the owner, whose pending view is the queue above.
+  const viewerPending =
+    viewerId && viewerId !== space.ownerId
+      ? await getViewerPendingSubmissions({ hostImageId, viewerId })
+      : [];
+
+  // The ceiling the picker filters on, so a submitter is not offered an image the
+  // mutation will refuse — and, for a minor-flagged host, is not shown a grid of
+  // their own mature work next to a Submit button.
+  //
+  // Withheld from anyone who cannot act on it. Under the `any` rule this number
+  // is 2 only when the host carries a minor flag, so returning it unconditionally
+  // from a public query turned every image id into a one-call oracle for another
+  // user's moderation state — including an *unresolved* review on an image the
+  // caller cannot even view. The refusal message on the mutation is anonymised
+  // for exactly that reason; this would have shipped the same fact as a number.
+  // Signed in, gallery open, not your own: the case the picker needs and nothing
+  // wider.
+  const canSubmitHere =
+    !!viewerId && space.mode !== 'off' && viewerId !== space.ownerId && !!host?.showable;
+  const maxSubmissionLevel = canSubmitHere
+    ? remixGalleryMaxSubmissionLevel({
+        rule: remixGalleryContentRule(space.settings),
+        hostLevel: host?.nsfwLevel ?? 0,
+        // A host row that no longer resolves fails closed rather than lifting the
+        // ceiling.
+        hostMinor: host?.minor ?? true,
+      })
+    : null;
 
   // The owner's name and cut, so the submit button can say where the money goes
   // without the copy asserting it. The shares are operator-tunable at runtime,
@@ -870,6 +1136,8 @@ export async function getRemixGalleryVisibility({
     ownerShare: space.ownerShare,
     declineFee,
     pendingCount,
+    viewerPending,
+    maxSubmissionLevel,
   };
 }
 
@@ -883,7 +1151,7 @@ export async function getRemixGalleryVisibility({
 export async function getPendingRemixGallerySubmissions({
   ownerId,
   hostImageId,
-  limit = 50,
+  limit = REMIX_GALLERY_QUEUE_LIMIT,
 }: {
   ownerId: number;
   /**
@@ -915,9 +1183,15 @@ export async function getPendingRemixGallerySubmissions({
     take: limit,
   });
 
+  // Measured before the image filter below, not after. A queue that hit the cap
+  // and then dropped rows whose image was deleted returns fewer than `limit`, so
+  // a caller counting the returned rows concludes it saw everything — precisely
+  // when it did not, and the escrow behind the rest sits until it expires.
+  const truncated = rows.length >= limit;
+
   const entries = rows.filter((row) => isRemixGalleryPlacementData(row.data));
   const imageIds = entries.map((row) => (row.data as RemixGalleryPlacementData).imageId);
-  if (!imageIds.length) return [];
+  if (!imageIds.length) return { items: [], truncated };
 
   const images = await dbRead.$queryRaw<
     {
@@ -944,13 +1218,16 @@ export async function getPendingRemixGallerySubmissions({
   `;
   const byId = new Map(images.map((image) => [image.id, image]));
 
-  return entries
-    .map((row) => ({
-      ...row,
-      data: row.data as RemixGalleryPlacementData,
-      image: byId.get((row.data as RemixGalleryPlacementData).imageId) ?? null,
-    }))
-    .filter((row) => row.image);
+  return {
+    items: entries
+      .map((row) => ({
+        ...row,
+        data: row.data as RemixGalleryPlacementData,
+        image: byId.get((row.data as RemixGalleryPlacementData).imageId) ?? null,
+      }))
+      .filter((row) => row.image),
+    truncated,
+  };
 }
 
 /**
@@ -963,7 +1240,7 @@ export async function getPendingRemixGallerySubmissions({
  */
 export async function getMyRemixGallerySubmissions({
   placerId,
-  limit = 50,
+  limit = REMIX_GALLERY_QUEUE_LIMIT,
 }: {
   placerId: number;
   limit?: number;

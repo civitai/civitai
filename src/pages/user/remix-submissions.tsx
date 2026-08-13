@@ -27,6 +27,7 @@ import { Currency } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
 import { daysFromNow, formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { REMIX_GALLERY_QUEUE_LIMIT } from '~/shared/utils/remix-gallery';
 import { trpc } from '~/utils/trpc';
 
 const TABS = ['received', 'sent'] as const;
@@ -74,7 +75,7 @@ export default function RemixSubmissions() {
   const { data: sent, isLoading: sentLoading } =
     trpc.placement.getMyRemixGallerySubmissions.useQuery();
 
-  const waiting = received?.length ?? 0;
+  const waiting = received?.items.length ?? 0;
 
   return (
     <>
@@ -106,7 +107,11 @@ export default function RemixSubmissions() {
             </Tabs.List>
 
             <Tabs.Panel value="received" pt="md">
-              <ReceivedTab rows={received ?? []} isLoading={receivedLoading} />
+              <ReceivedTab
+                rows={received?.items ?? []}
+                truncated={!!received?.truncated}
+                isLoading={receivedLoading}
+              />
             </Tabs.Panel>
 
             <Tabs.Panel value="sent" pt="md">
@@ -119,9 +124,17 @@ export default function RemixSubmissions() {
   );
 }
 
-type ReceivedRow = RouterOutput['placement']['getPendingRemixGallerySubmissions'][number];
+type ReceivedRow = RouterOutput['placement']['getPendingRemixGallerySubmissions']['items'][number];
 
-function ReceivedTab({ rows, isLoading }: { rows: ReceivedRow[]; isLoading: boolean }) {
+function ReceivedTab({
+  rows,
+  truncated,
+  isLoading,
+}: {
+  rows: ReceivedRow[];
+  truncated: boolean;
+  isLoading: boolean;
+}) {
   const utils = trpc.useUtils();
 
   const act = trpc.placement.actOnRemixGallerySubmission.useMutation({
@@ -170,6 +183,14 @@ function ReceivedTab({ rows, isLoading }: { rows: ReceivedRow[]; isLoading: bool
 
   return (
     <Stack gap="md">
+      {/* Neither queue pages. A list that stops at the cap and says nothing
+          reads as complete. */}
+      {truncated && (
+        <Text size="xs" c="dimmed">
+          Showing the first {REMIX_GALLERY_QUEUE_LIMIT}.
+        </Text>
+      )}
+
       {rows.map((row) => (
         <Card key={row.id} withBorder>
           <Group justify="space-between" wrap="nowrap" align="flex-start">
@@ -281,6 +302,14 @@ function SentTab({ rows, isLoading }: { rows: SentRow[]; isLoading: boolean }) {
         You can withdraw a submission any time before the creator reviews it and get your Buzz back
         in full. Once it has been accepted there is nothing to withdraw.
       </Text>
+
+      {/* Neither queue pages. A list that stops at the cap and says nothing
+          reads as complete. */}
+      {rows.length >= REMIX_GALLERY_QUEUE_LIMIT && (
+        <Text size="xs" c="dimmed">
+          Showing the first {REMIX_GALLERY_QUEUE_LIMIT}.
+        </Text>
+      )}
 
       {rows.map((row) => (
         <Card key={row.id} withBorder>

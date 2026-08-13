@@ -942,9 +942,8 @@ export async function incrementOperationSpent(challengeId: number, amount: numbe
  * the run. `resetStuckCompletingChallenges` below revokes a `Completing` claim purely on elapsed
  * time — no liveness check, no ownership token — so a slow-but-alive run can have its claim taken
  * over by a second run while it is still executing. A re-claim overwrites the stamp, so a run that
- * re-reads the row and finds a DIFFERENT stamp knows it no longer owns the completion. That signal
- * is used to suppress duplicate TELEMETRY only (see `claimStillHeld` in daily-challenge-processing);
- * it does not gate any write, and the status writes remain unconditional as before.
+ * re-reads the row and finds a DIFFERENT stamp knows it no longer owns the completion — see
+ * `challengeClaimStillHeld` and `completeChallengeIfClaimHeld` below.
  */
 export async function claimChallengeForCompletion(challengeId: number): Promise<string | null> {
   const claimedAt = new Date().toISOString();
@@ -956,6 +955,55 @@ export async function claimChallengeForCompletion(challengeId: number): Promise<
     AND status = ${ChallengeStatus.Active}::"ChallengeStatus"
   `;
   return result > 0 ? claimedAt : null;
+}
+
+/**
+ * A stamp that is present AND different is the only proof of a takeover: an absent stamp reads the
+ * same whether nothing has claimed the row or the claim write is simply not visible yet, so it is
+ * treated as still held. Consequence: this can only ever stop a run that has demonstrably lost the
+ * challenge, never one that still owns it.
+ */
+export async function challengeClaimStillHeld(
+  challengeId: number,
+  claimedAt: string
+): Promise<boolean> {
+  const [row] = await dbWrite.$queryRaw<[{ held: boolean }?]>`
+    SELECT COALESCE(metadata->>'completingClaimedAt', '') IN ('', ${claimedAt}) AS held
+    FROM "Challenge"
+    WHERE id = ${challengeId}
+    LIMIT 1
+  `;
+  return row?.held ?? true;
+}
+
+/**
+ * Mark a challenge Completed only while this run still holds the claim it took, so a run that was
+ * evicted mid-flight cannot write an outcome over the run that replaced it. Same fail-open reading
+ * of a missing stamp as `challengeClaimStillHeld`.
+ *
+ * Returns whether the write landed; a `false` means some other run owns the completion, and the
+ * caller's completion side effects (telemetry, notifications) belong to that run instead.
+ */
+export async function completeChallengeIfClaimHeld({
+  challengeId,
+  claimedAt,
+  metadata,
+}: {
+  challengeId: number;
+  claimedAt: string;
+  metadata?: Prisma.InputJsonValue;
+}): Promise<boolean> {
+  const metadataUpdate =
+    metadata === undefined
+      ? Prisma.empty
+      : Prisma.sql`, metadata = ${JSON.stringify(metadata)}::jsonb`;
+  const result = await dbWrite.$executeRaw`
+    UPDATE "Challenge"
+    SET status = ${ChallengeStatus.Completed}::"ChallengeStatus"${metadataUpdate}
+    WHERE id = ${challengeId}
+    AND COALESCE(metadata->>'completingClaimedAt', '') IN ('', ${claimedAt})
+  `;
+  return result > 0;
 }
 
 /**

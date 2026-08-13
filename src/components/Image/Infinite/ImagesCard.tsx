@@ -26,12 +26,12 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemStatus, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
-import { generationGraphPanel } from '~/store/generation-graph.store';
+import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
+import { tourOverlayZIndex } from '~/shared/constants/app-layout.constants';
 import { useImageStore } from '~/store/image.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { BlockedReason } from '~/server/common/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useTrackEvent } from '~/components/TrackView/track.utils';
 import clsx from 'clsx';
 import classes from './ImagesCard.module.scss';
 
@@ -51,7 +51,6 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
   const currentUser = useCurrentUser();
-  const { trackAction } = useTrackEvent();
 
   const image = useImageStore(data);
 
@@ -73,35 +72,16 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
   const scheduled = image.publishedAt && new Date(image.publishedAt) > new Date();
   const isBlockedForAiVerification = image.blockedFor === BlockedReason.AiNotVerified;
 
-  const handleRemixClick = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
+  // Opening the menu must not follow the card's link to the image detail.
+  const handleRemixClick = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
 
-      // Top-of-funnel telemetry — joined to orchestration.jobs.remixOfId
-      // downstream to compute remix-conversion. The source modelVersionId
-      // for the remix is resolved server-side by getGenerationData, so it's
-      // not available on the card; leave null and join via remixStore /
-      // orchestration.jobs at funnel-analysis time.
-      trackAction({
-        type: 'Image_Remix_Click',
-        details: {
-          imageId: image.id,
-          imageType: image.type,
-          source: 'remix:image-card',
-        },
-      }).catch(() => undefined);
-
-      generationGraphPanel.open({
-        type: image.type,
-        id: image.id,
-      });
-
-      // Go to next step in tour when clicking
-      if (running) helpers?.next();
-    },
-    [image.type, image.id, running, helpers, trackAction]
-  );
+  const handleRemixAction = useCallback(() => {
+    // Go to next step in tour when clicking
+    if (running) helpers?.next();
+  }, [running, helpers]);
 
   const twCardStyle = useMemo(() => {
     return !image.cosmetic?.data ? { height } : undefined;
@@ -188,18 +168,28 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                 {safe && (
                   <div className="absolute right-2 top-2 flex flex-col gap-2">
                     {!isBlocked && <ImageContextMenu image={image} />}
-                    {features.imageGeneration && (image.hasPositivePrompt ?? image.hasMeta) && (
-                      <HoverActionButton
-                        label="Remix"
-                        size={30}
-                        color="white"
-                        variant="filled"
-                        data-activity="remix:image-card"
-                        data-tour={image.type === MediaType.image ? 'gen:remix' : undefined}
-                        onClick={handleRemixClick}
+                    {features.imageGeneration && isRemixMenuVisible(image) && (
+                      <RemixMenu
+                        image={image}
+                        source="remix:image-card"
+                        onAction={handleRemixAction}
+                        // The content-gen tour's remix step can only be advanced
+                        // by clicking through to an option, and its overlay both
+                        // dims and swallows clicks below it.
+                        zIndex={running ? tourOverlayZIndex + 1 : undefined}
                       >
-                        <IconBrush stroke={2.5} size={16} />
-                      </HoverActionButton>
+                        <HoverActionButton
+                          label="Remix"
+                          size={30}
+                          color="white"
+                          variant="filled"
+                          data-activity="remix:image-card"
+                          data-tour={image.type === MediaType.image ? 'gen:remix' : undefined}
+                          onClick={handleRemixClick}
+                        >
+                          <IconBrush stroke={2.5} size={16} />
+                        </HoverActionButton>
+                      </RemixMenu>
                     )}
                     {scheduled && (
                       <Tooltip label="Scheduled">

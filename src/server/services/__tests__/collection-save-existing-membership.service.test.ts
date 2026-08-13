@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as SearchIndex from '~/server/search-index';
 import type * as HomeBlockCache from '~/server/services/home-block-cache.service';
+import { AUTO_FEATURE_NOTE_PREFIX } from '~/server/common/auto-feature';
 
 // Saving an item to a collection sends the item's whole desired membership, so collections it is ALREADY
 // in ride along in the payload. Those are no-op upserts — re-running the contest gates on them fails the
@@ -13,7 +14,7 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
     collection: { findMany: vi.fn() },
     collectionItem: { findMany: vi.fn(), count: vi.fn() },
     challenge: { findFirst: vi.fn() },
-    user: { findUnique: vi.fn() },
+    user: { findUnique: vi.fn(), findFirst: vi.fn() },
     model: { findMany: vi.fn() },
     modelVersion: { findMany: vi.fn() },
     $queryRaw: vi.fn(),
@@ -21,7 +22,7 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
   mockDbWrite: {
     $executeRaw: vi.fn(),
     $transaction: vi.fn(),
-    collectionItem: { deleteMany: vi.fn() },
+    collectionItem: { deleteMany: vi.fn(), updateMany: vi.fn() },
     collectionContributor: { upsert: vi.fn() },
   },
 }));
@@ -111,15 +112,34 @@ const save = () =>
 
 // The remove path reads the same item lookup and permission batch as the add path. Its authorization rule
 // (only the item's author, the collection owner, or a manager may remove) has to survive that sharing.
-const removeFrom = ({ addedById }: { addedById: number }) => {
+// Whatever id the attribution account happens to have in this database.
+const AUTO_FEATURE_USER_ID = 987_654;
+
+const removeFrom = ({
+  addedById,
+  note = null,
+  collectionOwnerId = 999,
+}: {
+  addedById: number;
+  note?: string | null;
+  collectionOwnerId?: number;
+}) => {
   mockDbRead.collection.findMany.mockResolvedValue([]);
+  mockDbRead.user.findFirst.mockResolvedValue({ id: AUTO_FEATURE_USER_ID });
   mockDbRead.collectionItem.findMany.mockResolvedValue([
-    { id: 555, collectionId: OWN_COLLECTION_ID, tagId: null, addedById },
+    { id: 555, collectionId: OWN_COLLECTION_ID, tagId: null, addedById, note },
   ]);
   mockDbRead.$queryRaw.mockResolvedValue([
-    { id: OWN_COLLECTION_ID, userId: 999, write: 'Public', read: 'Public', type: 'Model' },
+    {
+      id: OWN_COLLECTION_ID,
+      userId: collectionOwnerId,
+      write: 'Public',
+      read: 'Public',
+      type: 'Model',
+    },
   ]);
   mockDbWrite.collectionItem.deleteMany.mockReturnValue('delete' as never);
+  mockDbWrite.collectionItem.updateMany.mockReturnValue('update' as never);
   mockDbWrite.$transaction.mockResolvedValue([]);
 
   return saveItemInCollections({
@@ -206,6 +226,46 @@ describe('saveItemInCollections removals', () => {
     // write:Public grants everyone the right to ADD; it is not a licence to delete another user's entry.
     await expect(removeFrom({ addedById: 4242 })).rejects.toThrow(/no changes were made/i);
     expect(mockDbWrite.collectionItem.deleteMany).not.toHaveBeenCalled();
+  });
+
+  // This modal is the other door into removal. The auto-feature job's dedupe is "does a row
+  // already exist", so a delete here would hand the image back on the next run — the row has to
+  // survive as a rejection, exactly as it does through removeCollectionItem.
+  it('rejects an auto-featured item rather than deleting it', async () => {
+    await expect(
+      removeFrom({
+        addedById: AUTO_FEATURE_USER_ID,
+        note: `${AUTO_FEATURE_NOTE_PREFIX}:1234`,
+        // Featured Images is system-owned, so only a manager reaches this path at all.
+        collectionOwnerId: USER_ID,
+      })
+    ).resolves.toBeDefined();
+
+    expect(mockDbWrite.collectionItem.deleteMany).not.toHaveBeenCalled();
+    expect(mockDbWrite.collectionItem.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: { in: [555] } },
+        data: expect.objectContaining({ status: 'REJECTED', reviewedById: USER_ID }),
+      })
+    );
+  });
+
+  // Attribution alone must not tombstone. CivitaiOfficial also curates by hand, and those adds
+  // carry no auto-feature note — tombstoning them would make them unremovable for good, since
+  // re-adding a rejected row only updates its tag.
+  it('deletes a CivitaiOfficial item that the job did not add', async () => {
+    await expect(
+      removeFrom({
+        addedById: AUTO_FEATURE_USER_ID,
+        note: 'contest entry',
+        collectionOwnerId: USER_ID,
+      })
+    ).resolves.toBeDefined();
+
+    expect(mockDbWrite.collectionItem.updateMany).not.toHaveBeenCalled();
+    expect(mockDbWrite.collectionItem.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: [555] } },
+    });
   });
 });
 

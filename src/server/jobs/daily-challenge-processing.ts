@@ -5,7 +5,9 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import {
+  challengeClaimStillHeld,
   claimChallengeForCompletion,
+  completeChallengeIfClaimHeld,
   computeDynamicPool,
   distributePrizes,
   createChallengeRecord,
@@ -16,7 +18,6 @@ import {
   incrementOperationSpent,
   resolveEventContext,
   setChallengeActive,
-  updateChallengeStatus,
   type ChallengeDetails,
   type EventContext,
   type RecentEntry,
@@ -1395,24 +1396,18 @@ async function logChallengeSpendMetric(challenge: ChallengeDetails) {
 }
 
 /**
- * True while `metadata.completingClaimedAt` still matches the stamp this run claimed with — i.e.
- * nobody has revoked and re-taken this completion since. TELEMETRY GATE ONLY: it guards the two
- * counter emits below and nothing else, so it can never change what is written or paid.
- *
- * Deliberately FAILS OPEN (returns true) when the row carries no stamp: `metadata` here is read
- * through the replica pool, where "no stamp yet" is indistinguishable from "the replica has not
- * caught up with our own claim write". Only a stamp that is present AND different is treated as
- * proof of a takeover. Consequence, stated plainly: this can only ever suppress a duplicate emit,
- * never manufacture one — and it does not make the emit exactly-once (see the emit sites).
+ * A run that has lost its completion claim stops here rather than judging, paying and writing an
+ * outcome alongside the run that took over. Best-effort telemetry; never throws.
  */
-function claimStillHeld(
-  metadata: Record<string, unknown> | null | undefined,
-  claimedAt: string | null
-): boolean {
-  if (!claimedAt) return false;
-  const current = metadata?.completingClaimedAt;
-  if (typeof current !== 'string' || current.length === 0) return true;
-  return current === claimedAt;
+function logClaimLost(challengeId: number | null, stage: string) {
+  log('Completion claim lost, abandoning run:', { challengeId, stage });
+  logToAxiom({
+    type: 'warning',
+    name: 'challenge-completion-claim-lost',
+    message: 'Completion claim was revoked and re-taken while this run was still executing',
+    challengeId,
+    stage,
+  }).catch(() => undefined);
 }
 
 /**
@@ -1436,7 +1431,7 @@ export async function pickWinnersForChallenge(
 
   // 1. Atomic claim — prevent duplicate processing. `claimedAt` is the stamp written to
   // metadata.completingClaimedAt; a later read showing a different stamp means this run's claim was
-  // revoked (resetStuckCompletingChallenges) and re-taken. Used to gate telemetry only.
+  // revoked (resetStuckCompletingChallenges) and re-taken, and this run must stop.
   const claimedAt = await claimChallengeForCompletion(currentChallenge.challengeId);
   if (!claimedAt) {
     log('Challenge already claimed for completion, skipping:', currentChallenge.challengeId);
@@ -1484,8 +1479,6 @@ export async function pickWinnersForChallenge(
               source: ChallengeSource;
               judgingCategories: unknown;
               judgingEngine: string | null;
-              // Carried purely so the zero-entries emit below can re-check the claim stamp without
-              // a second round-trip — an extra COLUMN on a query that already runs, not a new read.
               metadata: Record<string, unknown> | null;
             }
           | undefined
@@ -1570,28 +1563,29 @@ export async function pickWinnersForChallenge(
           await refundUserChallengeFunds(currentChallenge.challengeId);
           log('Refunded user challenge funds (no winners)');
         }
-        await updateChallengeStatus(currentChallenge.challengeId, ChallengeStatus.Completed);
+        const completed = await completeChallengeIfClaimHeld({
+          challengeId: currentChallenge.challengeId,
+          claimedAt,
+        });
+        if (!completed) {
+          logClaimLost(currentChallenge.challengeId, 'zero-entries-completion');
+          return;
+        }
         log('Challenge marked as completed (no entries)');
-        // Telemetry: emit AFTER the Completed write, never before, and only while this run still
-        // holds the claim it took at the top of the function.
-        //
-        // What that actually guarantees — stated precisely, because the write it follows does NOT
-        // provide exactly-once on its own: `updateChallengeStatus` is an unconditional
-        // `UPDATE ... WHERE id = $1` with no status predicate, and `resetStuckCompletingChallenges`
-        // is purely time-based, so a slow-but-alive run can be reset to Active, re-claimed by a
-        // second run, and STILL execute its own Completed write. The stamp check is what keeps that
-        // run from emitting a second time. Making the write itself conditional would be a real
-        // behaviour change and is deliberately out of scope.
-        //
-        // Residual window on THIS path: the freshest read of the row before the emit is the judge-row
-        // SELECT above, taken right after the claim — so a takeover during judging/refund is not
-        // observed here and would still double-count. The winners path below re-reads the row much
-        // later and is correspondingly tighter. Both fail open on a missing stamp (see claimStillHeld).
-        // `source`/`metadata` reuse the already-fetched judge row — no extra (throwable) query.
-        if (claimStillHeld(challengeJudgeRow?.metadata, claimedAt))
-          recordChallengeCompleted({ source: challengeJudgeRow?.source });
+        // Emit AFTER the Completed write: the write is what makes this run the one that completed
+        // the challenge, so a run whose write was rejected must not count a completion.
+        recordChallengeCompleted({ source: challengeJudgeRow?.source });
         const freshChallenge = await getChallengeById(currentChallenge.challengeId);
         if (freshChallenge) await logChallengeSpendMetric(freshChallenge);
+        return;
+      }
+
+      // Everything from here on spends (judging calls) and writes an outcome (winner rows, payouts,
+      // status). Judging a production-sized field can outlast the 10-minute claim revocation, so
+      // re-check ownership at the last point where stopping costs nothing — a run that has already
+      // been replaced would otherwise pick a second, different podium.
+      if (!(await challengeClaimStillHeld(currentChallenge.challengeId, claimedAt))) {
+        logClaimLost(currentChallenge.challengeId, 'pre-judging');
         return;
       }
 
@@ -1850,29 +1844,31 @@ export async function pickWinnersForChallenge(
     }
 
     const existingMetadata = parseChallengeMetadata(challengeRecord?.metadata);
-    await dbWrite.challenge.update({
-      where: { id: currentChallenge.challengeId },
-      data: {
-        metadata: {
-          ...existingMetadata,
-          completionSummary: {
-            judgingProcess: process,
-            outcome: outcome,
-            completedAt: new Date().toISOString(),
-          },
-          reconciliation: {
-            ...(existingMetadata.reconciliation ?? {}),
-            paidUserIds: Array.from(
-              new Set([
-                ...(existingMetadata.reconciliation?.paidUserIds ?? []),
-                ...paidParticipants,
-              ])
-            ),
-          },
+    const completed = await completeChallengeIfClaimHeld({
+      challengeId: currentChallenge.challengeId,
+      claimedAt,
+      metadata: {
+        ...existingMetadata,
+        completionSummary: {
+          judgingProcess: process,
+          outcome: outcome,
+          completedAt: new Date().toISOString(),
         },
-        status: ChallengeStatus.Completed,
-      },
+        reconciliation: {
+          ...(existingMetadata.reconciliation ?? {}),
+          paidUserIds: Array.from(
+            new Set([...(existingMetadata.reconciliation?.paidUserIds ?? []), ...paidParticipants])
+          ),
+        },
+      } as unknown as Prisma.InputJsonValue,
     });
+    if (!completed) {
+      // Winners and payouts this run already wrote stay behind — partial state left by an aborted
+      // run is #3842, not this guard's job. What stops here is everything that would announce or
+      // count an outcome this run no longer owns.
+      logClaimLost(currentChallenge.challengeId, 'winners-completion');
+      return;
+    }
     log('Challenge status updated to Completed');
 
     // Telemetry: emitted AFTER the Completed write, deliberately NOT next to the payout above.
@@ -1880,17 +1876,6 @@ export async function pickWinnersForChallenge(
     // and then crashes before this write is reset Completing -> Active and re-enters via the
     // `existingWinners` branch, which re-issues the same (already-settled) payout. An emit at the
     // payout site would count that Buzz twice.
-    //
-    // Post-write placement alone is NOT exactly-once, and the code does not pretend otherwise: this
-    // Completed write is an unconditional `UPDATE ... WHERE id = $1` (no status predicate), and
-    // `resetStuckCompletingChallenges` revokes a Completing claim on elapsed time alone with no
-    // liveness check — so a slow-but-alive run can lose its claim to a second run and still run this
-    // write. The `claimStillHeld` gate is what stops that run from emitting a second time:
-    // `challengeRecord` was read at step 7, AFTER judging and both payout steps, so a takeover during
-    // the long part of the run is observed here. Residual window: a takeover between that read and
-    // this line is not covered — closing it would mean a conditional write, i.e. a real behaviour
-    // change, which is out of scope. The gate fails open on a missing stamp (see claimStillHeld), so
-    // it can only ever suppress a duplicate, never a first emit under normal operation.
     //
     // Amount mirrors endChallengeAndPickWinners: the sum of the prizes SUBMITTED for the winners
     // paid on this completion (equal to each ChallengeWinner.buzzAwarded), not the configured prize
@@ -1900,14 +1885,12 @@ export async function pickWinnersForChallenge(
     // not move money is invisible here and is still counted. `winnerBuzzType` is the currency
     // buildWinnerPayoutTransactions actually paid in, and `challengeRecord` is already in scope —
     // neither needs a new query.
-    if (claimStillHeld(challengeRecord?.metadata, claimedAt)) {
-      recordChallengeCompleted({ source: challengeRecord?.source });
-      recordChallengePrizePaidBuzz({
-        source: challengeRecord?.source,
-        buzzType: winnerBuzzType,
-        amount: winningEntries.reduce((sum, e) => sum + (e.prize ?? 0), 0),
-      });
-    }
+    recordChallengeCompleted({ source: challengeRecord?.source });
+    recordChallengePrizePaidBuzz({
+      source: challengeRecord?.source,
+      buzzType: winnerBuzzType,
+      amount: winningEntries.reduce((sum, e) => sum + (e.prize ?? 0), 0),
+    });
 
     if (challengeRecord) await logChallengeSpendMetric(challengeRecord);
 

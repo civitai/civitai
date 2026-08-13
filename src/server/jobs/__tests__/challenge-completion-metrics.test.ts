@@ -32,7 +32,8 @@ const {
   mockClaimChallengeForCompletion,
   mockGetExistingWinnersForRetry,
   mockResolveEventContext,
-  mockUpdateChallengeStatus,
+  mockChallengeClaimStillHeld,
+  mockCompleteChallengeIfClaimHeld,
   mockRefundUserChallengeFunds,
   mockCreateNotification,
   mockCreateChallengeWinner,
@@ -58,7 +59,8 @@ const {
   mockClaimChallengeForCompletion: vi.fn().mockResolvedValue('2026-07-29T12:00:00.000Z'),
   mockGetExistingWinnersForRetry: vi.fn().mockResolvedValue([]),
   mockResolveEventContext: vi.fn().mockResolvedValue(undefined),
-  mockUpdateChallengeStatus: vi.fn().mockResolvedValue(undefined),
+  mockChallengeClaimStillHeld: vi.fn(),
+  mockCompleteChallengeIfClaimHeld: vi.fn(),
   mockRefundUserChallengeFunds: vi.fn().mockResolvedValue({ refundedEntries: 0 }),
   mockCreateNotification: vi.fn().mockResolvedValue(undefined),
   mockCreateChallengeWinner: vi.fn(),
@@ -115,7 +117,9 @@ vi.mock('~/server/games/daily-challenge/daily-challenge.utils', async () => {
 });
 
 vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
+  challengeClaimStillHeld: mockChallengeClaimStillHeld,
   claimChallengeForCompletion: mockClaimChallengeForCompletion,
+  completeChallengeIfClaimHeld: mockCompleteChallengeIfClaimHeld,
   computeDynamicPool: vi.fn(),
   distributePrizes: vi.fn(),
   createChallengeRecord: vi.fn(),
@@ -126,7 +130,6 @@ vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
   incrementOperationSpent: vi.fn().mockResolvedValue(undefined),
   resolveEventContext: mockResolveEventContext,
   setChallengeActive: vi.fn(),
-  updateChallengeStatus: mockUpdateChallengeStatus,
 }));
 
 vi.mock('~/server/games/daily-challenge/challenge-rewards', () => ({
@@ -176,11 +179,8 @@ vi.mock('~/utils/logging', () => ({
 
 const { pickWinnersForChallenge } = await import('~/server/jobs/daily-challenge-processing');
 const { ChallengeSource } = await import('~/shared/utils/prisma/enums');
-const {
-  recordChallengeCompleted,
-  recordChallengePrizePaidBuzz,
-  __resetChallengeMetricsForTest,
-} = await import('~/server/prom/challenge.metrics');
+const { recordChallengeCompleted, recordChallengePrizePaidBuzz, __resetChallengeMetricsForTest } =
+  await import('~/server/prom/challenge.metrics');
 
 const COMPLETED_METRIC = 'civitai_app_challenge_completed_total';
 const PRIZE_PAID_METRIC = 'civitai_app_challenge_prize_paid_buzz_total';
@@ -268,6 +268,19 @@ const CLAIM_STAMP = '2026-07-29T12:00:00.000Z';
 // The stamp a SECOND run would write after resetStuckCompletingChallenges revoked our claim.
 const TAKEOVER_STAMP = '2026-07-29T12:11:00.000Z';
 
+// Stands in for `Challenge.metadata.completingClaimedAt` as the row carries it while this run
+// executes; `undefined` is a row with no stamp at all.
+let rowClaimStamp: string | undefined = CLAIM_STAMP;
+
+// Mirrors the SQL predicate shared by both claim-guarded helpers: only a stamp that is present AND
+// different proves a takeover, so an absent stamp still lets the run through.
+const stampAllows = (claimedAt: string) =>
+  rowClaimStamp === undefined || rowClaimStamp === '' || rowClaimStamp === claimedAt;
+
+// Challenge ids this run actually managed to mark Completed — the claim-conditional write only
+// lands while the run still owns the challenge, so this stays empty for an evicted run.
+const completedChallengeIds: number[] = [];
+
 function challengeRecordWith(
   source: string,
   rowMetadata: Record<string, unknown> = { completingClaimedAt: CLAIM_STAMP }
@@ -323,6 +336,7 @@ function mockJudgedEntryRows(rows: Array<{ imageId: number; userId: number; user
  * TAKEOVER_STAMP to simulate this run's claim being revoked and re-taken mid-flight.
  */
 async function runTwoWinnerCompletion(source: string, rowStamp: string | undefined = CLAIM_STAMP) {
+  rowClaimStamp = rowStamp;
   const rowMetadata = rowStamp === undefined ? {} : { completingClaimedAt: rowStamp };
   mockGetChallengeById.mockResolvedValue(challengeRecordWith(source, rowMetadata));
   mockChallengeJudgeRow(source, rowMetadata);
@@ -358,7 +372,27 @@ beforeEach(() => {
   mockClaimChallengeForCompletion.mockResolvedValue(CLAIM_STAMP);
   mockGetExistingWinnersForRetry.mockResolvedValue([]);
   mockResolveEventContext.mockResolvedValue(undefined);
-  mockUpdateChallengeStatus.mockResolvedValue(undefined);
+  rowClaimStamp = CLAIM_STAMP;
+  completedChallengeIds.length = 0;
+  // Named so a failure reads "generateWinners" rather than "vi.fn()" — these are the mocks whose
+  // call counts carry the claim-guard assertions.
+  mockGenerateWinners.mockName('generateWinners');
+  mockCreateChallengeWinner.mockName('createChallengeWinner');
+  mockCreateBuzzTransactionMany.mockName('createBuzzTransactionMany');
+  mockCompleteChallengeIfClaimHeld.mockName('completeChallengeIfClaimHeld');
+  mockGetChallengeById.mockName('getChallengeById');
+  vi.mocked(recordChallengeCompleted).mockName('recordChallengeCompleted');
+  vi.mocked(recordChallengePrizePaidBuzz).mockName('recordChallengePrizePaidBuzz');
+  mockChallengeClaimStillHeld.mockImplementation(async (_challengeId: number, claimedAt: string) =>
+    stampAllows(claimedAt)
+  );
+  mockCompleteChallengeIfClaimHeld.mockImplementation(
+    async ({ challengeId, claimedAt }: { challengeId: number; claimedAt: string }) => {
+      const held = stampAllows(claimedAt);
+      if (held) completedChallengeIds.push(challengeId);
+      return held;
+    }
+  );
   mockRefundUserChallengeFunds.mockResolvedValue({ refundedEntries: 0 });
   mockDbWriteChallengeFindUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
   // Resolve to the PERSISTED row (fresh insert), the real return shape — see
@@ -380,7 +414,10 @@ describe('pickWinnersForChallenge — zero-entries completion telemetry', () => 
     await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
 
     // The completion actually happened...
-    expect(mockUpdateChallengeStatus).toHaveBeenCalledWith(1, 'Completed');
+    expect(mockCompleteChallengeIfClaimHeld).toHaveBeenCalledWith({
+      challengeId: 1,
+      claimedAt: CLAIM_STAMP,
+    });
     // ...and it was counted, once, with the right source.
     expect(recordChallengeCompleted).toHaveBeenCalledTimes(1);
     expect(recordChallengeCompleted).toHaveBeenCalledWith({ source: ChallengeSource.User });
@@ -471,9 +508,8 @@ describe('pickWinnersForChallenge — emit placement is retry-safe', () => {
   it('emits only AFTER the Completed status write, never at the payout call', async () => {
     await runTwoWinnerCompletion(ChallengeSource.System);
 
-    // Only one challenge.update runs for a System-source completion: the Completed write.
-    expect(mockDbWriteChallengeUpdate).toHaveBeenCalledTimes(1);
-    const completedWriteOrder = mockDbWriteChallengeUpdate.mock.invocationCallOrder[0];
+    expect(mockCompleteChallengeIfClaimHeld).toHaveBeenCalledTimes(1);
+    const completedWriteOrder = mockCompleteChallengeIfClaimHeld.mock.invocationCallOrder[0];
     const payoutOrder = mockCreateBuzzTransactionMany.mock.invocationCallOrder[0];
     const completedEmitOrder = vi.mocked(recordChallengeCompleted).mock.invocationCallOrder[0];
     const prizeEmitOrder = vi.mocked(recordChallengePrizePaidBuzz).mock.invocationCallOrder[0];
@@ -488,7 +524,7 @@ describe('pickWinnersForChallenge — emit placement is retry-safe', () => {
   });
 
   it('does not emit when the Completed status write throws', async () => {
-    mockDbWriteChallengeUpdate.mockRejectedValue(new Error('db down'));
+    mockCompleteChallengeIfClaimHeld.mockRejectedValue(new Error('db down'));
 
     await expect(runTwoWinnerCompletion(ChallengeSource.System)).rejects.toThrow('db down');
 
@@ -500,45 +536,96 @@ describe('pickWinnersForChallenge — emit placement is retry-safe', () => {
 // The ENTRY guard (claim never acquired) is covered above. This block covers the case that guard
 // cannot reach: the claim WAS acquired, then revoked mid-flight by resetStuckCompletingChallenges
 // (purely time-based — no liveness check, no ownership token) and re-taken by a second run, while
-// this run keeps executing. Both Completed writes are unconditional `UPDATE ... WHERE id = $1` with
-// no status predicate, so this run's write still lands; without a claim re-check it would also emit,
-// on top of the takeover run's emit. The re-checked claim stamp is what holds the counters to one
-// increment per completion.
-describe('pickWinnersForChallenge — claim REVOKED mid-flight (write still runs)', () => {
-  it('winners path: still performs the Completed write but does NOT emit', async () => {
-    await runTwoWinnerCompletion(ChallengeSource.System, TAKEOVER_STAMP);
-
-    // The unconditional write really did execute — this is the whole point of the case.
-    expect(mockDbWriteChallengeUpdate).toHaveBeenCalledTimes(1);
-    expect(mockDbWriteChallengeUpdate.mock.calls[0][0]).toMatchObject({
-      data: { status: 'Completed' },
+// this run keeps executing. Production close-time judging can outlast the 10-minute revocation, so
+// an evicted run reaching these lines is a normal outcome, not a freak one: on a 45-entry challenge
+// it produced two podiums, ~2x the comparison rows and ~2x the Buzz, with first and second place
+// decided by whichever run wrote last (#3822).
+//
+// A run in that state must not decide the outcome: the Completed write carries the claim as a
+// predicate, so it simply does not land, and the emits — which follow the write's own result —
+// stay with the run that owns the challenge.
+describe('pickWinnersForChallenge — claim REVOKED mid-flight', () => {
+  it('winners path: does NOT write Completed and does NOT emit', async () => {
+    // The takeover lands DURING judging — after the pre-judging guard has already let this run
+    // through — which is the only way to reach the final write having lost the claim.
+    mockGetChallengeById.mockResolvedValue(challengeRecordWith(ChallengeSource.System));
+    mockChallengeJudgeRow(ChallengeSource.System);
+    mockJudgedEntryRows([
+      { imageId: 1, userId: 100, username: 'alice' },
+      { imageId: 2, userId: 200, username: 'bob' },
+    ]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    mockGenerateWinners.mockImplementation(async () => {
+      rowClaimStamp = TAKEOVER_STAMP;
+      return {
+        process: 'llm',
+        outcome: 'llm-picked',
+        model: 'test-model',
+        usage: {},
+        winners: [
+          { creator: 'alice', creatorId: 100, reason: 'best' },
+          { creator: 'bob', creatorId: 200, reason: 'second' },
+        ],
+      };
     });
-    // The payout ran too (it is retry-safe, so the takeover run re-issued the same one).
-    expect(mockCreateBuzzTransactionMany).toHaveBeenCalled();
 
-    // ...and neither counter moved, so the takeover run's own emits are the only ones.
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    // Neither counter moved, so the takeover run's own emits are the only ones.
     expect(recordChallengeCompleted).not.toHaveBeenCalled();
     expect(recordChallengePrizePaidBuzz).not.toHaveBeenCalled();
     expect(await allSeries(COMPLETED_METRIC)).toHaveLength(0);
     expect(await allSeries(PRIZE_PAID_METRIC)).toHaveLength(0);
+
+    // ...because the write carried this run's stamp and was rejected by the claim predicate.
+    expect(completedChallengeIds).toEqual([]);
+    expect(mockCompleteChallengeIfClaimHeld.mock.calls[0]?.[0]).toMatchObject({
+      challengeId: 1,
+      claimedAt: CLAIM_STAMP,
+    });
   });
 
-  it('zero-entries path: still marks Completed but does NOT emit', async () => {
+  it('winners path: an evicted run stops before spending on judging', async () => {
+    // Takeover observed at the pre-judging re-check: the run must not buy a second podium, create a
+    // second set of winner rows, or pay a second time.
+    rowClaimStamp = TAKEOVER_STAMP;
+    mockGetChallengeById.mockResolvedValue(challengeRecordWith(ChallengeSource.System));
+    mockChallengeJudgeRow(ChallengeSource.System);
+    mockJudgedEntryRows([
+      { imageId: 1, userId: 100, username: 'alice' },
+      { imageId: 2, userId: 200, username: 'bob' },
+    ]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    expect(mockGenerateWinners).not.toHaveBeenCalled();
+    expect(mockCreateChallengeWinner).not.toHaveBeenCalled();
+    expect(mockCreateBuzzTransactionMany).not.toHaveBeenCalled();
+    expect(mockCompleteChallengeIfClaimHeld).not.toHaveBeenCalled();
+    expect(recordChallengeCompleted).not.toHaveBeenCalled();
+  });
+
+  it('zero-entries path: does NOT mark Completed and does NOT emit', async () => {
+    rowClaimStamp = TAKEOVER_STAMP;
     mockChallengeJudgeRow(ChallengeSource.User, { completingClaimedAt: TAKEOVER_STAMP });
     mockDbReadQueryRaw.mockResolvedValueOnce([]);
 
     await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
 
-    expect(mockUpdateChallengeStatus).toHaveBeenCalledWith(1, 'Completed');
     expect(recordChallengeCompleted).not.toHaveBeenCalled();
     expect(await allSeries(COMPLETED_METRIC)).toHaveLength(0);
+    expect(completedChallengeIds).toEqual([]);
+    // The run returned at the rejected write, so nothing downstream of it ran either.
+    expect(mockGetChallengeById).not.toHaveBeenCalled();
   });
 
-  it('fails OPEN when the row carries no claim stamp at all (replica lag is not a takeover)', async () => {
-    // A missing stamp is indistinguishable from a replica that has not caught up with our own claim
-    // write, so the gate must NOT suppress here — it may only ever drop a duplicate.
+  it('fails OPEN when the row carries no claim stamp at all (an unstamped row is not a takeover)', async () => {
+    // A missing stamp reads the same whether nothing claimed the row or our own claim write is not
+    // visible yet, so neither guard may fire on it — the run judges, completes and emits as normal.
     await runTwoWinnerCompletion(ChallengeSource.System, undefined);
 
+    expect(mockGenerateWinners).toHaveBeenCalledTimes(1);
     expect(recordChallengeCompleted).toHaveBeenCalledTimes(1);
     const series = await seriesFor(COMPLETED_METRIC, { source: 'System' });
     expect(series).toBeDefined();

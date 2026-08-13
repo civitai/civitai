@@ -14,7 +14,21 @@ export type PlacedSticker = {
   status: string;
   amount: number;
   data: StickerPlacementData;
+  /**
+   * `Date` over superjson, a string out of anything that stringified the cache
+   * on the way past. Both are accepted rather than normalised on arrival
+   * because the only readers pass it to `new Date()` anyway, and a cast that
+   * claims `Date` for a value that is a string reads correct and compares
+   * wrong.
+   */
+  placedAt: Date | string;
   isPending: boolean;
+  /**
+   * Whether this placement carries a note the viewer may read. The text itself
+   * is not in the listing — that runs for every image on a feed page — and comes
+   * with the hover card instead.
+   */
+  hasComment: boolean;
 };
 
 /**
@@ -31,7 +45,7 @@ export function useStickerPlacements(imageIds: number[], enabled = true) {
     [imageIds.join(',')]
   );
 
-  const { data, isLoading } = trpc.placement.getStickerPlacements.useQuery(
+  const { data, isLoading, isError } = trpc.placement.getStickerPlacements.useQuery(
     { imageIds: ids },
     { enabled: enabled && ids.length > 0, staleTime: 60_000 }
   );
@@ -46,7 +60,11 @@ export function useStickerPlacements(imageIds: number[], enabled = true) {
     return map;
   }, [data]);
 
-  return { byImage, isLoading };
+  // `isError` alongside, for the same reason the counts hook carries it: a
+  // failed fetch and an image nobody has stickered are both an empty map, and a
+  // surface that reads "no stickers here" off the first one is saying something
+  // it does not know.
+  return { byImage, isLoading, isError };
 }
 
 /**
