@@ -1,28 +1,17 @@
-import type { Session, SessionUser } from '~/types/session';
-
-// Every `Date`-typed field on SessionUser. Kept in sync by `session-props.test.ts`, which reads
-// `src/types/session.ts` and fails if a new one is added without being listed here.
-export const SESSION_DATE_FIELDS = [
-  'emailVerified',
-  'createdAt',
-  'mutedAt',
-  'bannedAt',
-  'deletedAt',
-] as const;
+import type { Session } from '~/types/session';
 
 /**
- * Props are plain JSON — nothing transforms them the way `trpcState` is transformed — and the session
- * legitimately carries real `Date`s: a warm `session:data2` hit is msgpack, which round-trips Dates
- * (`@civitai/auth`'s `getSessionUser` documents this; only the cold-miss HTTP path yields ISO strings).
- * Next's dev server rejects a Date in props with a page-wide 500, while production serializes it to an
- * ISO string silently — so normalizing here makes dev agree with what prod already sends to the client.
+ * Make the session safe to hand to Next as a prop.
+ *
+ * Props are plain JSON — nothing transforms them the way `trpcState` is transformed — and a warm
+ * `session:data2` hit is msgpack, which round-trips both real `Date`s and `undefined` values with their
+ * keys intact (`@civitai/auth`'s `getSessionUser` documents the Date half; only the cold-miss HTTP path
+ * yields plain JSON). Next rejects BOTH with a page-wide 500 under the dev server, and production
+ * serializes them silently — so the two are inseparable and normalizing only the Dates fixes nothing.
+ *
+ * A JSON round-trip is deliberate rather than a field-by-field pass: it drops `undefined`, ISO-strings
+ * Dates, recurses into nested values like `meta`, and needs no list to maintain. It is also exactly what
+ * `/api/auth/session` does to the same object, so the SSR seed and every later refetch now agree.
  */
-export const jsonSafeSession = (session: Session | null): Session | null => {
-  if (!session?.user) return session;
-  const user: Record<string, unknown> = { ...session.user };
-  for (const field of SESSION_DATE_FIELDS) {
-    const value = user[field];
-    if (value != null) user[field] = new Date(value as Date).toISOString();
-  }
-  return { ...session, user: user as unknown as SessionUser };
-};
+export const jsonSafeSession = (session: Session | null): Session | null =>
+  session ? (JSON.parse(JSON.stringify(session)) as Session) : session;
