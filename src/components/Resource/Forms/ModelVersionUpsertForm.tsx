@@ -480,9 +480,10 @@ export function ModelVersionUpsertForm({
     existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash ||
     !!currentUser?.isModerator;
 
-  // Models that may not be gated at all. One source for both the hidden editor (`showPaidAccessInput`) and
-  // the submitted gate: hiding alone leaves the stored config intact (`shouldUnregister: false`) and
-  // resubmits a gate the creator can neither see nor clear, which is what POI did.
+  // POI and private: the two model-level reasons a gate can't exist. Read by both the hidden editor
+  // (`showPaidAccessInput`, which has further reasons of its own) and the submitted gate, because hiding
+  // alone leaves the stored config intact (`shouldUnregister: false`) and resubmits a gate the creator can
+  // neither see nor clear — which is what POI did.
   const gateSuppressed = model?.availability === Availability.Private || !!model?.poi;
 
   // Asked once per version, the first time it earns anything — a version already on record keeps its
@@ -775,7 +776,9 @@ export function ModelVersionUpsertForm({
         steps: data.steps ?? null,
         modelId: model?.id ?? -1,
         paidAccess: submittedGate,
-        donationGoal: toDonationGoalInput(gatedConfig),
+        // Keyed to the gate that is actually sent: a goal ends a timed window early, so writing one for a
+        // version whose gate was just rejected leaves a goal against nothing to end.
+        donationGoal: submittedGate ? toDonationGoalInput(gatedConfig) : null,
         trainedWords: skipTrainedWords ? [] : trainedWords,
         baseModelType: data.baseModelType,
         monetization: data.monetization,
@@ -927,9 +930,12 @@ export function ModelVersionUpsertForm({
   // A card header carrying its own toggle needs to read as a header, not as another row of fields.
   const cardHeaderBg = colorScheme === 'dark' ? 'dark.6' : 'gray.1';
 
-  // A private model, or a usage control that can't be gated, loses its gate on save no matter what the
-  // creator does — the submit substitutes null either way. Nothing to offer them, so say why instead.
-  const gateRemovalIsStructural = removingStoredGate && (gateSuppressed || !paidAccessUsageOk);
+  // Removals the creator cannot prevent — the gate goes on save whatever they do, whether the submit
+  // substitutes null (suppressed model, ungatable usage control) or an effect already cleared the config
+  // (non-commercial base model). Nothing to offer them, so say why instead. Anything reachable here
+  // without an arm below reads as the reversible early-access loss, which is the wrong sentence.
+  const gateRemovalIsStructural =
+    removingStoredGate && (gateSuppressed || !paidAccessUsageOk || isNonCommercial);
   // Whether the control each sentence is about is actually on screen (see the colour rule below).
   const removalControlsVisible =
     (!removingStoredFee || (showChargeSettings && showLicensingFeeBlock)) &&
@@ -1288,6 +1294,8 @@ export function ModelVersionUpsertForm({
                             ? "A private model can't have paid access, so this can't be kept."
                             : model?.poi
                             ? "A model depicting a real person can't have paid access, so this can't be kept."
+                            : isNonCommercial
+                            ? "This base model is licensed for non-commercial use, so this can't be kept."
                             : "This version's usage control can't be gated, so this can't be kept."}
                         </Text>
                       ) : (

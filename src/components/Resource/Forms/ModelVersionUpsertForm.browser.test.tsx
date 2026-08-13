@@ -453,7 +453,52 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
     await userEvent.click(page.getByRole('button', { name: 'Save' }));
     await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    // Null because of POI, not because this form never sends a gate: the blank-price test below submits a
+    // gate from the same model and version with POI off.
     expect((mutateAsync.mock.calls[0][0] as { paidAccess?: unknown }).paidAccess).toBeNull();
+  });
+
+  // Surfacing the POI notice meant rendering the Monetization card whenever a stored charge is going away.
+  // That also made this case reachable for the first time — a non-commercial base model clears the gate
+  // through an effect rather than at submit — and a removal with no arm of its own falls through to the
+  // reversible early-access wording, offering a Restore that puts back a config the server rejects.
+  test('a non-commercial base model says why the gate goes, and offers no restore', async () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={model}
+        version={
+          { ...(chargingVersion as object), licensingFee: 0 } as React.ComponentProps<
+            typeof ModelVersionUpsertForm
+          >['version']
+        }
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    // Switched in-session, not loaded that way: the clearing effect is keyed to the base model CHANGING,
+    // which is what empties the config behind the unmounted editor and makes this removal reachable.
+    await expect.element(accessSwitch()).toBeChecked();
+    await userEvent.click(page.getByRole('textbox', { name: 'Base Model' }));
+    await userEvent.click(page.getByRole('option', { name: 'Ideogram 4.0' }));
+
+    // Anchor on the line that arrives either way, then read the reason synchronously: on a revert the
+    // reason is simply the wrong sentence, and waiting for the right one would spend the full matcher
+    // timeout only to report that some text never appeared.
+    await expect
+      .element(page.getByText(/Saving now removes this version's paid access/))
+      .toBeInTheDocument();
+    expect(
+      page.getByText(/This base model is licensed for non-commercial use/).elements()
+    ).toHaveLength(1);
+    // The wrong sentence for this removal: nothing here is about early access ending.
+    expect(page.getByText(/your payment for early access will be lost/).elements()).toHaveLength(0);
+    // And no restore: it would re-apply a gate the server rejects for this base model.
+    expect(
+      page.getByRole('button', { name: 'Restore the stored settings' }).elements()
+    ).toHaveLength(0);
   });
 
   // "A cheaper generation-only price" with an empty box used to save a generation grant carrying no price
@@ -479,14 +524,14 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     // Both outcomes in one poll, on a short budget. `expect.element` alone would spend the full 15 s
     // matcher timeout on a revert and then report only that some text never appeared; this names the thing
     // that actually went wrong — the blank price was saved — in about a second.
-    await vi.waitFor(
-      () => {
-        if (mutateAsync.mock.calls.length)
-          throw new Error('saved a blank generation-only price instead of refusing it');
-        expect(page.getByText(/Enter a generation-only price/).elements()).toHaveLength(1);
-      },
-      { timeout: 3000 }
-    );
+    // Both outcomes in one poll, on the suite's default budget: a revert throws the named error on every
+    // attempt, so that is what the timeout reports — rather than fifteen seconds of `expect.element`
+    // waiting for text that never comes and then blaming the text.
+    await vi.waitFor(() => {
+      if (mutateAsync.mock.calls.length)
+        throw new Error('saved a blank generation-only price instead of refusing it');
+      expect(page.getByText(/Enter a generation-only price/).elements()).toHaveLength(1);
+    });
 
     // The positive control: the same save goes through once the price exists, so the refusal above is the
     // missing price and not the form being unsavable for some unrelated reason.
