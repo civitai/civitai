@@ -53,31 +53,9 @@ import { readFileSync, existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 
-// ---------------------------------------------------------------------------
-// Watchlist
-// ---------------------------------------------------------------------------
-// Keep this SMALL and justified. Every entry must name a real cross-graph invariant and
-// say what breaks when it is violated — an entry nobody can explain becomes an entry
-// nobody dares delete.
-const WATCHLIST = [
-  {
-    rule: 'SHARED_STATE',
-    module: 'src/server/logging/structured-log-sink.ts',
-    globalKey: '__civitaiStructuredLogSink',
-    why: 'The one AxiomDeps object every emitted copy of the logger shim hands to createAxiomLogger. `src/instrumentation.node.ts` calls setStructuredLogSink() ONCE at boot; a copy holding a private object is a log call site whose additional sinks (the OTel logs bridge) are permanently dark, with no error and no counter.',
-  },
-  {
-    rule: 'SHARED_STATE',
-    module: 'src/server/logging/server-fault-override.ts',
-    globalKey: '__civitaiServerFaultOverrides',
-    why: 'The one WeakSet recording which thrown errors are SERVER faults despite a 4xx tRPC code. The marker is added by throwers (e.g. `~/server/recaptcha/client`) and read by `classifyErrorFault` in `~/server/logging/client` — a module the bundler inlines into many emitted chunks (13 when this rule was added; this module itself, 12). A copy holding a private WeakSet answers `isEscalatedServerFault` false forever, so the escalation silently never happens: the fault logs as routine client feedback, with no error and no counter. Vitest cannot see this (it loads each module once), so this gate is the only check that can.',
-  },
-  {
-    rule: 'SINGLETON',
-    module: 'packages/civitai-telemetry/src/otel-logs.ts',
-    why: 'Holds the memoized OTel Logger and the bridge counters in module scope, and is loaded only from the instrumentation entry, which is also what registers the LoggerProvider. A second copy would be a second bridge that never sees that registration — and whose counters register into a registry nothing scrapes.',
-  },
-];
+// The watchlist lives in its own module so the gate and its test suite share ONE list —
+// see the header of ./server-graph-watchlist.mjs for why that matters.
+import { WATCHLIST } from './server-graph-watchlist.mjs';
 
 // ---------------------------------------------------------------------------
 const args = process.argv.slice(2);
