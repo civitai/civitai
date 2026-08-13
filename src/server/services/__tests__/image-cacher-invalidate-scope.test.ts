@@ -137,8 +137,11 @@ describe('purgeResizeCache', () => {
     it('asks the service to keep the post-flip variants for a hideMeta purge', async () => {
       await purgeResizeCache({ url: UUID, scope: 'hidden-meta-orphans' });
 
-      expect(lastUrl()).toContain(`imageKey=${UUID}`);
-      expect(lastUrl()).toContain('keep=hm');
+      // The SEPARATOR is part of the contract. Without the leading '&' the URL becomes
+      // `?imageKey=<uuid>keep=hm`: the key is corrupted AND keep is absent, so the service does a
+      // FULL purge on a bogus key. `toContain('keep=hm')` passes on that string, and so does
+      // `toContain('imageKey=<uuid>')` — both are substrings of the corrupted value.
+      expect(lastUrl()).toContain(`imageKey=${UUID}&keep=hm`);
     });
 
     // The delete path must remove everything: the row is already gone.
@@ -180,16 +183,23 @@ describe('purgeResizeCache', () => {
       expect(lastInit().redirect).toBe('error');
     });
 
-    it('sends NO secret header when none is configured', async () => {
-      vi.stubEnv('IMAGE_CACHER_ADMIN_SECRET', '');
+    it('still sends the request, with NO secret header, when none is configured', async () => {
       envOverrides.IMAGE_CACHER_ADMIN_SECRET = undefined;
 
       await purgeResizeCache({ url: UUID });
 
+      // 🔴 ASSERT THE REQUEST HAPPENED FIRST. Both `lastInit()` and the `?? {}` below fall back to
+      // an empty object, so ZERO fetch calls satisfied every header assertion here — meaning
+      // "invalidation is skipped entirely when no secret is set", the exact INVERSE of what this
+      // test claims, passed. That branch is the one running in production today: the secret is
+      // not yet configured there, so the unsecured path is the live path.
+      expect(invalidateCalls()).toHaveLength(1);
+
       const headers = (lastInit().headers ?? {}) as Record<string, string>;
       expect(headers).not.toHaveProperty('X-Admin-Secret');
-      // ...and specifically not the stringified-undefined form, which is what a dropped guard
-      // actually produces and what a `toBeUndefined()` assertion would happily accept.
+      // A dropped guard sets the key to the real `undefined` under this mock, which
+      // toHaveProperty already catches. Kept as a cheap belt-and-braces against a variant that
+      // stringifies it — but the assertion above is the one doing the work.
       expect(Object.values(headers)).not.toContain('undefined');
     });
   });
