@@ -47,8 +47,16 @@ export type RemoveAppCollaboratorInput = z.infer<typeof removeAppCollaboratorSch
 export const leaveAppSchema = z.object({ appListingId });
 export type LeaveAppInput = z.infer<typeof leaveAppSchema>;
 
+/**
+ * 🔴 `targetUserId` is OPTIONAL, and that is what makes this a WIDENING rather than a
+ * breaking change. Omitted ⇒ "my own row", which is byte-identical to the shape this proc
+ * shipped with, so any existing caller keeps working; supplied ⇒ the owner/moderator path
+ * (the service enforces it — see `setCollaboratorDisplayed`). Removing the self-service
+ * shape and requiring the field would have been the breaking direction, and was not done.
+ */
 export const setCollaboratorDisplayedSchema = z.object({
   appListingId,
+  targetUserId: userId.optional(),
   displayed: z.boolean(),
 });
 export type SetCollaboratorDisplayedInput = z.infer<typeof setCollaboratorDisplayedSchema>;

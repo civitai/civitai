@@ -721,8 +721,21 @@ async function loadDisplayedCollaboratorChips(
   // 🔴 EXPLICIT ALLOWLIST at the SELECT, not only at the projection. Two independent
   // narrowings: nothing but these three columns ever leaves the DB, and `creatorChip`
   // re-shapes them. Widening either alone cannot leak.
+  // 🔴 BANNED AND DELETED ACCOUNTS ARE FILTERED OUT, EXPLICITLY.
+  //
+  // This is the read that puts a collaborator's name and avatar on a PUBLIC app page,
+  // linked to their profile. Without these two clauses a banned user keeps that placement
+  // indefinitely, and a deleted one fell out only INCIDENTALLY — a hard delete nulls
+  // `username` and the chip component skips username-less rows, which is luck, not a
+  // filter. Neither is something to leave to the render layer.
+  //
+  // 🔴 DELIBERATELY STRICTER THAN `creatorChip`, which has the same shape and is NOT
+  // changed here. The two are different subjects: the creator IS the app's owner, whose
+  // ban delists the app anyway, so their chip and the listing disappear together. A
+  // COLLABORATOR is a third party — banning them must not require touching an app that
+  // may be perfectly healthy and owned by someone else entirely.
   const users = await dbRead.user.findMany({
-    where: { id: { in: userIds } },
+    where: { id: { in: userIds }, bannedAt: null, deletedAt: null },
     select: { id: true, username: true, image: true },
   });
   // Preserve the seat order (`createdAt asc`) rather than the DB's row order.

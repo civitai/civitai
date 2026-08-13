@@ -1,9 +1,11 @@
 import { Box, rem, ScrollArea, Tabs } from '@mantine/core';
 import {
+  IconApps,
   IconBuildingStore,
   IconCurrencyDollar,
   IconGavel,
   IconListDetails,
+  IconMail,
   IconPlugConnected,
   IconSquarePlus,
 } from '@tabler/icons-react';
@@ -31,6 +33,16 @@ export type AppsNavSummary = {
   hasApprovedApps: boolean;
   /** app reviewer (mod) → show "Review". */
   isReviewer: boolean;
+  /**
+   * ≥1 listing owned OR held via an ACCEPTED collaborator seat → show "My apps".
+   *
+   * 🔴 The seat half is why this cannot be folded into `hasSubmissions`: a collaborator
+   * has submitted nothing, so every other flag on this summary is `false` for them and
+   * there would be no nav route to an app they can genuinely edit.
+   */
+  hasEditableApps: boolean;
+  /** ≥1 PENDING invitation → show "Invites". True for someone who owns nothing. */
+  hasPendingInvites: boolean;
 };
 
 const EMPTY_SUMMARY: AppsNavSummary = {
@@ -38,6 +50,8 @@ const EMPTY_SUMMARY: AppsNavSummary = {
   hasSubmissions: false,
   hasApprovedApps: false,
   isReviewer: false,
+  hasEditableApps: false,
+  hasPendingInvites: false,
 };
 
 /**
@@ -100,6 +114,43 @@ const SUB_NAV_LINKS: SubNavLink[] = [
     label: 'Installed',
     icon: IconPlugConnected,
     visible: (s) => s.hasInstalls,
+  },
+  /**
+   * 🔴 BOTH OF THESE NEED `c.isAuthor` AS WELL AS THEIR SUMMARY FLAG, for exactly the
+   * reason #3899 gave for "Create" — and the merge that brought the two changes together
+   * is where this could have been missed. `git` auto-merged this table cleanly: main
+   * added the `context` argument and gated Create on it; this branch added these two
+   * entries against the OLD one-argument signature. The result compiled, every test
+   * passed, and both tabs were left un-gated.
+   *
+   * `/apps/mine` and `/apps/invites` both `getServerSideProps`-gate on
+   * `features.appBlocksAuthor` + `isAppDeveloper` and otherwise return `notFound`. The
+   * summary that drives them does NOT: `blocks.getNavSummary` is gated on the
+   * marketplace `appBlocks` flag, not the author one — so a store-visible NON-author
+   * (`app-listings=true`, `app-blocks-author=false`, the cohort #3899 was written for)
+   * can legitimately have both flags set and would click straight into a 404.
+   *
+   * Reachable on both: `inviteCollaborator` accepts ANY existing, non-banned user id as
+   * the target — nothing requires the invitee to be an author — so `hasPendingInvites`
+   * goes true for a non-author whenever an owner invites them. `hasEditableApps` is the
+   * slower path: an owner who loses the author capability keeps their listings, which is
+   * the same cohort-widening scenario #3899 describes.
+   *
+   * (The pre-existing `Revenue` entry below deliberately does NOT do this — see its own
+   * comment. That is a recorded decision about an OWNERSHIP affordance, not an oversight,
+   * and it is left exactly as main has it.)
+   */
+  {
+    href: '/apps/mine',
+    label: 'My apps',
+    icon: IconApps,
+    visible: (s, c) => c.isAuthor && s.hasEditableApps,
+  },
+  {
+    href: '/apps/invites',
+    label: 'Invites',
+    icon: IconMail,
+    visible: (s, c) => c.isAuthor && s.hasPendingInvites,
   },
   {
     href: '/apps/my-submissions',
