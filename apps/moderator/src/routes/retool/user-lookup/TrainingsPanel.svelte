@@ -13,6 +13,15 @@
       ? ('destructive' as const)
       : ('secondary' as const);
 
+  // Rendered as whatever the run actually carries rather than a chosen list of fields: the key set
+  // varies by engine, so a fixed table would quietly omit whatever the next one adds. Objects and
+  // arrays (`optimizerArgs`) are stringified rather than skipped.
+  const paramEntries = (run: TrainingRun) =>
+    Object.entries(run.params ?? {})
+      .filter(([, v]) => v !== null && v !== '' && v !== undefined)
+      .map(([k, v]) => [k, typeof v === 'object' ? JSON.stringify(v) : String(v)] as const)
+      .sort(([a], [b]) => a.localeCompare(b));
+
   const progress = (run: TrainingRun) =>
     run.currentEpoch === null && run.maxEpochs === null
       ? null
@@ -61,6 +70,22 @@
               {#if run.buzzCost !== null}<span>{num(run.buzzCost)} buzz</span>{/if}
               <span>{dateTime(run.startedAt)}</span>
             </div>
+            {#if paramEntries(run).length}
+              {@const params = paramEntries(run)}
+              <details class="mt-1">
+                <summary class="cursor-pointer text-xs text-dark-2">
+                  Training parameters ({params.length}){run.engine ? ` · ${run.engine}` : ''}
+                </summary>
+                <dl
+                  class="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs sm:grid-cols-[auto_1fr_auto_1fr]"
+                >
+                  {#each params as [key, value] (key)}
+                    <dt class="text-dark-2">{key}</dt>
+                    <dd class="break-all text-dark-0">{value}</dd>
+                  {/each}
+                </dl>
+              </details>
+            {/if}
           </li>
         {/each}
       </ul>

@@ -686,10 +686,14 @@ export async function getRetoolActivity(
   return rows as RetoolActivityRow[];
 }
 
-// TRAINING RUNS (Retool's NewSubmittedTrainsBrett). Retool selected `ModelFile.*` plus ~20 training
-// hyperparameters — batch size, LR schedule, network dim. Those are for debugging a failed train, not for
-// moderating an account, so what is ported is what a moderator acts on: what was trained, from what, how
-// far it got, how much it cost and whether it is public.
+// TRAINING RUNS (Retool's NewSubmittedTrainsBrett). The summary line is what a moderator acts on: what
+// was trained, from what, how far it got, how much it cost and whether it is public.
+//
+// `params` is Retool's ~20 hyperparameters, which this file previously dropped as debugging detail. The
+// mod team asked for them back ("display the metadata of the training"), so the whole object is carried
+// rather than a chosen subset: the key set varies by engine — around 30 across the corpus, with
+// `ecosystem`/`lr`/`epochs` on newer runs and `unetLR`/`maxTrainEpochs` on older ones — so enumerating
+// columns would silently drop whatever a new engine adds.
 export type TrainingRun = {
   modelVersionId: number;
   modelId: number;
@@ -704,6 +708,8 @@ export type TrainingRun = {
   buzzCost: number | null;
   startedAt: string | null;
   completedAt: string | null;
+  engine: string | null;
+  params: Record<string, unknown> | null;
 };
 
 export async function getTrainingRuns(
@@ -731,6 +737,8 @@ export async function getTrainingRuns(
       'mv.trainingStatus',
       sql<string | null>`mv."trainingDetails"::json ->> 'baseModel'`.as('baseModel'),
       sql<string | null>`mv."trainingDetails"::json ->> 'type'`.as('trainingType'),
+      sql<string | null>`mv."trainingDetails"::json -> 'params' ->> 'engine'`.as('engine'),
+      sql<Record<string, unknown> | null>`mv."trainingDetails"::jsonb -> 'params'`.as('params'),
       sql<
         number | null
       >`nullif(mv."trainingDetails"::json -> 'params' ->> 'maxTrainEpochs', '')::int`.as(
@@ -782,6 +790,8 @@ export async function getTrainingRuns(
     buzzCost: r.buzzCost === null ? null : Number(r.buzzCost),
     startedAt: r.startedAt,
     completedAt: r.completedAt,
+    engine: r.engine,
+    params: r.params,
   }));
 
   return { runs, truncated };
@@ -963,4 +973,85 @@ export async function getCsamReports(userId: number): Promise<CsamReportRow[]> {
     imageCount: Number(r.imageCount ?? 0),
     modelVersionCount: Number(r.modelVersionCount ?? 0),
   }));
+}
+
+// PAYOUTS. Asked for as "show a list of their payouts, (Tipalti connection needed?)" — the answer is no.
+// Tipalti is the processor, but every request and its state is a row here, so this needs no integration.
+//
+// Two tables because there are two eras and they are not the same object: `BuzzWithdrawalRequest` is the
+// creator-programme path (buzz converted at a platform fee, sent via a provider) and `CashWithdrawal` is
+// the cash-balance one. Merged into one timeline, tagged, because "has this account been paid, and did
+// anything fail" is one question.
+export type Payout = {
+  key: string;
+  kind: 'buzz' | 'cash';
+  /** Nullable: `CashWithdrawal.createdAt` has no NOT NULL, unlike the buzz table's. */
+  createdAt: Date | null;
+  status: string;
+  /** Buzz for a `buzz` row, cents for a `cash` one — the two are not addable, hence the kind. */
+  requested: number;
+  /** What actually moved, when it did. Null on a request nothing has been transferred against. */
+  transferred: number | null;
+  provider: string | null;
+  note: string | null;
+};
+
+export async function getPayouts(userId: number, limit = 50): Promise<Capped<Payout>> {
+  const [buzz, cash] = await Promise.all([
+    dbRead
+      .selectFrom('BuzzWithdrawalRequest')
+      .select([
+        'id',
+        'createdAt',
+        sql<string>`status::text`.as('status'),
+        'requestedBuzzAmount as requested',
+        'transferredAmount as transferred',
+        sql<string | null>`"requestedToProvider"::text`.as('provider'),
+      ])
+      .where('userId', '=', userId)
+      .orderBy('createdAt', 'desc')
+      .limit(limit + 1)
+      .execute(),
+    dbRead
+      .selectFrom('CashWithdrawal')
+      .select([
+        'id',
+        'createdAt',
+        sql<string>`status::text`.as('status'),
+        'amount as requested',
+        sql<string | null>`method::text`.as('provider'),
+        'note',
+      ])
+      .where('userId', '=', userId)
+      .orderBy('createdAt', 'desc')
+      .limit(limit + 1)
+      .execute(),
+  ]);
+
+  const rows: Payout[] = [
+    ...buzz.map((r) => ({
+      // Ids are text and the two tables can collide, so the key carries its source.
+      key: `buzz:${r.id}`,
+      kind: 'buzz' as const,
+      createdAt: r.createdAt,
+      status: r.status,
+      requested: Number(r.requested ?? 0),
+      transferred: r.transferred === null ? null : Number(r.transferred),
+      provider: r.provider,
+      note: null,
+    })),
+    ...cash.map((r) => ({
+      key: `cash:${r.id}`,
+      kind: 'cash' as const,
+      createdAt: r.createdAt,
+      status: r.status,
+      requested: Number(r.requested ?? 0),
+      transferred: null,
+      provider: r.provider,
+      note: r.note,
+    })),
+    // Undated rows sort last rather than crashing the comparator or silently leading the list.
+  ].sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
+
+  return capped(rows, limit);
 }

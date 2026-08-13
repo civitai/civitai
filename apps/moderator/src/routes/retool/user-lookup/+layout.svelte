@@ -143,7 +143,9 @@
          username and guessing which thread. -->
     {#if data.result?.modContact.chats}
       <button type="button" onclick={() => (showModChats = !showModChats)}>
-        <Badge variant="secondary">
+        <!-- Red, like a ban: the mod team reads this chip as enforcement history, not as neutral
+             metadata, and it sat in the same grey as the browsing level. -->
+        <Badge variant="destructive">
           spoke with a mod ×{data.result.modContact.chats}
           <span aria-hidden="true">{showModChats ? '▾' : '▸'}</span>
         </Badge>

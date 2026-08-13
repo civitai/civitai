@@ -38,6 +38,17 @@
   // runs ~200ms, which does not belong in the dashboard's first paint.
   let reported = $state<Reported[] | null>(null);
 
+  // The models the owner asked to have re-reviewed. Its own fetch because the count has no index and
+  // runs ~2.7s — see the service. The page that works them is the main app's, so this is the signal to
+  // go there rather than a queue to build twice.
+  let modelsReview = $state<number | null>(null);
+  $effect(() => {
+    fetch('/api/models-review-count')
+      .then((r) => (r.ok ? r.json() : { count: null }))
+      .then((d) => (modelsReview = d.count))
+      .catch(() => (modelsReview = null));
+  });
+
   // A ternary held two of these; a fourth would have made it unreadable and a fifth would have made
   // one of them silently wrong.
   const SWEEP_LABELS: Record<string, string> = {
@@ -420,6 +431,30 @@
 
         <!-- The two queues whose count is "what has arrived since the mark". Marking swept is what
              advances it; without the button the counts only ever grow. -->
+        {#if modelsReview !== null}
+          <div class="mt-3 border-t border-dark-4 pt-3">
+            <div class="flex flex-wrap items-baseline justify-between gap-2">
+              <a
+                href="{data.civitaiUrl}/moderator/models"
+                target="_blank"
+                rel="noreferrer"
+                class="text-sm text-blue-4 hover:underline"
+              >
+                Models awaiting re-review ↗
+              </a>
+              <span
+                class="text-sm tabular-nums {queueSeverityClass('modelsReview', modelsReview) ??
+                  (modelsReview ? 'text-white' : 'text-dark-2')}"
+              >
+                {format(modelsReview)}
+              </span>
+            </div>
+            <p class="mt-1 text-xs text-dark-2">
+              Unpublished for a violation, with the owner asking for another look.
+            </p>
+          </div>
+        {/if}
+
         {#each board.sweeps as s (s.task)}
           <div class="mt-3 border-t border-dark-4 pt-3">
             <div class="flex flex-wrap items-baseline justify-between gap-2">

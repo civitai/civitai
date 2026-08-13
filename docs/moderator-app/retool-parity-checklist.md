@@ -880,8 +880,16 @@ that reporter to that build.
 
 ### 12d. Queues that are missing (`1537513655711825931`, `1537514064580714507`)
 
-- [ ] **Unpublished models the user asked to have reviewed** — the `civitai.red/moderator/models`
-      queue. Count query as filed:
+- [x] **Unpublished models the user asked to have reviewed** (2026-08-13 — on the dashboard beside the
+      sweeps, linking out to `civitai.red/moderator/models`). The page that works them already exists and
+      works; what was missing is the count that says to go there, so this is a signal rather than a
+      second copy of a page. Verified: **61**, matching the query exactly.
+      ⚠️ **It is deliberately NOT in `sidebar-counts.service.ts`**, which every navigation waits on.
+      There is no index for the predicate — `Model_status_nsfw_idx` gets the status and then filters
+      **43,222 rows to return 61, measured at 2.7s** — so it is fetched on its own and cached, the same
+      reasoning that put `getMostReported` behind its own endpoint. A partial index would fix it, but
+      migrations here are hand-applied and that is a decision to take deliberately rather than as a side
+      effect of adding a count. Query as filed:
 
       ```sql
       SELECT COUNT("meta"->>'needsReview') AS needsReview
@@ -968,8 +976,9 @@ that reporter to that build.
 
 ### 12f. User Reports (`1537531797124943882`, `1537532842337378375`)
 
-- [ ] **Clicking an image should select it, with a separate arrow to Civitai** — same defect as §12e,
-      same shared component, fixed once.
+- [x] **Clicking an image should select it, with a separate arrow to Civitai** — same defect as §12e,
+      same shared component, fixed once (2026-08-13). `SuspectPanel` renders `ImageQueueGrid` with a
+      `selected` set, so it inherited the fix; verified separately on this page rather than assumed.
 - [x] **Clicking anywhere in a report's empty space should select that report**, and **clicking the
       username should go to User Lookup.** (both, 2026-08-13.) **These two are one change, and the
       second could not be done without the first.** In `QueuePanel.svelte` the suspect's username *was*
@@ -1000,7 +1009,8 @@ that reporter to that build.
       <name>` chip beside it — the *editorial* half (*"someone is already on this"*) is what was
       objected to, and deleting the datum as well would re-open the overlap problem §1 was solving.
       Say so if the chip should go too. Verified: `20 open reports against this account.` + chip.
-- [ ] **Make *spoke with mod* the same red as bans.**
+- [x] **Make *spoke with mod* the same red as bans.** (2026-08-13 — `destructive`. It sat in the same
+      grey as the browsing level, and the mod team reads it as enforcement history.)
 - [x] **The CSAM-report indicator should open the report.** (2026-08-13.) It rendered
       `identity.csamReportCount` as a plain `<Badge>` — no link, no handler — so the one chip a
       moderator most wants to open was the one that did nothing. It now opens a sheet listing each
@@ -1015,8 +1025,9 @@ that reporter to that build.
       **§1b is what misled here** — that entry says *"selected in `getIdentity` and editable behind Enable Edits"*, and both halves are true, but
       `IdentityPanel.svelte` rendered the field **only inside the Enable Edits form**, so a moderator
       who never toggled edits on never saw the account's full name.
-- [ ] **Subscription details should move out of the Buzz section.** **This one is a decision to reverse,
-      not a gap.** `e43a55876b` put membership on Basic User Information and it is there —
+- [x] **Subscription details should move out of the Buzz section.** (2026-08-13 — **moved**, not copied.
+      A second instance of a panel that can re-link a Paddle customer is two places to fix a bug in.)
+      **This was a decision to reverse, not a gap.** `e43a55876b` put membership on Basic User Information and it is there —
       `IdentityPanel.svelte:190` renders the badge, with a comment stating the split deliberately:
       *"the subscription record stays there; this is the one line of it that belongs with identity."*
       The mods want the record itself on basic info. **Their call.**
@@ -1027,9 +1038,15 @@ that reporter to that build.
       ⚠️ **Found while wiring it:** `Accepted TOS` was `!!identity.onboarding` — a truthiness test on a
       bitfield, so *any* completed onboarding step rendered as "accepted the TOS". Now `& TOS`, with
       `& RedTOS` beside it as its own row. The bits live in `$lib/onboarding.ts` rather than inline.
-- [ ] **LoRA Training panel should show the training metadata.** Confirmed — `TrainingsPanel.svelte`
-      renders a summary line only (base model, training type, image count, epochs, buzz cost, date).
-      The training params themselves are not fetched, so this needs a service change, not just a render.
+- [x] **LoRA Training panel should show the training metadata.** (2026-08-13.) The panel rendered a
+      summary line only; `trainingDetails.params` was never fetched. **This reverses a deliberate call** —
+      the service comment read *"those are for debugging a failed train, not for moderating an account"* —
+      so the note is now why they are back rather than why they went.
+      Carried as the **whole object** rather than a chosen subset: the key set varies by engine, about 30
+      across the corpus, `ecosystem`/`lr`/`epochs` on newer runs against `unetLR`/`maxTrainEpochs` on
+      older ones, so a fixed column list would silently drop whatever the next engine adds. Rendered as a
+      collapsed grid per run, with `optimizerArgs`-style objects stringified rather than skipped.
+      Verified on a real account: `Training parameters (21) · kohya`.
 - [x] 🔴 **Timed Mutes shows the entire enforcement surface.** (fixed 2026-08-13.)
       `[section]/+page.svelte` fell through to the same `AccountActionsPanel` for **both** `admin` and
       `mutes`, so the Timed Mutes section *was* the Admin section — ban, purge, force-logout and all.
@@ -1044,15 +1061,28 @@ that reporter to that build.
       moderator, Admin shows the cross-link, revoke flips it to ended, and the `User` row comes back to
       `muted=false, muteExpiresAt=null, manualMute=false`.
       **This unblocks §12i** — a gate on the `admin` slug now actually gates that surface.
-- [ ] **Notes and strikes belong on Basic User Information**, not two scroll-and-tab hops away
+- [x] **Notes and strikes belong on Basic User Information** (2026-08-13 — `ModerationMemoryPanel`
+      renders there too; the Notes & Strikes section stays, since it is also where the write forms live).
+      Not two scroll-and-tab hops away
       (`1537527920938192992`, restating `1537156052511096902`). The layout complaint behind it: socials
       is now strictly social links since the pfp/banner/bio/location moved to basic info, so it fits in
       the dead space beside location, and the dead space at the top of the page is where the
       notes/strikes/admin affordances should live. Retool put them one or two clicks from the main
       page. → **backlog** was the earlier answer (`1537244824535699477`: parity first, UI pass after) —
-      it is now asked for twice by two people, so re-decide rather than inherit that.
-- [ ] **Buzz: list the account's payouts.** Filed with the open question *"Tipalti connection
-      needed?"* — answer that before scoping.
+      it was asked for twice by two people, so it was re-decided rather than inherited. Verified in a
+      browser: Basic renders identity → subscription → notes & strikes → addresses.
+- [x] **Buzz: list the account's payouts.** (2026-08-13.) **The open question answers itself: no Tipalti
+      connection is needed.** Tipalti is the processor, but every request and its state is a row in
+      Postgres.
+      Two tables, because there are two eras and they are not the same object — `BuzzWithdrawalRequest`
+      (creator programme: buzz converted at a platform fee, sent via a provider) and `CashWithdrawal`
+      (cash balance). Merged into one timeline since *"has this account been paid, and did anything
+      fail"* is one question, but **tagged and denominated separately**: buzz requests are in buzz and
+      cash withdrawals in cents, so a bare number would put `280,000` beside `425.18` as though they
+      were comparable.
+      Verified on real accounts: `Paid $382.77 PayPal — Payment completed`, `Rejected $425.18 PayPal —
+      Payment error: PayPal payment failed: Receiver's account is locked or inactive`, and
+      `Rejected 280,000 buzz Tipalti` in the same list.
 - [x] **Copy-all-IDs button on *Addresses & linked accounts*** (`1537543755110944799`, 2026-08-13).
       Both halves: a **Check N in Bulk Ban** link that opens that page with the ids already loaded, and
       a copy disclosure for anything else. **The ids need deduping to be any use** — the list is one row

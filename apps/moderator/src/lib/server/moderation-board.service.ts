@@ -277,3 +277,32 @@ export async function getAutoBlockedUsers(limit = 50): Promise<AutoBlockedUser[]
       .execute() as Promise<AutoBlockedUser[]>
   );
 }
+
+// MODELS THE OWNER ASKED TO HAVE RE-REVIEWED. Asked for as a queue with the query below; the page that
+// works them is the main app's `/moderator/models`, so what was missing is the count that says to go
+// there.
+//
+// NOT in `sidebar-counts.service.ts`, which every navigation waits on. There is no index for this
+// predicate — `Model_status_nsfw_idx` gets the status and then filters 43,222 rows on the jsonb to
+// return 61, measured at **2.7s** — so it is fetched on its own and cached, the same reasoning that put
+// `getMostReported` behind `/api/most-reported`. A partial index would fix it, but that is a hand-applied
+// migration and a decision to make deliberately rather than as a side effect of adding a count.
+const MODELS_REVIEW_TTL_MS = 60_000;
+let modelsReviewCache: { at: number; value: Promise<number> } | null = null;
+
+export function getModelsNeedingReview(now = Date.now()): Promise<number> {
+  if (modelsReviewCache && now - modelsReviewCache.at < MODELS_REVIEW_TTL_MS)
+    return modelsReviewCache.value;
+  const value = dbRead
+    .selectFrom('Model')
+    .select((eb) => eb.fn.countAll<string>().as('count'))
+    .where('status', '=', 'UnpublishedViolation')
+    .where(sql<boolean>`meta->>'needsReview' = 'true'`)
+    .executeTakeFirst()
+    .then((row) => Number(row?.count ?? 0));
+  modelsReviewCache = { at: now, value };
+  value.catch(() => {
+    if (modelsReviewCache?.value === value) modelsReviewCache = null;
+  });
+  return value;
+}

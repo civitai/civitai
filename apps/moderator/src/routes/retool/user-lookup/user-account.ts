@@ -74,6 +74,10 @@ export type TrainingRun = {
   buzzCost: number | null;
   startedAt: string | null;
   completedAt: string | null;
+  engine: string | null;
+  /** `trainingDetails.params` verbatim. Untyped on purpose — the key set differs per engine, so a
+   *  declared shape would be wrong for whichever one ships next. */
+  params: Record<string, unknown> | null;
 };
 
 export type Notification = {

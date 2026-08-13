@@ -28,6 +28,7 @@
   import ShopPanel from '../ShopPanel.svelte';
   import SocialsPanel from '../SocialsPanel.svelte';
   import SubscriptionPanel from '../SubscriptionPanel.svelte';
+  import PayoutsPanel from '../PayoutsPanel.svelte';
   import TimedMutesPanel from '../TimedMutesPanel.svelte';
   import TrainingsPanel from '../TrainingsPanel.svelte';
 
@@ -77,6 +78,19 @@
         {form}
         civitaiUrl={data.civitaiUrl}
       />
+      <!-- Both asked for by the mod team, twice by two people for the notes: the enforcement history
+           and the paying relationship are what the first screen is read FOR, and both were two clicks
+           and a scroll away. Subscription MOVED off Buzz rather than being duplicated — a second copy
+           of a panel that can re-link a Paddle customer is two places to fix a bug in. -->
+      <SubscriptionPanel
+        subscription={result.subscription}
+        userId={result.identity.id}
+        paddleCustomerId={result.identity.paddleCustomerId}
+        canAct={data.canAct}
+        error={form && 'scope' in form && form.scope === 'account' ? (form.error ?? null) : null}
+        conflict={paddleConflict}
+      />
+      <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} {form} />
       <AddressesPanel {signals} />
     {:else if section === 'socials'}
       <SocialsPanel
@@ -119,14 +133,7 @@
           </div>
         {/if}
         <div class="min-w-0 flex-1">
-          <SubscriptionPanel
-            subscription={result.subscription}
-            userId={result.identity.id}
-            paddleCustomerId={result.identity.paddleCustomerId}
-            canAct={data.canAct}
-            error={form && 'scope' in form && form.scope === 'account' ? (form.error ?? null) : null}
-            conflict={paddleConflict}
-          />
+          <PayoutsPanel userId={result.identity.id} />
           <BuzzHistoryPanel userId={result.identity.id} />
         </div>
       </div>
