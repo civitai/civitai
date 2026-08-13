@@ -29,7 +29,7 @@ function StickerPlacementFields({
   const placementId = target?.placementId;
   const half = target?.placementTarget ?? 'sticker';
 
-  const { data, isLoading } = trpc.placement.getStickerPlacementDetail.useQuery(
+  const { data, isLoading, isError } = trpc.placement.getStickerPlacementDetail.useQuery(
     { placementId: placementId as number },
     { enabled: !!placementId, staleTime: 5 * 60_000 }
   );
@@ -64,6 +64,19 @@ function StickerPlacementFields({
     <Stack gap="xs">
       {isLoading ? (
         <Skeleton height={48} radius="sm" />
+      ) : isError || !data ? (
+        // Named or nothing. The line below is the reporter's only confirmation
+        // that the right sticker was flagged, and rendering the generic version
+        // of it over a failed lookup is the form claiming to have checked
+        // something it could not. The report still sends: a sticker taken down
+        // between the flag and the modal is exactly what someone might be
+        // reporting, and the queue shows a moderator that it is already gone.
+        <Alert color="yellow">
+          <Text size="xs">
+            We couldn&apos;t load this sticker — it may have just been removed. You can still send
+            the report.
+          </Text>
+        </Alert>
       ) : (
         <Group gap={8} wrap="nowrap">
           {art && (

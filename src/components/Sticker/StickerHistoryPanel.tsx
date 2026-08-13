@@ -378,8 +378,6 @@ function StickerHistoryList({
                 <StickerPlacementHoverCard
                   placementId={placement.id}
                   imageId={placement.imageId}
-                  placerId={placement.placerId}
-                  hasComment={placement.hasComment}
                   pending={placement.isPending}
                 >
                   <button

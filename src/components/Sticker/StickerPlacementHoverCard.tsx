@@ -64,8 +64,6 @@ const placedLabel = (placedAt: Date | string) => {
 export function StickerPlacementHoverCard({
   placementId,
   imageId,
-  placerId,
-  hasComment = false,
   pending = false,
   children,
 }: {
@@ -75,14 +73,6 @@ export function StickerPlacementHoverCard({
    * carrying the placement id — one reason, one queue — so the flag needs both.
    */
   imageId: number;
-  /** Who placed it, so the flag can stay off the reporter's own sticker. Taken
-   * from the listing rather than the detail query, which lands after the card
-   * opens: keyed off that, the flag would appear on your own sticker and then
-   * vanish. */
-  placerId: number;
-  /** Whether it carries a note this viewer can read, which decides whether the
-   * flag has to ask which half is being reported. */
-  hasComment?: boolean;
   pending?: boolean;
   children: ReactElement;
 }) {
@@ -175,25 +165,35 @@ export function StickerPlacementHoverCard({
               Awaiting review
             </Badge>
           )}
-          <ReportPlacement
-            placementId={placementId}
-            imageId={imageId}
-            placerId={placerId}
-            // The listing's answer, corrected by the card's own once it lands.
-            // They disagree for a moderator on a hidden note: the listing scopes
-            // `hasComment` to the placer and the owner, while this query hands
-            // moderators the text — so without the second half, the one viewer
-            // who can read that note is the one who cannot report it. The
-            // control looks identical either way, so nothing moves.
-            hasComment={hasComment || !!data?.comment}
-          />
+          {/* Waits for the card's own query rather than reading the listing's
+              `hasComment`. The two disagree in both directions — the listing
+              scopes the note to the placer and the owner where this query also
+              hands it to moderators, and a listing fetched before the owner hid
+              a note still says there is one — and the flag is a different
+              element in each case, a button or a menu trigger. Rendered off the
+              listing it would swap under the cursor as the card loads, so a
+              click mid-swap lands on a node that no longer exists. */}
+          {data && (
+            <ReportPlacement
+              placementId={placementId}
+              imageId={imageId}
+              placerId={data.placer.id}
+              hasComment={!!data.comment}
+            />
+          )}
           {/* One remove control, in one place. A moderator's remove and an
               owner's are different powers over the same sticker — the moderator
               answers a report, the owner takes it off their own image after the
               week the placer paid for — and offering both at once in two corners
               read as two different buttons doing the same thing. */}
           {currentUser?.isModerator ? (
-            <ModeratorRemove placementId={placementId} />
+            <ModeratorRemove
+              placementId={placementId}
+              // Both sources, because neither sees every case: the listing hands
+              // a moderator nobody else's pending rows, and the card's own query
+              // has not answered yet on the first frame.
+              pending={pending || data?.status === 'pending'}
+            />
           ) : (
             data?.viewerIsOwner &&
             data.status === 'approved' && (
@@ -317,11 +317,13 @@ function ReportPlacement({
     );
 
   return (
-    // `withinPortal={false}` is load-bearing, not a preference. A portalled
-    // dropdown is not a DOM descendant of the hover card, so moving the cursor
-    // onto a menu item leaves the card, the card closes, and the item the
-    // reporter is reaching for unmounts under them. Rendered inside, the pointer
-    // never leaves.
+    // Inline, so the menu is a DOM descendant of the card and not only a React
+    // one. Either way the pointer may move onto an item without the hover card
+    // closing — React derives enter/leave from the fiber tree, so a portalled
+    // dropdown counts as inside it too — but the card still closes 150ms after
+    // the pointer leaves it entirely, taking an open menu with it. Nothing here
+    // changes that; keeping the dropdown inside just removes one way for the
+    // two positioning contexts to disagree.
     <Menu withinPortal={false} position="bottom-end" withArrow>
       <Menu.Target>
         <LegacyActionIcon
@@ -467,14 +469,23 @@ function OwnerRemove({
  * Same mutation either way, so the two cannot drift into different rules about
  * what removal means.
  *
- * Nothing else happens: no refund, and nobody is notified (Justin, 2026-08-08).
- * The escrow on a live placement was paid to a content owner who did not choose
- * the sticker, and clawing it back would charge them for someone else's problem.
+ * On a live placement nothing else happens: no refund, and nobody is notified
+ * (Justin, 2026-08-08). The escrow was paid to a content owner who did not
+ * choose the sticker, and clawing it back would charge them for someone else's
+ * problem. **A pending one is not that**: it settles as `removeByModerator`,
+ * whose payout is a forfeit of the whole escrow, fee and principal — so the
+ * confirmation has to say a different thing about the money.
  *
  * Rendered for moderators only, which is convenience — `removePlacement` is a
  * `moderatorProcedure`, so the refusal is on the mutation and stays there.
  */
-function ModeratorRemove({ placementId }: { placementId: number }) {
+function ModeratorRemove({
+  placementId,
+  pending = false,
+}: {
+  placementId: number;
+  pending?: boolean;
+}) {
   const currentUser = useCurrentUser();
   const forget = useForgetStickerPlacement();
 
@@ -503,8 +514,9 @@ function ModeratorRemove({ placementId }: { placementId: number }) {
             title: 'Remove this placement',
             children: (
               <Text size="sm">
-                The sticker comes off this content for everyone. No Buzz moves and nobody is
-                notified.
+                {pending
+                  ? 'This one is still awaiting the owner. Removing it forfeits everything the placer paid — they get nothing back, and nobody is notified.'
+                  : 'The sticker comes off this content for everyone. No Buzz moves and nobody is notified.'}
               </Text>
             ),
             labels: { confirm: 'Remove', cancel: 'Cancel' },
