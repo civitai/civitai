@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
+import type * as ChallengeHelpers from '~/server/games/daily-challenge/challenge-helpers';
 
 // `checkImageEligibility` is what the challenge submit modal prechecks each library image against.
 // Only an AUTO-DETECTED resource satisfies a challenge's model requirement: a manually-attached
@@ -23,7 +25,7 @@ const { mockDbRead, mockDbWrite, mockIsFlipt } = vi.hoisted(() => ({
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/flipt/client')>()),
+  ...(await importOriginal<typeof FliptClient>()),
   isFlipt: mockIsFlipt,
 }));
 
@@ -41,9 +43,7 @@ vi.mock('~/server/games/daily-challenge/daily-challenge.utils', () => ({
 }));
 
 vi.mock('~/server/games/daily-challenge/challenge-helpers', async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import('~/server/games/daily-challenge/challenge-helpers')
-  >();
+  const actual = await importOriginal<typeof ChallengeHelpers>();
   return { ...actual, getChallengeById: vi.fn(), resolveEventContext: vi.fn() };
 });
 
@@ -122,7 +122,7 @@ function wireImage({
       nsfwLevel: 1,
       createdAt: new Date(),
       modelVersionIds: detected.length ? detected : null,
-      manualModelVersionIds: manual.length ? manual : null,
+      modelVersionIdsManual: manual.length ? manual : null,
     },
   ]);
 }

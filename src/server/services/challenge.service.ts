@@ -3042,7 +3042,7 @@ export async function checkImageEligibility(
       nsfwLevel: number;
       createdAt: Date;
       modelVersionIds: number[] | null;
-      manualModelVersionIds: number[] | null;
+      modelVersionIdsManual: number[] | null;
     }>
   >(
     `
@@ -3051,7 +3051,7 @@ export async function checkImageEligibility(
       i."nsfwLevel",
       i."createdAt",
       array_agg(DISTINCT ir."modelVersionId") FILTER (WHERE ir."modelVersionId" IS NOT NULL AND ir.detected IS TRUE) AS "modelVersionIds",
-      array_agg(DISTINCT ir."modelVersionId") FILTER (WHERE ir."modelVersionId" IS NOT NULL AND ir.detected IS NOT TRUE) AS "manualModelVersionIds"
+      array_agg(DISTINCT ir."modelVersionId") FILTER (WHERE ir."modelVersionId" IS NOT NULL AND ir.detected IS NOT TRUE) AS "modelVersionIdsManual"
     FROM "Image" i
     LEFT JOIN "ImageResourceNew" ir ON ir."imageId" = i.id
     WHERE i.id = ANY($1::int[])
@@ -3087,7 +3087,7 @@ export async function checkImageEligibility(
       const detectedIds = image.modelVersionIds ?? [];
       const hasEligibleModel = detectedIds.some((vid) => challenge.modelVersionIds.includes(vid));
       if (!hasEligibleModel) {
-        const manualIds = image.manualModelVersionIds ?? [];
+        const manualIds = image.modelVersionIdsManual ?? [];
         const claimsEligibleModel = manualIds.some((vid) =>
           challenge.modelVersionIds.includes(vid)
         );
