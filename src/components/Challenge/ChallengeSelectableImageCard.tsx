@@ -1,4 +1,4 @@
-import { AspectRatio, Badge, Checkbox } from '@mantine/core';
+import { AspectRatio, Badge, Checkbox, Tooltip } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { memo, useCallback, useMemo } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -14,7 +14,12 @@ import clsx from 'clsx';
 type EligibilityStatus = {
   eligible: boolean;
   reasons: string[];
+  /** Shown on the badge when the reason alone doesn't tell the entrant what to do about it. */
+  hint?: string;
 };
+
+const MODEL_NOT_DETECTED_HINT =
+  "The challenge's model has to be readable from the image's own generation metadata. A resource credited by hand doesn't count. Generate on site, or re-upload the image with its metadata intact.";
 
 type Props = {
   image: ImageGetInfinite[number];
@@ -32,6 +37,7 @@ function getEligibility(
   challenge: Pick<ChallengeDetail, 'allowedNsfwLevel' | 'startsAt' | 'modelVersionIds'>
 ): EligibilityStatus {
   const reasons: string[] = [];
+  let hint: string | undefined;
 
   // Check NSFW level
   if ((image.nsfwLevel as number) !== 0 && (image.nsfwLevel & challenge.allowedNsfwLevel) === 0) {
@@ -54,10 +60,11 @@ function getEligibility(
       const manualIds = image.modelVersionIdsManual ?? [];
       const claimsEligibleModel = manualIds.some((vid) => challenge.modelVersionIds.includes(vid));
       reasons.push(claimsEligibleModel ? 'Model not detected' : 'Wrong model');
+      if (claimsEligibleModel) hint = MODEL_NOT_DETECTED_HINT;
     }
   }
 
-  return { eligible: reasons.length === 0, reasons };
+  return { eligible: reasons.length === 0, reasons, hint };
 }
 
 function ChallengeSelectableImageCard({ image, challenge, selected, onToggle }: Props) {
@@ -105,14 +112,16 @@ function ChallengeSelectableImageCard({ image, challenge, selected, onToggle }: 
         {eligibility.eligible ? (
           <Checkbox size="lg" checked={selected} className="absolute right-1.5 top-1.5" readOnly />
         ) : (
-          <Badge
-            color="red"
-            variant="filled"
-            size="sm"
-            className="absolute right-1.5 top-1.5 max-w-[calc(100%-12px)]"
-          >
-            {eligibility.reasons[0] ?? 'Ineligible'}
-          </Badge>
+          <Tooltip label={eligibility.hint} disabled={!eligibility.hint} multiline maw={280}>
+            <Badge
+              color="red"
+              variant="filled"
+              size="sm"
+              className="absolute right-1.5 top-1.5 max-w-[calc(100%-12px)]"
+            >
+              {eligibility.reasons[0] ?? 'Ineligible'}
+            </Badge>
+          </Tooltip>
         )}
 
         {image.hasMeta && (

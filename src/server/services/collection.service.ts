@@ -2823,7 +2823,7 @@ export const validateContestCollectionEntry = async ({
       const validImageIds = new Set(withRequiredResource.map((r) => r.imageId));
       if (imageIds.some((id) => !validImageIds.has(id))) {
         throw throwBadRequestError(
-          'This image does not use a required model for this challenge, or the model could not be detected from its metadata.'
+          "This image doesn't use a required model for this challenge. The model has to be readable from the image's own generation metadata — a resource credited by hand doesn't count. Generate on site, or re-upload the image with its metadata intact."
         );
       }
     }
