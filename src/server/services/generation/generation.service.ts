@@ -27,7 +27,11 @@ import { getFeaturedModels } from '~/server/services/model.service';
 import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
 import type { GenerationAlias, ModelVersionMeta } from '~/server/schema/model-version.schema';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
-import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
@@ -283,7 +287,15 @@ export const getGenerationData = async ({
         sfwOnly,
       });
     default:
-      throw new Error('unsupported generation data type');
+      // 🔴 REACHABLE, and it is a CLIENT error: `getGenerationDataSchema` accepts
+      // `type: 'audio'` but this switch has no arm for it, so `?type=audio&id=1`
+      // lands here. `/api/generation/data` used to answer its whole catch with a
+      // 400, which made this a 400 by accident; now that the route delegates to
+      // `handleEndpointError`, a plain `Error` would be classified as a server
+      // fault and collapse into a generic 500. `throwBadRequestError` keeps BOTH
+      // the 400 and this exact text on the wire — the helper's 4xx arm passes a
+      // non-JSON message through as `{ message }`, byte-identical to before.
+      throw throwBadRequestError('unsupported generation data type');
   }
 };
 
@@ -508,7 +520,12 @@ async function getMediaGenerationData({
     height,
   });
 
-  if (type === 'audio') throw new Error('not implemented');
+  // Same reclassification as the `default:` arm of `getGenerationData`: the caller
+  // asked for generation data derived from a media item we cannot derive it from.
+  // A plain `Error` here would now be genericized into a 500 by
+  // `handleEndpointError`; `throwBadRequestError` preserves the pre-fix 400 and
+  // this exact message.
+  if (type === 'audio') throw throwBadRequestError('not implemented');
 
   // Return flat resources array - clients use splitResourcesByType() to route to graph nodes
   return {

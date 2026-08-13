@@ -139,7 +139,24 @@ export default MixedAuthEndpoint(async function handler(
       format,
     }).catch(() => undefined);
 
-    return res.status(422).json({ error: err.message });
+    // 🔴 civitai#3845 TIER 1. This was `{ error: err.message }` on a
+    // `MixedAuthEndpoint` whose read path is public, so an anonymous caller got
+    // whatever failed inside the try verbatim — including a driver's
+    // ``Invalid `prisma.…` invocation`` from the cache-miss read path.
+    //
+    // The STATUS is kept and NOT delegated to `handleEndpointError`. 422 here is a
+    // statement about the requested FILE ("we could not read tensor metadata out of
+    // it"), which is caller feedback; delegating would reclassify it as a 500,
+    // because nothing in this try throws a TRPCError. The zod rejection of `?id=`
+    // is already a separate `safeParse` 400 at the top of the handler and never
+    // enters this catch, so no validation path changes here at all.
+    //
+    // Only the MESSAGE is replaced, and with a string LITERAL rather than an
+    // imported constant on purpose: `ModelTensorMetadata.tsx` renders `body.error`
+    // directly as the panel's error text, so it must stay a non-empty string a
+    // human can read. The un-redacted message and stack are already in the
+    // `logToAxiom` call directly above — nothing is destroyed, only moved.
+    return res.status(422).json({ error: 'Unable to read tensor metadata for this file' });
   }
 });
 

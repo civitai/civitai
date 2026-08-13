@@ -73,12 +73,21 @@ vi.mock('request-ip', () => ({
   default: { getClientIp: () => '127.0.0.1' },
 }));
 
-// Mock PublicEndpoint to be a simple passthrough wrapper
-vi.mock('~/server/utils/endpoint-helpers', () => ({
+// Mock PublicEndpoint to be a simple passthrough wrapper.
+//
+// 🔴 Spread the ORIGINAL. This used to REPLACE the module, which was fine while
+// the route hand-rolled its own error envelope and silently became a
+// module-resolution failure ("No `handleEndpointError` export is defined") the
+// moment it started delegating (civitai#3845 TIER 1) — nine tests failing for a
+// reason unrelated to what they assert. `handleEndpointError` is now part of the
+// behaviour under test in the catch-path cases below.
+vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   PublicEndpoint: (handler: any) => handler,
 }));
 
 // 2. Import the handler after the mocks are defined
+import { TRPCError } from '@trpc/server';
 import handler from '~/pages/api/v1/images/index';
 
 // 3. Helper to mock NextApiRequest/Response
@@ -558,9 +567,17 @@ describe('/api/v1/images transient-upstream 503 reclassification', () => {
   });
 
   it('maps a TRPCError SERVICE_UNAVAILABLE (the service-wrapped path) to 503 WITH no-store + Retry-After', async () => {
-    const trpcError = Object.assign(new Error('Image search is temporarily overloaded — please retry.'), {
+    // 🔴 A REAL `TRPCError`, not `Object.assign(new Error, { name: 'TRPCError' })`.
+    // The duck-typed stand-in this test used to build was indistinguishable from a
+    // real one under `getHTTPStatusCodeFromError` (which only reads `.code`) but
+    // NOT under `instanceof`, which both this route and `handleEndpointError` now
+    // use. The service layer constructs these with `new TRPCError`, and a repo-wide
+    // sweep finds no production site that fabricates a duck-typed one, so the real
+    // instance is the faithful fixture — the stand-in was quietly testing a shape
+    // production never produces.
+    const trpcError = new TRPCError({
       code: 'SERVICE_UNAVAILABLE',
-      name: 'TRPCError',
+      message: 'Image search is temporarily overloaded — please retry.',
     });
     mockGetImagesFromFeedSearch.mockRejectedValue(trpcError);
     const { req, res } = createMocks({ query: { limit: '10' } });
@@ -568,23 +585,37 @@ describe('/api/v1/images transient-upstream 503 reclassification', () => {
     await handler(req, res);
 
     expect(res._getStatusCode()).toBe(503);
-    expect(res._getHeader('Cache-Control')).toBe('no-store');
+    // 🔴 `no-store, max-age=0`, not the bare `no-store` this asserted before. The
+    // route sets `no-store` and then DELEGATES, and `handleEndpointError` runs its
+    // own `noStore(res)` last-write-wins. Both forbid caching — `max-age=0` is
+    // redundant next to `no-store`, not weaker — and the retryable contract is
+    // intact because `Retry-After` is a different header and survives. Pinned by
+    // value so the difference is a recorded decision rather than a surprise.
+    //
+    // The RAW-error transient branch above still emits the bare `no-store`,
+    // because it answers in place and never reaches the helper. Both are correct;
+    // the asymmetry is real and is documented here rather than papered over.
+    expect(res._getHeader('Cache-Control')).toBe('no-store, max-age=0');
     expect(res._getHeader('Retry-After')).toBe('2');
   });
 
   it('does NOT mask a TRPCError NOT_FOUND as 503 — keeps its real 404 (no Retry-After)', async () => {
-    const notFound = Object.assign(new Error('Image not found'), {
-      code: 'NOT_FOUND',
-      name: 'TRPCError',
-    });
+    const notFound = new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
     mockGetImagesFromFeedSearch.mockRejectedValue(notFound);
     const { req, res } = createMocks({ query: { limit: '10' } });
 
     await handler(req, res);
 
     expect(res._getStatusCode()).toBe(404);
-    const data = res._getJSONData();
-    expect(data.code).toBe('NOT_FOUND');
+    // 🔴 SHAPE CHANGE, civitai#3845 TIER 1. This route's non-2xx body used to be
+    // the hand-rolled `{ error: <message>, code: <tRPC code> }`. Delegating to
+    // `handleEndpointError` adopts the shared 4xx shape — `{ message }` — which is
+    // the same trade `/api/v1/users` made when it was consolidated. The `code`
+    // discriminator survives on a genericized 5xx, where the full envelope
+    // (`{ error, message, code }`) is emitted; at a 4xx the STATUS is the
+    // discriminator. Asserted by value so a future change to either is visible
+    // here rather than only to a consumer.
+    expect(res._getJSONData()).toEqual({ message: 'Image not found' });
     expect(res._getHeader('Retry-After')).toBeUndefined();
   });
 

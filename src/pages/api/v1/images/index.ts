@@ -1,4 +1,4 @@
-import type { TRPCError } from '@trpc/server';
+import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import dayjs from '~/shared/utils/dayjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -10,7 +10,7 @@ import client from 'prom-client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '~/server/metrics/feed-image-existence-check.metrics';
 import { isTransientMeiliError } from '~/server/meilisearch/client';
 import { runImageSearch } from '~/server/services/image-search.service';
-import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import {
@@ -221,22 +221,41 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
       }
       return;
     }
-    const trpcError = error as TRPCError;
-    const statusCode = getHTTPStatusCodeFromError(trpcError);
-
     // A TRPCError SERVICE_UNAVAILABLE wrapped by the service layer (the normal
     // path for a transient Meili failure now) maps to 503 here — attach the
     // same no-store + Retry-After so the retryable contract is identical to the
-    // raw-error branch above.
-    if (statusCode === 503 && !res.headersSent) {
+    // raw-error branch above. Decided BEFORE delegating, because the shared
+    // helper cannot know this route wants a Retry-After.
+    //
+    // 🔴 Narrowed from `getHTTPStatusCodeFromError(error as TRPCError) === 503`
+    // to an explicit `instanceof`: the old cast was a lie for the non-TRPCError
+    // case, where `getHTTPStatusCodeFromError` silently returns 500 for anything
+    // without a tRPC `code`. Same set of requests takes this branch either way —
+    // only a TRPCError can reach 503 — but the predicate now says what it means.
+    if (
+      error instanceof TRPCError &&
+      getHTTPStatusCodeFromError(error) === 503 &&
+      !res.headersSent
+    ) {
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('Retry-After', '2');
     }
 
-    return res.status(statusCode).json({
-      error: trpcError.message,
-      code: trpcError.code,
-    });
+    // 🔴 civitai#3845 TIER 1. This was `{ error: trpcError.message, code: trpcError.code }`
+    // on a `PublicEndpoint` — i.e. served to ANONYMOUS callers. `trpcError` is
+    // whatever escaped `runImageSearch`, and a `throwDbError`-wrapped driver error
+    // puts a raw ``Invalid `prisma.image.findMany()` invocation`` — table and column
+    // names — straight on the wire. Nothing above this line is a validation
+    // rejection: the zod `safeParse` 400 and the paging 429 both `return` from the
+    // try body and never enter this catch, so delegating here cannot turn a client's
+    // malformed `?limit=` into a 500. A 4xx TRPCError from the search layer keeps
+    // its status; only a 5xx (and a driver-authored 4xx) is genericized, and the
+    // un-redacted text goes to the fault log instead of to the caller.
+    //
+    // The 4xx/503 body shape changes from `{ error, code }` to `{ message }` — the
+    // same trade `/api/v1/users` made in the parent change, and the shared shape is
+    // the point of consolidating.
+    return handleEndpointError(res, error);
   } finally {
     endTimer?.();
     // Release the heavy slot as soon as the handler resolves (synchronous

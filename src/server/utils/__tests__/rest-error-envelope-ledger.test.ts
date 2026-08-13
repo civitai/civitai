@@ -225,15 +225,17 @@ function bodyLeaks(body: string): boolean {
  * GROWS (a new site) or SHRINKS (one was fixed — delete its line). Ordered by
  * exposure, which is the order to fix in:
  *
- * 🔴 TIER 1 — UNAUTHENTICATED. Same severity as the routes this change fixes.
- *   v1/images/index.ts                    PublicEndpoint; `{ error: trpcError.message }`
- *   download/models/[modelVersionId].ts   PublicEndpoint; `errorResponse(500, err.message)`
- *   generation/{data,resources}.ts        PublicEndpoint; catch-all → 400 + e.message
- *   v1/model-files/[id]/tensor-metadata   MixedAuthEndpoint (public read) → 422 + err.message
- * NOT fixed here because the fix is not a delegation: each answers 4xx for EVERY
- * failure including zod-parse rejections, so routing them through the helper turns
- * a legitimate client 400 into a 500. That needs its own red/green and review.
- * `v1/images/index.ts` is pre-existing and unrelated to this change's diff.
+ * 🔴 TIER 1 — UNAUTHENTICATED. **All five are now FIXED** (civitai#3845 follow-up)
+ * and have left this list; they are asserted from the other side in
+ * `FIXED_BY_THIS_CHANGE` below and behaviourally in
+ * `src/tests/api/tier1-public-route-disclosure.test.ts`. The fix was NOT a
+ * delegation: each answered a 4xx for EVERY failure including zod-parse
+ * rejections, so routing them blindly through the helper would have turned a
+ * legitimate client 400 into a 500. Each route now separates the validation
+ * rejection (kept, with its detail) from the server-side failure (delegated).
+ *
+ * `download/models/[modelVersionId].ts` is the one that stayed on this list, and
+ * it is an OVER-REPORT, not a leak — see that block.
  *
  * 🟡 TIER 2 — session-authed: a logged-in user can trigger it, the public cannot.
  * `blocks/submit-version.ts` is `ModEndpoint` and so belongs in TIER 3, where it
@@ -250,18 +252,22 @@ function bodyLeaks(body: string): boolean {
  * fixing them is optional and may be undesirable.
  */
 const KNOWN_UNFIXED_SAME_CLASS: string[] = [
-  // ── TIER 1 — UNAUTHENTICATED ────────────────────────────────────────────────
-  'download/models/[modelVersionId].ts', // PublicEndpoint; errorResponse(500, err.message)
-  'generation/data.ts',
-  'generation/resources.ts',
-  'v1/images/index.ts', // PublicEndpoint; { error: trpcError.message }
-  'v1/model-files/[id]/tensor-metadata.ts',
   // ── OVER-REPORTS — flagged by shape, NOT leaks. Kept so the count is honest ──
-  // Both build `{ error: message }` from a local helper whose every call site
-  // passes a STRING LITERAL ('File not found', 'Not Found'). The guard cannot
-  // see that without types; the previous round's answer was a name allowlist,
-  // which is what buried `download/models` above. Recorded instead.
+  // All three build `{ error: message }` inside a local helper, so the guard sees
+  // an IDENT value and flags the file. It cannot see, without types, that every
+  // call site passes text WE wrote. The previous round's answer to that was a name
+  // allowlist, which is what buried `download/models` for a whole round. Recorded
+  // instead — and for `download/models` the "every call site" claim is not left as
+  // a comment: `download-model-error-response.test.ts` asserts it structurally, so
+  // re-introducing `errorResponse(500, err.message)` fails a test even though this
+  // ledger would stay green (`src/tests/api/tier1-public-route-disclosure.test.ts`).
+  //
+  // 🔴 `download/models` was TIER 1 and IS fixed — its 500 arm no longer forwards
+  // `err.message`. It could only leave this list by restructuring the response
+  // helper purely to dodge a regex, which is the wrong direction; it stays here,
+  // reclassified, with a real guard behind it.
   'download/attachments/[fileId].ts',
+  'download/models/[modelVersionId].ts',
   'download/vault/[vaultItemId].ts',
   // ── TIER 2 — session-authed ─────────────────────────────────────────────────
   'download/user-transactions.ts',
@@ -324,8 +330,22 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   'webhooks/text-moderation-result.ts',
 ];
 
-/** Routes this change fixed — must never appear in the exception list above. */
+/**
+ * Routes fixed for civitai#3845 — must never appear in the exception list above.
+ *
+ * Two groups, both asserted identically. The TIER-1 group is the follow-up: those
+ * routes were enumerated as unfixed in the list above and are now closed. Adding
+ * them here is the SHRINK direction of the ledger — the entry had to be deleted
+ * above AND the route re-checked shape-by-shape here, so a half-fix (message
+ * genericized on one arm only) cannot pass by editing one list.
+ */
 const FIXED_BY_THIS_CHANGE = [
+  // ── civitai#3845 follow-up — the TIER-1 unauthenticated routes ──────────────
+  'generation/data.ts',
+  'generation/resources.ts',
+  'v1/images/index.ts',
+  'v1/model-files/[id]/tensor-metadata.ts',
+  // ── the 11 hand-rolled envelopes consolidated in the parent change ──────────
   'notification/getDetails.ts',
   'run/[modelVersionId].ts',
   'v1/content/[[...slug]].ts',
