@@ -1320,11 +1320,28 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   // challenge clock rather than against how much it managed last time.
   if (judgingEngine.advance) {
     try {
+      const advanceStartedAt = Date.now();
       const calls = await judgingEngine.advance(
         engineContext,
         tickStartedAt + REVIEW_TICK_BUDGET_MS
       );
       if (calls > 0) log('Engine advanced', judgingEngine.key, calls, 'calls');
+      // Emitted on EVERY tick, including zero-call ones. A tick that did no work is the signal that
+      // pacing is not keeping up with arrivals, and that is invisible if only non-zero ticks report.
+      // ~144 ticks per challenge per day — nothing to query against, and exactly the series worth
+      // having while this is being rolled out.
+      logToAxiom({
+        type: 'info',
+        name: 'challenge-engine-advance',
+        challengeId: currentChallenge.challengeId,
+        engine: judgingEngine.key,
+        calls,
+        elapsedMs: Date.now() - advanceStartedAt,
+        // Wall-clock left when it stopped. Near zero means the DEADLINE bound this tick; a large
+        // remainder means the clock pacing did. They call for different responses, and the totals
+        // alone cannot tell them apart.
+        remainingBudgetMs: tickStartedAt + REVIEW_TICK_BUDGET_MS - Date.now(),
+      });
     } catch (error) {
       // A failed advance costs this tick's comparisons. It must not take the review tick with it:
       // the absolute pass, the entry notes and the reviewedAt stamp below are all still correct.
