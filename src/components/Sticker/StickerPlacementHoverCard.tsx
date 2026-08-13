@@ -504,8 +504,16 @@ function ModeratorRemove({
   const forget = useForgetStickerPlacement();
 
   const remove = trpc.placement.removePlacement.useMutation({
-    onSuccess: async () => {
-      showSuccessNotification({ message: 'Placement removed.' });
+    onSuccess: async (result) => {
+      // Reads the result rather than assuming it. The overlay can be drawing a
+      // placement someone else already settled, and reporting success on a
+      // takedown that removed nothing — beside a control that would have worked
+      // — is how a moderator concludes the sticker is handled.
+      showSuccessNotification({
+        message: result.removed
+          ? 'Placement removed.'
+          : 'Nothing to remove — it had already been settled.',
+      });
       await forget(placementId);
     },
     onError: (error) =>

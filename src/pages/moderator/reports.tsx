@@ -356,7 +356,7 @@ function ReportDrawer({
             </Link>
           )}
           <ReportDetails report={report} />
-          {reportedPlacementId !== null && report && (
+          {reportedPlacementId !== null && (
             <RemoveReportedPlacement
               placementId={reportedPlacementId}
               target={getReportedPlacementTarget(report)}
