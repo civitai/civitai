@@ -30,11 +30,23 @@ export type RemixSourceImage = {
   height?: number | null;
   ingestion?: ImageIngestionStatus | string | null;
   blockedFor?: string | null;
-  minor?: boolean | null;
-  poi?: boolean | null;
+  minor?: boolean;
+  poi?: boolean;
   hasMeta?: boolean | null;
   hasPositivePrompt?: boolean | null;
 };
+
+/**
+ * Ingestion states meaning the classifiers produced no verdict for this image.
+ * `Rescan` and `PendingManualAssignment` are excluded on purpose — both are
+ * states an already-classified image passes through, and a re-ingestion sweep
+ * can put a large slice of the catalogue into `Rescan` at once.
+ */
+const UNVERDICTED_INGESTION = new Set<string>([
+  ImageIngestionStatus.Pending,
+  ImageIngestionStatus.Error,
+  ImageIngestionStatus.NotFound,
+]);
 
 const FALLBACK_DIMENSIONS = { width: 512, height: 512 };
 
@@ -44,16 +56,35 @@ const FALLBACK_DIMENSIONS = { width: 512, height: 512 };
  * An image with no rating yet is NOT refused — it routes to the safe tier
  * instead (see `getRemixTier`), so an unscanned upload offers the same options
  * as any other image rather than a message the viewer can do nothing about.
- * What that costs: `minor` and `poi` are written by the ingestion classifiers,
- * so on an unscanned image they are null and the two checks below pass
- * vacuously. The safe tier's provider runs its own refusal on the content it
- * receives, which is what the routing leans on in place of our own verdict.
+ * What that costs: `minor`/`poi` default to FALSE rather than null, so on an
+ * unscanned image the two checks below pass without a verdict having been made
+ * — they cannot tell "clean" from "not looked at yet". The safe tier's provider
+ * runs its own refusal on what it receives, which is what the routing leans on
+ * in place of the verdict we do not have.
  */
 export function getEngineRefusal(image: RemixSourceImage): string | undefined {
   if (image.ingestion === ImageIngestionStatus.Blocked || image.blockedFor)
     return 'This image was blocked, so it cannot be remixed.';
   if (image.minor) return 'Images that may depict a minor cannot be remixed.';
   if (image.poi) return 'Images of real people cannot be remixed.';
+  // Rated mature by a human before the classifiers ran. `minor`/`poi` are NOT
+  // NULL columns defaulting to false, so the checks above cannot tell that state
+  // apart from a scanned-and-clean one — `ingestion` is the only discriminator.
+  //
+  // Scoped to the mature tier because that is the half with no backstop: an
+  // unrated image routes to the safe tier, whose provider refuses on its own,
+  // whereas the mature engines are self-hosted precisely so nothing external
+  // refuses them. Scoping it also keeps a fresh upload (unrated → safe) clear of
+  // the message entirely.
+  //
+  // LIMIT, stated rather than papered over: the search backend's document type
+  // carries no `ingestion`, so this closes the DB path only.
+  if (
+    getRemixTier(image) === 'mature' &&
+    image.ingestion != null &&
+    UNVERDICTED_INGESTION.has(image.ingestion)
+  )
+    return 'This image is still being reviewed. Try again once it finishes scanning.';
   return undefined;
 }
 

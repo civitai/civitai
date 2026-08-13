@@ -37,7 +37,7 @@ describe('getEngineRefusal', () => {
   // refusing. The viewer cannot hurry a scan, so a refusal message was a dead
   // end for the one case that is most common — your own fresh upload.
   it('does not refuse an unscanned image', () => {
-    const searchDoc = image({ nsfwLevel: 0, ingestion: undefined, minor: null, poi: null });
+    const searchDoc = image({ nsfwLevel: 0, ingestion: undefined });
     expect(getEngineRefusal(searchDoc)).toBeUndefined();
   });
 
@@ -49,6 +49,40 @@ describe('getEngineRefusal', () => {
     ImageIngestionStatus.PendingManualAssignment,
   ])('does not refuse on ingestion status %s', (ingestion) => {
     expect(getEngineRefusal(image({ ingestion }))).toBeUndefined();
+  });
+
+  // `minor`/`poi` are NOT NULL columns defaulting to false, so they cannot
+  // distinguish "rated mature by a moderator before the scan" from "scanned and
+  // clean" — only `ingestion` can. The mature tier is self-hosted, so unlike the
+  // safe tier there is no provider filter behind us here.
+  it.each([
+    ImageIngestionStatus.Pending,
+    ImageIngestionStatus.Error,
+    ImageIngestionStatus.NotFound,
+  ])('refuses a mature image whose scan is %s', (ingestion) => {
+    expect(getEngineRefusal(image({ nsfwLevel: 8, ingestion }))).toMatch(/still being reviewed/);
+  });
+
+  it('allows a mature image that has been scanned', () => {
+    expect(getEngineRefusal(image({ nsfwLevel: 8 }))).toBeUndefined();
+  });
+
+  // A re-ingestion sweep can put a large slice of the catalogue into Rescan at
+  // once; those images keep their earlier verdict, so refusing them would be a
+  // self-inflicted outage rather than a safety gain.
+  it.each([ImageIngestionStatus.Rescan, ImageIngestionStatus.PendingManualAssignment])(
+    'allows a mature image in %s, which keeps its earlier verdict',
+    (ingestion) => {
+      expect(getEngineRefusal(image({ nsfwLevel: 8, ingestion }))).toBeUndefined();
+    }
+  );
+
+  // The unrated case Justin asked for: routes safe, so it never reaches the
+  // clause above even though its scan has not finished either.
+  it('does not refuse an unrated image whose scan is pending', () => {
+    expect(
+      getEngineRefusal(image({ nsfwLevel: 0, ingestion: ImageIngestionStatus.Pending }))
+    ).toBeUndefined();
   });
 
   it('refuses a blocked image by status or by reason', () => {
@@ -105,6 +139,13 @@ describe('engine routing by rating', () => {
   it('routes an unrated image to the safe engine', () => {
     expect(getRemixTier(image({ nsfwLevel: 0 }))).toBe('safe');
     expect(getRemixEngine('edit', image({ nsfwLevel: 0 }))).toBe(REMIX_ENGINES.edit.safe);
+  });
+
+  it('routes video by tier too, not just edit', () => {
+    expect(getRemixEngine('video', image({ nsfwLevel: 1 }))).toBe(REMIX_ENGINES.video.safe);
+    expect(getRemixEngine('video', image({ nsfwLevel: 8, minor: false, poi: false }))).toBe(
+      REMIX_ENGINES.video.mature
+    );
   });
 
   // The failure this prevents is a charged request that the provider refuses,
