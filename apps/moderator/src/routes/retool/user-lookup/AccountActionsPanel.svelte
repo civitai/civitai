@@ -1,7 +1,6 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { enhance } from '$app/forms';
-  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -9,10 +8,11 @@
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import type { LayoutData } from './$types';
-  import { LINK_CLASS, dateTime } from '$lib/format';
+  import { LINK_CLASS } from '$lib/format';
+  import { userLookupUrl } from '$lib/entity-url';
   import type { FormResult } from './form-result';
   import { fetchSupport } from './user-support';
-  import { MUTE_PRESETS, REWARDS_ELIGIBILITY } from './enforcement-options';
+  import { REWARDS_ELIGIBILITY } from './enforcement-options';
   import { BAN_REASONS } from '$lib/enforcement';
   import { writeEnhancer } from '$lib/form-action';
 
@@ -31,15 +31,14 @@
   let version = $state(0);
   let confirming = $state<'ban' | 'unban' | 'purge' | null>(null);
   let purgeConfirm = $state('');
-  let showTimedMute = $state(false);
   let reasonCode = $state('');
-  let muteHours = $state(24);
 
   // One flag for the whole panel: these actions all act on the same account, and none of them is safe to
   // interleave with another.
   let submitting = $state(false);
 
   const support = $derived(browser ? fetchSupport(identity.id, version) : null);
+  const mutesUrl = $derived(userLookupUrl(identity.id, 'mutes'));
 
   // `reload: true` because these writes change `identity`, which DOES come from `load` — unlike the
   // panels fed by `/api/*`, where reloading re-runs the reaction scan for nothing.
@@ -52,7 +51,6 @@
     reload: true,
     onSuccess: () => {
       confirming = null;
-      showTimedMute = false;
       reasonCode = '';
       purgeConfirm = '';
       version += 1;
@@ -136,8 +134,6 @@
         <Button type="submit" size="sm" disabled={submitting}>Force logout</Button>
       </form>
 
-      <Button size="sm" onclick={() => (showTimedMute = !showTimedMute)}>Timed mute</Button>
-
       <form method="POST" action="?/resetCaches" use:enhance={onSubmit}>
         <input type="hidden" name="userId" value={identity.id} />
         <Button type="submit" size="sm" disabled={submitting}>Reset subscription caches</Button>
@@ -158,36 +154,6 @@
         Purge content
       </Button>
     </div>
-
-    {#if showTimedMute}
-      <form method="POST" action="?/addTimedMute" use:enhance={onSubmit} class="mt-4">
-        <input type="hidden" name="userId" value={identity.id} />
-        <div class="flex flex-wrap items-end gap-2">
-          <label class="text-xs text-dark-2">
-            Duration
-            <!-- Retool's presetMutes. A free-text hours box invites 240 where someone meant 24. -->
-            <div class="mt-1 flex gap-1">
-              {#each MUTE_PRESETS as [value, label] (value)}
-                <Button
-                  type="button"
-                  size="xs"
-                  variant={muteHours === value ? 'default' : 'outline'}
-                  onclick={() => (muteHours = value)}
-                >
-                  {label}
-                </Button>
-              {/each}
-            </div>
-            <input type="hidden" name="hours" value={muteHours} />
-          </label>
-          <label class="flex-1 text-xs text-dark-2">
-            Reason
-            <Input name="reason" placeholder="Why is this mute being applied?" class="mt-1" required />
-          </label>
-          <Button type="submit" size="sm" disabled={submitting}>Apply</Button>
-        </div>
-      </form>
-    {/if}
 
     <div class="mt-4 border-t border-dark-4 pt-4">
       <h4 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
@@ -323,36 +289,15 @@
     <p class="mt-5 text-sm text-dark-2">Loading mutes and support context…</p>
   {:then result}
     {#if result}
-      <div class="mt-5 grid gap-5 lg:grid-cols-2">
-        <div>
-          <h4 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
-            Timed mutes ({result.timedMutes.length})
-          </h4>
-          {#if result.timedMutes.length === 0}
-            <p class="text-sm text-dark-2">None.</p>
-          {:else}
-            <ul class="space-y-1 text-sm">
-              {#each result.timedMutes as m (m.id)}
-                <li class="flex flex-wrap items-baseline gap-x-2">
-                  {#if m.active}<Badge variant="destructive">active</Badge>{:else}<Badge
-                      variant="secondary">ended</Badge
-                    >{/if}
-                  <span class="text-dark-0">until {dateTime(m.muteEnd)}</span>
-                  <span class="text-xs text-dark-2">{m.createdBy ?? 'unknown'}</span>
-                  {#if m.active && canAct}
-                    <form method="POST" action="?/revokeTimedMute" use:enhance={onSubmit}>
-                      <input type="hidden" name="id" value={m.id} />
-                      <input type="hidden" name="userId" value={identity.id} />
-                      <button type="submit" disabled={submitting} class="text-xs {LINK_CLASS}">
-                        revoke
-                      </button>
-                    </form>
-                  {/if}
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        </div>
+      <div class="mt-5">
+        <!-- The timed-mute list moved to its own section; an active one still needs saying here,
+             because this is the screen a ban or an unmute is decided on. -->
+        {#if result.timedMutes.some((m) => m.active)}
+          <p class="mb-4 text-sm text-amber-300">
+            This account has an active timed mute — see
+            <a href={mutesUrl} class={LINK_CLASS}>Timed Mutes</a>.
+          </p>
+        {/if}
 
         <div>
           <h4 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Support</h4>

@@ -165,9 +165,18 @@ export function reportStatusVariant(status: string): 'default' | 'secondary' | '
  *  A chat has no public page at all, so `entityUrl` correctly returns null for it and the row rendered
  *  with nothing to click — the reported conversation was only reachable by pasting its id into Chat
  *  Audit by hand. The transcript IS the destination; it just lives in this app rather than on the site. */
-export const getReportItemUrl = (base: string, type: ReportEntity, entityId: number | null) =>
+export const getReportItemUrl = (
+  base: string,
+  type: ReportEntity,
+  entityId: number | null,
+  /** Site-relative path resolved server-side for entities with no page of their own — comments hang
+   *  off a parent, so their URL cannot be derived from the entity id alone. */
+  contextUrl?: string | null
+) =>
   type === 'chat'
     ? entityId
       ? `/retool/chat-audit/chats?chat=${entityId}`
       : null
-    : entityUrl(base, type, entityId);
+    : contextUrl
+      ? `${base}${contextUrl}`
+      : entityUrl(base, type, entityId);

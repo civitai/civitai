@@ -756,3 +756,323 @@ Retool's board is the triage entry point, and the walkthrough's colour quote lan
 - [ ] **Browser verification is partial.** The moderation team is exercising pages as they go and
       feeding findings back per session, rather than this being one gated pass. Treat a slice as
       unverified until someone says otherwise, but do not block porting on it.
+
+## 12. Moderation-team feedback round — 2026-08-12 → 08-13
+
+Three moderators worked the port and filed everything below in the migration thread
+(`1534637921829912777`, every message after `1537244774636068885`). Message ids are kept so any line
+can be traced back to who said it and what they were looking at; the doc's convention of not naming
+individuals in a public repo is kept.
+
+Items already covered by an earlier entry are cross-referenced rather than restated. Asks that Retool
+never did are marked → **backlog** and recorded in
+[`post-migration-backlog.md`](post-migration-backlog.md); they stay listed here only so the round
+reads as one round.
+
+**Every item below was cross-checked against the commits and the code on 2026-08-13**, because two
+releases landed inside the round and "filed after a release" is not the same as "still broken". The
+timeline that decides it:
+
+| When | What |
+| --- | --- |
+| 08-12 13:20 | `ccca4572a9` **v0.0.19** |
+| 08-12 19:33–19:49 | automated-report filter, `.red` links, chat-report link, membership, error logging, side-effect guard |
+| 08-12 19:54 | `b06d6f76fc` **v0.0.20** |
+| 08-13 10:43 | `e40e93106e` — the image/strike/user-lookup parity batch |
+| 08-13 10:48 / 11:13 | `7a00889e54` **v0.0.21**, `33fc37c60f` **v0.0.22** |
+
+Only the comics-review report predates v0.0.20. Everything else was filed against a shipped build —
+the *"Yay no more silly numbers"* in `1537284688509407322` is the v0.0.20 report filter, which pins
+that reporter to that build.
+
+### 12a. Reports — links and drill-down
+
+- [x] 🔴 **Comment reports link to nothing.** (`1537284688509407322`, fixed 2026-08-13). Model
+      comments, and article and image comments, all render the report row with no path to the comment;
+      the display is also "funky" (screenshot on the message).
+      `$lib/entity-url`'s `ENTITY_PATH` has no comment entry, and its own comment asserts that types
+      with no standalone page *"correctly return null."* That is true of a bare `/comments/<id>` route
+      and false of the product — the main app opens a comment **through its parent**, which is what
+      `civitai.red/moderator/reports` does today and what the mods were comparing against.
+      Resolved in SQL in `getReports` as a new `contextUrl` column, because the parent is a join away
+      and the queue already pays for one. Legacy model comments become
+      `/models/<id>?dialog=commentThread&commentId=<root>&highlight=<id>` — the reply case opens the
+      thread and marks the reply, exactly as the main app's own notification links do. `commentV2`
+      resolves its `Thread`'s parent across all nine entity columns.
+      Two shapes the naive version would have missed, both found by measuring rather than assuming:
+      a **reply**'s thread hangs off the comment above it and carries no entity at all, so resolution
+      falls back to `rootThreadId` (6,429 of 6,785 reported replies); and a `bountyEntryId` thread
+      never carries the `bountyId` the URL needs — **248 of 248** — hence the join to `BountyEntry`.
+      Coverage on the dev clone: **15,892 of 15,892** legacy comments, **33,786 of 37,384** commentV2.
+      The remainder is not a mapping gap — 3,519 are orphan `Thread` rows with no parent column of any
+      kind (one carries 110 comments), and they render unlinked as before.
+      Verified in a browser on both queues: `/articles/33568?highlight=2278242` and
+      `/models/2741166?dialog=commentThread&commentId=1280855&highlight=1282861`.
+- [x] **Chat report links.** (same message) **Already fixed, and the fix is sound** — `b2b330bdc8`
+      shipped in v0.0.20, *before* this message. `getReportItemUrl` special-cases chat to
+      `/retool/chat-audit/chats?chat=<id>`; that route exists and its `querySchema` parses `chat`, and
+      `reports.service.ts` reads the chat report's entity id from `ChatReport.chatId`, so the id being
+      linked is the one the transcript page wants. That commit is itself credited *"Reported by Daz"*
+      for the earlier round, so this is most likely the same report restated before the deploy landed.
+      **Ask them to re-check rather than reopening it.**
+- [x] 🔴 **The report details sheet stays open, empty, after any status change.** (fixed 2026-08-13)
+      (`1537298688060428350`) **Confirmed open, and it is broader than reported.**
+      `reports/[slug]/+page.svelte` holds `detailsOpen` and `selected` as independent state:
+      `detailsOpen` is a `$state` boolean, `selected` is `$derived(data.items.find(r => r.id ===
+      selectedId))`. The `?/setStatus` form uses the default `use:enhance`, so a successful write
+      invalidates and `data.items` reloads under the queue's status filter — which defaults to
+      `DEFAULT_REPORT_STATUSES = [Pending, Processing]`. Setting a report to **Unactioned or
+      Actioned** drops it out of that list, `selected` goes null, the `{#if selected}` body renders
+      nothing, and `detailsOpen` is still `true`. Result: an empty sheet holding the backdrop over the
+      page. It was reported on Unaction; Action does it too.
+      Fixed by deleting the second state rather than syncing it: the sheet is now
+      `open={!!selected}`, so it is a pure function of whether there is a report to show and the two
+      cannot diverge again. Verified in a browser — Unaction on a Pending report closes the sheet,
+      leaves 0 dialog nodes in the DOM and the page interactive.
+- [~] 🔴 **Comics review → Block → 500.** (`1537245043146883082`) Filed 19:42, twelve minutes before
+      v0.0.20. That release carries `2002b4bfc7`, which fixes exactly this shape: `blockImage` ran five
+      side effects in a `Promise.all` and three of them could reject *after* the row was already
+      updated, so the moderator got a 500 for work that had succeeded. **But its own commit body
+      refuses the credit** — the comics queue is empty on the dev clone (21,384 panels, none matching
+      the review predicate), so the page could not be exercised outside prod. Shipped as a class fix,
+      with `9b71561707`'s `handleError` hook added alongside it to name the actual failing step next
+      time. **Status: plausibly closed, instrumented, unconfirmed — ask for a re-test.**
+      The second half of that message is a separate question worth answering: **why do a banned user's
+      comics appear in the review queue at all.**
+
+### 12b. Report-queue counts and automated reports — closed, kept for the record
+
+- [x] Inflated queue badges, `.com` links, and every page showing `civitai` as the sole reporter
+      (`1537224379002261574`, `1537227376008896552`) — `9d2d67c20d` (automated reports out of the human
+      queues) and `60971a4663` (stop content links falling back to `.com`), both in **v0.0.20**. The
+      mods' own numbers match the fix's: reviews *"220, all `civitai`"* against 0 human. Acknowledged in
+      thread (*"Yay no more silly numbers"*), which is also what dates the rest of that message to a
+      v0.0.20 build.
+
+### 12c. Dashboard
+
+- [ ] **Move *Most reported* to the top of the page.** (`1537513088067043459`) Open — the table is at
+      `+page.svelte:372` of 465, below the whole queue board. §8b's *Urgent content* banner sits at
+      line 178 and is the same instinct, but the ask is for the table itself, not a jump link to it.
+- [x] 🔴 **Show the reporter count per row** — **it was already built, and wrong by one** (fixed
+      2026-08-13). The table's first column *is* the count. But `fetchMostReported` derived it as
+      `array_length(t."alsoReportedBy", 1)`, and `alsoReportedBy` **excludes the original reporter** —
+      the main app's own arithmetic is `report.alsoReportedBy.length + 1`
+      (`src/server/services/report.service.ts:487`, and `[report.userId, ...report.alsoReportedBy]` at
+      :500). So an item three people reported reads **2**. Two consequences beyond the column:
+      - the query filters `where(reportCount, '>', 1)`, so the table **hides every item with exactly
+        two reporters** while its own copy promises *"more than one reporter"*;
+      - `URGENT_REPORT_COUNT = 5` is applied to the same undercount, so §8b's urgent banner fires at
+        **six** real reporters, not five.
+      This is very likely why the count was asked for — it was on screen and did not match what a
+      moderator counts by hand. One expression fixes all three:
+      `coalesce(array_length(...), 1) + 1`, with the coalesce load-bearing because `array_length` is
+      NULL on an empty array rather than 0.
+      **Measured on the dev clone, the hidden half was the bigger defect**: the old predicate returned
+      **1** row where the corrected one returns **10+**, every one of them a genuine two-reporter
+      pile-up that the board had never shown. Verified in a browser: the table now renders 10 rows
+      reading 3, 2, 2, 2 … where it previously rendered one.
+- [ ] **Put *Recently worked* and *Queue sweeps* next to the queues they describe**, rather than in
+      their own blocks. Filed with *"might need a new table to track all of these queues, or
+      expand/revise `ModActivity`"* — **answer: no new table.** `Mods_TaskTimers` already carries the
+      per-task timestamps and `getSweepAt`/`getSweepCounts` already read them; see §12d.
+
+### 12d. Queues that are missing (`1537513655711825931`, `1537514064580714507`)
+
+- [ ] **Unpublished models the user asked to have reviewed** — the `civitai.red/moderator/models`
+      queue. Count query as filed:
+
+      ```sql
+      SELECT COUNT("meta"->>'needsReview') AS needsReview
+      FROM "Model"
+      WHERE "meta"->>'needsReview' = 'true'
+        AND "status" = 'UnpublishedViolation'
+      ```
+
+      Nothing in the app runs this. `queue-thresholds.ts` already carries a `modelsReview` scale
+      recovered from the export, so Retool had the queue — parity, not an addition. ⚠️ **A partial
+      index on `meta ? 'needsReview'` will not help this predicate** — `jsonb_exists` has no btree
+      opfamily, so the planner reports `predOK=false`; the query has to repeat the literal clause.
+
+- [~] **Timestamp-swept queues — the "I've checked these" pattern.** Some queues are not a backlog but
+      a *last-swept* marker: a mod reads the newest 20 articles, presses a button, and the timestamp
+      advances. Asked for on **Articles**, **Bounties**, and **models handed to Civitai on account
+      deletion** — *"if there's a better way than timestamps, feel free to change the method."*
+
+      **The mechanism already exists and one of the three is already built.** `SWEEP_TASKS` in
+      `moderation-board.service.ts` is exactly this pattern — `getSweepAt` reads the bound from
+      `Mods_TaskTimers`, the acknowledge write shipped in `b02c065630`, and a task with no
+      acknowledgement yet reports *"never swept"* rather than an unbounded count. `countCivitaiModelsSince`
+      is the third query below, byte for byte:
+
+      ```sql
+      SELECT COUNT(*) FROM "Article"  WHERE "createdAt" > {{ArticleTimer.data.lastUpdate[0]}}
+      SELECT COUNT(*) FROM "Bounty"   WHERE "createdAt" > {{BountyTimer.data.lastUpdate[0]}}
+      -- already built as countCivitaiModelsSince():
+      SELECT * FROM "Model"
+        WHERE "userId" = -1
+          AND "updatedAt" > {{CivitModelCheck.data.lastUpdate[0]}}
+          AND "status" = 'Published'
+      ```
+
+      So the work is **two more `SWEEP_TASKS` entries and two count functions**, not a new subsystem.
+      `queue-thresholds.ts` already carries Retool's own `articleTask` and `bountyTask` scales, recovered
+      from the export — which is independent evidence Retool ran both, so these are parity, not additions.
+      Same for `modelTask` and `trainingData`, which are also scales with no queue behind them.
+- [ ] **The three queues from `civitai.red/moderator/minor-hash-matches`.** Nothing in the app matches
+      `minorHash` / `minor-hash` — not started.
+- [ ] **Drop the unpublished-articles queue.** (`1537514064580714507`) *"There's no need for
+      unpublished articles to be an item/queue."* `src/routes/articles/unpublished` exists in the port;
+      removing it is the ask, so confirm before deleting — this is the one item in the round that
+      *removes* surface.
+
+### 12e. Bulk Image Manager (`1537516568815083690`)
+
+- [x] 🔴 **Clicking an image opens its link instead of selecting it.** (fixed 2026-08-13, one function.)
+      `ImageQueueGrid.svelte`'s card is an `<a href="{civitaiUrl}/images/{item.id}">` and its handler
+      is `onImageClick(e, item) { if (selected && selected.size > 0) { e.preventDefault(); toggle(item) } }`
+      — so selection by click only works **once something is already selected**, and the first click of
+      every batch navigates away instead. Selection is otherwise only reachable through the per-card
+      checkbox at line ~105. The filed ask is explicitly global (*"the default case in all grid
+      multi-select pages"*), and since both image pages share this component it is one change, not a
+      per-page fix.
+      A selectable grid now renders the media as a `<button>` that toggles, and the whole-card `<a>`
+      only survives on the read-only grids that pass no `selected` set. Verified on Bulk Image Manager:
+      103 select targets, and the first click on an empty selection sets `aria-pressed=true` and
+      reads `1 selected` **without navigating or opening a tab** — which is precisely what it used to do.
+- [x] **Add a corner arrow/button that opens the Civitai page.** (2026-08-13 — the other half of the
+      same change, since the `<a>` wrapped the whole card and freeing the click needed somewhere for
+      the navigation to go.) Verified: the arrow opens `civitai.red/images/<id>` in a new tab and does
+      **not** toggle the selection.
+- [ ] **Striking from this page fails with `Struck 0 of 1 owners: CIVITAI_MOD_API_KEY is not
+      configured.`** Not a code defect — §11 already lists that key as unset — but it is the first
+      report of a *user-visible* consequence, and the message reads as a bug to a moderator. Setting
+      the key closes it; the wording is worth a second look either way.
+
+### 12f. User Reports (`1537531797124943882`, `1537532842337378375`)
+
+- [ ] **Clicking an image should select it, with a separate arrow to Civitai** — same defect as §12e,
+      same shared component, fixed once.
+- [x] **Clicking anywhere in a report's empty space should select that report**, and **clicking the
+      username should go to User Lookup.** (both, 2026-08-13.) **These two are one change, and the
+      second could not be done without the first.** In `QueuePanel.svelte` the suspect's username *was*
+      the select affordance:
+      `suspectHref` returns `?user=<id>` on the same page, which opens the drill-down. So freeing the
+      username to link out needs the row itself to become the select target first. The reporter's
+      username beside it already linked to User Lookup, which is likely why the difference read as a
+      bug. The row now carries a stretched anchor **above** the content with the real controls lifted
+      over it, rather than the other way round — that way "empty space" means every pixel no control
+      occupies, instead of every pixel no text occupies. Verified in a browser: a row click opens that
+      account's drill-down and highlights the row, the username goes to `/retool/user-lookup?q=<id>`,
+      and the Action button is still the topmost element at its own position, so the overlay does not
+      swallow the controls.
+      Worth noting while in this file: the queue labels the same array correctly — `+N also reported`
+      — where the dashboard calls it *Reports*. See §12c.
+- [ ] **Removing images from any multi-select UI should offer the same options the site does.**
+      (`1537532842337378375`, screenshot) Filed against *"any multi select UI"*, so this is about the
+      shared removal form, not one page. §2 shipped the eleven `tosReasons` there; check what the site
+      offers that the bar does not before scoping.
+
+### 12g. User Lookup (`1537527920938192992`, `1537156052511096902`, `1537543755110944799`)
+
+- [x] **The open-report banner says too much.** (2026-08-13.) *"3 open reports against this account. Filed by
+      moderator civitai — someone is already on this."* → wanted: `3 open reports against this
+      account.` and nothing else. §1 added the second sentence deliberately, as the anti-overlap signal
+      (`1537244824535699477` era); the mods do not want it, and it is their call.
+      The sentence is now the count and nothing else. The moderator who filed survives as a `filed by
+      <name>` chip beside it — the *editorial* half (*"someone is already on this"*) is what was
+      objected to, and deleting the datum as well would re-open the overlap problem §1 was solving.
+      Say so if the chip should go too. Verified: `20 open reports against this account.` + chip.
+- [ ] **Make *spoke with mod* the same red as bans.**
+- [x] **The CSAM-report indicator should open the report.** (2026-08-13.) It rendered
+      `identity.csamReportCount` as a plain `<Badge>` — no link, no handler — so the one chip a
+      moderator most wants to open was the one that did nothing. It now opens a sheet listing each
+      `CsamReport` with its type, whether and when it was sent, archived/content-removed state, who
+      filed it, the `minorDepiction` and `contents` classification, and a link to the originating
+      report. Fetched only on open, since almost every account has none.
+      **What it deliberately does not show:** the report's `images`, and `details->'userActivity'` as
+      anything but a count. That key is the account's whole session log — one report on the dev clone
+      carries **89,550 entries, each with an IP** — so sending it to a browser to render a summary chip
+      would have been both a payload and a disclosure nobody asked for.
+- [x] **`name` is not displayed, only editable.** (2026-08-13 — now a read-only `Full name` field.)
+      **§1b is what misled here** — that entry says *"selected in `getIdentity` and editable behind Enable Edits"*, and both halves are true, but
+      `IdentityPanel.svelte` rendered the field **only inside the Enable Edits form**, so a moderator
+      who never toggled edits on never saw the account's full name.
+- [ ] **Subscription details should move out of the Buzz section.** **This one is a decision to reverse,
+      not a gap.** `e43a55876b` put membership on Basic User Information and it is there —
+      `IdentityPanel.svelte:190` renders the badge, with a comment stating the split deliberately:
+      *"the subscription record stays there; this is the one line of it that belongs with identity."*
+      The mods want the record itself on basic info. **Their call.**
+- [x] **Creator Program status.** (2026-08-13 — a header badge.) It is not a table but two bits on
+      `User.onboarding`, which the identity query already selected, so this needed no service change.
+      Joining and being **banned** from the programme are separate bits and an account can hold both;
+      the ban wins the label, because it is the one that changes what a moderator does next.
+      ⚠️ **Found while wiring it:** `Accepted TOS` was `!!identity.onboarding` — a truthiness test on a
+      bitfield, so *any* completed onboarding step rendered as "accepted the TOS". Now `& TOS`, with
+      `& RedTOS` beside it as its own row. The bits live in `$lib/onboarding.ts` rather than inline.
+- [ ] **LoRA Training panel should show the training metadata.** Confirmed — `TrainingsPanel.svelte`
+      renders a summary line only (base model, training type, image count, epochs, buzz cost, date).
+      The training params themselves are not fetched, so this needs a service change, not just a render.
+- [x] 🔴 **Timed Mutes shows the entire enforcement surface.** (fixed 2026-08-13.)
+      `[section]/+page.svelte` fell through to the same `AccountActionsPanel` for **both** `admin` and
+      `mutes`, so the Timed Mutes section *was* the Admin section — ban, purge, force-logout and all.
+      Now a `TimedMutesPanel` carrying only the duration presets, the reason and the history, and the
+      timed-mute half is gone from Account actions.
+      Two things kept deliberately: the **indefinite** Mute toggle stays on Admin, because it is not a
+      timed mute and belongs with ban; and Admin still says *"This account has an active timed mute"*
+      with a link, because it is the screen a ban or an unmute gets decided on and losing that signal
+      would trade one complaint for another. The list also now shows each mute's reason, which the old
+      panel selected and dropped.
+      Verified end to end on 1290051: applying a 24h mute renders it active with the reason and the
+      moderator, Admin shows the cross-link, revoke flips it to ended, and the `User` row comes back to
+      `muted=false, muteExpiresAt=null, manualMute=false`.
+      **This unblocks §12i** — a gate on the `admin` slug now actually gates that surface.
+- [ ] **Notes and strikes belong on Basic User Information**, not two scroll-and-tab hops away
+      (`1537527920938192992`, restating `1537156052511096902`). The layout complaint behind it: socials
+      is now strictly social links since the pfp/banner/bio/location moved to basic info, so it fits in
+      the dead space beside location, and the dead space at the top of the page is where the
+      notes/strikes/admin affordances should live. Retool put them one or two clicks from the main
+      page. → **backlog** was the earlier answer (`1537244824535699477`: parity first, UI pass after) —
+      it is now asked for twice by two people, so re-decide rather than inherit that.
+- [ ] **Buzz: list the account's payouts.** Filed with the open question *"Tipalti connection
+      needed?"* — answer that before scoping.
+- [ ] **Copy-all-IDs button on *Addresses & linked accounts*** (`1537543755110944799`), so a linked-
+      account set can be pasted straight into Bulk Ban. This is the seam between the two pages and it
+      is currently manual.
+
+### 12h. Bulk Ban (`1537543755110944799`)
+
+Filed against the page ported in §0, by the mod who uses it on bot chains.
+
+- [ ] **The IP check lists matched accounts with no way to copy their ids.** Accounts land in the
+      *in common* section and then have to be transcribed by hand into the ban list below. Same
+      copy-all button as §12g.
+- [ ] **No way to drop one entry from the pasted ban list.** Removing an id today means editing the
+      textarea and re-running the check. The motivating case is precise and worth keeping: a bot IP
+      that a genuine user logged in from once or twice.
+- [ ] **"Note on all matched accounts" includes already-banned accounts** — wanted: a toggle for
+      unbanned only.
+- [ ] **The per-account note section is redundant** with the note field directly above it.
+- [ ] **The paste boxes grow without bound instead of scrolling.** With the check section above the
+      ban section, a large line-by-line id set pushes the actual controls off screen. Draggable today;
+      the ask is that scrolling be the default.
+
+### 12i. Permissions — sub-permissions inside a page (`1537519380148133980`)
+
+- [ ] 🔴 **There is no way to restrict individual actions within a page, and several actions need it.**
+      Access is per-route today, so anyone who can open User Lookup can do everything on it. Named as
+      needing a narrower gate:
+      - editing email/username on Basic User Information
+      - adding or subtracting Buzz
+      - the entire Admin section
+      - granting badges in the Cosmetic Shop
+      **Confirmed in code.** `access.ts`'s `NAVIGATION` registers `/retool/user-lookup` as a *single*
+      path — every section under it is one grant, so anyone who can open the page can do everything on
+      it. The only narrower control that exists is `isSenior`, hand-rolled at exactly two call sites in
+      `[section]/+page.server.ts` (lines 222 and 487), which is the shape this ticket wants generalised.
+      Filed as *"Justin and Briant had a conversation earlier about sub-permissions inside of apps"* —
+      so the design may already exist elsewhere. §0 has the same shape open for Bulk Ban (*"gate it,
+      then widen deliberately"*) and §1b already hand-rolls the senior gate for `ToggleMod` — the third
+      instance, and the argument for solving it once.
+      ⚠️ **Blocked on §12g's Timed Mutes split**: `admin` and `mutes` render the same panel today, so a
+      gate on `admin` alone leaves the whole surface reachable at the other slug.

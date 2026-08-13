@@ -42,7 +42,58 @@ export type ModeratorReportRow = {
   statusSetAt: Date | null;
   statusSetByUsername: string | null;
   entityId: number | null;
+  /** Site-relative path for report types whose entity has no page of its own. Only comments set it —
+   *  see `commentContextUrl`. `null` everywhere else, where `entityUrl` already answers. */
+  contextUrl: string | null;
 };
+
+/**
+ * A comment has no standalone page: the site opens it through whatever it hangs off. So a comment
+ * report rendered as unlinked text, and the only way to the words being reported was to search for
+ * them. Resolved in SQL because the parent is a join away and the queue already pays for one.
+ *
+ * `commentV2` threads carry the parent as one of a dozen nullable columns, and a REPLY carries none of
+ * them — its thread's parent is the comment above it — so the resolution falls back to `rootThreadId`
+ * (6,429 of the 6,785 reported replies on the dev clone). `bountyEntryId` threads never carry the
+ * `bountyId` the URL needs (248 of 248), hence the join. `highlight` is what scrolls to and marks the
+ * comment once the page opens, and is the whole point of linking rather than landing on the entity.
+ */
+function commentContextUrl(type: ReportEntity, entityId: ReturnType<typeof sql<number | null>>) {
+  if (type === 'comment')
+    return sql<string | null>`(
+      SELECT '/models/' || c."modelId" || '?dialog=commentThread&commentId=' ||
+             coalesce(c."parentId", c.id) || '&highlight=' || c.id
+      FROM "Comment" c WHERE c.id = ${entityId} AND c."modelId" IS NOT NULL
+    )`;
+
+  if (type === 'commentV2')
+    return sql<string | null>`(
+      SELECT CASE
+        WHEN p."imageId"       IS NOT NULL THEN '/images/'   || p."imageId"
+        WHEN p."postId"        IS NOT NULL THEN '/posts/'    || p."postId"
+        WHEN p."articleId"     IS NOT NULL THEN '/articles/' || p."articleId"
+        WHEN p."reviewId"      IS NOT NULL THEN '/reviews/'  || p."reviewId"
+        WHEN p."bountyEntryId" IS NOT NULL THEN '/bounties/' || be."bountyId" || '/entries/' || p."bountyEntryId"
+        WHEN p."bountyId"      IS NOT NULL THEN '/bounties/' || p."bountyId"
+        WHEN p."challengeId"   IS NOT NULL THEN '/challenges/' || p."challengeId"
+        WHEN p."modelId"       IS NOT NULL THEN '/models/'   || p."modelId"
+        WHEN p."comicProjectId" IS NOT NULL THEN '/comics/'  || p."comicProjectId"
+        WHEN p."model3dId"     IS NOT NULL THEN '/3d-models/' || p."model3dId"
+        -- Threads with no parent column at all are the remainder (3,519 on the dev clone). They are
+        -- orphaned rows, not a missing mapping: one carries 110 comments and no entity of any kind.
+        ELSE NULL
+      END || '?highlight=' || cv.id
+      FROM "CommentV2" cv
+      JOIN "Thread" t ON t.id = cv."threadId"
+      -- A reply's own thread hangs off a comment; the entity is on the root.
+      LEFT JOIN "Thread" root ON root.id = t."rootThreadId"
+      JOIN LATERAL (SELECT * FROM "Thread" x WHERE x.id = CASE WHEN t."commentId" IS NULL THEN t.id ELSE coalesce(root.id, t.id) END) p ON true
+      LEFT JOIN "BountyEntry" be ON be.id = p."bountyEntryId"
+      WHERE cv.id = ${entityId}
+    )`;
+
+  return sql<string | null>`null::text`;
+}
 
 /** `'all'` must be said, not implied by omission. These were optional and silently skipped, which is
  *  how Chat Audit came to count every chat report in history under copy promising open ones only. */
@@ -112,6 +163,7 @@ export async function getReports({
       sql<number>`coalesce(array_length("Report"."alsoReportedBy", 1), 0)`.as('alsoReportedByCount')
     )
     .select(entityId.as('entityId'))
+    .select(commentContextUrl(type, entityId).as('contextUrl'))
     .orderBy('Report.id', 'desc')
     .limit(limit)
     .offset(offset)
@@ -274,8 +326,15 @@ export function getMostReported(limit = 20, now = Date.now()): Promise<MostRepor
 }
 
 async function fetchMostReported(limit: number): Promise<MostReportedRow[]> {
-  // `alsoReportedBy` is a Postgres array and the ordering key, so array_length stays raw sql.
-  const reportCount = sql<number>`array_length(t."alsoReportedBy", 1)`;
+  // `alsoReportedBy` is a Postgres array and the ordering key, so this stays raw sql.
+  //
+  // The +1 is the report's own filer: `alsoReportedBy` holds every reporter EXCEPT `Report.userId`,
+  // which is how the main app counts them too (`report.alsoReportedBy.length + 1`, and
+  // `[report.userId, ...report.alsoReportedBy]` for the reward). Without it the column read one short,
+  // `> 1` hid every two-reporter item behind copy promising "more than one reporter", and the
+  // dashboard's URGENT_REPORT_COUNT fired a reporter late. `array_length` is NULL on an empty array,
+  // not 0, so the coalesce is load-bearing rather than defensive.
+  const reportCount = sql<number>`coalesce(array_length(t."alsoReportedBy", 1), 0) + 1`;
   const rows = await dbRead
     .selectFrom('Report as t')
     .leftJoin('ImageReport as ir', 'ir.reportId', 't.id')

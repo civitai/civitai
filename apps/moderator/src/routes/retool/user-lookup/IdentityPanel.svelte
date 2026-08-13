@@ -8,6 +8,7 @@
   import type { LayoutData } from './$types';
   import { userUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime } from '$lib/format';
+  import { OnboardingStep, hasOnboardingStep } from '$lib/onboarding';
   import type { FormResult } from './form-result';
   import { PROFILE_FIELDS } from './enforcement-options';
   import { getBrowsingLevelLabel } from '@civitai/shared';
@@ -108,8 +109,8 @@
   // none of them reached the DOM, so the gap was seeing them — editing an account's own TOS acceptance
   // or browsing preferences is a separate capability, not a checkbox on the landing screen.
   const quickInfo = $derived<[string, boolean][]>([
-    // `onboarding` is a bitfield; nonzero means the TOS step is done.
-    ['Accepted TOS', !!identity.onboarding],
+    ['Accepted TOS', hasOnboardingStep(identity.onboarding, OnboardingStep.TOS)],
+    ['Accepted Red TOS', hasOnboardingStep(identity.onboarding, OnboardingStep.RedTOS)],
     ['Excluded from leaderboards', !!identity.excludeFromLeaderboards],
     // Retool's Buzz-Blocked. `Ineligible` is what the Add Buzz-Block button writes.
     ['Buzz-blocked', identity.rewardsEligibility === 'Ineligible'],
@@ -118,7 +119,18 @@
     ['Blurs mature content', !!identity.blurNsfw],
   ]);
 
+  // Joining and being banned from it are separate bits, and an account can carry both — the ban is the
+  // one that decides what a moderator does next, so it wins the label rather than being appended.
+  const creatorProgram = $derived(
+    hasOnboardingStep(identity.onboarding, OnboardingStep.BannedCreatorProgram)
+      ? { label: 'Creator Program (banned)', variant: 'destructive' as const }
+      : hasOnboardingStep(identity.onboarding, OnboardingStep.CreatorProgram)
+        ? { label: 'Creator Program', variant: 'secondary' as const }
+        : null
+  );
+
   const fields = $derived<[string, string][]>([
+    ['Full name', identity.name ?? '—'],
     ['Email', identity.email ?? '—'],
     ['Email verified', dateTime(identity.emailVerified)],
     ['Joined', dateTime(identity.createdAt)],
@@ -188,6 +200,9 @@
          made — it lived only under Buzz, three clicks from the page a moderator opens first. The full
          subscription record stays there; this is the one line of it that belongs with the identity. -->
     <Badge variant={membership.paying ? 'secondary' : 'outline'}>{membership.label}</Badge>
+    {#if creatorProgram}
+      <Badge variant={creatorProgram.variant}>{creatorProgram.label}</Badge>
+    {/if}
   </div>
 
   <div class="mt-4 flex flex-wrap gap-x-4 gap-y-1.5 text-sm">

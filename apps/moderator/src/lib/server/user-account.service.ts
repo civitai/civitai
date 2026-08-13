@@ -905,3 +905,62 @@ export async function getBuzzHistory(
     receipts: visible.filter((t) => t.direction === 'in'),
   };
 }
+
+/** One `CsamReport` row, reduced to what the classification says. The report's `images` and the
+ *  NCMEC contact fields are deliberately not selected — this answers "what was this account reported
+ *  for and did it go out", which is the question the header chip raises, without putting the material
+ *  itself in a moderation console. */
+export type CsamReportRow = {
+  id: number;
+  createdAt: Date;
+  type: string;
+  reportedByUsername: string | null;
+  reportSentAt: Date | null;
+  archivedAt: Date | null;
+  contentRemovedAt: Date | null;
+  reportId: number | null;
+  minorDepiction: string | null;
+  contents: string[];
+  /** Entry count only. `details->'userActivity'` is the account's whole session log — one report here
+   *  carried 89,550 entries, each with an IP — so it is summarised rather than sent. */
+  userActivityCount: number;
+  imageCount: number;
+  modelVersionCount: number;
+};
+
+export async function getCsamReports(userId: number): Promise<CsamReportRow[]> {
+  const rows = await dbRead
+    .selectFrom('CsamReport as cr')
+    .leftJoin('User as u', 'u.id', 'cr.reportedById')
+    .select([
+      'cr.id',
+      'cr.createdAt',
+      sql<string>`cr.type::text`.as('type'),
+      'u.username as reportedByUsername',
+      'cr.reportSentAt',
+      'cr.archivedAt',
+      'cr.contentRemovedAt',
+      'cr.reportId',
+      sql<string | null>`cr.details->>'minorDepiction'`.as('minorDepiction'),
+      sql<string[] | null>`cr.details->'contents'`.as('contents'),
+      // jsonb_array_length errors on a non-array, and these columns are sometimes an object or null.
+      sql<number>`CASE WHEN jsonb_typeof(cr.details->'userActivity') = 'array'
+        THEN jsonb_array_length(cr.details->'userActivity') ELSE 0 END`.as('userActivityCount'),
+      sql<number>`CASE WHEN jsonb_typeof(cr.images) = 'array' THEN jsonb_array_length(cr.images) ELSE 0 END`.as(
+        'imageCount'
+      ),
+      sql<number>`CASE WHEN jsonb_typeof(cr.details->'modelVersionIds') = 'array'
+        THEN jsonb_array_length(cr.details->'modelVersionIds') ELSE 0 END`.as('modelVersionCount'),
+    ])
+    .where('cr.userId', '=', userId)
+    .orderBy('cr.createdAt', 'desc')
+    .execute();
+
+  return rows.map((r) => ({
+    ...r,
+    contents: Array.isArray(r.contents) ? r.contents : [],
+    userActivityCount: Number(r.userActivityCount ?? 0),
+    imageCount: Number(r.imageCount ?? 0),
+    modelVersionCount: Number(r.modelVersionCount ?? 0),
+  }));
+}

@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import type { Snippet } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
+  import { IconExternalLink } from '@tabler/icons-svelte';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
@@ -37,7 +38,9 @@
     keyOf?: (item: T) => string | number;
     itemClass?: (item: T) => string;
     card: Snippet<[T]>;
-    /** Pass a set to enable multiselect; once anything is selected an image click toggles instead of navigating. */
+    /** Pass a set to enable multiselect. The image itself then becomes the select target and the
+     *  corner arrow is the way out to the site — selecting is the gesture these pages are for, and
+     *  making it the secondary one cost a navigation on the first click of every batch. */
     selected?: SvelteSet<string | number>;
     empty?: string;
     /** `null` suppresses the terminator — for a capped batch, where "End of queue." would contradict
@@ -51,13 +54,6 @@
     const k = key(item);
     if (selected!.has(k)) selected!.delete(k);
     else selected!.add(k);
-  }
-
-  function onImageClick(e: MouseEvent, item: T) {
-    if (selected && selected.size > 0) {
-      e.preventDefault();
-      toggle(item);
-    }
   }
 
   function goNext() {
@@ -80,20 +76,46 @@
           : ''}"
       >
         <div class="relative flex aspect-[4/5] items-center justify-center overflow-hidden bg-muted">
-          <a
-            href={`${civitaiUrl}/images/${item.id}`}
-            target="_blank"
-            rel="noreferrer"
-            class="flex h-full w-full items-center justify-center"
-            onclick={(e) => onImageClick(e, item)}
-          >
-            <EdgeMedia
-              src={item.url}
-              type={item.type}
-              width={450}
-              class="max-h-full max-w-full object-contain"
-            />
-          </a>
+          {#if selected}
+            <button
+              type="button"
+              onclick={() => toggle(item)}
+              aria-pressed={isSelected}
+              aria-label={isSelected ? 'Deselect image' : 'Select image'}
+              class="flex h-full w-full cursor-pointer items-center justify-center"
+            >
+              <EdgeMedia
+                src={item.url}
+                type={item.type}
+                width={450}
+                class="max-h-full max-w-full object-contain"
+              />
+            </button>
+            <a
+              href={`${civitaiUrl}/images/${item.id}`}
+              target="_blank"
+              rel="noreferrer"
+              title="Open on Civitai"
+              aria-label="Open on Civitai"
+              class="absolute bottom-2 right-2 z-10 rounded bg-black/70 p-1.5 text-white hover:bg-black/90"
+            >
+              <IconExternalLink size={16} />
+            </a>
+          {:else}
+            <a
+              href={`${civitaiUrl}/images/${item.id}`}
+              target="_blank"
+              rel="noreferrer"
+              class="flex h-full w-full items-center justify-center"
+            >
+              <EdgeMedia
+                src={item.url}
+                type={item.type}
+                width={450}
+                class="max-h-full max-w-full object-contain"
+              />
+            </a>
+          {/if}
           {#if item.nsfwLevel != null}
             <Badge
               class="absolute left-2 top-2 border-transparent {RATING_BADGE[item.nsfwLevel] ??

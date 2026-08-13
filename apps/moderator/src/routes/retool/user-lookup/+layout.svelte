@@ -3,13 +3,21 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import LookupSearch from '$lib/components/LookupSearch.svelte';
-  import { LINK_CLASS } from '$lib/format';
+  import { LINK_CLASS, dateTime } from '$lib/format';
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { userUrl } from '$lib/entity-url';
   import type { LayoutData } from './$types';
   import { ADMIN_SECTIONS, DEFAULT_SECTION, SECTIONS, SECTION_LINKS } from './sections';
+  import {
+    Sheet,
+    SheetContent,
+    SheetHeader,
+    SheetTitle,
+  } from '@civitai/ui/components/ui/sheet/index.js';
+  import type { Jsonified } from '$lib/format';
+  import type { CsamReportRow } from '$lib/server/user-account.service';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
@@ -26,6 +34,19 @@
   const identity = $derived(data.result?.identity ?? null);
   const profileUrl = $derived(
     identity?.username ? userUrl(data.civitaiUrl, identity.username) : null
+  );
+
+  // The chip carries a count and nothing else, which is the one thing a moderator cannot act on. The
+  // rows are fetched only once it is opened — the endpoint returns the report's CLASSIFICATION, not
+  // its material.
+  let csamOpen = $state(false);
+  const csamReports = $derived(
+    csamOpen && identity
+      ? fetch(`/api/user-csam-reports/${identity.id}`).then(
+          (r): Promise<Jsonified<CsamReportRow>[]> =>
+            r.ok ? r.json() : Promise.reject(new Error(String(r.status)))
+        )
+      : null
   );
 </script>
 
@@ -75,9 +96,11 @@
          single most important thing on the screen, and a Pending restriction is a SYSTEM mute nobody
          has ruled on — without it that account reads as an unexplained manual mute. -->
     {#if identity.csamReportCount > 0}
-      <Badge variant="destructive">
-        CSAM report{identity.csamReportCount > 1 ? ` ×${identity.csamReportCount}` : ''}
-      </Badge>
+      <button type="button" onclick={() => (csamOpen = true)} class="cursor-pointer">
+        <Badge variant="destructive" class="underline decoration-dotted underline-offset-2">
+          CSAM report{identity.csamReportCount > 1 ? ` ×${identity.csamReportCount}` : ''}
+        </Badge>
+      </button>
     {/if}
     {#if identity.muted}<Badge variant="destructive">muted</Badge>{/if}
     {#if identity.restrictionStatus}
@@ -198,11 +221,15 @@
       class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-200"
       role="status"
     >
-      <span>
+      <span class="flex flex-wrap items-center gap-2">
         {identity.openReportCount} open report{identity.openReportCount > 1 ? 's' : ''} against this
-        account.{identity.openReportModerators
-          ? ` Filed by moderator ${identity.openReportModerators} — someone is already on this.`
-          : ''}
+        account.
+        <!-- The sentence is the count and nothing else, per the mod team. The moderator who filed is
+             still the anti-overlap signal this banner exists for, so it stays as a chip rather than as
+             prose telling them what to conclude from it. -->
+        {#if identity.openReportModerators}
+          <Badge variant="outline">filed by {identity.openReportModerators}</Badge>
+        {/if}
       </span>
       <!-- The account's OWN drill-down, not the 500-row queue: this is where the report can be
            actioned with their content in front of you, which is what "actionable from here" meant. -->
@@ -264,3 +291,74 @@
     </div>
   </div>
 {/if}
+
+<Sheet bind:open={csamOpen}>
+  <SheetContent side="right" class="w-full overflow-y-auto sm:max-w-lg">
+    <SheetHeader>
+      <SheetTitle>CSAM reports</SheetTitle>
+    </SheetHeader>
+    <div class="flex flex-col gap-4 px-4 pb-6 text-sm">
+      <p class="text-xs text-dark-2">
+        What each report classified this account under, and whether it was sent. The reported material
+        is not shown here.
+      </p>
+      {#if csamReports}
+        {#await csamReports}
+          <p class="text-dark-2">Loading reports…</p>
+        {:then reports}
+          {#if reports.length === 0}
+            <p class="text-dark-2">No report rows — the count and the table disagree.</p>
+          {:else}
+            {#each reports as r (r.id)}
+              <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
+                <div class="flex flex-wrap items-baseline gap-x-2">
+                  <span class="font-medium text-white">#{r.id}</span>
+                  <Badge variant="secondary">{r.type}</Badge>
+                  {#if r.reportSentAt}
+                    <Badge variant="destructive">sent {dateTime(r.reportSentAt)}</Badge>
+                  {:else}
+                    <Badge variant="outline">not sent</Badge>
+                  {/if}
+                  {#if r.archivedAt}<Badge variant="secondary">archived</Badge>{/if}
+                  {#if r.contentRemovedAt}<Badge variant="secondary">content removed</Badge>{/if}
+                </div>
+                <dl class="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+                  <dt class="text-dark-2">Filed</dt>
+                  <dd class="text-dark-0">
+                    {dateTime(r.createdAt)}{r.reportedByUsername ? ` by ${r.reportedByUsername}` : ''}
+                  </dd>
+                  {#if r.minorDepiction}
+                    <dt class="text-dark-2">Minor depiction</dt>
+                    <dd class="text-dark-0">{r.minorDepiction}</dd>
+                  {/if}
+                  {#if r.contents.length}
+                    <dt class="text-dark-2">Contents</dt>
+                    <dd class="text-dark-0">{r.contents.join(', ')}</dd>
+                  {/if}
+                  <dt class="text-dark-2">Attached</dt>
+                  <dd class="text-dark-0">
+                    {r.imageCount} image{r.imageCount === 1 ? '' : 's'}, {r.modelVersionCount} model version{r.modelVersionCount ===
+                      1
+                      ? ''
+                      : 's'}{r.userActivityCount
+                      ? `, ${r.userActivityCount.toLocaleString()} activity ${
+                          r.userActivityCount === 1 ? 'entry' : 'entries'
+                        }`
+                      : ''}
+                  </dd>
+                </dl>
+                {#if r.reportId}
+                  <a href="/reports/user?q={r.reportId}" class="mt-3 inline-block text-xs {LINK_CLASS}">
+                    Originating report #{r.reportId}
+                  </a>
+                {/if}
+              </div>
+            {/each}
+          {/if}
+        {:catch}
+          <p class="text-red-300">Could not load the CSAM reports for this account.</p>
+        {/await}
+      {/if}
+    </div>
+  </SheetContent>
+</Sheet>

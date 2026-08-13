@@ -28,6 +28,7 @@
   import ShopPanel from '../ShopPanel.svelte';
   import SocialsPanel from '../SocialsPanel.svelte';
   import SubscriptionPanel from '../SubscriptionPanel.svelte';
+  import TimedMutesPanel from '../TimedMutesPanel.svelte';
   import TrainingsPanel from '../TrainingsPanel.svelte';
 
   let { data, form }: { data: PageData; form: FormResult } = $props();
@@ -192,8 +193,9 @@
         {onSubmit}
         {submitting}
       />
+    {:else if section === 'mutes'}
+      <TimedMutesPanel identity={result.identity} canAct={data.canAct} {form} />
     {:else}
-      <!-- admin + mutes: AccountActionsPanel carries both the enforcement row and the timed-mute list. -->
       <AccountActionsPanel
         identity={result.identity}
         canAct={data.canAct}

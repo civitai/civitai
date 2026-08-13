@@ -10,6 +10,11 @@ The split rule: if Retool does it now, it is parity. If it is phrased as *"it wo
 Sources: the ClickUp subtask descriptions under `868kkxqpn` and two Loom walkthroughs (transcripts,
 2026-08-09). 🎥 marks a walkthrough quote.
 
+The moderators' 2026-08-12/13 feedback round is recorded in the parity checklist
+([§12](retool-parity-checklist.md#12-moderation-team-feedback-round--2026-08-12--08-13)), not here —
+almost all of it is a defect or a gap against Retool. Anything from that round that turns out to be an
+improvement gets moved down here rather than copied.
+
 ---
 
 ## From "Misc Mod Asks" (`868kn8aa0`) — a subtask the tracker never listed

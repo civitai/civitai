@@ -56,7 +56,10 @@
     reportDetail(r.details, 'violation') ??
     reportDetail(r.details, 'reason');
 
-  let detailsOpen = $state(false);
+  // The sheet is open exactly when there is a report to show, rather than tracking openness on its
+  // own. A status change invalidates and the row leaves the list — the queue defaults to the OPEN
+  // statuses — so an independent `open` flag stayed true over a body that had rendered nothing, which
+  // left the backdrop covering the page with no way back.
   const selected = $derived(
     selectedId != null ? (data.items.find((r) => r.id === selectedId) ?? null) : null
   );
@@ -94,7 +97,6 @@
 
   function openDetails(id: number) {
     selectedId = id;
-    detailsOpen = true;
   }
 </script>
 
@@ -176,7 +178,7 @@
     </TableHeader>
     <TableBody>
       {#each data.items as report (report.id)}
-        {@const itemUrl = getReportItemUrl(data.civitaiUrl, data.type, report.entityId)}
+        {@const itemUrl = getReportItemUrl(data.civitaiUrl, data.type, report.entityId, report.contextUrl)}
         <TableRow>
           <TableCell>{report.reason}</TableCell>
           <!-- Retool's Details column. The reporter's own words decide whether a row is worth opening,
@@ -264,10 +266,10 @@
   </Pagination>
 </div>
 
-<Sheet bind:open={detailsOpen}>
+<Sheet open={!!selected} onOpenChange={(open) => !open && (selectedId = null)}>
   <SheetContent side="right" class="w-full overflow-y-auto sm:max-w-lg">
     {#if selected}
-      {@const itemUrl = getReportItemUrl(data.civitaiUrl, data.type, selected.entityId)}
+      {@const itemUrl = getReportItemUrl(data.civitaiUrl, data.type, selected.entityId, selected.contextUrl)}
       {@const placementId = reportedPlacementId(selected.details, selected.reason)}
       <SheetHeader>
         <SheetTitle>{reportEntityLabels[data.type]} report #{selected.id}</SheetTitle>

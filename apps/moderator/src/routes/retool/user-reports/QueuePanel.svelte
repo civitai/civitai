@@ -55,7 +55,7 @@
     params.set('page', String(page));
     params.set('user', String(entityId));
     params.delete('cursor');
-    return `?${params}`;
+    return `${pageState.url.pathname}?${params}`;
   };
 
   // Paging the queue keeps the image filters, which describe the open account, but never the cursor —
@@ -94,17 +94,29 @@
         {@const busy = pendingId === r.id}
         <li
           class={cn(
-            'rounded-md border p-3',
+            'relative rounded-md border p-3',
             suspectId === r.entityId ? 'border-blue-500/40 bg-blue-500/5' : 'border-dark-4'
           )}
         >
-          <div class="flex flex-wrap items-baseline gap-x-2">
+          <!-- The row IS the select target: anywhere that is not another control opens this report's
+               drill-down. It used to be the suspect's username alone, which is also the one word a
+               moderator wants to send to User Lookup — so the two asks are the same change. The
+               overlay sits ABOVE the content and the real controls are lifted over it, rather than the
+               other way round, so "empty space" means every pixel no control occupies. -->
+          {#if r.entityId}
+            <a
+              href={suspectHref(r.entityId)}
+              class="absolute inset-0 z-10 rounded-md"
+              aria-label="Open reports for {r.suspect?.username ?? `#${r.entityId}`}"
+            ></a>
+          {/if}
+          <div class="relative flex flex-wrap items-baseline gap-x-2">
             <Badge variant={reportStatusVariant(r.status)}>{r.status}</Badge>
             <span class="text-dark-0">
               {reportReasonLabel(r.details, r.reason)}
             </span>
             {#if r.entityId}
-              <a href={suspectHref(r.entityId)} class="font-medium {LINK_CLASS}">
+              <a href={userLookupUrl(r.entityId)} class="relative z-20 font-medium {LINK_CLASS}">
                 {r.suspect?.username ?? `#${r.entityId}`}
               </a>
             {/if}
@@ -128,14 +140,16 @@
           </div>
 
           {#if reportDetail(r.details, 'comment')}
-            <p class="mt-1 wrap-break-word text-dark-1">{reportDetail(r.details, 'comment')}</p>
+            <p class="relative mt-1 wrap-break-word text-dark-1">
+              {reportDetail(r.details, 'comment')}
+            </p>
           {/if}
 
-          <div class="mt-1 flex flex-wrap items-baseline gap-x-2 text-xs text-dark-2">
+          <div class="relative mt-1 flex flex-wrap items-baseline gap-x-2 text-xs text-dark-2">
             {#if r.reportedByUsername}
               <span>
                 reported by
-                <a href={userLookupUrl(r.reportedByUsername)} class={LINK_CLASS}>
+                <a href={userLookupUrl(r.reportedByUsername)} class="relative z-20 {LINK_CLASS}">
                   {r.reportedByUsername}
                 </a>
               </span>
@@ -143,7 +157,12 @@
           </div>
 
           {#if canAct}
-            <form method="POST" action="?/actionReport" use:enhance={onSubmit} class="mt-2 flex gap-2">
+            <form
+              method="POST"
+              action="?/actionReport"
+              use:enhance={onSubmit}
+              class="relative z-20 mt-2 flex gap-2"
+            >
               <input type="hidden" name="id" value={r.id} />
               <Button type="submit" name="status" value="Actioned" size="xs" variant="destructive" disabled={busy}>
                 Action
