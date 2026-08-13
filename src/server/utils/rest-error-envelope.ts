@@ -47,6 +47,8 @@
 export const REST_ERROR_CODE = {
   BAD_REQUEST: 'BAD_REQUEST',
   NOT_FOUND: 'NOT_FOUND',
+  CONFLICT: 'CONFLICT',
+  TIMEOUT: 'TIMEOUT',
   TOO_MANY_REQUESTS: 'TOO_MANY_REQUESTS',
   INTERNAL_SERVER_ERROR: 'INTERNAL_SERVER_ERROR',
 } as const;
@@ -61,6 +63,39 @@ export type RestErrorCode = (typeof REST_ERROR_CODE)[keyof typeof REST_ERROR_COD
  * `isRestServerFault` for which statuses that covers and why 503 is excluded.
  */
 export const GENERIC_SERVER_ERROR_MESSAGE = 'An unexpected error occurred';
+
+/**
+ * Replacement text for a **4xx** whose message turned out to be a database
+ * driver's own prose (civitai#3845 investigation 3 — see
+ * `isDriverAuthoredMessage`). The STATUS is kept, so the caller still learns what
+ * kind of failure this is; only the driver's query/schema text is dropped.
+ *
+ * 🔴 These strings must disclose nothing an attacker could not already infer from
+ * the status code itself — that is the entire point. They are deliberately less
+ * informative than the driver text they replace: the driver text was never written
+ * for a caller, and (unlike a 503 hint) it is NOT the only copy — genericizing a
+ * 4xx here also promotes it into the fault log, exactly as a 5xx does.
+ *
+ * Keyed by HTTP status because that is what `handleEndpointError` has in hand.
+ *
+ * 🔴 **The key set is a CLOSED LEDGER, and a test enforces it.** These four are
+ * exactly the 4xx statuses `prismaErrorToTrpcCode` can produce (400, 404, 408,
+ * 409). A status with no entry is left alone — i.e. unchanged from today — so the
+ * safety of this design rests entirely on the ledger staying complete. That is why
+ * `rest-error-envelope-ledger.test.ts` derives the reachable set from
+ * `prismaErrorToTrpcCode` itself and fails when this map's keys and that set
+ * disagree in EITHER direction: adding `P2031: 'FORBIDDEN'` upstream turns the
+ * test red instead of silently reopening the leak at 403.
+ */
+export const GENERIC_CLIENT_ERROR_BY_STATUS: Record<
+  number,
+  { code: RestErrorCode; message: string }
+> = {
+  400: { code: 'BAD_REQUEST', message: 'The request could not be processed' },
+  404: { code: 'NOT_FOUND', message: 'Not found' },
+  408: { code: 'TIMEOUT', message: 'The request timed out' },
+  409: { code: 'CONFLICT', message: 'The request conflicts with the current state' },
+};
 
 export type RestErrorBody = {
   error: unknown;

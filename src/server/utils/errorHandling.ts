@@ -1,4 +1,8 @@
 import { Prisma } from '@prisma/client';
+// `pg` re-exports pg-protocol's DatabaseError; import it from `pg` because that
+// is the direct dependency — `pg-protocol` is transitive and is NOT hoisted under
+// this repo's pnpm layout, so importing it directly fails to resolve.
+import { DatabaseError } from 'pg';
 import { TRPCError } from '@trpc/server';
 import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { isProd } from '~/env/other';
@@ -72,7 +76,83 @@ export function isPrismaForeignKeyViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003';
 }
 
-const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
+/** Is this specific object a database driver's own error? */
+function isDriverError(e: unknown): e is Error {
+  return (
+    e instanceof Prisma.PrismaClientKnownRequestError ||
+    e instanceof Prisma.PrismaClientUnknownRequestError ||
+    e instanceof Prisma.PrismaClientValidationError ||
+    e instanceof Prisma.PrismaClientInitializationError ||
+    e instanceof Prisma.PrismaClientRustPanicError ||
+    e instanceof DatabaseError
+  );
+}
+
+/**
+ * True when `message` is not merely ACCOMPANIED by a driver error but IS that
+ * driver error's own text — query/schema prose nobody wrote for a caller to read.
+ *
+ * 🔴 civitai#3845 investigation 3. `throwDbError` copies `error.message` verbatim
+ * into the TRPCError it throws, and `prismaErrorToTrpcCode` maps a large slice of
+ * Prisma codes to **4xx** statuses (P2000→400, P2001/P2015/P2018/P2025→404,
+ * P2002/P2003/P2004/P2014→409, P1008/P2024→408). `handleEndpointError` passes 4xx
+ * bodies through byte-identically on the stated grounds that "4xx is client
+ * feedback the caller is meant to read" — TRUE for a zod issue list or a
+ * hand-written "not found", FALSE for these, which reach the wire as e.g.
+ *
+ *   P2000 → 400  "…Invalid `prisma.appListing.create()` invocation… The provided
+ *                 value for the column is too long for the column's type.
+ *                 Column: app_listings.slug"
+ *   P2003 → 409  discloses the foreign-key CONSTRAINT name
+ *   P2025 → 404  discloses the model and the method
+ *
+ * 🔴 **Why message IDENTITY and not "is there a driver in the cause chain".** The
+ * chain test has a real false positive that would have destroyed good messages:
+ * `throwBadRequestError('That slug is already taken', dbError)` and
+ * `throwConflictError`/`throwRateLimitError`/`throwDbCustomError(msg)` all attach
+ * the driver error as `cause` while writing a message FOR the caller. Identity
+ * separates them by construction — if the text on the wire is byte-identical to
+ * the driver's own text, it is the driver's text, whoever forwarded it.
+ *
+ * The walk covers `cause` (that is where `throwDbError` puts the driver error) and
+ * the error itself (some sites reach the helper unwrapped). Depth 4 matches
+ * `isClientAbortError`: tRPC wraps once, a service layer may wrap again.
+ *
+ * `pg` is included deliberately and is the WORST case, not a hypothetical. A real
+ * `DatabaseError` carries its fields as ENUMERABLE own properties, so a `23505`
+ * unique violation serializes `detail: "Key (email)=(victim@example.com) already
+ * exists."` — an actual user row value — alongside `schema`, `table` and
+ * `constraint`. Kysely (`~/server/db/kyselyDb`) runs on that `pg` pool, so the
+ * class is not Prisma-only.
+ *
+ * NB this asks "who WROTE the text", not "how severe is it". A driver error mapped
+ * to a 4xx is still a legitimate 4xx — `handleEndpointError` keeps the STATUS and
+ * replaces only the MESSAGE.
+ *
+ * 🔴 **KNOWN GAP, deliberately not closed here.** A site that re-wraps a caught
+ * error's `.message` into a 4xx TRPCError *without* setting `cause` defeats this
+ * predicate — the wire text is the driver's, but nothing in the chain says so.
+ * There are 17 such sites (App Blocks + referral routers); the one-word fix is
+ * `cause: err`. They are enumerated and pinned by
+ * `rest-error-envelope-ledger.test.ts`, which fails if the set grows, so the gap
+ * is bounded and visible rather than silent.
+ */
+export function isDriverAuthoredMessage(message: string, e: unknown): boolean {
+  let cur = e as { cause?: unknown } | undefined;
+  for (let depth = 0; depth < 4 && cur; depth++) {
+    if (isDriverError(cur) && cur.message === message) return true;
+    cur = cur.cause as typeof cur;
+  }
+  return false;
+}
+
+/**
+ * Exported for `rest-error-envelope-ledger.test.ts`, which derives the set of 4xx
+ * statuses a driver-authored message can reach from THIS map rather than from a
+ * hand-copied list — so adding a mapping here cannot silently outrun
+ * `GENERIC_CLIENT_ERROR_BY_STATUS`.
+ */
+export const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
   P1008: 'TIMEOUT',
   P2000: 'BAD_REQUEST',
   P2001: 'NOT_FOUND',

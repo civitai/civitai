@@ -15,10 +15,11 @@ import { generateSecretHash } from '~/server/utils/key-generator';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import type { Partner } from '~/shared/utils/prisma/models';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
-import { isClientAbortError } from '~/server/utils/errorHandling';
+import { isClientAbortError, isDriverAuthoredMessage } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
 import {
+  GENERIC_CLIENT_ERROR_BY_STATUS,
   GENERIC_SERVER_ERROR_MESSAGE,
   REST_ERROR_CODE,
   restErrorBody,
@@ -53,8 +54,21 @@ function logRestServerFault(e: unknown) {
  *   the log — so genericizing can never destroy the only copy of a message.
  *
  * Two exclusions, both load-bearing:
- *   - **4xx** is client feedback the caller is meant to read (zod issues, "not
- *     found", rate-limit hints). Never logged as a fault, never genericized.
+ *   - **4xx** is *usually* client feedback the caller is meant to read (zod
+ *     issues, "not found", rate-limit hints), so it is not a server fault and is
+ *     not genericized HERE.
+ *
+ *     🔴 That used to be stated without the "usually", and as written it was
+ *     FALSE — civitai#3845 investigation 3. `throwDbError` maps a large slice of
+ *     Prisma codes to 4xx (P2000→400, P2025→404, P2003→409, P2024→408) while
+ *     copying the driver's own `message` verbatim, so a 4xx body could be a raw
+ *     `Invalid \`prisma.<model>.<method>()\` invocation` dump disclosing the table,
+ *     the column or the constraint name. Those are now caught by a SECOND
+ *     predicate, `isDriverAuthoredMessage`, applied inside the 4xx arm below: it
+ *     asks who WROTE the text rather than how severe the status is, keeps the
+ *     status, and — crucially — logs the un-redacted text on the way out, so the
+ *     "genericized exactly when logged" invariant holds for it too. A 4xx whose
+ *     message is ours is still passed through byte-identically.
  *   - **503** is the retryable transient-upstream mapping
  *     (`throwServiceUnavailableError`, the Meili/ClickHouse/orchestrator brownout
  *     guards). It fires in high-volume waves, so it is excluded from the error
@@ -316,6 +330,30 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
       return res
         .status(status)
         .json(restErrorBody(REST_ERROR_CODE.INTERNAL_SERVER_ERROR, GENERIC_SERVER_ERROR_MESSAGE));
+    }
+    // ── DRIVER-AUTHORED 4xx — status kept, MESSAGE genericized ────────────────
+    // 🔴 civitai#3845 investigation 3. The arm below this one is correct for a
+    // message we wrote and wrong for one Postgres wrote. `throwDbError` forwards
+    // the driver's `message` verbatim and `prismaErrorToTrpcCode` sends a large
+    // slice of codes to 4xx, so `P2000 → 400` shipped the offending COLUMN,
+    // `P2003 → 409` the CONSTRAINT name and `P2025 → 404` the model + method.
+    //
+    // The discriminator is message IDENTITY against a driver error in the cause
+    // chain — NOT "is a driver error present". The chain test has a real false
+    // positive: `throwBadRequestError('That slug is already taken', dbError)`
+    // attaches the driver as `cause` while writing a message FOR the caller, and
+    // genericizing that would destroy good client feedback to redact nothing.
+    //
+    // Logged BEFORE genericizing, on purpose: this arm buys into exactly the same
+    // invariant as the 5xx arm — the un-redacted text leaves the wire precisely
+    // when it enters the log, so no message is ever destroyed outright. (That is
+    // also the reason 503 is left alone: it is NOT logged, so its response is the
+    // only copy — and no Prisma code maps to SERVICE_UNAVAILABLE, so nothing
+    // driver-authored can arrive as one.)
+    const generic = GENERIC_CLIENT_ERROR_BY_STATUS[status];
+    if (generic && status !== 503 && isDriverAuthoredMessage(apiError.message, apiError)) {
+      logRestServerFault(apiError);
+      return res.status(status).json(restErrorBody(generic.code, generic.message));
     }
     // ── CLIENT FEEDBACK (4xx) + 503 — passed through BYTE-IDENTICALLY ──────────
     // Older Zod-validation TRPCErrors stuff a JSON-encoded issue array into
