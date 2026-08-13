@@ -16,8 +16,8 @@ import { spawn, execSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync, readdirSync, rmSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { createServer } from 'net';
 import { randomBytes, createHash } from 'crypto';
+import { isPortFree } from './port-probe.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const skillDir = resolve(__dirname, '..');
@@ -396,23 +396,10 @@ function runCommand(cmd, args, cwd, env, log) {
   });
 }
 
-// Check if a port is available
-function isPortAvailable(port) {
-  return new Promise((resolve) => {
-    const server = createServer();
-    server.once('error', () => resolve(false));
-    server.once('listening', () => {
-      server.close();
-      resolve(true);
-    });
-    server.listen(port, '127.0.0.1');
-  });
-}
-
 // Find next available port starting from base
 async function findAvailablePort(basePort, usedPorts = new Set()) {
   let port = basePort;
-  while (usedPorts.has(port) || !(await isPortAvailable(port))) {
+  while (usedPorts.has(port) || !(await isPortFree(port))) {
     port++;
     if (port > basePort + 100) {
       throw new Error('No available ports found within range');
@@ -1657,7 +1644,7 @@ async function main() {
             res.end(JSON.stringify({ error: `Port ${requestedPort} is already in use by another session` }));
             return;
           }
-          if (!(await isPortAvailable(requestedPort))) {
+          if (!(await isPortFree(requestedPort))) {
             res.writeHead(400);
             res.end(JSON.stringify({ error: `Port ${requestedPort} is not available` }));
             return;

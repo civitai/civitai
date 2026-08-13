@@ -117,6 +117,8 @@ vi.mock('~/server/games/daily-challenge/daily-challenge.utils', async () => {
 });
 
 vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
+  challengeClaimStillHeld: vi.fn().mockResolvedValue(true),
+  completeChallengeIfClaimHeld: vi.fn().mockResolvedValue(true),
   claimChallengeForCompletion: mockClaimChallengeForCompletion,
   computeDynamicPool: vi.fn(),
   distributePrizes: vi.fn(),

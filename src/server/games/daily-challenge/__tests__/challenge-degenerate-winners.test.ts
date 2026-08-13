@@ -28,6 +28,7 @@ const {
   mockGetExistingWinnersForRetry,
   mockResolveEventContext,
   mockUpdateChallengeStatus,
+  mockCompleteChallengeIfClaimHeld,
   mockRefundUserChallengeFunds,
   mockCreateNotification,
   mockCreateChallengeWinner,
@@ -51,6 +52,7 @@ const {
   mockGetExistingWinnersForRetry: vi.fn().mockResolvedValue([]),
   mockResolveEventContext: vi.fn().mockResolvedValue(undefined),
   mockUpdateChallengeStatus: vi.fn().mockResolvedValue(undefined),
+  mockCompleteChallengeIfClaimHeld: vi.fn().mockResolvedValue(true),
   mockRefundUserChallengeFunds: vi.fn().mockResolvedValue({ refundedEntries: 0 }),
   mockCreateNotification: vi.fn().mockResolvedValue(undefined),
   mockCreateChallengeWinner: vi.fn(),
@@ -94,6 +96,8 @@ vi.mock('~/server/games/daily-challenge/daily-challenge.utils', async () => {
 });
 
 vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
+  challengeClaimStillHeld: vi.fn().mockResolvedValue(true),
+  completeChallengeIfClaimHeld: mockCompleteChallengeIfClaimHeld,
   claimChallengeForCompletion: mockClaimChallengeForCompletion,
   computeDynamicPool: vi.fn(),
   distributePrizes: vi.fn(),
@@ -258,7 +262,7 @@ describe('pickWinnersForChallenge degenerate guard', () => {
         buzzAwarded: 500,
       })
     );
-    expect(mockUpdateChallengeStatus).not.toHaveBeenCalled();
+    expect(mockRefundUserChallengeFunds).not.toHaveBeenCalled();
   });
 
   it('calls generateWinners when there are 2+ distinct entrants (guard does not over-trigger)', async () => {
@@ -296,6 +300,8 @@ describe('pickWinnersForChallenge degenerate guard', () => {
     expect(mockGenerateWinners).not.toHaveBeenCalled();
     expect(mockCreateChallengeWinner).not.toHaveBeenCalled();
     expect(mockRefundUserChallengeFunds).toHaveBeenCalledWith(1);
-    expect(mockUpdateChallengeStatus).toHaveBeenCalledWith(1, 'Completed');
+    expect(mockCompleteChallengeIfClaimHeld).toHaveBeenCalledWith(
+      expect.objectContaining({ challengeId: 1 })
+    );
   });
 });

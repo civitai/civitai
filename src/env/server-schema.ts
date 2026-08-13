@@ -739,6 +739,12 @@ export const serverSchema = z
     // image from B2. Optional — if unset, invalidation is skipped.
     IMAGE_CACHER_URL: z.url().optional(),
 
+    // Shared secret for image-cacher's /admin/* endpoints. The service only requires it once its
+    // destructive cache-object mode is enabled, and rejects the call outright without it — so this
+    // must be configured BEFORE that mode is turned on, or invalidation stops working entirely.
+    // Optional here so unset behaves exactly as today.
+    IMAGE_CACHER_ADMIN_SECRET: z.string().optional(),
+
     // BitDex
     BITDEX_URL: z.string().optional().default(''),
 

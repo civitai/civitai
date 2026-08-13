@@ -106,7 +106,7 @@ Transitions are date/job-driven and enforced at the application layer only (no D
 
 **Entry validation** (`reviewEntries()`; failure → rejected):
 1. **NSFW** — image `nsfwLevel` must satisfy the challenge's `allowedNsfwLevel` bitwise flag.
-2. **Required resource** — image must use ≥1 of the challenge's `modelVersionIds` (via `ImageResourceNew.modelVersionId`, SQL `ANY()` OR-match).
+2. **Required resource** — image must use ≥1 of the challenge's `modelVersionIds` (via `ImageResourceNew.modelVersionId`, SQL `ANY()` OR-match), and the match must be on a row with **`detected = true`** — i.e. the resource was read out of the image's own generation metadata. A `detected: false` row is asserted by the uploader (the post's model-version link, or the hand-credit mutation — see [image-resources.md](image-resources.md)), so counting it would make the requirement self-certifiable on challenges with real prize pools. Enforced identically at submit (`collection.service`), at promotion (`challenge-rewards`) and in the modal precheck (`checkImageEligibility`); challenges with no `modelVersionIds` skip the check entirely. An image that carries a required model only on a `detected: false` row is reported as **"Model not detected"** rather than "Wrong model".
 3. **Recency** — image `createdAt` ≥ challenge `startsAt`.
 
 **AI scoring** — each accepted entry is scored 0–10 per judging dimension. The LLM also returns a `reaction`, a `comment` (posted to the image), and a `summary`. Score/summary are stored on `CollectionItem.note`.

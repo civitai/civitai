@@ -283,7 +283,27 @@ const {
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
-export async function purgeResizeCache({ url }: { url: string }) {
+/**
+ * How much of an image's cached variants the invalidation may remove.
+ *
+ * - `all` — every cached variant. For a DELETE, where the image must stop serving entirely.
+ * - `hidden-meta-orphans` — only the variants produced BEFORE a `hideMeta` flip.
+ *
+ * The second scope exists because a `hideMeta` false→true flip re-keys the image: the cache key
+ * includes the hideMeta flag, so after the flip every request derives a fresh, metadata-stripped
+ * variant under a NEW key and the pre-flip ones become orphans. The image is still LIVE, so
+ * removing the whole set would evict variants the page is currently serving; removing only the
+ * orphans clears the metadata-bearing copies without touching anything in use.
+ */
+export type PurgeResizeCacheScope = 'all' | 'hidden-meta-orphans';
+
+export async function purgeResizeCache({
+  url,
+  scope = 'all',
+}: {
+  url: string;
+  scope?: PurgeResizeCacheScope;
+}) {
   // Invalidate the resized/converted variants for this image. Cache
   // invalidation only — a stale variant is self-healing (re-derived on next
   // request) and must never fail the caller's mutation.
@@ -307,21 +327,78 @@ export async function purgeResizeCache({ url }: { url: string }) {
   // stale L2 entries — no worse than today's behavior. Never block or throw
   // the delete flow.
   if (env.IMAGE_CACHER_URL && url) {
-    fetch(`${env.IMAGE_CACHER_URL}/admin/invalidate?imageKey=${encodeURIComponent(url)}`, {
+    // `keep=hm` asks the service to retain the post-flip (hideMeta) variants. Omitted entirely for
+    // the `all` scope so this call is byte-identical to the one that has always been sent.
+    // Exhaustive on purpose. A ternary here fails OPEN: any value that is not the exact literal
+    // degrades to the WIDEST blast radius, so adding a third scope later would silently mean
+    // "delete everything" instead of failing to compile. The counterpart service rejects an
+    // unrecognised value outright; this is the client-side half of the same stance.
+    const keepParam = ((): string => {
+      switch (scope) {
+        case 'all':
+          return '';
+        case 'hidden-meta-orphans':
+          return '&keep=hm';
+        default: {
+          const unreachable: never = scope;
+          throw new Error(`unhandled purgeResizeCache scope: ${String(unreachable)}`);
+        }
+      }
+    })();
+
+    const query = `imageKey=${encodeURIComponent(url)}${keepParam}`;
+
+    // The endpoint requires this header once its destructive mode is enabled, and rejects the
+    // call outright without it. Sending it whenever it is configured means enabling that mode is
+    // a change on ONE side, not a synchronised deploy across two services.
+    const headers: Record<string, string> = {};
+    if (env.IMAGE_CACHER_ADMIN_SECRET) {
+      headers['X-Admin-Secret'] = env.IMAGE_CACHER_ADMIN_SECRET;
+    }
+
+    fetch(`${env.IMAGE_CACHER_URL}/admin/invalidate?${query}`, {
       method: 'POST',
+      headers,
+      // Never follow a redirect while carrying the shared secret. `fetch` strips Authorization and
+      // Cookie on a cross-origin hop but forwards CUSTOM headers verbatim, so a 30x from this
+      // endpoint would hand X-Admin-Secret to wherever it pointed. It only ever answers
+      // 202/400/401, so a redirect here is already anomalous — fail instead of chasing it.
+      redirect: 'error',
       // Invalidation must not slow down the delete flow.
       signal: AbortSignal.timeout(2000),
-    }).catch((err) => {
-      logToAxiom({
-        type: 'warning',
-        name: 'image-cacher-invalidate',
-        message: 'image-cacher invalidate failed',
-        imageKey: url,
-        error: safeError(err),
-      }).catch(() => {
-        // swallow — best effort logging
+    })
+      .then((res) => {
+        // 🔴 `fetch` DOES NOT REJECT ON A NON-2xx. Without this branch a 401 (missing/most likely
+        // stale shared secret), a 409 refusal or a 503 partial failure all land in the success
+        // path and vanish — so invalidation could stop working COMPLETELY and produce not one log
+        // line. That is the failure mode this check exists for, not a hypothetical one: the
+        // service's auth gate switches on when its delete mode is enabled, and the first symptom
+        // of a secret mismatch would otherwise be stale images with no signal anywhere.
+        if (!res.ok) {
+          return logToAxiom({
+            type: 'warning',
+            name: 'image-cacher-invalidate',
+            message: 'image-cacher invalidate returned a non-success status',
+            imageKey: url,
+            scope,
+            status: res.status,
+          }).catch(() => {
+            // swallow — best effort logging
+          });
+        }
+      })
+      .catch((err) => {
+        logToAxiom({
+          type: 'warning',
+          name: 'image-cacher-invalidate',
+          message: 'image-cacher invalidate failed',
+          imageKey: url,
+          scope,
+          error: safeError(err),
+        }).catch(() => {
+          // swallow — best effort logging
+        });
       });
-    });
   }
 }
 
@@ -2323,8 +2400,15 @@ export const getAllImages = async (
         model3dId: i.model3dId != null && visibleModel3DIds?.has(i.model3dId) ? i.model3dId : null,
         meta: imageMeta?.[i.id] ?? null,
         nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, i.nsfwLevel),
-        modelVersionIds: imageResources?.[i.id]?.resources?.map((r) => r.modelVersionId) ?? [],
-        modelVersionIdsManual: [],
+        // `modelVersionIds` is auto-detected only and `modelVersionIdsManual` is uploader-asserted,
+        // matching what the search-index path serves — consumers gate on the difference.
+        modelVersionIds:
+          imageResources?.[i.id]?.resources?.filter((r) => r.detected).map((r) => r.modelVersionId) ??
+          [],
+        modelVersionIdsManual:
+          imageResources?.[i.id]?.resources
+            ?.filter((r) => !r.detected)
+            .map((r) => r.modelVersionId) ?? [],
         publishedAt: i.publishedAt ? i.sortAt : undefined,
         baseModel: imageResources
           ? getBaseModelFromResources(imageResources[i.id]?.resources)
