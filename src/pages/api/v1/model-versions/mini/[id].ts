@@ -198,16 +198,43 @@ export default MixedAuthEndpoint(async function handler(
   // filter visibility, so without this the endpoint could advertise a non-public
   // file's hash/name/size — and now that the url names that exact file, the
   // download route would answer 404 for it.
+  //
+  // 🔴 The gate constrains ONLY the path that delegates to the download route.
+  // The training-results/epoch branch below builds `downloadUrl` from the
+  // orchestrator (`epoch.model_url`) and never touches
+  // /api/download/models/[modelVersionId], so the justification above simply
+  // does not apply to it — and a Private version's training file is non-Public
+  // by construction, so gating it would turn a working epoch url into
+  // `404 Missing model file` for every non-owner caller (including holders of an
+  // EntityAccess grant). Hence: resolve the caller's target over the UNFILTERED
+  // population first (this is exactly the pre-existing resolution), decide which
+  // url shape applies, and only then apply the gate to the download-route path.
   const isOwner = !!user?.id && user.id === modelVersion.modelUserId;
   const isMod = !!user?.isModerator;
   const visibleFiles =
     isOwner || isMod ? files : files.filter((f) => f.visibility === ModelFileVisibility.Public);
 
+  // The download route merges the requesting user's `filePreferences` into
+  // `getPrimaryFile` (see `getFileForModelVersion` in file.service.ts). Pinning
+  // the url to a `fileId` took that merge out of the loop, so the endpoint has to
+  // apply the preferences itself or a caller's format/size/fp choice is silently
+  // dropped. (The download route also merges explicit `format`/`size`/`fp`/
+  // `quantType` query params; this endpoint accepts none of those.)
+  const filePreferences = { metadata: user?.filePreferences };
+
   // Caller-specified file overrides the version's primary file. Falls back to
   // primary when modelFileId is omitted, preserving legacy behavior.
-  const targetFile = modelFileId
+  const requestedFile = modelFileId
+    ? files.find((f) => f.id === modelFileId)
+    : getPrimaryFile(files, filePreferences);
+  const useEpochUrl =
+    modelVersion.availability === Availability.Private && !!requestedFile?.metadata.trainingResults;
+
+  const targetFile = useEpochUrl
+    ? requestedFile
+    : modelFileId
     ? visibleFiles.find((f) => f.id === modelFileId)
-    : getPrimaryFile(visibleFiles);
+    : getPrimaryFile(visibleFiles, filePreferences);
   if (!targetFile) {
     return res.status(404).json({
       error: modelFileId
@@ -220,15 +247,20 @@ export default MixedAuthEndpoint(async function handler(
   let air: string;
   let downloadUrl: string;
 
-  if (modelVersion.availability === Availability.Private && !!targetFile.metadata.trainingResults) {
+  // `useEpochUrl` already implies `targetFile === requestedFile` and that it
+  // carries `trainingResults`; reading the field back here is purely so the type
+  // narrows for the block below.
+  const trainingResults = useEpochUrl ? targetFile.metadata.trainingResults : undefined;
+
+  if (trainingResults) {
     const epoch =
-      targetFile.metadata.trainingResults.epochs?.find((e) => {
+      trainingResults.epochs?.find((e) => {
         if ('epoch_number' in e) {
           return e.epoch_number === results.data.epoch;
         }
 
         return e.epochNumber === results.data.epoch;
-      }) ?? targetFile.metadata.trainingResults.epochs?.pop();
+      }) ?? trainingResults.epochs?.pop();
 
     if (!epoch) {
       return res.status(404).json({ error: 'Missing epoch' });

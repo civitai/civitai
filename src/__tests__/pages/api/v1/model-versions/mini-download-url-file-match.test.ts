@@ -72,22 +72,28 @@ import { getPrimaryFile } from '~/server/utils/model-helpers';
 
 const VERSION_ID = 555;
 const OWNER_ID = 4242;
+const OTHER_USER_ID = 9001;
 
 /**
- * Two files that the two selection paths genuinely disagree about.
+ * Files that the selection paths genuinely disagree about.
  *
- * - SAFETENSOR wins `getPrimaryFile` under the DEFAULT preferences the mini
- *   endpoint hardcodes (format SafeTensor +100, size pruned +10, fp16 +1).
- * - GGUF wins it under a user whose `filePreferences.format` is `GGUF` — which
- *   is exactly what the download route merges in. That divergence is asserted
- *   directly below so this fixture cannot silently stop being discriminating.
+ * - SAFETENSOR wins `getPrimaryFile` among the PUBLIC files under the default
+ *   preferences (format SafeTensor +100, fp16 +1; its `size: full` costs -10).
+ * - GGUF wins it under a user whose `filePreferences.format` is `GGUF`.
+ * - PRIVATE_MODEL is a perfect match for the defaults (SafeTensor + pruned +
+ *   fp16) and therefore OUT-SCORES SAFETENSOR. That is deliberate: it makes the
+ *   visibility filter load-bearing on the primary path, so a mutant that runs
+ *   `getPrimaryFile` over the UNFILTERED population changes the answer.
+ *
+ * All three divergences are asserted directly below so this fixture cannot
+ * silently stop being discriminating.
  */
 const SAFETENSOR = {
   id: 101,
   type: 'Model',
   visibility: 'Public',
   url: 'https://example.invalid/a.safetensors',
-  metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp16' },
+  metadata: { format: 'SafeTensor', size: 'full', fp: 'fp16' },
   sizeKB: 2_097_152,
   name: 'model-fp16.safetensors',
   hashes: { SHA256: 'A'.repeat(64) },
@@ -107,10 +113,57 @@ const PRIVATE_MODEL = {
   type: 'Model',
   visibility: 'Private',
   url: 'https://example.invalid/c.safetensors',
-  metadata: { format: 'SafeTensor', size: 'full', fp: 'fp32' },
+  metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp16' },
   sizeKB: 4_194_304,
-  name: 'private-full.safetensors',
+  name: 'private-pruned.safetensors',
   hashes: { SHA256: 'C'.repeat(64) },
+};
+
+/**
+ * A training-results file on a Private version. Its `downloadUrl` comes from the
+ * orchestrator (`epoch.model_url`), NOT from
+ * `/api/download/models/[modelVersionId]` — so the visibility gate that exists
+ * to keep the download route from 404ing a non-Public `fileId` must not apply
+ * to it. Such a file is non-Public by construction, so gating it would 404 an
+ * epoch url that previously worked for every non-owner caller.
+ */
+const EARLIER_EPOCH_URL =
+  'https://orchestration.civitai.com/v2/consumer/jobs/job-abc-123/assets/epoch-000009.safetensors';
+const EPOCH_URL =
+  'https://orchestration.civitai.com/v2/consumer/jobs/job-abc-123/assets/epoch-000010.safetensors';
+const TRAINING_FILE = {
+  id: 404,
+  type: 'Model',
+  visibility: 'Private',
+  url: 'https://example.invalid/d.safetensors',
+  metadata: {
+    format: 'SafeTensor',
+    // Two epochs, so "the LAST epoch is the one served" is an observable
+    // property rather than a tautology on a single-element array.
+    trainingResults: {
+      epochs: [
+        { epoch_number: 9, model_url: EARLIER_EPOCH_URL },
+        { epoch_number: 10, model_url: EPOCH_URL },
+      ],
+    },
+  },
+  sizeKB: 131_072,
+  name: 'epoch-000010.safetensors',
+  hashes: { SHA256: 'D'.repeat(64) },
+};
+
+/**
+ * The same shape, but Public and on a Public version. The epoch branch is
+ * `Private && trainingResults` — carrying training results is NOT on its own a
+ * reason to hand back an orchestrator url, so this file must go down the
+ * download-route path like any other.
+ */
+const PUBLIC_TRAINING_FILE = {
+  ...TRAINING_FILE,
+  id: 505,
+  visibility: 'Public',
+  name: 'public-epoch-000010.safetensors',
+  hashes: { SHA256: 'E'.repeat(64) },
 };
 
 const versionRow = {
@@ -147,6 +200,7 @@ const versionRow = {
 };
 
 type Body = {
+  air: string;
   size: number;
   fileType: string;
   fileName: string;
@@ -154,9 +208,20 @@ type Body = {
   downloadUrls: string[];
 };
 
-async function run(files: object[], query: Record<string, string> = {}) {
+async function run(
+  files: object[],
+  query: Record<string, string> = {},
+  versionOverrides: Partial<typeof versionRow> = {}
+) {
   // Call 1 = the version row, call 2 = the version's ModelFile rows.
-  mockQueryRaw.mockResolvedValueOnce([versionRow]).mockResolvedValueOnce(files);
+  // Deep-clone: the handler's epoch selection ends in `epochs?.pop()`, which
+  // MUTATES the metadata it was handed. A real request re-reads the rows from
+  // Postgres every time, so sharing a module-level fixture across tests would be
+  // the only place that mutation is observable — and it would drain the epochs
+  // array after the first use.
+  mockQueryRaw
+    .mockResolvedValueOnce([{ ...versionRow, ...versionOverrides }])
+    .mockResolvedValueOnce(structuredClone(files));
 
   const req = {
     method: 'GET',
@@ -211,17 +276,30 @@ describe('createModelFileDownloadUrl', () => {
   });
 });
 
+const GGUF_PREFERENCES = {
+  format: 'GGUF' as const,
+  size: 'pruned' as const,
+  fp: 'fp16' as const,
+  quantType: 'Q4_K_M' as const,
+  imageFormat: 'optimized' as const,
+};
+
 describe('the fixture is discriminating', () => {
   it('the two selection paths really do pick different files from it', () => {
-    // What the mini endpoint picks (hardcoded defaults).
+    // What the mini endpoint picks under the defaults.
     expect(getPrimaryFile([SAFETENSOR, GGUF])?.id).toBe(SAFETENSOR.id);
-    // What the download route picks for a user whose filePreferences say GGUF —
-    // the merge the download route performs on every request.
-    expect(
-      getPrimaryFile([SAFETENSOR, GGUF], {
-        metadata: { format: 'GGUF', size: 'pruned', fp: 'fp16', quantType: 'Q4_K_M' },
-      })?.id
-    ).toBe(GGUF.id);
+    // What a user whose filePreferences say GGUF should get — the merge the
+    // download route performs on every request, and (after this change) the
+    // mini endpoint too.
+    expect(getPrimaryFile([SAFETENSOR, GGUF], { metadata: GGUF_PREFERENCES })?.id).toBe(GGUF.id);
+  });
+
+  it('the non-public file OUT-SCORES the public one, so filtering changes the answer', () => {
+    // If this ever stops holding, every "non-public file is not advertised"
+    // assertion below passes vacuously: the public file would win regardless of
+    // whether the population was filtered.
+    expect(getPrimaryFile([PRIVATE_MODEL, SAFETENSOR, GGUF])?.id).toBe(PRIVATE_MODEL.id);
+    expect(getPrimaryFile([SAFETENSOR, GGUF])?.id).toBe(SAFETENSOR.id);
   });
 });
 
@@ -240,7 +318,15 @@ describe('GET /api/v1/model-versions/mini/[id] — url names the advertised file
       'downloadUrl does not name the file whose hash/size/name this response advertised, so the ' +
         'download route re-picks and can serve a different file than the one described'
     ).toBe(String(SAFETENSOR.id));
-    expect(body.downloadUrls[0]).not.toContain('primary=true');
+
+    // The pre-fix url was a BARE `/api/download/models/<versionId>` with no
+    // query string at all — `createModelFileDownloadUrl`'s `primary` flag only
+    // suppresses the other selectors, and `QS.stringify` never emits a `primary`
+    // key. So asserting the absence of `primary=true` guarded a string that
+    // never existed. Assert the shape the url must actually have instead.
+    expect(body.downloadUrls[0]).toMatch(
+      new RegExp(`/api/download/models/${VERSION_ID}\\?fileId=${SAFETENSOR.id}$`)
+    );
   });
 
   it('row order does not change the answer — the url still names the returned file', async () => {
@@ -297,5 +383,161 @@ describe('GET /api/v1/model-versions/mini/[id] — non-public files', () => {
     });
     expect(body.fileName).toBe(PRIVATE_MODEL.name);
     expect(urlFileId(body)).toBe(String(PRIVATE_MODEL.id));
+  });
+
+  /**
+   * The gate is `user.id === modelVersion.modelUserId`, not `!!user.id`. Without
+   * these two cases, replacing the ownership comparison with a bare
+   * authentication check is invisible: every other case is either anonymous, the
+   * owner, or a moderator.
+   */
+  it('an AUTHENTICATED non-owner is treated exactly like an anonymous caller', async () => {
+    currentUser.value = { id: OTHER_USER_ID };
+    const { body } = await run([PRIVATE_MODEL, SAFETENSOR, GGUF]);
+    expect(body.fileName).toBe(SAFETENSOR.name);
+    expect(body.hashes.SHA256).toBe(SAFETENSOR.hashes.SHA256);
+    expect(urlFileId(body)).toBe(String(SAFETENSOR.id));
+  });
+
+  it('an AUTHENTICATED non-owner asking for a non-public file by id gets 404', async () => {
+    currentUser.value = { id: OTHER_USER_ID };
+    const { status, body } = await run([PRIVATE_MODEL, SAFETENSOR], {
+      modelFileId: String(PRIVATE_MODEL.id),
+    });
+    expect(status).toBe(404);
+    expect(body).not.toHaveProperty('hashes');
+  });
+});
+
+describe("GET /api/v1/model-versions/mini/[id] — the caller's file preferences", () => {
+  /**
+   * The download route merges `user.filePreferences` into `getPrimaryFile`
+   * (`getFileForModelVersion`). Pinning the url to a `fileId` removed the only
+   * place those preferences were ever applied, so a GGUF-preferring user would
+   * silently be handed the SafeTensor. The endpoint has to apply them itself
+   * now — and the url must still name the file it picked.
+   */
+  it('a GGUF-preferring user is advertised the GGUF file, and the url names it', async () => {
+    currentUser.value = { id: OTHER_USER_ID, filePreferences: GGUF_PREFERENCES };
+    const { status, body } = await run([SAFETENSOR, GGUF]);
+    expect(status).toBe(200);
+    expect(body.fileName).toBe(GGUF.name);
+    expect(body.hashes.SHA256).toBe(GGUF.hashes.SHA256);
+    expect(body.size).toBe(GGUF.sizeKB);
+    expect(urlFileId(body)).toBe(String(GGUF.id));
+  });
+
+  it('a user with no preferences still gets the default pick', async () => {
+    currentUser.value = { id: OTHER_USER_ID };
+    const { body } = await run([SAFETENSOR, GGUF]);
+    expect(body.fileName).toBe(SAFETENSOR.name);
+    expect(urlFileId(body)).toBe(String(SAFETENSOR.id));
+  });
+
+  it('preferences never override an explicit modelFileId', async () => {
+    currentUser.value = { id: OTHER_USER_ID, filePreferences: GGUF_PREFERENCES };
+    const { body } = await run([SAFETENSOR, GGUF], { modelFileId: String(SAFETENSOR.id) });
+    expect(body.fileName).toBe(SAFETENSOR.name);
+    expect(urlFileId(body)).toBe(String(SAFETENSOR.id));
+  });
+
+  it('preferences do NOT reopen the visibility gate for a non-owner', async () => {
+    // PRIVATE_MODEL is a perfect match for these preferences too; it must still
+    // not be advertised.
+    currentUser.value = {
+      id: OTHER_USER_ID,
+      filePreferences: { ...GGUF_PREFERENCES, format: 'SafeTensor' as const },
+    };
+    const { body } = await run([PRIVATE_MODEL, SAFETENSOR, GGUF]);
+    expect(body.fileName).toBe(SAFETENSOR.name);
+    expect(urlFileId(body)).toBe(String(SAFETENSOR.id));
+  });
+});
+
+describe('GET /api/v1/model-versions/mini/[id] — the training-results/epoch path', () => {
+  /**
+   * REGRESSION for the visibility gate being applied too early. A Private
+   * version's training-results file is non-Public by construction, and its
+   * `downloadUrl` is the orchestrator's `epoch.model_url` — it never reaches
+   * `/api/download/models/[modelVersionId]`, so the gate's entire justification
+   * is absent here. Gating it turns a working epoch url into
+   * `404 Missing model file` for every non-owner caller (including those holding
+   * an EntityAccess grant).
+   */
+  it('an anonymous caller still gets the epoch url for a Private version', async () => {
+    const { status, body } = await run([TRAINING_FILE], {}, { availability: 'Private' });
+    expect(status).toBe(200);
+    // The LAST epoch, not the first.
+    expect(body.downloadUrls[0]).toBe(EPOCH_URL);
+    expect(body.downloadUrls[0]).not.toBe(EARLIER_EPOCH_URL);
+    expect(body.fileName).toBe(TRAINING_FILE.name);
+    expect(body.hashes.SHA256).toBe(TRAINING_FILE.hashes.SHA256);
+  });
+
+  it('an authenticated non-owner still gets the epoch url', async () => {
+    currentUser.value = { id: OTHER_USER_ID };
+    const { status, body } = await run(
+      [TRAINING_FILE, SAFETENSOR],
+      { modelFileId: String(TRAINING_FILE.id) },
+      { availability: 'Private' }
+    );
+    expect(status).toBe(200);
+    expect(body.downloadUrls[0]).toBe(EPOCH_URL);
+    expect(body.fileName).toBe(TRAINING_FILE.name);
+  });
+
+  it('the epoch url is the orchestrator url, NOT a download-route url', async () => {
+    // The discriminator between the two branches: if the gate ever pushes this
+    // file down the download-route path again, the url shape changes even when
+    // the response is still a 200.
+    const { body } = await run([TRAINING_FILE], {}, { availability: 'Private' });
+    expect(body.downloadUrls[0]).not.toContain('/api/download/models/');
+    expect(body.downloadUrls[0]).toContain('/jobs/job-abc-123/assets/');
+  });
+
+  it('a PUBLIC training-results file on a Public version gets a download-route url, not an epoch url', async () => {
+    // Pins the `Private &&` half of the branch condition on a file that IS
+    // visible: without it, "training results present" alone would be enough to
+    // emit an orchestrator url.
+    const { status, body } = await run([PUBLIC_TRAINING_FILE]);
+    expect(status).toBe(200);
+    expect(body.downloadUrls[0]).not.toContain('/jobs/');
+    expect(urlFileId(body)).toBe(String(PUBLIC_TRAINING_FILE.id));
+  });
+
+  it("the caller's preferences decide WHICH branch is taken on a Private version", async () => {
+    // TRAINING_FILE wins under the defaults (SafeTensor) and would produce an
+    // epoch url; GGUF wins for a GGUF-preferring user and is Public, so that
+    // caller must get the ordinary download-route url instead. If the branch
+    // decision ignored the caller's preferences, this caller would be handed
+    // someone else's epoch.
+    expect(getPrimaryFile([TRAINING_FILE, GGUF])?.id).toBe(TRAINING_FILE.id);
+    expect(getPrimaryFile([TRAINING_FILE, GGUF], { metadata: GGUF_PREFERENCES })?.id).toBe(GGUF.id);
+
+    currentUser.value = { id: OTHER_USER_ID, filePreferences: GGUF_PREFERENCES };
+    const { status, body } = await run([TRAINING_FILE, GGUF], {}, { availability: 'Private' });
+    expect(status).toBe(200);
+    expect(body.fileName).toBe(GGUF.name);
+    expect(body.downloadUrls[0]).not.toContain('/jobs/');
+    expect(urlFileId(body)).toBe(String(GGUF.id));
+  });
+
+  it('a version with NO visible file still 404s — the gate has no ungated fallback', async () => {
+    // The download-route path must fail closed. A fallback to the ungated pick
+    // would advertise a non-public file's hash/name/size and emit a url the
+    // download route answers 404 for.
+    const { status, body } = await run([PRIVATE_MODEL]);
+    expect(status).toBe(404);
+    expect(body).not.toHaveProperty('hashes');
+    expect(body).not.toHaveProperty('downloadUrls');
+  });
+
+  it('a NON-Private version with a training-results file still uses the download route, and is still gated', async () => {
+    // The epoch branch is `Private && trainingResults`. On a Public version the
+    // file goes down the download-route path, so the gate still applies and the
+    // non-public training file must not be advertised to a non-owner.
+    const { body } = await run([TRAINING_FILE, SAFETENSOR]);
+    expect(body.fileName).toBe(SAFETENSOR.name);
+    expect(urlFileId(body)).toBe(String(SAFETENSOR.id));
   });
 });
