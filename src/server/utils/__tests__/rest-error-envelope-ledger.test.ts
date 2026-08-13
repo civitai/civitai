@@ -72,53 +72,59 @@ function jsonBodies(source: string): string[] {
   const call = /\.\s*json\(\s*\{/g;
   for (let m = call.exec(source); m; m = call.exec(source)) {
     const start = source.indexOf('{', m.index);
-    let depth = 0;
-    let quote: string | null = null;
-    for (let i = start; i < source.length; i++) {
-      const ch = source[i];
-      // Skip string/template literals: a `}` inside `'oops }'` used to close the
-      // body early and silently TRUNCATE what got matched — a false negative in
-      // the mechanism itself.
-      if (quote) {
-        if (ch === '\\') i++;
-        else if (ch === quote) quote = null;
-        continue;
-      }
-      if (ch === "'" || ch === '"' || ch === '`') {
-        quote = ch;
-        continue;
-      }
-      if (ch === '{') depth++;
-      else if (ch === '}') {
-        depth--;
-        if (depth === 0) {
-          out.push(source.slice(start, i + 1));
-          break;
-        }
-      }
-    }
+    const body = scanBody(source, start, true);
+    // An UNTERMINATED quote (an apostrophe in a trailing `//` comment, a regex
+    // literal containing one) would otherwise consume to end-of-file and emit
+    // NOTHING for this call — silence, which is the worse failure direction.
+    // Fall back to a quote-blind scan rather than dropping the body.
+    const fallback = body ?? scanBody(source, start, false);
+    if (fallback) out.push(fallback);
   }
   return out;
 }
 
 /**
- * Strip NESTED object literals, leaving only the body's top-level keys.
+ * Brace-match from `start`, returning ONLY the depth-1 slice — the body's
+ * top-level keys, with nested object literals elided.
  *
- * The shapes below anchor on `[{,]`, which without this matches a key at ANY
- * depth: `res.status(200).json({ items, summary: { error, warnings } })` and
- * `{ incident: { cause: 'flood' } }` were both flagged as leaks. A guard that
- * matches everything is as useless as one that matches nothing — it just trains
- * the next author to edit the baseline instead of the code.
+ * 🔴 Two bugs merged into one pass, because as two passes the second undid the
+ * first. Round 2 made `jsonBodies` quote-aware to stop a `}` inside `'oops }'`
+ * truncating the body — then handed its output to a *separate*, quote-BLIND
+ * `topLevelKeys()` which truncated it again at exactly the same character. An
+ * audit measured the end-to-end result as unchanged, and both mutants that
+ * deleted the quote-handling left the suite green: the fix was inert, while its
+ * JSDoc claimed the hazard was closed. One pass now does both.
  *
- * Nesting an error object one level down (`{ data: { detail: err.message } }`)
- * is consequently NOT detected. That is a stated blind spot, not an oversight;
- * see the JSDoc on the offender-set test.
+ * Nesting is elided because the shapes anchor on `[{,]` and would otherwise match
+ * a key at ANY depth — `json({ items, summary: { error, warnings } })` and
+ * `json({ incident: { cause: 'flood' } })` were both flagged as leaks. A guard
+ * that matches everything just trains the next author to edit the baseline.
+ *
+ * Consequence, stated: an error nested one level down
+ * (`{ data: { detail: err.message } }`) is NOT detected.
  */
-function topLevelKeys(body: string): string {
+function scanBody(source: string, start: number, quoteAware: boolean): string | null {
   let out = '';
   let depth = 0;
-  for (let i = 0; i < body.length; i++) {
-    const ch = body[i];
+  let quote: string | null = null;
+  for (let i = start; i < source.length; i++) {
+    const ch = source[i];
+    if (quoteAware && quote) {
+      if (ch === '\\') i++;
+      else if (ch === quote) {
+        quote = null;
+        // Emit the closing quote so a string value survives as an EMPTY literal
+        // (`'x'` -> `''`). It must remain visibly a string: the shapes match an
+        // IDENT, so `{ error: '' }` correctly does not look like `{ error: err }`.
+        if (depth === 1) out += ch;
+      }
+      continue;
+    }
+    if (quoteAware && (ch === "'" || ch === '"' || ch === '`')) {
+      quote = ch;
+      if (depth === 1) out += ch;
+      continue;
+    }
     if (ch === '{') {
       depth++;
       if (depth === 1) out += ch;
@@ -126,12 +132,12 @@ function topLevelKeys(body: string): string {
     }
     if (ch === '}') {
       depth--;
-      if (depth === 0) out += ch;
+      if (depth === 0) return out + ch;
       continue;
     }
     if (depth === 1) out += ch;
   }
-  return out;
+  return null;
 }
 
 /**
@@ -143,19 +149,20 @@ function topLevelKeys(body: string): string {
  * from a `PublicEndpoint`. Anchoring on the variable NAME was the same species of
  * spelled guard as the literal-message regex it replaced, just a smaller hole.
  *
- * Widening to any identifier costs false positives on legitimate string-valued
- * bodies (`{ error: message }`), so the value must additionally end in `.message`
- * / be the bare binding / be `.cause` — and an allowlist below exempts the
- * identifiers that are known NOT to be errors.
+ * 🔴 **The round-2 fix then re-added the same species on the VALUE side.** A
+ * `NOT_AN_ERROR` allowlist (`message`, `reason`, `detail`, …) exempted any body
+ * whose error value was bound to a "string-ish" name. That laundered
+ * `download/models/[modelVersionId].ts:257` — `errorResponse(500, err.message)` →
+ * `res.json({ error: message })` on a **`PublicEndpoint`**, i.e. an
+ * unauthenticated `err.message` 500 of exactly the #3845 shape — out of the
+ * offender set entirely. The allowlist is GONE.
+ *
+ * The cost is over-reporting: a body that genuinely serves a string we wrote
+ * (`{ error: message }` where `message` is a literal) is now flagged. That is the
+ * right direction to be wrong in. Those land in the baseline once, annotated,
+ * instead of a name heuristic silently deciding which disclosures count.
  */
 const IDENT = String.raw`[A-Za-z_$][\w$]*`;
-
-/**
- * Identifiers that name a STRING we wrote, not a caught error. Without these the
- * widened pattern flags `{ error: message }` and `{ error: reason }`, which
- * disclose nothing.
- */
-const NOT_AN_ERROR = ['message', 'msg', 'reason', 'detail', 'text', 'status', 'code', 'label'];
 
 /**
  * The value shapes that put a whole error object — or its driver-authored text —
@@ -168,11 +175,8 @@ const LEAKING_BODY_SHAPES: { name: string; test: (body: string) => boolean }[] =
     // `{ error }` shorthand, `{ error: err }`, `{ error: e as Error }`.
     test: (b) =>
       new RegExp(
-        String.raw`(?:^|[{,])\s*error\s*(?:\}|,|:\s*\(?(${IDENT})\)?(?:\s+as\s+\w+)?\s*[,}\)])`
-      ).test(b) &&
-      !NOT_AN_ERROR.includes(
-        new RegExp(String.raw`(?:^|[{,])\s*error\s*:\s*\(?(${IDENT})`).exec(b)?.[1] ?? ''
-      ),
+        String.raw`(?:^|[{,])\s*error\s*(?:\}|,|:\s*\(?${IDENT}\)?(?:\s+as\s+\w+)?\s*[,}\)])`
+      ).test(b),
   },
   {
     name: '`cause` in a response body (the wrapped driver error, under a second key)',
@@ -186,11 +190,6 @@ const LEAKING_BODY_SHAPES: { name: string; test: (body: string) => boolean }[] =
     name: "`error`/`message` set to a caught error's `.message` (verbatim driver text)",
     // Any identifier, `?.` allowed, optional cast/parens. This is the shape the
     // widened IDENT exists for — `{ error: trpcError.message }` on a public route.
-    // 🔴 The NOT_AN_ERROR allowlist deliberately does NOT apply here. It exists for
-    // the BARE-identifier shape (`{ error: message }` is a string we wrote), and
-    // applying it to `.message` ACCESS exempted `(reason as Error).message` —
-    // unmistakably an error, exempted only because `reason` was on a list of
-    // string-ish names. Reading `.message` off something is itself the signal.
     test: (b) =>
       new RegExp(
         String.raw`(?:^|[{,])\s*(?:error|message)\s*:\s*\(?${IDENT}\)?(?:\s+as\s+[\w.<>\[\]]+)?\)?\??\.message\b`
@@ -200,19 +199,21 @@ const LEAKING_BODY_SHAPES: { name: string; test: (body: string) => boolean }[] =
 
 /** Does this response body serve an error object or its text? */
 function bodyLeaks(body: string): boolean {
-  const top = topLevelKeys(body);
-  return LEAKING_BODY_SHAPES.some((s) => s.test(top));
+  return LEAKING_BODY_SHAPES.some((s) => s.test(body));
 }
 
 /**
  * 🔴 Sites of the SAME class this change does not fix — enumerated, not glossed.
  *
- * This list has now been re-derived TWICE, and grew each time the guard got less
- * spelled: 3 regexes → 41 sites → **52**. That trajectory is the finding. Each
- * widening was driven by an audit defeating the previous version with a real
- * shape, most recently `v1/images/index.ts` — a `PublicEndpoint` serving
- * `{ error: trpcError.message }`, invisible only because the variable was not
- * named `e`/`err`/`error`/`ex`.
+ * This list has been re-derived THREE times, growing each time the guard got
+ * less spelled: 3 regexes → 41 → 52 → **57**. That trajectory is the finding.
+ * Every widening was forced by an audit defeating the previous version with a
+ * REAL shape — `v1/images/index.ts` (invisible because the binding was named
+ * `trpcError`), then `download/models/[modelVersionId].ts` (invisible because a
+ * name allowlist exempted the value `message`). Both are `PublicEndpoint`,
+ * i.e. unauthenticated, and both are pre-existing rather than introduced here.
+ * Two rounds of 'now it is structural' were each still spelled. Assume a fourth
+ * shape exists.
  *
  * 🔴 **KNOWN BLIND SPOTS — this list is a floor, not a ceiling.** The extractor
  * cannot see: a body built in a variable and passed as `res.json(body)`; an error
@@ -226,6 +227,7 @@ function bodyLeaks(body: string): boolean {
  *
  * 🔴 TIER 1 — UNAUTHENTICATED. Same severity as the routes this change fixes.
  *   v1/images/index.ts                    PublicEndpoint; `{ error: trpcError.message }`
+ *   download/models/[modelVersionId].ts   PublicEndpoint; `errorResponse(500, err.message)`
  *   generation/{data,resources}.ts        PublicEndpoint; catch-all → 400 + e.message
  *   v1/model-files/[id]/tensor-metadata   MixedAuthEndpoint (public read) → 422 + err.message
  * NOT fixed here because the fix is not a delegation: each answers 4xx for EVERY
@@ -234,7 +236,9 @@ function bodyLeaks(body: string): boolean {
  * `v1/images/index.ts` is pre-existing and unrelated to this change's diff.
  *
  * 🟡 TIER 2 — session-authed: a logged-in user can trigger it, the public cannot.
- * Includes `orchestrator/refreshBlobs.ts`: `OrchestratorEndpoint` is
+ * `blocks/submit-version.ts` and `v1/blocks/submit-version.ts` are `ModEndpoint`
+ * and so belong in TIER 3, where they now are.
+ * TIER 2 includes `orchestrator/refreshBlobs.ts`: `OrchestratorEndpoint` is
  * `AuthedEndpoint` + a per-user token (`endpoint-helpers.ts`), with NO moderator
  * check — an earlier draft filed it under TIER 3, which would have dispositioned a
  * session-authed disclosure as "arguably the point". It is not.
@@ -246,17 +250,24 @@ function bodyLeaks(body: string): boolean {
  * fixing them is optional and may be undesirable.
  */
 const KNOWN_UNFIXED_SAME_CLASS: string[] = [
-  // TIER 1 — unauthenticated
+  // ── TIER 1 — UNAUTHENTICATED ────────────────────────────────────────────────
+  'download/models/[modelVersionId].ts', // PublicEndpoint; errorResponse(500, err.message)
   'generation/data.ts',
   'generation/resources.ts',
-  'v1/images/index.ts',
+  'v1/images/index.ts', // PublicEndpoint; { error: trpcError.message }
   'v1/model-files/[id]/tensor-metadata.ts',
-  // TIER 2 — session-authed
-  'blocks/submit-version.ts',
+  // ── OVER-REPORTS — flagged by shape, NOT leaks. Kept so the count is honest ──
+  // Both build `{ error: message }` from a local helper whose every call site
+  // passes a STRING LITERAL ('File not found', 'Not Found'). The guard cannot
+  // see that without types; the previous round's answer was a name allowlist,
+  // which is what buried `download/models` above. Recorded instead.
+  'download/attachments/[fileId].ts',
+  'download/vault/[vaultItemId].ts',
+  // ── TIER 2 — session-authed ─────────────────────────────────────────────────
   'download/user-transactions.ts',
   'image/ingest.ts',
   'media/ingest/[mediaId].ts',
-  'orchestrator/refreshBlobs.ts',
+  'orchestrator/refreshBlobs.ts', // OrchestratorEndpoint = AuthedEndpoint + token, NO mod check
   'upload/abort.ts',
   'upload/complete.ts',
   'upload/sign-part.ts',
@@ -265,21 +276,22 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   'v1/blocks/models.ts',
   'v1/blocks/shared-storage/increment.ts',
   'v1/blocks/shared-storage/top.ts',
-  'v1/blocks/submit-version.ts',
   'v1/blocks/withdraw.ts',
   'v1/creator-program/join.ts',
   'v1/image-upload/multipart/index.ts',
   'v1/model-versions/early-access.ts',
-  // TIER 3 — operator / token-gated
+  // ── TIER 3 — operator / token-gated (WebhookEndpoint or ModEndpoint) ────────
   'admin/temp/backfill-b2-file-locations.ts',
   'admin/temp/backfill-metric-agg.ts',
   'admin/temp/backfill-user-downloads.ts',
+  'admin/temp/clamp-publishedat-bumps.ts',
   'admin/temp/dedupe-official-files.ts',
   'admin/temp/migrate-article-images.ts',
   'admin/temp/migrate-model-flags.ts',
   'admin/temp/remove-deprecated-base-models.ts',
   'admin/test.ts',
   'admin/update-freshdesk-customer.ts',
+  'blocks/submit-version.ts', // ModEndpoint
   'mod/clavata-image-process.ts',
   'mod/csam-upload.ts',
   'mod/mute-user-pending-review.ts',
@@ -292,10 +304,12 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   'mod/scanner-policies/export-dataset.ts',
   'mod/unblock-images.ts',
   'mod/withdraw-from-bank.ts',
+  'testing/blocks.ts',
   'testing/blue-buzz-paid-access.ts',
   'testing/model-file-scan.ts',
   'testing/redis-cluster.ts',
   'testing/xguard-test.ts',
+  'v1/blocks/submit-version.ts', // ModEndpoint
   'webhooks/resource-training-v2/[modelVersionId].ts',
   'webhooks/resource-training.ts',
   'webhooks/run-jobs/[[...run]].ts',
@@ -336,10 +350,14 @@ describe('LEDGER: no REST route serializes an error object or its text (civitai#
     const bodies = files.flatMap((f) => jsonBodies(stripLineComments(readFileSync(f, 'utf8'))));
     expect(bodies.length, 'no `.json({…})` bodies extracted — the extractor is inert').
       toBeGreaterThan(100);
+    // The extractor returns the DEPTH-1 SLICE with nested literals elided and
+    // string contents blanked — both deliberate (see `scanBody`). Pinned by value
+    // so a change to either behaviour is visible here rather than only as a
+    // mysterious shift in the offender count.
     expect(
       jsonBodies(`res.status(500).json({ error: 'x', nested: { a: 1 } });`),
-      'brace matching must survive a nested object'
-    ).toEqual([`{ error: 'x', nested: { a: 1 } }`]);
+      'nested literals elided, string contents blanked, braces balanced'
+    ).toEqual([`{ error: '', nested:  }`]);
   });
 
   it('the offender set is EXACTLY the recorded baseline — a new one fails here', () => {
@@ -371,7 +389,7 @@ describe('LEDGER: no REST route serializes an error object or its text (civitai#
       );
       for (const shape of LEAKING_BODY_SHAPES) {
         expect(
-          bodies.some((b) => shape.test(topLevelKeys(b))),
+          bodies.some((b) => shape.test(b)),
           `${rel} still matches "${shape.name}"`
         ).toBe(false);
       }
@@ -400,7 +418,7 @@ describe('LEDGER: no REST route serializes an error object or its text (civitai#
       const body = jsonBodies(sample)[0];
       expect(body, `extractor failed on: ${sample}`).toBeDefined();
       expect(
-        LEAKING_BODY_SHAPES[shapeIndex].test(topLevelKeys(body)),
+        LEAKING_BODY_SHAPES[shapeIndex].test(body),
         `shape "${LEAKING_BODY_SHAPES[shapeIndex].name}" failed on its own exemplar: ${sample}`
       ).toBe(true);
     }
@@ -411,7 +429,6 @@ describe('LEDGER: no REST route serializes an error object or its text (civitai#
     // one that matches nothing, and would force the next author to work around it.
     const mustNotMatch = [
       `res.status(403).json({ error: 'Forbidden' });`,
-      `res.status(404).json({ error: message });`,
       `res.status(400).json({ error: z.prettifyError(result.error) ?? 'Invalid file id' });`,
       `res.status(400).json({ error: parsed.error.flatten() });`,
       `res.status(200).json({ items, metadata });`,
@@ -420,13 +437,11 @@ describe('LEDGER: no REST route serializes an error object or its text (civitai#
       // permanently red for the wrong reason.
       `res.status(200).json({ items, summary: { error, warnings } });`,
       `res.status(200).json({ incident: { cause: 'flood' } });`,
-      // A string we wrote, bound to a normal identifier.
-      `res.status(400).json({ error: reason });`,
     ];
     for (const sample of mustNotMatch) {
       const body = jsonBodies(sample)[0];
       for (const shape of LEAKING_BODY_SHAPES) {
-        expect(shape.test(topLevelKeys(body)), `"${shape.name}" false-positives on: ${sample}`).toBe(
+        expect(shape.test(body), `"${shape.name}" false-positives on: ${sample}`).toBe(
           false
         );
       }

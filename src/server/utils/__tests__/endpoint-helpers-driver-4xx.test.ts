@@ -58,11 +58,31 @@ import { GENERIC_CLIENT_ERROR_BY_STATUS } from '~/server/utils/rest-error-envelo
 
 const CLIENT_VERSION = '6.13.0';
 
+/**
+ * 🔴 Pre-stamped with the header `PublicEndpoint` actually sets.
+ *
+ * An earlier version started with an EMPTY header map, so every `no-store`
+ * assertion only proved "the header ends up no-store when nothing set it first" —
+ * which is never the case in production: `PublicEndpoint` calls
+ * `addPublicCacheHeaders` BEFORE `await handler(req, res)`, so `Cache-Control` is
+ * always already populated when the helper runs.
+ *
+ * An audit demonstrated the gap by mutating `noStore` into a plausible
+ * "don't clobber the route's own Cache-Control" refactor:
+ *
+ *   if (!res.headersSent && !res.getHeader('Cache-Control')) res.setHeader(...)
+ *
+ * That silently restores `public, s-maxage=300` on EVERY error the helper writes,
+ * on every public route — and the whole suite stayed green. The fixture is the
+ * fix: with the header pre-stamped, that mutant now dies.
+ */
+const PUBLIC_ENDPOINT_CACHE_HEADER = 'public, s-maxage=300, stale-while-revalidate=150';
+
 function createRes() {
   let statusCode = 200;
   let payload: unknown;
   let headersSent = false;
-  const headers: Record<string, unknown> = {};
+  const headers: Record<string, unknown> = { 'Cache-Control': PUBLIC_ENDPOINT_CACHE_HEADER };
   const res = {
     status(c: number) {
       statusCode = c;
@@ -78,6 +98,12 @@ function createRes() {
     setHeader(k: string, v: unknown) {
       headers[k] = v;
       return res;
+    },
+    // Present so a "don't clobber an existing Cache-Control" mutant is
+    // EXPRESSIBLE against this fixture. Without it such a mutant throws rather
+    // than surviving, which would look like a kill for the wrong reason.
+    getHeader(k: string) {
+      return headers[k];
     },
     end() {
       headersSent = true;
@@ -341,6 +367,41 @@ describe('handleEndpointError — driver-authored text at a 4xx (civitai#3845 in
 
     expect(res._status()).toBe(500);
     expect(res._header('Cache-Control')).toBe('no-store, max-age=0');
+  });
+
+  it('a 499 client-abort is marked no-store', () => {
+    // The one arm the first pass left unpinned. Low stakes — no shared cache
+    // stores a 499 — but "every arm" was the claim, so every arm gets a test.
+    const res = createRes();
+    handleEndpointError(res as never, new Error('The operation was aborted'));
+
+    expect(res._status()).toBe(499);
+    expect(res._header('Cache-Control')).toBe('no-store, max-age=0');
+  });
+
+  it('OVERWRITES an existing cache header — not merely sets one when absent', () => {
+    // 🔴 The assertion the empty-fixture version could not make. In production the
+    // header is ALWAYS already set when the helper runs, so "set it if absent" is
+    // indistinguishable from "do nothing".
+    const res = createRes();
+    expect(res._header('Cache-Control'), 'fixture must start pre-stamped').toBe(
+      PUBLIC_ENDPOINT_CACHE_HEADER
+    );
+
+    handleEndpointError(res as never, new TRPCError({ code: 'NOT_FOUND', message: 'nope' }));
+
+    expect(res._header('Cache-Control')).toBe('no-store, max-age=0');
+  });
+
+  it('does NOT touch headers once they are already SENT', () => {
+    // `noStore`'s internal `!res.headersSent` guard. Writing a header after the
+    // response has gone out throws in Node; the helper must be a no-op instead.
+    const res = createRes();
+    res.json({ already: 'sent' });
+    const before = res._header('Cache-Control');
+
+    expect(() => handleEndpointError(res as never, new Error('late boom'))).not.toThrow();
+    expect(res._header('Cache-Control'), 'must not rewrite a sent response').toBe(before);
   });
 
   it.each([

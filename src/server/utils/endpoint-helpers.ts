@@ -146,11 +146,17 @@ function isRestServerFault(status: number): boolean {
  * right axis is "is this a response a cache should keep", and for an error the
  * answer is always no.
  *
- * **Accepted trade:** a 404 flood (scrapers hitting bad slugs) now reaches the
- * origin instead of being absorbed at the edge for 5 minutes. Correctness on a
- * transient 404 is worth more than cache efficiency on an error path, and these
- * routes are not the ones under that kind of load. Stated so the next person
- * knows it was a decision, not an oversight.
+ * **Accepted trade, measured rather than asserted.** Across the 25 callers of this
+ * helper, exactly ONE route's 404 changes cacheability: `v1/content/[[...slug]]`,
+ * which is low-volume over a small known slug space. `v1/models/[id]` — the only
+ * high-traffic one — answers its common 404 DIRECTLY (`res.status(404).json(...)`)
+ * without going through this helper, so it keeps its edge cache untouched.
+ *
+ * (An earlier version of this note said "these routes are not the ones under that
+ * kind of load". That was an unverifiable assertion of the sort that gets quoted
+ * back as fact; the sentence above is the check that replaced it. Worth knowing if
+ * you extend `noStore` further: the six `PublicEndpoint` callers have NO rate
+ * limiter, so edge absorption is the only thing in front of them.)
  *
  * Uniform application also removes a **fault-classification oracle**: with the
  * narrower version, `no-store` vs `s-maxage=300` on the same status told a caller
