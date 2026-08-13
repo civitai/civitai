@@ -585,18 +585,19 @@ describe('/api/v1/images transient-upstream 503 reclassification', () => {
     await handler(req, res);
 
     expect(res._getStatusCode()).toBe(503);
-    // 🔴 `no-store, max-age=0`, not the bare `no-store` this asserted before. The
-    // route sets `no-store` and then DELEGATES, and `handleEndpointError` runs its
-    // own `noStore(res)` last-write-wins. Both forbid caching — `max-age=0` is
-    // redundant next to `no-store`, not weaker — and the retryable contract is
-    // intact because `Retry-After` is a different header and survives. Pinned by
-    // value so the difference is a recorded decision rather than a surprise.
-    //
-    // The RAW-error transient branch above still emits the bare `no-store`,
-    // because it answers in place and never reaches the helper. Both are correct;
-    // the asymmetry is real and is documented here rather than papered over.
-    expect(res._getHeader('Cache-Control')).toBe('no-store, max-age=0');
+    expect(res._getHeader('Cache-Control')).toBe('no-store');
     expect(res._getHeader('Retry-After')).toBe('2');
+    // 🔴 THE BODY, which this test never asserted. Status + headers were green
+    // through a draft of civitai#3845/TIER-1 in which this path fell through to
+    // `handleEndpointError` and answered `{ message }`, while the raw-SDK
+    // transient path two branches up answered `{ error }` — the same route
+    // emitting the retry hint under two different keys at 503, with nothing
+    // failing. Asserted by VALUE, and byte-identical to the raw-path assertion in
+    // the `MeiliSearchCommunicationError` case above: that equality is the
+    // property, so a future change that re-splits the two paths goes red here.
+    expect(res._getJSONData()).toEqual({
+      error: 'Image search is temporarily overloaded — please retry.',
+    });
   });
 
   it('does NOT mask a TRPCError NOT_FOUND as 503 — keeps its real 404 (no Retry-After)', async () => {
