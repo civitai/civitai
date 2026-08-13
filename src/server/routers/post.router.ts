@@ -127,7 +127,18 @@ export const postRouter = router({
     .mutation(deletePostHandler),
   addImage: guardedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
-    .input(imageSchema.extend({ postId: z.number() }))
+    .input(
+      imageSchema.extend({
+        postId: z.number(),
+        /**
+         * The generation this upload claims to be an output of. Only ever used to
+         * look up provenance the server itself signed, against a workflow the
+         * session user owns — see remix-provenance.ts. Never stored, and kept off
+         * the shared `imageSchema` so it can't ride into a Prisma create.
+         */
+        generationWorkflowId: z.string().optional(),
+      })
+    )
     .mutation(({ ctx, input }) => addPostImage({ ...input, user: ctx.user })),
   updateImage: verifiedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })

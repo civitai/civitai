@@ -111,6 +111,7 @@ export function GeneratedImageActions({
     const imageData = postable.map((image) => ({
       url: image.url,
       meta: getStepMeta(image.step),
+      generationWorkflowId: image.workflowId,
     }));
 
     try {

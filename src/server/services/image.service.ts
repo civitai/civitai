@@ -273,6 +273,7 @@ import type { FeedQueryInput } from '../../../event-engine-common/feeds/types';
 import type { ImageQueryInput } from '../../../event-engine-common/types/image-feed-types';
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { getGenerationDisplayKeys } from '~/server/services/orchestrator/legacy-metadata-mapper';
+import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
 
 const {
   cacheHitRequestsTotal,
@@ -6052,13 +6053,27 @@ export async function createImage({
   toolIds,
   techniqueIds,
   skipIngestion,
+  verifiedSourceImageIds,
   ...image
-}: ImageSchema & { userId: number; skipIngestion?: boolean }) {
+}: ImageSchema & {
+  userId: number;
+  skipIngestion?: boolean;
+  /**
+   * Derivation the caller proved (see remix-provenance.ts). Nothing else can put
+   * `meta.extra.sourceImageIds` on a row — every other caller's claim is stripped
+   * here, so a new image path can't grant itself provenance by accident.
+   */
+  verifiedSourceImageIds?: number[] | null;
+}) {
+  const meta = sanitizeProvenance(
+    image.meta as Record<string, unknown> | null | undefined,
+    verifiedSourceImageIds
+  );
   const result = await dbWrite.image.create({
     data: {
       ...image,
-      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-      generationProcess: image.meta ? getImageGenerationProcess(image.meta) : null,
+      meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      generationProcess: meta ? getImageGenerationProcess(meta as ImageMetaProps) : null,
       tools: !!toolIds?.length
         ? { createMany: { data: toolIds.map((toolId) => ({ toolId })) } }
         : undefined,
@@ -6115,7 +6130,14 @@ export const createEntityImages = async ({
   await dbClient.image.createMany({
     data: images.map((image) => ({
       ...image,
-      meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      // Same strip as `createImage`: nothing that reaches an Image row keeps a
+      // provenance claim it didn't prove. These rows have no post, so they can't
+      // reach a remix gallery today — but the invariant is "no unproven claim on
+      // any row", not "on the rows that currently matter".
+      meta:
+        (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
+          | Prisma.JsonObject
+          | undefined) ?? Prisma.JsonNull,
       userId,
       resources: undefined,
     })),
@@ -6423,7 +6445,10 @@ export const updateEntityImages = async ({
     await dbClient.image.createMany({
       data: newImages.map((image) => ({
         ...image,
-        meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+        meta:
+          (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
+            | Prisma.JsonObject
+            | undefined) ?? Prisma.JsonNull,
         userId,
         resources: undefined,
       })),

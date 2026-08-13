@@ -67,6 +67,7 @@ import {
 } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { getPostsInfinite } from '~/server/services/post.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
@@ -1254,7 +1255,10 @@ export const upsertCollection = async ({
                     where: { id: image.id ?? -1 },
                     create: {
                       ...image,
-                      meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                      meta:
+                        (sanitizeProvenance(
+                          image?.meta as Record<string, unknown> | null | undefined
+                        ) as Prisma.JsonObject | undefined) ?? Prisma.JsonNull,
                       userId,
                       resources: undefined,
                       id: undefined,

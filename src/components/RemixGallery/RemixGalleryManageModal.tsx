@@ -25,6 +25,7 @@ import {
   IconRotate,
   IconShieldCheck,
   IconTrash,
+  IconWand,
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -35,6 +36,8 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { RemixGalleryItem } from '~/components/RemixGallery/remix-gallery.utils';
 import { dedupeGalleryItems } from '~/components/RemixGallery/remix-gallery.utils';
 import { SubmissionThumb } from '~/components/RemixGallery/SubmissionThumb';
+import { VerifiedRemixBadge } from '~/components/RemixGallery/VerifiedRemixBadge';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Currency } from '~/shared/utils/prisma/enums';
 import {
@@ -60,6 +63,30 @@ const sentLabel = (sentAt: Date | string) => {
   const value = new Date(sentAt);
   return Date.now() - value.getTime() < A_DAY_MS ? daysFromNow(value) : formatDateMin(value);
 };
+
+/**
+ * What an answer pays, rendered inside the button that gives that answer.
+ *
+ * The `+` is load-bearing: a bare Buzz amount on a button reads as its price,
+ * which is the opposite of what happens here. Yellow because placements are paid
+ * in purchasable Buzz — `PLACEMENT_SPEND_TYPES` excludes blue — so this is the
+ * colour the submitter actually spent.
+ */
+function EarningsChip({ amount }: { amount: number }) {
+  return (
+    <Group gap={1} wrap="nowrap" className="shrink-0">
+      <Text size="xs" fw={700} className="leading-none">
+        +
+      </Text>
+      {/* Only the bolt takes the currency colour — the amount stays in the
+          button's own text colour, so the pair reads as one label. */}
+      <CurrencyIcon currency={Currency.BUZZ} type="yellow" size={12} />
+      <Text size="xs" fw={700} className="leading-none">
+        {amount}
+      </Text>
+    </Group>
+  );
+}
 
 /**
  * The owner's control over one gallery: review what is waiting, and pin or
@@ -212,30 +239,50 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                     <Group justify="space-between" wrap="nowrap" align="center">
                       <Group gap="sm" wrap="nowrap" className="min-w-0">
                         {row.image && <SubmissionThumb image={row.image} />}
-                        <Stack gap={2} className="min-w-0">
-                          <Text size="sm" fw={500} className="truncate">
-                            {row.placer?.username ?? 'Someone'}
-                          </Text>
-                          <Group gap={4} wrap="nowrap">
-                            <CurrencyIcon currency={Currency.BUZZ} size={12} />
-                            <Text size="xs" c="dimmed">
-                              {row.amount}
+                        {/* `align="flex-start"` because a Stack stretches its
+                            children: without it the badge and the username row
+                            each spanned the full card width, which also dragged
+                            the badge's hover card off to the far edge. */}
+                        <Stack gap={6} align="flex-start" className="min-w-0">
+                          {/* What arrived and when, above who sent it — the queue
+                              is read top-down and the age is what decides which
+                              row to answer first. */}
+                          <Group gap={6} wrap="nowrap" className="min-w-0">
+                            <IconWand size={14} className="shrink-0 text-yellow-6" />
+                            <Text size="xs" c="dimmed" className="truncate">
+                              Remix submitted {sentLabel(row.createdAt)}
                             </Text>
                           </Group>
-                          <Text size="xs" c="dimmed">
-                            Sent {sentLabel(row.createdAt)}
-                          </Text>
+                          {row.placer ? (
+                            <UserAvatar user={row.placer} withUsername size="sm" linkToProfile />
+                          ) : (
+                            <Text size="sm" fw={500}>
+                              Someone
+                            </Text>
+                          )}
+                          {/* Its own line, and shown only when we resolved it
+                              ourselves. There is deliberately no counterpart for
+                              its absence: an off-site remix can never earn this,
+                              and marking those would turn a missing signal into a
+                              verdict. */}
+                          {row.data.derivedFromHost && <VerifiedRemixBadge />}
                         </Stack>
                       </Group>
                       {/* Stacked, and the same width, so the pair reads as one
                         decision with two answers rather than a row of buttons.
                         Keyed to the row and the action — bare `act.isPending`
                         spun every button in the queue on any one click. */}
-                      <Stack gap={6} className="w-28 shrink-0">
+                      {/* Each answer carries what it pays, so the owner never has
+                          to know that declining still earns a fee — the numbers
+                          come from the server, computed with the settlement's own
+                          helpers against this row's amount. */}
+                      <Stack gap={6} className="w-36 shrink-0">
                         <Button
                           size="compact-sm"
                           fullWidth
+                          classNames={{ label: 'w-full justify-between gap-2' }}
                           leftSection={<IconCheck size={14} />}
+                          rightSection={<EarningsChip amount={row.earnings.approve} />}
                           loading={actingOn(row.id, 'approve')}
                           onClick={() => act.mutate({ placementId: row.id, action: 'approve' })}
                         >
@@ -245,7 +292,9 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                           size="compact-sm"
                           fullWidth
                           variant="default"
+                          classNames={{ label: 'w-full justify-between gap-2' }}
                           leftSection={<IconX size={14} />}
+                          rightSection={<EarningsChip amount={row.earnings.decline} />}
                           loading={actingOn(row.id, 'decline')}
                           onClick={() => act.mutate({ placementId: row.id, action: 'decline' })}
                         >
