@@ -45,6 +45,8 @@ function createMocks({ query = {} }: { query?: Record<string, string | string[]>
   let payload: any = undefined;
   let ended = false;
 
+  const headers: Record<string, unknown> = {};
+
   const res = {
     headersSent: false,
     status(code: number) {
@@ -55,14 +57,25 @@ function createMocks({ query = {} }: { query?: Record<string, string | string[]>
       payload = body;
       return res;
     },
+    // Required since the route delegates to `handleEndpointError`, which marks a
+    // genericized error response `no-store` (civitai#3845/4). Its absence here
+    // surfaced as `TypeError: res.setHeader is not a function` in the full suite —
+    // a fixture gap, not a production one, but the header IS asserted below so the
+    // stub cannot quietly swallow a regression.
+    setHeader(key: string, value: unknown) {
+      headers[key] = value;
+      return res;
+    },
     end() {
       ended = true;
       return res;
     },
+    _getHeader: (k: string) => headers[k],
     _getStatusCode: () => statusCode,
     _getJSONData: () => payload,
     _ended: () => ended,
   } as unknown as NextApiResponse & {
+    _getHeader: (k: string) => unknown;
     _getStatusCode: () => number;
     _getJSONData: () => any;
     _ended: () => boolean;
@@ -175,6 +188,9 @@ describe('/api/v1/creators error-body JSON.parse guard', () => {
       message: 'An unexpected error occurred',
       error: 'An unexpected error occurred',
     });
+    // `PublicEndpoint` stamps `public, s-maxage=300` on every response before the
+    // handler runs, errors included. A genericized error must opt out.
+    expect(res._getHeader('Cache-Control')).toBe('no-store, max-age=0');
   });
 
   it('client abort (499) branch is unchanged — ends without a body', async () => {

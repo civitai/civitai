@@ -41,6 +41,36 @@ function logRestServerFault(e: unknown) {
 }
 
 /**
+ * Same log, forced to INFO severity — for a 4xx whose message we genericized.
+ *
+ * The entry must still be emitted: genericizing is only defensible because it
+ * RELOCATES the driver text rather than destroying it. But it must not land on
+ * the error board, and one status makes that concrete rather than theoretical.
+ *
+ * 🔴 The only Prisma codes that reach **408** are `P1008` / `P2024` — connection
+ * pool exhaustion. That is wave-shaped: during an incident every affected public
+ * request would add an error-severity line, on routes that previously logged
+ * nothing at all. It is the same "fires in high-volume waves" property for which
+ * `isRestServerFault` excludes 503 from the error stream.
+ *
+ * `classifyErrorFault` treats `TIMEOUT` as a SERVER fault, and that is correct
+ * for the repo at large (a timeout usually IS ours), so this does NOT change the
+ * global classification — it overrides `type`/`level` for this arm only. `type`
+ * is the load-bearing field: Alloy extracts it into Loki's `detected_level`.
+ *
+ * 400/404/409 already classify as client faults, so for those this is a no-op and
+ * the uniform treatment is the point — "a genericized 4xx is logged for forensics,
+ * never as an incident" is one rule rather than three.
+ */
+function logRestGenericizedClientFault(e: unknown) {
+  if (wasServerFaultLogged(e)) return;
+  logToAxiom(
+    { ...buildCentralErrorLog(e), type: 'info', level: 'info', source: 'handleEndpointError' },
+    'civitai-prod'
+  ).catch(() => undefined);
+}
+
+/**
  * Is this REST status a SERVER FAULT — i.e. one whose error text is OURS, never a
  * message written for the caller?
  *
@@ -87,6 +117,32 @@ function logRestServerFault(e: unknown) {
  */
 function isRestServerFault(status: number): boolean {
   return status >= 500 && status !== 503;
+}
+
+/**
+ * Mark a genericized error response uncacheable.
+ *
+ * 🔴 `PublicEndpoint` sets `Cache-Control: public, s-maxage=300,
+ * stale-while-revalidate=150` on EVERY response, unconditionally, BEFORE the
+ * handler runs — errors included. That was survivable while every failure on
+ * those routes was a 5xx, because shared caches do not cache 5xx by default. It
+ * stops being survivable the moment an error answers **404**: 404 IS in the
+ * default cacheable set, so a `NOT_FOUND` produced by a transient condition
+ * (replica lag, a `throwDbError`-mapped P2001/P2025) would be pinned at the edge
+ * for 300s + 150s SWR — serving "no such thing" for five minutes after the thing
+ * exists.
+ *
+ * This PR creates exactly that situation (`v1/content` 500 → real status, and the
+ * driver-authored 4xx arm), so the genericized arms opt out. The route-level 503
+ * arm in `v1/users/index.ts` already does the same thing for the same reason.
+ *
+ * Deliberately NOT applied to the 4xx pass-through arm: that arm's headers are
+ * byte-identical to pre-PR behaviour, and widening the change to responses this
+ * PR does not otherwise touch would be scope this cannot claim to have tested.
+ */
+function noStore(res: NextApiResponse) {
+  if (!res.headersSent) res.setHeader('Cache-Control', 'no-store, max-age=0');
+  return res;
 }
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
@@ -327,7 +383,7 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     // this genericizes the RESPONSE only, never the LOG.
     if (isRestServerFault(status)) {
       logRestServerFault(apiError);
-      return res
+      return noStore(res)
         .status(status)
         .json(restErrorBody(REST_ERROR_CODE.INTERNAL_SERVER_ERROR, GENERIC_SERVER_ERROR_MESSAGE));
     }
@@ -346,14 +402,19 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     //
     // Logged BEFORE genericizing, on purpose: this arm buys into exactly the same
     // invariant as the 5xx arm — the un-redacted text leaves the wire precisely
-    // when it enters the log, so no message is ever destroyed outright. (That is
-    // also the reason 503 is left alone: it is NOT logged, so its response is the
-    // only copy — and no Prisma code maps to SERVICE_UNAVAILABLE, so nothing
-    // driver-authored can arrive as one.)
+    // when it enters the log, so no message is ever destroyed outright.
+    //
+    // 503 needs no explicit exclusion here: `GENERIC_CLIENT_ERROR_BY_STATUS` has
+    // no 503 key, so `generic` is already undefined for it, and
+    // `rest-error-envelope-ledger.test.ts` FAILS if a 503 key is ever added
+    // (its key set must equal the 4xx statuses `prismaErrorToTrpcCode` reaches).
+    // An earlier draft carried a `status !== 503` clause; it was dead — removing
+    // it left the whole suite green — and a test comment claimed it was what
+    // enforced the exclusion, which was false. The map's key set is.
     const generic = GENERIC_CLIENT_ERROR_BY_STATUS[status];
-    if (generic && status !== 503 && isDriverAuthoredMessage(apiError.message, apiError)) {
-      logRestServerFault(apiError);
-      return res.status(status).json(restErrorBody(generic.code, generic.message));
+    if (generic && isDriverAuthoredMessage(apiError.message, apiError)) {
+      logRestGenericizedClientFault(apiError);
+      return noStore(res).status(status).json(restErrorBody(generic.code, generic.message));
     }
     // ── CLIENT FEEDBACK (4xx) + 503 — passed through BYTE-IDENTICALLY ──────────
     // Older Zod-validation TRPCErrors stuff a JSON-encoded issue array into

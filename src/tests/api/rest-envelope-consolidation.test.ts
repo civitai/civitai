@@ -470,21 +470,40 @@ describe('civitai#3845/4 — no REST route hand-rolls a driver-leaking error env
     });
   });
 
-  it('v1/users answers 499 for a client abort, NOT the 503 (ordering guard)', async () => {
-    // The abort check runs first precisely because an aborted Meili call can look
-    // transient. Without the ordering this returns 503 + Retry-After to a client
-    // that has already gone away.
+  it('v1/users answers 499 for a client abort that ALSO looks transient (ordering guard)', async () => {
+    // 🔴 This guard must be REACHABLE, not merely breakable. An earlier version
+    // threw a bare `new Error('The operation was aborted')` — which satisfies
+    // `isClientAbortError` but NOT `isTransientMeiliError`, so the 503 arm could
+    // never have fired for it and the test passed with the ordering REVERSED.
+    // Mutating `if (!isClientAbortError(error))` to `if (true)` — i.e. restoring
+    // the exact pre-PR order this test exists to pin — left the suite green.
+    //
+    // The shape below satisfies BOTH predicates, which is the only way into the
+    // branch. It is the real prod shape, not a contrivance: meilisearch-js's
+    // `request()` catch re-wraps a failed fetch as `MeiliSearchCommunicationError`
+    // preserving `name` and the original `message`, and
+    // `isTransientMeiliError` returns true for that name once `code`/`errno` is a
+    // string (`meilisearch/client.ts` — the network-level branch). An aborted
+    // fetch is exactly how that arises.
+    //
+    // Without the ordering, a client that has ALREADY GONE AWAY is answered
+    // 503 + `Retry-After: 2` + `Cache-Control: no-store`, and the abort is
+    // counted as a search brownout.
+    const abortedMeiliCall = Object.assign(new Error('The operation was aborted'), {
+      name: 'MeiliSearchCommunicationError',
+      code: 'ECONNRESET',
+    });
     mockPublicApiContext2.mockResolvedValue({
       user: {
         getAll: () => {
-          throw new Error('The operation was aborted');
+          throw abortedMeiliCall;
         },
       },
     });
     const { req, res } = createMocks({ query: { query: 'heidi' } });
     await usersHandler(req, res);
 
-    expect(res._status()).toBe(499);
+    expect(res._status(), 'a departed client gets 499, never the transient-search 503').toBe(499);
     expect(res._json()).toBeUndefined();
   });
 

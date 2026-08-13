@@ -26,9 +26,18 @@ const { mockLogToAxiom, mockBuildCentralErrorLog, mockWasServerFaultLogged } = v
   mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
   // Message-FAITHFUL on purpose: it is what lets the observability guard detect a
   // future "fix" that stops a leak by redacting the LOG instead of the RESPONSE.
+  //
+  // `type` is stubbed to the SERVER-fault value ('error') deliberately, which is
+  // what the real builder returns for the case that matters — a TIMEOUT/408, the
+  // one status `classifyErrorFault` does NOT treat as a client fault. Returning a
+  // default of 'info' instead would make the severity assertions below pass
+  // whether or not the override exists: the mutant and the fix would be
+  // indistinguishable.
   mockBuildCentralErrorLog: vi.fn((e: unknown) => ({
     name: (e as Error)?.name,
     message: (e as Error)?.message,
+    type: 'error',
+    level: 'error',
   })),
   mockWasServerFaultLogged: vi.fn(() => false),
 }));
@@ -53,6 +62,7 @@ function createRes() {
   let statusCode = 200;
   let payload: unknown;
   let headersSent = false;
+  const headers: Record<string, unknown> = {};
   const res = {
     status(c: number) {
       statusCode = c;
@@ -63,8 +73,11 @@ function createRes() {
       headersSent = true;
       return res;
     },
-    setHeader() {
-      /* noop */
+    // Records rather than no-ops: the genericized arms must mark the response
+    // uncacheable, and a no-op setHeader cannot tell a set header from an unset one.
+    setHeader(k: string, v: unknown) {
+      headers[k] = v;
+      return res;
     },
     end() {
       headersSent = true;
@@ -75,6 +88,7 @@ function createRes() {
     },
     _status: () => statusCode,
     _json: () => payload,
+    _header: (k: string) => headers[k],
   };
   return res;
 }
@@ -150,6 +164,7 @@ describe('handleEndpointError — driver-authored text at a 4xx (civitai#3845 in
       code: 'P2000',
       status: 400,
       restCode: 'BAD_REQUEST',
+      expected: 'The request could not be processed',
       message:
         "\nInvalid `prisma.appListing.create()` invocation:\n\nThe provided value for the column is too long for the column's type. Column: app_listings.slug",
       secrets: ['app_listings', 'slug', 'appListing', 'prisma.', 'invocation'],
@@ -159,6 +174,7 @@ describe('handleEndpointError — driver-authored text at a 4xx (civitai#3845 in
       code: 'P2003',
       status: 409,
       restCode: 'CONFLICT',
+      expected: 'The request conflicts with the current state',
       message:
         '\nInvalid `prisma.appCollaborator.create()` invocation:\n\nForeign key constraint failed on the field: `app_collaborators_app_listing_id_fkey`',
       secrets: ['app_collaborators_app_listing_id_fkey', 'appCollaborator', 'prisma.'],
@@ -168,6 +184,7 @@ describe('handleEndpointError — driver-authored text at a 4xx (civitai#3845 in
       code: 'P2025',
       status: 404,
       restCode: 'NOT_FOUND',
+      expected: 'Not found',
       message:
         '\nInvalid `prisma.appListing.delete()` invocation:\n\nAn operation failed because it depends on one or more records that were required but not found.',
       secrets: ['appListing', 'delete()', 'prisma.', 'invocation'],
@@ -177,26 +194,38 @@ describe('handleEndpointError — driver-authored text at a 4xx (civitai#3845 in
       code: 'P2024',
       status: 408,
       restCode: 'TIMEOUT',
+      expected: 'The request timed out',
       message:
         'Timed out fetching a new connection from the connection pool. (More info: http://pris.ly/d/connection-pool) (Current connection pool timeout: 10, connection limit: 21)',
       secrets: ['connection limit', 'pris.ly', 'connection pool timeout'],
     },
-  ])('$label — status kept, message genericized', ({ code, status, restCode, message, secrets }) => {
-    const res = throughTheSeam(prismaError(code, message));
+  ])(
+    '$label — status kept, message genericized',
+    ({ code, status, restCode, message, secrets, expected }) => {
+      const res = throughTheSeam(prismaError(code, message));
 
-    expect(res._status(), 'the STATUS must be preserved — this really is a 4xx').toBe(status);
-    expectNoneDisclosed(res, secrets);
+      expect(res._status(), 'the STATUS must be preserved — this really is a 4xx').toBe(status);
+      expectNoneDisclosed(res, secrets);
 
-    const body = res._json() as Record<string, unknown>;
-    expect(body.code, 'the envelope discriminator must match the status').toBe(restCode);
-    expect(body.message).toBe(GENERIC_CLIENT_ERROR_BY_STATUS[status].message);
-    // `message` MUST stay a string — the Go CLI decodes it into `Message string`
-    // and a non-string fails the whole envelope unmarshal.
-    expect(typeof body.message).toBe('string');
-    // The CLI renders `error` in preference to `message`, so it must be non-empty
-    // AND must not be the place the leak relocates to.
-    expect(body.error).toBe(GENERIC_CLIENT_ERROR_BY_STATUS[status].message);
-  });
+      const body = res._json() as Record<string, unknown>;
+      expect(body.code, 'the envelope discriminator must match the status').toBe(restCode);
+      // 🔴 Pinned as a LITERAL, not read back out of
+      // `GENERIC_CLIENT_ERROR_BY_STATUS`. Deriving the expectation from the
+      // implementation makes the assertion vacuous: an audit mutated 400's message
+      // to `''` and this suite stayed green, because both sides moved together.
+      // The wire contract is the literal text, so the literal is what a test owes.
+      expect(body.message).toBe(expected);
+      // `message` MUST stay a string — the Go CLI decodes it into `Message string`
+      // and a non-string fails the whole envelope unmarshal.
+      expect(typeof body.message).toBe('string');
+      // The CLI renders `error` in preference to `message`, so it must be non-empty
+      // AND must not be the place the leak relocates to.
+      expect(body.error).toBe(expected);
+      // Cross-check the table this arm reads from, so a change to it that does NOT
+      // reach the wire (a stale/unused entry) is also visible.
+      expect(GENERIC_CLIENT_ERROR_BY_STATUS[status]).toEqual({ code: restCode, message: expected });
+    }
+  );
 
   // ── The headline severity case: actual ROW DATA, from `pg`, not Prisma ──────
   it('INVARIANT: a real pg 23505 does NOT put the offending row value (an email) on the wire', () => {
@@ -279,6 +308,55 @@ describe('handleEndpointError — driver-authored text at a 4xx (civitai#3845 in
       mockLogToAxiom,
       'a hand-authored 4xx is client feedback, not a fault — logging it would flood the error stream'
     ).not.toHaveBeenCalled();
+  });
+
+  // ── The genericized response must not be edge-cached ───────────────────────
+  it.each([
+    { label: 'a genericized 4xx', code: 'P2025', status: 404 },
+    { label: 'a genericized 5xx', code: 'P2022', status: 500 },
+  ])('$label is marked no-store', ({ code, status }) => {
+    // 🔴 `PublicEndpoint` sets `Cache-Control: public, s-maxage=300,
+    // stale-while-revalidate=150` on EVERY response before the handler runs.
+    // That was survivable while every failure was a 5xx (shared caches do not
+    // cache 5xx by default); it stops being survivable once an error answers
+    // 404, which IS in the default cacheable set. A transient NOT_FOUND would
+    // otherwise be pinned at the edge for 300s + 150s SWR — serving "no such
+    // thing" for five minutes after the thing exists.
+    const res = throughTheSeam(prismaError(code, 'raw driver text'));
+
+    expect(res._status()).toBe(status);
+    expect(
+      res._header('Cache-Control'),
+      'a genericized error response must never be edge-cacheable'
+    ).toBe('no-store, max-age=0');
+  });
+
+  // ── Log severity: forensics, not an incident ───────────────────────────────
+  it('logs a genericized 408 at INFO, not ERROR — pool exhaustion is wave-shaped', () => {
+    // 🔴 The only Prisma codes reaching 408 are P1008/P2024 — connection-pool
+    // exhaustion. Logging those at error severity would add one error-board line
+    // per affected public request during exactly the incident you need signal in.
+    // That is the same "fires in high-volume waves" property for which
+    // `isRestServerFault` excludes 503 from the error stream.
+    // `classifyErrorFault` treats TIMEOUT as a SERVER fault repo-wide (correct in
+    // general), so this arm overrides `type`/`level` locally instead.
+    throughTheSeam(prismaError('P2024', 'Timed out fetching a new connection'));
+
+    expect(mockLogToAxiom).toHaveBeenCalledTimes(1);
+    const logged = mockLogToAxiom.mock.calls[0][0] as { type?: string; level?: string };
+    // `type` is the load-bearing one: Alloy extracts it into Loki detected_level.
+    expect(logged.type, 'a genericized 4xx must not land on the error board').toBe('info');
+    expect(logged.level).toBe('info');
+  });
+
+  it('still logs a genuine 5xx at ERROR severity (the info override is scoped)', () => {
+    // Negative control for the override: if it leaked into the 5xx arm it would
+    // silently empty the error board of real faults.
+    throughTheSeam(prismaError('P2022', 'raw driver text'));
+
+    expect(mockLogToAxiom).toHaveBeenCalledTimes(1);
+    const logged = mockLogToAxiom.mock.calls[0][0] as { type?: string };
+    expect(logged.type, 'a real server fault must still be error-severity').not.toBe('info');
   });
 
   // ── INVARIANT GUARDS: green on both sides, pinning what must NOT change ─────

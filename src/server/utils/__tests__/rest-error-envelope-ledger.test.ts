@@ -53,35 +53,156 @@ function walk(dir: string): string[] {
 }
 
 /**
- * The four shapes population B actually used, as source-level patterns. Each one
- * is a real leak that shipped, NOT a stylistic preference:
+ * Extract the text of every object literal passed to a `.json(...)` call.
  *
- *   `{ message: 'An unexpected error occurred', error }`  — whole object
- *   `{ error: err.message }` next to that message         — verbatim driver text
- *   `res.status(…).json({ error: <expr>.cause })`         — the WRAPPED driver error
- *   `res.status(…).json({ …, cause: error })`             — object under a 2nd key
+ * 🔴 This replaced three regexes that were **spelled guards, not structural ones**.
+ * An audit defeated all three at once by simply dropping the literal
+ * `'An unexpected error occurred'`: a file containing only
+ * `return res.status(500).json({ error });` — the exact whole-object leak the
+ * ledger exists to stop — swept CLEAN. Two narrower holes died with them:
+ * `res.status(getHTTPStatusCodeFromError(e))` could not match a `[^)]*` status
+ * group, and `res.json({ error })` with no `.status()` was never considered.
  *
- * Matched on the GENERIC_SERVER_ERROR_MESSAGE literal and on `cause` appearing in
- * a response body, because those are the tells that survive reformatting. A site
- * that needs a bespoke body should build it with `restErrorBody`, which cannot
- * carry an error object.
+ * So: find the CALL, brace-match its argument, and inspect the object's KEYS AND
+ * VALUE SHAPES — which is what the hazard actually is. These cannot be spelled
+ * around, because they name what the value IS rather than what sits next to it.
  */
-const HAND_ROLLED_PATTERNS: { name: string; re: RegExp }[] = [
+function jsonBodies(source: string): string[] {
+  const out: string[] = [];
+  const call = /\.\s*json\(\s*\{/g;
+  for (let m = call.exec(source); m; m = call.exec(source)) {
+    const start = source.indexOf('{', m.index);
+    let depth = 0;
+    for (let i = start; i < source.length; i++) {
+      if (source[i] === '{') depth++;
+      else if (source[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          out.push(source.slice(start, i + 1));
+          break;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/** An identifier a `catch (…)` binding realistically uses. */
+const CAUGHT = String.raw`(?:e|err|error|ex)`;
+
+/**
+ * The value shapes that put a whole error object — or its driver-authored text —
+ * on the wire. A string-literal value (`{ error: 'Forbidden' }`) is deliberately
+ * NOT matched: the hazard is serializing an Error, not using the key.
+ */
+const LEAKING_BODY_SHAPES: { name: string; re: RegExp }[] = [
   {
-    name: "the '{ message: <generic>, error }' envelope (population B's shape)",
-    re: /['"]An unexpected error occurred['"]\s*,\s*\n?\s*error\b/,
+    name: '`error` bound to a caught error object (its enumerable own props serialize)',
+    // `{ error }` shorthand, `{ error: err }`, `{ error: e as Error }`.
+    re: new RegExp(
+      String.raw`(?:^|[{,])\s*error\s*(?:\}|,|:\s*\(?${CAUGHT}\)?(?:\s+as\s+\w+)?\s*[,}\)])`
+    ),
   },
   {
-    name: 'a response body carrying `cause:` (serializes the wrapped driver error)',
-    re: /res\s*\.\s*status\([^)]*\)\s*\.\s*json\(\s*\{[^}]*\bcause\s*:/s,
+    name: '`cause` in a response body (the wrapped driver error, under a second key)',
+    re: /(?:^|[{,])\s*cause\s*(?:\}|,|:)/,
   },
   {
-    name: 'a response body carrying `error: <expr>.cause` (the wrapped driver error)',
-    re: /res\s*\.\s*status\([^)]*\)\s*\.\s*json\(\s*\{\s*error\s*:\s*[A-Za-z_$][\w$]*\.cause\b/,
+    name: '`error: <expr>.cause` (serves the error the TRPCError wrapped)',
+    re: new RegExp(String.raw`(?:^|[{,])\s*error\s*:\s*[A-Za-z_$][\w$]*\.cause\b`),
+  },
+  {
+    name: "`error`/`message` set to a caught error's `.message` (verbatim driver text)",
+    re: new RegExp(
+      String.raw`(?:^|[{,])\s*(?:error|message)\s*:\s*\(?${CAUGHT}\)?(?:\s+as\s+\w+)?\)?\.message\b`
+    ),
   },
 ];
 
-describe('LEDGER: no REST route hand-rolls the error envelope (civitai#3845/4)', () => {
+/**
+ * 🔴 Sites of the SAME class this change does not fix — enumerated, not glossed.
+ *
+ * Making the guard structural surfaced this: the class was never confined to the
+ * 11 routes civitai#3845 enumerated. Every entry is recorded rather than
+ * exempted-by-glob, so the list fails if it GROWS (a new site) or SHRINKS (one
+ * was fixed — delete its line). Ordered by exposure, which is the order to fix in:
+ *
+ * 🔴 TIER 1 — UNAUTHENTICATED. Same severity as the routes this change fixes.
+ *   generation/{data,resources}.ts        PublicEndpoint; catch-all → 400 + e.message
+ *   v1/model-files/[id]/tensor-metadata   MixedAuthEndpoint (public read) → 422 + err.message
+ * NOT fixed here because the fix is not a delegation: each answers 4xx for EVERY
+ * failure including zod-parse rejections, so routing them through the helper turns
+ * a legitimate client 400 into a 500. That needs its own red/green and review.
+ *
+ * 🟡 TIER 2 — session-authed: a logged-in user can trigger it, the public cannot.
+ * 🟢 TIER 3 — operator surfaces behind JOB_TOKEN / WEBHOOK_TOKEN / moderator auth
+ * (`WebhookEndpoint`, `ModEndpoint`, `OrchestratorEndpoint`). There the driver
+ * detail is arguably the POINT — admin/backfill/debug tools whose caller is us.
+ * Listed for completeness; fixing them is optional and may be undesirable.
+ */
+const KNOWN_UNFIXED_SAME_CLASS: string[] = [
+  // TIER 1 — unauthenticated
+  'generation/data.ts',
+  'generation/resources.ts',
+  'v1/model-files/[id]/tensor-metadata.ts',
+  // TIER 2 — session-authed
+  'blocks/submit-version.ts',
+  'download/user-transactions.ts',
+  'image/ingest.ts',
+  'media/ingest/[mediaId].ts',
+  'upload/abort.ts',
+  'upload/complete.ts',
+  'upload/sign-part.ts',
+  'v1/blocks/models.ts',
+  'v1/blocks/submit-version.ts',
+  'v1/blocks/withdraw.ts',
+  'v1/image-upload/multipart/index.ts',
+  // TIER 3 — operator / token-gated
+  'admin/temp/backfill-b2-file-locations.ts',
+  'admin/temp/dedupe-official-files.ts',
+  'admin/temp/migrate-article-images.ts',
+  'admin/temp/migrate-model-flags.ts',
+  'admin/temp/remove-deprecated-base-models.ts',
+  'admin/test.ts',
+  'admin/update-freshdesk-customer.ts',
+  'mod/clavata-image-process.ts',
+  'mod/csam-upload.ts',
+  'mod/mute-user-pending-review.ts',
+  'mod/overturn-user-mute.ts',
+  'mod/queue-model-metric-update.ts',
+  'mod/reconcile-nowpayments.ts',
+  'mod/reprocess-buzz-purchases.ts',
+  'mod/reprocess-order.ts',
+  'mod/scanner-policies/export-dataset.ts',
+  'mod/unblock-images.ts',
+  'mod/withdraw-from-bank.ts',
+  'orchestrator/refreshBlobs.ts',
+  'testing/blue-buzz-paid-access.ts',
+  'testing/model-file-scan.ts',
+  'testing/redis-cluster.ts',
+  'testing/xguard-test.ts',
+  'webhooks/resource-training.ts',
+  'webhooks/run-jobs/[[...run]].ts',
+  'webhooks/scanner-policy-result.ts',
+  'webhooks/text-moderation-result.ts',
+];
+
+/** Routes this change fixed — must never appear in the exception list above. */
+const FIXED_BY_THIS_CHANGE = [
+  'notification/getDetails.ts',
+  'run/[modelVersionId].ts',
+  'v1/content/[[...slug]].ts',
+  'v1/creators.ts',
+  'v1/permissions/check.ts',
+  'v1/tags.ts',
+  'v1/users/index.ts',
+  'v1/vault/all.tsx',
+  'v1/vault/check-vault.tsx',
+  'v1/vault/get.tsx',
+  'v1/vault/toggle-version.tsx',
+];
+
+describe('LEDGER: no REST route serializes an error object or its text (civitai#3845/4)', () => {
   const files = walk(API_ROOT);
 
   it('finds the API tree (positive control — an empty sweep must not read as clean)', () => {
@@ -92,30 +213,97 @@ describe('LEDGER: no REST route hand-rolls the error envelope (civitai#3845/4)',
     expect(files.some((f) => f.endsWith(path.join('v1', 'creators.ts')))).toBe(true);
   });
 
-  it.each(HAND_ROLLED_PATTERNS)('no file matches $name', ({ re }) => {
-    const offenders = files.filter((f) => re.test(stripLineComments(readFileSync(f, 'utf8'))));
+  it('extracts json bodies at all (positive control on the extractor itself)', () => {
+    // The sweep is `bodies.some(...)`. If `jsonBodies` returned [] for every file,
+    // every shape would report zero offenders and the ledger would be a very
+    // convincing no-op.
+    const bodies = files.flatMap((f) => jsonBodies(stripLineComments(readFileSync(f, 'utf8'))));
+    expect(bodies.length, 'no `.json({…})` bodies extracted — the extractor is inert').
+      toBeGreaterThan(100);
     expect(
-      offenders.map((f) => path.relative(API_ROOT, f)).sort(),
-      'route these through `handleEndpointError` instead of re-creating the envelope — ' +
-        'a whole error object serializes its enumerable own props, which for a Prisma error ' +
-        'is the table + column and for a pg 23505 is the offending ROW VALUE'
-    ).toEqual([]);
+      jsonBodies(`res.status(500).json({ error: 'x', nested: { a: 1 } });`),
+      'brace matching must survive a nested object'
+    ).toEqual([`{ error: 'x', nested: { a: 1 } }`]);
   });
 
-  it('the patterns CAN match (negative control — a guard that never fires is not a guard)', () => {
-    // Each pattern is fed a synthetic offender built from the shape it exists to
-    // catch. Without this, all three could be typos matching nothing and the sweep
-    // above would report a reassuring, meaningless zero.
-    const samples = [
-      `res.status(500).json({ message: 'An unexpected error occurred', error });`,
-      `res.status(500).json({ error: 'Invalid database operation', cause: error });`,
-      `return res.status(500).json({ error: error.cause });`,
-    ];
-    HAND_ROLLED_PATTERNS.forEach((p, i) => {
-      expect(p.re.test(samples[i]), `pattern "${p.name}" failed to match its own exemplar`).toBe(
-        true
+  it('the offender set is EXACTLY the recorded baseline — a new one fails here', () => {
+    const offenders = files
+      .filter((f) =>
+        jsonBodies(stripLineComments(readFileSync(f, 'utf8'))).some((b) =>
+          LEAKING_BODY_SHAPES.some((s) => s.re.test(b))
+        )
+      )
+      .map((f) => path.relative(API_ROOT, f).split(path.sep).join('/'))
+      .sort();
+
+    expect(
+      offenders,
+      'a REST route now serializes an error object (or its text) into a response body. ' +
+        'Route it through `handleEndpointError` instead — a whole error object serializes its ' +
+        'enumerable own props, which for a Prisma error is the table + column and for a pg ' +
+        '23505 is the offending ROW VALUE. If you FIXED a baseline entry, delete its line ' +
+        'from KNOWN_UNFIXED_SAME_CLASS.'
+    ).toEqual([...KNOWN_UNFIXED_SAME_CLASS].sort());
+  });
+
+  it('none of the routes THIS change fixed are in the offender set', () => {
+    // A list of exceptions can swallow the very thing it was written around.
+    // Assert the 11 explicitly, both ways.
+    for (const rel of FIXED_BY_THIS_CHANGE) {
+      expect(
+        KNOWN_UNFIXED_SAME_CLASS,
+        `${rel} is in the exception list — it is supposed to be FIXED`
+      ).not.toContain(rel);
+      const bodies = jsonBodies(
+        stripLineComments(readFileSync(path.join(API_ROOT, rel), 'utf8'))
       );
-    });
+      for (const shape of LEAKING_BODY_SHAPES) {
+        expect(bodies.some((b) => shape.re.test(b)), `${rel} still matches "${shape.name}"`).toBe(
+          false
+        );
+      }
+    }
+  });
+
+  it('every shape CAN match, incl. the probe that defeated the previous patterns', () => {
+    // Negative control per shape. The FIRST sample is the one an audit used to
+    // walk through the old ledger untouched: no generic message literal, no
+    // `cause`, no `.status()` chain to anchor on.
+    const mustMatch: [string, number][] = [
+      [`return res.json({ error });`, 0],
+      [`res.status(500).json({ message: 'An unexpected error occurred', error });`, 0],
+      [`res.status(getHTTPStatusCodeFromError(e)).json({ ok: false, error: err });`, 0],
+      [`res.status(500).json({ error: 'Invalid database operation', cause: error });`, 1],
+      [`return res.status(500).json({ error: error.cause });`, 2],
+      [`res.status(500).json({ message: 'x', error: err.message });`, 3],
+      [`res.status(422).json({ error: (err as Error).message });`, 3],
+    ];
+    for (const [sample, shapeIndex] of mustMatch) {
+      const body = jsonBodies(sample)[0];
+      expect(body, `extractor failed on: ${sample}`).toBeDefined();
+      expect(
+        LEAKING_BODY_SHAPES[shapeIndex].re.test(body),
+        `shape "${LEAKING_BODY_SHAPES[shapeIndex].name}" failed on its own exemplar: ${sample}`
+      ).toBe(true);
+    }
+  });
+
+  it('does NOT match a hand-written string body (guards against an over-broad sweep)', () => {
+    // The counterpart control: a guard that matches EVERYTHING is as useless as
+    // one that matches nothing, and would force the next author to work around it.
+    const mustNotMatch = [
+      `res.status(403).json({ error: 'Forbidden' });`,
+      `res.status(404).json({ error: message });`,
+      `res.status(400).json({ error: z.prettifyError(result.error) ?? 'Invalid file id' });`,
+      `res.status(400).json({ error: parsed.error.flatten() });`,
+      `res.status(200).json({ items, metadata });`,
+    ];
+    for (const sample of mustNotMatch) {
+      const body = jsonBodies(sample)[0];
+      for (const shape of LEAKING_BODY_SHAPES) {
+        expect(shape.re.test(body), `"${shape.name}" false-positives on: ${sample}`).toBe(false);
+      }
+    }
   });
 });
 
