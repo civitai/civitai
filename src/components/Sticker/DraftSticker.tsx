@@ -389,6 +389,18 @@ export function DraftSticker({
   // re-attached to whichever control is currently mounted, so it survives the
   // swap by construction. (`Popover.Target` merges the child's own ref rather
   // than replacing it, so holding one costs nothing.)
+  //
+  // It lands on Escape and on the control's own click. A close caused by a
+  // mousedown elsewhere overwrites it a moment later with whatever was clicked,
+  // which is the browser's own default action and the behaviour you want —
+  // clicking into the note field must leave focus in the note field.
+  //
+  // Dropping the `returnFocus` PROP did not unwire Mantine's returnFocus
+  // FUNCTION: `Popover.Dropdown` passes it as `onTrigger` to its escape handler
+  // unconditionally, and the prop only gates the separate restore-on-close
+  // branch. It runs after this one and is a no-op or a repeat today, because the
+  // node it captured is this same control. It would start winning if the popover
+  // could ever be opened with focus somewhere else.
   const [opacityOpen, setOpacityOpen] = useState(false);
   const opacityTargetRef = useRef<HTMLButtonElement>(null);
 

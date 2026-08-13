@@ -214,7 +214,9 @@ describe('DraftSticker control geometry', () => {
   // The other half of the reported symptom, and the half no slider count can
   // see. Mantine's own `returnFocus` cannot do this one: it captures the element
   // to return to in a hook that skips its first run, so a Popover remounting
-  // already-open captures nothing and restores to null.
+  // already-open captures nothing and restores to null. Measured without the
+  // fix, focus is left on a non-control `div` — not the body, and either way not
+  // anywhere a keyboard user can carry on from.
   test('returns focus to the control that replaced the one it was opened from', async () => {
     const { resize } = await renderDraft(WIDE);
     await expect.element(page.getByRole('button', { name: 'Place' })).toBeInTheDocument();
@@ -223,11 +225,21 @@ describe('DraftSticker control geometry', () => {
     await expect.element(page.getByRole('slider')).toBeInTheDocument();
 
     await resize(NARROW);
-    // Read synchronously: focus lands on the body if this regresses, and body is
-    // an absorbing state no matcher could ever catch leaving.
+    // Queried AFTER the crossing: this is the control the remount built, and a
+    // different node from the one the slider was opened from.
+    const control = page.getByRole('button', { name: /set this sticker's opacity/i }).element();
+
+    // Closes rather than opens — the helper is a toggle, and the close is the
+    // whole point here. Read synchronously afterwards: a regression parks focus
+    // somewhere absorbing that no matcher could catch leaving.
     openOpacity();
 
     expect(document.activeElement?.getAttribute('aria-label')).toBe("Set this sticker's opacity");
+    // Identity, not just the label: the assertion above is the legible one, this
+    // is the one that cannot be satisfied by some other element carrying the
+    // same name, and it pins that focus went to the control the crossing BUILT
+    // rather than the detached one it replaced.
+    expect(document.activeElement).toBe(control);
     // The control it returned to is the newly mounted one, not a detached node
     // left over from the layout it was opened in.
     expect(document.body.contains(document.activeElement)).toBe(true);
