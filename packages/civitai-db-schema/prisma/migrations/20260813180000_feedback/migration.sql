@@ -21,7 +21,9 @@ CREATE TABLE IF NOT EXISTS "Feedback" (
   -- feedback surface needs no migration. Validated against the TS registry at
   -- the API boundary.
   "area"      TEXT        NOT NULL,
-  "userId"    INTEGER     NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
+  -- ON UPDATE CASCADE matches what Prisma emits for this relation; without it
+  -- Postgres records NO ACTION and the table lands pre-drifted from the schema.
+  "userId"    INTEGER     NOT NULL REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE,
   "message"   TEXT        NOT NULL,
   -- Client-reported context (route, filters, which backend the client believed
   -- served the page). A claim, not evidence.

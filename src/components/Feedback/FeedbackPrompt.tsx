@@ -2,6 +2,7 @@ import { ActionIcon, Button, Group, Paper, Stack, Text, Textarea } from '@mantin
 import { IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useStorage } from '~/hooks/useStorage';
 import type { CreateFeedbackInput } from '~/server/schema/feedback.schema';
 import type { FeedbackArea } from '~/shared/constants/feedback.constants';
 import { FEEDBACK_MESSAGE_MAX_LENGTH } from '~/shared/constants/feedback.constants';
@@ -28,11 +29,15 @@ export function FeedbackPrompt({
   active = true,
 }: FeedbackPromptProps) {
   const currentUser = useCurrentUser();
-  // Read once on mount: sessionStorage is per-tab, so a dismissal survives
-  // navigation within the visit and is gone on the next one.
-  const [dismissed, setDismissed] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return window.sessionStorage.getItem(dismissKey(area)) === 'true';
+  // Per-tab, so a dismissal survives navigation within the visit and is gone on
+  // the next one. Read through useStorage rather than window.sessionStorage
+  // directly: storage access throws outright in a sandboxed iframe or with
+  // storage disabled, and this renders inside the feed — a throw there takes
+  // the whole page to the error boundary instead of costing one banner.
+  const [dismissed, setDismissed] = useStorage({
+    type: 'sessionStorage',
+    key: dismissKey(area),
+    defaultValue: false,
   });
   const [message, setMessage] = useState('');
   const [sent, setSent] = useState(false);
@@ -48,10 +53,7 @@ export function FeedbackPrompt({
 
   if (!enabled || !data?.enabled) return null;
 
-  const handleDismiss = () => {
-    window.sessionStorage.setItem(dismissKey(area), 'true');
-    setDismissed(true);
-  };
+  const handleDismiss = () => setDismissed(true);
 
   return (
     <Paper withBorder p="sm" radius="md" mb="md">

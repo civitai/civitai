@@ -43,6 +43,12 @@ type ImagesInfiniteProps = {
   showAds?: boolean;
   showEmptyCta?: boolean;
   disableStoreFilters?: boolean;
+  /**
+   * Opt-in, because this component also backs image PICKERS (the collection
+   * add-content modal, challenge submission). Those are BitDex-served too, but a
+   * "tell us if the feed looks off" box does not belong above a picker.
+   */
+  showFeedbackPrompt?: boolean;
 } & Pick<ImagesContextState, 'collectionId' | 'judgeInfo' | 'judgingCategories'>;
 
 export default function ImagesInfinite(props: ImagesInfiniteProps) {
@@ -62,6 +68,7 @@ export function ImagesInfiniteContent({
   showAds,
   showEmptyCta,
   disableStoreFilters = false,
+  showFeedbackPrompt = false,
   ...imageProviderProps
 }: ImagesInfiniteProps) {
   const imageFilters = useImageFilters(filterType);
@@ -99,6 +106,7 @@ export function ImagesInfiniteContent({
     debugRetryActive,
     debugDelayMs,
     feedSource,
+    feedSources,
     pagesLoaded,
   } = useQueryImages(
     { ...filters, browsingLevel, include: ['cosmetics'] },
@@ -214,22 +222,25 @@ export function ImagesInfiniteContent({
 
   return (
     <>
-      <FeedbackPrompt
-        area="bitdex-image-feed"
-        active={feedSource === 'bitdex'}
-        notice="We're testing a new system behind this feed. If anything looks off, tell us."
-        placeholder="What looked wrong? Missing images, odd ordering, repeats, anything."
-        context={{
-          path: typeof window !== 'undefined' ? window.location.pathname : undefined,
-          reportedSource: feedSource,
-          pagesLoaded,
-          filters: {
-            sort: String(filters.sort ?? ''),
-            period: String(filters.period ?? ''),
-            browsingLevel,
-          },
-        }}
-      />
+      {showFeedbackPrompt && (
+        <FeedbackPrompt
+          area="bitdex-image-feed"
+          active={feedSource === 'bitdex'}
+          notice="We're testing a new system behind this feed. If anything looks off, tell us."
+          placeholder="What looked wrong? Missing images, odd ordering, repeats, anything."
+          context={{
+            path: typeof window !== 'undefined' ? window.location.pathname : undefined,
+            reportedSource: feedSource,
+            reportedPageSources: feedSources.join(',').slice(0, 200),
+            pagesLoaded,
+            filters: {
+              sort: String(filters.sort ?? ''),
+              period: String(filters.period ?? ''),
+              browsingLevel,
+            },
+          }}
+        />
+      )}
       {!images.length && isFetching && !isRetrying ? (
         <Center p="xl">
           <Loader />

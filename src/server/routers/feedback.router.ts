@@ -1,10 +1,13 @@
 import { TRPCError } from '@trpc/server';
 import { createFeedbackSchema, getFeedbackAreaSchema } from '~/server/schema/feedback.schema';
 import { createFeedback, isFeedbackAreaEnabled } from '~/server/services/feedback.service';
-import { guardedProcedure, protectedProcedure, router } from '~/server/trpc';
+import { guardedProcedure, router } from '~/server/trpc';
 
 export const feedbackRouter = router({
-  getArea: protectedProcedure.input(getFeedbackAreaSchema).query(async ({ input, ctx }) => {
+  // Same procedure level as `create` on purpose: a viewer who can see the prompt
+  // must be able to submit. Under protectedProcedure a muted or not-yet-onboarded
+  // user got the banner, typed, and hit an unrelated error on send.
+  getArea: guardedProcedure.input(getFeedbackAreaSchema).query(async ({ input, ctx }) => {
     const enabled = await isFeedbackAreaEnabled({ area: input.area, userId: ctx.user.id });
     return { enabled };
   }),

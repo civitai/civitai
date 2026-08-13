@@ -135,6 +135,20 @@ export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesIn
   };
 };
 
+/**
+ * Which backend served each loaded page, as emitted by the server branch that
+ * actually returned the data (getAllImagesIndex); the DB branch emits nothing,
+ * reported here as 'db'.
+ *
+ * BitDex falls back to Meili PER PAGE — on an error, and routinely whenever a
+ * pass accumulates zero documents — so a feed can start on BitDex and finish on
+ * Meili. Callers that ask "is BitDex serving this feed" must read the LAST
+ * entry, not whether the list contains 'bitdex'.
+ */
+export function getFeedSources(pages: unknown[] | undefined): string[] {
+  return (pages ?? []).map((page) => (page as { source?: string } | undefined)?.source ?? 'db');
+}
+
 export const useQueryImages = (
   filters?: GetInfiniteImagesInput,
   options?: { keepPreviousData?: boolean; enabled?: boolean; applyHiddenPreferences?: boolean }
@@ -190,20 +204,8 @@ export const useQueryImages = (
     }
   );
 
-  // Which backend served what is currently on screen. Emitted by the server
-  // branch that actually returned the data (getAllImagesIndex), so it stays
-  // honest when BitDex is in primary but falls back to Meili mid-session; the
-  // DB branch emits nothing. 'bitdex' wins over a later Meili page because the
-  // BitDex-served results are still in the list the user is looking at.
-  const feedSource = useMemo(() => {
-    const sources = (data?.pages ?? []).map(
-      // Only the index branch of the handler's union carries `source`, so the
-      // read is a cast rather than a narrowing.
-      (page) => (page as { source?: string } | undefined)?.source
-    );
-    if (sources.includes('bitdex')) return 'bitdex';
-    return [...sources].reverse().find(Boolean);
-  }, [data]);
+  const feedSources = useMemo(() => getFeedSources(data?.pages), [data]);
+  const feedSource = feedSources[feedSources.length - 1];
 
   // Deduplicate items to prevent duplicates from offset pagination drift
   const flatData = useMemo(() => {
@@ -240,6 +242,7 @@ export const useQueryImages = (
     data,
     flatData,
     feedSource,
+    feedSources,
     pagesLoaded: data?.pages.length ?? 0,
     images: items,
     removedImages: hiddenCount,
