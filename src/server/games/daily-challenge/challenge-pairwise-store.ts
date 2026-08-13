@@ -96,6 +96,60 @@ export async function replaceStandings(
   ]);
 }
 
+export type SwissState = {
+  /** Comparison wins. A tie counts half to each side, so this is fractional. */
+  wins: Map<number, number>;
+  /** Comparisons played. Derived, never a counter. */
+  games: Map<number, number>;
+  /** Unordered `low:high` keys of every pair already judged in this challenge. */
+  played: Set<string>;
+};
+
+export const swissPairKey = (a: number, b: number) => (a < b ? `${a}:${b}` : `${b}:${a}`);
+
+/**
+ * Everything the Swiss pairing rule needs, derived from the comparison rows in one pass.
+ *
+ * 🔴 Derived, deliberately, rather than kept as incremental columns on the standing. A comparison
+ * can be paid for and then dropped at the database by `recordComparison`'s conflict clause — 91 of
+ * 454 in one live run. Against a counter that is silent corruption: the entry looks under-played
+ * for the rest of the challenge and keeps drawing budget it has already spent. Deriving means a
+ * dropped row costs exactly the relation it was, and `played` and `games` can never disagree.
+ *
+ * Reads every phase, not just `swiss`: a pair compared during arrival is a pair we have paid for,
+ * and asking for it again would be buying an answer we already own.
+ */
+export async function getSwissState(challengeId: number): Promise<SwissState> {
+  const rows = await dbWrite.$queryRaw<
+    { imageIdA: number; imageIdB: number; winnerImageId: number | null }[]
+  >`
+    SELECT "imageIdA", "imageIdB", "winnerImageId"
+    FROM "ChallengeEntryComparison"
+    WHERE "challengeId" = ${challengeId}
+  `;
+
+  const wins = new Map<number, number>();
+  const games = new Map<number, number>();
+  const played = new Set<string>();
+  const bump = (map: Map<number, number>, id: number, by: number) =>
+    map.set(id, (map.get(id) ?? 0) + by);
+
+  for (const row of rows) {
+    // The same pair can appear more than once across phases (different seatings are different
+    // rows). It is one pair for pairing purposes, but each row is a comparison that happened.
+    played.add(swissPairKey(row.imageIdA, row.imageIdB));
+    bump(games, row.imageIdA, 1);
+    bump(games, row.imageIdB, 1);
+    if (row.winnerImageId == null) {
+      bump(wins, row.imageIdA, 0.5);
+      bump(wins, row.imageIdB, 0.5);
+    } else {
+      bump(wins, row.winnerImageId, 1);
+    }
+  }
+  return { wins, games, played };
+}
+
 export type StoredComparison = {
   imageIdA: number;
   imageIdB: number;

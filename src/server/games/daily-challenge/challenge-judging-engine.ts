@@ -3,6 +3,7 @@ import type { JudgingCategory } from '~/server/games/daily-challenge/daily-chall
 export const JUDGING_ENGINES = {
   LegacyAbsolute: 'legacy-absolute',
   PairwiseLadder: 'pairwise-ladder',
+  RollingSwiss: 'rolling-swiss',
 } as const;
 
 export type JudgingEngineKey = (typeof JUDGING_ENGINES)[keyof typeof JUDGING_ENGINES];
@@ -20,6 +21,7 @@ export function isJudgingEngineKey(value: unknown): value is JudgingEngineKey {
 export const JUDGING_ENGINE_LABELS: Record<JudgingEngineKey, string> = {
   [JUDGING_ENGINES.LegacyAbsolute]: 'Legacy (absolute scoring)',
   [JUDGING_ENGINES.PairwiseLadder]: 'Pairwise ladder',
+  [JUDGING_ENGINES.RollingSwiss]: 'Rolling Swiss (grouped)',
 };
 
 export const JUDGING_ENGINE_OPTIONS = Object.values(JUDGING_ENGINES).map((value) => ({
@@ -111,6 +113,27 @@ export interface ChallengeJudgingEngine {
    * else — `rankField` places anything that was missed.
    */
   recordEntry(ctx: JudgingEngineContext, entry: JudgedEntryRef): Promise<void>;
+
+  /**
+   * Spend up to `maxCalls` model calls advancing this challenge's ranking, using every entry judged
+   * so far. Called once per review tick while the challenge is open, after the absolute pass.
+   * Returns the calls actually spent. Optional: an engine that does its work per-entry or at close
+   * omits it.
+   *
+   * This exists because the other two hooks are the only two there were, and between them they
+   * force every engine to do its work either one entry at a time or all at once at close. That is
+   * not a property of any engine — it is a property of this interface, and it is where the ladder's
+   * 28-minute close stage, its expired claim and its concurrent second run all come from. An engine
+   * that can do a bounded chunk of work per tick has none of those failures to solve.
+   *
+   * `pool` is every entry judged so far, NOT this tick's arrivals. The ten-minute window decides
+   * which entries get sampled INTO the field; it is not the field.
+   */
+  advance?<T extends RankableEntry>(
+    ctx: JudgingEngineContext,
+    pool: T[],
+    maxCalls: number
+  ): Promise<number>;
 
   /**
    * Order the eligible field, best first, at close. MUST return every entry it was given: the

@@ -1,5 +1,6 @@
 import { legacyAbsoluteEngine } from '~/server/games/daily-challenge/challenge-engine-legacy';
 import { pairwiseLadderEngine } from '~/server/games/daily-challenge/challenge-engine-pairwise';
+import { rollingSwissEngine } from '~/server/games/daily-challenge/challenge-engine-rolling-swiss';
 import {
   DEFAULT_JUDGING_ENGINE,
   isJudgingEngineKey,
@@ -19,6 +20,7 @@ import type { ChallengeJudgingCategory } from '~/server/schema/challenge.schema'
 export const JUDGING_ENGINE_REGISTRY: Record<JudgingEngineKey, ChallengeJudgingEngine> = {
   [JUDGING_ENGINES.LegacyAbsolute]: legacyAbsoluteEngine,
   [JUDGING_ENGINES.PairwiseLadder]: pairwiseLadderEngine,
+  [JUDGING_ENGINES.RollingSwiss]: rollingSwissEngine,
 };
 
 /**

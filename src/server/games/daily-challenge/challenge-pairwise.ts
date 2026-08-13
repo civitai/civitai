@@ -17,7 +17,7 @@ export type ComparisonImage = {
   nsfwLevel: number;
 };
 
-export type ComparisonPhase = 'arrive' | 'rerun' | 'podium';
+export type ComparisonPhase = 'arrive' | 'rerun' | 'podium' | 'swiss';
 
 export type PairwiseVerdict = {
   imageIdA: number;
@@ -40,6 +40,11 @@ type RawVerdict = {
   winner?: string;
   margin?: string;
   perCategory?: Record<string, string>;
+  reason?: string;
+};
+
+type RawGroupVerdict = {
+  ranking?: number[];
   reason?: string;
 };
 
@@ -163,6 +168,137 @@ export async function comparePair(input: {
     usage,
     buzzCost: estimateBuzzCost(model, usage),
   };
+}
+
+/**
+ * The group system prompt. Same rubric and same integrity clause as the head-to-head, so the two
+ * shapes of question differ in the question and nothing else — a wording advantage given to one
+ * would be indistinguishable from a real effect.
+ */
+export function buildGroupComparisonPrompt(input: {
+  theme: string;
+  themeElements?: string[];
+  categories: JudgingCategory[];
+  criteriaByKey?: Record<string, string>;
+  groupSize: number;
+}): string {
+  const { theme, categories, groupSize } = input;
+  const rubric = categories
+    .map((c) => {
+      const criteria = input.criteriaByKey?.[c.key];
+      return `- ${c.label} (${c.weight}% of the decision)${criteria ? `: ${criteria}` : ''}`;
+    })
+    .join('\n');
+  const themeWeight = categories.find((c) => c.key === 'theme')?.weight;
+  const themeElements = input.themeElements?.length
+    ? `\nTheme elements: ${input.themeElements.join(', ')}`
+    : '';
+  const numbers = Array.from({ length: groupSize }, (_, i) => i + 1);
+
+  return `You are ranking ${groupSize} entries in an image challenge from best to worst.
+
+Theme: ${theme}${themeElements}
+
+Weigh the images on exactly these criteria:
+${rubric}
+
+Rules:
+- Judge the images, not the order they are shown in. No position has an advantage.
+${
+  themeWeight
+    ? `- Theme is ${themeWeight}% of the decision. An image that merely uses the theme as a backdrop is weaker on theme than one that actually interprets it.\n`
+    : ''
+}- Count of ideas is not quality of idea. So is shock, cuteness, or absurdity: they only count if the execution earns them.
+- Technical rendering counts: blur, garbled text, flat or low-detail rendering, malformed anatomy.
+- ${INTEGRITY_CLAUSE}
+- Produce a strict ranking. Ties are not allowed; if two are close, decide.
+
+Reply with json
+
+{
+  "ranking": [${numbers.join(', ')}],
+  "reason": "one or two sentences citing what separates the top from the bottom"
+}
+
+"ranking" lists the image numbers in order, BEST FIRST. Every number 1-${groupSize} appears exactly once.`;
+}
+
+export type GroupVerdict = {
+  /** Image ids best-first, or null when the model's ranking did not parse. */
+  order: number[] | null;
+  /**
+   * A ranking that is not a permutation of the group. Counted, never retried away: a structure
+   * cannot use an answer it cannot parse, so this is a real failure rate of the k-way arm rather
+   * than a harness detail. Measured at 0 in 240 calls on flash and 0 in 200 on luna.
+   */
+  malformed: boolean;
+  model: AIModel;
+  usage: TokenUsage;
+  buzzCost: number;
+};
+
+/**
+ * Rank a group in one call, yielding every ordered relation among its members instead of one.
+ *
+ * Measured (`kway.mjs`, 200 quads on `openai/gpt-5.6-luna`, adult images included): 200 calls at
+ * tau 0.540 against 1,200 pairwise calls at 0.522 — paired mean difference +0.018, 95% CI
+ * [-0.027, +0.063]. Not an advantage; the interval excludes any meaningful degradation, which was
+ * the question. So this is a 6x reduction in calls at no measured accuracy cost.
+ *
+ * 🔴 Deliberately NOT routed by nsfwLevel. `comparePair` picks a cheap judge for tame pairs and
+ * reroutes on refusal, but the k-way result exists on the permissive judge for all content and on
+ * the cheap judge only for `nsfwLevel <= 4` — where ~83% of unrestricted quads were refused
+ * outright. Splitting groups across two routes would mean running an arm whose accuracy on mixed
+ * content nobody has measured, in order to save money on a call that is already a sixth of the
+ * calls it replaces.
+ *
+ * 🔴 The caller owns presentation order. Within-group position bias is UNMEASURED — the second-seat
+ * share of 60.5% is a property of the head-to-head, and nothing establishes what the equivalent is
+ * across four positions. Callers should vary the order rather than presenting a group in a stable
+ * one, which is what `armQuadSwiss`'s band shuffle does in the simulation.
+ */
+export async function compareGroup(input: {
+  systemPrompt: string;
+  /** In presentation order. Image N in the prompt is `group[N - 1]`. */
+  group: ComparisonImage[];
+}): Promise<GroupVerdict> {
+  const { group } = input;
+  const model = PERMISSIVE_JUDGE;
+  const messages = buildGroupMessages(input.systemPrompt, group);
+
+  const { content, usage } = await getCompletionWithUsage<RawGroupVerdict>(model, messages, 2);
+
+  const ranking = content.ranking;
+  const valid =
+    Array.isArray(ranking) &&
+    ranking.length === group.length &&
+    new Set(ranking).size === group.length &&
+    ranking.every((n) => Number.isInteger(n) && n >= 1 && n <= group.length);
+
+  return {
+    order: valid ? ranking.map((n) => group[n - 1].imageId) : null,
+    malformed: !valid,
+    model,
+    usage,
+    buzzCost: estimateBuzzCost(model, usage),
+  };
+}
+
+function buildGroupMessages(systemPrompt: string, group: ComparisonImage[]): SimpleMessage[] {
+  const edge = (image: ComparisonImage) => getEdgeUrl(image.url, { width: 1200, name: 'image' });
+  return [
+    { role: 'system', content: [{ type: 'text', text: systemPrompt }] },
+    {
+      role: 'user',
+      content: [
+        ...group.flatMap((image, i) => [
+          { type: 'text' as const, text: `Image ${i + 1}:` },
+          { type: 'image_url' as const, image_url: { url: edge(image) } },
+        ]),
+        { type: 'text' as const, text: `Rank these ${group.length} entries, best first.` },
+      ],
+    },
+  ];
 }
 
 function buildComparisonMessages(
