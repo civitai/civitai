@@ -5,6 +5,7 @@ import {
   IconEyeOff,
   IconFlag,
   IconMessage,
+  IconShieldCancel,
   IconSticker,
   IconTrash,
 } from '@tabler/icons-react';
@@ -77,7 +78,6 @@ export function StickerPlacementHoverCard({
   children: ReactElement;
 }) {
   const [opened, setOpened] = useState(false);
-  const currentUser = useCurrentUser();
 
   const { data, isLoading } = trpc.placement.getStickerPlacementDetail.useQuery(
     { placementId },
@@ -181,24 +181,23 @@ export function StickerPlacementHoverCard({
               hasComment={!!data.comment}
             />
           )}
-          {/* One remove control, in one place. A moderator's remove and an
-              owner's are different powers over the same sticker — the moderator
-              answers a report, the owner takes it off their own image after the
-              week the placer paid for — and offering both at once in two corners
-              read as two different buttons doing the same thing. */}
-          {currentUser?.isModerator ? (
-            <ModeratorRemove
-              placementId={placementId}
-              // Both sources, because neither sees every case: the listing hands
-              // a moderator nobody else's pending rows, and the card's own query
-              // has not answered yet on the first frame.
-              pending={pending || data?.status === 'pending'}
-            />
-          ) : (
-            data?.viewerIsOwner &&
-            data.status === 'approved' && (
-              <OwnerRemove placementId={placementId} removableAt={data.removableAt} />
-            )
+          {/* Two controls where a viewer holds both powers, not one that guesses
+              which they meant. A takedown and an owner's removal differ in what
+              they do to the placer's money — a takedown of a pending placement
+              forfeits everything they paid, an owner's removal is held for the
+              week they paid for and moves nothing — and the server decides which
+              happened by the role exercised, not by the account. A moderator on
+              their own image is still the owner, so they get both, each saying
+              which it is. */}
+          <ModeratorRemove
+            placementId={placementId}
+            // Both sources, because neither sees every case: the listing hands a
+            // moderator nobody else's pending rows, and the card's own query has
+            // not answered yet on the first frame.
+            pending={pending || data?.status === 'pending'}
+          />
+          {data?.viewerIsOwner && data.status === 'approved' && (
+            <OwnerRemove placementId={placementId} removableAt={data.removableAt} />
           )}
         </Group>
 
@@ -501,31 +500,34 @@ function ModeratorRemove({
   if (!currentUser?.isModerator) return null;
 
   return (
-    <Tooltip label="Remove this sticker from the content" withArrow>
+    <Tooltip label="Take this sticker down as a moderator" withArrow>
       <LegacyActionIcon
         color="red"
         variant="subtle"
         size="sm"
         className="shrink-0"
-        aria-label="Remove placement"
+        aria-label="Take down placement as moderator"
         loading={remove.isPending}
         onClick={() =>
           openConfirmModal({
-            title: 'Remove this placement',
+            title: 'Take this placement down',
             children: (
               <Text size="sm">
                 {pending
-                  ? 'This one is still awaiting the owner. Removing it forfeits everything the placer paid — they get nothing back, and nobody is notified.'
-                  : 'The sticker comes off this content for everyone. No Buzz moves and nobody is notified.'}
+                  ? 'This one is still awaiting the owner. Taking it down forfeits everything the placer paid — they get nothing back, and nobody is notified.'
+                  : 'The sticker comes off this content for everyone, recorded as a moderator takedown. No Buzz moves and nobody is notified.'}
               </Text>
             ),
-            labels: { confirm: 'Remove', cancel: 'Cancel' },
+            labels: { confirm: 'Take down', cancel: 'Cancel' },
             confirmProps: { color: 'red' },
             onConfirm: () => remove.mutate({ placementId }),
           })
         }
       >
-        <IconTrash size={14} />
+        {/* A shield, not a second bin. The owner's remove sits beside this one
+            for an account holding both powers, and two identical icons would
+            make the pair a coin toss over whose money moves. */}
+        <IconShieldCancel size={14} />
       </LegacyActionIcon>
     </Tooltip>
   );
