@@ -410,6 +410,13 @@ export function ModelVersionUpsertForm({
   const currentLicensingFee = form.watch('licensingFee') ?? 0;
   const existingSettlementCurrency = version?.licensingFeeSettlementCurrency ?? null;
   const hasExistingLicensingFee = Number(version?.licensingFee ?? 0) > 0;
+  // A model depicting a real person can't earn at all — not a gate, not a per-generation fee. Every
+  // control goes and the section explains itself, rather than leaving editable inputs whose values the
+  // submit would drop. Private models keep their fee editor; only the gate is theirs to lose.
+  const monetizationBlocked = !!model?.poi;
+  // What the submit actually sends, so the warnings and the affirmation gate read the same value the
+  // payload carries instead of the untouched form state.
+  const submittedFee = monetizationBlocked ? 0 : currentLicensingFee ?? 0;
   // A version that already charges opens with the monetization section expanded; everything else starts
   // collapsed behind the master switch below.
   const hasExistingCharge = !!version?.paidAccess || hasExistingLicensingFee;
@@ -472,6 +479,7 @@ export function ModelVersionUpsertForm({
   // version (which has no download tier, so `download?.price` alone would read as unpriced).
   const storedAccessPrice = storedTerms?.download?.price ?? storedPaidGen?.price ?? 0;
   const showLicensingFeeBlock =
+    !monetizationBlocked &&
     !isNonCommercial &&
     (!!features.licensingFee ||
       hasExistingLicensingFee ||
@@ -512,7 +520,7 @@ export function ModelVersionUpsertForm({
   const moderatingSomeoneElsesModel =
     !!currentUser?.isModerator && modelOwnerId != null && modelOwnerId !== currentUser.id;
   const requiresRightsAffirmation =
-    !alreadyAffirmed && !moderatingSomeoneElsesModel && (currentLicensingFee > 0 || gateCharges);
+    !alreadyAffirmed && !moderatingSomeoneElsesModel && (submittedFee > 0 || gateCharges);
   // Step 2 of the disclosure: asked as soon as the creator says they want to charge, so the pricing
   // controls never appear before the affirmation. Distinct from `requiresRightsAffirmation`, which is the
   // submit gate and stays keyed to an actual charge — toggling the switch and changing your mind must not
@@ -534,7 +542,7 @@ export function ModelVersionUpsertForm({
   // Step 4 for the fee: its own opt-in, so the fee editor is reached by saying you want to charge per
   // generation rather than by the section being open at all.
   const feeEditorOpen = showChargeSettings && showLicensingFeeBlock && feeEnabled;
-  const removingStoredFee = hasExistingLicensingFee && (currentLicensingFee ?? 0) <= 0;
+  const removingStoredFee = hasExistingLicensingFee && submittedFee <= 0;
   // Read through `gateCharges` — what the submit actually sends — for the same reason it exists: the raw
   // config survives behind a hidden editor, so a version that went private, or whose usage control can no
   // longer be gated, drops its gate on save while the config still reads non-null.
@@ -775,13 +783,16 @@ export function ModelVersionUpsertForm({
         epochs: data.epochs ?? null,
         steps: data.steps ?? null,
         modelId: model?.id ?? -1,
+        // A POI model earns nothing: the fee editor is unmounted for one, so its stored value would
+        // otherwise ride along untouched behind a section that shows no controls at all.
+        licensingFee: submittedFee,
         paidAccess: submittedGate,
         // Keyed to the gate that is actually sent: a goal ends a timed window early, so writing one for a
         // version whose gate was just rejected leaves a goal against nothing to end.
         donationGoal: submittedGate ? toDonationGoalInput(gatedConfig) : null,
         trainedWords: skipTrainedWords ? [] : trainedWords,
         baseModelType: data.baseModelType,
-        monetization: data.monetization,
+        monetization: monetizationBlocked ? null : data.monetization,
         recommendedResources,
         templateId,
         bountyId,
@@ -1255,13 +1266,37 @@ export function ModelVersionUpsertForm({
           {(showPaidAccessInput ||
             showLicensingFeeBlock ||
             requiresRightsAffirmation ||
-            removingStoredCharge) && (
+            removingStoredCharge ||
+            monetizationBlocked) && (
             <Card withBorder p="md">
               <Stack gap={0}>
                 <Text fw={600} mb="sm">
                   Monetization
                 </Text>
-                {(showPaidAccessInput || showLicensingFeeBlock) && (
+                {monetizationBlocked && (
+                  <Alert
+                    color="red"
+                    icon={<IconAlertTriangle size={18} />}
+                    title="Models depicting a real person can't be monetized"
+                  >
+                    <Text size="sm">
+                      Paid access and per-generation license fees are both unavailable for this
+                      model.
+                    </Text>
+                    {removingStoredCharge && (
+                      <Text size="xs" mt={4}>
+                        Saving now removes this version&apos;s{' '}
+                        {removingStoredFee && removingStoredGate
+                          ? 'license fee and paid access'
+                          : removingStoredFee
+                          ? 'license fee'
+                          : 'paid access'}
+                        .
+                      </Text>
+                    )}
+                  </Alert>
+                )}
+                {!monetizationBlocked && (showPaidAccessInput || showLicensingFeeBlock) && (
                   <Switch
                     label="I want to charge for this version"
                     description="Sell access to the version, charge a fee per generation, or both."
@@ -1274,7 +1309,7 @@ export function ModelVersionUpsertForm({
                     disabled={isEarlyAccessOver && !!version?.paidAccess}
                   />
                 )}
-                {removingStoredCharge && (
+                {removingStoredCharge && !monetizationBlocked && (
                   <Stack gap={4} mt="sm" align="flex-start">
                     {/* Red only when the control the sentence is about is off screen — that's the case
                         the creator can't see. On screen, this describes an edit they just made. */}

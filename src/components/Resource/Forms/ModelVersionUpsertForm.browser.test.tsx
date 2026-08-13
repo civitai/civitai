@@ -422,10 +422,11 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     expect(page.getByText(/A private model can't have paid access/).elements()).toHaveLength(1);
   });
 
-  // `model.poi` hid the paid-access editor without touching what the submit sent, so a POI model
-  // re-asserted its stored gate from a control that never rendered. The PAYLOAD is the assertion that
-  // matters here: the warning alone would still read green while the gate shipped.
-  test('a POI model warns about its stored gate, and submits none', async () => {
+  // A POI model can't earn at all. The editors used to render (and, on the standalone edit route, the
+  // endpoint didn't even send `poi`), so a stored gate and fee resubmitted from controls the creator was
+  // never meant to see. The PAYLOAD is the assertion that matters: the alert alone would read green while
+  // the charges shipped.
+  test('a POI model hides every monetization control, and submits no charge', async () => {
     flags.current = { licensingFee: true, earlyAccessModel: true };
     renderWithProviders(
       <ModelVersionUpsertForm
@@ -437,25 +438,27 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
       </ModelVersionUpsertForm>
     );
 
-    // Present at first render, so anchor on the switch and then read synchronously.
-    await expect.element(chargeSwitch()).toBeChecked();
-    expect(page.getByText(/Saving now removes this version's paid access/).elements()).toHaveLength(
-      1
-    );
+    // The whole section collapses to one explanation: no charge switch, no gate editor, no fee editor.
+    await expect
+      .element(page.getByText(/Models depicting a real person can't be monetized/))
+      .toBeInTheDocument();
     expect(
-      page.getByText(/A model depicting a real person can't have paid access/).elements()
+      page.getByText(/Saving now removes this version's license fee and paid access/).elements()
     ).toHaveLength(1);
-    // The gate editor is off screen — which is why the warning has to carry the message.
+    expect(chargeSwitch().elements()).toHaveLength(0);
     expect(accessSwitch().elements()).toHaveLength(0);
+    expect(feeSwitch().elements()).toHaveLength(0);
 
-    // An edit elsewhere: the stored config is unchanged, so without this the save short-circuits as
-    // pristine and the payload assertion below would never run.
+    // An edit elsewhere: the stored charges are unchanged, so without this the save short-circuits as
+    // pristine and the payload assertions below would never run.
     await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
     await userEvent.click(page.getByRole('button', { name: 'Save' }));
     await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
-    // Null because of POI, not because this form never sends a gate: the blank-price test below submits a
-    // gate from the same model and version with POI off.
-    expect((mutateAsync.mock.calls[0][0] as { paidAccess?: unknown }).paidAccess).toBeNull();
+    // Null/zero because of POI, not because this form never sends them: the blank-price test below
+    // submits a gate from the same model and version with POI off, and `chargingVersion` stores a fee.
+    const payload = mutateAsync.mock.calls[0][0] as { paidAccess?: unknown; licensingFee?: number };
+    expect(payload.paidAccess).toBeNull();
+    expect(payload.licensingFee).toBe(0);
   });
 
   // Surfacing the POI notice meant rendering the Monetization card whenever a stored charge is going away.
