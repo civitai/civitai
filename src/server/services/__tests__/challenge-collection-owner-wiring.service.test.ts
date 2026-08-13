@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as ChallengeJudgeService from '~/server/services/challenge-judge.service';
 
 // JUDGE_USER_ID/CREATOR_USER_ID must be defined inside vi.hoisted() itself: its callback runs
 // before any top-level `const` in this file initializes, so referencing an outer const here
@@ -104,7 +105,8 @@ vi.mock('~/server/services/challenge-eligibility.service', () => ({
   assertUserAccountInGoodStanding: vi.fn(),
 }));
 
-vi.mock('~/server/services/challenge-judge.service', () => ({
+vi.mock('~/server/services/challenge-judge.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ChallengeJudgeService>()),
   getUserSelectableJudges: vi.fn().mockResolvedValue([{ id: 3 }]),
 }));
 

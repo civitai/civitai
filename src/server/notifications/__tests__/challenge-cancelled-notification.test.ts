@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { challengeNotifications } from '~/server/notifications/challenge.notifications';
 
 describe('challenge-cancelled notification definition', () => {
-  const def = (challengeNotifications as Record<string, (typeof challengeNotifications)['challenge-winner']>)[
-    'challenge-cancelled'
-  ];
+  const def = (
+    challengeNotifications as Record<string, (typeof challengeNotifications)['challenge-winner']>
+  )['challenge-cancelled'];
 
   it('is registered as a non-toggleable System notification', () => {
     expect(def).toBeTruthy();
@@ -258,7 +258,9 @@ describe('endChallengeAndPickWinners — zero-winner entrant cancellation notifi
 
     const result = await endChallengeAndPickWinners(7);
 
-    expect(result).toEqual({ success: true, winnersCount: 0 });
+    // `queued` distinguishes "judging ran and found nobody" from "judging has not run yet" — this
+    // is the former, and the moderator UI branches on it.
+    expect(result).toEqual({ success: true, winnersCount: 0, queued: false });
     expect(mockCreateNotification).toHaveBeenCalledTimes(1);
     const call = mockCreateNotification.mock.calls[0][0];
     expect(call.type).toBe('challenge-cancelled');

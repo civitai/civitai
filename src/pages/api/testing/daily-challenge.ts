@@ -122,7 +122,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         i."id" as "imageId",
         i."userId",
         u."username",
-        i."url"
+        i."url",
+        i."nsfwLevel"
       FROM "Image" i
       JOIN "User" u ON u.id = i."userId"
       WHERE i.id = ${imageId}

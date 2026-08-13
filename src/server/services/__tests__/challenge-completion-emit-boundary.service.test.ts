@@ -27,6 +27,7 @@ const {
   mockDbWriteChallengeUpdate,
   mockDbWriteChallengeFindUnique,
   mockClaimChallengeForCompletion,
+  mockCompleteChallengeIfClaimHeld,
   mockGetChallengeById,
   mockGetExistingWinnersForRetry,
   mockCreateBuzzTransactionMany,
@@ -45,6 +46,7 @@ const {
     prizeDistribution: null,
   }),
   mockClaimChallengeForCompletion: vi.fn(),
+  mockCompleteChallengeIfClaimHeld: vi.fn().mockResolvedValue(true),
   mockGetChallengeById: vi.fn(),
   mockGetExistingWinnersForRetry: vi.fn(),
   mockCreateBuzzTransactionMany: vi.fn().mockResolvedValue(undefined),
@@ -111,6 +113,8 @@ vi.mock('~/server/games/daily-challenge/daily-challenge.utils', async () => {
 });
 
 vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
+  challengeClaimStillHeld: vi.fn().mockResolvedValue(true),
+  completeChallengeIfClaimHeld: mockCompleteChallengeIfClaimHeld,
   buildChallengeModerationText: vi.fn(),
   claimChallengeForCompletion: mockClaimChallengeForCompletion,
   closeChallengeCollection: vi.fn().mockResolvedValue(undefined),
@@ -359,11 +363,8 @@ describe('mod -> job completion boundary — prize Buzz is counted exactly once'
 
     // The payout call really was made twice across the two runs — one settlement, two attempts.
     expect(mockCreateBuzzTransactionMany.mock.calls.length).toBeGreaterThanOrEqual(2);
-    // The job's Completed write landed.
-    expect(mockDbWriteChallengeUpdate).toHaveBeenCalledTimes(1);
-    expect(mockDbWriteChallengeUpdate.mock.calls[0][0]).toMatchObject({
-      data: { status: ChallengeStatus.Completed },
-    });
+    // The job's claim-conditional Completed write landed.
+    expect(mockCompleteChallengeIfClaimHeld).toHaveBeenCalledTimes(1);
 
     // ...and the Buzz was counted ONCE.
     expect(recordChallengePrizePaidBuzz).toHaveBeenCalledTimes(1);

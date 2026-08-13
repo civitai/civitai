@@ -21,6 +21,7 @@ import {
   CHALLENGE_MIN_DURATION_MS,
   CHALLENGE_MIN_ENTRY_FEE,
 } from '~/shared/constants/challenge.constants';
+import { JUDGING_ENGINES } from '~/server/games/daily-challenge/challenge-judging-engine';
 import { infiniteQuerySchema } from './base.schema';
 import { imageSchema } from './image.schema';
 import type { ProfileImage } from '~/server/selectors/image.selector';
@@ -754,6 +755,7 @@ export const upsertJudgeSchema = z.object({
   winnerSelectionPrompt: z.string().optional().nullable(),
   active: z.boolean().optional(),
   userSelectable: z.boolean().optional(),
+  judgingEngine: z.enum(Object.values(JUDGING_ENGINES)).optional(),
 });
 
 // Playground: Generate content for a model version
@@ -788,6 +790,17 @@ export const playgroundReviewImageSchema = z.object({
   aiModel: z.string().min(1).optional(),
   judgingCategories: challengeJudgingCategoriesInputSchema.optional(),
   nsfw: z.boolean().optional(),
+});
+
+// Playground: dry-run a challenge's field through the pairwise ladder. Writes nothing — see
+// runLadderDryRun — but the comparisons are real LLM calls and really cost Buzz.
+export type PlaygroundRunLadderInput = z.infer<typeof playgroundRunLadderSchema>;
+export const playgroundRunLadderSchema = z.object({
+  challengeId: z.number(),
+  // Bounded well below the production K by default: a moderator experimenting should not be able
+  // to start a several-thousand-comparison run from a form field by accident.
+  topK: z.number().int().min(2).max(60).optional(),
+  includePodium: z.boolean().optional(),
 });
 
 // Playground: Pick winners from a challenge
