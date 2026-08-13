@@ -1,0 +1,20 @@
+{
+  // Audit/measurement config: identical to tsconfig.json in every respect
+  // EXCEPT that it does not exclude `src/**/__tests__/**`.
+  //
+  // The delta from the base config is exactly one line, deliberately: a
+  // hand-rolled narrowed program (one that picks its own `include` or drops
+  // `src`) silently loses `src/types/global.d.ts`, which makes ambient names
+  // like `FileMetadata` resolve to TS2304 and collapses downstream generics
+  // into a FALSE all-clear on the files that matter. Extending the real config
+  // and subtracting one exclude entry is what keeps the program honest.
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "node_modules",
+    "./node_modules",
+    "./node_modules/*",
+    "src/pages/api/dev-local/*.ts",
+    "scripts/local-dev/*.ts",
+    "packages/civitai-ui"
+  ]
+}
