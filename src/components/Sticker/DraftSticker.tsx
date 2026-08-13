@@ -271,6 +271,12 @@ export function DraftSticker({
 
   const begin =
     (mode: Gesture['mode'], corner?: { sx: number; sy: number }) => (event: React.PointerEvent) => {
+      // `preventDefault` also suppresses the compatibility `mousedown` — measured
+      // in Chromium, and `stopPropagation` alone does not do it. That is what
+      // keeps an open opacity slider alive through a drag, resize or rotate:
+      // Mantine's click-outside listens for `mousedown`, so a press on the
+      // sticker never reaches it. Removing this would close the popover on every
+      // gesture.
       event.preventDefault();
       event.stopPropagation();
 
