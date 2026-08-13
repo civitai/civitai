@@ -211,6 +211,28 @@ describe('DraftSticker control geometry', () => {
     expect(controlsAreInTheCluster()).toBe(false);
   });
 
+  // The other half of the reported symptom, and the half no slider count can
+  // see. Mantine's own `returnFocus` cannot do this one: it captures the element
+  // to return to in a hook that skips its first run, so a Popover remounting
+  // already-open captures nothing and restores to null.
+  test('returns focus to the control that replaced the one it was opened from', async () => {
+    const { resize } = await renderDraft(WIDE);
+    await expect.element(page.getByRole('button', { name: 'Place' })).toBeInTheDocument();
+
+    openOpacity();
+    await expect.element(page.getByRole('slider')).toBeInTheDocument();
+
+    await resize(NARROW);
+    // Read synchronously: focus lands on the body if this regresses, and body is
+    // an absorbing state no matcher could ever catch leaving.
+    openOpacity();
+
+    expect(document.activeElement?.getAttribute('aria-label')).toBe("Set this sticker's opacity");
+    // The control it returned to is the newly mounted one, not a detached node
+    // left over from the layout it was opened in.
+    expect(document.body.contains(document.activeElement)).toBe(true);
+  });
+
   test('leaves a closed slider closed across the same crossing', async () => {
     // Without this, the case above would also pass against a popover wedged
     // permanently open.

@@ -44,9 +44,10 @@ export const STICKER_PANEL_MIN_WIDTH_PX = 124;
  *
  * The two layouts are in different places in the component tree, so every
  * crossing of a single threshold unmounts one and mounts the other. A monotonic
- * drag crosses once and is fine; what a band buys is the NON-monotonic case — a
- * width parked on the line, where `scale * mediaWidth` rounds to 123 and 124 on
- * alternate frames, swapping the layouts for as long as the sticker sits there.
+ * drag crosses once and is fine; what a band buys is the NON-monotonic case,
+ * where the width itself moves back and forth across the line — a corner-resize
+ * gesture held near it, or a window-resize drag doing the same to the media box
+ * the sticker's width is a percentage of. Each wobble is a full swap without it.
  *
  * It buys jitter resistance and nothing else: one deliberate crossing still
  * swaps the layouts, so anything stateful up there has to survive that on its
@@ -168,10 +169,17 @@ export function placeButtonBoxes({
  * Whether the buy button belongs above the sticker rather than below it.
  *
  * Two different things hide it, and both were measured on the image detail page
- * at 1400x900: the tray is `fixed` at `z-30` and paints over the whole sticker
- * overlay, and the carousel's viewport is `overflow: hidden` ending exactly at
- * the bottom of the media box (846px), which clips anything hanging below it.
- * A button can hit either without the other, so both are checked.
+ * at 1400x900: the tray is `fixed` at `z-30` over the whole sticker overlay, and
+ * the carousel's viewport is `overflow: hidden` ending exactly at the bottom of
+ * the media box (846px), which clips anything hanging below it. A button can hit
+ * either without the other, so both are checked.
+ *
+ * The tray's rect is where the button cannot be PRESSED, which is deliberately
+ * wider than what the tray paints: its root spans the viewport and hit-tests
+ * across all of it, so the transparent gutters either side of the visible card
+ * swallow a click just as thoroughly as the card does. Read it as painting and
+ * the gutters look like slack worth trimming; they are not, and the ranking
+ * below depends on the difference.
  *
  * Takes the visible side when there is one, and otherwise the LESS hidden of the
  * two. Standing still when both are bad reads as conservative and is not: on a

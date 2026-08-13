@@ -380,7 +380,23 @@ export function DraftSticker({
   // a window resize was enough, since the sticker's width is a fraction of the
   // media box. `trapFocus` is the other half: the dropdown is genuinely rebuilt,
   // so focus has to be put back into it rather than merely not taken away.
+  //
+  // Returning focus on close is ours rather than Mantine's `returnFocus`, which
+  // is inert in exactly the case this exists for. `useFocusReturn` captures the
+  // element to return to inside a `useDidUpdate`, and that hook skips its first
+  // invocation — so a Popover REMOUNTING with `opened` already true never
+  // captures anything, and the close then restores to null. A ref here is
+  // re-attached to whichever control is currently mounted, so it survives the
+  // swap by construction. (`Popover.Target` merges the child's own ref rather
+  // than replacing it, so holding one costs nothing.)
   const [opacityOpen, setOpacityOpen] = useState(false);
+  const opacityTargetRef = useRef<HTMLButtonElement>(null);
+
+  const showOpacity = (open: boolean) => {
+    setOpacityOpen(open);
+    if (!open) opacityTargetRef.current?.focus({ preventScroll: true });
+  };
+
   const opacityControl = (
     <Popover
       width={210}
@@ -389,22 +405,18 @@ export function DraftSticker({
       withinPortal
       shadow="md"
       trapFocus
-      // Paired with `trapFocus`, which Mantine defaults to leaving unpaired: the
-      // trap moves focus into the slider on open, and without this it is
-      // abandoned on document.body at close, so the next Tab restarts at the top
-      // of the page.
-      returnFocus
       opened={opacityOpen}
-      onChange={setOpacityOpen}
+      onChange={showOpacity}
     >
       <Popover.Target>
         <ActionIcon
+          ref={opacityTargetRef}
           size="sm"
           radius="xl"
           variant="subtle"
           color={draft.opacity < 1 ? 'blue' : 'gray'}
           aria-label="Set this sticker's opacity"
-          onClick={() => setOpacityOpen((open) => !open)}
+          onClick={() => showOpacity(!opacityOpen)}
         >
           <IconDropletHalf2 size={14} />
         </ActionIcon>
