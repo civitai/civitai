@@ -31,7 +31,7 @@ const stylesheet = readFileSync(
 ).toLowerCase();
 
 describe('sticker treatments', () => {
-  // Pending placements are 60% opacity plus a dashed yellow outline. A treatment
+  // Pending placements are a dashed yellow outline. A treatment
   // that borrows any of that tells an owner they have a decision waiting when
   // they do not. The rule is enforced over the whole table rather than over the
   // options that exist today, because the violation arrives with a sixth option

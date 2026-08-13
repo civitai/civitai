@@ -24,6 +24,7 @@ import {
   isStickerPlacementData,
   normalizeStickerComment,
   normalizeStickerPlacement,
+  parseStickerPlacementData,
   stickerMaxScale,
   stickerRemovableAt,
 } from '~/shared/utils/sticker-placement';
@@ -384,9 +385,7 @@ export async function getStickerPlacementDetail({
 
   // Read off the placement's own payload rather than joined in the query above:
   // `data` is JSON, so the cosmetic id is not a relation Prisma can follow.
-  const data = isStickerPlacementData(placement.data)
-    ? (placement.data as StickerPlacementData)
-    : null;
+  const data = parseStickerPlacementData(placement.data);
   const cosmeticId = data?.cosmeticId ?? null;
 
   const isParty =
@@ -504,13 +503,14 @@ export async function getStickerPlacements({
     orderBy: { createdAt: 'asc' },
   });
 
-  return rows
-    .filter((row) => isStickerPlacementData(row.data))
-    .map((row) => {
-      const data = row.data as StickerPlacementData;
-      const isParty = !!viewerId && (viewerId === row.ownerId || viewerId === row.placerId);
+  return rows.flatMap((row) => {
+    const data = parseStickerPlacementData(row.data);
+    if (!data) return [];
 
-      return {
+    const isParty = !!viewerId && (viewerId === row.ownerId || viewerId === row.placerId);
+
+    return [
+      {
         id: row.id,
         imageId: row.targetId,
         placerId: row.placerId,
@@ -525,8 +525,9 @@ export async function getStickerPlacements({
         data: { ...data, comment: undefined, commentHidden: undefined },
         isPending: row.status === 'pending',
         hasComment: !!visibleStickerComment(data, isParty),
-      };
-    });
+      },
+    ];
+  });
 }
 
 /** Approved placements per image, for the reaction-bar count. */
@@ -858,13 +859,12 @@ export async function getPendingStickerPlacements({
   });
   const byId = new Map(images.map((image) => [image.id, image]));
 
-  return rows
-    .filter((row) => isStickerPlacementData(row.data))
-    .map((row) => ({
-      ...row,
-      data: row.data as StickerPlacementData,
-      image: byId.get(row.targetId) ?? null,
-    }));
+  return rows.flatMap((row) => {
+    const data = parseStickerPlacementData(row.data);
+    if (!data) return [];
+
+    return [{ ...row, data, image: byId.get(row.targetId) ?? null }];
+  });
 }
 
 /**

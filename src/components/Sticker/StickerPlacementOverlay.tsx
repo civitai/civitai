@@ -4,6 +4,7 @@ import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import type { PlacedSticker } from '~/components/Sticker/placement.util';
 import { orderPlacements, placementRevealDelays } from '~/components/Sticker/placement-order';
+import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
 import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
 import {
@@ -113,9 +114,9 @@ export function StickerPlacementOverlay({
   artworkWidth?: number;
   /**
    * How an approved sticker is separated from the artwork under it. Never
-   * applied to a pending placement — pending owns 60% opacity plus a dashed
-   * yellow outline, and a second always-on treatment on top of it would make
-   * "waiting on you" and "settled" look the same to the owner.
+   * applied to a pending placement — pending owns the dashed yellow outline, and
+   * a second always-on treatment on top of it would make "waiting on you" and
+   * "settled" look the same to the owner.
    */
   treatment?: StickerTreatmentKey;
   /**
@@ -325,6 +326,14 @@ export function StickerPlacementOverlay({
             isPending: placement.isPending,
           });
 
+          // The placer's own opacity, drawn at its true value even while the
+          // owner is deciding. Pending used to be dimmed a further 40% on top of
+          // this, which compounds — a sticker placed at the 30% floor would reach
+          // a review card at 18%, looking like nothing there and then appearing
+          // at full strength once approved, which is exactly what the floor
+          // exists to prevent. The dashed outline carries "awaiting review" now.
+          const appearance = stickerArtworkStyle(placement.data);
+
           const artworkImage = (
             <EdgeImage
               src={art.url}
@@ -332,12 +341,12 @@ export function StickerPlacementOverlay({
               // A fixed request width rather than a measured one: a sticker has
               // a natural size and the element scales it down in layout.
               options={{ width: artworkWidth, anim: art.animated, optimized: true }}
-              className={clsx(placement.isPending && 'opacity-60')}
               style={{
                 width: '100%',
                 height: 'auto',
                 display: 'block',
                 ...dressed.imageStyle?.[surface],
+                ...appearance,
               }}
             />
           );
@@ -363,7 +372,11 @@ export function StickerPlacementOverlay({
                 <span
                   aria-hidden
                   className={dressed.behind.className}
-                  style={{ zIndex: -1, ...dressed.behind.style }}
+                  style={{
+                    zIndex: -1,
+                    ...dressed.behind.style,
+                    opacity: placement.data.opacity,
+                  }}
                 />
               )}
 
@@ -373,10 +386,11 @@ export function StickerPlacementOverlay({
                 artworkImage
               )}
 
-              {/* A dashed outline rather than opacity alone. Fading is invisible
-                over busy artwork and reads as a rendering fault over plain
-                artwork, whereas a border is a deliberate mark at any size and
-                against any background. The mild fade stays as a second cue. */}
+              {/* A dashed outline, and now the only mark. Fading was the second
+                cue and could not stay: the placer sets their own opacity, so a
+                dim-for-pending would compound with theirs and be indistinguishable
+                from a sticker they chose to place faint. A border is a deliberate
+                mark at any size and against any background. */}
               {placement.isPending && (
                 <span className="pointer-events-none absolute -inset-1 rounded border-2 border-dashed border-yellow-6" />
               )}

@@ -1,5 +1,18 @@
-import { Text, Textarea, UnstyledButton } from '@mantine/core';
-import { IconMessage, IconX } from '@tabler/icons-react';
+import {
+  ActionIcon,
+  Popover,
+  Slider,
+  Text,
+  Textarea,
+  Tooltip,
+  UnstyledButton,
+} from '@mantine/core';
+import {
+  IconDropletHalf2,
+  IconFlipHorizontal,
+  IconMessage,
+  IconTrash,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -13,11 +26,15 @@ import {
   shouldFlipPlaceButton,
 } from '~/components/Sticker/place-button-position';
 import { payoutCopy } from '~/components/Sticker/payout-copy';
+import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { useCreateStickerPlacement } from '~/components/Sticker/placement.util';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import type { StickerTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { PLACEMENT_SPEND_TYPES } from '~/shared/constants/placement.constants';
-import { STICKER_COMMENT_MAX_LENGTH } from '~/shared/utils/sticker-placement';
+import {
+  STICKER_COMMENT_MAX_LENGTH,
+  STICKER_PLACEMENT_MIN_OPACITY,
+} from '~/shared/utils/sticker-placement';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 import {
   pointerToSurfaceFraction,
@@ -98,6 +115,7 @@ export function DraftSticker({
   const payout = payoutCopy(ownerShare, ownerUsername);
   const select = useStickerPlacementDraftStore((state) => state.select);
   const cancelDraft = useStickerPlacementDraftStore((state) => state.cancelDraft);
+  const move = useStickerPlacementDraftStore((state) => state.move);
   const place = useCreateStickerPlacement(draft.id);
 
   // Local to the draft rather than in the store: it is written once, read once
@@ -312,6 +330,7 @@ export function DraftSticker({
         display: 'block',
         pointerEvents: 'none',
         ...dressed.imageStyle?.detail,
+        ...stickerArtworkStyle(draft),
       }}
       draggable={false}
     />
@@ -341,7 +360,7 @@ export function DraftSticker({
         <span
           aria-hidden
           className={dressed.behind.className}
-          style={{ zIndex: -1, ...dressed.behind.style }}
+          style={{ zIndex: -1, ...dressed.behind.style, opacity: draft.opacity }}
         />
       )}
 
@@ -372,20 +391,80 @@ export function DraftSticker({
         style={{ top: `-${KNOB_OFFSET * 100}%` }}
       />
 
-      {/* Offset diagonally out past the corner handle rather than replacing it —
-          all four corners resize, and losing one to a destructive action on the
-          only corner a right-hander reaches first is worse than the crowding.
-          Dark rather than the handles' blue: it is the one control here that
-          throws work away. */}
-      <button
-        type="button"
-        aria-label="Remove this sticker"
+      {/* Offset diagonally out past the top-right corner rather than replacing
+          the handle there — all four corners resize, and losing one to a
+          destructive action on the corner a right-hander reaches first is worse
+          than the crowding. It grows to the RIGHT from that point, away from the
+          rotate knob: the knob is centred over the top edge, and a row that grew
+          leftward would reach it on any sticker narrower than twice the row.
+          Dark rather than the handles' blue: these act on the sticker, they are
+          not part of positioning it. */}
+      <div
+        className="absolute -top-7 left-full ml-1 flex cursor-auto items-center gap-0.5 rounded-full border-2 border-white bg-dark-7 px-1 py-0.5"
         onPointerDown={(event) => event.stopPropagation()}
-        onClick={() => cancelDraft(draft.id)}
-        className="absolute -right-7 -top-7 flex size-5 cursor-pointer items-center justify-center rounded-full border-2 border-white bg-dark-7 text-white"
       >
-        <IconX size={10} stroke={3} />
-      </button>
+        <Tooltip label={draft.flip ? 'Unflip' : 'Flip'} withinPortal>
+          <ActionIcon
+            size="sm"
+            radius="xl"
+            variant="subtle"
+            color={draft.flip ? 'blue' : 'gray'}
+            aria-label={draft.flip ? 'Unflip this sticker' : 'Flip this sticker'}
+            onClick={() => move(draft.id, { flip: !draft.flip })}
+          >
+            <IconFlipHorizontal size={14} />
+          </ActionIcon>
+        </Tooltip>
+
+        {/* The slider is behind a control rather than always on screen: it is set
+            once, and a slider parked on the artwork would be in the way of every
+            later drag. */}
+        <Popover width={210} position="top" withArrow withinPortal shadow="md">
+          <Popover.Target>
+            <ActionIcon
+              size="sm"
+              radius="xl"
+              variant="subtle"
+              color={draft.opacity < 1 ? 'blue' : 'gray'}
+              aria-label="Set this sticker's opacity"
+            >
+              <IconDropletHalf2 size={14} />
+            </ActionIcon>
+          </Popover.Target>
+          <Popover.Dropdown p="sm">
+            <Text size="xs" c="dimmed" className="mb-2">
+              Opacity
+            </Text>
+            {/* The floor is the slider's own minimum, so the range you can drag
+                through is the range the server accepts — the value can never be
+                one the purchase would then refuse. The refusal still lives in
+                the schema; this only keeps the two from disagreeing in front of
+                the person placing it. */}
+            <Slider
+              min={Math.round(STICKER_PLACEMENT_MIN_OPACITY * 100)}
+              max={100}
+              step={5}
+              value={Math.round(draft.opacity * 100)}
+              onChange={(value) => move(draft.id, { opacity: value / 100 })}
+              label={(value) => `${value}%`}
+              aria-label="Sticker opacity"
+            />
+          </Popover.Dropdown>
+        </Popover>
+
+        <Tooltip label="Remove" withinPortal>
+          <ActionIcon
+            size="sm"
+            radius="xl"
+            variant="subtle"
+            color="gray"
+            aria-label="Remove this sticker"
+            onClick={() => cancelDraft(draft.id)}
+          >
+            <IconTrash size={14} />
+          </ActionIcon>
+        </Tooltip>
+      </div>
 
       <div
         ref={buttonRef}
@@ -456,6 +535,8 @@ export function DraftSticker({
                 y: draft.y,
                 scale: draft.scale,
                 rotation: draft.rotation,
+                flip: draft.flip,
+                opacity: draft.opacity,
                 // Sent only when there is something to send, so an opened-then-
                 // abandoned field is the same as never opening it.
                 ...(note.trim() ? { comment: note } : {}),

@@ -21,7 +21,7 @@ const placement = (id: number, imageId: number, isPending = false): PlacedSticke
   ownerId: 602,
   status: isPending ? 'pending' : 'approved',
   amount: 75,
-  data: { cosmeticId: 900, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 },
+  data: { cosmeticId: 900, x: 0.5, y: 0.5, scale: 0.2, rotation: 0, flip: false, opacity: 1 },
   placedAt: new Date('2026-08-12T12:00:00Z'),
   isPending,
 });

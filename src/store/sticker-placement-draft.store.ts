@@ -1,8 +1,11 @@
 import { create } from 'zustand';
 import {
+  STICKER_PLACEMENT_DEFAULT_OPACITY,
   STICKER_PLACEMENT_DEFAULT_SCALE,
+  STICKER_PLACEMENT_MAX_OPACITY,
   STICKER_PLACEMENT_MAX_ROTATION,
   STICKER_PLACEMENT_MAX_SCALE,
+  STICKER_PLACEMENT_MIN_OPACITY,
   STICKER_PLACEMENT_MIN_SCALE,
 } from '~/shared/utils/sticker-placement';
 
@@ -22,6 +25,8 @@ export type StickerDraft = {
   y: number;
   scale: number;
   rotation: number;
+  flip: boolean;
+  opacity: number;
 };
 
 /**
@@ -230,6 +235,8 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
         // the very first gesture with no hint why.
         scale: Math.min(STICKER_PLACEMENT_DEFAULT_SCALE, maxScale ?? STICKER_PLACEMENT_MAX_SCALE),
         rotation: 0,
+        flip: false,
+        opacity: STICKER_PLACEMENT_DEFAULT_OPACITY,
       };
 
       // Appended and selected: the one just dragged out is the one being placed,
@@ -257,6 +264,15 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
           next.rotation ?? current.rotation,
           -STICKER_PLACEMENT_MAX_ROTATION,
           STICKER_PLACEMENT_MAX_ROTATION
+        ),
+        // Clamped like the rest, though nothing here can overshoot: the slider is
+        // bounded and the flip is a toggle. It matters because the server refuses
+        // rather than clamps below the floor, so a draft that got there some other
+        // way would be refused at the purchase — after the Buzz confirmation.
+        opacity: clamp(
+          next.opacity ?? current.opacity,
+          STICKER_PLACEMENT_MIN_OPACITY,
+          STICKER_PLACEMENT_MAX_OPACITY
         ),
       };
 
