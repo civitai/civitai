@@ -1,6 +1,60 @@
 import { defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
+import os from 'os';
 import path from 'path';
+
+// Vitest defaults to `cpus - 1` workers, so two concurrent suites saturate a 32-core dev box.
+// Measured here on the unit suite: 31 workers 235.9s, 8 workers 410.2s — 1.74x slower, for a
+// machine that stays usable while several agents run suites at once.
+//
+// The cap must only ever REDUCE. Vitest's default depends on the resolved mode (`cpus - 1` in run,
+// `floor(cpus / 2)` in watch) and that mode is NOT knowable from this file: `vitest run --watch` is
+// explicitly supported and resolves to watch while `process.argv` still says "run", so sniffing argv
+// raises the count on exactly the small machines this is meant to protect.
+//
+// So don't try to know the mode. Take the watch-mode default as the ceiling — it is the smaller of
+// the two at every core count — and apply nothing at all below 10 cores. That is mode-blind and
+// provably never exceeds either default, while leaving small boxes and CI (4 vCPU) untouched.
+//
+// `VITEST_MAX_WORKERS` still overrides everything below, per run.
+// (Unrelated but adjacent: `test.poolOptions` was removed in Vitest 4, so `poolOptions.forks.maxForks`
+// does nothing apart from logging a deprecation.)
+const WORKER_CAP = 8;
+// Below this the run-mode default (`cpus - 1`) is already <= WORKER_CAP, so there is nothing to cap.
+const CAP_ABOVE_CORES = WORKER_CAP + 1;
+const cpuCount = os.availableParallelism?.() ?? os.cpus().length;
+const capped = (ceiling: number) => Math.max(1, Math.min(WORKER_CAP, Math.floor(ceiling / 2)));
+
+// `undefined` leaves Vitest's own resolution completely alone.
+const maxWorkers = cpuCount > CAP_ABOVE_CORES ? capped(cpuCount) : undefined;
+
+// The browser pool sizes itself separately — `min(12, cpus - 1)`, because its main thread chokes
+// past ~12 — and `getThreadsCount` reads ONLY the project's own `maxWorkers`, never the root. So
+// the browser project has to be capped individually or it is not capped at all. Scope, stated
+// honestly: this equals the browser watch-mode default at every core count, so it bites only in
+// run mode (12 -> 6 at >= 13 cores) and is a deliberate no-op in watch.
+const componentMaxWorkers =
+  cpuCount > CAP_ABOVE_CORES ? capped(Math.min(12, cpuCount - 1)) : undefined;
+
+// `component` resolves to a different worker count than the other projects, so it needs its own
+// group or `groupSpecs` throws — and that throw reports as `Test Files: no tests`, i.e. a run that
+// reads as having found nothing rather than as having failed.
+//
+// Declared statically below AND re-asserted here, deliberately. Static alone is not enough: a CLI
+// `--sequence.*` flag REPLACES `test.sequence` wholesale (cliOverrides is a spread, not a merge)
+// and takes `groupOrder` with it. The plugin alone is not enough either: this file is outside
+// tsconfig's `include`, so nothing typechecks the hook name — a typo would leave the plugin inert
+// and silent. Keeping both means one has to fail before anything breaks.
+//
+// Known gap, unfixable by pinning: `--sequence.groupOrder=1` moves the OTHER projects onto this
+// same value, and no constant can dodge that. No script or workflow passes it.
+const COMPONENT_GROUP_ORDER = 1;
+const componentGroupOrderPlugin = {
+  name: 'civitai:component-group-order',
+  configureVitest({ project }: { project: any }) {
+    project.config.sequence.groupOrder = COMPONENT_GROUP_ORDER;
+  },
+};
 
 // Mirror the workspace `@civitai/*` package mappings from tsconfig.json `paths` so Vitest
 // (which doesn't read tsconfig paths, and these packages aren't symlinked into the root
@@ -65,6 +119,7 @@ const componentAlias = [
 export default defineConfig({
   resolve: { alias },
   test: {
+    maxWorkers,
     projects: [
       // The nine `packages/*` suites, referenced by their OWN config files rather than
       // re-declared here. Until this line existed, nothing in CI invoked them: the `unit`
@@ -154,6 +209,7 @@ export default defineConfig({
         // optimizeDeps cache (fresh CI runs). Canonical fix; protects every
         // component test from this class of dual-React crash.
         resolve: { alias: componentAlias, dedupe: ['react', 'react-dom'] },
+        plugins: [componentGroupOrderPlugin],
         // Pre-bundle deps the component setup mocks/imports so Vitest doesn't
         // discover them mid-run and trigger a "Vite unexpectedly reloaded a
         // test" warning (a flake vector).
@@ -200,6 +256,11 @@ export default defineConfig({
         },
         test: {
           name: 'component',
+          maxWorkers: componentMaxWorkers,
+          // See componentGroupOrderPlugin — this is the static half. Costs only a bare `vitest run`,
+          // which serialises the two projects instead of interleaving them; CI and every script
+          // select one project at a time.
+          sequence: { groupOrder: COMPONENT_GROUP_ORDER },
           globals: true,
           include: ['src/**/*.browser.test.tsx'],
           // process-shim MUST come first (no imports) so it runs before any
