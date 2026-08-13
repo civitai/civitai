@@ -419,7 +419,11 @@ export function StickerPlacementOverlay({
 
           if (!placement.isPending)
             return (
-              <StickerPlacementHoverCard key={placement.id} placementId={placement.id}>
+              <StickerPlacementHoverCard
+                key={placement.id}
+                placementId={placement.id}
+                imageId={placement.imageId}
+              >
                 {body}
               </StickerPlacementHoverCard>
             );
@@ -507,7 +511,12 @@ export function StickerPlacementOverlay({
             );
 
           return (
-            <StickerPlacementHoverCard key={placement.id} placementId={placement.id} pending>
+            <StickerPlacementHoverCard
+              key={placement.id}
+              placementId={placement.id}
+              imageId={placement.imageId}
+              pending
+            >
               {body}
             </StickerPlacementHoverCard>
           );
