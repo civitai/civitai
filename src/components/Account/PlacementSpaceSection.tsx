@@ -59,7 +59,7 @@ export function PlacementSpaceSection() {
     isPending: spacesPending,
     isError: spacesFailed,
   } = trpc.placement.getMySpaces.useQuery({ surface: 'sticker' }, { enabled });
-  const { data: pending } = trpc.placement.getPending.useQuery(undefined, { enabled });
+  const { data: pending } = trpc.placement.getPending.useQuery({}, { enabled });
 
   const stored = spaces?.[0];
   // Seeded from the surface defaults, not from `off`. With no row the cascade
@@ -107,7 +107,11 @@ export function PlacementSpaceSection() {
   if (spacesPending || spacesFailed) return null;
 
   const cap = range?.max ?? 0;
-  const waiting = pending?.length ?? 0;
+  const waiting = pending?.items.length ?? 0;
+  // One page's worth is a floor, not a total. Badging it as an exact number
+  // tells an owner with 200 waiting that they have 50, which is the same lie
+  // the unpaged queue told.
+  const waitingLabel = pending?.nextCursor ? `${waiting}+` : `${waiting}`;
   const caption = placementPriceCaption(
     'sticker',
     price === '' ? DEFAULT_PRICE ?? 0 : price,
@@ -248,7 +252,7 @@ export function PlacementSpaceSection() {
           rightSection={
             waiting > 0 ? (
               <Badge size="sm" color="yellow" variant="filled" circle>
-                {waiting}
+                {waitingLabel}
               </Badge>
             ) : undefined
           }

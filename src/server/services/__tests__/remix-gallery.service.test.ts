@@ -44,7 +44,10 @@ vi.mock('~/server/services/placement-space.service', () => ({ resolvePlacementSp
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
 
 vi.mock('~/server/services/placement.service', () => ({
-  getPlacementConfig: async () => ({ declineFeeRate: () => 0.3 }),
+  getPlacementConfig: async () => ({
+    declineFeeRate: () => 0.3,
+    approvalShares: () => ({ seller: 0, platform: 0 }),
+  }),
 }));
 
 /**
@@ -99,6 +102,7 @@ const {
   parseGalleryCursor,
   getRemixGallery,
   getRemixGalleryVisibility,
+  getPendingRemixGallerySubmissions,
 } = await import('~/server/services/remix-gallery.service');
 
 const {
@@ -1050,5 +1054,92 @@ describe('an approved submission counts toward the host image buzz counter', () 
       actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
     ).rejects.toThrow(/already resolved/i);
     expect(updateEntityMetricDetached).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The review queue pages, and the escrow behind an entry it skips expires
+ * without the owner ever being offered the choice — so "did we skip one" is the
+ * only question these ask.
+ */
+describe('getPendingRemixGallerySubmissions paging', () => {
+  const queueRow = (id: number, imageId: number, createdAt: string) => ({
+    id,
+    targetId: HOST_IMAGE,
+    placerId: PLACER,
+    amount: PRICE,
+    data: { imageId },
+    createdAt: new Date(createdAt),
+    expiresAt: null,
+    placer: { id: PLACER, username: 'someone', image: null },
+  });
+
+  /** Only the first image resolves, so the rest of the page is filtered out. */
+  const onlyFirstImageVisible = (imageId: number) =>
+    queryRaw.mockResolvedValue([
+      { id: imageId, url: 'x', width: 1, height: 1, type: 'image', metadata: null, nsfwLevel: 1 },
+    ]);
+
+  beforeEach(() => {
+    queryRaw.mockResolvedValue([]);
+  });
+
+  it('takes the cursor from the last row of the page, not the last row it returns', async () => {
+    // Three rows for a page of two: the third is the "is there more" probe, and
+    // the second is dropped below because its image no longer resolves.
+    placementFindMany.mockResolvedValue([
+      queueRow(1, 101, '2026-01-01T00:00:00.000Z'),
+      queueRow(2, 102, '2026-01-02T00:00:00.000Z'),
+      queueRow(3, 103, '2026-01-03T00:00:00.000Z'),
+    ]);
+    onlyFirstImageVisible(101);
+
+    const result = await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2 });
+
+    expect(result.items.map((item) => item.id)).toEqual([1]);
+    // Row 2's key. A cursor built from what was returned would say row 1, and
+    // the next page would serve row 2 a second time.
+    expect(result.nextCursor).toBe(`${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`);
+  });
+
+  it('reports no next page when the queue ends inside the page', async () => {
+    placementFindMany.mockResolvedValue([queueRow(1, 101, '2026-01-01T00:00:00.000Z')]);
+    onlyFirstImageVisible(101);
+
+    const result = await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2 });
+
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it('resumes strictly after the cursor row, including its same-millisecond twin', async () => {
+    placementFindMany.mockResolvedValue([]);
+    const createdAt = new Date('2026-01-02T00:00:00.000Z');
+
+    await getPendingRemixGallerySubmissions({
+      ownerId: OWNER,
+      limit: 2,
+      cursor: `${createdAt.getTime()}:2`,
+    });
+
+    const { where, orderBy, take } = placementFindMany.mock.calls.at(-1)?.[0] as {
+      where: { OR?: unknown[] };
+      orderBy: unknown;
+      take: number;
+    };
+    // Two placements can share a millisecond. Without the id tie-break one of
+    // them is stepped over and its escrow expires unreviewed.
+    expect(where.OR).toEqual([{ createdAt: { gt: createdAt } }, { createdAt, id: { gt: 2 } }]);
+    expect(orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
+    // limit + 1: the extra row is what says whether another page exists.
+    expect(take).toBe(3);
+  });
+
+  it('starts a fresh page rather than a NaN query when the cursor is malformed', async () => {
+    placementFindMany.mockResolvedValue([]);
+
+    await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2, cursor: 'nonsense' });
+
+    const { where } = placementFindMany.mock.calls.at(-1)?.[0] as { where: { OR?: unknown[] } };
+    expect(where.OR).toBeUndefined();
   });
 });

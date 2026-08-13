@@ -186,6 +186,50 @@ export const placementSurfaceLabel = (surface: PlacementSurface) =>
   PLACEMENT_SURFACES[surface].label;
 
 // ---------------------------------------------------------------------------
+// Review queues
+// ---------------------------------------------------------------------------
+
+/** How many pending placements one page of a review queue carries. */
+export const PLACEMENT_QUEUE_PAGE_SIZE = 50;
+
+export type PlacementQueueCursor = { createdAt: Date; id: number };
+
+export const encodePlacementQueueCursor = (row: PlacementQueueCursor) =>
+  `${row.createdAt.getTime()}:${row.id}`;
+
+/** A malformed cursor becomes a fresh first page rather than a NaN in a query. */
+export function parsePlacementQueueCursor(cursor?: string | null): PlacementQueueCursor | null {
+  if (!cursor) return null;
+
+  const [createdAt, id] = cursor.split(':').map(Number);
+  if (![createdAt, id].every(Number.isFinite)) return null;
+
+  return { createdAt: new Date(createdAt), id };
+}
+
+/**
+ * Where the last page stopped, as a keyset rather than an offset.
+ *
+ * Both columns the queues order on, in the same order and direction. `createdAt`
+ * alone is not unique — two placements made in the same millisecond would either
+ * repeat across pages or be stepped over, and an entry stepped over is escrow
+ * nobody ever reviews, which is the failure this paging exists to end.
+ *
+ * An offset would have the same hole for a different reason: acting on a
+ * placement takes it out of the queue, so page two of an offset walk skips as
+ * many entries as the owner just approved.
+ */
+export const placementQueueKeyset = (cursor: PlacementQueueCursor | null) =>
+  cursor
+    ? {
+        OR: [
+          { createdAt: { gt: cursor.createdAt } },
+          { createdAt: cursor.createdAt, id: { gt: cursor.id } },
+        ],
+      }
+    : {};
+
+// ---------------------------------------------------------------------------
 // Space resolution
 // ---------------------------------------------------------------------------
 

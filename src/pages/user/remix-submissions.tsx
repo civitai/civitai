@@ -70,12 +70,21 @@ export default function RemixSubmissions() {
 
   // Both run on mount rather than per-tab: the received count is shown on the
   // tab itself, so it has to be known while `sent` is the one on screen.
-  const { data: received, isLoading: receivedLoading } =
-    trpc.placement.getPendingRemixGallerySubmissions.useQuery({});
+  const {
+    data: received,
+    isLoading: receivedLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = trpc.placement.getPendingRemixGallerySubmissions.useInfiniteQuery(
+    {},
+    { getNextPageParam: (lastPage) => lastPage.nextCursor }
+  );
   const { data: sent, isLoading: sentLoading } =
     trpc.placement.getMyRemixGallerySubmissions.useQuery();
 
-  const waiting = received?.items.length ?? 0;
+  const receivedRows = received?.pages.flatMap((page) => page.items) ?? [];
+  const waiting = receivedRows.length;
 
   return (
     <>
@@ -96,7 +105,7 @@ export default function RemixSubmissions() {
                 rightSection={
                   waiting ? (
                     <Badge size="sm" variant="filled" circle>
-                      {waiting}
+                      {hasNextPage ? `${waiting}+` : waiting}
                     </Badge>
                   ) : null
                 }
@@ -108,9 +117,11 @@ export default function RemixSubmissions() {
 
             <Tabs.Panel value="received" pt="md">
               <ReceivedTab
-                rows={received?.items ?? []}
-                truncated={!!received?.truncated}
+                rows={receivedRows}
                 isLoading={receivedLoading}
+                hasMore={!!hasNextPage}
+                isFetchingMore={isFetchingNextPage}
+                onLoadMore={() => fetchNextPage()}
               />
             </Tabs.Panel>
 
@@ -128,12 +139,16 @@ type ReceivedRow = RouterOutput['placement']['getPendingRemixGallerySubmissions'
 
 function ReceivedTab({
   rows,
-  truncated,
   isLoading,
+  hasMore,
+  isFetchingMore,
+  onLoadMore,
 }: {
   rows: ReceivedRow[];
-  truncated: boolean;
   isLoading: boolean;
+  hasMore: boolean;
+  isFetchingMore: boolean;
+  onLoadMore: () => void;
 }) {
   const utils = trpc.useUtils();
 
@@ -183,14 +198,6 @@ function ReceivedTab({
 
   return (
     <Stack gap="md">
-      {/* Neither queue pages. A list that stops at the cap and says nothing
-          reads as complete. */}
-      {truncated && (
-        <Text size="xs" c="dimmed">
-          Showing the first {REMIX_GALLERY_QUEUE_LIMIT}.
-        </Text>
-      )}
-
       {rows.map((row) => (
         <Card key={row.id} withBorder>
           <Group justify="space-between" wrap="nowrap" align="flex-start">
@@ -254,6 +261,12 @@ function ReceivedTab({
           </Group>
         </Card>
       ))}
+
+      {hasMore && (
+        <Button variant="default" loading={isFetchingMore} onClick={onLoadMore}>
+          Load more
+        </Button>
+      )}
     </Stack>
   );
 }

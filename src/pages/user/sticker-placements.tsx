@@ -1,4 +1,15 @@
-import { Alert, Anchor, Card, Checkbox, Container, Group, Stack, Text, Title } from '@mantine/core';
+import {
+  Alert,
+  Anchor,
+  Button,
+  Card,
+  Checkbox,
+  Container,
+  Group,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
@@ -21,10 +32,14 @@ import { trpc } from '~/utils/trpc';
  * and to clear a backlog in one pass.
  */
 export default function StickerPlacements() {
-  const { data: pending, isLoading } = trpc.placement.getPending.useQuery();
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    trpc.placement.getPending.useInfiniteQuery(
+      {},
+      { getNextPageParam: (lastPage) => lastPage.nextCursor }
+    );
   const [selected, setSelected] = useState<number[]>([]);
 
-  const rows = pending ?? [];
+  const rows = data?.pages.flatMap((page) => page.items) ?? [];
   const cosmeticIds = rows.map((row) => row.data.cosmeticId);
   const { sticker } = useStickerCosmetics(cosmeticIds);
 
@@ -177,6 +192,12 @@ export default function StickerPlacements() {
               </Card>
             );
           })}
+
+          {hasNextPage && (
+            <Button variant="default" loading={isFetchingNextPage} onClick={() => fetchNextPage()}>
+              Load more
+            </Button>
+          )}
         </Stack>
       </Container>
     </>

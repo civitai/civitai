@@ -40,11 +40,7 @@ import { VerifiedRemixBadge } from '~/components/RemixGallery/VerifiedRemixBadge
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Currency } from '~/shared/utils/prisma/enums';
-import {
-  REMIX_GALLERY_MAX_PINNED,
-  REMIX_GALLERY_QUEUE_LIMIT,
-  remixGalleryRemovableAt,
-} from '~/shared/utils/remix-gallery';
+import { REMIX_GALLERY_MAX_PINNED, remixGalleryRemovableAt } from '~/shared/utils/remix-gallery';
 import { daysFromNow, formatDateMin } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -122,8 +118,20 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
   // Scoped server-side. Filtering the account-wide list here meant its limit
   // truncated before the filter ran, so a busy owner saw "nothing waiting" on
   // an image that had submissions.
-  const { data: pending, isLoading: pendingLoading } =
-    trpc.placement.getPendingRemixGallerySubmissions.useQuery({ hostImageId: imageId });
+  const {
+    data: pendingPages,
+    isLoading: pendingLoading,
+    fetchNextPage: fetchMorePending,
+    hasNextPage: hasMorePending,
+    isFetchingNextPage: fetchingMorePending,
+  } = trpc.placement.getPendingRemixGallerySubmissions.useInfiniteQuery(
+    { hostImageId: imageId },
+    { getNextPageParam: (lastPage) => lastPage.nextCursor }
+  );
+  const pending = useMemo(
+    () => ({ items: pendingPages?.pages.flatMap((page) => page.items) ?? [] }),
+    [pendingPages]
+  );
 
   // **Deliberately does not send the viewer's browsing level**, unlike the
   // gallery card. This is the owner managing what sits on their own image, so a
@@ -304,14 +312,15 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                     </Group>
                   </Card>
                 ))}
-                {/* The queue does not page. Without this line a busy owner
-                    sees a full list that looks complete and never learns the
-                    rest exist — and the escrow behind those sits until it
-                    expires. */}
-                {pending?.truncated && (
-                  <Text size="xs" c="dimmed">
-                    Showing the first {REMIX_GALLERY_QUEUE_LIMIT}. Answer some to see the rest.
-                  </Text>
+                {hasMorePending && (
+                  <Button
+                    variant="default"
+                    size="xs"
+                    loading={fetchingMorePending}
+                    onClick={() => fetchMorePending()}
+                  >
+                    Load more
+                  </Button>
                 )}
               </Stack>
             ) : (

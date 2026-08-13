@@ -82,6 +82,8 @@ export function RemixGallerySettings() {
   // Waiting on the owner, and waiting on someone else. Only the first is a
   // to-do, which is why it is the one badged in yellow.
   const receivedCount = pending?.items.length ?? 0;
+  // A floor once the queue pages — see the sticker twin in PlacementSpaceSection.
+  const receivedLabel = pending?.nextCursor ? `${receivedCount}+` : `${receivedCount}`;
   const sentCount = (sent ?? []).filter((row) => row.status === 'pending').length;
   const caption = placementPriceCaption(
     'remixGallery',
@@ -227,7 +229,7 @@ export function RemixGallerySettings() {
           rightSection={
             receivedCount > 0 ? (
               <Badge size="sm" color="yellow" variant="filled" circle>
-                {receivedCount}
+                {receivedLabel}
               </Badge>
             ) : undefined
           }
