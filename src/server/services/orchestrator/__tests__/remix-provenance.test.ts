@@ -39,6 +39,8 @@ const {
 } = await import('~/server/services/orchestrator/remix-provenance');
 
 const UUID_A = '11111111-2222-3333-4444-555555555555';
+const IMAGE_HOST = 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA';
+const edgeUrl = (uuid: string) => `${IMAGE_HOST}/${uuid}/original=true/foo.jpeg`;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -50,9 +52,7 @@ describe('resolveSourceImageIds', () => {
   it('maps edge urls back to the image rows they came from', async () => {
     findMany.mockResolvedValue([{ id: 7, url: UUID_A }]);
 
-    const ids = await resolveSourceImageIds([
-      `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${UUID_A}/original=true/foo.jpeg`,
-    ]);
+    const ids = await resolveSourceImageIds([edgeUrl(UUID_A)]);
 
     expect(ids).toEqual([7]);
     expect(findMany).toHaveBeenCalledWith(
@@ -66,7 +66,7 @@ describe('resolveSourceImageIds', () => {
       { id: 9, url: UUID_A },
     ]);
 
-    expect(await resolveSourceImageIds([UUID_A])).toEqual([4]);
+    expect(await resolveSourceImageIds([edgeUrl(UUID_A)])).toEqual([4]);
   });
 
   it('resolves nothing for inputs that are not on-site images', async () => {
@@ -79,10 +79,13 @@ describe('resolveSourceImageIds', () => {
     expect(findMany).not.toHaveBeenCalled();
   });
 
-  it('refuses a uuid path segment on a host that is not ours', async () => {
+  it('refuses a uuid that did not arrive on our image host', async () => {
     // Input image URLs are a bare `z.string()`, so the uuid alone proves nothing
-    // about whose bytes the job actually read.
+    // about whose bytes the job actually read. The bare-uuid form is refused for
+    // the same reason: accepting it would rest on the orchestrator declining to
+    // fetch it, which is exactly the assumption the host check removes.
     expect(await resolveSourceImageIds([`https://attacker.example/${UUID_A}/x.png`])).toEqual([]);
+    expect(await resolveSourceImageIds([UUID_A])).toEqual([]);
     expect(findMany).not.toHaveBeenCalled();
   });
 });

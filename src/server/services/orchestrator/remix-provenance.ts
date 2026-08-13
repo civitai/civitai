@@ -45,6 +45,16 @@ const MAX_SOURCE_IMAGES = 8;
  */
 const MAX_TOKEN_AGE_SECONDS = 60 * 60 * 24 * 30;
 
+/**
+ * Tolerated clock skew between the pod that minted a token and the one reading
+ * it. Without it, a mint on a pod a second ahead is discarded silently — the
+ * generate-then-post flow that runs seconds apart is exactly where that bites.
+ */
+const MAX_CLOCK_SKEW_SECONDS = 300;
+
+const IV_BYTES = 12;
+const AUTH_TAG_BYTES = 16;
+
 type ProvenancePayload = {
   v: number;
   /** Issued to this user; a token replayed by anyone else fails verification. */
@@ -66,7 +76,10 @@ const UUID_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * otherwise resolve to an image the job never touched.
  */
 function extractImageUuid(url: string): string | undefined {
-  if (UUID_SEGMENT.test(url)) return url;
+  // No bare-uuid branch: it would return before the host check, and a client can
+  // send any string as an input URL. Whether a bare uuid is fetchable is the
+  // orchestrator's business, and resting this on its behaviour is what the host
+  // check exists to stop doing.
   const imageHost = clientEnv.NEXT_PUBLIC_IMAGE_LOCATION;
   if (!imageHost || !url.startsWith(`${imageHost}/`)) return undefined;
 
@@ -75,13 +88,24 @@ function extractImageUuid(url: string): string | undefined {
 }
 
 /**
- * Its own key, derived rather than using `NEXTAUTH_SECRET` raw, so a token can
- * never be confused with anything else signed by the same secret.
+ * Catches an absent or placeholder secret, not weak ones — `NEXTAUTH_SECRET` is
+ * `z.string()` with no `.min()`, so nothing upstream enforces a length. This is a
+ * floor against the empty case, not a certificate of strength.
  */
-function provenanceKey(): Buffer {
-  return createHash('sha256')
-    .update(`${env.NEXTAUTH_SECRET}:remix-provenance:v${VERSION}`)
-    .digest();
+const MIN_SECRET_LENGTH = 8;
+
+/**
+ * Its own key, derived rather than using `NEXTAUTH_SECRET` raw, so a token can
+ * never be confused with anything else keyed by the same secret. Bumping
+ * `VERSION` rotates it.
+ */
+function provenanceKey(): Buffer | null {
+  // The secret is a key-derivation input now, not just a signing input: with an
+  // empty one the key is sha256(':remix-provenance:v1'), a constant anyone can
+  // compute from this file. Fail closed rather than mint forgeable tokens.
+  const secret = env.NEXTAUTH_SECRET;
+  if (!secret || secret.length < MIN_SECRET_LENGTH) return null;
+  return createHash('sha256').update(`${secret}:remix-provenance:v${VERSION}`).digest();
 }
 
 const TOKEN_PREFIX = `p${VERSION}`;
@@ -133,8 +157,11 @@ export function signProvenance({
     t: Math.floor(Date.now() / 1000),
   };
 
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', provenanceKey(), iv);
+  const key = provenanceKey();
+  if (!key) return undefined;
+
+  const iv = randomBytes(IV_BYTES);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
   const ciphertext = Buffer.concat([
     cipher.update(JSON.stringify(payload), 'utf8'),
     cipher.final(),
@@ -159,9 +186,20 @@ export function verifyProvenance(token: unknown, userId: number): number[] | nul
   const [prefix, iv, ciphertext, tag] = token.split('.');
   if (prefix !== TOKEN_PREFIX || !iv || !ciphertext || !tag) return null;
 
+  const ivBytes = Buffer.from(iv, 'base64url');
+  const tagBytes = Buffer.from(tag, 'base64url');
+  // 🔴 Node accepts GCM tags of 4, 8, 12–16 bytes and verifies against only what
+  // it is given, so a caller who truncates the tag downgrades a 128-bit forgery
+  // to a 32-bit one. Measured: a valid token with its tag cut to 4 bytes
+  // decrypts and verifies. Full length or nothing.
+  if (ivBytes.length !== IV_BYTES || tagBytes.length !== AUTH_TAG_BYTES) return null;
+
+  const key = provenanceKey();
+  if (!key) return null;
+
   try {
-    const decipher = createDecipheriv('aes-256-gcm', provenanceKey(), Buffer.from(iv, 'base64url'));
-    decipher.setAuthTag(Buffer.from(tag, 'base64url'));
+    const decipher = createDecipheriv('aes-256-gcm', key, ivBytes);
+    decipher.setAuthTag(tagBytes);
     // Throws on any tampering — caught below and read as "no signal".
     const decrypted = Buffer.concat([
       decipher.update(Buffer.from(ciphertext, 'base64url')),
@@ -176,7 +214,8 @@ export function verifyProvenance(token: unknown, userId: number): number[] | nul
     // these sources, and nothing ties it to a particular file. Expiry is what
     // stops one generation from being reusable against that source forever.
     const age = Math.floor(Date.now() / 1000) - payload.t;
-    if (!Number.isFinite(age) || age < 0 || age > MAX_TOKEN_AGE_SECONDS) return null;
+    if (!Number.isFinite(age) || age < -MAX_CLOCK_SKEW_SECONDS || age > MAX_TOKEN_AGE_SECONDS)
+      return null;
 
     const ids = payload.s.filter((id) => Number.isInteger(id) && id > 0);
     return ids.length ? ids.slice(0, MAX_SOURCE_IMAGES) : null;

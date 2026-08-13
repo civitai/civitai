@@ -39,9 +39,18 @@ function walk(dir: string, files: string[] = []): string[] {
  * the point is to notice a NEW sink, and a crude matcher that over-reports is the
  * right failure direction.
  */
-const WRITE_SITE = /\bimage\.(create|createMany|update|updateMany)\s*\(/g;
-const FUNCTION_START = /\n(?:export )?(?:async )?function |\n(?:export )?const \w+ = /g;
+const WRITE_SITE =
+  /\bimage\.(create|createMany|update|updateMany|upsert)\s*\(|\bconnectOrCreate\s*:|\$execute(?:Raw|RawUnsafe)[\s\S]{0,300}?(?:UPDATE|INSERT INTO)\s+"Image"/g;
+const FUNCTION_START =
+  /\n(?:export )?(?:async )?function |\n(?:export )?const \w+ = |\n {2}\w+\s*\(/g;
 const AFTER = 1200;
+
+/**
+ * How many sinks the scan is expected to find at all — the count, not just
+ * "at least one", because a pattern that silently stops matching a whole SHAPE
+ * (nested writes, raw SQL) leaves a guard that passes by seeing nothing.
+ */
+const MIN_KNOWN_SINKS = 7;
 
 /**
  * From the top of the enclosing function to a bit past the write. The sanitize
@@ -57,35 +66,73 @@ function scopeAround(source: string, at: number) {
   return source.slice(start, at + AFTER);
 }
 
-function findUnsanitizedWrites() {
-  const offenders: string[] = [];
+/**
+ * Blanks commented-out lines, keeping length so reported line numbers stay true.
+ * A commented sink is not a sink — the repo has a dead raw-SQL `UPDATE "Image"`
+ * that the scan would otherwise report forever.
+ */
+function withoutCommentedCode(source: string) {
+  return source
+    .split('\n')
+    .map((line) => (/^\s*(\/\/|\*|\/\*)/.test(line) ? ' '.repeat(line.length) : line))
+    .join('\n');
+}
 
-  for (const file of walk(path.join(SRC, 'server'))) {
-    const source = fs.readFileSync(file, 'utf8');
-    for (const match of source.matchAll(WRITE_SITE)) {
-      const window = scopeAround(source, match.index);
-      if (!/\bmeta:/.test(source.slice(match.index, match.index + AFTER))) continue;
-      if (/sanitizeProvenance/.test(window)) continue;
-      if (DERIVED_FROM_ROW.some((allowed) => window.includes(allowed))) continue;
+/** Every `Image.meta` write the scan can see, sanitized or not. */
+function findWriteSites() {
+  const sites: { at: string; sanitized: boolean }[] = [];
 
-      const line = source.slice(0, match.index).split('\n').length;
-      offenders.push(`${path.relative(SRC, file).replace(/\\/g, '/')}:${line}`);
+  // `src/pages` as well as `src/server`: several image writes live under the API
+  // routes. None sets `meta` today, and a guard that never looks there would not
+  // notice the first one that does.
+  for (const root of ['server', 'pages']) {
+    for (const file of walk(path.join(SRC, root))) {
+      const source = withoutCommentedCode(fs.readFileSync(file, 'utf8'));
+      for (const match of source.matchAll(WRITE_SITE)) {
+        if (!/\bmeta\s*[:=]/.test(source.slice(match.index, match.index + AFTER))) continue;
+
+        const window = scopeAround(source, match.index);
+        const line = source.slice(0, match.index).split('\n').length;
+        sites.push({
+          at: `${path.relative(SRC, file).replace(/\\/g, '/')}:${line}`,
+          sanitized:
+            /sanitizeProvenance/.test(window) ||
+            DERIVED_FROM_ROW.some((allowed) => window.includes(allowed)),
+        });
+      }
     }
   }
 
-  return offenders;
+  return sites;
 }
 
 describe('Image.meta writes cannot carry an unverified provenance claim', () => {
   it('every write site that sets meta strips the claim first', () => {
-    expect(findUnsanitizedWrites()).toEqual([]);
+    expect(
+      findWriteSites()
+        .filter((site) => !site.sanitized)
+        .map((site) => site.at)
+    ).toEqual([]);
   });
 
-  it('the scan can actually see a sink (positive control)', () => {
-    // Without this, a broken walk or a renamed prisma call would make the guard
-    // above pass by finding nothing at all.
-    const createImage = fs.readFileSync(path.join(SRC, 'server/services/image.service.ts'), 'utf8');
-    expect(createImage).toMatch(/image\.create\s*\(/);
-    expect(createImage).toMatch(/sanitizeProvenance/);
+  it('still sees every shape of sink it covers (positive control)', () => {
+    const sites = findWriteSites();
+
+    // A count, not an existence check. The first version of this guard passed
+    // while blind to the nested `connectOrCreate` sink that the same commit had
+    // just fixed: one known site was enough to satisfy it. If this drops, the
+    // pattern has stopped matching a whole shape.
+    expect(sites.length).toBeGreaterThanOrEqual(MIN_KNOWN_SINKS);
+    expect(sites.map((site) => site.at)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('services/image.service.ts'),
+        expect.stringContaining('services/post.service.ts'),
+        // Nested creates under another model — the shape the first version of
+        // this scan was blind to, which is how the collection cover-image sink
+        // went unnoticed by two review passes.
+        expect.stringContaining('services/user-profile.service.ts'),
+        expect.stringContaining('services/collection.service.ts'),
+      ])
+    );
   });
 });
