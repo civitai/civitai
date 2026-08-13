@@ -40,7 +40,7 @@ function walk(dir: string, files: string[] = []): string[] {
  * right failure direction.
  */
 const WRITE_SITE =
-  /\bimage\.(create|createMany|update|updateMany|upsert)\s*\(|\bconnectOrCreate\s*:|\$execute(?:Raw|RawUnsafe)[\s\S]{0,300}?(?:UPDATE|INSERT INTO)\s+"Image"/g;
+  /\bimage\.(?:create(?:Many(?:AndReturn)?)?|update(?:Many)?|upsert)\s*\(|\bconnectOrCreate\s*:|\$(?:execute|query)(?:Raw|RawUnsafe)[\s\S]{0,300}?(?:UPDATE|INSERT INTO)\s+"Image"/gi;
 const FUNCTION_START =
   /\n(?:export )?(?:async )?function |\n(?:export )?const \w+ = |\n {2}\w+\s*\(/g;
 const AFTER = 1200;
@@ -49,8 +49,12 @@ const AFTER = 1200;
  * How many sinks the scan is expected to find at all — the count, not just
  * "at least one", because a pattern that silently stops matching a whole SHAPE
  * (nested writes, raw SQL) leaves a guard that passes by seeing nothing.
+ *
+ * Set below the current count on purpose. If you legitimately REMOVE a sink —
+ * folding two write paths into one — lower this deliberately; it is a floor on
+ * the scan's reach, not a census.
  */
-const MIN_KNOWN_SINKS = 7;
+const MIN_KNOWN_SINKS = 6;
 
 /**
  * From the top of the enclosing function to a bit past the write. The sanitize
@@ -89,7 +93,10 @@ function findWriteSites() {
     for (const file of walk(path.join(SRC, root))) {
       const source = withoutCommentedCode(fs.readFileSync(file, 'utf8'));
       for (const match of source.matchAll(WRITE_SITE)) {
-        if (!/\bmeta\s*[:=]/.test(source.slice(match.index, match.index + AFTER))) continue;
+        // `meta: true` is a SELECT, not a write — it shows up in the `select`
+        // block of the query that follows an unrelated raw UPDATE.
+        if (!/\bmeta\s*[:=](?!\s*true\b)/.test(source.slice(match.index, match.index + AFTER)))
+          continue;
 
         const window = scopeAround(source, match.index);
         const line = source.slice(0, match.index).split('\n').length;
