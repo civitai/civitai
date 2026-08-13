@@ -62,4 +62,22 @@ describe('resolveMediaLocation — the `| null` contract', () => {
       url: 'https://b2.test/abc',
     });
   });
+
+  // The base URL is `env.STORAGE_RESOLVER_INTERNAL_URL ?? '<cluster-dns fallback>'`, and nothing
+  // above asserts which side of that `??` is used — so dropping either half leaves every test
+  // green. The fixture URL is deliberately distinct from the fallback, which makes the two
+  // distinguishable; this is the assertion that actually distinguishes them.
+  it('addresses the resolver at the configured url, not the compiled-in fallback', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ backend: 'backblaze', url: 'https://b2.test/abc' }),
+    });
+
+    await resolveMediaLocation('abc-def/original.jpeg');
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://storage-resolver.test/resolve-media',
+      expect.objectContaining({ method: 'POST' })
+    );
+  });
 });

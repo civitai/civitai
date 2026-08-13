@@ -341,6 +341,17 @@ describe('deleteImageFromS3', () => {
     expect(mockLogToAxiom).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: 'delete-image-from-s3-failed' })
     );
+    // Asserting the WARNING too, not just the delete. Without this the `.catch`'s return VALUE is
+    // unpinned: swapping `() => null` for one that returns a location still passes every other
+    // test here, and silently suppresses the one signal that a resolver outage is happening.
+    // It must also carry the reason — routing the rejection here rather than to the outer catch
+    // otherwise throws away the only record of why the resolver failed.
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'delete-image-from-s3-unresolved-location',
+        error: expect.anything(),
+      })
+    );
   });
 
   // The guard above is safe only while no row holds a url for a bucket we own. Nothing enforces

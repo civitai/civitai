@@ -359,27 +359,32 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
 
     if (!!otherImagesWithSameUrl) return;
 
-    // B2 is the only backend an image can be on: the DigitalOcean-Spaces bucket was deleted
-    // 2026-05-18 and `ImageUploadBackend` has exactly one member. So the registry is consulted
-    // for observability, not to choose a destination — a miss means "unregistered", never
-    // "somewhere else". This used to branch to a DO delete on a miss, which is how 2,545 objects
-    // outlived their rows: `resolveMediaLocation` returns null on a 404, a service error AND a
-    // timeout, and the DO endpoint answers `404 page not found` as text/plain, which the SDK's
-    // XML error deserializer throws on. The row was already gone, so the object stayed public.
-    // Belt and braces with the `await` fix in resolveMediaLocation: the lookup is observability, so
-    // no failure of it may stop the delete. Inlining the guard here keeps that true even if the
+    // B2 is the only backend an image can be on, so the registry is consulted for observability
+    // rather than to choose a destination — a miss means "unregistered", never "somewhere else".
+    // This used to branch to a second backend on a miss, and that branch could not succeed, so
+    // every miss left the object behind a row that was already deleted.
+    //
+    // The `.catch` is belt and braces with the `await` fix inside resolveMediaLocation: no failure
+    // of the lookup may stop the delete, and inlining the guard keeps that true even if the
     // resolver later grows a throwing path again.
-    const location = await resolveMediaLocation(url).catch(() => null);
+    let resolverError: unknown;
+    const location = await resolveMediaLocation(url).catch((error: unknown) => {
+      resolverError = error;
+      return null;
+    });
     if (!location) {
       // Not a failure — the delete proceeds against B2 below. But an unregistered image is a
       // registry gap (or a storage-resolver outage), and silently treating it as B2 is exactly
-      // what made the gap invisible for three months. Rate of this line is the health signal.
+      // what made the gap invisible. Rate of this line is the health signal, so it carries the
+      // reason too: routing a rejection here instead of to the catch below would otherwise discard
+      // the only record of WHY the resolver failed.
       await logToAxiom({
         type: 'warning',
         name: 'delete-image-from-s3-unresolved-location',
         message: 'storage-resolver returned no location; deleting from B2 anyway',
         imageId: id,
         url,
+        ...(resolverError !== undefined && { error: safeError(resolverError) }),
       }).catch(() => undefined);
     }
 
