@@ -189,15 +189,19 @@ export function StickerPlacementHoverCard({
               happened by the role exercised, not by the account. A moderator on
               their own image is still the owner, so they get both, each saying
               which it is. */}
-          <ModeratorRemove
-            placementId={placementId}
-            // Both sources, because neither sees every case: the listing hands a
-            // moderator nobody else's pending rows, and the card's own query has
-            // not answered yet on the first frame.
-            pending={pending || data?.status === 'pending'}
-          />
-          {data?.viewerIsOwner && data.status === 'approved' && (
-            <OwnerRemove placementId={placementId} removableAt={data.removableAt} />
+          {data && (
+            <>
+              {/* The card's own query, never the listing. A listing is fetched
+                  once and this app never refetches it on focus, so a party whose
+                  placement was approved in another tab carries `isPending: true`
+                  for as long as the page stays open — and that value would pick
+                  the confirmation's sentence about the placer's money, right
+                  before an irreversible click. */}
+              <ModeratorRemove placementId={placementId} pending={data.status === 'pending'} />
+              {data.viewerIsOwner && data.status === 'approved' && (
+                <OwnerRemove placementId={placementId} removableAt={data.removableAt} />
+              )}
+            </>
           )}
         </Group>
 
@@ -205,9 +209,20 @@ export function StickerPlacementHoverCard({
             data is, so holding the shape stops the dropdown resizing under the
             cursor the moment it loads — which on a hover card can move the
             target out from under you. */}
-        {isLoading || !data ? (
+        {isLoading ? (
           <div className="p-3">
             <Skeleton height={92} radius="md" />
+          </div>
+        ) : !data ? (
+          // A miss is the ordinary case, not an edge one: nothing refetches the
+          // placements listing, so an overlay keeps drawing a sticker a
+          // moderator took down minutes ago. Without this the card holds the
+          // skeleton for as long as it is open — a spinner that reads as slow
+          // rather than as gone, on a sticker that no longer exists.
+          <div className="p-3">
+            <Text size="sm" c="dimmed">
+              This sticker is no longer on the image.
+            </Text>
           </div>
         ) : (
           <>
