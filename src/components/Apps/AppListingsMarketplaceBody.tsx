@@ -21,6 +21,7 @@ import {
 } from '~/components/Apps/recentlyOpenedAppsStore';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ListingCard, ListingSort } from '~/server/schema/blocks/app-listing-read.schema';
+import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -214,11 +215,12 @@ export function AppListingsMarketplaceBody() {
         limit: 24,
       },
       {
-        // W13 (PR-W1a/D8): store-visibility gate = dedicated `appListings`
-        // OR-falling-back to `appBlocks`. Mirrors the server read gate
-        // (`enforceAppListingsReadFlag` → `isAppListingsEnabled`). Zero behavior
-        // change today (the `app-listings` flag doesn't exist yet).
-        enabled: !!(features.appListings || features.appBlocks),
+        // W13 (PR-W1a/D8): store-visibility gate = the SHARED `hasAppsStoreAccess`
+        // predicate (dedicated `appListings` OR-falling-back to `appBlocks`).
+        // Mirrors the server read gate (`enforceAppListingsReadFlag` →
+        // `isAppListingsEnabled`), which is why this query — unlike
+        // `blocks.getNavSummary` — DOES widen with the store.
+        enabled: hasAppsStoreAccess(features),
         getNextPageParam: (lastPage) => lastPage.nextCursor,
       }
     );

@@ -6,7 +6,10 @@
  * 🔒 GATING INVARIANT (F-E E1 + W13 PR-W1a/D8 — do not violate):
  *   - The STORE-VISIBILITY flag gate is FIRST and is the ONLY access control.
  *     W13 repoints it onto the dedicated `appListings` flag with an OR-fallback
- *     to `appBlocks`: access = `features.appListings || features.appBlocks`. A
+ *     to `appBlocks`. The boolean itself is NOT written here — it lives in the
+ *     shared `hasAppsStoreAccess` predicate (`~/shared/utils/app-blocks-access`)
+ *     that every store surface calls, so the SSR gate and the client-side gates
+ *     cannot drift apart. Access = `features.appListings || features.appBlocks`. A
  *     logged-out / non-mod user satisfies NEITHER (both are mod-segmented today),
  *     so access is false for them → notFound. The store stays dark for real
  *     anon/non-mod users until a segment is widened at launch.
@@ -24,15 +27,17 @@
  *     (mods-only today). (`deIndex` is kept ON in the page <Meta> so the page is
  *     not crawlable pre-launch.)
  */
+import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
+
 export type AppsPageAccessResult = { notFound: true } | { props: Record<string, never> };
 
 export function resolveAppsPageAccess(args: {
   features?: { appBlocks?: boolean; appListings?: boolean } | null;
 }): AppsPageAccessResult {
   // Store-visibility gate FIRST and ONLY. No session check — the dark anon path
-  // renders behind the flag. W13: dedicated `appListings` flag OR-falling-back to
-  // `appBlocks` so the current mods+testers cohort keeps access while
-  // `app-listings` doesn't yet exist (zero behavior change today).
-  if (!(args.features?.appListings || args.features?.appBlocks)) return { notFound: true };
+  // renders behind the flag. The predicate is SHARED (`hasAppsStoreAccess`) with
+  // every other store surface, including the `/apps/*` sub-nav, so there is one
+  // rule in one place and the gates cannot disagree.
+  if (!hasAppsStoreAccess(args.features)) return { notFound: true };
   return { props: {} };
 }

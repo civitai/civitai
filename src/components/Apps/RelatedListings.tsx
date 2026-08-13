@@ -14,6 +14,7 @@ import {
   MARKETPLACE_CATEGORY_LABELS,
 } from '~/server/services/blocks/marketplace-categories.constants';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
+import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -50,10 +51,10 @@ export interface RelatedListingsProps {
 
 export function RelatedListings({ listingId, category }: RelatedListingsProps) {
   const features = useFeatureFlags();
-  // Same store-visibility gate the grid + detail use (`appListings` OR-falling-
-  // back to `appBlocks`), so this rail can never fire a read the page itself
-  // isn't allowed to make.
-  const canSeeStore = !!(features.appListings || features.appBlocks);
+  // Same store-visibility gate the grid + detail use — the SHARED
+  // `hasAppsStoreAccess` predicate — so this rail can never fire a read the page
+  // itself isn't allowed to make.
+  const canSeeStore = hasAppsStoreAccess(features);
 
   // The DTO's `category` is a free-text column (`string | null`), while the
   // query input is the closed taxonomy enum. Narrow through the shared type

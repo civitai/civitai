@@ -51,6 +51,55 @@ export function isAppDeveloper(
 }
 
 /**
+ * The store-visibility flag pair, in the shape every caller already has in hand
+ * (`ctx.features` on the SSR side, `useFeatureFlags()` on the client). Optional
+ * + nullable so a Flipt-down / not-yet-created flag and an absent `features`
+ * object both flow in without a cast.
+ */
+export type AppsStoreFeatureFlags =
+  | { appBlocks?: boolean; appListings?: boolean }
+  | null
+  | undefined;
+
+/**
+ * App Blocks — App STORE-VISIBILITY gate (`appListings || appBlocks`).
+ *
+ * 🔒 THE SINGLE SOURCE OF TRUTH for "may this viewer see the /apps store".
+ * Every store surface — the `/apps` SSR resolver (`resolveAppsPageAccess`),
+ * the `/apps` page body, the store-preview route, the marketplace grid query,
+ * the related-listings rail, and the `/apps/*` sub-nav — routes through THIS
+ * predicate. Do NOT re-inline `features.appListings || features.appBlocks`; the
+ * gates drifting apart is exactly what this function exists to prevent, and it
+ * had already happened once: `AppsSubNav` gated on `appBlocks` ALONE while the
+ * canonical resolver ORed both, so an `app-listings`-only cohort would have
+ * loaded `/apps` with no sub-navigation at all.
+ *
+ * ## Why an OR, and which flag is which
+ *
+ * `appListings` (Flipt `app-listings`) is the DEDICATED catalog-visibility flag;
+ * `appBlocks` (Flipt `app-blocks-enabled`) doubles as the block-RUNTIME
+ * kill-switch. W13 split them so the store catalog can widen to public
+ * INDEPENDENTLY of the deliberately-held block-runtime GA — a public launch
+ * widens ONLY `app-listings`. The OR-fallback to `appBlocks` keeps the CURRENT
+ * mods + `app-dev-testers` cohort's store access verbatim through the transition
+ * window (both flags resolve true for them today, so this is zero behaviour
+ * change). Drop the fallback only once `app-listings` is the sole, wider source
+ * of truth. Server-side mirror: `isAppListingsEnabled` in
+ * `~/server/services/app-blocks-flag`.
+ *
+ * 🔴 This is NOT the gate for the block-RUNTIME surfaces. `/apps/installed`,
+ * `/apps/review`, `/apps/my-submissions`, `/apps/revenue`, `/apps/run/<slug>`
+ * and the `blocks.*` tRPC procedures gate on `appBlocks` alone, on purpose —
+ * they need the runtime, not just the catalog. Widening them is a product
+ * decision, not a mechanical alignment; do not sweep them into this predicate.
+ *
+ * Fails CLOSED: absent / null features, or an empty object, → `false`.
+ */
+export function hasAppsStoreAccess(features: AppsStoreFeatureFlags): boolean {
+  return !!features?.appListings || !!features?.appBlocks;
+}
+
+/**
  * App Blocks — moderator REVIEW-surface access gate (`/apps/review`).
  *
  * Distinct from {@link isAppDeveloper} on purpose: reviewing OTHER people's
