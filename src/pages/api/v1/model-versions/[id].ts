@@ -252,11 +252,14 @@ export async function prepareModelVersionResponse(
               getDownloadFilename({ model, modelVersion: version, file })
             ),
             primary: primaryFile.id === file.id,
+            // Pin the URL to THIS file — see the matching note in
+            // src/pages/api/v1/models/[id].ts. Without `fileId` the download
+            // route re-resolves the file from the caller's filePreferences, so
+            // the advertised `hashes`/`sizeKB`/`name` and the bytes actually
+            // served can disagree on a multi-file version.
             downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
               versionId: version.id,
-              type: file.type,
-              meta: metadata,
-              primary: primaryFile.id === file.id,
+              fileId: file.id,
             })}`,
           }))
       : [],

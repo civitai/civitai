@@ -122,11 +122,19 @@ async function buildPublicModelResponse(
                     getDownloadFilename({ model, modelVersion: version, file })
                   ),
                   hashes: hashesAsObject(hashes),
+                  // Pin the URL to THIS file. Passing `type`/`meta`/`primary`
+                  // instead makes the download route re-resolve the file on its
+                  // own (caller's filePreferences + its own scoring) — and for
+                  // the elected primary it emits a bare, entirely unqualified
+                  // URL — so on a multi-file version the URL could serve a file
+                  // other than the one whose `hashes`/`sizeKB`/`name` are
+                  // serialized right here. `fileId` suppresses every soft
+                  // discriminator in createModelFileDownloadUrl, and the
+                  // download route skips its metadata-misalignment check
+                  // because the file is already exact.
                   downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                     versionId: version.id,
-                    type: file.type,
-                    meta: metadata,
-                    primary: primaryFile.id === file.id,
+                    fileId: file.id,
                   })}`,
                   primary: primaryFile.id === file.id ? true : undefined,
                   url: undefined,
