@@ -225,7 +225,6 @@ import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
 import { removeEmpty } from '~/utils/object-helpers';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
-import { getImageS3Client } from '~/utils/s3-client';
 import { serverUploadImage, getB2ImageS3Client } from '~/utils/s3-utils';
 import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
@@ -314,10 +313,10 @@ export async function purgeResizeCache({
   // request) and must never fail the caller's mutation.
   //
   // NOTE: this used to also do a direct S3 listObjects+deleteManyObjects against
-  // env.S3_IMAGE_CACHE_BUCKET ("civitai-media-cache") via getImageS3Client().
+  // env.S3_IMAGE_CACHE_BUCKET ("civitai-media-cache") via the legacy image S3 client.
   // That path was DEAD in prod and has been removed: the cache bucket now lives
   // on Backblaze B2 (us-west-004) and is owned by the image-cacher service,
-  // while getImageS3Client() points at the DigitalOcean-Spaces object-read proxy
+  // while that client pointed at the DigitalOcean-Spaces object-read proxy
   // (S3_IMAGE_UPLOAD_ENDPOINT). That proxy does not implement ListObjectsV2 — a
   // path-style list request returns a plain-text "404 page not found", which the
   // AWS SDK's XML error deserializer chokes on (`char '4' is not expected.:1:1`).
@@ -437,23 +436,54 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
 
     if (!!otherImagesWithSameUrl) return;
 
-    // Check storage-resolver for backend location (during media migration)
-    const location = await resolveMediaLocation(url);
-    if (location?.backend === 'backblaze' && env.S3_IMAGE_B2_ACCESS_KEY) {
-      const b2Client = getB2ImageS3Client();
-      await withRetries(() =>
-        b2Client.send(
-          new DeleteObjectCommand({
-            Bucket: env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads',
-            Key: url,
-          })
-        )
-      );
-    } else if (env.S3_IMAGE_UPLOAD_BUCKET) {
-      await withRetries(() =>
-        getImageS3Client().deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET!, key: url })
-      );
+    // B2 is the only backend an image can be on, so the registry is consulted for observability
+    // rather than to choose a destination — a miss means "unregistered", never "somewhere else".
+    // This used to branch to a second backend on a miss, and that branch could not succeed, so
+    // every miss left the object behind a row that was already deleted.
+    //
+    // The `.catch` is belt and braces with the `await` fix inside resolveMediaLocation: no failure
+    // of the lookup may stop the delete, and inlining the guard keeps that true even if the
+    // resolver later grows a throwing path again.
+    //
+    // The reason is sanitised INSIDE that `.catch`, under its own try, which is what keeps it total.
+    // `safeError` ends in `String(e)` for a non-Error, and that throws on a value with no primitive
+    // conversion — `Object.create(null)`, or anything with a throwing `toString`. Calling it in the
+    // log payload below instead would put that throw inside the OUTER try, skipping the B2 delete:
+    // the exact failure this `.catch` exists to prevent, reintroduced by the code reporting it.
+    let resolverError: MixedObject | undefined;
+    const location = await resolveMediaLocation(url).catch((error: unknown) => {
+      try {
+        resolverError = safeError(error);
+      } catch {
+        resolverError = { message: 'resolver rejected with a value that could not be serialised' };
+      }
+      return null;
+    });
+    if (!location) {
+      // Not a failure — the delete proceeds against B2 below. But an unregistered image is a
+      // registry gap (or a storage-resolver outage), and silently treating it as B2 is exactly
+      // what made the gap invisible. Rate of this line is the health signal, so it carries the
+      // reason too: routing a rejection here instead of to the catch below would otherwise discard
+      // the only record of WHY the resolver failed.
+      await logToAxiom({
+        type: 'warning',
+        name: 'delete-image-from-s3-unresolved-location',
+        message: 'storage-resolver returned no location; deleting from B2 anyway',
+        imageId: id,
+        url,
+        ...(resolverError !== undefined && { error: resolverError }),
+      }).catch(() => undefined);
     }
+
+    const b2Client = getB2ImageS3Client();
+    await withRetries(() =>
+      b2Client.send(
+        new DeleteObjectCommand({
+          Bucket: env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads',
+          Key: url,
+        })
+      )
+    );
   } catch (error) {
     // Nothing retries this: deleteImages drops the DB row first, so a lost object stays
     // publicly reachable (CDN urls are unsigned) with only this line to find it by.
