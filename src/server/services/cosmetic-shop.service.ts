@@ -559,36 +559,55 @@ export const getShopSectionsWithItems = async ({
                     },
                   ]
                 : []),
-              {
-                cosmetic: {
-                  // Merged into ONE `type` filter. A second `type` key would silently
-                  // overwrite the caller's requested types — with the flag off (the
-                  // default for everyone), /shop?cosmeticTypes=Badge would return
-                  // every non-sticker type instead of badges.
-                  ...(realTypes.length > 0 || !stickersEnabled
-                    ? {
-                        type: {
-                          ...(realTypes.length > 0 ? { in: realTypes } : {}),
-                          // Stickers stay out of the official shop until the flag is
-                          // on. Rendering is unaffected — this hides the storefront
-                          // entry only.
-                          ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
-                        },
-                      }
-                    : {}),
-                  // Creator-made cosmetics (createdById set — official items also
-                  // have an addedById, the mod who listed them) are gated behind
-                  // the creatorShop feature flag; a section of only creator items
-                  // disappears entirely for unflagged viewers via the
-                  // empty-section filter below.
-                  ...(isModerator || creatorShopEnabled ? {} : { createdById: null }),
-                  // A block between viewer and creator (either direction) hides
-                  // that creator's items even when featured in official sections.
-                  ...(blockedPairIds.length
-                    ? { OR: [{ createdById: null }, { createdById: { notIn: blockedPairIds } }] }
-                    : {}),
-                },
-              },
+              // Asking for packs and nothing else drops this arm outright.
+              // Leaving it in unconstrained would match every cosmetic, since
+              // 'Pack' contributes no `type` for it to filter on.
+              ...(cosmeticTypes?.length && !realTypes.length
+                ? []
+                : [
+                    {
+                      // Not redundant with the EXISTS below: every condition under
+                      // `cosmetic` is conditional, and Prisma DROPS an empty relation
+                      // filter rather than treating it as "the relation is set". At
+                      // top level that reads as `1=1`, but as an OR arm it erases the
+                      // arm — leaving `OR: [{ cosmeticId: null }]`, i.e. packs only,
+                      // so every section of real cosmetics returned nothing.
+                      cosmeticId: { not: null },
+                      cosmetic: {
+                        // Merged into ONE `type` filter. A second `type` key would silently
+                        // overwrite the caller's requested types — with the flag off (the
+                        // default for everyone), /shop?cosmeticTypes=Badge would return
+                        // every non-sticker type instead of badges.
+                        ...(realTypes.length > 0 || !stickersEnabled
+                          ? {
+                              type: {
+                                ...(realTypes.length > 0 ? { in: realTypes } : {}),
+                                // Stickers stay out of the official shop until the flag is
+                                // on. Rendering is unaffected — this hides the storefront
+                                // entry only.
+                                ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
+                              },
+                            }
+                          : {}),
+                        // Creator-made cosmetics (createdById set — official items also
+                        // have an addedById, the mod who listed them) are gated behind
+                        // the creatorShop feature flag; a section of only creator items
+                        // disappears entirely for unflagged viewers via the
+                        // empty-section filter below.
+                        ...(isModerator || creatorShopEnabled ? {} : { createdById: null }),
+                        // A block between viewer and creator (either direction) hides
+                        // that creator's items even when featured in official sections.
+                        ...(blockedPairIds.length
+                          ? {
+                              OR: [
+                                { createdById: null },
+                                { createdById: { notIn: blockedPairIds } },
+                              ],
+                            }
+                          : {}),
+                      },
+                    },
+                  ]),
             ],
             archivedAt: null,
             // Creator items in official sections can lose their Published

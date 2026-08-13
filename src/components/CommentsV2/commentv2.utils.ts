@@ -2,6 +2,9 @@ import type { ToggleHideCommentInput } from '~/server/schema/commentv2.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
+/** Where a surface scrolls to when a single thread is opened — the way back has to be on screen. */
+export const RETURN_TO_ROOT_THREAD_ID = 'return-to-root-thread';
+
 export const useMutateComment = () => {
   const queryUtils = trpc.useUtils();
   const toggleHideCommentMutation = trpc.commentv2.toggleHide.useMutation({

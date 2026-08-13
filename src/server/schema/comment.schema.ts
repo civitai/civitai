@@ -6,6 +6,7 @@ import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import type { RateLimit } from '~/server/middleware.trpc';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { surfaceMayContainStickers } from '~/shared/utils/sticker-token';
+import { COMMENT_ALLOWED_TAGS } from '~/utils/html-sanitize-helpers';
 
 export const commentRateLimits: RateLimit[] = [
   { limit: 10, period: CacheTTL.hour },
@@ -40,7 +41,7 @@ export const commentUpsertInput = z.object({
   reviewId: z.number().nullish(),
   parentId: z.number().nullish(),
   content: getSanitizedStringSchema({
-    allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'span'],
+    allowedTags: COMMENT_ALLOWED_TAGS,
     // Read from STICKER_SURFACES rather than hardcoded, so "may contain a
     // sticker" and "charges for one" can't drift apart — that split is what let
     // sticker markup be containable on surfaces that never charged.

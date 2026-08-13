@@ -19,6 +19,8 @@ import {
   type ResolveReportInput,
   type UnpublishOwnListingInput,
 } from '~/server/schema/blocks/offsite-moderation.schema';
+import { safeCollaboratorQuery } from '~/server/services/blocks/app-access.service';
+import { recordOwnershipEvent } from '~/server/services/blocks/app-collaborator.service';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import { assertListingAssetsScanCleanInTx } from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionableInTx } from '~/server/services/blocks/app-listing-actionable.service';
@@ -614,6 +616,28 @@ export type ClaimListingResult = { appListingId: string; userId: number };
  * is preserved for audit fidelity (who actually submitted it). This fn NEVER touches
  * the publish request. The audit event's before/after userId captures the transfer.
  *
+ * 🔴 IT DOES, HOWEVER, CLEAR THE COLLABORATOR SEATS — and that is NEW, because until
+ * seats were re-keyed to `app_listings` an off-site listing could not hold one, so
+ * "reassign `userId`" WAS the complete remediation. It no longer is. This is the
+ * IMPERSONATION remedy (report → delist → claim → ban): the row being claimed was set up
+ * by someone pretending to be the rightful owner, and everything that impersonator
+ * attached to it is part of what is being taken away. Left behind, their seats would
+ * survive the claim as live editor capability on the REAL owner's listing —
+ * `listingContent`, `submitForReview` and `analytics` — their PENDING invites would stay
+ * acceptable, their accepted-and-displayed seats would keep appearing in the PUBLIC
+ * BYLINE under the new owner's name, and a pending ownership TRANSFER they had already
+ * offered would stay acceptable, handing the listing straight back out. So, in the SAME
+ * transaction as the reassign: every seat is deleted (any status), every pending
+ * transfer is cancelled, and each is recorded as an `AppOwnershipEvent` so the removal
+ * is auditable rather than silent. The new owner re-invites whoever they actually want.
+ *
+ * 🔴 That cleanup is CONDITIONAL on the collaborator tables existing, checked ONCE
+ * before the transaction opens. They are manual-apply (DB rule #8), and a statement
+ * against a missing relation ABORTS the surrounding Postgres transaction — a `catch`
+ * cannot undo that (every later statement fails 25P02), so `safeCollaboratorQuery`'s
+ * degrade-to-fallback CANNOT be used inside a tx. Probing outside it keeps the claim
+ * working unchanged in the pre-migration window, where no seat can exist anyway.
+ *
  * Optionally links + resolves the triggering `reportId` in the SAME tx (mirrors
  * delist EXACTLY, listing-scoped): in the impersonation workflow (report → delist →
  * claim → ban) the claim is the substantive resolution, so it ties to and closes the
@@ -626,10 +650,20 @@ export async function claimListing(opts: {
 }): Promise<ClaimListingResult> {
   const { input, reviewerUserId } = opts;
   const reason = requireModReason(input.reason);
+  const now = new Date();
   // Fail-fast + info-leak parity (replica): a missing OR on-site listing throws the
   // same generic NOT_FOUND before any tx is opened. The authoritative snapshot is
   // re-read on the primary inside the tx below.
   await classifyOffsiteListing(input.appListingId);
+
+  // 🔴 OUTSIDE THE TX ON PURPOSE — see the header. A query against a missing relation
+  // aborts the whole Postgres transaction, so the missing-table degrade has to happen
+  // before one is opened. `false` ⇒ the manual-apply migration has not landed ⇒ no seat
+  // can exist ⇒ the claim behaves exactly as it did before this feature.
+  const seatsTableLive = await safeCollaboratorQuery(async () => {
+    await dbRead.appCollaborator.count({ where: { appListingId: input.appListingId } });
+    return true;
+  }, false);
 
   await dbWrite.$transaction(async (tx) => {
     // Authoritative pre-state snapshot from the PRIMARY (not the replica classify),
@@ -693,6 +727,49 @@ export async function claimListing(opts: {
         after: { userId: input.targetUserId },
       },
     });
+
+    // 🔴 SEAT REMEDIATION — in the SAME tx as the reassign, so a rolled-back claim
+    // leaves the seats untouched exactly as it leaves zero moderation events. See the
+    // header for why "reassign userId" stopped being the whole remedy.
+    if (seatsTableLive) {
+      // Read the ids BEFORE deleting: `deleteMany` returns a count, and a count cannot
+      // name who lost what. An impersonation remedy that cannot say whose access it
+      // revoked is not an audit trail.
+      const seats = (await tx.appCollaborator.findMany({
+        where: { appListingId: input.appListingId },
+        select: { userId: true, status: true },
+      })) as Array<{ userId: number; status: string }>;
+      if (seats.length > 0) {
+        await tx.appCollaborator.deleteMany({ where: { appListingId: input.appListingId } });
+        for (const seat of seats) {
+          await recordOwnershipEvent(tx, {
+            appListingId: input.appListingId,
+            slug: current.slug,
+            action: 'remove',
+            actorUserId: reviewerUserId,
+            targetUserId: seat.userId,
+            metadata: { via: 'claim', previousStatus: seat.status },
+          });
+        }
+      }
+      // A pending transfer the previous (impersonating) owner had already offered would
+      // otherwise stay acceptable and hand the listing straight back out. Guarded on
+      // `status:'pending'` so a terminal row is never re-written.
+      const cancelled = await tx.appOwnershipTransfer.updateMany({
+        where: { appListingId: input.appListingId, status: 'pending' },
+        data: { status: 'cancelled', respondedAt: now },
+      });
+      if (cancelled.count > 0) {
+        await recordOwnershipEvent(tx, {
+          appListingId: input.appListingId,
+          slug: current.slug,
+          action: 'transfer_cancelled',
+          actorUserId: reviewerUserId,
+          metadata: { via: 'claim', cancelled: cancelled.count },
+        });
+      }
+    }
+
     if (input.reportId) {
       // Resolve the triggering report in the same tx — mirrors delist EXACTLY. In the
       // impersonation flow (report → delist → claim → ban) the claim is the substantive

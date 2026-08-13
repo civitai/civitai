@@ -81,6 +81,7 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import {
   ChallengeSource,
   CollectionContributorPermission,
+  CollectionInviteStatus,
   CollectionItemStatus,
   CollectionMode,
   CollectionReadConfiguration,
@@ -94,6 +95,12 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { assertUserChallengeAcceptingEntries } from '~/server/games/daily-challenge/challenge-entry-gate';
+import { liveInviteWhere } from '~/server/services/collection-invite.utils';
+import {
+  collectionSupportsCollaborators,
+  freeGrantBaseline,
+  isCollaboratorRow,
+} from '~/server/services/collection-permission.utils';
 
 export type CollectionContributorPermissionFlags = {
   collectionId: number;
@@ -103,6 +110,8 @@ export type CollectionContributorPermissionFlags = {
   manage: boolean;
   follow: boolean;
   isContributor: boolean;
+  isCollaborator: boolean;
+  collaborationDisabled: boolean;
   isOwner: boolean;
   followPermissions: CollectionContributorPermission[];
   publicCollection: boolean;
@@ -200,6 +209,8 @@ export async function getUserCollectionPermissionsByIds({
     type: CollectionType | null;
     mode: CollectionMode | null;
     contributorPermissions: CollectionContributorPermission[] | null;
+    collaborationDisabledAt: Date | null;
+    hasAcceptedSeat: boolean;
   };
 
   const collections = await dbRead.$queryRaw<CollectionPermissionRow[]>`
@@ -210,15 +221,20 @@ export async function getUserCollectionPermissionsByIds({
       c."userId",
       c.type::"CollectionType" as "type",
       c.mode::"CollectionMode" as "mode",
+      c."collaborationDisabledAt",
       ${
         userId
-          ? Prisma.sql`cc.permissions as "contributorPermissions"`
-          : Prisma.sql`NULL as "contributorPermissions"`
+          ? Prisma.sql`cc.permissions as "contributorPermissions", ci.id IS NOT NULL as "hasAcceptedSeat"`
+          : Prisma.sql`NULL as "contributorPermissions", false as "hasAcceptedSeat"`
       }
     FROM "Collection" c
     ${
       userId
-        ? Prisma.sql`LEFT JOIN "CollectionContributor" cc ON cc."collectionId" = c.id AND cc."userId" = ${userId}`
+        ? Prisma.sql`
+          LEFT JOIN "CollectionContributor" cc ON cc."collectionId" = c.id AND cc."userId" = ${userId}
+          LEFT JOIN "CollectionInvite" ci ON ci."collectionId" = c.id AND ci."userId" = ${userId}
+            AND ci.status = ${CollectionInviteStatus.Accepted}::"CollectionInviteStatus"
+        `
         : Prisma.empty
     }
     WHERE c.id IN (${Prisma.join(ids)})
@@ -241,6 +257,8 @@ export async function getUserCollectionPermissionsByIds({
       manage: false,
       follow: false,
       isContributor: false,
+      isCollaborator: false,
+      collaborationDisabled: !!collection.collaborationDisabledAt,
       isOwner: false,
       publicCollection: false,
       followPermissions: [],
@@ -270,6 +288,18 @@ export async function getUserCollectionPermissionsByIds({
       permissions.followPermissions.push(CollectionContributorPermission.ADD_REVIEW);
     }
 
+    const freelyGranted = freeGrantBaseline(collection);
+
+    if (collection.collaborationDisabledAt) {
+      permissions.write = false;
+      permissions.writeReview = false;
+      permissions.followPermissions = permissions.followPermissions.filter(
+        (p) =>
+          p !== CollectionContributorPermission.ADD &&
+          p !== CollectionContributorPermission.ADD_REVIEW
+      );
+    }
+
     if (!userId) {
       return permissions;
     }
@@ -296,15 +326,34 @@ export async function getUserCollectionPermissionsByIds({
 
     permissions.isContributor = true;
 
+    permissions.isCollaborator =
+      collectionSupportsCollaborators(collection) &&
+      isCollaboratorRow({
+        permissions: contributorPermissions,
+        freeBaseline: freelyGranted,
+        hasAcceptedSeat: collection.hasAcceptedSeat,
+      });
+
     if (contributorPermissions.includes(CollectionContributorPermission.VIEW)) {
       permissions.read = true;
     }
 
-    if (contributorPermissions.includes(CollectionContributorPermission.ADD)) {
+    // A contributor row that merely mirrors the free-tier grant (e.g. a follower auto-added
+    // with the collection's own followPermissions) must not resurrect access the lapse block
+    // just closed — only a grant beyond the free tier survives a lapse.
+    if (
+      contributorPermissions.includes(CollectionContributorPermission.ADD) &&
+      (!collection.collaborationDisabledAt ||
+        !freelyGranted.has(CollectionContributorPermission.ADD))
+    ) {
       permissions.write = true;
     }
 
-    if (contributorPermissions.includes(CollectionContributorPermission.ADD_REVIEW)) {
+    if (
+      contributorPermissions.includes(CollectionContributorPermission.ADD_REVIEW) &&
+      (!collection.collaborationDisabledAt ||
+        !freelyGranted.has(CollectionContributorPermission.ADD_REVIEW))
+    ) {
       permissions.writeReview = true;
     }
 
@@ -331,6 +380,27 @@ export async function getUserCollectionPermissionsById({
   return results[0] ?? createEmptyPermissions(id);
 }
 
+// The exact permissions array a follow row is written with for a given read/write pair.
+// Order matters — the contributor resync compares it against stored rows with `equals` — so it
+// must stay identical to the order `getUserCollectionPermissionsByIds` builds
+// `followPermissions` in above.
+function freeGrantPermissions(collection: {
+  read: CollectionReadConfiguration;
+  write: CollectionWriteConfiguration;
+}): CollectionContributorPermission[] {
+  const permissions: CollectionContributorPermission[] = [];
+  if (collection.read !== CollectionReadConfiguration.Private) {
+    permissions.push(CollectionContributorPermission.VIEW);
+  }
+  if (collection.write === CollectionWriteConfiguration.Public) {
+    permissions.push(CollectionContributorPermission.ADD);
+  }
+  if (collection.write === CollectionWriteConfiguration.Review) {
+    permissions.push(CollectionContributorPermission.ADD_REVIEW);
+  }
+  return permissions;
+}
+
 function createEmptyPermissions(collectionId: number): CollectionContributorPermissionFlags {
   return {
     collectionId,
@@ -340,6 +410,8 @@ function createEmptyPermissions(collectionId: number): CollectionContributorPerm
     manage: false,
     follow: false,
     isContributor: false,
+    isCollaborator: false,
+    collaborationDisabled: false,
     isOwner: false,
     publicCollection: false,
     followPermissions: [],
@@ -378,7 +450,7 @@ export const getUserCollectionsWithPermissions = async <
   // By default, owned collections will be always returned
   const AND: Prisma.Sql[] = [];
   const SELECT: Prisma.Sql = Prisma.raw(
-    `SELECT c."id", c."name", c."description", c."read", c."userId", c."write", c."imageId", c."type", c."mode"`
+    `SELECT c."id", c."name", c."description", c."read", c."userId", c."write", c."imageId", c."type", c."mode", c."createdAt", c."updatedAt"`
   );
 
   if (input.type) {
@@ -558,6 +630,11 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
     })),
   };
 };
+
+export const getPendingReviewCount = (collectionId: number) =>
+  dbRead.collectionItem.count({
+    where: { collectionId, status: CollectionItemStatus.REVIEW },
+  });
 
 const inputToCollectionType = {
   modelId: CollectionType.Model,
@@ -929,6 +1006,55 @@ export const saveItemInCollections = async ({
     }
   }
 
+  const reviewCollectionIds = uniq(
+    data.filter((d) => d.status === CollectionItemStatus.REVIEW).map((d) => d.collectionId)
+  );
+  if (reviewCollectionIds.length > 0) {
+    try {
+      const managers = await dbRead.collectionContributor.findMany({
+        where: {
+          collectionId: { in: reviewCollectionIds },
+          permissions: { has: CollectionContributorPermission.MANAGE },
+        },
+        select: { collectionId: true, userId: true },
+      });
+
+      await Promise.all(
+        reviewCollectionIds.map((collectionId) => {
+          const collection = collections.find((c) => c.id === collectionId);
+          if (!collection) return;
+
+          const recipients = uniq([
+            collection.userId,
+            ...managers.filter((m) => m.collectionId === collectionId).map((m) => m.userId),
+          ]).filter((id) => id !== userId);
+          if (recipients.length === 0) return;
+
+          return createNotification({
+            userIds: recipients,
+            type: 'collection-submission-received',
+            category: NotificationCategory.Update,
+            key: `collection-submission-received:${collectionId}:${uuid()}`,
+            details: { collectionId, collectionName: collection.name },
+          });
+        })
+      );
+    } catch (error) {
+      // The item write above already committed — a failure resolving recipients or notifying
+      // them must not fail the submit itself, or the caller sees an error for an action that
+      // actually succeeded and is likely to retry and double-submit.
+      logToAxiom({
+        type: 'error',
+        name: 'collection-submission-notify-failed',
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        collectionIds: reviewCollectionIds,
+      }).catch(() => {
+        // swallow — best-effort logging must never break the submit it is observing
+      });
+    }
+  }
+
   // Check for updates to featured models
   if (input.modelId && collections.some((c) => c.id === FEATURED_MODEL_COLLECTION_ID)) {
     await bustFeaturedModelsCache();
@@ -963,11 +1089,12 @@ export const saveItemInCollections = async ({
 export const upsertCollection = async ({
   input,
 }: {
-  input: UpsertCollectionInput & { userId: number; isModerator?: boolean };
+  input: UpsertCollectionInput & { userId: number; isModerator?: boolean; isMember?: boolean };
 }) => {
   const {
     userId,
     isModerator,
+    isMember,
     id,
     name,
     description,
@@ -1025,12 +1152,29 @@ export const upsertCollection = async ({
       select: {
         id: true,
         read: true,
+        write: true,
         mode: true,
         createdAt: true,
         image: { select: { id: true } },
       },
     });
     if (!currentCollection) throw throwNotFoundError(`No collection with id ${id}`);
+
+    const canConfigure = permission.isOwner || !!isModerator;
+    const nextRead = canConfigure ? read : undefined;
+    const nextWrite = canConfigure ? write : undefined;
+    const nextMode = canConfigure ? mode : undefined;
+
+    const opensSubmissions =
+      !!nextWrite &&
+      nextWrite !== currentCollection.write &&
+      nextWrite !== CollectionWriteConfiguration.Private;
+
+    if (opensSubmissions && !isMember && !isModerator) {
+      throw throwAuthorizationError(
+        'A membership is required to open a collection to submissions.'
+      );
+    }
 
     // nb - if we ever allow a cover image on create, copy this logic below
     // TODO commenting this out - other users can manage collections
@@ -1070,9 +1214,9 @@ export const upsertCollection = async ({
           name,
           description,
           nsfw,
-          read,
-          write,
-          mode,
+          read: nextRead,
+          write: nextWrite,
+          mode: nextMode,
           metadata: (metadata ?? {}) as Prisma.JsonObject,
           image: imageId
             ? { connect: { id: imageId } }
@@ -1123,10 +1267,7 @@ export const upsertCollection = async ({
     // add network latency to the interactive transaction's timeout budget.
     await userCollectionCountCache.refresh(updated.userId);
 
-    if (
-      input.read === CollectionReadConfiguration.Public &&
-      currentCollection.read !== input.read
-    ) {
+    if (nextRead === CollectionReadConfiguration.Public && currentCollection.read !== nextRead) {
       // Set publishedAt for all post belonging to this collection if changing privacy to public
       await dbWrite.$queryRaw`
         UPDATE "Post" SET
@@ -1134,7 +1275,7 @@ export const upsertCollection = async ({
           "metadata" = jsonb_set("metadata", '{prevPublishedAt}', NULL)
         WHERE "collectionId" = ${updated.id}
       `;
-    } else if (!updated.mode && input.read !== CollectionReadConfiguration.Public) {
+    } else if (!updated.mode && nextRead !== CollectionReadConfiguration.Public) {
       // otherwise set publishedAt to null when no mode is setup.
       await dbWrite.$queryRaw`
         UPDATE "Post" SET
@@ -1144,31 +1285,38 @@ export const upsertCollection = async ({
       `;
     }
 
-    // Update contributors:
+    // Follow rows carry whatever the collection granted for free when they were written, so
+    // they have to be re-derived whenever that grant changes — otherwise closing a collection
+    // leaves every follower holding ADD, which both keeps them writing to it and makes them
+    // read as elevated collaborators to the roster. Compare against `currentCollection`, NOT
+    // the post-update row: `updated.write` already holds the new value, so the condition was
+    // false exactly when it needed to fire.
     if (
-      (input.write && input.write !== updated.write) ||
-      (input.read && input.read !== updated.read)
+      (nextWrite && nextWrite !== currentCollection.write) ||
+      (nextRead && nextRead !== currentCollection.read)
     ) {
-      // Update contributors permissions:
-      const permissions: CollectionContributorPermission[] = [];
-      if (updated.read !== CollectionReadConfiguration.Private) {
-        permissions.push(CollectionContributorPermission.VIEW);
-      }
+      const previousFreeGrant = freeGrantPermissions(currentCollection);
+      const permissions = freeGrantPermissions(updated);
 
-      if (updated.write === CollectionWriteConfiguration.Public) {
-        permissions.push(CollectionContributorPermission.ADD);
-      }
+      // An invited collaborator's grant is theirs, not the collection's — resetting it here
+      // would revoke every collaborator the moment the owner touches privacy. Matches the
+      // seat definition the caps and the roster use, so a re-invited collaborator (invite
+      // flipped back to Pending) stays protected.
+      const collaborators = await dbWrite.collectionInvite.findMany({
+        where: liveInviteWhere(updated.id),
+        select: { userId: true },
+      });
 
-      if (updated.write === CollectionWriteConfiguration.Review) {
-        permissions.push(CollectionContributorPermission.ADD_REVIEW);
-      }
-
+      // Only rows that are EXACTLY the grant the collection used to hand out for free — i.e.
+      // rows `addContributorToCollection` wrote from `followPermissions`. Rows carrying
+      // anything else were granted by something other than following (an accepted invite, the
+      // contest-manager join URL, historical staff rows), and this resync has never run in
+      // production, so "not explicitly excluded" would silently revoke all of them.
       await dbWrite.collectionContributor.updateMany({
         where: {
           collectionId: updated.id,
-          userId: {
-            not: updated.userId,
-          },
+          userId: { notIn: [updated.userId, ...collaborators.map((c) => c.userId)] },
+          permissions: { equals: previousFreeGrant },
         },
         data: {
           permissions,
@@ -1202,6 +1350,10 @@ export const upsertCollection = async ({
     await preventReplicationLag('collection', updated.id);
 
     return updated;
+  }
+
+  if (write && write !== CollectionWriteConfiguration.Private && !isMember && !isModerator) {
+    throw throwAuthorizationError('A membership is required to open a collection to submissions.');
   }
 
   // TODO allow cover image
@@ -1879,6 +2031,15 @@ export const addContributorToCollection = async ({
     permissionFlags ?? (await getUserCollectionPermissionsById({ id: collectionId, userId }));
 
   if (!manage && !follow) {
+    throw throwAuthorizationError(
+      'You do not have permission to add contributors to this collection.'
+    );
+  }
+
+  // The upsert REPLACES the target's permissions, so without this any follower of a
+  // community collection could rewrite a manager's row and strip their MANAGE.
+  // Mirrors removeContributorFromCollection's guard.
+  if (targetUserId !== userId && !manage) {
     throw throwAuthorizationError(
       'You do not have permission to add contributors to this collection.'
     );

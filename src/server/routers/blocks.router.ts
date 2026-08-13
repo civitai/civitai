@@ -302,6 +302,28 @@ async function assertViewerIsAppDeveloper(userId: number): Promise<void> {
 }
 
 /**
+ * THE app-authoring access gate for this router's four owner-scoped procs
+ * (`getMyAppRepo`, `getMyAppManifest`, `updateManifest`, `getMyForgejoCloneInfo`).
+ *
+ * A thin re-export of `app-access.service::assertAppEditAccess`, which replaced four
+ * byte-identical open-codings of `block.app?.userId !== ctx.user!.id`. The guard itself
+ * lives in the service so it has one home and can be unit-tested without importing this
+ * 7.9k-line router; this wrapper only keeps the import dynamic, matching the rest of
+ * the file's discipline for cross-service reach.
+ */
+async function assertAppEditAccess(
+  block: { id: string; app: { userId: number } | null },
+  userId: number
+): Promise<void> {
+  const { assertAppEditAccess: assertAccess } = await import(
+    '~/server/services/blocks/app-access.service'
+  );
+  // The owner is already in hand from the proc's own AppBlock select — passed through
+  // so the gate costs ZERO extra queries on the owner path.
+  await assertAccess({ appBlockId: block.id, ownerUserId: block.app?.userId, userId });
+}
+
+/**
  * App-Blocks flag gate for the BLOCK-TOKEN-authed runtime procs
  * (estimate/submit/poll/cancelWorkflow, updateUserSettings).
  *
@@ -5310,6 +5332,24 @@ export const blocksRouter = router({
    * therefore takes enforceTokenScope's Full early-return regardless. Annotate it the
    * day something token-authed needs it — at which point AppBlocksSubmit is the
    * consistent choice, for the reasons spelled out on getMyAppAnalytics.
+   *
+   * 🔴 DELIBERATELY **NOT** WIDENED FOR COLLABORATORS. This proc answers "what have
+   * *I* accrued", keyed on the snapshotted `BlockBuzzAttribution.appOwnerUserId`, and
+   * that is exactly the right question for it to keep answering:
+   *   - an editor calling it sees THEIR OWN portfolio, and nothing of the owner's —
+   *     no leak, no change;
+   *   - an owner who TRANSFERRED an app away still sees the rows they accrued before
+   *     the cut, which is required: those rows are still theirs to be paid for
+   *     (`app-ownership-transfer.service` deliberately does not rewrite the column).
+   * Widening it — or app-scoping it — would break that second property.
+   *
+   * The collaborator surface is the SEPARATE app-scoped `getAppEarnings` below. Note
+   * the one rough edge left alone on purpose: an editor who calls THIS proc with the
+   * shared `appBlockId` gets zeros, because none of those rows are attributed to them.
+   * Making that case throw would create the ownership oracle this proc deliberately
+   * does not have (see `RevenueUnavailableReason`'s note on why there is no `notOwned`
+   * value). The client routes editors to `getAppEarnings`, which answers the question
+   * they actually mean and returns an explicit `notPermitted` rather than a zero.
    */
   getMyRevenue: appDeveloperProcedure
     .use(enforceAppBlocksFlag)
@@ -5462,14 +5502,41 @@ export const blocksRouter = router({
     }),
 
   /**
-   * The current user's owned apps + lifetime revenue per app. Drives
-   * the per-app dropdown on /apps/revenue. OauthClient.userId is the
-   * single source of truth for app ownership in v1.
+   * The apps the caller can act on (OWNED + apps they hold an ACCEPTED collaborator
+   * seat on) + lifetime revenue per app. Drives the per-app dropdown on /apps/revenue.
+   *
+   * 🔴 THE LIFETIME GROUPBY IS THE PORTFOLIO-LEAK SITE, so read this before editing it.
+   * It used to be `where: { appOwnerUserId: user.id }` with NO app filter — a
+   * USER-WIDE query, bucketed by app in JS afterwards. That is safe only while the
+   * caller owns everything they can see. The moment an editor is in scope, the
+   * "obvious" widening (pass the OWNER's id, since the editor has no attribution rows
+   * of their own) returns the OWNER'S ENTIRE PORTFOLIO — every app they ever published,
+   * including ones this editor was never invited to.
+   *
+   * It is now served by `getMyAppsEarnings`, which resolves the permitted app-id SET
+   * first and filters `appBlockId IN thatSet`. Never reintroduce an
+   * `appOwnerUserId`-only filter on a collaborator-reachable read.
+   *
+   * `role` is surfaced so the client can distinguish an owned app from a seat (only an
+   * owner sees the manage-collaborators / transfer controls).
    */
   getMyApps: appDeveloperProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
     const user = ctx.user as SessionUser;
+    const { getMyAppsEarnings } = await import(
+      '~/server/services/blocks/app-collaborator-earnings.service'
+    );
+    const earnings = await getMyAppsEarnings({ userId: user.id });
+    if (earnings.length === 0) return [];
+    const roleByApp = new Map(earnings.map((e) => [e.appBlockId, e.role] as const));
+    const lifetimeMap = new Map(
+      earnings.map(
+        (e) => [e.appBlockId, { shareCents: e.lifetimeShareCents, count: e.lifetimeCount }] as const
+      )
+    );
+
     const apps = await dbRead.appBlock.findMany({
-      where: { app: { userId: user.id } },
+      // The permitted set, not `app: { userId }` — that would drop every seated app.
+      where: { id: { in: earnings.map((e) => e.appBlockId) } },
       select: {
         id: true,
         blockId: true,
@@ -5480,32 +5547,6 @@ export const blocksRouter = router({
       },
       orderBy: { createdAt: 'desc' },
     });
-
-    // One groupBy across all of the user's apps so the request
-    // doesn't N+1 against the attribution table. Skip when there
-    // are no apps — pointless query.
-    const lifetimeByApp = apps.length
-      ? await dbRead.blockBuzzAttribution.groupBy({
-          by: ['appBlockId'],
-          where: {
-            appOwnerUserId: user.id,
-            status: { in: ['confirmed', 'paid_out'] },
-          },
-          _sum: { appOwnerShareCents: true },
-          _count: true,
-        })
-      : [];
-    type LifetimeRow = {
-      appBlockId: string;
-      _sum: { appOwnerShareCents: number | null };
-      _count: number;
-    };
-    const lifetimeMap = new Map<string, { shareCents: number; count: number }>(
-      (lifetimeByApp as LifetimeRow[]).map((r) => [
-        r.appBlockId,
-        { shareCents: r._sum.appOwnerShareCents ?? 0, count: r._count },
-      ])
-    );
 
     type AppRow = {
       id: string;
@@ -5522,6 +5563,7 @@ export const blocksRouter = router({
       status: a.status,
       appName: a.app?.name ?? null,
       manifest: a.manifest as Record<string, unknown>,
+      role: roleByApp.get(a.id) ?? ('owner' as const),
       lifetimeShareCents: lifetimeMap.get(a.id)?.shareCents ?? 0,
       lifetimeCount: lifetimeMap.get(a.id)?.count ?? 0,
     }));
@@ -5560,19 +5602,18 @@ export const blocksRouter = router({
       const block = await dbRead.appBlock.findUnique({
         where: { id: input.appBlockId },
         select: {
+          id: true,
           blockId: true,
           status: true,
           app: { select: { userId: true } },
         },
       });
       if (!block) throw throwNotFoundError('App block not found');
-      // Owner gate — OauthClient.userId is the v1 app-ownership source of truth.
-      // FORBIDDEN (authenticated but not permitted) rather than UNAUTHORIZED, to
-      // distinguish a logged-in non-owner from an anon caller; mirrors the
-      // grantScopes ceiling gate above.
-      if (block.app?.userId !== ctx.user!.id) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Not the app owner' });
-      }
+      // Access gate — the OWNER (OauthClient.userId, the v1 source of truth) or an
+      // ACCEPTED collaborator. A pending/rejected invitee is refused. FORBIDDEN
+      // (authenticated but not permitted) rather than UNAUTHORIZED, to distinguish a
+      // logged-in non-owner from an anon caller; mirrors the grantScopes ceiling gate.
+      await assertAppEditAccess(block, ctx.user!.id);
       // A banned/suspended account must not be issued (or re-issued) a live push
       // credential. They still can't deploy (the mod gate holds), but we don't
       // hand out a fresh Forgejo token. Full revoke-on-ban is a follow-up.
@@ -5680,8 +5721,19 @@ export const blocksRouter = router({
         },
       });
       if (!block) throw throwNotFoundError('App block not found');
-      if (block.app?.userId !== ctx.user!.id) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Not the app owner' });
+      // Owner OR accepted collaborator (see `assertAppEditAccess`).
+      await assertAppEditAccess(block, ctx.user!.id);
+      // 🔴 BAN PARITY. The three sibling owner-scoped procs (getMyAppRepo,
+      // updateManifest, getMyForgejoCloneInfo) each carry an explicit `bannedAt`
+      // re-check; this read did NOT, which was a real inconsistency surfaced by
+      // consolidating these four gates. `protectedProcedure`'s `isAuthed` already
+      // refuses a banned session, so this is defence-in-depth exactly like its
+      // siblings rather than a new restriction.
+      if (ctx.user!.bannedAt) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Account is not eligible to manage apps',
+        });
       }
       return {
         appBlockId: block.id,
@@ -5816,10 +5868,10 @@ export const blocksRouter = router({
         },
       });
       if (!block) throw throwNotFoundError('App block not found');
-      // Owner gate — OauthClient.userId is the v1 ownership source of truth.
-      if (block.app?.userId !== ctx.user!.id) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Not the app owner' });
-      }
+      // Access gate — owner OR accepted collaborator. Shipping a new version is an
+      // explicit editor capability; the no-trust review gate downstream is unchanged
+      // (the commit still parks a `pending` request a moderator must approve).
+      await assertAppEditAccess(block, ctx.user!.id);
       // A banned/suspended account must not be able to mutate a live app.
       if (ctx.user!.bannedAt) {
         throw new TRPCError({
@@ -5966,10 +6018,11 @@ export const blocksRouter = router({
 
   /**
    * App management (Phase 2) — return the caller's per-user Forgejo clone info
-   * for one of THEIR apps, for the read-only `civitai app pull` CLI command.
-   * Owner-gated identically to getMyAppRepo; lazily provisions the scoped,
-   * restricted per-user Forgejo identity (ensureForgejoIdentity) and grants it
-   * read on the app's own civitai-apps/<slug> repo.
+   * for an app they may EDIT, for the read-only `civitai app pull` CLI command.
+   * Access-gated identically to getMyAppRepo — which, since App Listing Collaborators,
+   * means OWNER **or** ACCEPTED collaborator (`assertAppEditAccess`), not owner-only.
+   * Lazily provisions the scoped, restricted per-user Forgejo identity
+   * (ensureForgejoIdentity) and grants it read on the app's own civitai-apps/<slug> repo.
    *
    * Close to getMyAppRepo but no longer identical to it — three differences, and the
    * first is easy to miss now that only one of them carries a scope annotation:
@@ -5980,7 +6033,7 @@ export const blocksRouter = router({
    *   - INTENT: pull/sync here vs push instructions there.
    *   - COLLABORATOR PERMISSION: `read` here vs `write` there (see the note at the
    *     addCollaborator call below).
-   * Ownership gating IS identical (owner check + bannedAt + `approved`). It returns the
+   * Access gating IS identical (assertAppEditAccess + bannedAt + `approved`). It returns the
    * raw { forgejoUsername, token, cloneUrl } the CLI assembles its git command from; the
    * token is embedded in the returned cloneUrl exactly as getMyAppRepo does (the CLI
    * documents the token-in-URL leakage caveat).
@@ -6005,8 +6058,10 @@ export const blocksRouter = router({
     // include the civitai-cli OAuth login token.
     //
     // Accepted, deliberately: AppBlocksSubmit is opt-in, excluded from `Full`, and
-    // carried only by the first-party civitai-cli client; the caller must still own the
-    // app, not be banned, and the app must be `approved`; the collaborator grant is
+    // carried only by the first-party civitai-cli client; the caller must still hold EDIT
+    // ACCESS to the app — owner OR an ACCEPTED collaborator seat, per assertAppEditAccess
+    // (a pending or rejected invitee is refused, and there is no moderator bypass) — must
+    // not be banned, and the app must be `approved`; the collaborator grant is
     // `read` on that one repo; and this is already the established meaning of the bit
     // for CLI-facing procs, several of which are outright mutations (see
     // `listingMediaCliScope` in app-listings.router.ts). A dedicated bit would be
@@ -6047,16 +6102,15 @@ export const blocksRouter = router({
       const block = input.appBlockId
         ? await dbRead.appBlock.findUnique({
             where: { id: input.appBlockId },
-            select: { blockId: true, status: true, app: { select: { userId: true } } },
+            select: { id: true, blockId: true, status: true, app: { select: { userId: true } } },
           })
         : await dbRead.appBlock.findFirst({
             where: { blockId: input.slug },
-            select: { blockId: true, status: true, app: { select: { userId: true } } },
+            select: { id: true, blockId: true, status: true, app: { select: { userId: true } } },
           });
       if (!block) throw throwNotFoundError('App block not found');
-      if (block.app?.userId !== ctx.user!.id) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Not the app owner' });
-      }
+      // Owner OR accepted collaborator (see `assertAppEditAccess`).
+      await assertAppEditAccess(block, ctx.user!.id);
       if (ctx.user!.bannedAt) {
         throw new TRPCError({
           code: 'FORBIDDEN',

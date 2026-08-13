@@ -13,7 +13,8 @@ import {
 import { IconFilter } from '@tabler/icons-react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { getDisplayName } from '~/utils/string-helpers';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
@@ -26,27 +27,42 @@ import classes from './ShopFiltersDropdown.module.scss';
 export type ShopFilters = GetShopInput & {
   modifier?: 'owned' | 'notOwned';
   wishlisted?: boolean;
+  limited?: boolean;
+  acceptsBlueBuzz?: boolean;
 };
 
 type Filters = ShopFilters;
 
-export function ShopFiltersDropdown({
-  filters,
-  setFilters,
-  availableTypes,
-  hideModifiers,
-  showWishlist,
-}: Props) {
+export function ShopFiltersDropdown({ filters, setFilters, availableTypes }: Props) {
   const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
+  const currentUser = useCurrentUser();
 
-  const types: ShopFilterType[] = availableTypes ?? (Object.values(CosmeticType) as CosmeticType[]);
+  const types: ShopFilterType[] = availableTypes ?? [
+    ...(Object.values(CosmeticType) as CosmeticType[]),
+    PACK_FILTER_VALUE,
+  ];
+
+  // Owned and wishlisted both read the viewer's own collection, so neither can
+  // do anything logged out.
+  const canFilterByAccount = !!currentUser;
+  const accountFiltersActive = !!filters.modifier || !!filters.wishlisted;
+
+  // Logging out mid-browse leaves those filters set with no chip to unset them,
+  // and they'd keep matching against an empty owned/wishlisted set — an empty
+  // grid the viewer can't recover from.
+  useEffect(() => {
+    if (canFilterByAccount || !accountFiltersActive) return;
+    setFilters((prev) => ({ ...prev, modifier: undefined, wishlisted: undefined }));
+  }, [canFilterByAccount, accountFiltersActive, setFilters]);
 
   const [opened, setOpened] = useState(false);
   const filterLength =
     (filters.cosmeticTypes ? filters.cosmeticTypes.length : 0) +
-    (!hideModifiers && !!filters.modifier ? 1 : 0) +
-    (showWishlist && filters.wishlisted ? 1 : 0);
+    (canFilterByAccount && !!filters.modifier ? 1 : 0) +
+    (canFilterByAccount && filters.wishlisted ? 1 : 0) +
+    (filters.limited ? 1 : 0) +
+    (filters.acceptsBlueBuzz ? 1 : 0);
 
   const clearFilters = useCallback(() => setFilters({}), [setFilters]);
 
@@ -98,7 +114,7 @@ export function ShopFiltersDropdown({
           </Group>
         </Chip.Group>
       </Stack>
-      {!hideModifiers && (
+      {canFilterByAccount && (
         <Stack gap="md">
           <Divider label="Modifiers" className="text-sm font-bold" />
           <Chip.Group
@@ -112,16 +128,16 @@ export function ShopFiltersDropdown({
                 Owned
               </Chip>
               <Chip value="notOwned" {...chipProps}>
-                Not Owned
+                Hide Owned
               </Chip>
             </Group>
           </Chip.Group>
         </Stack>
       )}
-      {showWishlist && (
-        <Stack gap="md">
-          <Divider label="Wishlist" className="text-sm font-bold" />
-          <Group gap={8}>
+      <Stack gap="md">
+        <Divider label="More Filters" className="text-sm font-bold" />
+        <Group gap={8}>
+          {canFilterByAccount && (
             <Chip
               checked={!!filters.wishlisted}
               onChange={(checked) => setFilters((prev) => ({ ...prev, wishlisted: checked }))}
@@ -129,9 +145,23 @@ export function ShopFiltersDropdown({
             >
               Wishlisted
             </Chip>
-          </Group>
-        </Stack>
-      )}
+          )}
+          <Chip
+            checked={!!filters.limited}
+            onChange={(checked) => setFilters((prev) => ({ ...prev, limited: checked }))}
+            {...chipProps}
+          >
+            Limited
+          </Chip>
+          <Chip
+            checked={!!filters.acceptsBlueBuzz}
+            onChange={(checked) => setFilters((prev) => ({ ...prev, acceptsBlueBuzz: checked }))}
+            {...chipProps}
+          >
+            Accepts Blue Buzz
+          </Chip>
+        </Group>
+      </Stack>
       {filterLength > 0 && (
         <Button
           color="gray"
@@ -192,8 +222,4 @@ type Props = {
   filters: Filters;
   // Restrict the cosmetic-type chips (e.g. Creator Shop shows only sellable types).
   availableTypes?: ShopFilterType[];
-  // Hide the Owned / Not Owned modifiers (Creator Shop storefront).
-  hideModifiers?: boolean;
-  // Show the Wishlisted toggle (only /shop renders wishlist controls today).
-  showWishlist?: boolean;
 };

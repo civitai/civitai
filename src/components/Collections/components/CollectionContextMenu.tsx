@@ -9,6 +9,7 @@ import {
   IconStar,
   IconStarOff,
   IconTrash,
+  IconUsers,
 } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -30,6 +31,9 @@ import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuIt
 
 const CollectionAiReviewModal = dynamic(
   () => import('~/components/Collections/CollectionAiReviewModal')
+);
+const CollectionCollaboratorsModal = dynamic(
+  () => import('~/components/Collections/CollectionCollaborators/CollectionCollaboratorsModal')
 );
 import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { openReportModal } from '~/components/Dialog/triggers/report';
@@ -219,6 +223,9 @@ export function CollectionContextMenu({
   };
 
   const isBookmarkCollection = mode === CollectionMode.Bookmark;
+  // Matches what `getCollaborators` will answer for: curated (any mode) and system-owned
+  // collections carry staff rows that are an internal roster, not a collaboration.
+  const supportsCollaborators = !mode && ownerId > 0;
 
   return (
     <Menu {...menuProps} withArrow>
@@ -230,6 +237,7 @@ export function CollectionContextMenu({
               variant="transparent"
               collectionId={collectionId}
               permissions={permissions}
+              showLeaveAction
               p={0}
               pl={0}
               pr={0}
@@ -246,18 +254,22 @@ export function CollectionContextMenu({
         )}
 
         {!isBookmarkCollection && (isOwner || isMod) && (
+          <Menu.Item
+            color="red"
+            leftSection={<IconTrash size={14} stroke={1.5} />}
+            onClick={(e: React.MouseEvent) => {
+              e.preventDefault();
+              e.stopPropagation();
+              handleDeleteClick();
+            }}
+          >
+            Delete collection
+          </Menu.Item>
+        )}
+        {/* Managers get here too — the edit modal and `upsertCollection` both hold privacy and
+            mode to the owner, so what they reach is name, description and cover. */}
+        {!isBookmarkCollection && (isOwner || isMod || permissions?.manage) && (
           <>
-            <Menu.Item
-              color="red"
-              leftSection={<IconTrash size={14} stroke={1.5} />}
-              onClick={(e: React.MouseEvent) => {
-                e.preventDefault();
-                e.stopPropagation();
-                handleDeleteClick();
-              }}
-            >
-              Delete collection
-            </Menu.Item>
             <Menu.Item
               leftSection={<IconEdit size={14} stroke={1.5} />}
               onClick={(e: React.MouseEvent) => {
@@ -268,7 +280,7 @@ export function CollectionContextMenu({
             >
               Edit collection
             </Menu.Item>
-            {features.collectionAiReview && (
+            {(isOwner || isMod) && features.collectionAiReview && (
               <Menu.Item
                 leftSection={<IconRobot size={14} stroke={1.5} />}
                 onClick={(e: React.MouseEvent) => {
@@ -321,6 +333,21 @@ export function CollectionContextMenu({
               Review items
             </Menu.Item>
           </Link>
+        )}
+        {supportsCollaborators && permissions?.read && (
+          <Menu.Item
+            leftSection={<IconUsers size={14} stroke={1.5} />}
+            onClick={(e: React.MouseEvent) => {
+              e.preventDefault();
+              e.stopPropagation();
+              dialogStore.trigger({
+                component: CollectionCollaboratorsModal,
+                props: { collectionId },
+              });
+            }}
+          >
+            Collaborators
+          </Menu.Item>
         )}
         {!isOwner && (
           <ReportMenuItem

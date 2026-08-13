@@ -52,12 +52,16 @@ export default function Account() {
           <ContentControlsCard />
           <GenerationSettingsCard />
           {features.canViewNsfw && <ModerationCard />}
-          {/* Either flag mounts the card; each half gates itself inside. ANDing
-              them here put the sticker controls behind `creator-controls`, which
-              is dark by default and whose Flipt flag does not exist — so nobody
-              could price their space, and the review queue nothing else links to
-              became unreachable. */}
-          {(features.creatorControls || features.stickerPlacement) && <CreatorControlsCard />}
+          {/* Any one flag mounts the card; each section gates itself inside.
+              ANDing them here put the sticker controls behind `creator-controls`,
+              which is dark by default and whose Flipt flag does not exist — so
+              nobody could price their space, and the review queue nothing else
+              links to became unreachable. The same omission hid remix galleries
+              entirely: the settings section was shipped, mounted, and gated by a
+              flag this condition did not mention. */}
+          {(features.creatorControls || features.stickerPlacement || features.remixGallery) && (
+            <CreatorControlsCard />
+          )}
           <StickerInventoryCard />
           <AccountsCard />
           <UserPaymentConfigurationCard />

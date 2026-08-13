@@ -16,6 +16,7 @@ import { ImageCard } from '~/components/Cards/ImageCard';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { ITEMS_PER_ROW, useCappedItems } from '~/components/HomeBlocks/homeBlockItems';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -25,8 +26,6 @@ import type { FeedBlockItems } from '~/server/services/home-block.service';
 import { shuffle } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
-
-const ITEMS_PER_ROW = 7;
 
 type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema };
 
@@ -169,34 +168,6 @@ const FeedSkeleton = ({ rows }: { rows: number }) => (
  */
 function useShuffled<T>(items: T[]) {
   return useMemo(() => shuffle([...items]), [items]);
-}
-
-/** Trim to the visible slice, capping how many items one creator can contribute. */
-function useCappedItems<T extends { id: number; user?: { id: number } }>(
-  items: T[],
-  rows: number,
-  maxPerUser?: number
-) {
-  return useMemo(() => {
-    const itemsToShow = ITEMS_PER_ROW * rows;
-    if (!maxPerUser) return items.slice(0, itemsToShow);
-
-    const perUserCount = new Map<number, number>();
-    const capped: T[] = [];
-    for (const item of items) {
-      if (capped.length >= itemsToShow) break;
-      const userId = item.user?.id;
-      if (userId == null) {
-        capped.push(item);
-        continue;
-      }
-      const count = perUserCount.get(userId) ?? 0;
-      if (count >= maxPerUser) continue;
-      perUserCount.set(userId, count + 1);
-      capped.push(item);
-    }
-    return capped;
-  }, [items, rows, maxPerUser]);
 }
 
 type GridProps<T> = { items: T; rows: number; maxPerUser?: number };

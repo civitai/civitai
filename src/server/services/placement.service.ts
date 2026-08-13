@@ -6,7 +6,6 @@ import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placem
 import {
   clampApprovalShares,
   clampDeclineFeeRate,
-  PLACEMENT_MIN_PRICE,
   PLACEMENT_PRICE_CAP_TIERS,
   PLACEMENT_SURFACES,
   placementPriceCap,
@@ -126,7 +125,7 @@ export async function placementPriceRange(
   const tier = toPriceCapTier(capTier ?? undefined);
 
   return {
-    min: PLACEMENT_MIN_PRICE,
+    min: PLACEMENT_SURFACES[surface].serverMinPrice,
     max: placementPriceCap(score, tier, config.priceCapTiers(surface)),
     score,
     tier,

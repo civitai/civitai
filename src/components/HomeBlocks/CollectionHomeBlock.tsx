@@ -24,6 +24,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageCard } from '~/components/Cards/ImageCard';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
+import { ITEMS_PER_ROW, useCappedItems } from '~/components/HomeBlocks/homeBlockItems';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PostCard } from '~/components/Cards/PostCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
@@ -59,7 +60,6 @@ export const CollectionHomeBlock = ({ showAds, ...props }: Props) => {
   );
 };
 
-const ITEMS_PER_ROW = 7;
 const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
     { id: homeBlockId },
@@ -87,26 +87,11 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   });
 
   const maxPerUser = metadata.collection?.maxPerUser;
-  const items = useMemo(() => {
-    const itemsToShow = ITEMS_PER_ROW * rows;
-    if (!maxPerUser) return filtered.slice(0, itemsToShow);
-
-    const perUserCount = new Map<number, number>();
-    const capped: typeof filtered = [];
-    for (const item of filtered) {
-      if (capped.length >= itemsToShow) break;
-      const userId = (item as any)?.user?.id as number | undefined;
-      if (userId == null) {
-        capped.push(item);
-        continue;
-      }
-      const count = perUserCount.get(userId) ?? 0;
-      if (count >= maxPerUser) continue;
-      perUserCount.set(userId, count + 1);
-      capped.push(item);
-    }
-    return capped;
-  }, [filtered, rows, maxPerUser]);
+  const items = useCappedItems(
+    filtered as { user?: { id: number } | null }[],
+    rows,
+    maxPerUser
+  ) as typeof filtered;
 
   // useEffect(() => console.log({ homeBlock, filtered, items }), [homeBlock, filtered, items]);
 

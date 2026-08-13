@@ -1,4 +1,15 @@
-import { Alert, Badge, Button, Card, FileInput, Group, Image, Loader, Stack, Text } from '@mantine/core';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  FileInput,
+  Group,
+  Image,
+  Loader,
+  Stack,
+  Text,
+} from '@mantine/core';
 import {
   IconAlertTriangle,
   IconCheck,
@@ -27,6 +38,11 @@ import {
   type ScreenshotSlot,
 } from '~/components/Apps/screenshotSlots';
 import type { EditAsset, EditScreenshot } from '~/components/Apps/offsiteEditConfig';
+import {
+  listingAssetTooLargeReason,
+  validateListingImage,
+  type ListingAssetKind,
+} from '~/server/schema/blocks/app-listing.schema';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -59,7 +75,13 @@ export type MetaSuggestions = {
   iconDataUri?: string;
 };
 
-type AssetKind = 'icon' | 'cover' | 'screenshot';
+/**
+ * ALIASED to the server's kind union rather than respelled, because this value is
+ * now handed to the server's own per-kind validator (`uploadAndPersist`): if the
+ * two ever diverge the compiler says so here, instead of a kind silently missing
+ * its bounds at the picker.
+ */
+type AssetKind = ListingAssetKind;
 
 /** Per-asset attach lifecycle (see the create wizard's doc for the full state map). */
 export type AssetStatus = 'idle' | 'working' | 'scanning' | 'attached' | 'timeout' | 'error';
@@ -100,14 +122,61 @@ function mergePreview(prev: AssetState, next: AssetState): AssetState {
   return { ...next, previewUrl: prev.previewUrl };
 }
 
-/** Read the intrinsic pixel dimensions of an image File (the attach proc rejects zero/unknown). */
+/**
+ * Read the pixel dimensions of an image File as the BROWSER presents them (the
+ * attach proc rejects zero/unknown).
+ *
+ * 🔴 "As the browser presents them" is not the same as the server's pair for every
+ * container, and the prechecks in `uploadAndPersist` are split along exactly that
+ * line. Measured on Chromium 149:
+ *
+ *   JPEG, PNG  the browser applies EXIF orientation, and so does the server
+ *              (`probeStoredImage` transposes for orientations 5–8) — the two
+ *              agree on BOTH AXES, not merely on `Math.max`.
+ *   WEBP       the browser does NOT apply it. An EXIF-oriented WebP stored 640×1280
+ *              reads 640×1280 here and 1280×640 on the server. The axes are
+ *              transposed relative to each other, so any bound naming an axis (an
+ *              aspect band, the cover's minimum width) gets the OPPOSITE verdict.
+ *
+ * `imageOrientation: 'from-image'` is the spec default and is passed explicitly to
+ * state the intent, but it does NOT buy the agreement: in this Chromium the option
+ * is inert for WebP — `'from-image'`, `'none'` and no options all return the stored
+ * pair — which is why `uploadAndPersist` sniffs the container instead of trusting
+ * it. WebP is offered by the file inputs' own `accept`, so this is a live path.
+ */
 async function readImageDimensions(file: File): Promise<{ width: number; height: number }> {
-  const bitmap = await createImageBitmap(file);
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
   try {
     return { width: bitmap.width, height: bitmap.height };
   } finally {
     bitmap.close();
   }
+}
+
+/** `RIFF` at offset 0 and `WEBP` at offset 8 — the WebP container's signature. */
+const WEBP_RIFF = [0x52, 0x49, 0x46, 0x46];
+const WEBP_FORM = [0x57, 0x45, 0x42, 0x50];
+
+/**
+ * Is this file a WEBP, judged from its own first bytes?
+ *
+ * 🔴 Deliberately NOT `file.type`. That is derived from the file NAME, which is
+ * precisely why the MIME check is left server-only a few lines below — and a
+ * mislabelled file is the case this has to get right: reading `.png` off a WebP
+ * would re-enable the axis-sensitive bounds on the one container whose axes this
+ * side cannot trust, which is the over-strict failure being fixed. The bytes are
+ * the thing the server's decoder will also go on.
+ *
+ * Reads the first 12 bytes only (`File.slice` is a view; nothing else is pulled
+ * into memory). A file too short to hold a signature is not a WebP — and is not a
+ * decodable image either, so `createImageBitmap` has already thrown for it.
+ */
+async function isWebpContainer(file: File): Promise<boolean> {
+  const header = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+  if (header.length < 12) return false;
+  return (
+    WEBP_RIFF.every((b, i) => header[i] === b) && WEBP_FORM.every((b, i) => header[8 + i] === b)
+  );
 }
 
 export function ListingAssetStep({
@@ -155,7 +224,12 @@ export function ListingAssetStep({
   const [screenshots, setScreenshots] = useState<ScreenshotSlot[]>(() =>
     (initial?.screenshots ?? [])
       .filter((s) => s.imageId != null)
-      .map((s) => ({ id: `pre_${s.id}`, status: 'attached' as const, imageId: s.imageId, message: null }))
+      .map((s) => ({
+        id: `pre_${s.id}`,
+        status: 'attached' as const,
+        imageId: s.imageId,
+        message: null,
+      }))
   );
   const screenshotIdRef = useRef(0);
   // Slot id → { rowId (AppListingScreenshot.id, for removal), previewUrl }. Kept
@@ -290,8 +364,62 @@ export function ListingAssetStep({
     scanTimersRef.current.set(key, timer);
   }
 
-  async function uploadAndPersist(file: File): Promise<number> {
+  async function uploadAndPersist(file: File, kind: AssetKind): Promise<number> {
     const { width, height } = await readImageDimensions(file);
+    // Fail fast, BEFORE a byte leaves the browser. The dimensions are already in
+    // hand here, but every rule expressed over them lives further down the wire, so
+    // without this mirror the author waits out a full upload to be told something
+    // that was knowable from the file picker.
+    //
+    // TWO checks, applied in the order the SERVER reaches them, so the author is
+    // shown the message that would actually have landed:
+    //   1. the kind-AGNOSTIC per-side ceiling, which `persistAssetImage` applies to
+    //      the measured bytes as soon as the upload completes ("That image …");
+    //   2. the per-KIND geometry rules (aspect + minimum sides + the icon's own,
+    //      tighter, maximum), which the attach procs apply one step later via
+    //      `validateListingImage` ("icon must be …").
+    // An image failing (1) never reaches (2) — here or on the server — so the
+    // ordering is what keeps the two messages from swapping places.
+    //
+    // 🔴 A UX MIRROR, NOT THE ENFORCEMENT POINT. The server re-derives the pair from
+    // the STORED BYTES (`measureListingAssetUpload`) and re-applies both; anything
+    // decided here is a client claim. Deleting either check costs a wasted upload,
+    // never a bypass, and nothing downstream may become conditional on it running.
+    //
+    // Both predicates are IMPORTED, never restated: a vendored copy of a bound is
+    // exactly what goes stale and starts refusing valid input (civitai/cli#270).
+    //
+    // 🔴 How much of (2) may be evaluated here depends on the CONTAINER, because
+    // that decides whether this side and the server agree about which axis is which
+    // — see `readImageDimensions` for the measurement. For JPEG and PNG both apply
+    // EXIF orientation and agree on both axes, so every bound is fair game. For
+    // WEBP the browser does not, so the pair arrives transposed relative to the
+    // server's and any bound naming an axis would be evaluated against the wrong
+    // one: an EXIF-rotated WebP cover the server stores happily (aspect 2.00) reads
+    // as 0.50 here, i.e. EVERY such cover would be refused at the picker. So for
+    // WebP the axis-sensitive bounds are skipped and left to the server, and only
+    // the transposition-INVARIANT ones — which a quarter-turn cannot change — are
+    // prechecked. Skipping restores a late rejection; refusing something the server
+    // would accept is the failure that has no recovery.
+    const tooLarge = listingAssetTooLargeReason('That image', width, height);
+    if (tooLarge) throw new Error(`${tooLarge}.`);
+    // `validateListingImage` is handed only what this side knows FAITHFULLY; it
+    // skips `sizeBytes` / `mimeType` when absent, and both are omitted on purpose:
+    //   • `mimeType` — `file.type` comes from the file NAME, while the server reads
+    //     the DECODED container format. A mislabelled extension (or an empty
+    //     `file.type`) would refuse an image the server accepts, and refusing valid
+    //     input at the picker is worse than the wasted upload this is fixing.
+    //   • `sizeBytes` — the byte caps are split across two server gates (a 4 MiB
+    //     ceiling at persist, the per-kind cap at attach), so one verdict here would
+    //     name the wrong gate for files above the ceiling. Left server-side whole.
+    // `type` is not a claim: `createImageBitmap` has already thrown above for
+    // anything that is not a decodable image.
+    const perKind = validateListingImage({ type: 'image', width, height }, kind, {
+      skipOrientationSensitive: await isWebpContainer(file),
+    });
+    // No trailing period — the attach proc surfaces `reason` verbatim, and this has
+    // to read identically wherever the rejection lands.
+    if (!perKind.ok) throw new Error(perKind.reason);
     const result = await uploadToCF(file);
     const { imageId } = await persistMutation.mutateAsync({
       url: result.id,
@@ -357,7 +485,10 @@ export function ListingAssetStep({
       // Promote a captured row id into screenshotMeta so the Remove button appears.
       const rowId = rowIdRef.current.get(key);
       if (rowId) {
-        setScreenshotMeta((prev) => ({ ...prev, [key]: { rowId, previewUrl: prev[key]?.previewUrl ?? null } }));
+        setScreenshotMeta((prev) => ({
+          ...prev,
+          [key]: { rowId, previewUrl: prev[key]?.previewUrl ?? null },
+        }));
       }
       onAssetMutated?.();
       // Kick off the scan-status poll only while the scan is still in-flight. Updates
@@ -411,7 +542,7 @@ export function ListingAssetStep({
       apply({ status: 'working', imageId: null, message: null, previewUrl });
     }
     try {
-      const imageId = await uploadAndPersist(file);
+      const imageId = await uploadAndPersist(file, kind);
       if (!isCurrentEpoch(key, epoch)) return;
       await drive(key, kind, imageId, 0, epoch, apply);
     } catch (err) {
@@ -719,7 +850,9 @@ export function ListingAssetStep({
                             // A scanning-but-committed row (has a server row) must be
                             // removed on the server; a not-yet-committed (working) row is
                             // a local-only cancel.
-                            onClick={() => (hasRow ? void removeScreenshot(s.id) : cancelScreenshot(s.id))}
+                            onClick={() =>
+                              hasRow ? void removeScreenshot(s.id) : cancelScreenshot(s.id)
+                            }
                             data-testid={`apps-offsite-screenshot-cancel-${i}`}
                           >
                             Cancel

@@ -10,8 +10,16 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
 
 - `src/infra/helpers.ts` — shared query helpers (`jsonArrayFrom`/`jsonObjectFrom` reads, `toJson` writes).
 - `src/<domain>.db.ts` — one query module per domain, exported at the subpath `@civitai/db-queries/<domain>`.
-  Only the `tag.db.ts` **exemplar** exists today; domain modules are (re)ported on demand, per cutover, from
-  current `main` (see the migration plan) rather than kept ahead of their consumers where they'd drift.
+  Domain modules are (re)ported on demand, per cutover, from current `main` (see the migration plan) rather
+  than kept ahead of their consumers where they'd drift. Today: `tag.db.ts` (the original **exemplar**, plus
+  the votable-tag vote lookups) and `model.db.ts`.
+
+  The first ported **hot read paths** are the per-user vote lookups behind the votable-tag endpoint
+  (`listImageTagVotes` / `listImageTagVotesMany` / `listModelTagVotes`) and the per-visible-set engagement
+  membership read (`listModelEngagements`). These went to Kysely specifically to keep the highest-volume
+  read statements off the Prisma query engine, whose in-process CPU cost scales with call volume. Their
+  behaviour parity with the Prisma originals is pinned against a real database by
+  `<civitai>/src/server/db/__tests__/kysely-prisma-parity.test.ts` — see Testing below.
 
 ## Client access — executor injection
 
@@ -202,6 +210,19 @@ the root `.env` `DATABASE_URL` locally); the suite `describe.skipIf(!h.hasDb)`-s
 Wrap it and destroy the client in `afterAll`. See [`src/tag.db.explain.test.ts`](src/tag.db.explain.test.ts).
 Stricter plan-regression assertions (no seq-scan on a hot path) need a prod-like dataset — dev-DB planner
 choices vary with table size — so keep those against real data, not this suite.
+
+### 3. Prisma-vs-Kysely behaviour parity (for a query ported off Prisma)
+
+Tiers 1 and 2 prove what SQL runs and that it plans. Neither proves the **caller sees the same thing it saw
+before**, which is the whole risk of porting a live read path. For that, run BOTH implementations against the
+SAME rows in the SAME database and deep-compare the results, rather than asserting the Kysely result against
+a hand-written expectation (which only re-states what the new code does). This lives in the consuming app,
+since the package itself must stay Prisma-free: `<civitai>/src/server/db/__tests__/kysely-prisma-parity.test.ts`,
+with its schema fixture alongside. Cover the empty result, an empty input array (the `IN ()` guard), and
+cross-user/cross-entity isolation — a dropped predicate shows up as extra rows, not as an empty diff.
+
+It is opt-in via `KYSELY_PARITY_DATABASE_URL` and deliberately does NOT fall back to `DATABASE_URL`: it
+writes fixtures, so it needs a throwaway database. The test header has the one-line docker command.
 
 ## Example
 

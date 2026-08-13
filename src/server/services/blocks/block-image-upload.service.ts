@@ -10,6 +10,7 @@ import {
 import type { OffsiteRatingValue } from '~/shared/constants/browsingLevel.constants';
 import type { PersistBlockUploadImageInput } from '~/server/schema/blocks/block-image-upload.schema';
 import { measureUploadedImage } from '~/server/services/blocks/measure-uploaded-image';
+import { storedObjectEtagMetadata } from '~/server/services/blocks/stored-object-integrity';
 import type { SessionUser } from '~/types/session';
 import { uploadImageBufferToStore } from '~/utils/s3-utils';
 
@@ -64,8 +65,11 @@ export async function persistBlockUploadImage(opts: {
     width: measured.width,
     height: measured.height,
     mimeType: measured.mimeType,
-    // Byte size is read from `Image.metadata.size` by the image validators.
-    metadata: { size: measured.sizeBytes },
+    // Byte size is read from `Image.metadata.size` by the image validators. The
+    // entity tag records which stored object they were measured from — a row from
+    // here is attachable as listing media, so it must carry the same evidence the
+    // listing attach gate re-checks.
+    metadata: { size: measured.sizeBytes, ...storedObjectEtagMetadata(measured.etag) },
     userId,
   });
   return { imageId: image.id };
@@ -102,8 +106,14 @@ function sniffSupportedImage(b: Buffer): string | null {
   if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png';
   if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return 'image/gif';
   if (
-    b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && // 'RIFF'
-    b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50 // 'WEBP'
+    b[0] === 0x52 &&
+    b[1] === 0x49 &&
+    b[2] === 0x46 &&
+    b[3] === 0x46 && // 'RIFF'
+    b[8] === 0x57 &&
+    b[9] === 0x45 &&
+    b[10] === 0x42 &&
+    b[11] === 0x50 // 'WEBP'
   ) {
     return 'image/webp';
   }

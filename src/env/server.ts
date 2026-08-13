@@ -5,6 +5,7 @@
  */
 import * as dotenv from 'dotenv';
 import { env as clientEnv, formatErrors } from './client';
+import { IS_BUILD } from './is-build';
 import { serverSchema } from './server-schema';
 
 if (process.env.NODE_ENV === 'development') {
@@ -49,11 +50,5 @@ if (process.env.NODE_ENV === 'development') {
     }
   } catch {}
 }
-
-// Detect if we're in a Next.js build process
-// This is useful for skipping runtime-only operations like database/redis connections
-const isNextBuild =
-  process.argv.some((arg) => arg.includes('next')) && process.argv.some((arg) => arg === 'build');
-const IS_BUILD = process.env.IS_BUILD === 'true' || isNextBuild;
 
 export const env = { ..._serverEnv.data, ...clientEnv, IS_BUILD };

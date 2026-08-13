@@ -1,6 +1,13 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { explainHarness } from './test/harness';
-import { createTag, getTagById, upsertTagsByName } from './tag.db';
+import {
+  createTag,
+  getTagById,
+  listImageTagVotes,
+  listImageTagVotesMany,
+  listModelTagVotes,
+  upsertTagsByName,
+} from './tag.db';
 
 const h = explainHarness();
 
@@ -21,5 +28,20 @@ describe.skipIf(!h.hasDb)('tag.db queries EXPLAIN against the real schema', () =
   it('upsertTagsByName plans (batch insert + id lookup)', async () => {
     await upsertTagsByName(h.db, ['x', 'y'], ['Model']);
     expect((await h.explainAll()).length).toBeGreaterThan(0);
+  });
+
+  it('listImageTagVotes plans', async () => {
+    await listImageTagVotes(h.db, { imageId: 1, userId: 1 });
+    expect(await h.explainLast()).toBeTruthy();
+  });
+
+  it('listImageTagVotesMany plans', async () => {
+    await listImageTagVotesMany(h.db, { imageIds: [1, 2], userId: 1 });
+    expect(await h.explainLast()).toBeTruthy();
+  });
+
+  it('listModelTagVotes plans', async () => {
+    await listModelTagVotes(h.db, { modelId: 1, userId: 1 });
+    expect(await h.explainLast()).toBeTruthy();
   });
 });

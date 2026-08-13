@@ -53,6 +53,29 @@ async function getAppOwnerUserId(appBlockId: string): Promise<number | null> {
   return row?.app.userId ?? null;
 }
 
+/**
+ * The app's INSIDERS for the self-review gate: the owner plus every ACCEPTED
+ * collaborator.
+ *
+ * 🔴 WIDENED FOR COLLABORATORS. The gate used to compare against the single
+ * `app.userId`; with editor seats, an accepted collaborator — who can edit the
+ * listing, ship versions and see the earnings — could otherwise 5-star the app they
+ * co-author. That is the same conflict of interest the owner check exists to stop.
+ *
+ * 🔴 `displayed` is deliberately NOT part of this set. It is a public-CREDIT
+ * preference, not a capability, so an editor who hid their byline is still an insider;
+ * filtering on it would turn "hide my name" into a self-review bypass. See
+ * `listAppInsiderUserIds`, which encodes that asymmetry against its public sibling.
+ *
+ * PENDING and REJECTED seats are NOT insiders — they hold no capability, so they have
+ * no conflict, and treating a mere invite as disqualifying would let an owner silence
+ * a critic by inviting them.
+ */
+async function getAppInsiderUserIds(appBlockId: string): Promise<number[]> {
+  const { listAppInsiderUserIds } = await import('~/server/services/blocks/app-access.service');
+  return listAppInsiderUserIds(appBlockId);
+}
+
 /** True when the viewer has an ENABLED subscription (install) for the app. */
 async function hasEnabledInstall(appBlockId: string, userId: number): Promise<boolean> {
   const row = await dbRead.blockUserSubscription.findFirst({
@@ -112,11 +135,13 @@ export const upsertAppBlockReview = async ({
   const createRecommended = recommended ?? true;
   const updateRecommended = recommended === undefined ? {} : { recommended };
 
-  // Gate 2: no self-review. Reject before any write so the owner can't seed
-  // their own (even though it's excluded from the aggregate too).
+  // Gate 2: no self-review. Reject before any write so an insider can't seed
+  // their own (even though it's excluded from the aggregate too). Covers the owner
+  // AND every accepted collaborator — see `getAppInsiderUserIds`.
   const ownerUserId = await getAppOwnerUserId(appBlockId);
   if (ownerUserId == null) throw throwBadRequestError('App block not found');
-  if (ownerUserId === userId) {
+  const insiders = await getAppInsiderUserIds(appBlockId);
+  if (insiders.includes(userId)) {
     throw throwAuthorizationError('You cannot review your own app');
   }
 

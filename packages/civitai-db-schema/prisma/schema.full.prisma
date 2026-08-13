@@ -501,6 +501,8 @@ model User {
   collectionItems            CollectionItem[]
   reviewedCollectionItems    CollectionItem[]               @relation("reviewedBy")
   contributingCollections    CollectionContributor[]
+  collectionInvitesReceived CollectionInvite[] @relation("collectionInviteRecipient")
+  collectionInvitesSent     CollectionInvite[] @relation("collectionInviteSender")
   homeBlocks                 HomeBlock[]
   bounties                   Bounty[]
   bountyEntries              BountyEntry[]
@@ -603,6 +605,14 @@ model User {
   appListingReportsReported          AppListingReport[]         @relation("AppListingReportReporter")
   appListingReportsResolved          AppListingReport[]         @relation("AppListingReportResolver")
   appListingModerationEvents         AppListingModerationEvent[] @relation("AppListingModEventActor")
+  // App Listing Collaborators — editor seats held / issued, the ownership audit
+  // trail this user acted in or was targeted by, and any transfer they are party to.
+  appCollaboratorSeats               AppCollaborator[]          @relation("AppCollaboratorMember")
+  appCollaboratorInvitesSent         AppCollaborator[]          @relation("AppCollaboratorInviter")
+  appOwnershipEventsActed            AppOwnershipEvent[]        @relation("AppOwnershipEventActor")
+  appOwnershipEventsTargeted         AppOwnershipEvent[]        @relation("AppOwnershipEventTarget")
+  appOwnershipTransfersFrom          AppOwnershipTransfer[]     @relation("AppOwnershipTransferFrom")
+  appOwnershipTransfersTo            AppOwnershipTransfer[]     @relation("AppOwnershipTransferTo")
   targetedAnnouncements              AnnouncementUser[]
   placementSuspension                PlacementSuspension?       @relation("PlacementSuspensionUser")
   placementsReceived                 Placement[]                @relation("PlacementOwner")
@@ -2503,6 +2513,10 @@ model AppBlock {
   userScopeGrants    AppUserScopeGrant[]
   reviews            AppBlockReview[]
   appListing         AppListing?
+  // NB: App Listing Collaborators (seats / ownership events / ownership transfers)
+  // are keyed to `AppListing`, NOT here — see the AppCollaborator model header. An
+  // off-site listing has no AppBlock at all, so a block-keyed seat could never exist
+  // for one of the store's two kinds.
 
   @@unique([appId, blockId], map: "app_blocks_app_block_uniq")
   // W1 audit C-3 fix: enforce one app per slug at the DB layer. The
@@ -2548,6 +2562,151 @@ model AppBlockReview {
   // Aggregate read path (AVG/COUNT WHERE NOT exclude).
   @@index([appBlockId, exclude], map: "app_block_reviews_app_agg_idx")
   @@map("app_block_reviews")
+}
+
+/// App Listing COLLABORATORS — a consent-gated editor seat on a STORE LISTING.
+///
+/// 🔴 KEYED TO `AppListing`, NOT `AppBlock`. `AppBlock` is the ON-SITE runtime record;
+/// an OFF-SITE listing (external-link / OAuth-connect) has no AppBlock at all
+/// (`app_listings.app_block_id IS NULL`), so a block-keyed seat was structurally unable
+/// to exist for one of the store's two kinds. `AppListing` is the store-facing parent of
+/// BOTH, so the seat lives here. Ownership remains canonically `OauthClient.userId` for
+/// an on-site listing — the seat's KEY and the ownership COLUMN are different questions.
+///
+/// 🔴 A SEAT BELONGS TO A **PARENT** LISTING, NEVER TO A SHADOW REVISION
+/// (`revisionOfId != null`). `applyApprovedRevision` DELETES the shadow, and this FK
+/// CASCADEs — a seat on a shadow would silently vanish on approve. A SQL CHECK cannot
+/// express "parent only" (it cannot see another row), so it is enforced in the service:
+/// `inviteCollaborator` refuses a shadow, and `resolveListingAccess` resolves a shadow
+/// to its parent before any seat lookup.
+///
+/// 🔴 WHAT A SEAT UNLOCKS IS DERIVED FROM THE LISTING'S `kind`, not stored. An off-site
+/// editor gets content/media, submit-for-review and analytics, but NOT earnings
+/// (`BlockBuzzAttribution` is block-scoped) and NOT submit-version / git (there is no
+/// bundle and no repo). See `capabilitiesForKind` in `app-access.service.ts`.
+///
+/// 🔴 `displayed` (the public-byline opt-in) LIVES HERE FOR A LOAD-BEARING REASON, and
+/// this is load-bearing rather than incidental: `applyApprovedRevision`'s OFFSITE
+/// branch copies the shadow's `name/tagline/description/category/contentRating/
+/// externalUrl/connect*` straight onto the live parent. An `AppListing` column
+/// holding a display-author flag would therefore be CLOBBERED by any later shadow
+/// approve — an immediate-apply product decision would silently revert on the next
+/// mod re-review. Collaborator rows are outside BOTH branches' copy sets, so
+/// immediate-apply is correct BY CONSTRUCTION, not by a promise to remember.
+///
+/// CONSENT MODEL (mirrors `EntityCollaborator`'s status-visibility rules, NOT its
+/// code — that model is hard-scoped to Posts): an invite starts `pending` and confers
+/// ZERO capability and ZERO public visibility. Only `accepted` grants anything.
+///
+/// `role` is TEXT (not an enum) so a future role needs no migration; `'editor'` is the
+/// only value the code writes today. `status` is TEXT for the same reason, bounded by
+/// a CHECK constraint in the migration.
+///
+/// MANUAL-APPLY (datapacket-talos rule #8): the main civitai DB (CNPG nvme0) does NOT
+/// run `prisma migrate deploy`. The committed SQL is hand-applied per environment. All
+/// reads are NULL-safe / empty-safe, so the feature is INERT until it lands.
+model AppCollaborator {
+  appListingId String   @map("app_listing_id")
+  appListing  AppListing @relation(fields: [appListingId], references: [id], onDelete: Cascade)
+  userId      Int       @map("user_id")
+  user        User      @relation("AppCollaboratorMember", fields: [userId], references: [id], onDelete: Cascade)
+  /// Capability role. 'editor' today. What it actually unlocks is DERIVED from the
+  /// listing's kind (`capabilitiesForKind`), not stored here: content + media + submit
+  /// for review + analytics on both kinds, plus earnings and submit-version/git on
+  /// on-site only. Owner-only actions (managing collaborators, initiating a transfer)
+  /// are NOT a role — they are reserved to the listing owner.
+  role        String    @default("editor")
+  /// 'pending' | 'accepted' | 'rejected'. Only 'accepted' confers capability, and
+  /// only 'accepted' is ever visible publicly.
+  status      String    @default("pending")
+  /// Public-byline opt-in. Immediate-apply (no mod review) — safe because this row is
+  /// outside the revision copy sets (see the header). A collaborator is listed on the
+  /// public listing only when status='accepted' AND displayed=true.
+  displayed   Boolean   @default(true)
+  /// The OWNER who issued the invite (audit + the "invited by" chip).
+  invitedBy   Int       @map("invited_by")
+  inviter     User      @relation("AppCollaboratorInviter", fields: [invitedBy], references: [id], onDelete: Cascade)
+  /// Last time an invite NOTIFICATION was emitted for this row — the re-invite
+  /// throttle key. NB: the `EntityCollaborator` sibling has an inverted throttle
+  /// (`>=` where it means `<=`); this one is written correctly (see the service).
+  lastNotifiedAt DateTime? @map("last_notified_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  respondedAt DateTime? @map("responded_at") @db.Timestamptz(6)
+
+  @@id([appListingId, userId])
+  /// "which listings can this user edit" — the hot path (`resolveAccessibleListingIds`).
+  @@index([userId, status], map: "app_collaborators_user_status_idx")
+  /// "who is on this listing" — the roster + the public byline read.
+  @@index([appListingId, status], map: "app_collaborators_listing_status_idx")
+  @@map("app_collaborators")
+}
+
+/// APPEND-ONLY audit trail of every collaborator/ownership action on a listing.
+///
+/// Deliberately a separate table from `AppListingModerationEvent` (which is
+/// mod-ACTION-scoped): these are AUTHOR actions. Mirrors that table's survivability
+/// posture — every FK is NULLABLE + SET NULL so an event outlives the listing, the
+/// actor and the target.
+model AppOwnershipEvent {
+  id           String      @id // aoe_<ULID>
+  appListingId String?     @map("app_listing_id")
+  appListing   AppListing? @relation(fields: [appListingId], references: [id], onDelete: SetNull)
+  /// Denormalized so the event stays self-describing after the listing is gone.
+  slug         String
+  /// invite | accept | reject | remove | leave | display | transfer_initiated |
+  /// transfer_accepted | transfer_cancelled. Bounded by a CHECK in the migration.
+  action       String
+  /// Who performed the action.
+  actorUserId  Int?      @map("actor_user_id")
+  actor        User?     @relation("AppOwnershipEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  /// Who it was performed ON (the invitee / removed editor / transfer recipient).
+  targetUserId Int?      @map("target_user_id")
+  target       User?     @relation("AppOwnershipEventTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+  /// Structured extras (role, before/after owner, expiry, …).
+  metadata     Json?
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([appListingId, createdAt(sort: Desc)], map: "app_ownership_events_listing_idx")
+  @@index([actorUserId, createdAt(sort: Desc)], map: "app_ownership_events_actor_idx")
+  @@map("app_ownership_events")
+}
+
+/// An IN-FLIGHT ownership transfer (owner initiates → recipient accepts).
+///
+/// 🔴 WHY A THIRD TABLE rather than folding this into `AppCollaborator` with a
+/// `role='owner_transfer'` row: `AppCollaborator`'s PK is `(appListingId, userId)`, so a
+/// transfer to someone who is ALREADY an editor would collide with their seat row and
+/// the two states would have to share one `status` column. And deriving the pending
+/// state from `AppOwnershipEvent` (the append-only log) cannot carry a UNIQUE, so two
+/// concurrent `initiateTransfer` calls could both "succeed". This table carries the
+/// real constraint: a PARTIAL UNIQUE on `app_listing_id WHERE status='pending'` — at
+/// most one in-flight transfer per listing, enforced at the DB.
+model AppOwnershipTransfer {
+  id           String     @id // aot_<ULID>
+  appListingId String     @map("app_listing_id")
+  appListing   AppListing @relation(fields: [appListingId], references: [id], onDelete: Cascade)
+  /// Snapshot of the owner at initiate time — re-asserted in-tx at accept, so a
+  /// transfer initiated by an owner who has since lost the listing cannot complete.
+  fromUserId  Int       @map("from_user_id")
+  fromUser    User      @relation("AppOwnershipTransferFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUserId    Int       @map("to_user_id")
+  toUser      User      @relation("AppOwnershipTransferTo", fields: [toUserId], references: [id], onDelete: Cascade)
+  /// 'pending' | 'accepted' | 'cancelled' | 'rejected' | 'expired'. CHECK in the migration.
+  status      String    @default("pending")
+  /// Hard expiry — an unaccepted transfer stops being acceptable after this instant.
+  /// Enforced in the ACCEPT path (a read-time predicate), so no sweeper job is
+  /// required for correctness; a sweeper would only tidy the rows.
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  respondedAt DateTime? @map("responded_at") @db.Timestamptz(6)
+
+  /// NB: the migration ALSO creates a PARTIAL UNIQUE index
+  /// (`app_listing_id WHERE status='pending'`) that Prisma cannot express. That partial
+  /// index — not this plain one — is the one-in-flight-transfer guard; the service
+  /// relies on its P2002.
+  @@index([appListingId, status], map: "app_ownership_transfers_listing_status_idx")
+  @@index([toUserId, status], map: "app_ownership_transfers_to_status_idx")
+  @@map("app_ownership_transfers")
 }
 
 /// W1 v0 publish request — every version of every app goes through the
@@ -2705,6 +2864,12 @@ model AppListing {
   // P3b off-site moderation: user reports + the append-only mod audit trail.
   reports          AppListingReport[]
   moderationEvents AppListingModerationEvent[]
+  // App Listing Collaborators — the editor seats, the append-only ownership audit
+  // trail, and any in-flight ownership transfer. Keyed HERE (not to AppBlock) so an
+  // OFF-SITE listing, which has no AppBlock, can hold seats too.
+  collaborators      AppCollaborator[]
+  ownershipEvents    AppOwnershipEvent[]
+  ownershipTransfers AppOwnershipTransfer[]
 
   // Marketplace read-path indexes (future P2 read path).
   @@index([status, kind], map: "app_listings_status_kind_idx")
@@ -4378,9 +4543,11 @@ model Collection {
   metadata     Json                         @default("{}")
   availability Availability                 @default(Public)
   nsfwLevel    Int                          @default(0)
+  collaborationDisabledAt DateTime?
 
   items        CollectionItem[]
   contributors CollectionContributor[]
+  invites      CollectionInvite[]
   tags         TagsOnCollection[]
   post         Post[]
   reports      CollectionReport[]
@@ -4464,6 +4631,34 @@ model CollectionContributor {
 
   @@id([userId, collectionId])
   @@index([userId], type: Hash)
+}
+
+enum CollectionCollaboratorRole {
+  Contributor
+  Manager
+}
+
+enum CollectionInviteStatus {
+  Pending
+  Accepted
+  Declined
+}
+
+model CollectionInvite {
+  id           Int                        @id @default(autoincrement())
+  collectionId Int
+  collection   Collection                 @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  userId       Int
+  user         User                       @relation("collectionInviteRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  invitedById  Int
+  invitedBy    User                       @relation("collectionInviteSender", fields: [invitedById], references: [id], onDelete: Cascade)
+  role         CollectionCollaboratorRole
+  status       CollectionInviteStatus     @default(Pending)
+  createdAt    DateTime                   @default(now())
+  respondedAt  DateTime?
+
+  @@unique([collectionId, userId])
+  @@index([userId, status])
 }
 
 model TagsOnCollection {

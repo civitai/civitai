@@ -85,7 +85,7 @@ export function UserMenu() {
               ['hidden']: !currentUser,
             })}
           >
-            <UserAvatar user={creator ?? currentUser} size="md" />
+            <UserAvatar user={creator ?? currentUser} size="md" withHoverCard={false} />
             {features.buzz && currentUser && <UserBuzz pr="sm" />}
           </div>
           <Burger opened={open} className={clsx({ ['@md:hidden']: !!currentUser })} />
@@ -163,7 +163,7 @@ function UserMenuContent({ onAccountClick }: { onAccountClick: () => void }) {
       <div className="flex flex-1 flex-col overflow-y-auto overflow-x-hidden p-1 scrollbar-thin">
         {currentUser && (
           <MenuItemButton className="flex items-center justify-between" onClick={onAccountClick}>
-            <UserAvatar user={creator ?? currentUser} withUsername />
+            <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />
             <IconChevronRight />
           </MenuItemButton>
         )}

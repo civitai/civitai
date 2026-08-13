@@ -14,6 +14,7 @@ import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import { STICKER_JUMBO_LIMIT, stickerMaxWidth, STICKER_SIZE } from '~/shared/utils/sticker-token';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { MentionHoverCard } from '~/components/UserAvatar/MentionHoverCard';
 
 // Match host exactly or as a subdomain (e.g. "www.youtube.com"), never as a
 // substring elsewhere in the URL — `url.includes('youtube.com')` would let
@@ -98,6 +99,10 @@ export function RenderHtml({
       allowedAttributes: {
         ...DEFAULT_ALLOWED_ATTRIBUTES,
         div: ['data-youtube-video', 'data-type', 'style', 'data-consent-blocked'],
+        // Attributes are filtered against the tag a transform produced, so the
+        // mention span's data attributes are dropped once it becomes a link
+        // unless `a` allows them too. The hover card reads the user from them.
+        a: [...DEFAULT_ALLOWED_ATTRIBUTES.a, 'data-type', 'data-id', 'data-label'],
       },
       allowedStyles: allowCustomStyles
         ? {
@@ -275,6 +280,9 @@ export function RenderHtml({
   return (
     <TypographyStylesWrapper {...props} className={clsx(classes.htmlRenderer, className)}>
       <div ref={contentRef} dangerouslySetInnerHTML={{ __html: html }} />
+      {/* Not gated on `withMentions` — that prop only decides whether a mention
+          becomes a link. The span carries the user either way. */}
+      <MentionHoverCard containerRef={contentRef} />
     </TypographyStylesWrapper>
   );
 }

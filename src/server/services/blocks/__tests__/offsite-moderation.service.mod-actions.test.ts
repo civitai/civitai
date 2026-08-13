@@ -52,11 +52,20 @@ type WriteMock = {
   // scan-clean gate (assertAssetsScanClean).
   appListingScreenshot: { findMany: ReturnType<typeof vi.fn> };
   image: { findMany: ReturnType<typeof vi.fn> };
+  // 🔴 claim's SEAT REMEDIATION, in the same tx as the reassign: the impersonator's
+  // seats/invites are deleted and their pending transfer is cancelled, each recorded as
+  // an AppOwnershipEvent.
+  appCollaborator: { findMany: ReturnType<typeof vi.fn>; deleteMany: ReturnType<typeof vi.fn> };
+  appOwnershipTransfer: { updateMany: ReturnType<typeof vi.fn> };
+  appOwnershipEvent: { create: ReturnType<typeof vi.fn> };
 };
 type ReadMock = {
   appListing: { findUnique: ReturnType<typeof vi.fn> };
   appListingReport: { findUnique: ReturnType<typeof vi.fn> };
   appListingModerationEvent: { findMany: ReturnType<typeof vi.fn> };
+  // The OUT-OF-TX table-presence probe. A missing-table error here means the
+  // manual-apply migration has not landed, and the remediation is skipped entirely.
+  appCollaborator: { count: ReturnType<typeof vi.fn> };
 };
 
 const { mockRead, mockWrite, mockNotify, mockLogToAxiom, ids } = vi.hoisted(() => {
@@ -86,6 +95,13 @@ const { mockRead, mockWrite, mockNotify, mockLogToAxiom, ids } = vi.hoisted(() =
         (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: 'Scanned' }))
       ),
     },
+    // claim's seat remediation, in the same tx as the reassign.
+    appCollaborator: {
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+      deleteMany: vi.fn(async () => ({ count: 0 })),
+    },
+    appOwnershipTransfer: { updateMany: vi.fn(async () => ({ count: 0 })) },
+    appOwnershipEvent: { create: vi.fn(async (a: { data: unknown }) => a.data) },
   };
   // The tx client is the write mock itself, so tx.* calls land on the same spies.
   write.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) => cb(write));
@@ -93,6 +109,7 @@ const { mockRead, mockWrite, mockNotify, mockLogToAxiom, ids } = vi.hoisted(() =
     appListing: { findUnique: vi.fn(async () => null) },
     appListingReport: { findUnique: vi.fn(async () => null) },
     appListingModerationEvent: { findMany: vi.fn(async () => []) },
+    appCollaborator: { count: vi.fn(async () => 0) },
   };
   return {
     mockRead: read,
@@ -110,6 +127,8 @@ vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingReportId: () => `alrp_test_${++ids.n}`,
   newAppListingModerationEventId: () => `alme_test_${++ids.n}`,
   newAppListingPublishRequestId: () => `alpr_test_${++ids.n}`,
+  // claim's seat remediation writes AppOwnershipEvents through `recordOwnershipEvent`.
+  newAppOwnershipEventId: () => `aoe_test_${++ids.n}`,
 }));
 // Assert owner-notification emission without pulling the notifications client graph.
 vi.mock('~/server/services/blocks/app-listing-notify', () => ({ notifyAppListingOwner: mockNotify }));
@@ -186,6 +205,12 @@ beforeEach(() => {
   mockRead.appListing.findUnique.mockResolvedValue(null);
   mockRead.appListingReport.findUnique.mockResolvedValue(null);
   mockRead.appListingModerationEvent.findMany.mockResolvedValue([]);
+  // Default: the collaborator tables EXIST (post-migration) and hold nothing.
+  mockRead.appCollaborator.count.mockResolvedValue(0);
+  mockWrite.appCollaborator.findMany.mockResolvedValue([]);
+  mockWrite.appCollaborator.deleteMany.mockResolvedValue({ count: 0 });
+  mockWrite.appOwnershipTransfer.updateMany.mockResolvedValue({ count: 0 });
+  mockWrite.appOwnershipEvent.create.mockImplementation(async (a: { data: unknown }) => a.data);
   mockNotify.mockResolvedValue(undefined);
   mockLogToAxiom.mockResolvedValue(undefined);
 });
@@ -731,6 +756,233 @@ describe('claimListing', () => {
       })
     ).rejects.toBeInstanceOf(TRPCError);
     expect(mockRead.appListing.findUnique).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 SEAT REMEDIATION — new, and only necessary since seats became listing-keyed.
+  // -------------------------------------------------------------------------
+
+  /**
+   * 🔴 WHY THIS EXISTS AT ALL. Before the block→listing re-key an OFF-SITE listing could
+   * hold NO collaborator seats — `app_collaborators` was keyed on `app_blocks(id)` and an
+   * off-site listing has no AppBlock — so "reassign `AppListing.userId`" WAS the complete
+   * remediation and this gap did not exist. It does now.
+   *
+   * claim is the IMPERSONATION remedy (report → delist → claim → ban). Everything the
+   * impersonator attached to the listing is part of what is being taken away. Left
+   * behind, their seats survive as live editor capability on the REAL owner's listing,
+   * their pending invites stay acceptable, their accepted-and-displayed seats keep
+   * appearing in the PUBLIC BYLINE under the new owner's name, and a pending ownership
+   * TRANSFER they had already offered stays acceptable — handing the listing straight
+   * back out.
+   */
+  describe('🔴 claim clears the impersonator’s seats, invites and pending transfer', () => {
+    /** Two seats: one accepted-and-displayed (the byline), one still pending. */
+    const SEATS = [
+      { userId: 901, status: 'accepted' },
+      { userId: 902, status: 'pending' },
+    ];
+
+    function armClaim() {
+      mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
+      mockWrite.appListing.findUnique.mockResolvedValueOnce(primarySnapshot('approved'));
+    }
+
+    it('POSITIVE CONTROL: with no seats and no transfer, nothing is deleted or cancelled', async () => {
+      // The baseline. If this failed, every "was deleted" assertion below could be
+      // satisfied by a fixture that deletes unconditionally.
+      armClaim();
+      await claimListing({
+        input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON },
+        reviewerUserId: REVIEWER,
+      });
+      expect(mockWrite.appCollaborator.deleteMany).not.toHaveBeenCalled();
+      expect(mockWrite.appOwnershipEvent.create).not.toHaveBeenCalled();
+      // The transfer sweep is unconditional (a status-guarded updateMany is cheap and
+      // cannot damage a terminal row), but it must record NOTHING when it matches none.
+      expect(mockWrite.appOwnershipTransfer.updateMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('🔴 every seat on the listing is DELETED — scoped to this listing', async () => {
+      armClaim();
+      mockWrite.appCollaborator.findMany.mockResolvedValue(SEATS);
+      mockWrite.appCollaborator.deleteMany.mockResolvedValue({ count: 2 });
+      await claimListing({
+        input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON },
+        reviewerUserId: REVIEWER,
+      });
+      expect(mockWrite.appCollaborator.deleteMany).toHaveBeenCalledWith({
+        where: { appListingId: APP_ID },
+      });
+      // 🔴 No `status` filter: a PENDING invite is exactly as much of the impersonator's
+      // residue as an accepted seat, and leaving it would let them re-enter by having
+      // their invitee simply accept afterwards.
+      const where = mockWrite.appCollaborator.deleteMany.mock.calls[0][0].where;
+      expect(where).not.toHaveProperty('status');
+    });
+
+    it('🔴 each removed seat is AUDITED by user id — a count cannot name who lost access', async () => {
+      armClaim();
+      mockWrite.appCollaborator.findMany.mockResolvedValue(SEATS);
+      mockWrite.appCollaborator.deleteMany.mockResolvedValue({ count: 2 });
+      await claimListing({
+        input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON },
+        reviewerUserId: REVIEWER,
+      });
+      const events = (
+        mockWrite.appOwnershipEvent.create.mock.calls as Array<[{ data: Record<string, unknown> }]>
+      ).map((c) => c[0].data);
+      expect(events).toHaveLength(2);
+      expect(events.map((e) => e.targetUserId).sort()).toEqual([901, 902]);
+      for (const e of events) {
+        expect(e.action).toBe('remove');
+        expect(e.actorUserId).toBe(REVIEWER);
+        expect(e.appListingId).toBe(APP_ID);
+        expect(e.slug).toBe(SLUG);
+      }
+      // The ids must be READ BEFORE the delete, or they cannot be recorded at all.
+      expect(mockWrite.appCollaborator.findMany).toHaveBeenCalledWith({
+        where: { appListingId: APP_ID },
+        select: { userId: true, status: true },
+      });
+    });
+
+    it('🔴 a PENDING ownership transfer is CANCELLED (guarded on pending) and audited', async () => {
+      armClaim();
+      mockWrite.appOwnershipTransfer.updateMany.mockResolvedValue({ count: 1 });
+      await claimListing({
+        input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON },
+        reviewerUserId: REVIEWER,
+      });
+      const call = mockWrite.appOwnershipTransfer.updateMany.mock.calls[0][0];
+      expect(call.where).toMatchObject({ appListingId: APP_ID, status: 'pending' });
+      expect(call.data.status).toBe('cancelled');
+      const events = (
+        mockWrite.appOwnershipEvent.create.mock.calls as Array<[{ data: Record<string, unknown> }]>
+      ).map((c) => c[0].data);
+      expect(events).toHaveLength(1);
+      expect(events[0].action).toBe('transfer_cancelled');
+      expect(events[0].actorUserId).toBe(REVIEWER);
+    });
+
+    it('🔴 the cleanup happens INSIDE the claim transaction', async () => {
+      // A cleanup issued outside the tx would survive a rolled-back claim — the listing
+      // would keep its impersonating owner AND lose its seats. Same discipline the
+      // "zero events on a guarded claim" tests already hold for the audit write.
+      const order: string[] = [];
+      mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
+      mockWrite.appListing.findUnique.mockResolvedValueOnce(primarySnapshot('approved'));
+      mockWrite.appCollaborator.findMany.mockResolvedValue(SEATS);
+      mockWrite.appCollaborator.deleteMany.mockImplementation(async () => {
+        order.push('delete');
+        return { count: 2 };
+      });
+      mockWrite.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) => {
+        order.push('tx:begin');
+        const r = await cb(mockWrite);
+        order.push('tx:commit');
+        return r;
+      });
+      await claimListing({
+        input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON },
+        reviewerUserId: REVIEWER,
+      });
+      expect(order).toEqual(['tx:begin', 'delete', 'tx:commit']);
+    });
+
+    it('🔴 a GUARDED (0-row) claim deletes NOTHING — the rollback covers the seats too', async () => {
+      // The reassign matches 0 rows (a concurrent action moved the listing), so the whole
+      // tx throws before any cleanup. The seats belong to a listing that was not claimed.
+      mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
+      mockWrite.appListing.findUnique.mockResolvedValueOnce(primarySnapshot('approved'));
+      mockWrite.appListing.updateMany.mockResolvedValue({ count: 0 });
+      mockWrite.appCollaborator.findMany.mockResolvedValue(SEATS);
+      await expect(
+        claimListing({
+          input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON },
+          reviewerUserId: REVIEWER,
+        })
+      ).rejects.toMatchObject({ code: 'NOT_TRANSITIONABLE' });
+      expect(mockWrite.appCollaborator.deleteMany).not.toHaveBeenCalled();
+      expect(mockWrite.appOwnershipTransfer.updateMany).not.toHaveBeenCalled();
+    });
+
+    /**
+     * 🔴 THE PRE-MIGRATION WINDOW. These tables are manual-apply (DB rule #8). A
+     * statement against a missing relation ABORTS the surrounding Postgres transaction
+     * and no `catch` can undo that — every later statement fails 25P02 — so the
+     * degrade-to-fallback CANNOT live inside the tx. It is a probe issued BEFORE one is
+     * opened, and a missing table must leave the claim behaving exactly as it did before
+     * this feature existed.
+     */
+    describe('the tables may not exist yet', () => {
+      /** What Prisma raises for a missing relation. */
+      const MISSING = Object.assign(new Error('relation "app_collaborators" does not exist'), {
+        code: 'P2021',
+      });
+
+      it('🔴 a missing table SKIPS the remediation and the claim still succeeds', async () => {
+        armClaim();
+        mockRead.appCollaborator.count.mockRejectedValue(MISSING);
+        const res = await claimListing({
+          input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON },
+          reviewerUserId: REVIEWER,
+        });
+        expect(res).toEqual({ appListingId: APP_ID, userId: TARGET });
+        // Nothing collaborator-shaped is issued INSIDE the tx — which is the point: any
+        // one of these would have aborted it.
+        expect(mockWrite.appCollaborator.findMany).not.toHaveBeenCalled();
+        expect(mockWrite.appCollaborator.deleteMany).not.toHaveBeenCalled();
+        expect(mockWrite.appOwnershipTransfer.updateMany).not.toHaveBeenCalled();
+        // …and the claim's own audit event is still written.
+        expect(mockWrite.appListingModerationEvent.create).toHaveBeenCalledTimes(1);
+      });
+
+      it('🔴 the probe is issued BEFORE the transaction opens', async () => {
+        // If it ran inside, the missing-table error would abort the tx and the `catch`
+        // would be decorative — the whole reason it is out here.
+        const order: string[] = [];
+        mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
+        mockWrite.appListing.findUnique.mockResolvedValueOnce(primarySnapshot('approved'));
+        mockRead.appCollaborator.count.mockImplementation(async () => {
+          order.push('probe');
+          return 0;
+        });
+        mockWrite.$transaction.mockImplementation(
+          async (cb: (tx: WriteMock) => Promise<unknown>) => {
+            order.push('tx:begin');
+            return cb(mockWrite);
+          }
+        );
+        await claimListing({
+          input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON },
+          reviewerUserId: REVIEWER,
+        });
+        expect(order).toEqual(['probe', 'tx:begin']);
+      });
+
+      it('🔴 a NON-missing-table error still propagates — this is not a blanket swallow', async () => {
+        // The degrade is narrow by design. A connection failure or a genuine query bug
+        // must not be turned into "no seats to clean", which would silently skip the
+        // remediation on every claim.
+        //
+        // 🔴 Only the REPLICA read is armed here, deliberately: this call throws at the
+        // probe, BEFORE the transaction opens, so an `armClaim()` would leave an
+        // unconsumed `mockResolvedValueOnce` on `mockWrite.appListing.findUnique`.
+        // `vi.clearAllMocks()` clears recorded calls but NOT the once-queue, so that
+        // value would be handed to the NEXT suite's first in-tx primary read — which is
+        // how one leaked `Once` cascaded into 14 unrelated failures while this file was
+        // being written.
+        mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
+        mockRead.appCollaborator.count.mockRejectedValue(new Error('connection reset'));
+        await expect(
+          claimListing({
+            input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON },
+            reviewerUserId: REVIEWER,
+          })
+        ).rejects.toThrow('connection reset');
+      });
+    });
   });
 });
 

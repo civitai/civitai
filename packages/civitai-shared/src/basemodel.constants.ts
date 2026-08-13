@@ -174,6 +174,9 @@ export const ECO = {
   LTXV: 42,
   LTXV2: 58,
   LTXV23: 63,
+  // 2.5 ships its own 22B weights, so a 2.3 LoRA is not guaranteed to load on
+  // it — separate ecosystem, bridgeable later with a crossEcosystemRule.
+  LTXV25: 81,
   Sora2: 43,
   Veo3: 44,
   SVD: 45,
@@ -732,6 +735,13 @@ export const ecosystems: EcosystemRecord[] = [
     familyId: 16,
     sortOrder: 207,
   },
+  {
+    id: ECO.LTXV25,
+    key: 'LTXV25',
+    displayName: 'LTX Video 2.5',
+    familyId: 16,
+    sortOrder: 208,
+  },
   { id: ECO.Lumina, key: 'Lumina', displayName: 'Lumina', sortOrder: 208 },
   {
     id: ECO.Mochi,
@@ -863,7 +873,7 @@ export const MODEL3D_ECOSYSTEM_KEYS = new Set<string>(
  *  - ComfyImageGenInput  → Anima, Ernie, Lens, HiDream-O1
  *  - SdCppImageGenInput  → ZImageTurbo, ZImageBase, Qwen
  *  - Flux2KleinImageGen  → Flux2Klein_9B(_base), Flux2Klein_4B(_base)
- *  - ComfyLtx*VideoGen   → LTXV2, LTXV23
+ *  - ComfyLtx*VideoGen   → LTXV2, LTXV23, LTXV25
  *  - AceStepAudioInput   → Ace
  *
  * NOTE: lookalikes that are EXTERNAL and must NOT be listed — `Flux2` (≠ Klein),
@@ -898,9 +908,10 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'Flux2Klein_9B_base',
   'Flux2Klein_4B',
   'Flux2Klein_4B_base',
-  // ComfyLtx2VideoGenInput / ComfyLtx23VideoGenInput
+  // ComfyLtx2VideoGenInput / ComfyLtx23VideoGenInput / ComfyLtx25VideoGenInput
   'LTXV2',
   'LTXV23',
+  'LTXV25',
   // AceStepAudioInput
   'Ace',
   // Hunyuan3dComfyPolyGenInput (3D; Meshy/Tripo are FAL and stay external)
@@ -1138,6 +1149,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // LTXV2.3 - checkpoint and LORA
   { ecosystemId: ECO.LTXV23, supportType: 'generation', modelTypes: checkpointAndLora },
+
+  // LTXV2.5 - checkpoint and LORA
+  { ecosystemId: ECO.LTXV25, supportType: 'generation', modelTypes: checkpointAndLora },
 
   // AceAudio - checkpoint only (audio generation)
   { ecosystemId: ECO.AceAudio, supportType: 'generation', modelTypes: checkpointOnly },
@@ -1437,6 +1451,14 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.LTXV23,
     defaults: {
       model: { id: 2749908 },
+      modelLocked: true,
+      engine: 'ltx2',
+    },
+  },
+  {
+    ecosystemId: ECO.LTXV25,
+    defaults: {
+      model: { id: 3220143 },
       modelLocked: true,
       engine: 'ltx2',
     },
@@ -1964,6 +1986,19 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     modelTypes: loraOnly,
     support: 'partial',
   },
+
+  // ==========================================================================
+  // LTXV 2.3 → LTXV 2.5
+  // ==========================================================================
+  // LTXV 2.3 LoRA works partially in LTXV 2.5 — surfaced in the resource picker
+  // only with Advanced mode on, and flagged as partially compatible.
+  {
+    sourceEcosystemId: ECO.LTXV23,
+    targetEcosystemId: ECO.LTXV25,
+    supportType: 'generation',
+    modelTypes: loraOnly,
+    support: 'partial',
+  },
 ];
 
 // =============================================================================
@@ -1994,6 +2029,7 @@ export const BM = {
   LTXV: 15,
   LTXV2: 72,
   LTXV23: 80,
+  LTXV25: 100,
   Lumina: 16,
   Mochi: 17,
   NanoBanana: 18,
@@ -2208,7 +2244,7 @@ export const licenses: LicenseRecord[] = [
   {
     id: 16,
     name: 'LTX Video License',
-    url: 'https://huggingface.co/Lightricks/LTX-Video/blob/main/LTX-Video-Open-Weights-License-0.X.txt',
+    url: 'https://huggingface.co/Lightricks/LTX-Video/blob/8984fa25007f376c1a299016d0957a37a2f797bb/LTX-Video-Open-Weights-License-0.X.txt',
   },
   {
     id: 17,
@@ -2313,7 +2349,7 @@ export const licenses: LicenseRecord[] = [
   {
     id: 35,
     name: 'LTX-2 Community License Agreement',
-    url: 'https://huggingface.co/Lightricks/LTX-2.3/blob/main/LICENSE',
+    url: 'https://huggingface.co/Lightricks/LTX-2.3/blob/6f3520585aa27248020550da2f453aa0c572398c/LICENSE',
   },
   {
     id: 36,
@@ -2342,6 +2378,13 @@ export const licenses: LicenseRecord[] = [
     id: 39,
     name: 'Black Forest Labs Terms of Service',
     url: 'https://bfl.ai/legal/terms-of-service',
+  },
+  {
+    id: 40,
+    // Separate from id 35: this is the Aug 2026 rewrite, scoped by its own section 1.9
+    // to LTX-2.5 and later, and stricter than the Jan 2026 text the 2.x weights carry.
+    name: 'LTX-2.x Community License Agreement',
+    url: 'https://github.com/Lightricks/LTX-2/blob/2362161611a61154d342e02724fb8fe58efd455d/LICENSE.md',
   },
 ];
 
@@ -2748,7 +2791,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: "Lightricks' next-generation video generation model",
     type: 'video',
     ecosystemId: ECO.LTXV2,
-    licenseId: 16,
+    licenseId: 35,
   },
   {
     id: BM.LTXV23,
@@ -2757,6 +2800,14 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'video',
     ecosystemId: ECO.LTXV23,
     licenseId: 35,
+  },
+  {
+    id: BM.LTXV25,
+    name: 'LTXV 2.5',
+    description: "Lightricks' LTX Video 2.5 generation model",
+    type: 'video',
+    ecosystemId: ECO.LTXV25,
+    licenseId: 40,
   },
 
   // Lens
@@ -4050,7 +4101,7 @@ export const ecosystemGroups: EcosystemGroup[] = [
   {
     id: 'LTXV',
     displayName: 'LTX Video',
-    ecosystemIds: [ECO.LTXV, ECO.LTXV2, ECO.LTXV23],
+    ecosystemIds: [ECO.LTXV, ECO.LTXV2, ECO.LTXV23, ECO.LTXV25],
     defaultEcosystemId: ECO.LTXV23,
     sortOrder: 205,
   },

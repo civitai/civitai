@@ -276,7 +276,6 @@ export const UserContextMenu = ({ username }: { username: string }) => {
         <>
           {isMod && (
             <>
-              <SuspendPlacerMenuItem userId={user.id} />
               {env.NEXT_PUBLIC_USER_LOOKUP_URL && (
                 <Menu.Item
                   component="a"
@@ -350,6 +349,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               >
                 {user.muted ? 'Unmute user' : 'Mute user'}
               </Menu.Item>
+              <SuspendPlacerMenuItem userId={user.id} />
               {canManageUserPayments && (
                 <>
                   <Menu.Item
@@ -386,19 +386,21 @@ export const UserContextMenu = ({ username }: { username: string }) => {
             </Menu.Item>
           )}
           <HideUserButton as="menu-item" userId={user.id} />
-          <LoginRedirect reason="report-user">
-            <Menu.Item
-              leftSection={<IconFlag size={14} stroke={1.5} />}
-              onClick={() =>
-                openReportModal({
-                  entityType: ReportEntity.User,
-                  entityId: user.id,
-                })
-              }
-            >
-              Report
-            </Menu.Item>
-          </LoginRedirect>
+          {user.id !== currentUser?.id && (
+            <LoginRedirect reason="report-user">
+              <Menu.Item
+                leftSection={<IconFlag size={14} stroke={1.5} />}
+                onClick={() =>
+                  openReportModal({
+                    entityType: ReportEntity.User,
+                    entityId: user.id,
+                  })
+                }
+              >
+                Report
+              </Menu.Item>
+            </LoginRedirect>
+          )}
         </>
       </Menu.Dropdown>
     </Menu>
