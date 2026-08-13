@@ -27,6 +27,22 @@ export const BAND_SIZE = 8;
 /** Comparisons each entry owes over the life of the challenge. Swept in the simulation; top-3 plateaus here. */
 export const DEFAULT_BOUT_BUDGET = 9;
 
+/** Ordered relations one group call returns. Four entries yield six. */
+export const RELATIONS_PER_CALL = (GROUP_SIZE * (GROUP_SIZE - 1)) / 2;
+
+/**
+ * A safety ceiling on calls per tick, NOT a throughput model.
+ *
+ * 🔴 Nearly every constant in the ladder was back-solved from a measured 9-second median bout to
+ * fit a 10-minute window, which is how that design became load-bearing on the model provider's
+ * latency: if the provider slows down, the arithmetic that made it safe stops holding and the
+ * symptom is a blown claim rather than anything that looks like a latency problem. So the pacing
+ * below is derived from the CHALLENGE clock, which no provider can change, and this constant only
+ * stops a single tick running away. A quad call's latency is unmeasured; do not turn this into a
+ * calculation that pretends otherwise.
+ */
+export const MAX_CALLS_PER_TICK = 64;
+
 export type SwissEntry = { imageId: number };
 
 export type PairingInput<T extends SwissEntry> = {
@@ -148,6 +164,33 @@ export function relationsFromRanking(
       out.push({ winnerImageId, loserImageId });
     }
   return out;
+}
+
+/**
+ * How many calls this tick may spend, paced against the challenge clock.
+ *
+ * The whole job needs `field * budget / 2` comparisons, which is that over `RELATIONS_PER_CALL`
+ * calls. By the time a challenge is a quarter elapsed, a quarter of them should be done — so this
+ * returns the shortfall against that target and nothing more.
+ *
+ * Self-correcting by construction: it compares work DONE against work due by now rather than
+ * dividing what is left by ticks remaining. A tick that is skipped, or a job that was down for an
+ * hour, is caught up by the next tick instead of quietly losing that work forever.
+ *
+ * Returns 0 when we are ahead of the clock. That is the point — spending eagerly is what partitions
+ * the field into arrival cohorts (top-1 0.35 measured).
+ */
+export function tickCallBudget(input: {
+  fieldSize: number;
+  callsSoFar: number;
+  progress: number;
+  budget: number;
+}): number {
+  const { fieldSize, callsSoFar, budget } = input;
+  const progress = Math.min(1, Math.max(0, input.progress));
+  const totalCalls = Math.ceil((fieldSize * budget) / 2 / RELATIONS_PER_CALL);
+  const dueByNow = Math.ceil(totalCalls * progress);
+  return Math.max(0, Math.min(MAX_CALLS_PER_TICK, dueByNow - callsSoFar));
 }
 
 /**

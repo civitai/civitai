@@ -24,8 +24,10 @@ import {
   DEFAULT_BOUT_BUDGET,
   GROUP_SIZE,
   planGroups,
+  RELATIONS_PER_CALL,
   relationsFromRanking,
   swissStandings,
+  tickCallBudget,
 } from '~/server/games/daily-challenge/challenge-swiss';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -78,13 +80,30 @@ export const rollingSwissEngine: ChallengeJudgingEngine = {
     });
   },
 
-  async advance<T extends RankableEntry>(
-    ctx: JudgingEngineContext,
-    pool: T[],
-    maxCalls: number
-  ): Promise<number> {
-    if (pool.length < GROUP_SIZE || maxCalls < 1) return 0;
-    return runGroups(ctx, pool, maxCalls, await challengeProgress(ctx.challengeId));
+  /**
+   * One tick's share of the work. The engine reads its own standings for the pool, paces itself
+   * against the challenge clock, and stops at the caller's deadline whichever comes first.
+   */
+  async advance(ctx: JudgingEngineContext, deadlineMs: number): Promise<number> {
+    const standings = await store.getStandings(ctx.challengeId);
+    if (standings.length < GROUP_SIZE) return 0;
+
+    const { progress, callsSoFar } = await challengeClock(ctx.challengeId);
+    const maxCalls = tickCallBudget({
+      fieldSize: standings.length,
+      callsSoFar,
+      progress,
+      budget: DEFAULT_BOUT_BUDGET,
+    });
+    if (maxCalls < 1 || Date.now() >= deadlineMs) return 0;
+
+    return runGroups(
+      ctx,
+      standings.map((row) => ({ imageId: row.imageId })),
+      maxCalls,
+      progress,
+      deadlineMs
+    );
   },
 
   /**
@@ -149,11 +168,12 @@ export const rollingSwissEngine: ChallengeJudgingEngine = {
  * mid-flight would let two lanes pick the same pair before either had recorded it, which is the
  * third concurrency race this subsystem has had.
  */
-async function runGroups<T extends RankableEntry>(
+async function runGroups(
   ctx: JudgingEngineContext,
-  pool: T[],
+  pool: { imageId: number }[],
   maxCalls: number,
-  progress: number
+  progress: number,
+  deadlineMs?: number
 ): Promise<number> {
   const state = await store.getSwissState(ctx.challengeId);
   const groups = planGroups({
@@ -181,6 +201,10 @@ async function runGroups<T extends RankableEntry>(
   let buzz = 0;
 
   await runPool(groups, LADDER_CONCURRENCY, async (group) => {
+    // Checked per group rather than once up front: the deadline is what holds when the provider is
+    // slower than we assumed, and a limit that is only tested before the work starts cannot do that.
+    if (deadlineMs != null && Date.now() >= deadlineMs) return;
+
     const groupImages = group
       .map((entry) => images.get(entry.imageId))
       .filter((image): image is ComparisonImage => !!image);
@@ -240,18 +264,36 @@ async function runGroups<T extends RankableEntry>(
 }
 
 /**
- * How far through the challenge we are, 0..1. Drives the pacing ceiling, so a challenge with no
- * usable dates must not read as "finished" — that would hand day one the whole budget, which is
- * the arrival-cohort failure. Falls back to 0, i.e. the floor allowance.
+ * How far through the challenge we are (0..1) and how many calls have already been spent on it.
+ *
+ * 🔴 A challenge with no usable dates reads as 0, never as finished. Reading it as finished would
+ * open the full budget on day one, which is exactly the eager-spend failure that partitions the
+ * field into arrival cohorts — top-1 0.35 against 0.775, measured.
+ *
+ * `callsSoFar` is derived from the recorded relations rather than counted, for the same reason
+ * `getSwissState` derives its tallies: a counter that a dropped row can desynchronise is worse than
+ * an extra scan. It is a floor when a call's relations were all already owned, which makes the
+ * pacing slightly generous and never runaway.
  */
-async function challengeProgress(challengeId: number): Promise<number> {
-  const [row] = await dbRead.$queryRaw<{ startsAt: Date | null; endsAt: Date | null }[]>`
-    SELECT "startsAt", "endsAt" FROM "Challenge" WHERE id = ${challengeId}
-  `;
-  if (!row?.startsAt || !row?.endsAt) return 0;
+async function challengeClock(
+  challengeId: number
+): Promise<{ progress: number; callsSoFar: number }> {
+  const [[row], [spend]] = await Promise.all([
+    dbRead.$queryRaw<{ startsAt: Date | null; endsAt: Date | null }[]>`
+      SELECT "startsAt", "endsAt" FROM "Challenge" WHERE id = ${challengeId}
+    `,
+    dbRead.$queryRaw<{ relations: bigint }[]>`
+      SELECT COUNT(*) AS relations FROM "ChallengeEntryComparison"
+      WHERE "challengeId" = ${challengeId} AND "phase" = 'swiss'
+    `,
+  ]);
+
+  const callsSoFar = Math.ceil(Number(spend?.relations ?? 0) / RELATIONS_PER_CALL);
+  if (!row?.startsAt || !row?.endsAt) return { progress: 0, callsSoFar };
   const total = row.endsAt.getTime() - row.startsAt.getTime();
-  if (total <= 0) return 0;
-  return Math.min(1, Math.max(0, (Date.now() - row.startsAt.getTime()) / total));
+  if (total <= 0) return { progress: 0, callsSoFar };
+  const progress = Math.min(1, Math.max(0, (Date.now() - row.startsAt.getTime()) / total));
+  return { progress, callsSoFar };
 }
 
 async function loadComparisonImages(imageIds: number[]): Promise<Map<number, ComparisonImage>> {

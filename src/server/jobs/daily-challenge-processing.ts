@@ -1312,6 +1312,32 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     }
   }
 
+  // Let the engine do this tick's share of the ranking
+  // ----------------------------------------------
+  // Engines that rank incrementally do their work here rather than at close. The deadline is the
+  // tick budget the arrival loop above already respects, so a slow provider costs this tick's
+  // progress and nothing else — the next tick catches up, because the engine paces against the
+  // challenge clock rather than against how much it managed last time.
+  if (judgingEngine.advance) {
+    try {
+      const calls = await judgingEngine.advance(
+        engineContext,
+        tickStartedAt + REVIEW_TICK_BUDGET_MS
+      );
+      if (calls > 0) log('Engine advanced', judgingEngine.key, calls, 'calls');
+    } catch (error) {
+      // A failed advance costs this tick's comparisons. It must not take the review tick with it:
+      // the absolute pass, the entry notes and the reviewedAt stamp below are all still correct.
+      logToAxiom({
+        type: 'error',
+        name: 'challenge-engine-advance',
+        message: (error as Error).message,
+        challengeId: currentChallenge.challengeId,
+        engine: judgingEngine.key,
+      });
+    }
+  }
+
   // Update last review time in Challenge metadata
   // ----------------------------------------------
   if (currentChallenge.challengeId) {

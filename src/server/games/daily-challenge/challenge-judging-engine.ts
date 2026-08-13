@@ -115,10 +115,10 @@ export interface ChallengeJudgingEngine {
   recordEntry(ctx: JudgingEngineContext, entry: JudgedEntryRef): Promise<void>;
 
   /**
-   * Spend up to `maxCalls` model calls advancing this challenge's ranking, using every entry judged
-   * so far. Called once per review tick while the challenge is open, after the absolute pass.
-   * Returns the calls actually spent. Optional: an engine that does its work per-entry or at close
-   * omits it.
+   * Advance this challenge's ranking by a bounded chunk of work, stopping by `deadlineMs` (an
+   * epoch timestamp). Called once per review tick while the challenge is open, after the absolute
+   * pass. Returns the model calls actually spent. Optional: an engine that does its work per-entry
+   * or at close omits it.
    *
    * This exists because the other two hooks are the only two there were, and between them they
    * force every engine to do its work either one entry at a time or all at once at close. That is
@@ -126,14 +126,14 @@ export interface ChallengeJudgingEngine {
    * 28-minute close stage, its expired claim and its concurrent second run all come from. An engine
    * that can do a bounded chunk of work per tick has none of those failures to solve.
    *
-   * `pool` is every entry judged so far, NOT this tick's arrivals. The ten-minute window decides
-   * which entries get sampled INTO the field; it is not the field.
+   * 🔴 The bound is a DEADLINE, not a call count, and deliberately so. The ladder's per-tick limits
+   * were back-solved from a measured 9-second bout, so a slower provider silently invalidated the
+   * arithmetic that made them safe. A wall-clock deadline holds whatever the provider does.
+   *
+   * The engine picks its own entries: it owns its tables, and the caller's ten-minute window
+   * decides which entries are sampled INTO the field rather than which are ranked.
    */
-  advance?<T extends RankableEntry>(
-    ctx: JudgingEngineContext,
-    pool: T[],
-    maxCalls: number
-  ): Promise<number>;
+  advance?(ctx: JudgingEngineContext, deadlineMs: number): Promise<number>;
 
   /**
    * Order the eligible field, best first, at close. MUST return every entry it was given: the

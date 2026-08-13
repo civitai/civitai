@@ -5,10 +5,13 @@ import {
   countFreshPairs,
   DEFAULT_BOUT_BUDGET,
   GROUP_SIZE,
+  MAX_CALLS_PER_TICK,
   planGroups,
+  RELATIONS_PER_CALL,
   relationsFromRanking,
   strength,
   swissStandings,
+  tickCallBudget,
 } from '~/server/games/daily-challenge/challenge-swiss';
 
 /**
@@ -77,6 +80,67 @@ describe('pacing', () => {
 
   it('opens the full budget at close', () => {
     expect(allowance(1, DEFAULT_BOUT_BUDGET)).toBe(DEFAULT_BOUT_BUDGET);
+  });
+});
+
+describe('tick call budget', () => {
+  const field = 476;
+
+  it('spends nothing when it is already ahead of the clock', () => {
+    // Half the challenge gone, but the whole job's calls already done.
+    const total = Math.ceil((field * DEFAULT_BOUT_BUDGET) / 2 / RELATIONS_PER_CALL);
+    expect(
+      tickCallBudget({
+        fieldSize: field,
+        callsSoFar: total,
+        progress: 0.5,
+        budget: DEFAULT_BOUT_BUDGET,
+      })
+    ).toBe(0);
+  });
+
+  it('releases roughly a quarter of the work by a quarter elapsed', () => {
+    const total = Math.ceil((field * DEFAULT_BOUT_BUDGET) / 2 / RELATIONS_PER_CALL);
+    const due = tickCallBudget({
+      fieldSize: field,
+      callsSoFar: 0,
+      progress: 0.25,
+      budget: DEFAULT_BOUT_BUDGET,
+    });
+    // Capped by the per-tick ceiling, so assert the ceiling bound it rather than the clock.
+    expect(due).toBe(Math.min(MAX_CALLS_PER_TICK, Math.ceil(total * 0.25)));
+  });
+
+  /**
+   * Coverage of the self-correcting property, not a revert guard: rewriting the budget as
+   * "remaining work / ticks remaining" keeps this green (both sides shrink together) and is caught
+   * by the quarter-elapsed test above instead. Verified by mutation, not assumed.
+   */
+  it('catches up after skipped ticks instead of losing that work', () => {
+    const behind = tickCallBudget({
+      fieldSize: field,
+      callsSoFar: 0,
+      progress: 0.3,
+      budget: DEFAULT_BOUT_BUDGET,
+    });
+    const onPace = tickCallBudget({
+      fieldSize: field,
+      callsSoFar: Math.ceil(((field * DEFAULT_BOUT_BUDGET) / 2 / RELATIONS_PER_CALL) * 0.29),
+      progress: 0.3,
+      budget: DEFAULT_BOUT_BUDGET,
+    });
+    expect(behind).toBeGreaterThan(onPace);
+  });
+
+  it('never exceeds the per-tick safety ceiling', () => {
+    expect(
+      tickCallBudget({
+        fieldSize: 100_000,
+        callsSoFar: 0,
+        progress: 1,
+        budget: DEFAULT_BOUT_BUDGET,
+      })
+    ).toBe(MAX_CALLS_PER_TICK);
   });
 });
 
