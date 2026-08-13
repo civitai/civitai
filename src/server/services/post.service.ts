@@ -1151,7 +1151,7 @@ export const addPostImage = async ({
   user,
   externalDetailsUrl,
   ...props
-}: ImageSchema & { user: SessionUser; postId: number }) => {
+}: ImageSchema & { user: SessionUser; postId: number; generationWorkflowId?: string }) => {
   const externalData = await parseExternalMetadata(externalDetailsUrl, user.id);
   if (externalData) {
     meta = { ...meta, external: externalData };

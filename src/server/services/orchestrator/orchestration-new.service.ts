@@ -1225,9 +1225,10 @@ export async function createWorkflowStepsFromGraph({
           resources: stepMetadata.resources,
           remixOfId,
           // The read path for outputs whose file carries no embedded metadata —
-          // every video today. Written here so the upload path can resolve
-          // provenance from a workflow the user owns rather than from the request.
-          sourceImageIds: sourceImageIds?.length ? sourceImageIds : undefined,
+          // every video today. The SIGNED token, never the ids themselves:
+          // `orchestrator.updateWorkflow`/`patch` let a user write whatever they
+          // like here, so a plain field would be their claim wearing our name.
+          provenance,
           isPrivateGeneration,
         });
 

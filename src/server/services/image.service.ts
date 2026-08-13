@@ -6130,7 +6130,14 @@ export const createEntityImages = async ({
   await dbClient.image.createMany({
     data: images.map((image) => ({
       ...image,
-      meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      // Same strip as `createImage`: nothing that reaches an Image row keeps a
+      // provenance claim it didn't prove. These rows have no post, so they can't
+      // reach a remix gallery today — but the invariant is "no unproven claim on
+      // any row", not "on the rows that currently matter".
+      meta:
+        (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
+          | Prisma.JsonObject
+          | undefined) ?? Prisma.JsonNull,
       userId,
       resources: undefined,
     })),
@@ -6438,7 +6445,10 @@ export const updateEntityImages = async ({
     await dbClient.image.createMany({
       data: newImages.map((image) => ({
         ...image,
-        meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+        meta:
+          (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
+            | Prisma.JsonObject
+            | undefined) ?? Prisma.JsonNull,
         userId,
         resources: undefined,
       })),

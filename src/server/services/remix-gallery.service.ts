@@ -14,7 +14,11 @@ import { resolvePlacementSpaceFor } from '~/server/services/placement-space.serv
 import { imageReviewedSql } from '~/server/common/image-visibility';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { onlySelectableLevels } from '~/shared/constants/browsingLevel.constants';
-import { declineFeeAmount, PLACEMENT_SURFACES } from '~/shared/utils/placement';
+import {
+  declineFeeAmount,
+  PLACEMENT_SURFACES,
+  splitPlacementPayment,
+} from '~/shared/utils/placement';
 import type { RemixGalleryPlacementData } from '~/shared/utils/remix-gallery';
 import {
   isRemixGalleryPlacementData,
@@ -1234,12 +1238,30 @@ export async function getPendingRemixGallerySubmissions({
   `;
   const byId = new Map(images.map((image) => [image.id, image]));
 
+  // What each answer actually pays the owner, computed per row with the same
+  // helpers the settlement uses. The row's own `amount` rather than the space's
+  // current price — the price can move after a submission — and the live rates
+  // rather than the defaults, so the number on the button is the number paid.
+  const config = await getPlacementConfig();
+  const shares = config.approvalShares(SURFACE);
+  const declineFeeRate = config.declineFeeRate(SURFACE);
+
   return {
     items: entries
       .map((row) => ({
         ...row,
         data: row.data as RemixGalleryPlacementData,
         image: byId.get((row.data as RemixGalleryPlacementData).imageId) ?? null,
+        earnings: {
+          approve: splitPlacementPayment({
+            amount: row.amount,
+            outcome: 'approved',
+            declineFeeRate,
+            sellerShare: shares.seller,
+            platformShare: shares.platform,
+          }).toOwner,
+          decline: declineFeeAmount(row.amount, declineFeeRate),
+        },
       }))
       .filter((row) => row.image),
     truncated,

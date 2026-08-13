@@ -1,3 +1,4 @@
+import { createCipheriv, createHash, randomBytes } from 'crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as DbClient from '~/server/db/client';
 import type * as Workflows from '~/server/services/orchestrator/workflows';
@@ -22,6 +23,10 @@ vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
 
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock('~/env/client', () => ({
+  env: { NEXT_PUBLIC_IMAGE_LOCATION: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA' },
 }));
 
 const {
@@ -73,7 +78,31 @@ describe('resolveSourceImageIds', () => {
     expect(ids).toEqual([]);
     expect(findMany).not.toHaveBeenCalled();
   });
+
+  it('refuses a uuid path segment on a host that is not ours', async () => {
+    // Input image URLs are a bare `z.string()`, so the uuid alone proves nothing
+    // about whose bytes the job actually read.
+    expect(await resolveSourceImageIds([`https://attacker.example/${UUID_A}/x.png`])).toEqual([]);
+    expect(findMany).not.toHaveBeenCalled();
+  });
 });
+
+/** Mints a token with a chosen issue time, the way the real signer would. */
+function tokenIssuedAt(seconds: number, userId = 42, sourceImageIds = [7]) {
+  const key = createHash('sha256').update('test-secret:remix-provenance:v1').digest();
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const ciphertext = Buffer.concat([
+    cipher.update(JSON.stringify({ v: 1, u: userId, s: sourceImageIds, t: seconds }), 'utf8'),
+    cipher.final(),
+  ]);
+  return [
+    'p1',
+    iv.toString('base64url'),
+    ciphertext.toString('base64url'),
+    cipher.getAuthTag().toString('base64url'),
+  ].join('.');
+}
 
 describe('signProvenance / verifyProvenance', () => {
   it('round-trips the ids it was issued for', () => {
@@ -86,23 +115,52 @@ describe('signProvenance / verifyProvenance', () => {
     expect(verifyProvenance(token, 43)).toBeNull();
   });
 
-  it('refuses a payload edited after signing', () => {
-    const token = signProvenance({ userId: 42, sourceImageIds: [7] })!;
-    const [, signature] = token.split('.');
-    const forged = Buffer.from(JSON.stringify({ v: 1, u: 42, s: [999], t: 0 })).toString(
-      'base64url'
-    );
+  it('tells nobody who generated what', () => {
+    // The token ships inside every generated file, and those are public. A
+    // readable payload would publish the user id and the source image ids,
+    // including sources that are private or unpublished.
+    const token = signProvenance({ userId: 4242, sourceImageIds: [1337] })!;
 
-    expect(verifyProvenance(`${forged}.${signature}`, 42)).toBeNull();
+    expect(token).not.toContain('4242');
+    expect(token).not.toContain('1337');
+    for (const part of token.split('.').slice(1))
+      expect(Buffer.from(part, 'base64url').toString('utf8')).not.toContain('"u"');
+  });
+
+  it('refuses a payload edited after issue', () => {
+    const token = signProvenance({ userId: 42, sourceImageIds: [7] })!;
+    const [prefix, iv, ciphertext, tag] = token.split('.');
+    const bytes = Buffer.from(ciphertext, 'base64url');
+    bytes[0] ^= 0xff;
+
+    expect(
+      verifyProvenance([prefix, iv, bytes.toString('base64url'), tag].join('.'), 42)
+    ).toBeNull();
   });
 
   it('refuses anything that is not one of our tokens', () => {
-    for (const value of ['', 'nonsense', 'a.b', undefined, null, 12, { s: [1] }])
+    for (const value of ['', 'nonsense', 'a.b', 'p1.a.b.c', undefined, null, 12, { s: [1] }])
       expect(verifyProvenance(value, 42)).toBeNull();
   });
 
   it('issues nothing when there are no source images', () => {
     expect(signProvenance({ userId: 42, sourceImageIds: [] })).toBeUndefined();
+  });
+
+  it('refuses a token past its lifetime, so one generation is not a permanent licence', () => {
+    const past = Math.floor(Date.now() / 1000) - 60 * 60 * 24 * 31;
+
+    expect(verifyProvenance(tokenIssuedAt(past), 42)).toBeNull();
+  });
+
+  it('refuses a token dated in the future', () => {
+    expect(verifyProvenance(tokenIssuedAt(Math.floor(Date.now() / 1000) + 600), 42)).toBeNull();
+  });
+
+  it('accepts one issued inside the window (control for the two above)', () => {
+    const recent = Math.floor(Date.now() / 1000) - 60 * 60 * 24 * 29;
+
+    expect(verifyProvenance(tokenIssuedAt(recent), 42)).toEqual([7]);
   });
 });
 
@@ -121,7 +179,9 @@ describe('resolveVerifiedSourceImageIds', () => {
   });
 
   it('falls back to the workflow, read with the caller’s own token', async () => {
-    getWorkflowMock.mockResolvedValue({ metadata: { sourceImageIds: [11, 12] } });
+    getWorkflowMock.mockResolvedValue({
+      metadata: { provenance: signProvenance({ userId: 42, sourceImageIds: [11, 12] }) },
+    });
 
     expect(await resolveVerifiedSourceImageIds({ userId: 42, workflowId: 'wf-1' })).toEqual([
       11, 12,
@@ -130,6 +190,17 @@ describe('resolveVerifiedSourceImageIds', () => {
     expect(getWorkflowMock).toHaveBeenCalledWith(
       expect.objectContaining({ token: 'token', path: { workflowId: 'wf-1' } })
     );
+  });
+
+  it('refuses ids a user wrote onto their own workflow', async () => {
+    // `orchestrator.updateWorkflow` and `orchestrator.patch` accept free-form
+    // metadata on a workflow the caller owns, so the metadata is attacker-
+    // controlled. Only a signature we minted counts.
+    getWorkflowMock.mockResolvedValue({
+      metadata: { sourceImageIds: [999], provenance: 'forged' },
+    });
+
+    expect(await resolveVerifiedSourceImageIds({ userId: 42, workflowId: 'wf-1' })).toBeNull();
   });
 
   it('resolves nothing when the workflow is not the caller’s to read', async () => {

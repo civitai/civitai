@@ -232,12 +232,6 @@ export const imageSchema = z.object({
   modelVersionId: z.number().nullish(),
   type: z.enum(MediaType).default(MediaType.image),
   metadata: z.record(z.string(), z.any()).optional(),
-  /**
-   * The generation this upload claims to be an output of. Only ever used to
-   * look up provenance the server itself wrote, against a workflow the session
-   * user owns — see remix-provenance.ts. Never stored.
-   */
-  generationWorkflowId: z.string().optional(),
   externalDetailsUrl: z.url().optional(),
   toolIds: z.number().array().optional(),
   techniqueIds: z.number().array().optional(),
