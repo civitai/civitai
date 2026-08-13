@@ -5,7 +5,10 @@ import { ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums'
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ModelSort } from '~/server/common/enums';
-import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import {
+  createModelFileDownloadUrl,
+  createSerializedFileDownloadUrl,
+} from '~/server/common/model-helpers';
 import { getDownloadFilename } from '~/server/services/file.service';
 import { getModelsWithVersions } from '~/server/services/model.service';
 import { publicModelResponseKey } from '~/server/services/model-version.service';
@@ -115,7 +118,7 @@ async function buildPublicModelResponse(
           files: includeDownloadUrl
             ? castedFiles
                 .filter((file) => file.visibility === ModelFileVisibility.Public)
-                .map(({ hashes, metadata, ...file }) => ({
+                .map(({ hashes, metadata, modelVersionId, ...file }) => ({
                   ...file,
                   metadata: removeEmpty(metadata),
                   name: safeDecodeURIComponent(
@@ -132,9 +135,16 @@ async function buildPublicModelResponse(
                   // discriminator in createModelFileDownloadUrl, and the
                   // download route skips its metadata-misalignment check
                   // because the file is already exact.
-                  downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
-                    versionId: version.id,
-                    fileId: file.id,
+                  //
+                  // `version.files` is NOT all this version's own files:
+                  // getModelsWithVersions splices in the linked VAE version's
+                  // files (`files.push(...vaeFile)`), which keep their own
+                  // `modelVersionId`. createSerializedFileDownloadUrl pins ONLY
+                  // a file this version owns — see the invariant note there.
+                  downloadUrl: `${baseUrl}${createSerializedFileDownloadUrl({
+                    file: { id: file.id, modelVersionId, type: file.type, metadata },
+                    hostVersionId: version.id,
+                    primary: primaryFile.id === file.id,
                   })}`,
                   primary: primaryFile.id === file.id ? true : undefined,
                   url: undefined,

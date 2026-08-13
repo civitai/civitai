@@ -22,6 +22,7 @@ import {
   isBaseModelGenerationSupported,
 } from '~/shared/constants/basemodel.constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { toApiModelFile } from '~/server/common/model-helpers';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
@@ -3872,20 +3873,18 @@ export async function getModelsWithVersions({
 
               return {
                 ...version,
-                files: files.map(({ metadata: metadataRaw, modelVersionId, ...file }) => {
-                  const metadata = metadataRaw as FileMetadata | undefined;
-
-                  return {
-                    ...file,
-                    metadata: {
-                      format: metadata?.format,
-                      size: metadata?.size,
-                      fp: metadata?.fp,
-                      quantType: metadata?.quantType,
-                      isRequired: metadata?.isRequired,
-                    },
-                  };
-                }),
+                // `modelVersionId` is deliberately PRESERVED on each file. The
+                // `files.push(...vaeFile)` above splices in files that live on
+                // the LINKED VAE version, so "which version owns this file" is
+                // not derivable from the enclosing `version.id` — and the v1
+                // response shapers need it to decide whether a per-file
+                // `downloadUrl` may be pinned with `fileId` (see
+                // createSerializedFileDownloadUrl). Dropping it here is what let
+                // a VAE file's id be paired with the host version, producing a
+                // 404 on a previously-working URL. Both public consumers
+                // (api/v1/models/[id], model-search.service) strip it from the
+                // wire body, so the public shape is unchanged.
+                files: files.map(toApiModelFile),
                 earlyAccessDeadline,
                 paidAccess,
                 stats,

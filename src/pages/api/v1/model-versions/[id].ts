@@ -7,7 +7,10 @@ import * as z from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
 import { getDownloadFilename } from '~/server/services/file.service';
-import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import {
+  createModelFileDownloadUrl,
+  createSerializedFileDownloadUrl,
+} from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
 import type { ModelVersionApiReturn } from '~/server/selectors/modelVersion.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
@@ -257,9 +260,17 @@ export async function prepareModelVersionResponse(
             // route re-resolves the file from the caller's filePreferences, so
             // the advertised `hashes`/`sizeKB`/`name` and the bytes actually
             // served can disagree on a multi-file version.
-            downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
-              versionId: version.id,
-              fileId: file.id,
+            //
+            // `castedFiles` is NOT all this version's own files: the `vaeId`
+            // splice above pushes files that live on the LINKED VAE version.
+            // createSerializedFileDownloadUrl pins ONLY a file this version
+            // owns; a spliced one keeps its original discriminator URL, which
+            // the download route resolves through the linked-component
+            // fallback. See the invariant note on that helper.
+            downloadUrl: `${baseUrl.origin}${createSerializedFileDownloadUrl({
+              file: { id: file.id, modelVersionId, type: file.type, metadata },
+              hostVersionId: version.id,
+              primary: primaryFile.id === file.id,
             })}`,
           }))
       : [],

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { assertDownloadUrlsResolve } from '~/tests/api/v1/download-url-seam.helper';
 
 /**
  * Regression coverage for GET /api/v1/models/[id] — per-file `downloadUrl`
@@ -85,6 +86,7 @@ vi.mock('~/server/utils/url-helpers', () => ({ getBaseUrl: () => 'https://civita
 const FILES = [
   {
     id: 11,
+    modelVersionId: 4242,
     type: 'Model',
     visibility: 'Public',
     sizeKB: 1111,
@@ -93,6 +95,7 @@ const FILES = [
   },
   {
     id: 12,
+    modelVersionId: 4242,
     type: 'Model',
     visibility: 'Public',
     sizeKB: 2222,
@@ -101,6 +104,7 @@ const FILES = [
   },
   {
     id: 13,
+    modelVersionId: 4242,
     type: 'Config',
     visibility: 'Public',
     sizeKB: 3333,
@@ -109,6 +113,7 @@ const FILES = [
   },
   {
     id: 14,
+    modelVersionId: 4242,
     type: 'Model',
     visibility: 'Private',
     sizeKB: 4444,
@@ -117,12 +122,36 @@ const FILES = [
   },
 ];
 
+/**
+ * A file spliced in from the LINKED VAE version. `getModelsWithVersions` does
+ * `files.push(...vaeFile)` on the HOST version's array, where `vaeFile` came
+ * from `getVaeFiles` — which selects `type: 'Model'` rows on the LINKED version,
+ * rewrites `type` to 'VAE', and keeps each row's own `id` AND `modelVersionId`
+ * (that select is pinned by
+ * src/server/services/__tests__/vae-files-cross-version.test.ts, so this shape
+ * is derived from the real producer, not invented here).
+ *
+ * So `version.files` is NOT "the files of version 4242": entry 91 belongs to
+ * 9999. Pinning its id to 4242 emits a pair the download route resolves as
+ * `findFirst({ id: 91, modelVersionId: 4242 })` → null → 404.
+ */
+const LINKED_VAE_VERSION_ID = 9999;
+const VAE_FILE = {
+  id: 91,
+  modelVersionId: LINKED_VAE_VERSION_ID,
+  type: 'VAE',
+  visibility: 'Public',
+  sizeKB: 5555,
+  hashes: [{ type: 'SHA256', hash: 'eeee5555' }],
+  metadata: { format: 'SafeTensor', size: 'full', fp: 'fp32' },
+};
+
 // hash → the fixture file that hash belongs to. The assertion walks the RESPONSE
 // and uses the advertised hash to recover which file the response claims each
 // entry is, then checks the URL points at THAT file.
 const BY_HASH = new Map(FILES.map((f) => [f.hashes[0].hash, f]));
 
-function modelItem(id: number) {
+function modelItem(id: number, { withVae = false }: { withVae?: boolean } = {}) {
   return {
     id,
     name: `Model ${id}`,
@@ -134,7 +163,8 @@ function modelItem(id: number) {
         id: 4242,
         name: 'v1',
         status: 'Published',
-        files: FILES,
+        // The literal splice getModelsWithVersions performs.
+        files: withVae ? [...FILES, { ...VAE_FILE }] : FILES,
         images: [],
       },
     ],
@@ -270,6 +300,73 @@ describe('GET /api/v1/models/[id] — per-file downloadUrl is pinned to that fil
     expect(res.body.modelVersions[0].downloadUrl).toBe(
       'https://civitai.com/api/download/models/4242'
     );
+  });
+
+  it('does not leak the internal modelVersionId onto the wire body', async () => {
+    // getModelsWithVersions now PRESERVES `modelVersionId` on each file so the
+    // shaper can tell owned files from spliced ones; the endpoint must strip it
+    // again or the public response shape changes.
+    const res = await invoke('7');
+    for (const entry of res.body.modelVersions[0].files)
+      expect(Object.prototype.hasOwnProperty.call(entry, 'modelVersionId')).toBe(false);
+  });
+
+  /**
+   * The CROSS-VERSION case the pin got wrong: a VAE file belonging to version
+   * 9999 sitting in version 4242's file list.
+   */
+  describe('with a VAE file spliced in from a LINKED version', () => {
+    beforeEach(() => {
+      mockGetModelsWithVersions.mockImplementation(async ({ input }: any) => ({
+        items: [modelItem(input.ids[0], { withVae: true })],
+      }));
+    });
+
+    it('serializes the spliced VAE file alongside the host version files', async () => {
+      const res = await invoke('7');
+      const files = res.body.modelVersions[0].files;
+      expect(files.map((f: any) => f.id).sort((a: number, b: number) => a - b)).toEqual([
+        11, 12, 13, 91,
+      ]);
+    });
+
+    it('does NOT pin the foreign file id to the host version', async () => {
+      const res = await invoke('7');
+      const vaeEntry = res.body.modelVersions[0].files.find((f: any) => f.id === 91);
+      expect(vaeEntry, 'the spliced VAE file was not serialized').toBeDefined();
+      const url = new URL(vaeEntry.downloadUrl);
+      expect(url.pathname).toBe('/api/download/models/4242');
+      expect(
+        url.searchParams.get('fileId'),
+        `fileId=91 on version 4242 is the 404 pair — url=${vaeEntry.downloadUrl}`
+      ).toBeNull();
+      // Keeps the discriminator URL the download route's linked-component
+      // fallback resolves (`isComponentFileType('VAE')`).
+      expect(url.searchParams.get('type')).toBe('VAE');
+    });
+
+    it('still pins every file the host version DOES own', async () => {
+      const res = await invoke('7');
+      const owned = res.body.modelVersions[0].files.filter((f: any) => f.id !== 91);
+      expect(owned).toHaveLength(3);
+      for (const entry of owned)
+        expect(
+          new URL(entry.downloadUrl).searchParams.get('fileId'),
+          `owned file ${entry.id} lost its pin`
+        ).toBe(String(entry.id));
+    });
+
+    it('every emitted (versionId, fileId) pair resolves at the download route', async () => {
+      const res = await invoke('7');
+      assertDownloadUrlsResolve({
+        urls: res.body.modelVersions[0].files.map((f: any) => f.downloadUrl),
+        universe: [
+          ...FILES.map((f) => ({ id: f.id, modelVersionId: f.modelVersionId })),
+          { id: VAE_FILE.id, modelVersionId: VAE_FILE.modelVersionId },
+        ],
+        expect: expect as never,
+      });
+    });
   });
 });
 
