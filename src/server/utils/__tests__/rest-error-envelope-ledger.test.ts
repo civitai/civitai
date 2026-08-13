@@ -236,8 +236,8 @@ function bodyLeaks(body: string): boolean {
  * `v1/images/index.ts` is pre-existing and unrelated to this change's diff.
  *
  * 🟡 TIER 2 — session-authed: a logged-in user can trigger it, the public cannot.
- * `blocks/submit-version.ts` and `v1/blocks/submit-version.ts` are `ModEndpoint`
- * and so belong in TIER 3, where they now are.
+ * `blocks/submit-version.ts` is `ModEndpoint` and so belongs in TIER 3, where it
+ * now is. Its `v1/` namesake is NOT — see the note on that entry.
  * TIER 2 includes `orchestrator/refreshBlobs.ts`: `OrchestratorEndpoint` is
  * `AuthedEndpoint` + a per-user token (`endpoint-helpers.ts`), with NO moderator
  * check — an earlier draft filed it under TIER 3, which would have dispositioned a
@@ -276,6 +276,14 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   'v1/blocks/models.ts',
   'v1/blocks/shared-storage/increment.ts',
   'v1/blocks/shared-storage/top.ts',
+  // NOT ModEndpoint — `withAxiom` + `Authorization: Bearer <API key>`, gated by
+  // `isAppBlocksAuthorEnabled`, a Flipt flag whose own docs say it grants
+  // authoring to a curated cohort INDEPENDENT of the mod-only flag. An earlier
+  // round filed it under TIER 3 as "ModEndpoint", which is exactly the
+  // misclassification corrected for `orchestrator/refreshBlobs.ts` — signing off
+  // a non-operator-reachable disclosure as "arguably the point". Mod-only in
+  // practice today only because of the static mod floor.
+  'v1/blocks/submit-version.ts',
   'v1/blocks/withdraw.ts',
   'v1/creator-program/join.ts',
   'v1/image-upload/multipart/index.ts',
@@ -309,7 +317,6 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   'testing/model-file-scan.ts',
   'testing/redis-cluster.ts',
   'testing/xguard-test.ts',
-  'v1/blocks/submit-version.ts', // ModEndpoint
   'webhooks/resource-training-v2/[modelVersionId].ts',
   'webhooks/resource-training.ts',
   'webhooks/run-jobs/[[...run]].ts',
@@ -358,6 +365,35 @@ describe('LEDGER: no REST route serializes an error object or its text (civitai#
       jsonBodies(`res.status(500).json({ error: 'x', nested: { a: 1 } });`),
       'nested literals elided, string contents blanked, braces balanced'
     ).toEqual([`{ error: '', nested:  }`]);
+  });
+
+  it('the extractor handles the branches no real file exercises today', () => {
+    // 🔴 Both branches below are UNREACHABLE across all ~970 `.json({…})` sites in
+    // the tree (measured: 0 fallbacks, 0 escape-skips), and deleting either left
+    // the ledger fully green. A dead branch with no exemplar is exactly the shape
+    // these rounds keep finding, so they get one here rather than a claim in a
+    // comment.
+
+    // Unterminated quote — an apostrophe in a TRAILING `//` comment survives
+    // `stripLineComments`, which only drops whole-line comments. Without the
+    // fallback the scan runs to EOF and emits NOTHING for this call: silence,
+    // which is the worse failure direction because it reads as "clean".
+    const unterminated = `res.status(500).json({ error: err.message, ok: false // don't care\n});`;
+    const bodies = jsonBodies(unterminated);
+    expect(bodies.length, 'the fallback must still yield a body').toBe(1);
+    expect(bodies.some(bodyLeaks), 'and the leak in it must still be seen').toBe(true);
+
+    // Escaped quote at depth 1. 🔴 The exemplar needs a `}` INSIDE the string or
+    // it does not discriminate: without the escape skip the scan just runs to EOF
+    // and the fallback above rescues it, so the leak is still found and the mutant
+    // survives (measured — it did). With a brace in there, dropping the escape
+    // skip ends the body EARLY at a real depth-0 `}`, the scan "succeeds" so the
+    // fallback never fires, and `error: err.message` lands outside the extracted
+    // body — a silent false negative.
+    const escaped = String.raw`res.status(500).json({ note: 'it\'s } fine', error: err.message });`;
+    expect(jsonBodies(escaped).some(bodyLeaks), 'an escaped quote must not blind the scan').toBe(
+      true
+    );
   });
 
   it('the offender set is EXACTLY the recorded baseline — a new one fails here', () => {

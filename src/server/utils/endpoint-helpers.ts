@@ -146,17 +146,30 @@ function isRestServerFault(status: number): boolean {
  * right axis is "is this a response a cache should keep", and for an error the
  * answer is always no.
  *
- * **Accepted trade, measured rather than asserted.** Across the 25 callers of this
- * helper, exactly ONE route's 404 changes cacheability: `v1/content/[[...slug]]`,
- * which is low-volume over a small known slug space. `v1/models/[id]` — the only
- * high-traffic one — answers its common 404 DIRECTLY (`res.status(404).json(...)`)
- * without going through this helper, so it keeps its edge cache untouched.
+ * **Accepted trade.** Which routes lose edge absorption on a 404:
  *
- * (An earlier version of this note said "these routes are not the ones under that
- * kind of load". That was an unverifiable assertion of the sort that gets quoted
- * back as fact; the sentence above is the check that replaced it. Worth knowing if
- * you extend `noStore` further: the six `PublicEndpoint` callers have NO rate
- * limiter, so edge absorption is the only thing in front of them.)
+ *   - `v1/content/[[...slug]]`   — `PublicEndpoint`; low volume, small slug space
+ *   - `v1/articles/[id]`         — `MixedAuthEndpoint`; `throwNotFoundError`
+ *   - `v1/collections/[id]`      — `MixedAuthEndpoint`; `throwNotFoundError`
+ *
+ * plus any other caller that 404s through this helper. `v1/models/[id]` — the
+ * highest-traffic one — is NOT affected: it answers its common 404 directly
+ * (`res.status(404).json(...)`) without reaching here.
+ *
+ * 🔴 **`MixedAuthEndpoint` is the easy one to miss, and I missed it twice.** The
+ * first version of this note asserted, without checking, that "these routes are
+ * not under that kind of load". The second replaced it with a *measured* claim of
+ * exactly ONE affected route — arrived at by surveying only the six
+ * `PublicEndpoint` callers. But `MixedAuthEndpoint` calls `addPublicCacheHeaders`
+ * on **every anonymous request** (`if (!session) addPublicCacheHeaders(...)`
+ * below), so its by-id routes carry the same header. A precise wrong number is
+ * more quotable than a vague one — and this file already said so 250 lines down,
+ * where the 5xx arm names "`GET /api/v1/articles/{id}` (a public
+ * MixedAuthEndpoint)" as unauthenticated-reachable.
+ *
+ * Worth knowing if you extend `noStore` further: the six `PublicEndpoint` callers
+ * have NO rate limiter, so edge absorption is the only thing in front of them;
+ * the `MixedAuthEndpoint` ones do have one.
  *
  * Uniform application also removes a **fault-classification oracle**: with the
  * narrower version, `no-store` vs `s-maxage=300` on the same status told a caller

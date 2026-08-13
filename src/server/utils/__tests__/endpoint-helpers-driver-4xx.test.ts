@@ -393,14 +393,26 @@ describe('handleEndpointError — driver-authored text at a 4xx (civitai#3845 in
     expect(res._header('Cache-Control')).toBe('no-store, max-age=0');
   });
 
-  it('does NOT touch headers once they are already SENT', () => {
-    // `noStore`'s internal `!res.headersSent` guard. Writing a header after the
-    // response has gone out throws in Node; the helper must be a no-op instead.
+  it('does NOT rewrite the cache header once headers are already SENT', () => {
+    // `noStore`'s internal `!res.headersSent` guard.
+    //
+    // 🔴 This deliberately asserts ONLY the header. An earlier version also
+    // asserted `.not.toThrow()` with a comment claiming "the helper must be a
+    // no-op" on an already-sent response. That was false in two ways: the
+    // assertion could not fail (this fixture's `json()` does not throw the way a
+    // real `ServerResponse` does), and the helper does NOT no-op — only the 499
+    // arm and `noStore` itself are `headersSent`-guarded, while every 4xx/5xx arm
+    // ends in `noStore(res).status(...).json(...)` unguarded and would throw
+    // ERR_HTTP_HEADERS_SENT for real. Callers guard themselves instead — e.g.
+    // `download/models/[modelVersionId].ts` has its own `if (res.headersSent)
+    // return;`. Asserting a property the code lacks would have told a maintainer
+    // that guard was redundant.
     const res = createRes();
     res.json({ already: 'sent' });
     const before = res._header('Cache-Control');
 
-    expect(() => handleEndpointError(res as never, new Error('late boom'))).not.toThrow();
+    handleEndpointError(res as never, new Error('late boom'));
+
     expect(res._header('Cache-Control'), 'must not rewrite a sent response').toBe(before);
   });
 
