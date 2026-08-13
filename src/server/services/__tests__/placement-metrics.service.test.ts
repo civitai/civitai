@@ -263,6 +263,10 @@ describe('sweepUncountedPlacements', () => {
     expect(confirmedIds()).toEqual([]);
     expect(releasedIds()).toEqual([1]);
     expect(result.counted).toBe(0);
+    // Counted apart from a collision defer: the job's alarm excuses one and not
+    // the other, and conflating them silences it on the case it exists for.
+    expect(result.undelivered).toBe(1);
+    expect(result.deferred).toBe(0);
   });
 
   it('stops emitting once its own lease has expired', async () => {
@@ -289,6 +293,13 @@ describe('sweepUncountedPlacements', () => {
     expect(queryRaw).toHaveBeenCalledTimes(1);
     expect(updateEntityMetricDetached).not.toHaveBeenCalled();
     expect(updateMany).not.toHaveBeenCalled();
-    expect(result).toEqual({ considered: 0, counted: 0, amount: 0, deferred: 0, skipped: false });
+    expect(result).toEqual({
+      considered: 0,
+      counted: 0,
+      amount: 0,
+      deferred: 0,
+      undelivered: 0,
+      skipped: false,
+    });
   });
 });

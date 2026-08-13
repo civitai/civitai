@@ -101,6 +101,13 @@ const CLAIM_RETRY_MS = 15 * 60 * 1000;
 const MAX_CLAIM_ATTEMPTS = 10;
 
 /**
+ * The worst a single group's emit can cost: every attempt timing out, plus the
+ * backoff between them. Subtracted from the lease before starting one, so a
+ * group cannot begin work it has no time left to finish.
+ */
+const MAX_GROUP_EMIT_MS = 3 * 5_000 + 750;
+
+/**
  * The durable path: count every placement that reached `approved` and never made
  * it onto the counter.
  *
@@ -140,7 +147,14 @@ export async function sweepUncountedPlacements({
   limit = 100,
   alreadyEmitted,
 }: { limit?: number; alreadyEmitted?: Set<string> } = {}) {
-  const idle = { considered: 0, counted: 0, amount: 0, deferred: 0, skipped: false };
+  const idle = {
+    considered: 0,
+    counted: 0,
+    amount: 0,
+    deferred: 0,
+    undelivered: 0,
+    skipped: false,
+  };
 
   // Default-off, and it must stay off until the migration's backfill has been
   // re-run against the deployed code. Everything approved between the ALTER and
@@ -242,6 +256,10 @@ export async function sweepUncountedPlacements({
   let counted = 0;
   let amount = 0;
   const deferredIds: number[] = [];
+  // Counted apart from a collision defer: one is the design working, the other
+  // is the sweep unable to emit at all, and the job's alarm turns on the
+  // difference.
+  let undelivered = 0;
 
   for (const group of groups.values()) {
     if (alreadyEmitted?.has(group.key)) {
@@ -253,9 +271,14 @@ export async function sweepUncountedPlacements({
     // the irreversible half and no database guard reaches it. A run slow enough
     // to outlive its own claim would emit for rows its successor has already
     // emitted for — two events, different seconds, additive metric, permanent.
+    //
+    // The margin is what makes this airtight rather than merely bounded. Checked
+    // against the bare lease, a group starting at one second to expiry and
+    // hitting the worst case finishes past it: emitted, then unable to confirm,
+    // then re-claimed and emitted again. Refuse to start what cannot finish.
     // The rest of the page keeps its stale claim, which is the recovery path
     // that already exists.
-    if (Date.now() - lease.getTime() > CLAIM_RETRY_MS) break;
+    if (Date.now() - lease.getTime() > CLAIM_RETRY_MS - MAX_GROUP_EMIT_MS) break;
 
     try {
       // A zero-amount group is confirmed without an emit rather than skipped:
@@ -278,6 +301,7 @@ export async function sweepUncountedPlacements({
       // must not cost the row an attempt it never spent.
       if (!delivered) {
         deferredIds.push(...group.ids);
+        undelivered += group.ids.length;
         continue;
       }
 
@@ -322,7 +346,8 @@ export async function sweepUncountedPlacements({
     considered: claimed.length,
     counted,
     amount,
-    deferred: deferredIds.length,
+    deferred: deferredIds.length - undelivered,
+    undelivered,
     skipped: false,
   };
 }

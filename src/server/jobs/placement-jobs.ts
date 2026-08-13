@@ -187,16 +187,19 @@ export const sweepUncountedPlacementsJob = createJob(
     const considered = sum(runs, (run) => run.considered);
     const counted = sum(runs, (run) => run.counted);
     const deferred = sum(runs, (run) => run.deferred);
+    const undelivered = sum(runs, (run) => run.undelivered);
 
-    // Deferred rows are the design working, not a failure — a run that only
-    // deferred has counted nothing and is fine. Alarming on it would make this
-    // noisy on its own intended path, which is how an alarm stops being read.
+    // A collision defer is the design working and must not alarm — it is this
+    // sweep's own intended path, and an alarm that fires there stops being read.
+    // An UNDELIVERED defer is the opposite: the sweep could not emit at all, so
+    // it counts toward the alarm rather than excusing it.
     if (considered > deferred && counted === 0)
       await logToAxiom({
         name: 'placement-jobs',
         type: 'warning',
         message: 'placement-sweep-uncounted claimed work and counted none of it',
         considered,
+        undelivered,
       }).catch(() => null);
 
     return {
@@ -204,10 +207,15 @@ export const sweepUncountedPlacementsJob = createJob(
       counted,
       amount: sum(runs, (run) => run.amount),
       deferred,
+      undelivered,
       // Rows the sweep has given up on. Past the attempt ceiling they are never
       // selected again, so this is the only thing that says the counter is short
       // and by how much.
-      abandoned: await countAbandonedPlacements(),
+      //
+      // Read only when it could have changed. `metricAttempts` is not in the
+      // sweep's index, so this is a scan of it — cheap on the queue it is sized
+      // for, and pointless to pay every five minutes to be told zero.
+      abandoned: counted === 0 && considered > deferred ? await countAbandonedPlacements() : null,
       // The flag is off, so nothing was even looked at. Distinct from a run that
       // found nothing to do.
       skipped: runs.every((run) => run.skipped),

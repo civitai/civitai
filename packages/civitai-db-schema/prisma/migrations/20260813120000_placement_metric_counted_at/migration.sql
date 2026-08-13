@@ -48,9 +48,17 @@ WHERE status IN ('approved', 'removed')
 --    exactly the moment there is a backlog worth sorting. The remaining
 --    predicates are cheap filters over a set the partial clause already keeps
 --    small.
+--    The predicate carries `status` and `targetType` even though the KEY
+--    deliberately does not. A partial predicate is membership, not a key, so it
+--    adds no BitmapOr — and without it every declined and expired placement ever
+--    created enters this index and never leaves, because nothing stamps those.
+--    The index would grow monotonically for the life of the table while the
+--    queue it serves stays near empty.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS "Placement_resolvedAt_idx"
   ON "Placement" ("resolvedAt")
-  WHERE "metricCountedAt" IS NULL;
+  WHERE "metricCountedAt" IS NULL
+    AND "targetType" = 'image'
+    AND status IN ('approved', 'removed');
 
 -- 4. VERIFY, because step 3 can report success having done nothing. An
 --    interrupted CONCURRENTLY build leaves the index in place marked invalid;
