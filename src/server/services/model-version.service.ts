@@ -94,7 +94,9 @@ import {
   generationPrice,
   isPaidAccessActive,
   isTimedGateActive,
+  licensingFeeBlockedFor,
   migrateTermsForUsageControl,
+  paidAccessBlockedFor,
   paidAccessCharges,
   paidGenerationGrant,
 } from '@civitai/buzz';
@@ -529,8 +531,22 @@ export const upsertModelVersion = async ({
   // Get model information to check NSFW + restricted base model combination
   const model = await dbWrite.model.findUniqueOrThrow({
     where: { id: data.modelId },
-    select: { nsfw: true, meta: true, userId: true },
+    select: { nsfw: true, meta: true, userId: true, poi: true, availability: true },
   });
+
+  // Model-level monetization policy, enforced here because the editors are only the explanation. A POI
+  // model earns nothing; a private model can't be sold. STRIPPED rather than rejected: every edit
+  // resubmits the whole version, and 207 POI versions already carry a stored fee — rejecting would make
+  // each of them unsavable until someone cleared it by hand, which is the "blocked version saves
+  // entirely" shape hot-fixed in 82f64846ba. Callers that explicitly ASK to create a charge (the REST
+  // endpoint, Creator Studio) refuse instead, where there is nothing to strand.
+  if (paidAccessBlockedFor(model)) paidAccess = null;
+  if (licensingFeeBlockedFor(model)) {
+    data.licensingFee = null;
+    data.licensingFeeType = null;
+    data.licensingFeeSettlementCurrency = null;
+    monetization = null;
+  }
 
   // Validate NSFW + restricted base model combination
   if (
