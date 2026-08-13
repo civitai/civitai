@@ -56,21 +56,33 @@
  *     from `path(l,c): error TS…` to `path:l:c - error TS…`, which the old
  *     single-format regex matched zero of — 801 real errors parsed as 0, and the
  *     gate PASSED. It is now forced off on the command line (`--pretty false`,
- *     which overrides the config), BOTH formats are recognised anyway, and a run
- *     whose output contains the literal `error TS` while parsing to zero is
- *     refused as unmeasurable.
- *  3. PLAUSIBILITY. A parsed total of 0 against a baseline of N>0 is refused
- *     (escape: `TYPECHECK_TESTS_ALLOW_EMPTY=1`). "Everything got fixed" and "the
- *     instrument is broken" produce the same number, and only one of them is
- *     common.
+ *     which overrides the config), BOTH formats are recognised anyway, and the
+ *     parse must ACCOUNT FOR EVERY LINE carrying the `error TS` marker. That last
+ *     clause is not a restatement: the control used to fire only when the parser
+ *     understood NOTHING, so a run that understood 5 of 801 marker lines was
+ *     accepted and reported "136 file(s) now clean". Measured on this repo,
+ *     unparsed === 0 across 801 diagnostics and 650 continuation lines.
+ *  3. PLAUSIBILITY. A parsed total of 0 against a baseline of N>0 is refused, and
+ *     so is a COLLAPSE (a total under 25% of the baseline) — the zero was only
+ *     the extreme of that spectrum, and the ratchet scores both as progress.
+ *     "Everything got fixed" and "the instrument is broken" produce the same
+ *     number, and only one of them is common. The escape hatch
+ *     (`TYPECHECK_TESTS_ALLOW_EMPTY`) is honoured on `--write-baseline` ONLY,
+ *     must carry a written reason rather than `=1`, is echoed into the output,
+ *     and is REFUSED — not ignored — on a verdict run. One env var in one job
+ *     definition must not be able to make this gate green.
  *  4. POSITIVE CONTROL ON THE MEASUREMENT ARM. `--listFilesOnly` proves the
  *     program actually READS test files. It now runs through the SAME wrapper,
  *     the same `-p`, and the same flags as the run that produces the verdict —
  *     the old one shelled out to `tsc.js` directly with different arguments, so
  *     it structurally could not witness the arm being validated. Its floor is
- *     derived from the file count STORED IN THE BASELINE, not a magic 400: at
- *     938 real files a floor of 400 let 57% of the test tree disappear with the
- *     control still green, and vanished files score as `fixed`, i.e. PASS.
+ *     `max(fixed 400, 90% of the count STORED IN THE BASELINE)`: at 938 real
+ *     files a bare 400 let 57% of the test tree disappear with the control still
+ *     green (vanished files score as `fixed`, i.e. PASS), while a bare derived
+ *     floor was only as good as a number in a JSON file — `testFilesInProgram: 1`
+ *     yielded a floor of ZERO while still logging "derived from the baseline".
+ *     A corrupt, negative or absurd recorded count is refused, not silently
+ *     downgraded to the fallback.
  *  5. CONFIG-DRIFT CONTROL. `tsconfig.tests.json` must be `tsconfig.json`'s
  *     exclude list minus exactly one entry. Both lists are written out verbatim,
  *     so without this an addition to the base list silently fails to reach the
@@ -93,7 +105,9 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  ALLOW_EMPTY_ENV,
   checkPlausibility,
+  classifyEmptyAllowance,
   classifyRun,
   compare,
   diffExcludes,
@@ -109,18 +123,25 @@ const REPO_ROOT = path.resolve(HERE, '..', '..');
 const TS_CONFIG = 'tsconfig.tests.json';
 const BASE_TS_CONFIG = 'tsconfig.json';
 const EXCLUDE_ENTRY = 'src/**/__tests__/**';
-// Test seam, like TYPECHECK_TESTS_WRAPPER below: lets the suite point the gate
-// at a fixture baseline instead of the committed one, so the comparison and the
-// --write-baseline refusal can be exercised without a real tsc run and without
-// writing to a tracked file.
-const BASELINE_PATH = process.env.TYPECHECK_TESTS_BASELINE || path.join(HERE, 'typecheck-tests-baseline.json');
 
-// Test seam. Lets the suite drive this gate with a stub wrapper that exits the
-// way each real failure does, at sub-second cost instead of a multi-minute tsc
-// run. Not meant for normal use — every path it reaches is the same path the
-// real wrapper reaches.
+// ------------------------------------------------------------------ seams
+// Three environment variables reach into this gate's production behaviour. They
+// exist so the suite can drive it with a stub typechecker and a fixture baseline
+// at sub-second cost instead of a multi-minute `tsc` — a control nobody can
+// afford to run is not a control.
+//
+// They are ECHOED (see `provenance` below) because an unechoed seam makes a
+// stub-driven run byte-identical to a real one: the same "801 error(s) across
+// 141 file(s) … PASS" is printed whether the number came from the repository or
+// from a fixture. That is the gate's own thesis — a verdict must carry its
+// provenance — applied to the gate.
+const BASELINE_PATH = process.env.TYPECHECK_TESTS_BASELINE || path.join(HERE, 'typecheck-tests-baseline.json');
 const WRAPPER = process.env.TYPECHECK_TESTS_WRAPPER || path.join(REPO_ROOT, 'scripts', 'typecheck.mjs');
-const ALLOW_EMPTY = process.env.TYPECHECK_TESTS_ALLOW_EMPTY === '1';
+// Where the two tsconfigs are read from. Defaults to the repo root; the suite
+// points it at a fixture directory to exercise the config-drift control END TO
+// END, i.e. to pin that the gate ACTS on `diffExcludes`, not merely that
+// `diffExcludes` computes the right answer.
+const CONFIG_DIR = process.env.TYPECHECK_TESTS_CONFIG_DIR || REPO_ROOT;
 
 const TEST_PATH_MARKER = `${path.sep}__tests__${path.sep}`;
 
@@ -142,6 +163,56 @@ function cannotMeasure(reason) {
 // file's parser on purpose: a separate generator is two implementations of one
 // rule, and they disagree eventually — always in the direction of a green gate.
 const WRITE_BASELINE = process.argv.includes('--write-baseline');
+
+// ------------------------------------------------------- provenance echo
+// Printed before anything is measured, so it appears above the verdict even when
+// the run dies early. An overridden seam is marked; the default case is still
+// printed, because "no OVERRIDE line" and "nobody printed provenance" look the
+// same to a reader and only one of them is a fact about the run.
+const provenance = [
+  ['wrapper', WRAPPER, 'TYPECHECK_TESTS_WRAPPER'],
+  ['baseline', BASELINE_PATH, 'TYPECHECK_TESTS_BASELINE'],
+  ['tsconfig dir', CONFIG_DIR, 'TYPECHECK_TESTS_CONFIG_DIR'],
+];
+const overridden = provenance.filter(([, , env]) => process.env[env]);
+console.log(
+  `typecheck-tests-gate: provenance — mode=${WRITE_BASELINE ? '--write-baseline' : 'verdict'}, ` +
+    provenance.map(([label, value, env]) => `${label}=${value}${process.env[env] ? ' [OVERRIDE]' : ''}`).join(', ')
+);
+if (overridden.length) {
+  console.log(
+    `typecheck-tests-gate: NOTE — ${overridden.length} seam(s) overridden by environment ` +
+      `(${overridden.map(([, , env]) => env).join(', ')}). This run did NOT necessarily measure ` +
+      `this repository; treat its numbers as belonging to whatever the override points at.`
+  );
+}
+
+// --------------------------------------------- the plausibility escape hatch
+// Resolved here, before any measurement, so an illegitimate use is refused on
+// its own terms rather than silently changing what a later control means.
+const allowance = classifyEmptyAllowance({
+  raw: process.env[ALLOW_EMPTY_ENV],
+  writeBaseline: WRITE_BASELINE,
+});
+if (allowance.refuse) {
+  fail(
+    `typecheck-tests-gate: REFUSING TO RUN — ${allowance.refuse}\n` +
+      '  A disabled control is not a passing run. Nothing was measured.',
+    3
+  );
+}
+if (allowance.allowed) {
+  console.log('');
+  console.log('  ################################################################');
+  console.log('  #  PLAUSIBILITY CONTROL DISARMED — this run is NOT a clean bill #');
+  console.log('  ################################################################');
+  console.log(`  # reason given: ${allowance.reason}`);
+  console.log(`  # ${ALLOW_EMPTY_ENV} is set, so an implausible measurement (a zero, or a`);
+  console.log('  # collapse against the previous baseline) will be WRITTEN rather than');
+  console.log('  # refused. Whoever reviews the resulting baseline diff is the control.');
+  console.log('  ################################################################');
+  console.log('');
+}
 
 // ---------------------------------------------------------------- baseline
 if (!WRITE_BASELINE && !existsSync(BASELINE_PATH)) {
@@ -179,7 +250,7 @@ if (!WRITE_BASELINE) {
 // program minus one exclude entry", every number below means something else.
 try {
   const readExclude = (file) =>
-    JSON.parse(stripJsonComments(readFileSync(path.join(REPO_ROOT, file), 'utf8'))).exclude;
+    JSON.parse(stripJsonComments(readFileSync(path.join(CONFIG_DIR, file), 'utf8'))).exclude;
   const drift = diffExcludes(readExclude(BASE_TS_CONFIG), readExclude(TS_CONFIG), EXCLUDE_ENTRY);
   if (!drift.ok) {
     cannotMeasure(
@@ -233,14 +304,26 @@ const testFilesInProgram = listed.output
   .length;
 
 const recordedTestFiles = baseline.testFilesInProgram ?? previous?.testFilesInProgram;
-const { floor, derived } = testFileFloor(recordedTestFiles);
+const floorResult = testFileFloor(recordedTestFiles);
+if (!floorResult.ok) {
+  cannotMeasure(
+    `the positive control has no usable floor — ${floorResult.reason}\n` +
+      `    The floor is what makes the positive control a control; without it this run would ` +
+      `report a number nothing checked.`
+  );
+}
+const { floor, derived } = floorResult;
 if (testFilesInProgram < floor) {
   cannotMeasure(
     `POSITIVE CONTROL FAILED — the program built from ${TS_CONFIG} contains ` +
       `${testFilesInProgram} file(s) under a __tests__ directory, below the floor of ${floor} ` +
       (derived
         ? `(90% of the ${recordedTestFiles} recorded in the baseline).`
-        : `(fixed fallback; the baseline records no testFilesInProgram).`) +
+        : recordedTestFiles === undefined || recordedTestFiles === null
+          ? `(fixed fallback; the baseline records no testFilesInProgram).`
+          : `(fixed fallback ${floor}; it OUTRANKS the ${Math.floor(recordedTestFiles * 0.9)} that ` +
+            `90% of the baseline's ${recordedTestFiles} would give — a derived floor may raise the ` +
+            `fixed one, never lower it).`) +
       `\n    Whatever this run would have reported, it is not a measurement of the test tree. ` +
       `Check ${TS_CONFIG}'s exclude list and the -p path.`
   );
@@ -249,6 +332,9 @@ console.log(
   `typecheck-tests-gate: positive control OK — ${testFilesInProgram} test file(s) in the program ` +
     `(floor ${floor}${derived ? ', derived from the baseline' : ', fixed fallback'}).`
 );
+// A `--listFilesOnly` run that produced NO test-file lines at all cannot reach
+// here (the floor is >= FALLBACK_MIN_TEST_FILES > 0), which is the point of the
+// Math.max: the previous derivation could hand this check a floor of 0.
 
 // ------------------------------------------------------------- the verdict run
 const measured = runWrapper([]);
@@ -289,9 +375,36 @@ const previousTotal = Object.values(previous?.files ?? {}).reduce((a, b) => a + 
 const plausible = checkPlausibility({
   currentTotal,
   baselineTotal: WRITE_BASELINE ? previousTotal : baselineTotal,
-  allowEmpty: ALLOW_EMPTY,
+  allowEmpty: allowance.allowed,
 });
-if (!plausible.ok) cannotMeasure(plausible.reason);
+if (!plausible.ok) {
+  // A measured ZERO is refused everywhere: it cannot be a regression, so letting
+  // it through buys nothing, and it is the single likeliest shape of a broken
+  // instrument.
+  //
+  // A COLLAPSE is split by reversibility. On the write path it destroys the
+  // ratchet and the evidence together, so it is refused. On a verdict run it
+  // cannot hide a regression — a regression is what `compare` blocks on, and a
+  // collapsed measurement makes files look FIXED, never new — so refusing would
+  // block a legitimate large cleanup for no safety gain. It is shouted instead,
+  // and the shout is above the verdict line rather than below it.
+  if (plausible.kind === 'collapse' && !WRITE_BASELINE) {
+    console.log('');
+    console.log('  ################################################################');
+    console.log('  #  IMPLAUSIBLE MEASUREMENT — READ BEFORE BELIEVING THE VERDICT  #');
+    console.log('  ################################################################');
+    for (const line of plausible.reason.match(/.{1,72}(\s|$)/g) ?? []) {
+      console.log(`  # ${line.trim()}`);
+    }
+    console.log('  # This run can still BLOCK, and a block from it is real. What it');
+    console.log('  # cannot do is certify the tree: an instrument measuring a smaller');
+    console.log('  # program than the baseline reports the difference as progress.');
+    console.log('  ################################################################');
+    console.log('');
+  } else {
+    cannotMeasure(plausible.reason);
+  }
+}
 
 if (WRITE_BASELINE) {
   const files = Object.fromEntries([...current.entries()].sort(([a], [b]) => (a < b ? -1 : 1)));
@@ -318,7 +431,13 @@ if (WRITE_BASELINE) {
   );
   console.log(
     `typecheck-tests-gate: wrote baseline — ${total} error(s) across ${Object.keys(files).length} ` +
-      `file(s), ${testFilesInProgram} test file(s) in program.`
+      `file(s), ${testFilesInProgram} test file(s) in program.` +
+      (allowance.allowed
+        ? `\ntypecheck-tests-gate: ...WITH THE PLAUSIBILITY CONTROL DISARMED (${ALLOW_EMPTY_ENV}). ` +
+          `Reason given: ${allowance.reason}\n` +
+          `typecheck-tests-gate: this baseline was NOT validated against the previous one. Review ` +
+          `the diff as if it were unreviewed, because it is.`
+        : '')
   );
   process.exit(0);
 }

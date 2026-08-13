@@ -50,18 +50,28 @@ const ANSI = /\[[0-9;]*m/g;
 /**
  * Parse tsc output into per-file error counts.
  *
- * Returns `{ counts, total, formats, sawAnyErrorTs }`:
- *   counts        Map<repo-relative posix path, number>
- *   total         sum of counts
- *   formats       Set of the diagnostic formats actually matched
- *   sawAnyErrorTs how many lines contain the literal marker at all — the
- *                 positive control on the parser itself. `sawAnyErrorTs > 0`
- *                 with `total === 0` means the output HAS diagnostics in a shape
- *                 this parser does not understand; that is not "clean".
+ * Returns `{ counts, total, formats, sawAnyErrorTs, unparsed, unparsedSample }`:
+ *   counts         Map<repo-relative posix path, number>
+ *   total          sum of counts
+ *   formats        Set of the diagnostic formats actually matched
+ *   sawAnyErrorTs  how many lines contain the literal marker at all — the
+ *                  positive control on the parser itself.
+ *   unparsed       `sawAnyErrorTs - total`: lines that carry the marker but that
+ *                  NEITHER regex understood. See `classifyRun` — this is the
+ *                  number the "parser blind to the format" control reads, and it
+ *                  is checked for ANY divergence, not only for a total of zero.
+ *   unparsedSample the first few such lines, verbatim, so a refusal can name the
+ *                  actual text instead of asserting one exists.
+ *
+ * `total <= sawAnyErrorTs` is structural: `total` only increments on a line that
+ * matched, and every matching line contains the marker. So `unparsed` is never
+ * negative and `unparsed === 0` is exactly "the parser accounted for every line
+ * that claims to be a diagnostic".
  */
 export function parseDiagnostics(output) {
   const counts = new Map();
   const formats = new Set();
+  const unparsedSample = [];
   let total = 0;
   let sawAnyErrorTs = 0;
 
@@ -71,14 +81,17 @@ export function parseDiagnostics(output) {
     sawAnyErrorTs++;
     const plain = PLAIN_DIAG.exec(line);
     const m = plain ?? PRETTY_DIAG.exec(line);
-    if (!m) continue;
+    if (!m) {
+      if (unparsedSample.length < 3) unparsedSample.push(line.trim().slice(0, 200));
+      continue;
+    }
     formats.add(plain ? 'plain' : 'pretty');
     total++;
     const file = m[1].split(path.sep).join('/').replace(/^\.\//, '');
     counts.set(file, (counts.get(file) || 0) + 1);
   }
 
-  return { counts, total, formats, sawAnyErrorTs };
+  return { counts, total, formats, sawAnyErrorTs, unparsed: sawAnyErrorTs - total, unparsedSample };
 }
 
 /**
@@ -143,13 +156,33 @@ export function classifyRun({ status, signal, parsed, crashMarker = false }) {
         `result. Whatever it measured, it is not a verdict worth ratcheting against.`,
     };
   }
-  if (parsed.sawAnyErrorTs > 0 && parsed.total === 0) {
+  // The parse-accounting control. This used to fire ONLY when the parser
+  // understood literally nothing (`total === 0`), which made it a cliff at
+  // exactly zero: a run in which the parser understood 5 of 801 marker-carrying
+  // lines was accepted, and then printed "136 file(s) now clean" — a 99%
+  // undercount reported as an improvement. The invariant is not "did it parse
+  // SOMETHING", it is "did it parse EVERYTHING that claims to be a diagnostic".
+  //
+  // Measured on this repository (801 diagnostics, 1451 output lines, 650 of them
+  // message-continuation lines): unparsed === 0 exactly. The continuation lines
+  // do not carry the `error TS` marker, so they are never counted. The divergent
+  // cases that DO exist in tsc are the FILELESS diagnostics — TS18003 "No inputs
+  // were found in config file", TS6053 "File not found" — which carry the marker
+  // with no `path(line,col)` prefix. Those are precisely the outputs that mean
+  // the program was not built as intended, so refusing on them is correct rather
+  // than merely safe.
+  const unparsed = parsed.unparsed ?? (parsed.sawAnyErrorTs ?? parsed.total) - parsed.total;
+  if (unparsed > 0) {
+    const sample = parsed.unparsedSample?.length
+      ? `\n    first unparsed line(s):\n      ${parsed.unparsedSample.join('\n      ')}`
+      : '';
     return {
       ok: false,
       reason:
-        `${parsed.sawAnyErrorTs} output line(s) contain "error TS" but NONE parsed into a ` +
-        `file/line diagnostic. The parser is blind to this output's format; a zero from it ` +
-        `is a fact about the parser, not about the code.`,
+        `${unparsed} of ${parsed.sawAnyErrorTs} output line(s) containing "error TS" did NOT parse ` +
+        `into a file/line diagnostic (${parsed.total} did). The parser did not account for every ` +
+        `diagnostic in this output, so its count is a fact about the parser, not about the code. ` +
+        `A partial parse is not a smaller measurement — it is an unknown one.${sample}`,
     };
   }
   return { ok: true, reason: null };
@@ -165,40 +198,213 @@ export function classifyRun({ status, signal, parsed, crashMarker = false }) {
  * fixed everything" without saying so out loud. So it is refused rather than
  * celebrated, with a named escape hatch for the day it is genuinely true.
  */
+export const COLLAPSE_RATIO = 0.25;
+export const COLLAPSE_MIN_BASELINE = 20;
+
 export function checkPlausibility({ currentTotal, baselineTotal, allowEmpty = false }) {
   if (baselineTotal > 0 && currentTotal === 0 && !allowEmpty) {
     return {
       ok: false,
+      kind: 'empty',
       reason:
         `the baseline records ${baselineTotal} error(s) but this run parsed 0. A checker that ` +
         `reports zero where the baseline says ${baselineTotal} has almost certainly not measured ` +
-        `anything. If the test tree really is clean now, re-run with ` +
-        `TYPECHECK_TESTS_ALLOW_EMPTY=1 (and regenerate the baseline in the same change).`,
+        `anything. If the test tree really is clean now, regenerate the baseline in the same ` +
+        `change (${ALLOW_EMPTY_ENV} is honoured on --write-baseline only — see its policy).`,
     };
   }
-  return { ok: true, reason: null };
+  // The zero above is the extreme of a spectrum, not a category of its own. A
+  // run that reports 5 against a baseline of 801 is the same failure with one
+  // digit changed, and it PASSES the ratchet (everything scores `improved` or
+  // `fixed`) while printing a congratulatory "N file(s) now clean".
+  //
+  // This is deliberately NOT symmetric with the zero case, because the two
+  // differ in reversibility: a collapsed VERDICT run is loud but harmless — it
+  // cannot hide a regression, since a regression is what the ratchet blocks on
+  // — whereas a collapsed --write-baseline REWRITES the ratchet to the smaller
+  // number and the evidence of what was lost is gone. So the caller warns on the
+  // first and refuses the second. Both are reported; neither is silent.
+  if (
+    baselineTotal >= COLLAPSE_MIN_BASELINE &&
+    currentTotal > 0 &&
+    currentTotal < baselineTotal * COLLAPSE_RATIO &&
+    !allowEmpty
+  ) {
+    const pct = ((1 - currentTotal / baselineTotal) * 100).toFixed(1);
+    return {
+      ok: false,
+      kind: 'collapse',
+      reason:
+        `this run parsed ${currentTotal} error(s) against a baseline of ${baselineTotal} — a ${pct}% ` +
+        `drop, below the ${COLLAPSE_RATIO * 100}% plausibility floor. Either a great deal was genuinely ` +
+        `fixed, or the instrument measured a smaller program than the baseline was taken over ` +
+        `(a changed -p, a widened exclude, a partially-parsed output). Those two produce the same ` +
+        `number and only one of them is common.`,
+    };
+  }
+  return { ok: true, kind: null, reason: null };
 }
+
+/**
+ * Policy for the plausibility escape hatch.
+ *
+ * The hatch shipped as `TYPECHECK_TESTS_ALLOW_EMPTY=1`, honoured on every path.
+ * That is one environment variable in one job definition away from reinstating
+ * the exact failure this gate exists to eliminate: with it set, a wrapper that
+ * measures nothing produced `0 error(s) across 0 file(s) (baseline: 801 across
+ * 141)` -> `141 file(s) now clean` -> `PASS`, exit 0, with nothing anywhere in
+ * the output recording that a control had been switched off.
+ *
+ * Three properties fix that, and the first is the one that matters:
+ *
+ *  1. SCOPE. The hatch is honoured on `--write-baseline` ONLY. It cannot make a
+ *     verdict run green, so it cannot be used — deliberately or accidentally —
+ *     to turn CI green. This is not a weakening of the hatch's legitimate use:
+ *     the day the test tree is genuinely clean, the action required is to
+ *     REGENERATE the baseline, and after that regeneration the baseline total is
+ *     0 and the control never fires again. A verdict run that hits the control
+ *     is correctly telling you to do that regeneration.
+ *  2. IT IS NOT IGNORED ON A VERDICT RUN — it is REFUSED. Silently ignoring a
+ *     control-disabling variable is its own confident-wrong: the operator
+ *     believes the control is off, the gate believes it is on, and the log says
+ *     nothing. Setting it on a verdict run is an error that names itself.
+ *  3. IT REQUIRES A REASON, not a truthy token. `=1` is refused; the value must
+ *     be a human-readable justification, and it is echoed into the output, so
+ *     the log of a disarmed run carries WHY it was disarmed and by whose claim.
+ */
+export const ALLOW_EMPTY_ENV = 'TYPECHECK_TESTS_ALLOW_EMPTY';
+const BARE_TOKENS = new Set(['1', '0', 'true', 'false', 'yes', 'no', 'on', 'off', 'y', 'n']);
+export const MIN_REASON_CHARS = 12;
+
+export function classifyEmptyAllowance({ raw, writeBaseline }) {
+  const value = typeof raw === 'string' ? raw.trim() : '';
+  if (!value) return { allowed: false, refuse: null, reason: null };
+
+  if (!writeBaseline) {
+    return {
+      allowed: false,
+      reason: null,
+      refuse:
+        `${ALLOW_EMPTY_ENV} is set on a VERDICT run. It is honoured on --write-baseline only, and ` +
+        `is refused here rather than ignored — a run whose plausibility control has been switched ` +
+        `off must never be able to report PASS. If the test tree is genuinely clean, regenerate ` +
+        `the baseline (node scripts/ci/typecheck-tests-gate.mjs --write-baseline) in the same ` +
+        `change; the regenerated baseline makes this control a no-op honestly. If you are seeing ` +
+        `this in CI, some job definition is exporting ${ALLOW_EMPTY_ENV} — remove it.`,
+    };
+  }
+
+  if (BARE_TOKENS.has(value.toLowerCase()) || value.length < MIN_REASON_CHARS || !/\s/.test(value)) {
+    return {
+      allowed: false,
+      reason: null,
+      refuse:
+        `${ALLOW_EMPTY_ENV}=${JSON.stringify(value)} is not a reason. Disabling the plausibility ` +
+        `control requires a written justification of at least ${MIN_REASON_CHARS} characters and ` +
+        `more than one word, which is echoed into this run's output — e.g. ` +
+        `${ALLOW_EMPTY_ENV}="test tree genuinely clean after PR #1234, regenerating". A control ` +
+        `that can be switched off by typing "1" is one nobody has to justify switching off.`,
+    };
+  }
+
+  return { allowed: true, refuse: null, reason: value };
+}
+
+// `SHRINK_TOLERANCE` is the honest cost of the derived half of the floor: some
+// churn is normal, and a floor that blocks on ordinary deletion is a floor
+// people disable. `FALLBACK_MIN_TEST_FILES` is the fixed half — see
+// `testFileFloor` below, which takes the MAX of the two. Neither is sufficient
+// alone, and the docblock there says why.
+export const SHRINK_TOLERANCE = 0.9;
+export const FALLBACK_MIN_TEST_FILES = 400;
+// Nothing in this repository's history is within an order of magnitude of this.
+// A recorded count above it is a corrupt or hand-edited baseline, and the damage
+// it does is the opposite of the usual one: it makes the positive control
+// PERMANENTLY RED, which is the failure mode that teaches people to delete the
+// control. So it is refused with a message, not silently obeyed.
+export const ABSURD_MAX_TEST_FILES = 100_000;
 
 /**
  * Positive-control floor for the number of test files in the program.
  *
- * Derived from the count STORED IN THE BASELINE rather than a magic constant. A
- * fixed floor of 400 against 938 real files meant 57% of the test tree could
- * vanish with the control still green — and vanished files score as `fixed`, so
- * the gate would have PASSED while measuring a little over a third of its
- * population. The floor now tracks whatever the baseline was measured over.
+ * Two separate defects lived here.
  *
- * `SHRINK_TOLERANCE` is the honest cost: some churn is normal, and a floor that
- * blocks on ordinary deletion is a floor people disable.
+ * The first was a magic 400 against 938 real files: 57% of the test tree could
+ * vanish with the control still green, and vanished files score as `fixed`, i.e.
+ * PASS. That was fixed by deriving the floor from the baseline.
+ *
+ * The second was introduced BY that fix, and is the more interesting one: a
+ * derived control is only ever as good as the value it derives from, and this
+ * one had no lower bound at all. `testFileFloor(1)` returned `{floor: 0}` — a
+ * floor no program can fail — while still reporting `derived: true`, i.e. while
+ * still LOGGING that it was derived from the baseline and therefore trustworthy.
+ * A one-character edit to a JSON file disabled the control and improved the
+ * wording of the log. Hence `Math.max`: the derived floor may raise the fixed
+ * one, never lower it.
+ *
+ * The fixed floor is an assertion about THIS repository — it has 938 test files,
+ * so a program containing fewer than 400 is not a program worth measuring —
+ * rather than a general constant.
+ *
+ * Returns `{ ok, floor, derived, reason }`. `ok: false` means the recorded value
+ * is unusable and the caller must refuse: a corrupt count is not the same as an
+ * ABSENT one, and quietly treating it as absent is how a broken baseline reads
+ * as a working control.
  */
-export const SHRINK_TOLERANCE = 0.9;
-export const FALLBACK_MIN_TEST_FILES = 400;
-
 export function testFileFloor(baselineTestFiles) {
-  if (!Number.isInteger(baselineTestFiles) || baselineTestFiles <= 0) {
-    return { floor: FALLBACK_MIN_TEST_FILES, derived: false };
+  // Genuinely absent — an older baseline written before the field existed. Fall
+  // back, and say the floor is not derived.
+  if (baselineTestFiles === undefined || baselineTestFiles === null) {
+    return { ok: true, floor: FALLBACK_MIN_TEST_FILES, derived: false, reason: null };
   }
-  return { floor: Math.floor(baselineTestFiles * SHRINK_TOLERANCE), derived: true };
+  if (typeof baselineTestFiles !== 'number' || !Number.isInteger(baselineTestFiles)) {
+    return {
+      ok: false,
+      floor: null,
+      derived: false,
+      reason:
+        `the baseline records testFilesInProgram = ${JSON.stringify(baselineTestFiles)}, which is ` +
+        `not an integer. This value is the positive control's floor; a baseline that cannot say ` +
+        `how many files it was measured over cannot validate anything. Regenerate it with ` +
+        `--write-baseline rather than editing it by hand.`,
+    };
+  }
+  if (baselineTestFiles <= 0) {
+    return {
+      ok: false,
+      floor: null,
+      derived: false,
+      reason:
+        `the baseline records testFilesInProgram = ${baselineTestFiles}. A baseline measured over ` +
+        `zero or fewer test files is not a baseline, and deriving a floor from it yields a floor ` +
+        `no program can fail. Regenerate it with --write-baseline.`,
+    };
+  }
+  if (baselineTestFiles > ABSURD_MAX_TEST_FILES) {
+    return {
+      ok: false,
+      floor: null,
+      derived: false,
+      reason:
+        `the baseline records testFilesInProgram = ${baselineTestFiles}, above the sanity ceiling ` +
+        `of ${ABSURD_MAX_TEST_FILES}. Deriving a floor from it would make the positive control ` +
+        `permanently red, which is worse than having no control. Regenerate it with --write-baseline.`,
+    };
+  }
+
+  const derivedFloor = Math.floor(baselineTestFiles * SHRINK_TOLERANCE);
+  return {
+    ok: true,
+    floor: Math.max(FALLBACK_MIN_TEST_FILES, derivedFloor),
+    // `derived` drives the wording of the log line, so it must mean "the
+    // baseline actually RAISED the floor" — strictly greater, not >=. At a tie
+    // the floor is the fixed one and would have been the fixed one anyway;
+    // reporting it as "derived from the baseline" credits the baseline with a
+    // number it did not determine, which is the same misattribution that let a
+    // floor of 0 log as derived.
+    derived: derivedFloor > FALLBACK_MIN_TEST_FILES,
+    reason: null,
+  };
 }
 
 /** Structural validation of a parsed baseline object. Returns an array of problems. */
@@ -210,9 +416,35 @@ export function validateBaseline(baseline, expectedConfig) {
   if (typeof baseline.files !== 'object' || baseline.files === null || Array.isArray(baseline.files)) {
     problems.push('baseline is missing a `files` object');
   } else {
+    let sum = 0;
+    let summable = true;
     for (const [file, count] of Object.entries(baseline.files)) {
       if (!Number.isInteger(count) || count <= 0) {
         problems.push(`baseline entry "${file}" is not a positive integer count (got ${count})`);
+        summable = false;
+      } else {
+        sum += count;
+      }
+    }
+    // `totalErrors` is written by --write-baseline and read by nobody, which is
+    // exactly what makes it dangerous: it is the number a human skims in review
+    // and the number a hand-edit changes, and until now nothing compared it to
+    // the entries it claims to summarise. A baseline whose header says 801 while
+    // its body sums to 5 is not a cosmetic defect — it is a baseline that has
+    // been edited by something other than the generator, and the entries are the
+    // half that decides what merges.
+    if (summable && baseline.totalErrors !== undefined) {
+      if (!Number.isInteger(baseline.totalErrors) || baseline.totalErrors < 0) {
+        problems.push(
+          `baseline totalErrors is ${JSON.stringify(baseline.totalErrors)}, not a non-negative integer`
+        );
+      } else if (baseline.totalErrors !== sum) {
+        problems.push(
+          `baseline totalErrors says ${baseline.totalErrors} but its ${
+            Object.keys(baseline.files).length
+          } file entries sum to ${sum}. The file has been edited by hand or truncated; regenerate ` +
+            'it with --write-baseline rather than reconciling the number.'
+        );
       }
     }
   }

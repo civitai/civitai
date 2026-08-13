@@ -59,7 +59,8 @@ file, in a commit whose subject is about neither.
 > "nobody decided that test files should not be typechecked". **Both are false.** Verified:
 >
 > ```
-> $ git ls-tree -r 1a7f89df98^ --name-only | grep -E '^src/.*/__tests__/'
+> $ git ls-tree -r 1a7f89df98^ --name-only | grep -E '^src/(.*/)?__tests__/'
+> src/__tests__/setup.ts                                                 (2026-01-23, 3f93c4a359)
 > src/env/__tests__/other.test.ts                                        (2026-02-06, b2a862e9d2)
 > src/server/games/daily-challenge/__tests__/challenge-helpers.test.ts   (2026-02-13, 768bb18136)
 > src/server/games/daily-challenge/__tests__/winner-cooldown.test.ts     (2026-02-12, 9eb0d79003)
@@ -70,14 +71,23 @@ file, in a commit whose subject is about neither.
 > src/shared/utils/__tests__/creator-program.utils.test.ts               (2026-02-17, f28ea5ea67)
 > ```
 >
-> **Eight such files already existed** when the exclude line was added, the earliest on
+> **Nine such files already existed** when the exclude line was added, the earliest on
 > **2026-01-23** — over a month earlier, across six separate commits by different authors.
 > The convention was established and in use; the exclusion came *afterwards*.
+>
+> An earlier revision of this document said *eight*, and quoted the grep
+> `^src/.*/__tests__/`. That pattern requires at least one path segment between `src/` and
+> `__tests__/`, so it cannot match `src/__tests__/setup.ts` — a file added by the very same
+> commit as two of the others. The corrected pattern is `^src/(.*/)?__tests__/`, which is
+> also the population the gate's own `TESTS_PATH_RE` predicate matches; measuring the history
+> with a narrower pattern than the gate uses is how the count came out one short. The
+> load-bearing claims are unaffected: the convention was established, and the earliest file
+> still dates to 2026-01-23.
 
 That changes the likely reading, and the honest thing is to label the new reading as
 **inference, not established fact** — the commit carries no comment, no linked discussion and
 no rationale, so its author's intent is not recoverable from the record. The inference: with
-eight test files already in the program, the typecheck was **already red**, and adding a ninth
+nine test files already in the program, the typecheck was **already red**, and adding another
 made that unavoidable. The one-line exclude was then a deliberate, undocumented **silencing**
 of an existing failure — not an author unknowingly closing a door nobody had opened yet.
 
@@ -398,17 +408,36 @@ remembering to print a particular string:
    and tsc also enables it under a TTY. It reshapes every diagnostic from
    `path(l,c): error TS…` to `path:l:c - error TS…`. It is now forced off on the command line
    (`--pretty false` beats the config), **both** formats are parsed anyway, ANSI is stripped
-   first, and output containing the literal `error TS` that parses to zero is refused.
-3. **Plausibility.** A parsed total of `0` against a baseline of `N > 0` is refused; the escape
-   is the explicit `TYPECHECK_TESTS_ALLOW_EMPTY=1`. "Everything got fixed" and "the instrument
-   is broken" produce the same number, and only one of them is common.
+   first, and the parse must **account for every line** carrying the `error TS` marker — not
+   merely parse *something*. That last clause is the fix for a cliff at exactly zero: the
+   control originally fired only when the parser understood **nothing**, so a run that
+   understood 5 of 801 marker lines was accepted and then reported "136 file(s) now clean".
+   Measured on this repository, `unparsed === 0` across 801 diagnostics and 650 continuation
+   lines; the divergent shapes that do exist in tsc are the *fileless* diagnostics (TS18003
+   "No inputs were found in config file", TS6053 "File not found"), which are precisely the
+   outputs meaning the program was not built as intended.
+3. **Plausibility.** A parsed total of `0` against a baseline of `N > 0` is refused, and so is a
+   **collapse** — a total under 25% of the baseline. The zero was only the extreme of that
+   spectrum, and the ratchet scores the whole spectrum as *progress*: every file the instrument
+   fails to see is a file that looks `fixed`. "Everything got fixed" and "the instrument is
+   broken" produce the same number, and only one of them is common. On a verdict run a collapse
+   **shouts but does not block** (it cannot hide a regression, so blocking would obstruct a
+   genuine cleanup for no safety gain); on `--write-baseline` it is refused, because there it
+   rewrites the ratchet to the smaller number and destroys the evidence with it.
+   The escape hatch is scoped in §"the escape hatch" below.
 4. **Positive control on the measurement arm.** `--listFilesOnly` proves the program actually
    reads test files — and it now runs through the **same wrapper, the same `-p`, and the same
    flags** as the verdict run. The old control shelled out to `tsc.js` directly with different
    arguments, so it structurally could not witness the arm it was validating. Its floor is
-   derived from the file count **stored in the baseline** (938 → 844), not a magic 400: at a
-   fixed 400, 57% of the test tree could vanish with the control still green, and vanished
-   files score as `fixed`, i.e. **PASS**.
+   `max(fixed 400, 90% of the count stored in the baseline)` — 938 → 844 here. Both halves of
+   that `max` are load-bearing, and each fixes a different defect: a bare 400 let 57% of the
+   test tree vanish with the control still green (vanished files score as `fixed`, i.e. PASS),
+   while a bare *derived* floor was only ever as good as a number in a JSON file —
+   `testFilesInProgram: 1` produced a floor of **zero**, a control no program can fail, while
+   still logging "derived from the baseline". A corrupt, negative, non-integer or absurd
+   recorded count is **refused**, not silently downgraded to the fallback: an absent value and
+   a corrupt one are different facts, and treating the second as the first is how a broken
+   baseline reads as a working control.
 5. **Config-drift control.** `tsconfig.tests.json` must be `tsconfig.json`'s exclude list minus
    exactly one entry. Both lists are written out verbatim, so without this check an addition to
    the base list silently fails to reach the measurement program and the one-line-delta property
@@ -417,12 +446,48 @@ remembering to print a particular string:
 `--write-baseline` runs behind all five, because regeneration is the operation that can destroy
 the ratchet outright.
 
+### The escape hatch, and why it is not one env var
+
+The plausibility escape shipped as `TYPECHECK_TESTS_ALLOW_EMPTY=1`, honoured on every path.
+That made it **the CI blocker for this whole proposal**: with it set, a wrapper that measures
+nothing printed `0 error(s) across 0 file(s) (baseline: 801 across 141)` → `141 file(s) now
+clean` → **PASS, exit 0**, with nothing anywhere in the output recording that a control had been
+switched off. One environment variable in one job definition reintroduced exactly the failure
+this gate exists to eliminate.
+
+Three properties now hold, and the first is the one that matters:
+
+- **Scope.** It is honoured on `--write-baseline` **only**, so it cannot make a verdict run
+  green. This does not weaken its legitimate use: on the day the test tree is genuinely clean
+  the required action *is* to regenerate the baseline, after which the baseline total is 0 and
+  the control never fires again. A verdict run that trips the control is correctly telling you
+  to do that regeneration.
+- **It is refused, not ignored, on a verdict run.** Silently ignoring a control-disabling
+  variable is its own confident-wrong: the operator believes the control is off, the gate
+  believes it is on, and the log says nothing.
+- **It requires a written reason**, not a truthy token. `=1` is refused; the value must be a
+  human-readable justification, and it is echoed into the output, so the log of a disarmed run
+  carries *why* it was disarmed. A control that can be switched off by typing `1` is one nobody
+  has to justify switching off.
+
+A disarmed regeneration prints a banner, and its success line says
+`...WITH THE PLAUSIBILITY CONTROL DISARMED` with the reason — a reader cannot mistake it for a
+clean run.
+
+### Provenance
+
+`TYPECHECK_TESTS_WRAPPER`, `TYPECHECK_TESTS_BASELINE` and `TYPECHECK_TESTS_CONFIG_DIR` are
+production environment seams that exist so the suite can drive the gate at sub-second cost. They
+are now **echoed on every run**, with overridden ones marked `[OVERRIDE]`, because an unechoed
+seam makes a stub-driven run byte-identical to a real one: the same `801 error(s) across 141
+file(s) … PASS` prints whether the number came from the repository or from a fixture. That is
+this document's own thesis — a verdict must carry its provenance — applied to the gate itself.
+
 **Tested, not asserted.** The pure half of the gate (parse / classify / plausibility / compare /
-drift) lives in `scripts/ci/typecheck-tests-compare.mjs` and is covered by 77 cases in
+drift) lives in `scripts/ci/typecheck-tests-compare.mjs` and is covered by the suite in
 `scripts/__tests__/typecheck-tests-gate.test.ts`, which also drives the gate end-to-end through
 a `TYPECHECK_TESTS_WRAPPER` seam with stub typecheckers that exit the way each real failure
-does. Twelve mutations — one per guard — were each confirmed to turn the suite red, and red for
-*that guard's* cases rather than incidentally.
+does. The case count and the mutation results are stated once, in §"The unit suite" below.
 
 Exit codes: `0` pass · `1` regression (blocking) · `2` usage/baseline error · `3` the
 environment could not run the check.
@@ -546,8 +611,8 @@ paths they do not touch, which is why they are no longer the only evidence here.
 
 ### The unit suite (the follow-up this document previously deferred)
 
-`scripts/__tests__/typecheck-tests-gate.test.ts` — 78 cases, running under the existing `unit`
-Vitest project (its `include` already covers `scripts/**/*.test.ts`), sub-second per case
+`scripts/__tests__/typecheck-tests-gate.test.ts` — **134 cases**, running under the existing
+`unit` Vitest project (its `include` already covers `scripts/**/*.test.ts`), sub-second per case
 because the gate is driven through a `TYPECHECK_TESTS_WRAPPER` seam with stub typecheckers
 rather than a multi-minute `tsc`.
 
@@ -556,9 +621,24 @@ count **rose**, **fell**, went **clean**, was **deleted**, or was **renamed**; t
 a basename; an **empty**, **malformed**, **absent** and **wrong-config** baseline; both
 diagnostic formats; and every cell of the exit-status truth table.
 
-**The suite was mutation-tested, not merely run.** Thirteen mutations — one per guard — were
-each applied to the real source and confirmed to turn the suite **red for that guard's own
-cases**, with the tree checksum-verified back to pristine afterwards:
+**A well-tested pure function is not a wired control.** Every guard here is two things — a pure
+function, and a call site in the gate that decides whether to act on it — and until the final
+hardening round only the first was covered. Mutating `if (!drift.ok)` to `if (false)` in the
+gate left the suite **78/78 green**: `diffExcludes` was thoroughly tested and the control was
+genuinely live in production, but nothing asserted the gate *read* it. That is the same class
+this document exists to close, found inside this document's own suite. The gate's call sites are
+now driven end-to-end through a `TYPECHECK_TESTS_CONFIG_DIR` seam, and each case asserts the
+**specific message** of the control under test rather than the exit code — several of these
+sites are outcome-equivalent (they all end in exit 3 via some later check), so an exit-code
+assertion would survive the mutation and prove nothing.
+
+**The suite was mutation-tested, not merely run.** Two batteries were run. The first, thirteen
+mutations against the pure functions, is below. The second — nineteen mutations run after the
+final hardening round, covering the gate's **call sites** as well as its functions — is
+summarised after it.
+
+Each mutation was applied to the real source and confirmed to turn the suite **red for that
+guard's own cases**, with the tree checksum-verified back to pristine afterwards:
 
 | mutant | guard broken | cases failed |
 |---|---|---|
@@ -576,8 +656,53 @@ cases**, with the tree checksum-verified back to pristine afterwards:
 | M12 | the gate acts on the run classification | 4 |
 | M13 | `--write-baseline` borrows the floor from the baseline it replaces | 1 |
 
-A guard that no mutation can turn red is not a guard, and 78 green assertions say nothing on
-their own about which of them are load-bearing.
+A guard that no mutation can turn red is not a guard, and a green suite says nothing on its own
+about which of its assertions are load-bearing.
+
+**The second battery (19 mutants, after the hardening round).** It covers the guards added in
+that round *and* the gate's call sites, and it carries its own controls:
+
+| mutant | guard broken | cases failed |
+|---|---|---|
+| `F1-unparsed-guard` | a partial parse is refused, not only a total one | 6 |
+| `F1-collapse-guard` | a collapse against the baseline is refused | 5 |
+| `F2-math-max` | the derived floor may raise the fixed one, never lower it | 4 |
+| `F2-derived-strict` | "derived" is only claimed when the baseline actually raised the floor | 1 |
+| `F2-noninteger-refusal` | a non-integer recorded count is refused | 4 |
+| `F2-nonpositive-refusal` | a zero/negative recorded count is refused | 2 |
+| `F2-absurd-ceiling` | an absurd count is refused rather than made permanently red | 2 |
+| `F3-verdict-scope` | the escape hatch is honoured on `--write-baseline` only | 3 |
+| `F3-bare-token` | the hatch requires a reason, not `=1` | 10 |
+| `BL-total-crosscheck` | `totalErrors` must agree with the sum of the entries | 1 |
+| `F5-drift-callsite` | **the gate acts on the drift control** | 2 |
+| `F5-listed-callsite` | the gate acts on the positive control arm's own verdict | 1 |
+| `F5-floorresult-callsite` | the gate acts on an unusable floor | 4 |
+| `F5-allowance-callsite` | the gate acts on a refused escape hatch | 1 |
+| `F5-provenance-echo` | provenance is echoed | 1 |
+| `F5-collapse-shout` | a collapse is shouted on the verdict path | 1 |
+| `CONTROL-breaking-compare` (must die) | the ratchet blocks at all | 8 |
+| `CONTROL-equivalent-rename` (must **survive**) | — | 0 ✅ |
+| `CONTROL-equivalent-comment` (must **survive**) | — | 0 ✅ |
+
+Two findings came out of running it, and both are worth recording because each is an instance of
+something this document argues elsewhere:
+
+- **`F5-floorresult-callsite` initially SURVIVED.** The case meant to cover it used
+  `testFilesInProgram: 1`, which after the `Math.max` fix is a *valid* input (floor 400) — so it
+  exercised the floor comparison, not the "is this floor usable at all" refusal. With that call
+  site neutered, `floor` is `null`, `testFilesInProgram < null` is false, and the gate sails past
+  **both** checks into a verdict. A dedicated case with a genuinely corrupt count now kills it.
+  A mutation sweep is only a claim about the mutations you imagined, and this is what a blind
+  spot looks like from the inside.
+- **`CONTROL-equivalent-rename` was initially reported KILLED**, which by the rule stated for
+  this kind of battery means the harness is broken. It was not: the "equivalent" mutation renamed
+  only the *declaration* of a local, leaving the interpolation `${pct}` dangling — a
+  `ReferenceError`, i.e. a genuinely breaking mutation mislabelled as equivalent. The harness was
+  right and the control was wrong. It is recorded here rather than quietly corrected, because
+  "the equivalent control died" is exactly the signal one is tempted to explain away.
+
+Both equivalent controls survive and both breaking controls die in the final run, so the 16
+kills above are attributable.
 
 ---
 

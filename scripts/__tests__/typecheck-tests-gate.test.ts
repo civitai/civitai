@@ -1,11 +1,12 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 // @ts-expect-error -- plain ESM helper module, no types; `scripts/` is outside every tsconfig program.
 import {
   checkPlausibility,
+  classifyEmptyAllowance,
   classifyRun,
   compare,
   detectRenames,
@@ -145,7 +146,64 @@ describe('classifyRun — a zero is only a measurement when the run succeeded', 
   it('REFUSES output whose diagnostics the parser could not read', () => {
     const v = classifyRun({ status: 0, signal: null, parsed: { total: 0, sawAnyErrorTs: 12 } });
     expect(v.ok).toBe(false);
-    expect(v.reason).toMatch(/blind to this output/);
+    expect(v.reason).toMatch(/did NOT parse/);
+  });
+
+  // ------------------------------------------------------------------- F1
+  // The control above used to require total === 0, making it a cliff at exactly
+  // zero. A PARTIAL parse — the parser understanding a handful of a great many
+  // marker-carrying lines — sailed through and was then reported as an
+  // improvement, because every file it failed to parse scores as `fixed`.
+  it('REFUSES a PARTIAL parse, not only a total one (the 99% undercount)', () => {
+    const v = classifyRun({
+      status: 2,
+      signal: null,
+      parsed: { total: 5, sawAnyErrorTs: 801, unparsed: 796 },
+    });
+    expect(v.ok).toBe(false);
+    expect(v.reason).toContain('796');
+    expect(v.reason).toContain('801');
+    expect(v.reason).toMatch(/did NOT parse/);
+  });
+
+  it.each([
+    [800, 801, 1],
+    [1, 801, 800],
+    [0, 1, 1],
+  ])(
+    'refuses on ANY divergence — %i parsed of %i marker lines (%i unaccounted)',
+    (total, saw, unparsed) => {
+      const v = classifyRun({ status: 2, signal: null, parsed: { total, sawAnyErrorTs: saw } });
+      expect(v.ok).toBe(false);
+      expect(v.reason).toContain(String(unparsed));
+    }
+  );
+
+  it('names the actual unparsed text so a false positive is diagnosable, not just asserted', () => {
+    const v = classifyRun({
+      status: 2,
+      signal: null,
+      parsed: {
+        total: 1,
+        sawAnyErrorTs: 2,
+        unparsed: 1,
+        unparsedSample: [`${TS}18003: No inputs were found in config file`],
+      },
+    });
+    expect(v.reason).toContain('TS18003');
+  });
+
+  it('ACCEPTS a fully-accounted-for run — the invariant must not false-positive', () => {
+    // Measured against this repository: 801 diagnostics over 1451 output lines,
+    // 650 of them message-continuation lines. Continuation lines do not carry
+    // the marker, so unparsed is 0 and a real failing run still classifies ok.
+    expect(
+      classifyRun({
+        status: 1,
+        signal: null,
+        parsed: { total: 801, sawAnyErrorTs: 801, unparsed: 0 },
+      }).ok
+    ).toBe(true);
   });
 
   it('still honours an explicit crash marker, but does not depend on one', () => {
@@ -157,6 +215,42 @@ describe('classifyRun — a zero is only a measurement when the run succeeded', 
     expect(classifyRun({ status: 1, signal: null, parsed: clean, crashMarker: false }).ok).toBe(
       false
     );
+  });
+});
+
+describe('parseDiagnostics — the accounting the F1 control reads', () => {
+  it('reports unparsed 0 when every marker line parsed, even with continuation lines', () => {
+    const out = [
+      plain('src/a/__tests__/x.test.ts'),
+      "  Property 'mock' does not exist on type '() => void'.",
+      plain('src/b/__tests__/y.test.ts'),
+      '  Types of parameters are incompatible.',
+    ].join('\n');
+    const r = parseDiagnostics(out);
+    expect(r.total).toBe(2);
+    expect(r.sawAnyErrorTs).toBe(2);
+    expect(r.unparsed).toBe(0);
+  });
+
+  it('counts and SAMPLES a fileless diagnostic — the real divergent shape', () => {
+    // TS18003 / TS6053 carry the marker with no `path(line,col)` prefix. These
+    // are exactly the outputs meaning "the program was not built as intended",
+    // so refusing on them is correct rather than merely conservative.
+    const r = parseDiagnostics(
+      [plain('src/a/__tests__/x.test.ts'), `${TS}18003: No inputs were found in config file.`].join(
+        '\n'
+      )
+    );
+    expect(r.total).toBe(1);
+    expect(r.sawAnyErrorTs).toBe(2);
+    expect(r.unparsed).toBe(1);
+    expect(r.unparsedSample[0]).toContain('18003');
+  });
+
+  it('caps the sample so a wholly-unparseable run cannot flood the log', () => {
+    const r = parseDiagnostics(Array(50).fill(`${TS}9999: weird`).join('\n'));
+    expect(r.unparsed).toBe(50);
+    expect(r.unparsedSample).toHaveLength(3);
   });
 });
 
@@ -175,27 +269,159 @@ describe('checkPlausibility', () => {
   it('allows a zero when the baseline is also zero', () => {
     expect(checkPlausibility({ currentTotal: 0, baselineTotal: 0 }).ok).toBe(true);
   });
-  it('allows any non-zero measurement', () => {
-    expect(checkPlausibility({ currentTotal: 1, baselineTotal: 801 }).ok).toBe(true);
+
+  // ------------------------------------------------------------------- F1
+  // The zero was treated as a category; it is the extreme of a spectrum. A run
+  // reporting 5 against a baseline of 801 is the same failure with one digit
+  // changed, and it PASSED while printing "136 file(s) now clean".
+  it('refuses a COLLAPSE, not only an exact zero', () => {
+    const v = checkPlausibility({ currentTotal: 5, baselineTotal: 801 });
+    expect(v.ok).toBe(false);
+    expect(v.kind).toBe('collapse');
+    expect(v.reason).toContain('99.4%');
+  });
+
+  it.each([
+    // 801 * 0.25 = 200.25, so 201 is the first allowed value and 200 is refused.
+    [201, 801, true, 'the first ratio at or above the floor is allowed'],
+    [200, 801, false, 'just under the floor is refused'],
+    [300, 801, true, 'an ordinary large cleanup is not obstructed'],
+    [800, 801, true, 'an unchanged run'],
+  ])('current %i vs baseline %i -> ok=%s (%s)', (currentTotal, baselineTotal, ok) => {
+    expect(checkPlausibility({ currentTotal, baselineTotal }).ok).toBe(ok);
+  });
+
+  it('does not fire on a SMALL baseline, where a big ratio swing is ordinary', () => {
+    // 1 of 8 is an 87% drop but means nothing; the ratio is only informative
+    // once there is enough to be a ratio of.
+    expect(checkPlausibility({ currentTotal: 1, baselineTotal: 8 }).ok).toBe(true);
+    expect(checkPlausibility({ currentTotal: 1, baselineTotal: 20 }).ok).toBe(false);
+  });
+
+  it('tags the two refusals differently, because the caller treats them differently', () => {
+    expect(checkPlausibility({ currentTotal: 0, baselineTotal: 801 }).kind).toBe('empty');
+    expect(checkPlausibility({ currentTotal: 5, baselineTotal: 801 }).kind).toBe('collapse');
+    expect(checkPlausibility({ currentTotal: 801, baselineTotal: 801 }).kind).toBeNull();
+  });
+});
+
+// --------------------------------------------------- F3: the escape hatch
+describe('classifyEmptyAllowance — one env var must not be able to make CI green', () => {
+  it('is inert when unset', () => {
+    expect(classifyEmptyAllowance({ raw: undefined, writeBaseline: false })).toEqual({
+      allowed: false,
+      refuse: null,
+      reason: null,
+    });
+  });
+
+  it('REFUSES on a verdict run rather than ignoring it', () => {
+    // Silently ignoring a control-disabling variable is its own confident-wrong:
+    // the operator believes the control is off, the gate believes it is on, and
+    // the log says nothing.
+    const r = classifyEmptyAllowance({ raw: 'a perfectly good reason', writeBaseline: false });
+    expect(r.allowed).toBe(false);
+    expect(r.refuse).toMatch(/VERDICT run/);
+    expect(r.refuse).toMatch(/--write-baseline only/);
+  });
+
+  it.each([['1'], ['true'], ['yes'], ['TRUE'], ['y'], ['on'], ['   1  ']])(
+    'REFUSES the bare token %p even on the write path',
+    (raw) => {
+      const r = classifyEmptyAllowance({ raw, writeBaseline: true });
+      expect(r.allowed).toBe(false);
+      expect(r.refuse).toMatch(/is not a reason/);
+    }
+  );
+
+  it.each([['short'], ['abcdefghijkl'], ['a'.repeat(40)]])(
+    'REFUSES %p — too short, or a single word with no justification in it',
+    (raw) => {
+      expect(classifyEmptyAllowance({ raw, writeBaseline: true }).allowed).toBe(false);
+    }
+  );
+
+  it('ALLOWS a written reason on the write path, and returns it for echoing', () => {
+    const reason = 'test tree genuinely clean after PR #1234, regenerating';
+    const r = classifyEmptyAllowance({ raw: reason, writeBaseline: true });
+    expect(r.allowed).toBe(true);
+    expect(r.reason).toBe(reason);
+    expect(r.refuse).toBeNull();
   });
 });
 
 describe('testFileFloor', () => {
   it('derives the floor from the baseline count rather than a magic number', () => {
-    expect(testFileFloor(938)).toEqual({ floor: 844, derived: true });
+    expect(testFileFloor(938)).toEqual({ ok: true, floor: 844, derived: true, reason: null });
   });
-  it.each([[undefined], [0], [-1], ['938'], [1.5]])(
-    'falls back when the baseline records %p',
+
+  it.each([[undefined], [null]])(
+    'falls back when the baseline genuinely records nothing (%p)',
     (v) => {
-      expect(testFileFloor(v as never)).toEqual({ floor: 400, derived: false });
+      // ABSENT is a legitimate state: a baseline written before the field existed.
+      expect(testFileFloor(v as never)).toEqual({
+        ok: true,
+        floor: 400,
+        derived: false,
+        reason: null,
+      });
     }
   );
+
   it('would have caught the shrink the old fixed floor allowed', () => {
     // 938 real files, old floor 400: 57% of the tree could leave and the control
     // stayed green, with the vanished files scored `fixed` -> PASS.
     const { floor } = testFileFloor(938);
     expect(400).toBeLessThan(floor);
     expect(500 < floor).toBe(true);
+  });
+
+  // ------------------------------------------------------------------- F2
+  // The derived floor had no lower bound, so replacing the magic 400 with "a
+  // value read from a file" made the control only as good as that value — while
+  // still logging `derived: true`, i.e. still claiming to be the trustworthy
+  // version. These are the cases that made it a no-op.
+  it.each([
+    [1, 'a one-file baseline yielded a floor of ZERO — no program can fail it'],
+    [5, 'a five-file baseline yielded a floor of 4'],
+    [100, 'any count below the fixed floor'],
+  ])('NEVER lets a small recorded count (%i) lower the floor below the fixed one', (recorded) => {
+    const r = testFileFloor(recorded);
+    expect(r.ok).toBe(true);
+    expect(r.floor).toBe(400);
+    // and it must not claim the floor came from the baseline, because it did not
+    expect(r.derived).toBe(false);
+    expect(Math.floor(recorded * 0.9)).toBeLessThan(r.floor);
+  });
+
+  it('is exactly Math.max(fixed, derived) at the crossover', () => {
+    // 445 * 0.9 = 400.5 -> 400, ties with the fallback and is not "derived".
+    expect(testFileFloor(445)).toEqual({ ok: true, floor: 400, derived: false, reason: null });
+    // 446 * 0.9 = 401.4 -> 401, the first count where the baseline wins.
+    expect(testFileFloor(446)).toEqual({ ok: true, floor: 401, derived: true, reason: null });
+  });
+
+  it.each([
+    [0, /zero or fewer/],
+    [-1, /zero or fewer/],
+    ['938', /not an integer/],
+    [1.5, /not an integer/],
+    [Number.NaN, /not an integer/],
+    [{}, /not an integer/],
+    [1e9, /sanity ceiling/],
+  ])('REFUSES a corrupt recorded count (%p) rather than silently falling back', (v, re) => {
+    const r = testFileFloor(v as never);
+    expect(r.ok).toBe(false);
+    expect(r.floor).toBeNull();
+    expect(r.reason).toMatch(re);
+  });
+
+  it('refuses an absurd count because a permanently-red control is worse than none', () => {
+    // The damage runs the OTHER way from every case above: an enormous floor
+    // makes the positive control impossible to satisfy, and a gate that can
+    // never go green is one people delete.
+    expect(testFileFloor(100_001).ok).toBe(false);
+    expect(testFileFloor(100_000).ok).toBe(true);
   });
 });
 
@@ -252,6 +478,43 @@ describe('validateBaseline', () => {
       'c'
     );
     expect(p).toHaveLength(4);
+  });
+
+  // `totalErrors` is the number a human skims in review and the number a
+  // hand-edit changes; nothing compared it to the entries it claims to
+  // summarise, so a header saying 801 over a body summing to 5 was cosmetic and
+  // unnoticed.
+  it('cross-checks totalErrors against the sum of the file entries', () => {
+    const p = validateBaseline({ config: 'c', totalErrors: 801, files: { 'a.ts': 5 } }, 'c');
+    expect(p).toEqual([expect.stringContaining('sum to 5')]);
+  });
+
+  it('accepts a totalErrors that agrees', () => {
+    expect(
+      validateBaseline({ config: 'c', totalErrors: 7, files: { 'a.ts': 5, 'b.ts': 2 } }, 'c')
+    ).toEqual([]);
+  });
+
+  it('accepts a baseline with no totalErrors at all (an older generator)', () => {
+    expect(validateBaseline({ config: 'c', files: { 'a.ts': 5 } }, 'c')).toEqual([]);
+  });
+
+  it('rejects a non-integer totalErrors', () => {
+    expect(validateBaseline({ config: 'c', totalErrors: '7', files: { 'a.ts': 7 } }, 'c')).toEqual([
+      expect.stringContaining('non-negative integer'),
+    ]);
+  });
+
+  it('holds for the REAL committed baseline', () => {
+    // The cross-check is worth nothing if the file it is meant to protect does
+    // not satisfy it. This is the positive control on the control.
+    const real = JSON.parse(
+      readFileSync(path.join(REPO_ROOT, 'scripts/ci/typecheck-tests-baseline.json'), 'utf8')
+    );
+    expect(validateBaseline(real, 'tsconfig.tests.json')).toEqual([]);
+    expect(real.totalErrors).toBe(
+      Object.values(real.files as Record<string, number>).reduce((a, b) => a + b, 0)
+    );
   });
 });
 
@@ -459,6 +722,7 @@ function runGate(
       TYPECHECK_TESTS_WRAPPER: wrapper,
       TYPECHECK_TESTS_BASELINE: baseline,
       TYPECHECK_TESTS_ALLOW_EMPTY: '',
+      TYPECHECK_TESTS_CONFIG_DIR: '',
       ...env,
     },
   });
@@ -505,18 +769,132 @@ describe('the gate, end to end: a broken checker must never PASS', () => {
     expect(res.all).toContain('almost certainly not measured anything');
   });
 
-  it('…and passes that same zero behind the explicit escape hatch', () => {
+  // ------------------------------------------------------------------- F3
+  // This case previously asserted the OPPOSITE — that the hatch turned this same
+  // zero into `PASS`, exit 0. That is precisely the CI blocker: a wrapper that
+  // measures nothing printed "0 error(s) across 0 file(s) (baseline: 7 across 2)"
+  // -> "2 file(s) now clean" -> PASS, with nothing in the output recording that a
+  // control had been switched off. One env var in one job definition.
+  it('REFUSES the escape hatch on a verdict run — it cannot make CI green', () => {
     const res = runGate(
       wrapperStub('clean2', 'process.exit(0);'),
       fixtureBaseline('b4', BASE_FILES),
       [],
-      {
-        TYPECHECK_TESTS_ALLOW_EMPTY: '1',
-      }
+      { TYPECHECK_TESTS_ALLOW_EMPTY: '1' }
+    );
+    expect(res.status).toBe(3);
+    expect(res.all).toContain('REFUSING TO RUN');
+    expect(res.all).toMatch(/VERDICT run/);
+    expect(res.all).not.toContain('PASS —');
+    expect(res.all).not.toContain('now clean');
+  });
+
+  it('refuses it with a WRITTEN reason too — scope, not wording, is the control', () => {
+    const res = runGate(
+      wrapperStub('clean3', 'process.exit(0);'),
+      fixtureBaseline('b4b', BASE_FILES),
+      [],
+      { TYPECHECK_TESTS_ALLOW_EMPTY: 'the tree really is clean, honestly' }
+    );
+    expect(res.status).toBe(3);
+    expect(res.all).not.toContain('PASS —');
+  });
+
+  it('a COLLAPSE shouts but does not block a verdict run, and cannot read as clean', () => {
+    // Split by reversibility: a collapsed verdict run cannot hide a regression
+    // (a regression is what `compare` blocks on; a collapse makes files look
+    // FIXED), so refusing would block a legitimate cleanup for no safety gain.
+    const many: Record<string, number> = {};
+    for (let i = 0; i < 40; i++) many[`src/f${i}/__tests__/a.test.ts`] = 1;
+    const res = runGate(
+      wrapperStub(
+        'collapsed',
+        `console.log(${JSON.stringify(plain('src/f0/__tests__/a.test.ts'))});
+process.exit(2);`
+      ),
+      fixtureBaseline('b6', many)
     );
     expect(res.status).toBe(0);
-    expect(res.all).toContain('PASS —');
+    expect(res.all).toContain('IMPLAUSIBLE MEASUREMENT');
+    expect(res.all).toContain('97.5%');
+    // and the shout must precede the verdict, not trail it
+    expect(res.all.indexOf('IMPLAUSIBLE MEASUREMENT')).toBeLessThan(res.all.indexOf('PASS —'));
   });
+
+  it('a PARTIAL parse is refused end to end — the F1 undercount', () => {
+    // 5 parseable diagnostics alongside 20 marker lines the parser cannot read.
+    // Before: classified ok, then reported as files "now clean".
+    const body = [
+      `const l = [${JSON.stringify(plain('src/a/__tests__/x.test.ts'))}];`,
+      `for (let i=0;i<20;i++) l.push("${'error' + ' '}TS18003: No inputs were found.");`,
+      "console.log(l.join('\\n'));",
+      'process.exit(2);',
+    ].join('\n');
+    const res = runGate(wrapperStub('partial', body), fixtureBaseline('b7', BASE_FILES));
+    expect(res.status).toBe(3);
+    expect(res.all).toContain('CANNOT MEASURE');
+    expect(res.all).toMatch(/did NOT parse/);
+    expect(res.all).toContain('TS18003');
+    expect(res.all).not.toContain('now clean');
+  });
+
+  // A one-file `--listFilesOnly` program against a baseline recording ONE test
+  // file. Before F2 this derived a floor of ZERO, which no program can fail, so
+  // the gate proceeded and measured a single file while logging that its floor
+  // came from the baseline. The Math.max is what turns this into a refusal.
+  it('a floor derived from a tiny baseline cannot fall below the fixed one, end to end', () => {
+    const bl = path.join(dir, 'tinycount.json');
+    writeFileSync(
+      bl,
+      JSON.stringify({
+        config: 'tsconfig.tests.json',
+        testFilesInProgram: 1,
+        totalErrors: 7,
+        files: BASE_FILES,
+      })
+    );
+    const stub = path.join(dir, 'tiny.mjs');
+    writeFileSync(
+      stub,
+      [
+        'const args = process.argv.slice(2);',
+        "if (args.includes('--listFilesOnly')) {",
+        '  console.log("/repo/src/a/__tests__/only.test.ts"); process.exit(0);',
+        '}',
+        'process.exit(0);',
+      ].join('\n')
+    );
+    const res = runGate(stub, bl);
+    expect(res.status).toBe(3);
+    expect(res.all).toContain('POSITIVE CONTROL FAILED');
+    expect(res.all).toContain('400');
+    expect(res.all).not.toContain('PASS —');
+  });
+
+  it.each([['938'], [-5], [1.5], [999999]])(
+    'REFUSES outright when the baseline records a corrupt testFilesInProgram (%p)',
+    (recorded) => {
+      // Distinct call site from the floor comparison above, and it was NOT
+      // pinned by it: with `if (!floorResult.ok)` neutered, `floor` is null,
+      // `testFilesInProgram < null` is false, and the gate sails past both
+      // checks into a verdict. The battery caught this as a surviving mutant.
+      const bl = path.join(dir, `corrupt-${String(recorded).replace(/\W/g, '_')}.json`);
+      writeFileSync(
+        bl,
+        JSON.stringify({
+          config: 'tsconfig.tests.json',
+          testFilesInProgram: recorded,
+          totalErrors: 7,
+          files: BASE_FILES,
+        })
+      );
+      const res = runGate(workingWrapper(`corrupt-${String(recorded).replace(/\W/g, '_')}`), bl);
+      expect(res.status).toBe(3);
+      expect(res.all).toContain('no usable floor');
+      expect(res.all).not.toContain('PASS —');
+      expect(res.all).not.toContain('positive control OK');
+    }
+  );
 
   it('a shrunken program trips the baseline-derived positive control', () => {
     const stub = path.join(dir, 'shrunk.mjs');
@@ -697,6 +1075,117 @@ describe('the gate, end to end: --write-baseline refuses to zero the ratchet', (
     expect(written.totalErrors).toBe(1);
     expect(written.testFilesInProgram).toBe(950);
     expect(written.files).toEqual({ 'src/a/__tests__/x.test.ts': 1 });
+  });
+});
+
+// ------------------------------------------------------------------- F5
+/**
+ * Every control above is a pure function that is well covered AND a call site in
+ * the gate that decides whether to act on it. Those are two different things,
+ * and the second was not pinned: mutating `if (!drift.ok)` to `if (false)` left
+ * the suite 78/78 GREEN. `diffExcludes` was thoroughly tested and the control
+ * was live in production — but nothing asserted the gate READ it, which is the
+ * same class of gap this PR exists to close, inside this PR's own suite.
+ *
+ * These cases drive the gate end to end through the `TYPECHECK_TESTS_CONFIG_DIR`
+ * seam. Each asserts the SPECIFIC message of the control under test, not merely
+ * a non-zero exit: several of these call sites are outcome-equivalent (they all
+ * end in exit 3 via some later check), so an exit-code assertion would survive
+ * the mutation and prove nothing.
+ */
+function configDir(name: string, base: string[], tests: string[]) {
+  const d = path.join(dir, `cfg-${name}`);
+  mkdirSync(d, { recursive: true });
+  writeFileSync(path.join(d, 'tsconfig.json'), JSON.stringify({ exclude: base }));
+  writeFileSync(path.join(d, 'tsconfig.tests.json'), JSON.stringify({ exclude: tests }));
+  return d;
+}
+
+const OK_BASE = ['node_modules', 'src/**/__tests__/**'];
+const OK_TESTS = ['node_modules'];
+
+function workingWrapper(name: string) {
+  return wrapperStub(
+    name,
+    [
+      `const l = [${JSON.stringify(plain('src/a/__tests__/x.test.ts'))}];`,
+      'const out = [];',
+      'for (let i=0;i<5;i++) out.push(l[0]);',
+      `for (let i=0;i<2;i++) out.push(${JSON.stringify(plain('src/b/__tests__/y.test.ts'))});`,
+      "console.log(out.join('\\n'));",
+      'process.exit(2);',
+    ].join('\n')
+  );
+}
+
+describe('the gate ACTS on its controls, not merely computes them', () => {
+  it('CONTROL ARM: an undrifted fixture pair passes, so the arm below attributes', () => {
+    // Without this, a refusal from the drift case could be caused by anything
+    // about the fixture directory rather than by the drift itself.
+    const res = runGate(workingWrapper('drift-ok'), fixtureBaseline('d0', BASE_FILES), [], {
+      TYPECHECK_TESTS_CONFIG_DIR: configDir('ok', OK_BASE, OK_TESTS),
+    });
+    expect(res.status).toBe(0);
+    expect(res.all).toContain('PASS —');
+  });
+
+  it('acts on config DRIFT — the call site that survived `if (false)`', () => {
+    const res = runGate(workingWrapper('drift-bad'), fixtureBaseline('d1', BASE_FILES), [], {
+      TYPECHECK_TESTS_CONFIG_DIR: configDir('drift', [...OK_BASE, 'src/generated/**'], OK_TESTS),
+    });
+    expect(res.status).toBe(3);
+    expect(res.all).toContain('no longer');
+    expect(res.all).toContain('src/generated/**');
+    expect(res.all).not.toContain('PASS —');
+  });
+
+  it('acts on drift in the other direction too (the tests config adds an exclude)', () => {
+    const res = runGate(workingWrapper('drift-add'), fixtureBaseline('d2', BASE_FILES), [], {
+      TYPECHECK_TESTS_CONFIG_DIR: configDir('added', OK_BASE, [...OK_TESTS, 'src/extra/**']),
+    });
+    expect(res.status).toBe(3);
+    expect(res.all).toContain('src/extra/**');
+  });
+
+  it('acts on an UNREADABLE tsconfig — the catch arm around the drift check', () => {
+    const d = path.join(dir, 'cfg-broken');
+    mkdirSync(d, { recursive: true });
+    writeFileSync(path.join(d, 'tsconfig.json'), '{ this is not json');
+    writeFileSync(path.join(d, 'tsconfig.tests.json'), JSON.stringify({ exclude: OK_TESTS }));
+    const res = runGate(workingWrapper('cfg-broken-w'), fixtureBaseline('d3', BASE_FILES), [], {
+      TYPECHECK_TESTS_CONFIG_DIR: d,
+    });
+    expect(res.status).toBe(3);
+    expect(res.all).toContain('could not compare the two tsconfig exclude lists');
+  });
+
+  it('acts on the POSITIVE CONTROL ARM failing, with its OWN message', () => {
+    // Known outcome-equivalent site: if the gate ignored `listed.verdict.ok`,
+    // the file count would be 0 and the floor check would refuse anyway — same
+    // exit 3, worse message. Asserting the message is what makes this a real
+    // pin rather than a restatement of the next check.
+    const stub = path.join(dir, 'listfail.mjs');
+    writeFileSync(
+      stub,
+      [
+        'const args = process.argv.slice(2);',
+        "if (args.includes('--listFilesOnly')) process.exit(127);",
+        `console.log(${JSON.stringify(plain('src/a/__tests__/x.test.ts'))});`,
+        'process.exit(2);',
+      ].join('\n')
+    );
+    const res = runGate(stub, fixtureBaseline('d4', BASE_FILES));
+    expect(res.status).toBe(3);
+    expect(res.all).toContain('the positive control could not run');
+    expect(res.all).toContain('127');
+  });
+
+  it('echoes PROVENANCE, so a stub-driven run is not byte-identical to a real one', () => {
+    const res = runGate(workingWrapper('prov'), fixtureBaseline('d5', BASE_FILES));
+    expect(res.all).toContain('provenance —');
+    expect(res.all).toContain('[OVERRIDE]');
+    expect(res.all).toContain('TYPECHECK_TESTS_WRAPPER');
+    expect(res.all).toMatch(/did NOT necessarily measure this repository/);
   });
 });
 
