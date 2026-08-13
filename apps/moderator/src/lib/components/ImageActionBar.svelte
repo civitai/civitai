@@ -39,10 +39,21 @@
   const unblockedSelected = $derived(
     blockedIds ? [...selected].filter((id) => !blockedIds.has(id)).length : 0
   );
+  // A client-side filter can hide an image that is still selected, and the removal posts ids, not what
+  // is on screen. Saying so is the difference between removing 12 images and removing 40.
+  const hiddenSelected = $derived.by(() => {
+    const visible = new Set(selectable);
+    return [...selected].filter((id) => !visible.has(id)).length;
+  });
 
   let tosReason = $state<string | null>(null);
   let reason = $state('');
   let pendingFlag = $state<CannedReason['flag']>(undefined);
+  let strikeOwners = $state(false);
+  // A strike's description is what the account is shown, so it cannot be the empty string. Blocking the
+  // submit rather than disabling the checkbox: a disabled checkbox does not post, so emptying the reason
+  // under a ticked box would drop the strike silently and still remove the images.
+  const strikeNeedsReason = $derived(strikeOwners && reason.trim() === '');
 
   const applyTosReason = (r: CannedReason) => {
     tosReason = r.label;
@@ -71,6 +82,7 @@
       tosReason = null;
       reason = '';
       pendingFlag = undefined;
+      strikeOwners = false;
     }
   });
 
@@ -95,6 +107,9 @@
         <span class="font-semibold text-white">{num(count)}</span> selected
         {#if ownerCount > 1}
           <span class="text-amber-300">· spanning {ownerCount} accounts</span>
+        {/if}
+        {#if hiddenSelected > 0}
+          <span class="text-amber-300">· {num(hiddenSelected)} not shown by the current filter</span>
         {/if}
       {/if}
     </p>
@@ -195,8 +210,34 @@
             class="min-w-48 flex-1"
           />
         </div>
+        <!-- Retool's strikeCheckbox. The removal and the strike for it were one gesture there; without
+             it a moderator leaves for User Lookup once per owner. -->
+        <label class="mb-2 flex items-start gap-2 text-sm text-white">
+          <input
+            type="checkbox"
+            name="strikeOwners"
+            value="1"
+            bind:checked={strikeOwners}
+            class="mt-0.5"
+          />
+          <span>
+            Strike {ownerCount > 1 ? `all ${ownerCount} owners` : "the owner's account"} — the reason
+            above is sent as the strike's description.
+          </span>
+        </label>
+        {#if strikeNeedsReason}
+          <p class="mb-2 text-xs text-amber-200">
+            A strike needs a reason: pick one above, or write the message the user should be sent.
+          </p>
+        {/if}
+
         <div class="flex gap-2">
-          <Button type="submit" size="sm" variant="destructive" disabled={submitting}>
+          <Button
+            type="submit"
+            size="sm"
+            variant="destructive"
+            disabled={submitting || strikeNeedsReason}
+          >
             {submitting ? 'Removing…' : `Remove ${num(count)}`}
           </Button>
           <Button type="button" size="sm" variant="outline" onclick={() => (confirming = null)}>

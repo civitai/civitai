@@ -32,6 +32,14 @@
 
   let { data, form }: { data: PageData; form: FormResult } = $props();
 
+  // `fail()` payloads collapse to a union across every action on this page, so the conflict shape has
+  // to be recovered with a runtime check rather than read off the type.
+  type PaddleConflict = { id: number; username: string | null; paddleCustomerId: string };
+  const paddleConflict = $derived.by((): PaddleConflict | null => {
+    const value = form && 'paddleConflict' in form ? form.paddleConflict : null;
+    return value && typeof value === 'object' && 'id' in value ? (value as PaddleConflict) : null;
+  });
+
   const result = $derived(data.result);
   const section = $derived(data.section);
 
@@ -110,7 +118,14 @@
           </div>
         {/if}
         <div class="min-w-0 flex-1">
-          <SubscriptionPanel subscription={result.subscription} />
+          <SubscriptionPanel
+            subscription={result.subscription}
+            userId={result.identity.id}
+            paddleCustomerId={result.identity.paddleCustomerId}
+            canAct={data.canAct}
+            error={form && 'scope' in form && form.scope === 'account' ? (form.error ?? null) : null}
+            conflict={paddleConflict}
+          />
           <BuzzHistoryPanel userId={result.identity.id} />
         </div>
       </div>

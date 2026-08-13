@@ -3,18 +3,26 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess } from '$lib/server/access';
 import { parseForm, parseIdList, parseQuery, userIdSchema } from '$lib/server/query';
-import { removeImages, restoreImages, setImageFlag } from '$lib/server/user-actions.service';
+import {
+  issueStrike,
+  removeImages,
+  restoreImages,
+  setImageFlag,
+} from '$lib/server/user-actions.service';
+import { countBlockedImages, strikeBatchOwners } from '$lib/server/bulk-image.service';
 import { VIOLATION_TYPES } from '$lib/violations';
 import { MAX_INT4, usersByIds } from '$lib/server/users.service';
 import { DEFAULT_REPORT_REASONS, ReportEntity, ReportStatus } from '$lib/reports';
 import { getReportHistory, getReports, setReportStatus } from '$lib/server/reports.service';
 import {
-  addUserStrike,
   getUserNotes,
   getUserStrikes,
   sendModNotification,
 } from '$lib/server/moderation-memory.service';
 import { getSuspectImages } from '$lib/server/report-triage.service';
+import { getLiveStrikes } from '$lib/server/user-lookup.service';
+import { getModActivity } from '$lib/server/user-account.service';
+import { getReportsOnUser } from '$lib/server/user-reports.service';
 import { ingestionErrorLevelSet } from '@civitai/shared';
 
 // `user` opens the drill-down for one suspect, in the URL so a moderator can hand a colleague the exact
@@ -72,7 +80,8 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   // Reaching the queue is an investigation permission; acting on a report or an account is not.
   const canAct = canAccess(locals.user, '/users');
 
-  const [reports, history, suspect, strikes, notes] = await Promise.all([
+  const [reports, history, suspect, strikes, legacyStrikes, notes, modActivity, reportsOnUser] =
+    await Promise.all([
     // The SAME query `/reports/user` runs. A parallel one diverged from the sidebar's counts on which
     // reasons it excluded, so the badge and this heading disagreed about one queue.
     getReports({
@@ -84,11 +93,26 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     }),
     getReportHistory(ReportEntity.User),
     user ? getSuspectImages(user, filters, { cursor }) : null,
+    // The MAIN APP's strikes, not the moderator database's Retool-era table — that one is written by
+    // nothing, so this panel read 0 on an account carrying ten live strikes, which is the worst
+    // possible number to be wrong about on the screen where the next one is issued.
+    user ? getLiveStrikes(user) : null,
     user ? getUserStrikes(user) : null,
     // Retool put the suspect's notes on this page. "Shipped in User Lookup" is true of the dataset and
     // false of this screen: deciding on a strike without the prior note is the thing notes exist to stop.
     user ? getUserNotes(user, locals.user.username ?? null) : null,
-  ]);
+    // Retool's top-left was three tabs — ModActivity / Reports / UserReport History — and the whole
+    // point of this screen is not leaving it. Strikes and notes were already here; these two are what
+    // "has anyone dealt with this account before" actually reads.
+    user ? getModActivity(user, 20) : null,
+    // Every status, not the open ones: the queue row above is the open report. What is missing here is
+    // whether this account has been reported and RULED ON before.
+    //
+    // Human-filed only, matching the queue's own definition. `Automated` is 99.9% of this table — one
+    // dev account carries 556 of them — so an unfiltered list of 20 is 20 Clavata rows and answers
+    // nothing about whether a person has complained about this account before.
+    user ? getReportsOnUser(user, { limit: 20, statuses: [], reasons: DEFAULT_REPORT_REASONS }) : null,
+    ]);
 
   // The report row carries the suspect's id but not their state; hydrate through the shared helper
   // rather than joining User again — four hand-rolled copies of that join had already drifted.
@@ -117,7 +141,10 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       negativePrompt,
     },
     strikes,
+    legacyStrikeCount: legacyStrikes?.length ?? 0,
     notes,
+    modActivity,
+    reportsOnUser,
     canAct,
     // The queue and the selected suspect sit side by side, which needs the full content width.
     wide: true,
@@ -161,11 +188,11 @@ export const actions: Actions = {
     return { success: true };
   },
 
-  // Retool's InsertStrike + LogStrike + InsertStrikeNotif, which the shared service already does as one.
+  // Retool's InsertStrike + LogStrike + InsertStrikeNotif. Writes the MAIN APP's strike system, like
+  // User Lookup does: a row in the moderator database's legacy `UserStrikes` gets no escalation,
+  // points, expiry, typed notification or void path. See issueStrike.
   strike: async ({ request, locals }) => {
     if (!canAccess(locals.user, '/users')) return scopedFail('strike', 'Not permitted.');
-    const author = locals.user.username;
-    if (!author) return scopedFail('strike', 'Your account has no username to attribute it to.');
 
     const input = parseForm(
       userIdSchema.extend({ reason: z.string().trim().min(1).max(1000) }),
@@ -173,21 +200,15 @@ export const actions: Actions = {
     );
     if (typeof input === 'string') return scopedFail('strike', input);
 
-    const result = await addUserStrike({
+    const result = await issueStrike({
       userId: input.userId,
-      reason: input.reason,
-      author,
+      description: input.reason,
       moderatorId: locals.user.id,
     });
     if (!result.ok) return scopedFail('strike', result.error);
-
-    // The strike LANDED. Returning a failure here would leave the form armed with its text intact and
-    // the queue unrefreshed — the obvious next click issues a second strike. It is a success carrying
-    // a warning, not a failure.
-    return {
-      success: true,
-      warning: result.notified ? undefined : 'Strike recorded, but the user could not be notified.',
-    };
+    // No "could not notify" branch: `createStrike` sends the typed notification and its email inside
+    // the same call, so there is no separate step here to half-fail.
+    return { success: true };
   },
 
   // Retool's strikeCheckbox path: acting on a report means removing the images it is about, from the
@@ -201,10 +222,23 @@ export const actions: Actions = {
         // Retool's TosReasons carried a flag alongside the message; setting it is part of the same
         // gesture, so a POI removal does not need a second pass to mark the images.
         alsoFlag: z.enum(['poi', 'minor', 'tag']).optional(),
+        // Retool's strikeCheckbox. `z.coerce.boolean()` would read the string "false" as true, and a
+        // checkbox is absent-or-its-value, so match the value it posts.
+        strikeOwners: z
+          .literal('1')
+          .optional()
+          .transform((v) => v === '1'),
       }),
       await request.formData()
     );
     if (typeof input === 'string') return scopedFail('images', input);
+    // Refused BEFORE the removal: after it, the images are gone and the other half of the gesture
+    // cannot be retried from here.
+    if (input.strikeOwners && !input.reason)
+      return scopedFail('images', 'A strike needs a reason — it is the message the user is sent.');
+
+    // BEFORE the write, or every id reads as already-blocked afterwards.
+    const alreadyBlocked = await countBlockedImages(input.imageIds);
 
     const result = await removeImages({
       imageIds: input.imageIds,
@@ -237,9 +271,29 @@ export const actions: Actions = {
         ? ' Note: "tag" is not an image flag and was not applied.'
         : '';
 
+    // Same ordering as the flag: a failed removal must not strike anybody.
+    const struck =
+      input.strikeOwners && input.reason
+        ? await strikeBatchOwners({
+            imageIds: input.imageIds,
+            description: input.reason,
+            moderatorId: locals.user.id,
+          })
+        : null;
+
+    const strikeNote = struck
+      ? struck.error
+        ? ` Struck ${struck.struck} of ${struck.owners} owners: ${struck.error}`
+        : ` Struck ${struck.struck} owner${struck.struck === 1 ? '' : 's'}.`
+      : '';
+
     return {
       success: true,
-      imageResult: `Removed ${result.count} of ${input.imageIds.length}.${flagNote}`,
+      // The endpoint counts rows FOUND; the already-blocked share is subtracted so re-removing a
+      // blocked batch cannot report a full removal.
+      imageResult:
+        `Removed ${result.count - alreadyBlocked} of ${input.imageIds.length}` +
+        `${alreadyBlocked > 0 ? ` (${alreadyBlocked} already blocked)` : ''}.${flagNote}${strikeNote}`,
     };
   },
 
@@ -248,9 +302,16 @@ export const actions: Actions = {
     const input = parseForm(idsSchema, await request.formData());
     if (typeof input === 'string') return scopedFail('images', input);
 
+    const wasBlocked = await countBlockedImages(input.imageIds);
+
     const result = await restoreImages({ imageIds: input.imageIds, moderatorId: locals.user.id });
     if (!result.ok) return scopedFail('images', result.error);
-    return { success: true, imageResult: `Restored ${result.count} of ${input.imageIds.length}.` };
+    return {
+      success: true,
+      imageResult:
+        `Restored ${result.count} of ${input.imageIds.length}` +
+        `${result.count > wasBlocked ? ` (${result.count - wasBlocked} were not blocked)` : ''}.`,
+    };
   },
 
   setFlag: async ({ request, locals }) => {

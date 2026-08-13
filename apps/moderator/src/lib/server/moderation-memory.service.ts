@@ -59,6 +59,9 @@ export async function getModerationFlags(userId: number): Promise<ModerationFlag
   };
 }
 
+// READ ONLY, deliberately. `UserStrikes` in the moderator database is Retool-era history; strikes are
+// issued against the main app's system (`issueStrike`), which has escalation, points, expiry, the typed
+// notification and a void path. Nothing here writes this table.
 export async function getUserStrikes(userId: number): Promise<UserStrike[]> {
   return getModeratorDb()
     .selectFrom('UserStrikes')
@@ -81,63 +84,6 @@ export async function strikeCountsByUserIds(ids: number[]): Promise<Map<number, 
     .groupBy('userId')
     .execute();
   return new Map(rows.flatMap((r) => (r.userId === null ? [] : [[r.userId, Number(r.count)]])));
-}
-
-// ISSUING A STRIKE (Retool's InsertStrike + InsertStrikeNotif + LogStrike).
-//
-// Two systems, and they can disagree: the strike row lives in the MODERATOR database while the
-// notification goes to the notifications service over HTTP. The row is written first and the
-// notification is best-effort — a strike that is recorded but not announced is recoverable, whereas a
-// user told they were struck with no row behind it is not. The caller is told which happened.
-export type StrikeResult = { ok: true; notified: boolean } | { ok: false; error: string };
-
-export async function addUserStrike(input: {
-  userId: number;
-  reason: string;
-  author: string;
-  moderatorId: number;
-}): Promise<StrikeResult> {
-  const row = await getModeratorDb()
-    .insertInto('UserStrikes')
-    .values({
-      userId: input.userId,
-      reason: input.reason,
-      createdBy: input.author,
-      createdAt: new Date(),
-    })
-    .returning('id')
-    .executeTakeFirst();
-
-  if (!row) return { ok: false, error: 'Could not record the strike.' };
-
-  await recordModActivity({
-    userId: input.moderatorId,
-    entityType: 'user',
-    entityId: input.userId,
-    activity: 'strike',
-  });
-
-  let notified = false;
-  try {
-    await getNotifications().createNotification({
-      // The strike id keys the notification, so a retry cannot deliver a second copy of the same one.
-      key: `moderator-strike:${row.id}`,
-      userId: input.userId,
-      type: 'system-announcement',
-      category: 'System',
-      details: {
-        message: `A moderator issued a strike on your account: ${input.reason}`,
-        // Retool's strike notification linked here; `system-announcement` renders `url` as the
-        // click-through, so omitting it leaves the user told but with nowhere to go.
-        url: '/safety',
-      },
-    });
-    notified = true;
-  } catch (e) {
-    console.error('[moderation-memory] strike notification failed', e);
-  }
-
-  return { ok: true, notified };
 }
 
 // A moderator-authored notification (Retool's SendNotification, which POSTed the main app's

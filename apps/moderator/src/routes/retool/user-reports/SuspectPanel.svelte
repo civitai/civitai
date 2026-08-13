@@ -10,6 +10,7 @@
   import ImageActionBar from '$lib/components/ImageActionBar.svelte';
   import CannedReasonPicker from '$lib/components/CannedReasonPicker.svelte';
   import { STRIKE_REASONS } from '$lib/moderation-reasons';
+  import { reportReasonLabel, reportStatusVariant } from '$lib/reports';
   import SuspectFilterBar from './SuspectFilterBar.svelte';
   import type { PageData } from './$types';
   import { writeEnhancer } from '$lib/form-action';
@@ -28,7 +29,9 @@
     notifyError,
     imagesError,
     imageResult,
-    warning,
+    legacyStrikeCount,
+    modActivity,
+    reportsOnUser,
   }: {
     suspectId: number;
     suspect: NonNullable<PageData['suspect']>;
@@ -41,8 +44,14 @@
     notifyError: string | null;
     imagesError: string | null;
     imageResult: string | null;
-    warning: string | null;
+    legacyStrikeCount: number;
+    modActivity: NonNullable<PageData['modActivity']>;
+    reportsOnUser: NonNullable<PageData['reportsOnUser']>;
   } = $props();
+
+  // Read once per render rather than per row: `Date.now()` inside the loop makes every row's expiry a
+  // separate reading of the clock for no gain.
+  const now = new Date();
 
   let striking = $state(false);
   let strikeReason = $state('');
@@ -57,7 +66,7 @@
   );
 
   // This panel owns its writes so a success can tear down what it armed. Inferring that from the
-  // returned `warning` left a strike form open with a live submit after the strike had landed.
+  // action's return shape left a strike form open with a live submit after the strike had landed.
   const onSubmit = writeEnhancer({
     reload: true,
     onSuccess: () => {
@@ -107,15 +116,6 @@
       </div>
     {/if}
   </div>
-
-  {#if warning}
-    <div
-      class="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200"
-      role="status"
-    >
-      {warning}
-    </div>
-  {/if}
 
   {#if striking}
     <form method="POST" action="?/strike" use:enhance={onSubmit} class="mb-3">
@@ -168,16 +168,77 @@
     {:else}
       <ul class="space-y-1 text-sm">
         {#each strikes as s (s.id)}
+          {@const spent = s.voidedAt != null || s.status !== 'Active' || s.expiresAt < now}
           <li class="flex flex-wrap items-baseline gap-x-2">
-            <Badge variant="destructive">strike</Badge>
-            <span class="text-dark-0">{s.reason}</span>
+            <!-- A voided or lapsed strike still counts as history but not as rope, so it must not read
+                 the same as one holding the account at its limit. -->
+            <Badge variant={spent ? 'outline' : 'destructive'}>
+              {s.voidedAt != null ? 'voided' : s.expiresAt < now ? 'expired' : s.reason}
+            </Badge>
+            <span class="text-dark-0">{s.description}</span>
             <span class="text-xs text-dark-2">
-              {s.createdBy ?? 'unknown'} · {dateTime(s.createdAt)}
+              {s.points} point{s.points === 1 ? '' : 's'} · {dateTime(s.createdAt)}
+              {#if !spent}· until {dateTime(s.expiresAt)}{/if}
             </span>
           </li>
         {/each}
       </ul>
     {/if}
+    {#if legacyStrikeCount > 0}
+      <p class="mt-1 text-xs text-dark-2">
+        Plus {legacyStrikeCount} from the Retool era, in User Lookup — that table is history and is not
+        part of the counts above.
+      </p>
+    {/if}
+  </div>
+
+  <!-- Retool's other two history tabs. Without them this screen answers "what did they post" and not
+       "has anyone already dealt with this account", which is the question that decides whether to act
+       at all. Both capped at 20; User Lookup holds the full history. -->
+  <div class="mb-4 grid gap-4 sm:grid-cols-2">
+    <div>
+      <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
+        Moderation activity ({modActivity.length})
+      </h3>
+      {#if modActivity.length === 0}
+        <p class="text-sm text-dark-2">Nothing recorded against this account.</p>
+      {:else}
+        <ul class="space-y-1 text-sm">
+          {#each modActivity.slice(0, 8) as a (a.id)}
+            <li class="flex flex-wrap items-baseline gap-x-2">
+              <span class="text-dark-0">{a.activity}</span>
+              <span class="text-xs text-dark-2">
+                {a.entityType}{a.entityId ? ` #${a.entityId}` : ''}
+                {#if a.moderatorUsername}· {a.moderatorUsername}{/if}
+                · {dateTime(a.createdAt)}
+              </span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+
+    <div>
+      <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
+        Reports received ({reportsOnUser.length}, human-filed)
+      </h3>
+      {#if reportsOnUser.length === 0}
+        <p class="text-sm text-dark-2">Never reported before this one.</p>
+      {:else}
+        <ul class="space-y-1 text-sm">
+          {#each reportsOnUser.slice(0, 8) as r (r.id)}
+            <li class="flex flex-wrap items-baseline gap-x-2">
+              <Badge variant={reportStatusVariant(r.status)}>{r.status}</Badge>
+              <span class="text-dark-0">{reportReasonLabel(r.details, r.reason)}</span>
+              <span class="text-xs text-dark-2">
+                {#if r.reporter}by {r.reporter} · {/if}{dateTime(r.createdAt)}
+                {#if r.statusSetBy}· {r.status.toLowerCase()} by {r.statusSetBy}{/if}
+              </span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
   </div>
 
   <!-- Retool showed the suspect's notes here. Filing a strike without reading the prior note is what

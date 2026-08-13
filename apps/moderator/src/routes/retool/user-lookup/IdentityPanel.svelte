@@ -104,6 +104,20 @@
     };
   });
 
+  // Retool's Quick Info checkbox block. Read-only here: `UserContent` selected every one of these and
+  // none of them reached the DOM, so the gap was seeing them — editing an account's own TOS acceptance
+  // or browsing preferences is a separate capability, not a checkbox on the landing screen.
+  const quickInfo = $derived<[string, boolean][]>([
+    // `onboarding` is a bitfield; nonzero means the TOS step is done.
+    ['Accepted TOS', !!identity.onboarding],
+    ['Excluded from leaderboards', !!identity.excludeFromLeaderboards],
+    // Retool's Buzz-Blocked. `Ineligible` is what the Add Buzz-Block button writes.
+    ['Buzz-blocked', identity.rewardsEligibility === 'Ineligible'],
+    ['FP curator', curator.isCurator],
+    ['Shows mature content', !!identity.showNsfw],
+    ['Blurs mature content', !!identity.blurNsfw],
+  ]);
+
   const fields = $derived<[string, string][]>([
     ['Email', identity.email ?? '—'],
     ['Email verified', dateTime(identity.emailVerified)],
@@ -174,6 +188,15 @@
          made — it lived only under Buzz, three clicks from the page a moderator opens first. The full
          subscription record stays there; this is the one line of it that belongs with the identity. -->
     <Badge variant={membership.paying ? 'secondary' : 'outline'}>{membership.label}</Badge>
+  </div>
+
+  <div class="mt-4 flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
+    {#each quickInfo as [label, on] (label)}
+      <span class={on ? 'text-dark-0' : 'text-dark-3'}>
+        <span aria-hidden="true">{on ? '☑' : '☐'}</span>
+        {label}
+      </span>
+    {/each}
   </div>
 
   <dl class="mt-4 grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">

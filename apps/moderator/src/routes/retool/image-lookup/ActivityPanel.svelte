@@ -119,6 +119,11 @@
             </a>
             {#if r.bannedAt}<Badge variant="destructive">banned</Badge>{/if}
             <span class="text-xs text-dark-2">{dateTime(r.createdAt)}</span>
+            <!-- Only when it differs: a reaction that was CHANGED is a different signal from one given
+                 once, and printing an identical second timestamp on every other row buries it. -->
+            {#if r.updatedAt && r.updatedAt.getTime() !== r.createdAt.getTime()}
+              <span class="text-xs text-dark-2">· changed {dateTime(r.updatedAt)}</span>
+            {/if}
           </li>
         {/each}
       </ul>

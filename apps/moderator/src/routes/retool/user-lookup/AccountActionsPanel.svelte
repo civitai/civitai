@@ -84,6 +84,44 @@
       those separately in Bulk Image Manager.
     </p>
 
+    <!-- A PENDING restriction is a system ruling nobody has made yet, and the Unmute button beside it
+         resolves none of it: the row stays Pending, the cancelled subscription stays cancelled, the
+         prohibited-request count stays where it was and the user is never told. Overturn/Uphold is the
+         one write path that does all of that, so it sits above the mute toggle rather than beside it. -->
+    {#if identity.restrictionStatus === 'Pending' && identity.restrictionId}
+      <div class="mb-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
+        <p class="mb-2 text-sm text-amber-200">
+          A <strong>{identity.restrictionType ?? 'generation'}</strong> restriction on this account is
+          awaiting a ruling. Unmuting alone leaves it Pending — rule on it here instead.
+        </p>
+        <form method="POST" action="?/resolveRestriction" use:enhance={onSubmit} class="grid gap-2">
+          <input type="hidden" name="userRestrictionId" value={identity.restrictionId} />
+          <input type="hidden" name="userId" value={identity.id} />
+          <Input
+            name="resolvedMessage"
+            placeholder="Message shown to the user with the ruling (optional)"
+            class="max-w-lg"
+          />
+          <div class="flex flex-wrap gap-2">
+            <!-- One field, two submits: a submit button contributes a single name/value pair. -->
+            <Button type="submit" name="status" value="Overturned" size="sm" disabled={submitting}>
+              Overturn — lift it
+            </Button>
+            <Button
+              type="submit"
+              name="status"
+              value="Upheld"
+              size="sm"
+              variant="destructive"
+              disabled={submitting}
+            >
+              Uphold — keep them muted
+            </Button>
+          </div>
+        </form>
+      </div>
+    {/if}
+
     <div class="flex flex-wrap gap-2">
       <form method="POST" action="?/setMuted" use:enhance={onSubmit}>
         <input type="hidden" name="userId" value={identity.id} />

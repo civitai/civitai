@@ -22,6 +22,9 @@
 
   const fields = $derived<[string, string][]>([
     ['Uploaded', dateTime(image.createdAt)],
+    // The last write of any kind. On a row whose moderation history is otherwise a separate panel, an
+    // `Updated` far from `Uploaded` is the tell that something touched it.
+    ['Updated', dateTime(image.updatedAt)],
     ['Scanned', dateTime(image.scannedAt)],
     ['Type', image.type],
     ['Dimensions', image.width && image.height ? `${num(image.width)}×${num(image.height)}` : '—'],

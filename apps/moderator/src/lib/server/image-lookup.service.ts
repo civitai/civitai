@@ -13,6 +13,9 @@ export type ImageDetail = {
   url: string;
   name: string | null;
   createdAt: Date;
+  /** Last write of ANY kind, moderation included — so it dates the last action on a row whose own
+   *  history is not otherwise visible here. */
+  updatedAt: Date | null;
   userId: number;
   username: string | null;
   userBannedAt: Date | null;
@@ -60,6 +63,8 @@ export type ImageReactionRow = {
   bannedAt: Date | null;
   reaction: string;
   createdAt: Date;
+  /** Differs from `createdAt` when the reaction was changed rather than first given. */
+  updatedAt: Date | null;
 };
 
 export type ImageReportRow = {
@@ -165,6 +170,7 @@ async function getImage(imageId: number): Promise<ImageDetail | null> {
       'i.url',
       'i.name',
       'i.createdAt',
+      'i.updatedAt',
       'i.userId',
       'i.postId',
       'i.type',
@@ -243,7 +249,15 @@ async function getReactions(
   const rows = await dbRead
     .selectFrom('ImageReaction as ir')
     .leftJoin('User as u', 'u.id', 'ir.userId')
-    .select(['ir.id', 'ir.userId', 'ir.reaction', 'ir.createdAt', 'u.username', 'u.bannedAt'])
+    .select([
+      'ir.id',
+      'ir.userId',
+      'ir.reaction',
+      'ir.createdAt',
+      'ir.updatedAt',
+      'u.username',
+      'u.bannedAt',
+    ])
     .where('ir.imageId', '=', imageId)
     .orderBy('ir.createdAt', 'desc')
     .limit(limit + 1)
@@ -259,6 +273,7 @@ async function getReactions(
     bannedAt: r.bannedAt,
     reaction: String(r.reaction),
     createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
   }));
 
   return { rows: page, truncated };

@@ -27,7 +27,7 @@
     <ul class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm">
       {#each modContact.chatIds as id (id)}
         <li>
-          <a href="/retool/chat-audit/search?q={id}" class={LINK_CLASS}>chat {id}</a>
+          <a href="/retool/chat-audit/chats?chat={id}" class={LINK_CLASS}>chat {id}</a>
         </li>
       {/each}
       {#if modContact.chats > modContact.chatIds.length}

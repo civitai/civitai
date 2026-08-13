@@ -20,6 +20,9 @@
   const href = (slug: string) =>
     data.q ? `/retool/user-lookup/${slug}?q=${encodeURIComponent(data.q)}` : `/retool/user-lookup/${slug}`;
 
+  // Collapsed by default: the chip is the signal, the ids are what you want once it has fired.
+  let showModChats = $state(false);
+
   const identity = $derived(data.result?.identity ?? null);
   const profileUrl = $derived(
     identity?.username ? userUrl(data.civitaiUrl, identity.username) : null
@@ -112,10 +115,16 @@
           : ` (${data.result.subscription.status})`}
       </Badge>
     {/if}
+    <!-- Retool's "Talked to a mod" header button, which opened a list of the chat ids. The fact alone
+         is not the useful half: finding the conversation otherwise means searching Chat Audit by
+         username and guessing which thread. -->
     {#if data.result?.modContact.chats}
-      <Badge variant="secondary">
-        spoke with a mod ×{data.result.modContact.chats}
-      </Badge>
+      <button type="button" onclick={() => (showModChats = !showModChats)}>
+        <Badge variant="secondary">
+          spoke with a mod ×{data.result.modContact.chats}
+          <span aria-hidden="true">{showModChats ? '▾' : '▸'}</span>
+        </Badge>
+      </button>
     {/if}
     {#if identity.browsingLevel}
       <Badge variant="secondary">Viewing: {getBrowsingLevelLabel(identity.browsingLevel)}</Badge>
@@ -124,6 +133,20 @@
       <span class="text-xs text-dark-2">{identity.email}</span>
     {/if}
   </div>
+
+  {#if showModChats && data.result}
+    {@const contact = { ...data.result.modContact, chats: data.result.modContact.chats ?? 0 }}
+    <ul class="mb-2 flex flex-wrap gap-x-3 gap-y-1 text-sm">
+      {#each contact.chatIds as id (id)}
+        <li><a href="/retool/chat-audit/chats?chat={id}" class={LINK_CLASS}>chat {id}</a></li>
+      {/each}
+      {#if contact.chats > contact.chatIds.length}
+        <li class="text-xs text-dark-2">
+          +{contact.chats - contact.chatIds.length} more, in the Chat section
+        </li>
+      {/if}
+    </ul>
+  {/if}
 
   <!-- The ticket asked for open reports "very clearly at the top", and actionable from here. A report
        nobody has ruled on changes what every other panel on this page means. -->
@@ -181,8 +204,10 @@
           ? ` Filed by moderator ${identity.openReportModerators} — someone is already on this.`
           : ''}
       </span>
-      <a href="/reports/user?status=Pending&status=Processing" class={LINK_CLASS}>
-        Triage in the report queue
+      <!-- The account's OWN drill-down, not the 500-row queue: this is where the report can be
+           actioned with their content in front of you, which is what "actionable from here" meant. -->
+      <a href="/retool/user-reports?user={identity.id}" class={LINK_CLASS}>
+        Work this account's reports
       </a>
     </div>
   {/if}

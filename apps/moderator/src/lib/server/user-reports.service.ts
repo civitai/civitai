@@ -70,6 +70,9 @@ export type ReportQueryOptions = {
   /** Empty means every status. One account's screenshot showed 803 rows, so a 50-row unfiltered list
    *  is not a view of anything. */
   statuses?: string[];
+  /** Empty means every reason. `Automated` reports are ~99.9% of the corpus on a flagged account — 556
+   *  on one dev account against 3 human ones — so a caller asking "who reported them" has to say so. */
+  reasons?: string[];
 };
 
 /** Reports filed against content THIS user owns (Retool's ReportsReceived). */
@@ -150,7 +153,7 @@ export async function getReportsSubmitted(
  *  ones — the question on arrival is what is outstanding against them right now. */
 export async function getReportsOnUser(
   userId: number,
-  { limit = 200, statuses = ['Pending', 'Processing'] }: ReportQueryOptions = {}
+  { limit = 200, statuses = ['Pending', 'Processing'], reasons }: ReportQueryOptions = {}
 ): Promise<UserReportRow[]> {
   const rows = await dbRead
     .selectFrom('Report as r')
@@ -160,6 +163,7 @@ export async function getReportsOnUser(
     .select([...REPORT_COLUMNS, sql<number | null>`ur."userId"`.as('entityId')])
     .where('ur.userId', '=', userId)
     .$if(!!statuses?.length, (qb) => qb.where(sql<boolean>`r."status"::text = any(${statuses})`))
+    .$if(!!reasons?.length, (qb) => qb.where(sql<boolean>`r."reason"::text = any(${reasons})`))
     .orderBy('r.createdAt', 'desc')
     .limit(limit)
     .execute();

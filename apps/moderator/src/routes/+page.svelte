@@ -15,7 +15,7 @@
   import { entityUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS } from '$lib/format';
   import { sidebarCounts } from '$lib/sidebar-counts.svelte';
-  import { queueSeverityClass } from '$lib/queue-thresholds';
+  import { URGENT_REPORT_COUNT, queueSeverityClass } from '$lib/queue-thresholds';
   import { writeEnhancer } from '$lib/form-action';
   import type { ActionData, PageData } from './$types';
 
@@ -37,6 +37,11 @@
   // Fetched client-side for the same reason as the sidebar counts: the query joins six report tables and
   // runs ~200ms, which does not belong in the dashboard's first paint.
   let reported = $state<Reported[] | null>(null);
+
+  // Retool's "Urgent Content (N)" banner. The same rows the Most reported table renders — a pile-up on
+  // one item is a live incident, not a long queue — but stated at the top, since the table is below
+  // three screens of queue counts and the whole point is that it should not need looking for.
+  const urgent = $derived((reported ?? []).filter((r) => r.reportCount >= URGENT_REPORT_COUNT));
 
   // Retool's board: who last worked each queue, how far behind each swept task is, and the scam
   // detector's own mutes. A count alone cannot tell an untouched queue from one being drained.
@@ -163,6 +168,22 @@
     {/each}
   </p>
 </header>
+
+{#if urgent.length > 0}
+  <a
+    href="#most-reported"
+    class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200"
+  >
+    <span>
+      <strong>Urgent content ({urgent.length})</strong>
+      — {urgent.length === 1 ? 'one item has' : `${urgent.length} items have`}
+      {URGENT_REPORT_COUNT}+ open reports in the last week, worst at {Math.max(
+        ...urgent.map((u) => u.reportCount)
+      )}.
+    </span>
+    <span class="underline">Review below</span>
+  </a>
+{/if}
 
 {#if loading}
   <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -348,7 +369,9 @@
   </p>
 {/await}
 
-<h2 class="mt-8 mb-1 text-base font-semibold text-white">Most reported</h2>
+<h2 id="most-reported" class="mt-8 mb-1 scroll-mt-4 text-base font-semibold text-white">
+  Most reported
+</h2>
 <p class="mb-3 text-sm text-dark-2">
   Pending reports from the last week with more than one reporter, worst first. Already-blocked images are
   excluded. Resolving closes the <em>report</em> — it does not remove the content.

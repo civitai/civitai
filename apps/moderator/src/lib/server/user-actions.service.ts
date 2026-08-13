@@ -1,6 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { sql } from '@civitai/db/kysely';
-import { dbWrite } from './db';
+import { dbRead, dbWrite } from './db';
 import { getBuzz } from './buzz';
 import { bustUserCosmeticCaches } from './cache';
 import { getModeratorDb } from './moderator-db';
@@ -550,6 +550,88 @@ export async function issueStrike(input: {
   return { ok: true };
 }
 
+// GENERATION RESTRICTIONS. A system restriction leaves the account muted with a Pending
+// `UserRestriction` row, and the mute toggle beside it resolves NOTHING: the row stays Pending, the
+// cancelled subscription stays cancelled, the prohibited-request count stays where it was, and the
+// user is never told which way it went. `resolveUserRestriction` in the main app does all of that in
+// one write, and this is the only way to reach it from here.
+export async function resolveRestriction(input: {
+  userRestrictionId: number;
+  status: 'Overturned' | 'Upheld';
+  resolvedMessage?: string;
+  userId: number;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  const result = await callRetoolEndpoint(
+    'restriction',
+    {
+      action: 'resolve',
+      userRestrictionId: input.userRestrictionId,
+      status: input.status,
+      ...(input.resolvedMessage ? { resolvedMessage: input.resolvedMessage } : {}),
+    },
+    'Restriction ruling'
+  );
+  if (!result.ok) return result;
+
+  await logAction(`restriction:${input.status.toLowerCase()}`, input.userId, input.moderatorId);
+  return { ok: true };
+}
+
+// PADDLE ACCOUNT LINKING (Retool's three-step wizard behind the Membership panel's Paddle button:
+// find the account holding a customer id, unlink it, link this one).
+//
+// Written here rather than through the main app: `paddleCustomerId` has no mod endpoint, and the
+// column is a plain pointer — the billing side effects belong to Paddle's own webhooks, which resolve
+// the account BY this column. That is also why a mis-link is worth fixing: until it is, the wrong
+// account receives another account's subscription events.
+
+/** Who currently holds a customer id, so a link cannot silently move it off another account. */
+export async function findPaddleCustomerOwner(
+  paddleCustomerId: string
+): Promise<{ id: number; username: string | null } | null> {
+  const row = await dbRead
+    .selectFrom('User')
+    .select(['id', 'username'])
+    .where('paddleCustomerId', '=', paddleCustomerId)
+    .executeTakeFirst();
+  return row ?? null;
+}
+
+export async function setPaddleCustomer(input: {
+  userId: number;
+  /** `null` unlinks. */
+  paddleCustomerId: string | null;
+  /** Clear the id off whichever account currently holds it first — Retool's "unlink an old one" step. */
+  takeFrom?: number;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  if (input.takeFrom && input.takeFrom !== input.userId) {
+    await dbWrite
+      .updateTable('User')
+      .set({ paddleCustomerId: null })
+      .where('id', '=', input.takeFrom)
+      .execute();
+    await logAction('paddleUnlink', input.takeFrom, input.moderatorId);
+  }
+
+  const result = await dbWrite
+    .updateTable('User')
+    .set({ paddleCustomerId: input.paddleCustomerId })
+    .where('id', '=', input.userId)
+    .executeTakeFirst();
+  if (Number(result.numUpdatedRows ?? 0) === 0) return { ok: false, error: 'User not found.' };
+
+  await logAction(input.paddleCustomerId ? 'paddleLink' : 'paddleUnlink', input.userId, input.moderatorId);
+
+  // The membership the page renders is read through caches keyed on the account, so without this the
+  // panel keeps showing the pre-link subscription and the moderator re-links a second time.
+  await resetSubscriptionCaches({ userId: input.userId, moderatorId: input.moderatorId }).catch(
+    () => undefined
+  );
+  return { ok: true };
+}
+
 // REWARDS ELIGIBILITY (Retool's UpdateBuzzEligible → /api/mod/set-rewards-eligibility).
 export async function setRewardsEligibility(input: {
   userId: number;
@@ -779,6 +861,37 @@ export async function removeImages(input: {
   if (result.count === 0)
     return { ok: false, error: 'Nothing changed — those images may already be gone. Reload.' };
   return result;
+}
+
+/**
+ * Retool's image-only account nuke: `/api/mod/remove-images` with a `userId` and NO id list, which
+ * blocks every image the account owns in one call. Distinct from Purge Content, which takes models,
+ * posts and articles with it — this is the "their images are the problem" case.
+ *
+ * Unbounded by design, so it is NOT chunked and cannot report per-image attribution: the ids never
+ * reach this side. One `ModActivity` row against the account stands in, and the caller confirms.
+ */
+export async function removeAllImagesForUser(input: {
+  userId: number;
+  reason?: string;
+  violationType?: string;
+  moderatorId: number;
+}): Promise<CountResult> {
+  const result = await postMainAppJson(
+    '/api/mod/remove-images',
+    {
+      userId: input.userId,
+      moderatorId: input.moderatorId,
+      reason: input.reason,
+      ...(input.violationType ? { violationType: input.violationType } : {}),
+      ...(input.reason ? { violationDetails: input.reason } : {}),
+    },
+    'Account image removal'
+  );
+  if (!result.ok) return result;
+
+  await logAction('removeAllImages', input.userId, input.moderatorId);
+  return { ok: true, count: countOf(result.body, ['images']) };
 }
 
 export async function restoreImages(input: {

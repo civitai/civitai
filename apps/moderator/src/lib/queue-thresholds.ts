@@ -97,3 +97,13 @@ export function queueSeverityClass(key: string, count: number | null): string | 
 }
 
 export const hasQueueThreshold = (key: string) => (COUNT_KEY_ALIASES[key] ?? key) in THRESHOLDS;
+
+/**
+ * What makes one piece of content urgent rather than merely reported: Retool's board carried an
+ * "Urgent Content" banner for a pile-up on a single recent item, which is a different fact from a
+ * queue being long — one image drawing five complaints in a week is a live incident, and it was
+ * previously visible only by scrolling to the Most reported table and reading the counts.
+ *
+ * Lives here with the other operating standards so the number is changed in one place, deliberately.
+ */
+export const URGENT_REPORT_COUNT = 5;

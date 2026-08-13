@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { enhance } from '$app/forms';
   import { SvelteSet } from 'svelte/reactivity';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -15,6 +16,8 @@
   import { userLookupUrl } from '$lib/entity-url';
   import { BULK_SOURCE_LABELS, BULK_SOURCES } from './sources';
   import ImageActionBar from '$lib/components/ImageActionBar.svelte';
+  import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
+  import { NsfwLevel } from '@civitai/shared';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -48,15 +51,77 @@
     )
   );
 
+  // Retool filtered the fetched batch client-side, and so does this: the batch is one query the
+  // moderator already paid for, and re-running it per filter change would drop the selection they are
+  // assembling. `matched` is shown against the loaded count, never the source total.
+  let filters = $state<Record<string, string>>({});
+  const filterFields: FilterField[] = [
+    {
+      kind: 'select',
+      key: 'rating',
+      label: 'Rating',
+      options: [
+        [String(NsfwLevel.PG), 'PG'],
+        [String(NsfwLevel.PG13), 'PG-13'],
+        [String(NsfwLevel.R), 'R'],
+        [String(NsfwLevel.X), 'X'],
+        [String(NsfwLevel.XXX), 'XXX'],
+        [String(NsfwLevel.Blocked), 'Blocked'],
+        ['0', 'Unrated'],
+      ],
+    },
+    {
+      kind: 'select',
+      key: 'status',
+      label: 'Removed',
+      options: [
+        ['removed', "Only ToS'd"],
+        ['live', 'Hide removed'],
+      ],
+    },
+    { kind: 'search', key: 'q', label: 'Search prompt' },
+  ];
+
+  const filteredItems = $derived(
+    (data.batch?.items ?? []).filter((i) => {
+      if (filters.rating && i.nsfwLevel !== Number(filters.rating)) return false;
+      if (filters.status === 'removed' && i.ingestion !== 'Blocked') return false;
+      if (filters.status === 'live' && i.ingestion === 'Blocked') return false;
+      // The negative prompt too: a blocked term sitting in the negative is the same finding, and
+      // Retool's prompt search matched both.
+      const q = filters.q?.trim().toLowerCase();
+      if (q && !`${i.prompt ?? ''}\n${i.negativePrompt ?? ''}`.toLowerCase().includes(q)) return false;
+      return true;
+    })
+  );
+
   const ownerOfImage = $derived(new Map((data.batch?.items ?? []).map((i) => [i.id, i.userId])));
   const selectedOwnerCount = $derived(
     new Set([...selected].map((id) => ownerOfImage.get(Number(id))).filter((id) => id != null)).size
   );
 
+  // The account-wide removal is armed separately from everything else on the page: it is the only
+  // action whose size is not what the grid shows.
+  let nuking = $state(false);
+  let nukeConfirm = $state('');
+  $effect(() => {
+    subject;
+    untrack(() => {
+      nuking = false;
+      nukeConfirm = '';
+    });
+  });
+
   let submitting = $state(false);
   const onSubmit = writeEnhancer({
     reload: true,
-    onSuccess: () => selected.clear(),
+    // The account-wide form is torn down here too: a success does not change the URL, so the effect
+    // above never fires and it would otherwise stay open and armed under its own success banner.
+    onSuccess: () => {
+      selected.clear();
+      nuking = false;
+      nukeConfirm = '';
+    },
     busy: (value) => (submitting = value),
   });
 
@@ -103,31 +168,46 @@
   >
     {form.error}
   </div>
-{:else if form && 'warning' in form && form.warning}
-  <div
-    class="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200"
-    role="status"
-  >
-    {form.warning}
-  </div>
-{:else if form?.success}
-  <!-- The server's count, not the submitted one: a partial removal must not read as a full one. -->
-  <div
-    class="mb-4 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200"
-    role="status"
-  >
-    <!-- The endpoint returns the images it FOUND, not the ones it changed, so an id that was already
-         blocked counts here. "Submitted" is the claim the number actually supports. -->
-    {#if 'removed' in form && form.removed != null}
-      Removed {num(form.removed)} images — count is images submitted, not necessarily changed.
-    {:else if 'restored' in form && form.restored != null}
-      Restored {num(form.restored)} images — count is images submitted, not necessarily changed.
-    {:else if 'flagged' in form && form.flagged != null}
-      Updated flags on {num(form.flagged)} images.
-    {:else if 'notified' in form && form.notified != null}
-      Notified {num(form.notified)} owners.
-    {/if}
-  </div>
+{:else}
+  <!-- A warning no longer HIDES the success line. A removal that struck only some of its owners has
+       two facts to report, and the one the moderator has to act on is not the one that succeeded. -->
+  {#if form?.success}
+    <div
+      class="mb-4 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200"
+      role="status"
+    >
+      <!-- The endpoint returns the images it FOUND, not the ones it changed. The already-blocked share
+           is counted here before the write, so the number that changed is the one reported. -->
+      {#if 'removed' in form && form.removed != null}
+        {@const already = ('alreadyBlocked' in form ? form.alreadyBlocked : 0) ?? 0}
+        Removed {num(form.removed - already)} images{already > 0
+          ? ` — ${num(already)} of the ${num(form.removed)} submitted were already blocked`
+          : ''}.
+      {:else if 'restored' in form && form.restored != null}
+        {@const wasBlocked = ('wasBlocked' in form ? form.wasBlocked : 0) ?? 0}
+        Restored {num(form.restored)} images{form.restored > wasBlocked
+          ? ` — ${num(form.restored - wasBlocked)} of them were not blocked`
+          : ''}.
+      {:else if 'flagged' in form && form.flagged != null}
+        Updated flags on {num(form.flagged)} images.
+      {:else if 'notified' in form && form.notified != null}
+        Notified {num(form.notified)} owners.
+      {:else if 'removedAll' in form && form.removedAll != null}
+        Removed every image on {form.account} — {num(form.removedAll)} in total.
+      {/if}
+      {#if 'struck' in form && form.struck != null && form.struck > 0}
+        Struck {num(form.struck)} owner{form.struck === 1 ? '' : 's'}.
+      {/if}
+    </div>
+  {/if}
+  {#if form && 'warning' in form && form.warning}
+    <div
+      class="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200"
+      role="status"
+    >
+      {form.warning}
+    </div>
+  {/if}
 {/if}
 
 {#if data.notFound}
@@ -168,10 +248,19 @@
     {/if}
   </section>
 
+  <ListFilterBar
+    fields={filterFields}
+    bind:values={filters}
+    matched={filteredItems.length}
+    total={batch.items.length}
+  />
+
   {#if data.canAct}
+    <!-- `selectable` is the FILTERED set, so "Select all" means what is on screen. That is the whole
+         point of filtering to ToS'd before acting. -->
     <ImageActionBar
       {selected}
-      selectable={batch.items.map((i) => i.id)}
+      selectable={filteredItems.map((i) => i.id)}
       {onSubmit}
       {submitting}
       ownerCount={selectedOwnerCount}
@@ -179,10 +268,54 @@
     />
   {/if}
 
+  {#if data.canAct && data.subjectUserId != null}
+    {@const account = data.owners.find((o) => o.id === data.subjectUserId)}
+    <!-- The one action that is NOT scoped to what is on screen. The page caps at 200 images, so on a
+         prolific account "select all" and this are different sizes — which is the whole reason Retool
+         had it. Kept away from the selection controls for the same reason it is typed to confirm. -->
+    <section class="mb-4 rounded-xl border border-red-500/40 bg-red-500/5 p-5">
+      <h2 class="mb-1 text-sm font-semibold text-white">Remove every image on this account</h2>
+      <p class="mb-3 text-xs text-dark-2">
+        Blocks all {num(batch.total)} images this account owns, not only the {num(batch.items.length)}
+        loaded here. Images only — models, posts and articles are untouched; use Purge Content in User
+        Lookup for those.
+      </p>
+      {#if !nuking}
+        <Button size="sm" variant="destructive" onclick={() => (nuking = true)}>
+          Remove all images…
+        </Button>
+      {:else}
+        <form method="POST" action="?/removeAllForUser" use:enhance={onSubmit} class="grid gap-2">
+          <input type="hidden" name="userId" value={data.subjectUserId} />
+          <Input name="reason" placeholder="Reason (recorded with the removal)" class="max-w-lg" />
+          <Input
+            name="confirm"
+            bind:value={nukeConfirm}
+            placeholder="Type {account?.username ?? data.subjectUserId} to confirm"
+            class="max-w-lg"
+          />
+          <div class="flex gap-2">
+            <Button
+              type="submit"
+              size="sm"
+              variant="destructive"
+              disabled={submitting || nukeConfirm.trim() === ''}
+            >
+              {submitting ? 'Removing…' : 'Remove every image'}
+            </Button>
+            <Button type="button" size="sm" variant="outline" onclick={() => (nuking = false)}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      {/if}
+    </section>
+  {/if}
+
   <!-- No selection without the actions: ticking a box with no action bar leaves the moderator in a
        mode where clicking an image toggles instead of opening it, for no reason. -->
   <ImageQueueGrid
-    items={batch.items}
+    items={filteredItems}
     civitaiUrl={data.civitaiUrl}
     selected={data.canAct ? selected : undefined}
     card={imageCard}
@@ -199,6 +332,7 @@
   poi?: boolean;
   minor?: boolean;
   prompt?: string | null;
+  negativePrompt?: string | null;
   isProfilePicture?: boolean;
   hasConnection?: boolean;
 })}
@@ -228,6 +362,14 @@
 
     {#if img.prompt}
       <p class="line-clamp-3 wrap-break-word text-dark-2" title={img.prompt}>{img.prompt}</p>
+    {/if}
+    <!-- Selected since the page was written and rendered nowhere. A prohibited term sitting in the
+         negative is the same finding, and the prompt search above matches it either way. -->
+    {#if img.negativePrompt}
+      <p class="line-clamp-2 wrap-break-word text-dark-3" title={img.negativePrompt}>
+        <span class="text-dark-2">neg:</span>
+        {img.negativePrompt}
+      </p>
     {/if}
   </div>
 {/snippet}

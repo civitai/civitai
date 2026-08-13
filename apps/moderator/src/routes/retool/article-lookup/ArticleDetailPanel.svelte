@@ -44,6 +44,37 @@
   const hasMetadata = $derived(
     !!article.metadata && Object.keys(article.metadata as object).length > 0
   );
+
+  // `metadata` DOES carry moderation-bearing keys — measured across 3,392 articles carrying any:
+  // profanityMatches/profanityEvaluation, unpublishedBy/At/Reason, customMessage. Buried in a raw JSON
+  // dump none of it is read, so the moderation subset is lifted out and the dump stays below it.
+  const meta = $derived((article.metadata ?? {}) as Record<string, unknown>);
+  const asText = (v: unknown) =>
+    v == null ? null : typeof v === 'string' || typeof v === 'number' ? String(v) : JSON.stringify(v);
+  const modMeta = $derived(
+    (
+      [
+        ['Unpublished', asText(meta.unpublishedAt)],
+        ['Unpublished by', asText(meta.unpublishedBy)],
+        ['Unpublish reason', asText(meta.unpublishedReason)],
+        ['Message to author', asText(meta.customMessage)],
+        // The evaluation is an object whose `reason` is the sentence a human wrote the check to say;
+        // the metrics beside it are why that sentence fired and stay in the raw dump below.
+        [
+          'Profanity',
+          typeof (meta.profanityEvaluation as { reason?: unknown })?.reason === 'string'
+            ? ((meta.profanityEvaluation as { reason: string }).reason)
+            : asText(meta.profanityEvaluation),
+        ],
+        [
+          'Profanity matches',
+          Array.isArray(meta.profanityMatches)
+            ? `${meta.profanityMatches.length}: ${meta.profanityMatches.slice(0, 8).join(', ')}`
+            : asText(meta.profanityMatches),
+        ],
+      ] as [string, string | null][]
+    ).filter((entry): entry is [string, string] => entry[1] !== null && entry[1] !== '')
+  );
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -115,9 +146,23 @@
     </div>
   </div>
 
+  {#if modMeta.length}
+    <div class="mt-4 border-t border-dark-4 pt-4">
+      <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Moderation metadata</h3>
+      <dl class="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2">
+        {#each modMeta as [label, value] (label)}
+          <div class="min-w-0">
+            <dt class="text-xs tracking-wide text-dark-2 uppercase">{label}</dt>
+            <dd class="wrap-break-word text-dark-0">{value}</dd>
+          </div>
+        {/each}
+      </dl>
+    </div>
+  {/if}
+
   {#if hasMetadata}
     <div class="mt-4 border-t border-dark-4 pt-4">
-      <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Metadata</h3>
+      <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Metadata (raw)</h3>
       <pre class="overflow-x-auto rounded-md bg-dark-7 p-2 text-xs text-dark-0">{JSON.stringify(
           article.metadata,
           null,

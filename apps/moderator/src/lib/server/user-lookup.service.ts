@@ -46,9 +46,13 @@ export type UserIdentity = {
    *  the account still reads as muted. `null` when the account has never been restricted. */
   restrictionStatus: string | null;
   restrictionType: string | null;
+  /** The row behind the two above, so a Pending one can be ruled on rather than only read. */
+  restrictionId: number | null;
   /** Quick Info in Retool. `onboarding` is a bitfield; nonzero means the TOS step is done. */
   onboarding: number | null;
   excludeFromLeaderboards: boolean | null;
+  showNsfw: boolean | null;
+  blurNsfw: boolean | null;
 };
 
 export type UserCount = {
@@ -186,6 +190,43 @@ async function getActiveStrikes(userId: number): Promise<{ count: number; points
   return { count: Number(row?.count ?? 0), points: Number(row?.points ?? 0) };
 }
 
+export type LiveStrike = {
+  id: number;
+  reason: string;
+  description: string;
+  points: number;
+  status: string;
+  createdAt: Date;
+  expiresAt: Date;
+  voidedAt: Date | null;
+  issuedBy: number | null;
+};
+
+/**
+ * The strike ROWS, where `getActiveStrikes` answers the header chip's "how much rope is left". Voided
+ * and expired ones are included: a moderator deciding on the next action needs the account's history,
+ * and a strike that has already lapsed is the thing that says this has happened before.
+ */
+export async function getLiveStrikes(userId: number, limit = 50): Promise<LiveStrike[]> {
+  return dbRead
+    .selectFrom('UserStrike')
+    .select([
+      'id',
+      'reason',
+      'description',
+      'points',
+      'status',
+      'createdAt',
+      'expiresAt',
+      'voidedAt',
+      'issuedBy',
+    ])
+    .where('userId', '=', userId)
+    .orderBy('createdAt', 'desc')
+    .limit(limit)
+    .execute();
+}
+
 export async function getUserLookup(userId: number): Promise<UserLookupResult | null> {
   const [
     identity,
@@ -314,6 +355,10 @@ async function getIdentity(userId: number): Promise<UserIdentity | null> {
       // Retool's "Viewing: PG, PG13, …" — what this account has chosen to be shown, which is context
       // for a report about what they saw or posted.
       'u.browsingLevel',
+      // The other half of "what they chose to see": `browsingLevel` is the ceiling, these two are
+      // whether mature content is shown at all and whether it arrives blurred.
+      'u.showNsfw',
+      'u.blurNsfw',
       // jsonb path extraction has no builder equivalent.
       sql<string | null>`u.meta #>> '{banDetails,reasonCode}'`.as('banReason'),
       sql<string | null>`u.meta #>> '{banDetails,detailsInternal}'`.as('banDetails'),
@@ -331,6 +376,10 @@ async function getIdentity(userId: number): Promise<UserIdentity | null> {
         SELECT ur.type FROM "UserRestriction" ur
         WHERE ur."userId" = u.id ORDER BY ur.id DESC LIMIT 1
       )`.as('restrictionType'),
+      sql<number | null>`(
+        SELECT ur.id FROM "UserRestriction" ur
+        WHERE ur."userId" = u.id ORDER BY ur.id DESC LIMIT 1
+      )`.as('restrictionId'),
       // The ticket asked for open reports against the account "very clearly at the top". A report
       // nobody has ruled on changes what every other panel means, and it was reachable only by
       // navigating to the Reports section and reading a list.

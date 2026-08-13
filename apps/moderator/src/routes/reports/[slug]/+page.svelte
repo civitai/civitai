@@ -39,6 +39,7 @@
     reportStatusBadgeClass,
     getReportItemUrl,
     reportedPlacementId,
+    reportDetail,
   } from '$lib/reports';
   import type { ActionData, PageData } from './$types';
 
@@ -48,6 +49,13 @@
   // Armed per placement id, so closing the sheet and opening another report cannot leave a live
   // destructive button pointed at the previous one.
   let confirmingPlacement = $state<number | null>(null);
+  // The reporter's own words, wherever this entity type puts them: `comment` is the free-text field on
+  // most forms, `violation`/`reason` is what the picker-driven ones carry.
+  const reportComment = (r: { details: unknown }) =>
+    reportDetail(r.details, 'comment') ??
+    reportDetail(r.details, 'violation') ??
+    reportDetail(r.details, 'reason');
+
   let detailsOpen = $state(false);
   const selected = $derived(
     selectedId != null ? (data.items.find((r) => r.id === selectedId) ?? null) : null
@@ -158,6 +166,7 @@
     <TableHeader>
       <TableRow>
         <TableHead>Reason</TableHead>
+        <TableHead>Details</TableHead>
         <TableHead>Status</TableHead>
         <TableHead>Reported</TableHead>
         <TableHead>Reported by</TableHead>
@@ -170,6 +179,13 @@
         {@const itemUrl = getReportItemUrl(data.civitaiUrl, data.type, report.entityId)}
         <TableRow>
           <TableCell>{report.reason}</TableCell>
+          <!-- Retool's Details column. The reporter's own words decide whether a row is worth opening,
+               and reading them meant opening the sheet and picking them out of a JSON dump. -->
+          <TableCell class="max-w-sm">
+            <span class="line-clamp-2 text-sm text-muted-foreground" title={reportComment(report)}>
+              {reportComment(report) ?? '—'}
+            </span>
+          </TableCell>
           <TableCell>
             <Badge class={reportStatusBadgeClass[report.status]}>{report.status}</Badge>
           </TableCell>
@@ -205,7 +221,7 @@
         </TableRow>
       {:else}
         <TableRow>
-          <TableCell colspan={6} class="py-8 text-center text-muted-foreground">
+          <TableCell colspan={7} class="py-8 text-center text-muted-foreground">
             No reports match this view.
           </TableCell>
         </TableRow>
@@ -273,6 +289,10 @@
           <dt class="text-muted-foreground">Reported</dt>
           <dd>{fmtDate(selected.createdAt)}</dd>
         </dl>
+
+        {#if reportComment(selected)}
+          <p class="wrap-break-word text-sm">{reportComment(selected)}</p>
+        {/if}
 
         {#if selected.details}
           <pre class="max-h-64 overflow-auto rounded-lg border bg-muted/40 p-3 text-xs">{JSON.stringify(

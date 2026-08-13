@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
 import { dbRead } from './db';
+import { issueStrike } from './user-actions.service';
 import type { MediaType } from '$lib/media/edge-url';
 
 // Retool's Bulk Image Manager: find a batch of images by one of five sources, then act on the batch.
@@ -176,4 +177,55 @@ export async function getBatchOwners(imageIds: number[]): Promise<number[]> {
     .where('id', 'in', imageIds)
     .execute();
   return rows.map((r) => r.userId);
+}
+
+/**
+ * How many of a batch are ALREADY blocked, read before the write. `/api/mod/remove-images` reports the
+ * rows it FOUND, not the rows it changed, so re-removing a blocked batch comes back with a full count
+ * and reads as work done. Taken here rather than fixed in the endpoint because that is a cross-app
+ * change; subtracting a number this side is exact for the same submitted ids.
+ */
+export async function countBlockedImages(imageIds: number[]): Promise<number> {
+  if (!imageIds.length) return 0;
+  const row = await dbRead
+    .selectFrom('Image')
+    .select((eb) => eb.fn.countAll<string>().as('c'))
+    .where('id', 'in', imageIds)
+    .where('ingestion', '=', 'Blocked')
+    .executeTakeFirst();
+  return Number(row?.c ?? 0);
+}
+
+/**
+ * Retool's `strikeCheckbox`, on both Bulk Image Manager and User Reports: a TOS removal and the strike
+ * for it were one gesture. Owners are resolved SERVER-side from the ids rather than passed in — the
+ * grid only holds the page in front of the moderator, and a selection can outlive it.
+ */
+export async function strikeBatchOwners(input: {
+  imageIds: number[];
+  /** The user-facing strike description — the same canned message the removal was filed under. */
+  description: string;
+  moderatorId: number;
+}): Promise<{ struck: number; owners: number; error?: string }> {
+  const owners = await getBatchOwners(input.imageIds);
+  if (!owners.length) return { struck: 0, owners: 0, error: 'no owners could be resolved' };
+
+  const results = await Promise.all(
+    owners.map((userId) =>
+      issueStrike({
+        userId,
+        description: input.description,
+        internalNotes: `Issued with the removal of ${input.imageIds.length} image(s).`,
+        moderatorId: input.moderatorId,
+      })
+    )
+  );
+  const failed = results.filter((r) => !r.ok) as { ok: false; error: string }[];
+  return {
+    struck: owners.length - failed.length,
+    owners: owners.length,
+    // The first reason, not a count: they share a cause (rate limit, endpoint down) far more often
+    // than not, and a bare "3 failed" sends the moderator to the logs to find out why.
+    error: failed.length ? failed[0].error : undefined,
+  };
 }

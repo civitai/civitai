@@ -73,6 +73,9 @@
           suspect={data.suspect}
           filters={data.filters}
           strikes={data.strikes}
+          legacyStrikeCount={data.legacyStrikeCount}
+          modActivity={data.modActivity ?? []}
+          reportsOnUser={data.reportsOnUser ?? []}
           notes={data.notes ?? []}
           canAct={data.canAct}
           civitaiUrl={data.civitaiUrl}
@@ -80,7 +83,6 @@
           notifyError={scoped('notify')}
           imagesError={scoped('images')}
           imageResult={form && 'imageResult' in form ? (form.imageResult ?? null) : null}
-          warning={form && 'warning' in form ? (form.warning ?? null) : null}
         />
       {/key}
     {:else}

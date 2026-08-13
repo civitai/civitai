@@ -26,6 +26,9 @@ import {
   clearProfileText,
   purgeAllContent,
   removeSocial,
+  resolveRestriction,
+  findPaddleCustomerOwner,
+  setPaddleCustomer,
   setModerationFlag,
   forceLogout,
   refreshSessionCache,
@@ -116,6 +119,76 @@ export const actions: Actions = {
       input.muted === 'true'
         ? await setMuted({ userId: input.userId, muted: true, moderatorId: locals.user.id })
         : await unmuteAndClearTimed({ userId: input.userId, moderatorId: locals.user.id });
+    if (!result.ok) return accountFail(result.error);
+    return { success: true };
+  },
+
+  // Retool's Paddle wizard, in one form: submitting an id that another account holds comes back with
+  // that account rather than moving it, and the second submit does the move explicitly.
+  linkPaddle: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');
+    const input = parseForm(
+      userIdSchema.extend({
+        paddleCustomerId: z.string().trim().max(255).optional(),
+        takeFrom: z.coerce.number().int().positive().optional(),
+        unlink: z.literal('1').optional(),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return accountFail(input);
+
+    if (input.unlink) {
+      const cleared = await setPaddleCustomer({
+        userId: input.userId,
+        paddleCustomerId: null,
+        moderatorId: locals.user.id,
+      });
+      return cleared.ok ? { success: true } : accountFail(cleared.error);
+    }
+
+    if (!input.paddleCustomerId) return accountFail('Enter a Paddle customer id.');
+
+    // Checked even when `takeFrom` was sent: the holder can have changed since the page rendered, and
+    // the confirmation the moderator gave was about a specific account.
+    const owner = await findPaddleCustomerOwner(input.paddleCustomerId);
+    if (owner && owner.id !== input.userId && owner.id !== input.takeFrom)
+      return fail(409, {
+        scope: 'account',
+        error: `That customer id is linked to another account.`,
+        paddleConflict: { ...owner, paddleCustomerId: input.paddleCustomerId },
+      });
+
+    const result = await setPaddleCustomer({
+      userId: input.userId,
+      paddleCustomerId: input.paddleCustomerId,
+      takeFrom: owner?.id === input.takeFrom ? input.takeFrom : undefined,
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return accountFail(result.error);
+    return { success: true };
+  },
+
+  // Ruling on a Pending system restriction, which the mute toggle above cannot do: it clears `muted`
+  // and leaves the row Pending, the subscription cancelled and the user untold.
+  resolveRestriction: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');
+    const input = parseForm(
+      userIdSchema.extend({
+        userRestrictionId: z.coerce.number().int().positive(),
+        status: z.enum(['Overturned', 'Upheld']),
+        resolvedMessage: z.string().trim().max(1000).optional(),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return accountFail(input);
+
+    const result = await resolveRestriction({
+      userRestrictionId: input.userRestrictionId,
+      status: input.status,
+      resolvedMessage: input.resolvedMessage || undefined,
+      userId: input.userId,
+      moderatorId: locals.user.id,
+    });
     if (!result.ok) return accountFail(result.error);
     return { success: true };
   },
