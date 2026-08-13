@@ -64,7 +64,10 @@ export default function StickerPlacements() {
             </div>
             {rows.length > 0 && (
               <Checkbox
-                label="Select all"
+                // Names what it selects. With the queue paged it reaches the
+                // rows on screen, and an owner who bulk-declined believing they
+                // had cleared 200 would find 150 still waiting.
+                label={hasNextPage ? 'Select all loaded' : 'Select all'}
                 checked={allSelected}
                 indeterminate={selected.length > 0 && !allSelected}
                 onChange={() => setSelected(allSelected ? [] : rows.map((row) => row.id))}
@@ -83,7 +86,10 @@ export default function StickerPlacements() {
           )}
 
           {isLoading && <Text size="sm">Loading…</Text>}
-          {!isLoading && !rows.length && (
+          {/* `&& !hasNextPage`: a page whose rows were all dropped returns
+              nothing with a cursor still set, and "nothing waiting" over a
+              queue that has more is the failure paging exists to end. */}
+          {!isLoading && !rows.length && !hasNextPage && (
             <Alert>
               <Text size="sm">Nothing waiting. Placements you approve show up on your images.</Text>
             </Alert>

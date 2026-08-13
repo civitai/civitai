@@ -197,15 +197,30 @@ export type PlacementQueueCursor = { createdAt: Date; id: number };
 export const encodePlacementQueueCursor = (row: PlacementQueueCursor) =>
   `${row.createdAt.getTime()}:${row.id}`;
 
-/** A malformed cursor becomes a fresh first page rather than a NaN in a query. */
+/**
+ * A malformed cursor becomes a fresh first page rather than reaching a query.
+ *
+ * `Number.isSafeInteger`, not `isFinite`: `1e21` is finite and makes an Invalid
+ * Date (the max time value is 8.64e15), and `1.5` is finite and goes to an `INT`
+ * column as a fraction. Both are hand-crafted-cursor-only, and both are a 500
+ * rather than anything worse — but the guard is here to say a cursor never
+ * reaches the database unparsed, so it has to actually do that.
+ */
 export function parsePlacementQueueCursor(cursor?: string | null): PlacementQueueCursor | null {
   if (!cursor) return null;
 
-  const [createdAt, id] = cursor.split(':').map(Number);
-  if (![createdAt, id].every(Number.isFinite)) return null;
+  const parts = cursor.split(':');
+  if (parts.length !== 2) return null;
+
+  const [createdAt, id] = parts.map(Number);
+  if (![createdAt, id].every((value) => Number.isSafeInteger(value) && value >= 0)) return null;
+  if (createdAt > MAX_CURSOR_TIME) return null;
 
   return { createdAt: new Date(createdAt), id };
 }
+
+/** ECMAScript's max time value. Past it, `new Date` is an Invalid Date. */
+const MAX_CURSOR_TIME = 8.64e15;
 
 /**
  * Where the last page stopped, as a keyset rather than an offset.

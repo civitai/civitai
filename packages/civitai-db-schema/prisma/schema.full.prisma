@@ -7880,6 +7880,10 @@ model Placement {
 
   @@index([surface, targetType, targetId, status])
   @@index([ownerId, status])
+  /// The owner review queue's paging order. Without it each page rescans and
+  /// re-sorts every pending row the owner has, and a refetch of a walk N pages
+  /// deep pays that N+1 times.
+  @@index([ownerId, status, createdAt, id])
   @@index([placerId, status])
   @@index([status, expiresAt])
 }

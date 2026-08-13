@@ -46,6 +46,8 @@ vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValu
 vi.mock('~/server/services/placement.service', () => ({
   getPlacementConfig: async () => ({
     declineFeeRate: () => 0.3,
+    // Not the real defaults — no test here asserts an owner payout. Anything
+    // that starts to must set these, or it will read 100% to the owner.
     approvalShares: () => ({ seller: 0, platform: 0 }),
   }),
 }));
@@ -1134,12 +1136,36 @@ describe('getPendingRemixGallerySubmissions paging', () => {
     expect(take).toBe(3);
   });
 
-  it('starts a fresh page rather than a NaN query when the cursor is malformed', async () => {
+  it('reports no next page when the queue ends exactly on the page boundary', async () => {
+    // The case the old `truncated = rows.length >= limit` got wrong. `take` is
+    // limit + 1, so a queue of exactly `limit` returns `limit` rows and there is
+    // nothing behind it — a cursor here sends the owner to an empty page.
+    placementFindMany.mockResolvedValue([
+      queueRow(1, 101, '2026-01-01T00:00:00.000Z'),
+      queueRow(2, 102, '2026-01-02T00:00:00.000Z'),
+    ]);
+    onlyFirstImageVisible(101);
+
+    const result = await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2 });
+
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it('starts a fresh page rather than a bad value in a query when the cursor is malformed', async () => {
     placementFindMany.mockResolvedValue([]);
+    const wellFormed = `${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`;
 
-    await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2, cursor: 'nonsense' });
+    // The positive control. Without it this test passes with the keyset removed
+    // entirely, because then no cursor ever produces an `OR`.
+    await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2, cursor: wellFormed });
+    const accepted = placementFindMany.mock.calls.at(-1)?.[0] as { where: { OR?: unknown[] } };
+    expect(accepted.where.OR).toHaveLength(2);
 
-    const { where } = placementFindMany.mock.calls.at(-1)?.[0] as { where: { OR?: unknown[] } };
-    expect(where.OR).toBeUndefined();
+    for (const cursor of ['nonsense', '1e21:1', '1700000000000:1.5', '1:2:3', '-1:2']) {
+      await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2, cursor });
+
+      const { where } = placementFindMany.mock.calls.at(-1)?.[0] as { where: { OR?: unknown[] } };
+      expect(where.OR, `cursor ${cursor} reached the query`).toBeUndefined();
+    }
   });
 });

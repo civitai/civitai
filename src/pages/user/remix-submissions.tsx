@@ -181,7 +181,12 @@ function ReceivedTab({
       </Group>
     );
 
-  if (!rows.length)
+  // `&& !hasMore` is the whole point. A page whose rows were all dropped —
+  // submissions whose image was deleted, unpublished or is still ingesting —
+  // returns no items and a cursor. Returning the empty state here would put
+  // "nothing is waiting" over a queue with entries behind it, which is the
+  // failure this paging exists to end, moved one layer up.
+  if (!rows.length && !hasMore)
     return (
       <Alert color="gray">
         <Text size="sm">Nothing is waiting for your review.</Text>
@@ -198,6 +203,13 @@ function ReceivedTab({
 
   return (
     <Stack gap="md">
+      {!rows.length && (
+        <Text size="sm" c="dimmed">
+          Nothing on this page can be shown — the images behind these submissions are gone or still
+          processing. There are more waiting.
+        </Text>
+      )}
+
       {rows.map((row) => (
         <Card key={row.id} withBorder>
           <Group justify="space-between" wrap="nowrap" align="flex-start">

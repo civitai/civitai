@@ -231,7 +231,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
               badge={
                 forThisImage.length ? (
                   <Badge size="sm" variant="light" color="yellow">
-                    {forThisImage.length}
+                    {hasMorePending ? `${forThisImage.length}+` : forThisImage.length}
                   </Badge>
                 ) : null
               }
@@ -240,8 +240,17 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
               <Group justify="center" py="md">
                 <Loader size="sm" />
               </Group>
-            ) : forThisImage.length ? (
+            ) : forThisImage.length || hasMorePending ? (
               <Stack gap="xs" mt="sm">
+                {/* A page can come back empty with a cursor still set — every
+                    submission on it had its image deleted, unpublished or still
+                    ingesting. Saying "nothing waiting" here would hide the ones
+                    behind it, which is the bug the paging exists to end. */}
+                {!forThisImage.length && (
+                  <Text size="sm" c="dimmed">
+                    Nothing on this page can be shown. There are more waiting.
+                  </Text>
+                )}
                 {forThisImage.map((row) => (
                   <Card key={row.id} withBorder p="xs" radius="md">
                     <Group justify="space-between" wrap="nowrap" align="center">
