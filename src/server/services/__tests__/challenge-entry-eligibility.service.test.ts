@@ -3,15 +3,14 @@ import type * as FliptClient from '~/server/flipt/client';
 import type * as ChallengeHelpers from '~/server/games/daily-challenge/challenge-helpers';
 
 // `checkImageEligibility` is what the challenge submit modal prechecks each library image against.
-// Only an AUTO-DETECTED resource satisfies a challenge's model requirement: a manually-attached
-// resource is a claim the owner types into the image, so accepting one would let anyone tag any
-// upload with the required model and enter.
+// Only an AUTO-DETECTED resource satisfies a challenge's model requirement: a `detected: false` row
+// is asserted by the uploader (the post's model-version link, or `addResourceToPostImage`), so
+// accepting one would let anyone claim the required model on any upload and enter.
 //
 // The two rejections are reported separately on purpose. "Wrong model" is the entrant's mistake;
-// "Model not detected" means they did use the model but we could not read it out of the image, which
-// is a different thing to tell them and a different thing for them to do about it. Reporting the
-// former for the latter is what sent a user to support insisting their image used the required
-// model — it did.
+// "Model not detected" means the image carries no generation metadata naming the model, which is a
+// different thing to tell them and a different thing for them to do about it. Reporting the former
+// for the latter is what sent a user to support insisting their image used the required model.
 
 const { mockDbRead, mockDbWrite, mockIsFlipt } = vi.hoisted(() => ({
   mockDbRead: {
@@ -109,13 +108,7 @@ function wireChallenge(modelVersionIds: number[] = [REQUIRED_VERSION_ID]) {
   });
 }
 
-function wireImage({
-  detected = [],
-  manual = [],
-}: {
-  detected?: number[];
-  manual?: number[];
-}) {
+function wireImage({ detected = [], manual = [] }: { detected?: number[]; manual?: number[] }) {
   mockDbRead.$queryRawUnsafe.mockResolvedValue([
     {
       id: IMAGE_ID,
