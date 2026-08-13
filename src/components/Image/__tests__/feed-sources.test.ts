@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildFeedSnapshot,
   getFeedSources,
   resolveFeedSource,
   summarizeFeedSources,
@@ -45,6 +46,45 @@ describe('resolveFeedSource', () => {
   it('answers nothing when no page reported a backend', () => {
     expect(resolveFeedSource(['none'])).toBeUndefined();
     expect(resolveFeedSource([])).toBeUndefined();
+  });
+
+  // Turning the flag off mid-session routes later pages through the DB, which
+  // returns a real cursor and real items. Those pages must ANSWER, or the notice
+  // stays up over Postgres results — the failure the whole gate exists to stop.
+  it('answers db when the flag went off mid-session and the DB took over', () => {
+    expect(resolveFeedSource(['bitdex', 'bitdex', 'db', 'db'])).toBe('db');
+  });
+});
+
+describe('buildFeedSnapshot', () => {
+  const filters = { sort: 'Newest', period: 'Day', browsingLevel: 1 };
+
+  it('answers with resolveFeedSource, not the raw last entry', () => {
+    const snapshot = buildFeedSnapshot([{ source: 'bitdex' }, { items: [] }], filters, 1);
+
+    expect(snapshot.source).toBe('bitdex');
+    expect(snapshot.sources).toEqual(['bitdex', 'none']);
+  });
+
+  it('carries the filters that fetched these pages', () => {
+    const snapshot = buildFeedSnapshot([{ source: 'bitdex' }], filters, 1);
+
+    expect(snapshot).toMatchObject({ sort: 'Newest', period: 'Day', pagesLoaded: 1 });
+  });
+
+  // Run-length encoding only compresses RUNS, and per-page fallback means an
+  // alternating feed is ordinary here. A head-first cut would drop the tail —
+  // the half `source` was read from — leaving a row contradicting itself.
+  it('keeps the tail of an alternating 40-page feed inside the width limit', () => {
+    const pages = Array.from({ length: 40 }, (_, i) => ({
+      source: i % 2 === 0 ? 'bitdex' : 'meili',
+    }));
+
+    const snapshot = buildFeedSnapshot(pages, filters, 1);
+
+    expect(snapshot.summary.length).toBeLessThanOrEqual(200);
+    expect(snapshot.summary.endsWith('meili')).toBe(true);
+    expect(snapshot.source).toBe('meili');
   });
 });
 

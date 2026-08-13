@@ -50,12 +50,7 @@ export function FeedbackPrompt({
   active = true,
 }: FeedbackPromptProps) {
   const currentUser = useCurrentUser();
-  // Per-tab, so a dismissal survives navigation within the visit and is gone on
-  // the next one. Read through useStorage rather than window.sessionStorage
-  // directly: storage access throws outright in a sandboxed iframe or with
-  // storage disabled, and this renders inside the feed — a throw there takes
-  // the whole page to the error boundary instead of costing one banner.
-  const [dismissed, setDismissed] = useState(readDismissed(area));
+  const [dismissed, setDismissed] = useState(() => readDismissed(area));
   const [message, setMessage] = useState('');
   const [sent, setSent] = useState(false);
 

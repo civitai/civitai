@@ -46,7 +46,8 @@ async function withinRateLimit(userId: number) {
     // window rather than "redis is down" — log it, or the limiter silently
     // degrades to the weaker path with nothing to see.
     logToAxiom({
-      type: 'feedback-rate-limit-degraded',
+      type: 'warning',
+      name: 'feedback-rate-limit-degraded',
       error: error instanceof Error ? error.message : String(error),
       userId,
     }).catch(() => undefined);

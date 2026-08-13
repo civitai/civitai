@@ -2,7 +2,7 @@ import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { closeModal, openConfirmModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { isEqual } from 'lodash-es';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -135,13 +135,11 @@ export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesIn
   };
 };
 
-/** A page that reported no backend at all. Not the same as "served by the DB" — the
- * index branch also returns sourceless on an empty terminal page, and the two are
- * indistinguishable from here. */
+/** A page that reported no backend. Both branches name themselves now, so this is
+ * an index page that returned nothing — i.e. the end of a feed — not a DB page. */
 export const FEED_SOURCE_NONE = 'none';
 
-/** Which backend served each loaded page, as emitted by the server branch that
- * actually returned the data (getAllImagesIndex). */
+/** Which backend served each loaded page, as emitted by the server. */
 export function getFeedSources(pages: unknown[] | undefined): string[] {
   return (pages ?? []).map(
     (page) => (page as { source?: string } | undefined)?.source ?? FEED_SOURCE_NONE
@@ -153,9 +151,10 @@ export function getFeedSources(pages: unknown[] | undefined): string[] {
  *
  * BitDex falls back to Meili PER PAGE — on an error, and routinely whenever a
  * pass accumulates zero documents — so the answer is the LAST page's backend,
- * not whether any page was BitDex. Sourceless pages are skipped rather than
- * treated as a switch: an empty terminal page is what scrolling to the end of a
- * feed looks like, and it must not retract a notice the whole scroll earned.
+ * not whether any page was BitDex. Only genuinely sourceless pages are skipped:
+ * an empty terminal page is what scrolling to the end looks like and must not
+ * retract a notice the whole scroll earned, while a DB page names itself 'db'
+ * and DOES answer, because that is the flag going off mid-session.
  */
 export function resolveFeedSource(sources: string[]): string | undefined {
   for (let i = sources.length - 1; i >= 0; i--) {
@@ -174,6 +173,35 @@ export function summarizeFeedSources(sources: string[]): string {
     else runs.push({ source, count: 1 });
   }
   return runs.map(({ source, count }) => (count > 1 ? `${source}x${count}` : source)).join(',');
+}
+
+export type FeedSnapshot = ReturnType<typeof buildFeedSnapshot>;
+
+/**
+ * The pages and the filters that fetched them, read in one place.
+ *
+ * Callers must not assemble this from separate reads: under keepPreviousData the
+ * merged filters update synchronously while `data` still holds the previous
+ * query's pages, and a report pairing new filters with old pages describes a feed
+ * that never existed.
+ */
+export function buildFeedSnapshot(
+  pages: unknown[] | undefined,
+  filters: { sort?: unknown; period?: unknown; browsingLevel?: number },
+  browsingLevel: number
+) {
+  const sources = getFeedSources(pages);
+  return {
+    sources,
+    source: resolveFeedSource(sources),
+    // Keeps the TAIL: the head is what a fixed slice would have kept, and the
+    // tail is the half the gate actually read.
+    summary: summarizeFeedSources(sources).slice(-200),
+    pagesLoaded: pages?.length ?? 0,
+    sort: String(filters.sort ?? ''),
+    period: String(filters.period ?? ''),
+    browsingLevel: filters.browsingLevel ?? browsingLevel,
+  };
 }
 
 export const useQueryImages = (
@@ -231,23 +259,18 @@ export const useQueryImages = (
     }
   );
 
-  // Stamped together, keyed on `data` alone: under keepPreviousData the merged
-  // `filters` update synchronously while `data` still holds the previous query's
-  // pages, so reading them from separate renders produces a report describing a
-  // feed that never existed. Recomputing only when `data` changes keeps the
-  // filters with the pages they actually fetched.
-  const feedSnapshot = useMemo(() => {
-    const sources = getFeedSources(data?.pages);
-    return {
-      sources,
-      source: resolveFeedSource(sources),
-      pagesLoaded: data?.pages.length ?? 0,
-      sort: String(filters.sort ?? ''),
-      period: String(filters.period ?? ''),
-      browsingLevel: filters.browsingLevel ?? contextBrowsingLevel,
+  // A ref, not useMemo: pairing the filters with the pages they fetched is
+  // correctness here, and useMemo is a hint React may discard — a recompute on
+  // the transition render would read the NEW filters against the OLD data and
+  // reproduce exactly the mismatch this exists to prevent.
+  const snapshotRef = useRef<{ data: typeof data; snapshot: FeedSnapshot } | null>(null);
+  if (!snapshotRef.current || snapshotRef.current.data !== data) {
+    snapshotRef.current = {
+      data,
+      snapshot: buildFeedSnapshot(data?.pages, filters, contextBrowsingLevel),
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- see comment above
-  }, [data]);
+  }
+  const feedSnapshot = snapshotRef.current.snapshot;
 
   // Deduplicate items to prevent duplicates from offset pagination drift
   const flatData = useMemo(() => {

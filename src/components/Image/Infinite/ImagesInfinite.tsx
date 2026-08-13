@@ -13,11 +13,7 @@ import { SearchRetryBanner } from '~/components/EndOfFeed/SearchRetryBanner';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
 import { FeedbackPrompt } from '~/components/Feedback/FeedbackPrompt';
 import type { ImagesQueryParamSchema } from '~/components/Image/image.utils';
-import {
-  summarizeFeedSources,
-  useImageFilters,
-  useQueryImages,
-} from '~/components/Image/image.utils';
+import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
 import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
 import type { ImagesContextState } from '~/components/Image/Providers/ImagesProvider';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
@@ -227,13 +223,17 @@ export function ImagesInfiniteContent({
       {showFeedbackPrompt && (
         <FeedbackPrompt
           area="bitdex-image-feed"
-          active={feedSnapshot.source === 'bitdex'}
+          // `hidden` is not implemented on the index path at all, so a BitDex-served
+          // "Your Hidden Images" is the ordinary feed under the wrong title —
+          // already broken for an unrelated reason, and every report would be
+          // misattributed to BitDex.
+          active={feedSnapshot.source === 'bitdex' && !filters.hidden}
           notice="We're testing a new system behind this feed. If anything looks off, tell us."
           placeholder="What looked wrong? Missing images, odd ordering, repeats, anything."
           context={{
             path: typeof window !== 'undefined' ? window.location.pathname : undefined,
             reportedSource: feedSnapshot.source,
-            reportedPageSources: summarizeFeedSources(feedSnapshot.sources).slice(0, 200),
+            reportedPageSources: feedSnapshot.summary,
             pagesLoaded: feedSnapshot.pagesLoaded,
             filters: {
               sort: feedSnapshot.sort,

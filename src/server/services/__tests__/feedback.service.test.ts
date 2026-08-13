@@ -1,14 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FEEDBACK_RATE_LIMIT } from '~/shared/constants/feedback.constants';
 
-const { incrByMock, decrByMock, expireMock, ttlMock, countMock, createMock } = vi.hoisted(() => ({
-  incrByMock: vi.fn(),
-  decrByMock: vi.fn(),
-  expireMock: vi.fn(),
-  ttlMock: vi.fn(),
-  countMock: vi.fn(),
-  createMock: vi.fn(),
-}));
+const { incrByMock, decrByMock, expireMock, ttlMock, countMock, createMock, logToAxiomMock } =
+  vi.hoisted(() => ({
+    incrByMock: vi.fn(),
+    decrByMock: vi.fn(),
+    expireMock: vi.fn(),
+    ttlMock: vi.fn(),
+    countMock: vi.fn(),
+    createMock: vi.fn(),
+    logToAxiomMock: vi.fn(async () => undefined),
+  }));
 
 vi.mock('~/server/db/client', () => ({
   dbRead: {
@@ -22,7 +24,7 @@ vi.mock('~/server/redis/client', () => ({
   REDIS_SYS_KEYS: { FEEDBACK: { RATE_LIMIT: 'system:feedback:rate-limit' } },
 }));
 
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
+vi.mock('~/server/logging/client', () => ({ logToAxiom: logToAxiomMock }));
 
 vi.mock('~/server/flipt/client', () => ({
   getFliptBoolean: vi.fn().mockResolvedValue(false),
@@ -30,6 +32,10 @@ vi.mock('~/server/flipt/client', () => ({
 }));
 
 import { createFeedback } from '../feedback.service';
+
+// The per-user key. Asserted literally: with expect.any(String) a key that
+// dropped its userId segment — one global bucket for the whole site — passes.
+const RATE_LIMIT_KEY = 'system:feedback:rate-limit:1';
 
 const input = { userId: 1, area: 'bitdex-image-feed' as const, message: 'feed looks wrong' };
 
@@ -48,7 +54,7 @@ describe('createFeedback rate limit', () => {
 
     await createFeedback(input);
 
-    expect(expireMock).toHaveBeenCalledWith(expect.any(String), 3600);
+    expect(expireMock).toHaveBeenCalledWith(RATE_LIMIT_KEY, 3600);
   });
 
   it('re-arms an expiry that went missing on a later submission', async () => {
@@ -57,7 +63,7 @@ describe('createFeedback rate limit', () => {
 
     await createFeedback(input);
 
-    expect(expireMock).toHaveBeenCalledWith(expect.any(String), 3600);
+    expect(expireMock).toHaveBeenCalledWith(RATE_LIMIT_KEY, 3600);
   });
 
   it('leaves a healthy expiry alone', async () => {
@@ -76,7 +82,7 @@ describe('createFeedback rate limit', () => {
     createMock.mockRejectedValue(new Error('relation "Feedback" does not exist'));
 
     await expect(createFeedback(input)).rejects.toThrow('relation "Feedback" does not exist');
-    expect(decrByMock).toHaveBeenCalledWith(expect.any(String), 1);
+    expect(decrByMock).toHaveBeenCalledWith(RATE_LIMIT_KEY, 1);
   });
 
   it('does not refund a slot it never reserved (redis was down)', async () => {
@@ -93,6 +99,10 @@ describe('createFeedback rate limit', () => {
 
     await expect(createFeedback(input)).resolves.toEqual({ id: 1 });
     expect(createMock).toHaveBeenCalledTimes(1);
+    // A refund on the SUCCESS path decrements every write back out, so the
+    // counter never climbs and the cap never fires.
+    expect(decrByMock).not.toHaveBeenCalled();
+    expect(incrByMock).toHaveBeenCalledWith(RATE_LIMIT_KEY, 1);
   });
 
   it('rejects with TOO_MANY_REQUESTS past the cap, without writing', async () => {
@@ -132,6 +142,16 @@ describe('createFeedback rate limit', () => {
       const elapsedMs = Date.now() - (where.createdAt.gt as Date).getTime();
       expect(elapsedMs).toBeGreaterThan(FEEDBACK_RATE_LIMIT.windowMs - 10_000);
       expect(elapsedMs).toBeLessThan(FEEDBACK_RATE_LIMIT.windowMs + 10_000);
+    });
+
+    it('records the degrade, so the weaker path is not silent', async () => {
+      countMock.mockResolvedValue(0);
+
+      await createFeedback(input);
+
+      expect(logToAxiomMock).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'feedback-rate-limit-degraded' })
+      );
     });
 
     it('still rejects at the cap', async () => {
