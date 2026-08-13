@@ -137,7 +137,7 @@ import {
 import type { LicensingFeeSettlementCurrency, LicensingFeeType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
-import { markFileReplaced, filesForModelVersionCache } from './model-file.service';
+import { markFileReplaced, deleteFilesForModelVersionCache } from './model-file.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
 import { deregisterFileLocations } from '~/utils/storage-resolver';
@@ -3198,8 +3198,8 @@ export const mergeVersions = async ({
   await Promise.all([
     bustMvCache(allVersionIds2, modelId, userId),
     dataForModelsCache.bust(modelId),
-    filesForModelVersionCache.bust(targetVersionId),
-    ...sourceVersionIds.map((id) => filesForModelVersionCache.bust(id)),
+    deleteFilesForModelVersionCache(targetVersionId),
+    ...sourceVersionIds.map((id) => deleteFilesForModelVersionCache(id)),
     preventReplicationLag('model', modelId),
     preventReplicationLag('modelVersion', targetVersionId),
   ]);

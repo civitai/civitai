@@ -24,6 +24,10 @@ export const AI_MODELS = {
   GROK: 'x-ai/grok-4.1-fast',
   GPT_5_NANO: 'openai/gpt-5-nano',
   STEP_FUN: 'stepfun/step-3.5-flash',
+  // Pairwise challenge judging (see challenge-judge-routes.ts). QWEN_FLASH refuses adult pairs
+  // with data_inspection_failed; GPT_5_6_LUNA is the permissive route those fall back to.
+  QWEN_FLASH: 'qwen/qwen3.7-flash',
+  GPT_5_6_LUNA: 'openai/gpt-5.6-luna',
   QWEN_35B: 'urn:air:qwen3:repository:huggingface:Civitai/Qwen3.6-35B-A3B-Abliterated-AWQ@main.tar',
 
   // Fallback chains

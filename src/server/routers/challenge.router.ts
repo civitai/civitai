@@ -23,6 +23,7 @@ import {
   playgroundGenerateContentSchema,
   playgroundReviewImageSchema,
   playgroundPickWinnersSchema,
+  playgroundRunLadderSchema,
   upsertChallengeCategorySchema,
 } from '~/server/schema/challenge.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
@@ -70,6 +71,7 @@ import {
   playgroundGenerateContent,
   playgroundReviewImage,
   playgroundPickWinners,
+  playgroundRunLadder,
 } from '~/server/services/challenge.service';
 import {
   getChallengeCategoriesFull,
@@ -400,6 +402,13 @@ export const challengeRouter = router({
     .input(playgroundReviewImageSchema)
     .use(isFlagProtected('challengePlatform'))
     .mutation(({ input }) => playgroundReviewImage(input)),
+
+  // Moderator: Playground — dry-run the pairwise ladder over a real field. Writes nothing, but
+  // every comparison is a paid LLM call, so it stays behind moderatorProcedure.
+  playgroundRunLadder: moderatorProcedure
+    .input(playgroundRunLadderSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input }) => playgroundRunLadder(input)),
 
   // Moderator: Playground — pick winners
   playgroundPickWinners: moderatorProcedure

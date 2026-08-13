@@ -70,7 +70,11 @@ export function reconcileWinnerToPersisted<T extends WinnerPayoutEntry>(
  * omitting it here would make any caller passing the LLM's own shape as a literal fail the
  * excess-property check.
  */
-export type GeneratedWinnerPick = { creatorId?: unknown; creator?: unknown; reason?: string | null };
+export type GeneratedWinnerPick = {
+  creatorId?: unknown;
+  creator?: unknown;
+  reason?: string | null;
+};
 
 /** A pick that resolved to a judged entry, carrying the placement it will be paid and recorded at. */
 export type ResolvedWinnerPick = {
