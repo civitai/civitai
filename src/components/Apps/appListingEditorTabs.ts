@@ -66,29 +66,37 @@ export type EditorTabContext = {
  *                       `capabilitiesForKind(...).listingContent` is `true` for BOTH
  *                       kinds. There is no shape in which this tab is unreachable.
  *
- *   - `media`         — ONLY with a backing AppBlock, and the discriminator is the BLOCK,
- *                       not the capability. 🔴 This is a real disagreement between the
- *                       capability table and the surface: `listingContent` is `true` for
- *                       off-site, but the standalone media editor is hosted by
- *                       `appListings.getMyListingForApp`, which takes an `appBlockId` — so
- *                       for an off-site listing there is no id to key it with. Off-site
- *                       media is edited INSIDE the details wizard (`ExternalSubmitForm`'s
- *                       asset step), which is why dropping the tab loses nothing.
- *                       Gating on `capabilities.listingContent` here would be an
- *                       UNKILLABLE clause — it is `true` on both kinds, so removing it
- *                       could never change an answer.
+ *   - `media`         — BOTH `capabilities.listingMedia` AND a backing block.
+ *                       🔴 The capability is the AUTHORITY here; the block check is the
+ *                       renderability floor. That ordering used to be reversed — this arm
+ *                       gated on block-presence ALONE, because `listingContent` was `true`
+ *                       for off-site and so could never withhold anything. That made the
+ *                       gate an incidental PROXY: it happened to correlate with the truth
+ *                       (off-site listings usually have no block) without ever expressing
+ *                       it. `listingMedia` was split out of `listingContent` so the table
+ *                       states the real constraint — the standalone media editor is hosted
+ *                       by the BLOCK-keyed `getMyListingForApp` — and this gate now reads
+ *                       it. Off-site media is still editable inside the details wizard,
+ *                       which is why withholding the TAB loses nothing today.
+ *                       Widening it is civitai/civitai#3893.
  *
- *   - `manifest`      — BOTH `capabilities.submitVersion` AND a backing block, and the two
- *                       are NOT redundant: they disagree on exactly the shape
- *                       `mapAppBlockToListing` can mint, an OFF-SITE listing that CARRIES
- *                       a block (`kind:'offsite'` + non-null `appBlockId`; 0 rows in
- *                       production, measured 2026-08-11 — see
- *                       `resolveAccessibleAppBlockIds`). For that row `submitVersion` is
- *                       `false` while a block id exists, and `blocks.getMyAppManifest`
- *                       would happily answer — so the capability is what withholds a
- *                       surface the store presents as external. They disagree in the
- *                       other direction on an on-site listing with no block yet, where the
- *                       block check is what stops a tab that has no id to render with.
+ *   - `manifest`      — BOTH `capabilities.submitVersion` AND a backing block.
+ *
+ * 🔴 NEITHER TWO-CLAUSE ARM IS REDUNDANT, and the reason is the same for both: the
+ * capability and the block-presence check disagree in OPPOSITE directions, so each clause
+ * is the sole cause of an answer somewhere and each is individually killable.
+ *
+ *   - An OFF-SITE listing that CARRIES a block — the shape `mapAppBlockToListing` can
+ *     mint (`kind:'offsite'` + non-null `appBlockId`; 0 rows in production, measured
+ *     2026-08-11, see `resolveAccessibleAppBlockIds`). A block id exists, so the block
+ *     check alone would offer BOTH tabs; `submitVersion:false` / `listingMedia:false` are
+ *     what withhold surfaces the store presents as external.
+ *   - An ON-SITE listing with NO block yet — both capabilities are `true`, so the
+ *     capability alone would offer both tabs; the block check is what stops a tab that has
+ *     no id to render with.
+ *
+ * `appListingEditorTabs.test.ts` pins one case per direction, so dropping either clause
+ * reddens exactly one of them.
  *
  *   - `collaborators` — ALWAYS. Seats are listing-keyed, so both kinds have a roster, and
  *                       `appCollaborators.list` admits the OWNER **and** an ACCEPTED
@@ -97,7 +105,7 @@ export type EditorTabContext = {
  */
 export function editorTabsFor(ctx: EditorTabContext): EditorTab[] {
   const tabs: EditorTab[] = ['details'];
-  if (ctx.appBlockId != null) tabs.push('media');
+  if (ctx.capabilities.listingMedia === true && ctx.appBlockId != null) tabs.push('media');
   if (ctx.capabilities.submitVersion === true && ctx.appBlockId != null) tabs.push('manifest');
   tabs.push('collaborators');
   return tabs;

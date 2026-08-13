@@ -95,7 +95,9 @@ export function AppCollaboratorsPanel({
         />
       }
       onRemove={(userId) => remove.mutate({ appListingId, targetUserId: userId })}
-      onSetDisplayed={(displayed) => setDisplayed.mutate({ appListingId, displayed })}
+      onSetDisplayed={(displayed, targetUserId) =>
+        setDisplayed.mutate({ appListingId, displayed, targetUserId })
+      }
       onLeave={() => leave.mutate({ appListingId })}
     />
   );

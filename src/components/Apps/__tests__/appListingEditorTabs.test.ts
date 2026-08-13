@@ -61,10 +61,16 @@ describe('editorTabsFor — kind-derived tabs, pinned both directions', () => {
    * what make each one individually killable: each disagrees with the other in exactly
    * one direction, so deleting either clause turns exactly one of them red.
    */
-  it('OFF-SITE listing that CARRIES a block: capability withholds Manifest', () => {
+  it('🔴 OFF-SITE listing that CARRIES a block: the CAPABILITY withholds Manifest AND Media', () => {
     // `mapAppBlockToListing` can mint `kind:'offsite'` WITH a non-null appBlockId. The
-    // block id exists (so a block-presence check alone would offer the tab) but the kind
-    // declares `submitVersion: false`, and the store presents the listing as external.
+    // block id exists — so a block-presence check ALONE would offer both tabs — but the
+    // kind declares `submitVersion: false` and `listingMedia: false`, and the store
+    // presents the listing as external.
+    //
+    // 🔴 THIS IS THE CASE THAT MAKES THE CAPABILITY CLAUSE KILLABLE. It is the only shape
+    // where the capability and the block-presence check disagree in this direction, so
+    // flipping `CAPABILITIES_BY_KIND.offsite.listingMedia` to `true` (what
+    // https://github.com/civitai/civitai/issues/3893 would do) reddens exactly here.
     const tabs = editorTabsFor({
       kind: 'offsite',
       appBlockId: 'ab_odd',
@@ -72,14 +78,16 @@ describe('editorTabsFor — kind-derived tabs, pinned both directions', () => {
       capabilities: offsite,
     });
     expect(tabs).not.toContain('manifest');
-    // Media keys on the BLOCK, which this row has — so it IS offered here. That is the
-    // asymmetry, spelled out: the two tabs do not share a predicate.
-    expect(tabs).toContain('media');
+    expect(tabs).not.toContain('media');
+    expect(tabs).toEqual(['details', 'collaborators']);
   });
 
-  it('ON-SITE listing with NO block yet: block-presence withholds Manifest and Media', () => {
-    // `submitVersion` is `true` for on-site (so a capability check alone would offer the
-    // tab), but there is no id to render either block-keyed surface with.
+  it('🔴 ON-SITE listing with NO block yet: BLOCK-PRESENCE withholds Manifest and Media', () => {
+    // `submitVersion` and `listingMedia` are both `true` for on-site — so a capability
+    // check ALONE would offer both tabs — but there is no id to render either block-keyed
+    // surface with. This is the case that makes the block-presence clause killable, and
+    // it is the mirror image of the off-site-with-a-block case above: the two clauses
+    // disagree in opposite directions, which is why neither is redundant.
     const tabs = editorTabsFor({
       kind: 'onsite',
       appBlockId: null,

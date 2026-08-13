@@ -147,11 +147,17 @@ describe('AppCollaboratorsPanelView — who may do what', () => {
   });
 });
 
-describe('AppCollaboratorsPanelView — the `displayed` opt-out is SELF-SERVICE', () => {
+describe('AppCollaboratorsPanelView — the `displayed` byline flag', () => {
   /**
-   * 🔴 `appCollaborators.setDisplayed` writes `userId: ctx.user.id` — it can only ever
-   * change the CALLER's own row. An owner-driven per-seat toggle does not exist as a
-   * proc, and should not: `displayed` is the named person's public-CREDIT preference.
+   * 🔴 TWO CONTROLS, TWO OWNERS OF THE DECISION, and this is a deliberate product
+   * decision rather than an emergent capability:
+   *   - every accepted collaborator controls their OWN byline (the "Your seat" switch);
+   *   - the app OWNER additionally controls EVERY seat's byline (the per-row switch).
+   *
+   * The narrower model — self-service only, owner read-only — was implemented first and
+   * explicitly overruled. It is written down here because a later reader looking at an
+   * owner who can strip a collaborator's public credit should be able to tell "decided"
+   * from "not yet noticed".
    */
   test('the toggle renders on the VIEWER’s own accepted seat', async () => {
     renderWithProviders(
@@ -168,7 +174,7 @@ describe('AppCollaboratorsPanelView — the `displayed` opt-out is SELF-SERVICE'
       .toBeInTheDocument();
   });
 
-  test('an OWNER viewing someone else’s seat gets NO toggle — only the read-only state', async () => {
+  test('an OWNER gets a PER-SEAT toggle on another collaborator’s row', async () => {
     renderWithProviders(
       <AppCollaboratorsPanelView
         role="owner"
@@ -178,10 +184,75 @@ describe('AppCollaboratorsPanelView — the `displayed` opt-out is SELF-SERVICE'
         onSetDisplayed={() => undefined}
       />
     );
+    const toggle = page.getByTestId(`apps-collaborator-row-displayed-${EDITOR_ID}`);
+    await expect.element(toggle).toBeInTheDocument();
+    // It reflects the row's CURRENT state, not a default.
+    expect((toggle.element() as HTMLInputElement).checked).toBe(false);
+  });
+
+  test('the per-seat toggle reports the ROW’s user id, not the viewer’s', async () => {
+    const calls: Array<[boolean, number | undefined]> = [];
+    renderWithProviders(
+      <AppCollaboratorsPanelView
+        role="owner"
+        capabilities={ONSITE}
+        rows={[seat({ userId: 77 }), seat({ userId: 88 })]}
+        viewerUserId={OWNER_ID}
+        onSetDisplayed={(displayed, targetUserId) => calls.push([displayed, targetUserId])}
+      />
+    );
+    const toggle = page.getByTestId('apps-collaborator-row-displayed-88');
+    await expect.element(toggle).toBeInTheDocument();
+    await userEvent.click(toggle.element());
+    // 🔴 Both operands matter: the mutant that passes the viewer's id would strip the
+    // OWNER's byline instead of the collaborator's, and would look like it worked.
+    expect(calls).toEqual([[false, 88]]);
+  });
+
+  /**
+   * 🔴 THE CASE MOST LIKELY TO BE WRONG. An accepted EDITOR holds a seat, so a gate that
+   * asks "does the viewer have a role here?" rather than "is the viewer the OWNER?"
+   * would render this control for them — and the service would then refuse it, which is
+   * the "never render an action that will 403" rule broken in the other direction.
+   */
+  test('a non-owner EDITOR gets NO per-seat toggle on a PEER’s row', async () => {
+    renderWithProviders(
+      <AppCollaboratorsPanelView
+        role="editor"
+        capabilities={ONSITE}
+        rows={[seat({ userId: EDITOR_ID }), seat({ userId: 99, displayed: false })]}
+        viewerUserId={EDITOR_ID}
+        onSetDisplayed={() => undefined}
+      />
+    );
+    // The viewer's OWN self-service switch is the commit proof, and must still be there.
     await expect
-      .element(page.getByTestId(`apps-collaborator-row-${EDITOR_ID}`))
+      .element(page.getByTestId('apps-collaborator-displayed-toggle'))
+      .toBeInTheDocument();
+    expect(page.getByTestId('apps-collaborator-row-displayed-99').elements()).toHaveLength(0);
+    // …and a peer's state is still legible, read-only.
+    await expect
+      .element(page.getByTestId('apps-collaborator-row-99'))
       .toHaveTextContent(/Hidden from the public byline/i);
-    expect(page.getByTestId('apps-collaborator-displayed-toggle').elements()).toHaveLength(0);
+  });
+
+  test('an OWNER gets NO per-seat toggle on a PENDING row — an unaccepted seat has no byline', async () => {
+    renderWithProviders(
+      <AppCollaboratorsPanelView
+        role="owner"
+        capabilities={ONSITE}
+        rows={[seat({ userId: EDITOR_ID, status: 'pending' }), seat({ userId: 55 })]}
+        viewerUserId={OWNER_ID}
+        onSetDisplayed={() => undefined}
+      />
+    );
+    // POSITIVE CONTROL beside the zero: the ACCEPTED row on the same render DOES get one.
+    await expect
+      .element(page.getByTestId('apps-collaborator-row-displayed-55'))
+      .toBeInTheDocument();
+    expect(
+      page.getByTestId(`apps-collaborator-row-displayed-${EDITOR_ID}`).elements()
+    ).toHaveLength(0);
   });
 
   test('a PENDING own row gets NO toggle and NO leave — a pending seat is inert', async () => {
@@ -205,20 +276,23 @@ describe('AppCollaboratorsPanelView — the `displayed` opt-out is SELF-SERVICE'
   });
 
   test('toggling reports the NEW checked value', async () => {
-    const calls: boolean[] = [];
+    const calls: Array<[boolean, number | undefined]> = [];
     renderWithProviders(
       <AppCollaboratorsPanelView
         role="editor"
         capabilities={ONSITE}
         rows={[seat({ userId: EDITOR_ID, displayed: true })]}
         viewerUserId={EDITOR_ID}
-        onSetDisplayed={(v) => calls.push(v)}
+        onSetDisplayed={(v, t) => calls.push([v, t])}
       />
     );
     const toggle = page.getByTestId('apps-collaborator-displayed-toggle');
     await expect.element(toggle).toBeInTheDocument();
     await userEvent.click(toggle.element());
-    expect(calls).toEqual([false]);
+    // 🔴 NO target id on the self path — that absence is what selects the service's
+    // self-service branch, so a mutant that always sends the viewer's id would route a
+    // plain collaborator through the OWNER gate and 403 them off their own byline.
+    expect(calls).toEqual([[false, undefined]]);
   });
 });
 

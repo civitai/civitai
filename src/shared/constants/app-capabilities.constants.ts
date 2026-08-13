@@ -21,8 +21,31 @@ export type ListingKind = 'onsite' | 'offsite';
 export type AppRole = 'owner' | 'editor';
 
 export type ListingCapability =
-  /** Listing content + media (name/tagline/description/icon/cover/screenshots). */
+  /**
+   * Listing SCALARS — name / tagline / description / category / external URL. Edited
+   * through the LISTING-keyed, seat-aware `getMyListingForEdit` + `updateListing`, which
+   * work identically for both kinds.
+   */
   | 'listingContent'
+  /**
+   * The standalone listing-MEDIA editor surface (icon / cover / screenshots).
+   *
+   * 🔴 SPLIT OUT OF `listingContent`, and the split is the honest half of a distinction
+   * the table used to paper over. An off-site listing CAN hold and edit assets — the
+   * submit/edit wizard does exactly that, and the asset procs themselves
+   * (`setIcon`/`setCover`/`addScreenshot`/…) are already listing-keyed and seat-aware.
+   * What it cannot do is open the STANDALONE editor, because that surface is hosted by
+   * `appListings.getMyListingForApp`, whose input is an `appBlockId` — and an off-site
+   * listing has no AppBlock to name.
+   *
+   * So this cell is a statement about the SURFACE, not about the data model, and unlike
+   * `earnings` / `submitVersion` it is NOT structural — it is plumbing that has not been
+   * re-keyed yet. Tracked by https://github.com/civitai/civitai/issues/3893, whose fix is
+   * precisely "flip this cell to true". Until then, a table that claimed off-site media
+   * worked would be a permission table asserting more than holds, which is the exact
+   * defect class this feature keeps finding.
+   */
+  | 'listingMedia'
   /** Submit the listing for moderator review (`AppListingPublishRequest` + changelog). */
   | 'submitForReview'
   /** Listing analytics (`AppListingMetric` connect/visit, app views). */
@@ -33,17 +56,23 @@ export type ListingCapability =
   | 'submitVersion';
 
 /**
- * 🔴 THE CAPABILITY TABLE, and the two `false` cells are STRUCTURAL, not policy:
+ * 🔴 THE CAPABILITY TABLE. Three `false` cells for off-site, and they are NOT all the
+ * same kind of claim — read the distinction before changing one:
  *
- *   - `earnings` — `BlockBuzzAttribution` is keyed on `appBlockId` + a snapshotted
- *     `appOwnerUserId`. An off-site listing has no AppBlock, so there is no row that
- *     could ever be attributed to it. Returning a zeroed summary would be a lie
+ *   - `earnings` — STRUCTURAL. `BlockBuzzAttribution` is keyed on `appBlockId` + a
+ *     snapshotted `appOwnerUserId`. An off-site listing has no AppBlock, so there is no
+ *     row that could ever be attributed to it. Returning a zeroed summary would be a lie
  *     indistinguishable from "earned nothing"; the read refuses instead.
- *   - `submitVersion` — an off-site listing has no bundle and no Forgejo repo. There
- *     is nothing to push to and no credential to mint.
+ *   - `submitVersion` — STRUCTURAL. An off-site listing has no bundle and no Forgejo
+ *     repo. There is nothing to push to and no credential to mint.
+ *   - `listingMedia` — 🔴 NOT structural: PLUMBING. The data supports it; the surface's
+ *     host resolver (`getMyListingForApp`) is block-keyed and has not been re-keyed yet.
+ *     See its doc above and https://github.com/civitai/civitai/issues/3893. Flipping this
+ *     cell is a real change with a real fix behind it, unlike the two above, which cannot
+ *     be flipped without changing the schema.
  *
  * Everything else is identical across kinds, because an off-site listing carries the
- * same content, the same review flow (`AppListingPublishRequest`) and the same metric
+ * same scalars, the same review flow (`AppListingPublishRequest`) and the same metric
  * rows as an on-site one.
  */
 export const CAPABILITIES_BY_KIND: Readonly<
@@ -51,6 +80,7 @@ export const CAPABILITIES_BY_KIND: Readonly<
 > = Object.freeze({
   onsite: Object.freeze({
     listingContent: true,
+    listingMedia: true,
     submitForReview: true,
     analytics: true,
     earnings: true,
@@ -58,6 +88,9 @@ export const CAPABILITIES_BY_KIND: Readonly<
   }),
   offsite: Object.freeze({
     listingContent: true,
+    // The standalone media editor is hosted by the BLOCK-keyed `getMyListingForApp`.
+    // Plumbing, not schema — civitai/civitai#3893 is the work that flips this.
+    listingMedia: false,
     submitForReview: true,
     analytics: true,
     // Block-scoped money. No AppBlock ⇒ no attribution rows can exist.

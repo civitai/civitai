@@ -57,7 +57,15 @@ export type AppCollaboratorsPanelViewProps = {
   /** The invite picker. Injected so the View carries no search-stack dependency. */
   userPicker?: ReactNode;
   onRemove?: (userId: number) => void;
-  onSetDisplayed?: (displayed: boolean) => void;
+  /**
+   * Set a seat's public-byline flag.
+   *
+   * 🔴 `targetUserId` is OMITTED on the SELF path and PRESENT on the owner path, and that
+   * absence is load-bearing rather than an ergonomic: the proc selects its self-service
+   * branch on exactly that, so always sending the viewer's id would route a plain
+   * collaborator through the OWNER gate and 403 them off their own byline.
+   */
+  onSetDisplayed?: (displayed: boolean, targetUserId?: number) => void;
   onLeave?: () => void;
   busy?: boolean;
   /** Identity renderer. Defaults to a plain id label so the View needs no data layer. */
@@ -187,15 +195,36 @@ export function AppCollaboratorsPanelView({
                   <Group gap="sm">
                     {identity(row.userId)}
                     {statusBadge(row.status)}
-                    {/* Public-byline STATE is shown to everyone who can read the roster;
-                        only its owner may change it (see the switch below). */}
-                    {row.status === 'accepted' && !row.displayed ? (
+                    {/* Public-byline STATE, read-only. Shown to anyone who can read the
+                        roster but has no control over this row — an OWNER gets the switch
+                        instead (below), so the two never render together and the state is
+                        stated exactly once. */}
+                    {row.status === 'accepted' && !row.displayed && !isOwner ? (
                       <Badge color="gray" variant="outline">
                         Hidden from the public byline
                       </Badge>
                     ) : null}
                   </Group>
                   <Group gap="xs">
+                    {/* 🔴 OWNER CONTROL OVER SOMEONE ELSE'S BYLINE — a deliberate product
+                        decision (see the describe block in the browser test and the
+                        service header). ACCEPTED rows only: nobody, owner included, may
+                        pre-arrange public credit for an invitation not yet taken, and the
+                        service's `status: ACCEPTED` guard would refuse it anyway — so
+                        rendering it on a pending row would be an action that 403s. */}
+                    {isOwner && onSetDisplayed && row.status === 'accepted' ? (
+                      <Switch
+                        size="xs"
+                        labelPosition="left"
+                        label="Public byline"
+                        checked={row.displayed}
+                        disabled={busy}
+                        data-testid={`apps-collaborator-row-displayed-${row.userId}`}
+                        onChange={(event) =>
+                          onSetDisplayed(event.currentTarget.checked, row.userId)
+                        }
+                      />
+                    ) : null}
                     {isOwner && onRemove ? (
                       <Button
                         size="xs"
@@ -216,13 +245,13 @@ export function AppCollaboratorsPanelView({
         )}
       </Stack>
 
-      {/* 🔴 SELF-SERVICE ONLY, and this is a deliberate divergence from "a per-seat toggle
-          on the owner's roster". `appCollaborators.setDisplayed` writes
-          `userId: ctx.user.id` — it can only ever change the CALLER's own row, and that is
-          the correct model: `displayed` is a public-CREDIT preference belonging to the
-          person named, not a capability the owner administers. An owner-driven toggle
-          would let an app owner strip (or force) a collaborator's public credit, and
-          would need a new proc to exist at all. The owner sees the state, read-only. */}
+      {/* 🔴 THE SELF-SERVICE HALF, which the owner control ADDS TO rather than replaces:
+          every accepted collaborator always controls their own byline, whoever else can
+          also reach it. It calls `onSetDisplayed` with NO target id — that absence is what
+          selects the proc's self path, so a collaborator who is not the owner is never
+          routed through the owner gate on their own row. Last writer wins between the two
+          controls; see the service header for why there is deliberately no precedence
+          rule. */}
       {ownAcceptedSeat && onSetDisplayed ? (
         <Stack gap="xs">
           <Title order={5}>Your seat</Title>
