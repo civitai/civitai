@@ -83,16 +83,18 @@ type SubNavLink = {
  * `app-blocks-author=false`) would click a tab straight into a 404. The tab now
  * keys off the SAME predicate the page's `getServerSideProps` does.
  *
- * ⚠️ KNOWN, PRE-EXISTING, DELIBERATELY NOT FIXED HERE: `/apps/submit`'s CLIENT
- * BODY carries an EXTRA `if (!features?.appBlocks) return <NotFound />` that its
- * own SSR gate does NOT. While the container gated on `appBlocks`, this tab could
- * only render when that flag was already true, so the extra check was unreachable.
- * With the container now on the shared STORE predicate it becomes reachable for the
- * cohort {`appListings` yes, `appBlocks` no, author} — empty today — who would SSR
- * into the page and then hit a client-side 404. The outlier is submit.tsx's body,
- * not this tab: re-inlining `appBlocks` here would re-create the very drift this
- * change removes, and whether authoring requires the block runtime is a product
- * decision. Left to a follow-up.
+ * ⚠️ KNOWN, PRE-EXISTING, DELIBERATELY NOT FIXED HERE — tracked in issue #3906:
+ * `/apps/submit`'s CLIENT BODY carries an EXTRA
+ * `if (!features?.appBlocks) return <NotFound />` (submit.tsx:68) that its own SSR
+ * gate does NOT. That check was always reachable by DIRECT navigation (a bookmark,
+ * a pasted link, the `?edit=` deep link from my-submissions); what the old
+ * `appBlocks` gate on this container prevented was reaching it *via this tab*.
+ * Now that the container is on the shared STORE predicate, the tab is one more
+ * route into it for the cohort {`appListings` yes, `appBlocks` no, author} — empty
+ * today, since `app-blocks-author` is a strict subset of `app-blocks-enabled`.
+ * The outlier is submit.tsx's body, not this tab: re-inlining `appBlocks` here
+ * would re-create the very drift this change removes, and whether authoring
+ * requires the block runtime is a product decision. See #3906.
  *
  * With "Create" conditional the bar can collapse to a single entry, so
  * {@link AppsSubNavView} hides itself entirely below two tabs — a one-tab

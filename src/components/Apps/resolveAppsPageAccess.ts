@@ -27,12 +27,15 @@
  *     (mods-only today). (`deIndex` is kept ON in the page <Meta> so the page is
  *     not crawlable pre-launch.)
  */
-import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
+import { hasAppsStoreAccess, type AppsStoreFeatureFlags } from '~/shared/utils/app-blocks-access';
 
 export type AppsPageAccessResult = { notFound: true } | { props: Record<string, never> };
 
 export function resolveAppsPageAccess(args: {
-  features?: { appBlocks?: boolean; appListings?: boolean } | null;
+  // The SHARED flag type, derived from `FeatureAccess` — so renaming/removing
+  // `appListings` at GA breaks HERE at compile time rather than silently
+  // degrading this gate to `appBlocks`-only.
+  features?: AppsStoreFeatureFlags;
 }): AppsPageAccessResult {
   // Store-visibility gate FIRST and ONLY. No session check — the dark anon path
   // renders behind the flag. The predicate is SHARED (`hasAppsStoreAccess`) with

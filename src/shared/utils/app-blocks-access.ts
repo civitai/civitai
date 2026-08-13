@@ -1,3 +1,5 @@
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
+
 /**
  * App Blocks — developer-surface access gate.
  *
@@ -55,9 +57,22 @@ export function isAppDeveloper(
  * (`ctx.features` on the SSR side, `useFeatureFlags()` on the client). Optional
  * + nullable so a Flipt-down / not-yet-created flag and an absent `features`
  * object both flow in without a cast.
+ *
+ * 🔴 DERIVED FROM `FeatureAccess`, NOT hand-written — this is load-bearing, and a
+ * hand-written `{ appBlocks?: boolean; appListings?: boolean }` was measurably
+ * worse. Under the structural version, dropping or renaming `appListings` in
+ * `feature-flags.service.ts` would make the OLD open-coded `features.appListings`
+ * reads fail with `TS2339`, but `hasAppsStoreAccess(features)` would keep
+ * compiling — silently degrading every store surface to `appBlocks`-only. That
+ * rename is not hypothetical: it is exactly the documented "drop the OR-fallback
+ * once `app-listings` is the sole source of truth" step at GA. Keying off
+ * `FeatureAccess` turns that silent degradation into a compile error here.
+ *
+ * The import is TYPE-ONLY, so nothing from the server module reaches a runtime
+ * bundle (the established pattern — see `src/shared/data-graph/generation/context.ts`).
  */
 export type AppsStoreFeatureFlags =
-  | { appBlocks?: boolean; appListings?: boolean }
+  | Partial<Pick<FeatureAccess, 'appBlocks' | 'appListings'>>
   | null
   | undefined;
 
@@ -70,9 +85,14 @@ export type AppsStoreFeatureFlags =
  * the related-listings rail, and the `/apps/*` sub-nav — routes through THIS
  * predicate. Do NOT re-inline `features.appListings || features.appBlocks`; the
  * gates drifting apart is exactly what this function exists to prevent, and it
- * had already happened once: `AppsSubNav` gated on `appBlocks` ALONE while the
- * canonical resolver ORed both, so an `app-listings`-only cohort would have
- * loaded `/apps` with no sub-navigation at all.
+ * had already happened once: of the SIX store-visibility sites, five spelled the
+ * OR out and the sixth — `AppsSubNav` — spelled only half of it (`appBlocks`
+ * alone), so an `app-listings`-only cohort would have loaded `/apps` with no
+ * sub-navigation at all.
+ *
+ * ENFORCED, not merely requested: `components/Apps/__tests__/appsStoreAccessCallSites.test.ts`
+ * pins the exact ledger of the six sites and fails if one is added, reverted, or
+ * re-inlines the boolean. Adding a store surface means adding it to that ledger.
  *
  * ## Why an OR, and which flag is which
  *

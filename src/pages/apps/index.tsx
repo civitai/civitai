@@ -36,7 +36,8 @@ export default function AppsPage() {
           `AppListing` record (both on-site App Blocks AND off-site OAuth apps)
           via `AppListingsMarketplaceBody` (the P2a `appListings.listAvailable`
           read path). Still dark/mod-only — the page gate is UNCHANGED
-          (`resolveAppsPageAccess` → `features.appBlocks` Flipt mod segment,
+          (`resolveAppsPageAccess` → the shared `hasAppsStoreAccess` predicate,
+          i.e. `appListings || appBlocks`, both mod-segmented in Flipt today;
           `deIndex`), this only swaps WHICH grid renders.
 
           ROLLBACK = one-line revert: the legacy AppBlock path
