@@ -20,6 +20,7 @@ import {
   licensingFeeRatioSchema,
 } from '$lib/server/monetization/licensing-fee';
 import { bustVersionCache } from '$lib/server/monetization/bust-cache';
+import { bulkPaidAccessSchema } from '$lib/server/monetization/paid-access-schema';
 import {
   setPaidAccessConfig,
   paidAccessFormSchema,
@@ -66,26 +67,6 @@ const versionIdsSchema = z
       .filter((n) => Number.isInteger(n) && n > 0)
   )
   .refine((ids) => ids.length > 0, 'Select at least one version.');
-const bulkPaidAccessSchema = z
-  .object({
-    accessPrice: requiredBuzzField(MIN_ACCESS_PRICE, 'Enter a price for access.'),
-    generationPrice: optionalBuzzField(MIN_GENERATION_PRICE),
-    freePreviewGenerations: freePreviewsField(),
-    // Without this the shared form's "Free for everyone" choice is silently dropped and the version
-    // gets a PRICED generation tier with a zero trial limit — the opposite of what was picked.
-    freeGeneration: checkbox,
-    acceptsBlueBuzz: checkbox,
-    // Same reason as the per-version schema: without the chosen mode, "a cheaper generation-only price"
-    // with an empty box is indistinguishable from "same as the access price", and lands as a generation
-    // tier charged at the download price. In bulk that mis-prices every selected version at once.
-    genMode: z.enum(['bundled', 'separate', 'free']).optional(),
-  })
-  .refine((v) => v.generationPrice == null || v.generationPrice <= v.accessPrice, {
-    message: 'Generation-only price cannot be greater than the access price.',
-  })
-  .refine((v) => v.genMode !== 'separate' || v.generationPrice != null, {
-    message: 'Enter a generation-only price, or choose "Same as the access price".',
-  });
 const modelsQuerySchema = z.object({
   q: z.string().optional(),
   fee: z.enum(['set', 'off']).optional().catch(undefined),
@@ -250,6 +231,7 @@ export const actions: Actions = {
       freePreviewGenerations: form.get('freePreviewGenerations'),
       freeGeneration: form.get('freeGeneration'),
       acceptsBlueBuzz: form.get('acceptsBlueBuzz'),
+      genMode: form.get('genMode'),
     });
     if (!pricing.success) return fail(400, { paidAccess: true, error: firstError(pricing.error) });
 
