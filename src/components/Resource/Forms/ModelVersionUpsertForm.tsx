@@ -410,10 +410,11 @@ export function ModelVersionUpsertForm({
   const currentLicensingFee = form.watch('licensingFee') ?? 0;
   const existingSettlementCurrency = version?.licensingFeeSettlementCurrency ?? null;
   const hasExistingLicensingFee = Number(version?.licensingFee ?? 0) > 0;
-  // A model depicting a real person can't earn at all — not a gate, not a per-generation fee. Every
+  // Two reasons a version can't earn anything at all — not a gate, not a per-generation fee. Every
   // control goes and the section explains itself, rather than leaving editable inputs whose values the
   // submit would drop. Private models keep their fee editor; only the gate is theirs to lose.
-  const monetizationBlocked = !!model?.poi;
+  const monetizationBlockedReason = model?.poi ? 'poi' : isNonCommercial ? 'nonCommercial' : null;
+  const monetizationBlocked = !!monetizationBlockedReason;
   // What the submit actually sends, so the warnings and the affirmation gate read the same value the
   // payload carries instead of the untouched form state.
   const submittedFee = monetizationBlocked ? 0 : currentLicensingFee ?? 0;
@@ -480,7 +481,6 @@ export function ModelVersionUpsertForm({
   const storedAccessPrice = storedTerms?.download?.price ?? storedPaidGen?.price ?? 0;
   const showLicensingFeeBlock =
     !monetizationBlocked &&
-    !isNonCommercial &&
     (!!features.licensingFee ||
       hasExistingLicensingFee ||
       existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash);
@@ -492,7 +492,8 @@ export function ModelVersionUpsertForm({
   // (`showPaidAccessInput`, which has further reasons of its own) and the submitted gate, because hiding
   // alone leaves the stored config intact (`shouldUnregister: false`) and resubmits a gate the creator can
   // neither see nor clear — which is what POI did.
-  const gateSuppressed = model?.availability === Availability.Private || !!model?.poi;
+  const gateSuppressed =
+    model?.availability === Availability.Private || !!model?.poi || isNonCommercial;
 
   // Asked once per version, the first time it earns anything — a version already on record keeps its
   // affirmation, so editing a price later doesn't ask again.
@@ -945,8 +946,7 @@ export function ModelVersionUpsertForm({
   // substitutes null (suppressed model, ungatable usage control) or an effect already cleared the config
   // (non-commercial base model). Nothing to offer them, so say why instead. Anything reachable here
   // without an arm below reads as the reversible early-access loss, which is the wrong sentence.
-  const gateRemovalIsStructural =
-    removingStoredGate && (gateSuppressed || !paidAccessUsageOk || isNonCommercial);
+  const gateRemovalIsStructural = removingStoredGate && (gateSuppressed || !paidAccessUsageOk);
   // Whether the control each sentence is about is actually on screen (see the colour rule below).
   const removalControlsVisible =
     (!removingStoredFee || (showChargeSettings && showLicensingFeeBlock)) &&
@@ -1277,11 +1277,17 @@ export function ModelVersionUpsertForm({
                   <Alert
                     color="red"
                     icon={<IconAlertTriangle size={18} />}
-                    title="Models depicting a real person can't be monetized"
+                    title={
+                      monetizationBlockedReason === 'poi'
+                        ? "Models depicting a real person can't be monetized"
+                        : 'This base model is licensed for non-commercial use'
+                    }
                   >
                     <Text size="sm">
-                      Paid access and per-generation license fees are both unavailable for this
-                      model.
+                      Paid access and per-generation license fees are both unavailable for this{' '}
+                      {monetizationBlockedReason === 'poi' ? 'model' : 'base model'}.
+                      {monetizationBlockedReason === 'nonCommercial' &&
+                        ' Switch back to a commercial base model to restore them.'}
                     </Text>
                     {removingStoredCharge && (
                       <Text size="xs" mt={4}>
@@ -1327,10 +1333,6 @@ export function ModelVersionUpsertForm({
                         <Text size="xs" c="red">
                           {isPrivateModel
                             ? "A private model can't have paid access, so this can't be kept."
-                            : model?.poi
-                            ? "A model depicting a real person can't have paid access, so this can't be kept."
-                            : isNonCommercial
-                            ? "This base model is licensed for non-commercial use, so this can't be kept. Switch back to a commercial base model to restore it."
                             : "This version's usage control can't be gated, so this can't be kept."}
                         </Text>
                       ) : (
@@ -1341,9 +1343,9 @@ export function ModelVersionUpsertForm({
                       ))}
                     {/* No affordance for a removal the creator cannot prevent: the submit substitutes
                         null for these regardless, so restoring would clear nothing and read as broken.
-                        A non-commercial base model rejects BOTH charges server-side, and its fee editor is
-                        unmounted — restoring there re-applies a fee nobody can see to a save that fails. */}
-                    {!isNonCommercial && (removingStoredFee || !gateRemovalIsStructural) && (
+                        The fully-blocked reasons (POI, non-commercial) never reach here — they render the
+                        alert above instead, which has no controls to restore into. */}
+                    {(removingStoredFee || !gateRemovalIsStructural) && (
                       <Anchor
                         component="button"
                         type="button"

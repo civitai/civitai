@@ -465,48 +465,78 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
   // That also made this case reachable for the first time — a non-commercial base model clears the gate
   // through an effect rather than at submit — and a removal with no arm of its own falls through to the
   // reversible early-access wording, offering a Restore that puts back a config the server rejects.
-  test('a non-commercial base model says why the gate goes, and offers no restore', async () => {
+  test('a non-commercial base model blocks monetization on load, and un-blocks on switching back', async () => {
     flags.current = { licensingFee: true, earlyAccessModel: true };
     renderWithProviders(
       <ModelVersionUpsertForm
         model={model}
-        // `chargingVersion` as-is: it carries a licensing fee AND a gate, which is the shape that
-        // exercises the Restore link — `removingStoredFee` is a left-hand OR in its condition, so a
-        // fee-free fixture would pass while the affordance still rendered.
-        version={chargingVersion}
+        // Loaded already on the non-commercial base model: the clearing effect is keyed to the value
+        // CHANGING, so on-load it never fires and the stored charges used to ride through to a save the
+        // server then rejected, with nothing on screen having predicted it.
+        version={
+          { ...(chargingVersion as object), baseModel: 'Ideogram 4.0' } as React.ComponentProps<
+            typeof ModelVersionUpsertForm
+          >['version']
+        }
         onSubmit={vi.fn()}
       >
         {() => <button type="submit">Save</button>}
       </ModelVersionUpsertForm>
     );
 
-    // Switched in-session, not loaded that way: the clearing effect is keyed to the base model CHANGING,
-    // which is what empties the config behind the unmounted editor and makes this removal reachable.
-    await expect.element(accessSwitch()).toBeChecked();
-    await userEvent.click(page.getByRole('textbox', { name: 'Base Model' }));
-    await userEvent.click(page.getByRole('option', { name: 'Ideogram 4.0' }));
-
-    // Anchor on the line that arrives either way, then read the reason synchronously: on a revert the
-    // reason is simply the wrong sentence, and waiting for the right one would spend the full matcher
-    // timeout only to report that some text never appeared.
-    await expect
-      .element(page.getByText(/Saving now removes this version's license fee and paid access/))
-      .toBeInTheDocument();
+    // Anchor on the card, then read the alert synchronously: both are in the same render, and a revert
+    // still renders the card — so this fails in about a second naming the missing alert, instead of
+    // spending the full matcher timeout on text that is never coming.
+    await expect.element(page.getByText('Monetization')).toBeInTheDocument();
     expect(
       page.getByText(/This base model is licensed for non-commercial use/).elements()
     ).toHaveLength(1);
-    // The wrong sentence for this removal: nothing here is about early access ending.
-    expect(page.getByText(/your payment for early access will be lost/).elements()).toHaveLength(0);
-    // The way back is the picker, not a link, and the sentence has to say so — unlike POI and private,
-    // this removal is reversible.
     expect(
-      page.getByText(/Switch back to a commercial base model to restore it/).elements()
+      page.getByText(/Saving now removes this version's license fee and paid access/).elements()
     ).toHaveLength(1);
-    // And no restore: it would re-apply a fee and a gate the server rejects for this base model — the
-    // fee behind an editor that is unmounted for non-commercial base models, which is the hidden charge
-    // the disclosure work exists to prevent.
+    expect(chargeSwitch().elements()).toHaveLength(0);
+    expect(accessSwitch().elements()).toHaveLength(0);
+
+    await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const payload = mutateAsync.mock.calls[0][0] as { paidAccess?: unknown; licensingFee?: number };
+    expect(payload.paidAccess).toBeNull();
+    expect(payload.licensingFee).toBe(0);
+  });
+
+  // Unlike POI, this block is the creator's to undo — the copy says so, and the controls have to actually
+  // come back or that sentence is a lie.
+  test('switching off a non-commercial base model brings the charge controls back', async () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={model}
+        version={
+          { ...(chargingVersion as object), baseModel: 'Ideogram 4.0' } as React.ComponentProps<
+            typeof ModelVersionUpsertForm
+          >['version']
+        }
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    // Anchor on the card, then read the alert synchronously: both are in the same render, and a revert
+    // still renders the card — so this fails in about a second naming the missing alert, instead of
+    // spending the full matcher timeout on text that is never coming.
+    await expect.element(page.getByText('Monetization')).toBeInTheDocument();
     expect(
-      page.getByRole('button', { name: 'Restore the stored settings' }).elements()
+      page.getByText(/This base model is licensed for non-commercial use/).elements()
+    ).toHaveLength(1);
+
+    await userEvent.click(page.getByRole('textbox', { name: 'Base Model' }));
+    await userEvent.click(page.getByRole('option', { name: 'SDXL 1.0' }));
+
+    await expect.element(chargeSwitch()).toBeInTheDocument();
+    expect(
+      page.getByText(/This base model is licensed for non-commercial use/).elements()
     ).toHaveLength(0);
   });
 
