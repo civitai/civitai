@@ -17,10 +17,10 @@ import { KNOB_OFFSET, rotate } from '~/components/Sticker/draft-gesture';
 import {
   candidateDistance,
   flippedButtonOffset,
+  panelBandFor,
   panelsFitInsideEdges,
   placeButtonBoxes,
   shouldFlipPlaceButton,
-  STICKER_PANEL_BAND_PX,
 } from '~/components/Sticker/place-button-position';
 import { payoutCopy } from '~/components/Sticker/payout-copy';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
@@ -126,9 +126,9 @@ export function DraftSticker({
 
   // Both the tray and the carousel's clipped viewport can swallow the button, so
   // it moves above the sticker when that is the better of the two positions.
-  // `panelsInside` rides along because it is decided from the same measurement
-  // and changes with it: the panels sit against the sticker's edges while there
-  // is room for them there, and move outside the corners when there is not.
+  // `panelsInside` rides along because it is decided from the same measurement:
+  // the panels sit against the sticker's edges while there is room for them
+  // there, and a narrower draft hands its controls to the buy cluster instead.
   const [{ flipped, flippedOffset, panelsInside }, setPosition] = useState({
     flipped: false,
     flippedOffset: 0,
@@ -166,8 +166,10 @@ export function DraftSticker({
       knobOffset: KNOB_OFFSET,
       gap: BUY_BUTTON_GAP,
       // The panels are the other thing above the sticker, and the only one that
-      // does not scale with it.
-      panelBand: STICKER_PANEL_BAND_PX,
+      // does not scale with it — and on a narrow draft they are not drawn at
+      // all, so there is nothing there to clear. Clearing a band that is not
+      // there only costs the button a flip it could have taken.
+      panelBand: panelBandFor(width),
     });
     // From the button's own measured rect, both times: the pair that comes out
     // is the same whichever side the button is currently on, which is what stops
@@ -258,9 +260,14 @@ export function DraftSticker({
   // The cheap half, and the only one a gesture reaches: rect and offset reads,
   // no style recalc. Which ancestor clips is a property of the tree, not of the
   // sticker's own transform, so none of these deps can change it.
+  //
+  // `panelsInside` is in here because it moves the controls between the panels
+  // and the cluster, which changes the cluster's height — an input to the flip
+  // decision. The ResizeObserver would catch it a beat later; this measures on
+  // the same commit that moved them.
   useLayoutEffect(() => {
     measure();
-  }, [measure, draft.x, draft.y, draft.scale, draft.rotation, flipped]);
+  }, [measure, draft.x, draft.y, draft.scale, draft.rotation, flipped, panelsInside]);
 
   const begin =
     (mode: Gesture['mode'], corner?: { sx: number; sy: number }) => (event: React.PointerEvent) => {
@@ -503,7 +510,7 @@ export function DraftSticker({
           these are a fixed band, so on a small sticker all three converge: the
           knob ends up under a panel and DELETE lands on opacity, because it
           paints later. Narrow drafts hand their controls to the buy cluster
-          instead — see `controlRow` below. */}
+          instead — the `!panelsInside` row inside `buttonRef` below. */}
       {panelsInside && (
         <>
           <div

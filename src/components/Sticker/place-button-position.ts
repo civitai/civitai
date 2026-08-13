@@ -29,9 +29,12 @@ export const STICKER_PANEL_BAND_PX = 36;
  *
  * The knob is centred on the top edge and 16px wide, so it spans
  * `[w/2 - 8, w/2 + 8]`; the left panel (two icons) reaches 54px in from the left
- * edge. Clear of each other needs `w/2 - 8 >= 54`. Below this, the panels go
- * outside the corners instead — where they can reach neither the knob nor each
- * other, whatever the sticker's size.
+ * edge. Clear of each other needs `w/2 - 8 >= 54`. Below this there are no
+ * panels above the sticker at all: the draft's controls move into the buy
+ * cluster, which measures its own position against the tray and the clipping
+ * ancestor. Anchoring them to a small sticker's box fails in both directions —
+ * inside it they reach past each other and the knob, outside it they hang off
+ * the sticker and are clipped away near the edges of the image.
  */
 export const STICKER_PANEL_MIN_WIDTH_PX = 124;
 
@@ -47,6 +50,10 @@ export const STICKER_PANEL_MIN_WIDTH_PX = 124;
  */
 export const panelsFitInsideEdges = (stickerWidth: number) =>
   stickerWidth >= STICKER_PANEL_MIN_WIDTH_PX;
+
+/** The band to clear, which is nothing at all when no panels are drawn. */
+export const panelBandFor = (stickerWidth: number) =>
+  panelsFitInsideEdges(stickerWidth) ? STICKER_PANEL_BAND_PX : 0;
 
 /**
  * How far above the sticker the flipped button sits.

@@ -3,6 +3,7 @@ import type { Box } from '~/components/Sticker/place-button-position';
 import {
   candidateDistance,
   flippedButtonOffset,
+  panelBandFor,
   panelsFitInsideEdges,
   placeButtonBoxes,
   shouldFlipPlaceButton,
@@ -129,6 +130,14 @@ describe('panelsFitInsideEdges', () => {
   it('allows it at the sizes the flush layout was designed for', () => {
     expect(panelsFitInsideEdges(144)).toBe(true);
     expect(panelsFitInsideEdges(400)).toBe(true);
+  });
+
+  // The band exists only where the panels do. Clearing one that is not there is
+  // not harmful in itself, but it shrinks the flipped candidate box and so makes
+  // the button decline a flip it could have taken.
+  it('reports no band to clear where no panels are drawn', () => {
+    expect(panelBandFor(51)).toBe(0);
+    expect(panelBandFor(144)).toBe(STICKER_PANEL_BAND_PX);
   });
 });
 
