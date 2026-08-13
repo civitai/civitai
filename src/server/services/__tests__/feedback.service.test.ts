@@ -150,7 +150,7 @@ describe('createFeedback rate limit', () => {
       await createFeedback(input);
 
       expect(logToAxiomMock).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'feedback-rate-limit-degraded' })
+        expect.objectContaining({ type: 'warning', name: 'feedback-rate-limit-degraded' })
       );
     });
 

@@ -69,7 +69,12 @@ describe('buildFeedSnapshot', () => {
   it('carries the filters that fetched these pages', () => {
     const snapshot = buildFeedSnapshot([{ source: 'bitdex' }], filters, 1);
 
-    expect(snapshot).toMatchObject({ sort: 'Newest', period: 'Day', pagesLoaded: 1 });
+    expect(snapshot).toMatchObject({
+      sort: 'Newest',
+      period: 'Day',
+      pagesLoaded: 1,
+      browsingLevel: 1,
+    });
   });
 
   // Run-length encoding only compresses RUNS, and per-page fallback means an

@@ -135,8 +135,9 @@ export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesIn
   };
 };
 
-/** A page that reported no backend. Both branches name themselves now, so this is
- * an index page that returned nothing — i.e. the end of a feed — not a DB page. */
+/** A page that reported no backend. Both branches name themselves now, so this can
+ * only be an index page that returned nothing: the end of a feed, or a blocked-tag
+ * query zeroed at page one. Never a DB page, which reports 'db'. */
 export const FEED_SOURCE_NONE = 'none';
 
 /** Which backend served each loaded page, as emitted by the server. */

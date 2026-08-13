@@ -223,10 +223,9 @@ export function ImagesInfiniteContent({
       {showFeedbackPrompt && (
         <FeedbackPrompt
           area="bitdex-image-feed"
-          // `hidden` is not implemented on the index path at all, so a BitDex-served
-          // "Your Hidden Images" is the ordinary feed under the wrong title —
-          // already broken for an unrelated reason, and every report would be
-          // misattributed to BitDex.
+          // Excluded while the index path ignores `hidden`: a BitDex-served hidden
+          // view is the ordinary feed under the wrong title, so reports about it
+          // would be misattributed.
           active={feedSnapshot.source === 'bitdex' && !filters.hidden}
           notice="We're testing a new system behind this feed. If anything looks off, tell us."
           placeholder="What looked wrong? Missing images, odd ordering, repeats, anything."
