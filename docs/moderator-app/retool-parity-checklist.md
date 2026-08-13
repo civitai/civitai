@@ -944,8 +944,18 @@ that reporter to that build.
       `queue-thresholds.ts` already carries Retool's own `articleTask` and `bountyTask` scales, recovered
       from the export — which is independent evidence Retool ran both, so these are parity, not additions.
       Same for `modelTask` and `trainingData`, which are also scales with no queue behind them.
-- [ ] **The three queues from `civitai.red/moderator/minor-hash-matches`.** Nothing in the app matches
-      `minorHash` / `minor-hash` — not started.
+- [ ] 🚧 **The three queues from `civitai.red/moderator/minor-hash-matches`** — **blocked on a main-app
+      count endpoint, deliberately.** The three are *Pending review* (`getMinorHashMatchesForReview`),
+      *Auto-flagged* (`getAutoFlaggedMinorModels`) and *Appeals* (`getMinorFlagAppealsForReview`).
+      **Do not reimplement these predicates in the spoke.** They are not simple counts: each is a CTE
+      query carrying tuned exclusions — `minorHashDismissed`, `notMinorHashClearedPredicate`,
+      `humanConfirmedPredicate`, `MINOR_HASH_ACCEPTED_KEY`, a review-window cutoff — and a *drifted copy*
+      of a minor-safety queue is worse than no copy, because it would read as authoritative while
+      disagreeing with the page that actually works the rows.
+      The models queue above sets the pattern that fits: surface the count, link out to the page that
+      already works them. That needs the count exposed once from the main app (the procedures are
+      `moderatorProcedure`-gated tRPC, so the spoke cannot call them), which is a cross-app change and
+      an owner's call. **Ask for a `retool/*`-family count endpoint, then this is a 20-line item.**
 - [ ] **Drop the unpublished-articles queue.** (`1537514064580714507`) *"There's no need for
       unpublished articles to be an item/queue."* `src/routes/articles/unpublished` exists in the port;
       removing it is the ask, so confirm before deleting — this is the one item in the round that
