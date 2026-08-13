@@ -39,6 +39,22 @@ export const STICKER_PANEL_BAND_PX = 36;
 export const STICKER_PANEL_MIN_WIDTH_PX = 124;
 
 /**
+ * The width a draft that already has flush panels has to fall BELOW before they
+ * are taken away again, 8px under the width it had to reach to get them.
+ *
+ * The two layouts are in different places in the component tree, so every
+ * crossing of a single threshold unmounts one and mounts the other. A monotonic
+ * drag crosses once and is fine; what a band buys is the NON-monotonic case — a
+ * width parked on the line, where `scale * mediaWidth` rounds to 123 and 124 on
+ * alternate frames, swapping the layouts for as long as the sticker sits there.
+ *
+ * It buys jitter resistance and nothing else: one deliberate crossing still
+ * swaps the layouts, so anything stateful up there has to survive that on its
+ * own rather than by being crossed less often.
+ */
+export const STICKER_PANEL_LEAVE_WIDTH_PX = 116;
+
+/**
  * Whether the panels can sit flush with the sticker's own edges.
  *
  * They are drawn against the edges by design, which reads as bracketing the box
@@ -47,13 +63,17 @@ export const STICKER_PANEL_MIN_WIDTH_PX = 124;
  * opacity button. At the 5% scale floor that is a 51px-wide sticker, and at the
  * default 18% on a phone-width media box it is 65px, so this is a default state
  * rather than an edge case.
+ *
+ * `currentlyInside` is required, with no default, for the same reason
+ * `flippedButtonOffset` demands its band: a caller that forgets it would get a
+ * single threshold back and nothing would say so.
  */
-export const panelsFitInsideEdges = (stickerWidth: number) =>
-  stickerWidth >= STICKER_PANEL_MIN_WIDTH_PX;
+export const panelsFitInsideEdges = (stickerWidth: number, currentlyInside: boolean) =>
+  stickerWidth >= (currentlyInside ? STICKER_PANEL_LEAVE_WIDTH_PX : STICKER_PANEL_MIN_WIDTH_PX);
 
 /** The band to clear, which is nothing at all when no panels are drawn. */
-export const panelBandFor = (stickerWidth: number) =>
-  panelsFitInsideEdges(stickerWidth) ? STICKER_PANEL_BAND_PX : 0;
+export const panelBandFor = (stickerWidth: number, currentlyInside: boolean) =>
+  panelsFitInsideEdges(stickerWidth, currentlyInside) ? STICKER_PANEL_BAND_PX : 0;
 
 /**
  * How far above the sticker the flipped button sits.
@@ -153,9 +173,13 @@ export function placeButtonBoxes({
  * the bottom of the media box (846px), which clips anything hanging below it.
  * A button can hit either without the other, so both are checked.
  *
- * Flips only when that strictly helps. A sticker low on a short viewport can
- * have nowhere good to put the button, and moving it to a second bad position
- * is worse than leaving it where the user last saw it.
+ * Takes the visible side when there is one, and otherwise the LESS hidden of the
+ * two. Standing still when both are bad reads as conservative and is not: on a
+ * narrow draft the cluster carries the only copy of flip, opacity and delete, so
+ * a button nobody can see is a draft with no controls at all until it is dragged
+ * somewhere else. Ranking is free of feedback for the same reason the pair is:
+ * both boxes come out identical whichever side the button is currently on, so a
+ * flip cannot change its own score. Ties keep it where it is.
  */
 export function shouldFlipPlaceButton({
   below,
@@ -170,10 +194,27 @@ export function shouldFlipPlaceButton({
   clip: Box | null;
   viewportTop?: number;
 }) {
-  const hidden = (box: Box) =>
-    box.top < viewportTop ||
-    (!!tray && overlaps(box, tray)) ||
-    (!!clip && (box.bottom > clip.bottom || box.top < clip.top));
+  // Off the top of the viewport is not a worse degree of the same thing: the
+  // page may not scroll there at all, so it is disqualifying rather than
+  // rankable. Keeping it out of the arithmetic is what stops a button 36px under
+  // the tray being "improved" onto one 20px above the window.
+  const hiddenExtent = (box: Box) => {
+    if (box.top < viewportTop) return Infinity;
 
-  return hidden(below) && !hidden(above);
+    const behindTray =
+      tray && overlaps(box, tray)
+        ? Math.min(box.bottom, tray.bottom) - Math.max(box.top, tray.top)
+        : 0;
+    const pastClip = clip
+      ? Math.max(0, box.bottom - clip.bottom) + Math.max(0, clip.top - box.top)
+      : 0;
+
+    return Math.max(behindTray, pastClip);
+  };
+
+  const belowHidden = hiddenExtent(below);
+  if (belowHidden === 0) return false;
+
+  const aboveHidden = hiddenExtent(above);
+  return aboveHidden === 0 || aboveHidden < belowHidden;
 }

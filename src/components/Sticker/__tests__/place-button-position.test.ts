@@ -8,6 +8,7 @@ import {
   placeButtonBoxes,
   shouldFlipPlaceButton,
   STICKER_PANEL_BAND_PX,
+  STICKER_PANEL_LEAVE_WIDTH_PX,
   STICKER_PANEL_MIN_WIDTH_PX,
 } from '~/components/Sticker/place-button-position';
 
@@ -112,32 +113,66 @@ describe('panelsFitInsideEdges', () => {
   it('refuses the flush layout on the sizes where delete would cover opacity', () => {
     // The 5% scale floor on a 1024px media box, and the default 18% on a
     // phone-width one. Both are states the product actually produces.
-    expect(panelsFitInsideEdges(51)).toBe(false);
-    expect(panelsFitInsideEdges(65)).toBe(false);
+    expect(panelsFitInsideEdges(51, false)).toBe(false);
+    expect(panelsFitInsideEdges(65, false)).toBe(false);
   });
 
   // The rotate knob is centred and 16px wide, and the left panel reaches 54px
   // in: below 124 the knob ends up under it, and the panel swallows the press.
   it('is bounded by the knob, not merely by the two panels touching', () => {
-    expect(panelsFitInsideEdges(STICKER_PANEL_MIN_WIDTH_PX - 1)).toBe(false);
-    expect(panelsFitInsideEdges(STICKER_PANEL_MIN_WIDTH_PX)).toBe(true);
+    expect(panelsFitInsideEdges(STICKER_PANEL_MIN_WIDTH_PX - 1, false)).toBe(false);
+    expect(panelsFitInsideEdges(STICKER_PANEL_MIN_WIDTH_PX, false)).toBe(true);
     // 92 is where the panels alone stop overlapping (54 + 26 + a gap). Wide
     // enough for them, still too narrow for the knob — the case a fix aimed at
     // the panels alone would get wrong.
-    expect(panelsFitInsideEdges(92)).toBe(false);
+    expect(panelsFitInsideEdges(92, false)).toBe(false);
   });
 
   it('allows it at the sizes the flush layout was designed for', () => {
-    expect(panelsFitInsideEdges(144)).toBe(true);
-    expect(panelsFitInsideEdges(400)).toBe(true);
+    expect(panelsFitInsideEdges(144, false)).toBe(true);
+    expect(panelsFitInsideEdges(400, false)).toBe(true);
+  });
+
+  // The two layouts live in different places in the component tree, so every
+  // crossing swaps one for the other. A single threshold makes a width parked on
+  // it do that on every frame of a resize.
+  it('holds the flush layout below the width that would have earned it', () => {
+    for (const width of [116, 118, 123]) {
+      expect(panelsFitInsideEdges(width, false)).toBe(false);
+      expect(panelsFitInsideEdges(width, true)).toBe(true);
+    }
+  });
+
+  it('gives up the flush layout once the width leaves the band underneath it', () => {
+    expect(panelsFitInsideEdges(STICKER_PANEL_LEAVE_WIDTH_PX, true)).toBe(true);
+    expect(panelsFitInsideEdges(STICKER_PANEL_LEAVE_WIDTH_PX - 1, true)).toBe(false);
+  });
+
+  // The band is a deadzone, not a shift of the line: a draft that has never had
+  // the panels still has to reach the full width to get them, and one that has
+  // them keeps them until it drops out the bottom.
+  it('agrees with itself on both sides of the band', () => {
+    for (const width of [40, 51, 65, 92, 115]) {
+      expect(panelsFitInsideEdges(width, true)).toBe(false);
+      expect(panelsFitInsideEdges(width, false)).toBe(false);
+    }
+    for (const width of [124, 144, 400]) {
+      expect(panelsFitInsideEdges(width, true)).toBe(true);
+      expect(panelsFitInsideEdges(width, false)).toBe(true);
+    }
   });
 
   // The band exists only where the panels do. Clearing one that is not there is
   // not harmful in itself, but it shrinks the flipped candidate box and so makes
   // the button decline a flip it could have taken.
   it('reports no band to clear where no panels are drawn', () => {
-    expect(panelBandFor(51)).toBe(0);
-    expect(panelBandFor(144)).toBe(STICKER_PANEL_BAND_PX);
+    expect(panelBandFor(51, false)).toBe(0);
+    expect(panelBandFor(144, false)).toBe(STICKER_PANEL_BAND_PX);
+  });
+
+  it('reports the band on the same widths the panels are drawn on', () => {
+    expect(panelBandFor(118, false)).toBe(0);
+    expect(panelBandFor(118, true)).toBe(STICKER_PANEL_BAND_PX);
   });
 });
 
@@ -272,10 +307,29 @@ describe('shouldFlipPlaceButton', () => {
     expect(decide(box(480), box(200), TRAY, tallClip)).toBe(true);
   });
 
-  it('does not flip when the flipped position is also hidden', () => {
-    // A sticker tall enough that both ends are in trouble. Flipping here moves
-    // the button without fixing anything.
-    expect(decide(box(800), box(730))).toBe(false);
+  // A sticker tall enough that both ends are in trouble. Standing still is what
+  // leaves a narrow draft with no controls at all — the cluster carries the only
+  // copy of flip, opacity and delete — so the less buried position wins.
+  it('takes the less hidden position when both are hidden', () => {
+    // 36px of the button behind the tray, against 6px.
+    expect(decide(box(800), box(730))).toBe(true);
+  });
+
+  it('stays put when the alternative is hidden by more', () => {
+    // The mirror of the case above, so this cannot pass by always flipping.
+    expect(decide(box(730), box(800))).toBe(false);
+  });
+
+  it('stays put when the two are hidden by exactly as much', () => {
+    // No tie-break worth having, and moving on a tie is how it would oscillate
+    // if the pair ever stopped being position-independent.
+    expect(decide(box(730), box(730, 36, 100, 232))).toBe(false);
+  });
+
+  it('prefers a visible position over a merely less hidden one', () => {
+    // Ranking must not get a say while one side is actually clear.
+    expect(decide(box(730), box(400))).toBe(true);
+    expect(decide(box(400), box(730))).toBe(false);
   });
 
   it('does not flip a button off the top of the viewport', () => {
@@ -296,9 +350,21 @@ describe('shouldFlipPlaceButton', () => {
 
   it('flips away from the top edge of the clip, not just the bottom', () => {
     // Above the carousel viewport but still on screen: clipped at the top, which
-    // nothing else would catch.
+    // nothing else would catch. The first case stays because 40px lost at the
+    // clip's top edge is MORE than the 36 the tray takes, not because a
+    // top-clipped position is disqualified — see the case below.
     expect(decide(box(800), box(20))).toBe(false);
     expect(decide(box(800), box(65))).toBe(true);
+  });
+
+  it('prefers a partly visible top-clipped position over one wholly behind the tray', () => {
+    // The 52px two-line button that lands with the merged payout copy, at the
+    // same two positions as the case above. Below is now swallowed whole by the
+    // tray; above keeps 12px below the clip's top edge. Deliberate, and the
+    // reason the pair above is a margin rather than a rule: top-of-clip is
+    // rankable, unlike top-of-viewport, because what is left of the box is on
+    // screen and can be pressed.
+    expect(decide(box(800, 52), box(20, 52))).toBe(true);
   });
 
   it('treats a button resting exactly on the tray edge as visible', () => {

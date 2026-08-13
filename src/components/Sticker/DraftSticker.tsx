@@ -142,10 +142,10 @@ export function DraftSticker({
 
   // `measure` is what the ResizeObserver and the window listener are bound to,
   // so it has to keep its identity across a drag — otherwise re-binding them is
-  // back on the pointermove path, which is the whole problem. It reads the two
+  // back on the pointermove path, which is the whole problem. It reads the
   // values it needs through a ref instead of closing over them.
-  const frame = useRef({ flipped, rotation: draft.rotation });
-  frame.current = { flipped, rotation: draft.rotation };
+  const frame = useRef({ flipped, rotation: draft.rotation, panelsInside });
+  frame.current = { flipped, rotation: draft.rotation, panelsInside };
 
   const clip = useRef<HTMLElement | null>(null);
 
@@ -154,7 +154,7 @@ export function DraftSticker({
     const button = buttonRef.current;
     if (!element || !button) return;
 
-    const { flipped, rotation } = frame.current;
+    const { flipped, rotation, panelsInside } = frame.current;
     const tray = useStickerPlacementDraftStore.getState().tray;
     const height = element.offsetHeight;
     // Layout size, not the bounding box: `offsetWidth` ignores the CSS rotation,
@@ -169,7 +169,7 @@ export function DraftSticker({
       // does not scale with it — and on a narrow draft they are not drawn at
       // all, so there is nothing there to clear. Clearing a band that is not
       // there only costs the button a flip it could have taken.
-      panelBand: panelBandFor(width),
+      panelBand: panelBandFor(width, panelsInside),
     });
     // From the button's own measured rect, both times: the pair that comes out
     // is the same whichever side the button is currently on, which is what stops
@@ -194,7 +194,7 @@ export function DraftSticker({
         clip: clip.current?.getBoundingClientRect() ?? null,
       }),
       flippedOffset: offset,
-      panelsInside: panelsFitInsideEdges(width),
+      panelsInside: panelsFitInsideEdges(width, panelsInside),
     };
 
     // Every pointer move re-measures, so bail on an unchanged result rather
@@ -372,8 +372,31 @@ export function DraftSticker({
 
   // The slider is behind a control rather than always on screen: it is set once,
   // and a slider parked on the artwork would be in the way of every later drag.
+  //
+  // Open state is held here rather than inside the Popover because the control
+  // itself does not survive: the flush panels and the buy cluster are different
+  // places in the tree, so a draft resized across the panel threshold unmounts
+  // whichever one it was in. Uncontrolled, that closed an open slider mid-drag —
+  // a window resize was enough, since the sticker's width is a fraction of the
+  // media box. `trapFocus` is the other half: the dropdown is genuinely rebuilt,
+  // so focus has to be put back into it rather than merely not taken away.
+  const [opacityOpen, setOpacityOpen] = useState(false);
   const opacityControl = (
-    <Popover width={210} position="top" withArrow withinPortal shadow="md">
+    <Popover
+      width={210}
+      position="top"
+      withArrow
+      withinPortal
+      shadow="md"
+      trapFocus
+      // Paired with `trapFocus`, which Mantine defaults to leaving unpaired: the
+      // trap moves focus into the slider on open, and without this it is
+      // abandoned on document.body at close, so the next Tab restarts at the top
+      // of the page.
+      returnFocus
+      opened={opacityOpen}
+      onChange={setOpacityOpen}
+    >
       <Popover.Target>
         <ActionIcon
           size="sm"
@@ -381,6 +404,7 @@ export function DraftSticker({
           variant="subtle"
           color={draft.opacity < 1 ? 'blue' : 'gray'}
           aria-label="Set this sticker's opacity"
+          onClick={() => setOpacityOpen((open) => !open)}
         >
           <IconDropletHalf2 size={14} />
         </ActionIcon>
@@ -535,6 +559,10 @@ export function DraftSticker({
 
       <div
         ref={buttonRef}
+        // Which of the two layouts is live is otherwise only legible from
+        // Tailwind position classes, and a test reading those fails for the
+        // wrong reason the moment the styling moves.
+        data-testid="sticker-buy-cluster"
         // `w-max` and the floor together: an absolutely positioned child is
         // shrink-to-fit against its containing block, which here is the sticker
         // itself — so a small sticker was squeezing the button until its label
