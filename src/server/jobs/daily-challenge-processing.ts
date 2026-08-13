@@ -1490,7 +1490,10 @@ export async function pickWinnersForChallenge(
             challengeId: currentChallenge.challengeId,
             unmatchedIndexes: unmatchedPicks.map((pick) => pick.index),
             unmatchedCreatorIds: unmatchedPicks.map((pick) => String(pick.creatorId)),
-            awardedPlaces: winningEntries.length,
+            // Resolved, NOT awarded: the duplicate-creator dedupe below can still drop one of
+            // these, so reading this as "placements paid" would overstate on a pick that both
+            // named an unknown id and repeated a creator.
+            resolvedPlaces: winningEntries.length,
             pickedPlaces: generated.winners.length,
           }).catch(() => undefined);
           recordChallengeWinnerUnmatchedPick({

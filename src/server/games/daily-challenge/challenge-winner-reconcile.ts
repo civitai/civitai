@@ -64,8 +64,13 @@ export function reconcileWinnerToPersisted<T extends WinnerPayoutEntry>(
   return { ...entry, position: persisted.place, prize: persisted.buzzAwarded };
 }
 
-/** One winner as `generateWinners` returned it — raw LLM JSON, so every field is untrusted. */
-export type GeneratedWinnerPick = { creatorId?: unknown; reason?: string | null };
+/**
+ * One winner as `generateWinners` returned it — raw LLM JSON, so every field is untrusted.
+ * `creator` is modelled but never read: resolution keys on `creatorId` alone (see below), and
+ * omitting it here would make any caller passing the LLM's own shape as a literal fail the
+ * excess-property check.
+ */
+export type GeneratedWinnerPick = { creatorId?: unknown; creator?: unknown; reason?: string | null };
 
 /** A pick that resolved to a judged entry, carrying the placement it will be paid and recorded at. */
 export type ResolvedWinnerPick = {

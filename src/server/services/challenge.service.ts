@@ -2628,7 +2628,8 @@ export async function endChallengeAndPickWinners(challengeId: number) {
           challengeId,
           unmatchedIndexes: unmatchedPicks.map((pick) => pick.index),
           unmatchedCreatorIds: unmatchedPicks.map((pick) => String(pick.creatorId)),
-          awardedPlaces: winningEntries.length,
+          // Resolved, not awarded — the dedupe below can still drop one. (Parity with the cron path.)
+          resolvedPlaces: winningEntries.length,
           pickedPlaces: generated.winners.length,
         }).catch(() => undefined);
         recordChallengeWinnerUnmatchedPick({

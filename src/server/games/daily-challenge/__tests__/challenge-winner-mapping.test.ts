@@ -316,7 +316,7 @@ describe('pickWinnersForChallenge winner mapping (name-spoof hardening)', () => 
 // moving up. `resolveWinnerPicks` is unit-tested on its own; these drive the same thing through
 // `pickWinnersForChallenge`, so reverting the CALL SITE back to `position: i + 1` fails here.
 describe('pickWinnersForChallenge unmatched picks (challenge 390)', () => {
-  it('awards places 1 and 2 when the judge`s first pick resolves to no entry', async () => {
+  it("awards places 1 and 2 when the judge's first pick resolves to no entry", async () => {
     mockChallengeJudgeRow(ChallengeSource.System);
     mockJudgedEntryRows([
       { imageId: 1, userId: 100, username: 'Alice' },
