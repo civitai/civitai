@@ -85,6 +85,7 @@ import {
 import { isValidAIGeneration } from '~/utils/image-utils';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { applyVerifiedProvenance } from '~/server/services/orchestrator/remix-provenance';
 import { getMetadata } from '~/utils/metadata';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -1233,8 +1234,11 @@ export const addPostImage = async ({
     }
   }
 
+  const { generationWorkflowId, ...imageProps } = props;
+  meta = await applyVerifiedProvenance({ meta, userId: user.id, generationWorkflowId });
+
   const partialResult = await createImage({
-    ...props,
+    ...imageProps,
     meta,
     userId: user.id,
     toolIds: toolId ? [toolId] : undefined,

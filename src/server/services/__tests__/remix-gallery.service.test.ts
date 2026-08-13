@@ -120,6 +120,7 @@ const goodSubmission = {
   needsReview: null,
   publishedAt: new Date('2026-01-01'),
   remixOfId: null,
+  sourceImageIds: [] as number[],
 };
 
 const openSpace = {
@@ -595,6 +596,22 @@ describe('escrow ordering', () => {
       imageId: REMIX_IMAGE,
       remixOfId: 4242,
     });
+  });
+
+  it('marks the submission as derived when the host image was an input to it', async () => {
+    primeQueries({ submission: { ...goodSubmission, sourceImageIds: [HOST_IMAGE] } });
+    await submit();
+    expect(placementCreate.mock.calls[0][0].data.data).toMatchObject({
+      derivedFromHost: true,
+    });
+  });
+
+  it('leaves the mark off — never false — for a submission we cannot vouch for', async () => {
+    // An off-site remix and a source we never resolved are the same state here,
+    // and the owner-review UI keys off presence. `false` would read as a verdict.
+    primeQueries({ submission: { ...goodSubmission, sourceImageIds: [999] } });
+    await submit();
+    expect(placementCreate.mock.calls[0][0].data.data).not.toHaveProperty('derivedFromHost');
   });
 });
 

@@ -134,6 +134,18 @@ export const imageGenerationSchema = z.object({
   extra: z
     .object({
       remixOfId: z.number().optional(),
+      /**
+       * Signed at submit, baked into the output file by the orchestrator, read
+       * back here. Declared so the parser keeps it; the upload path verifies it
+       * and then drops it in favour of `sourceImageIds`.
+       */
+      provenance: z.string().optional(),
+      /**
+       * Images this one was actually generated from. Server-written only — a
+       * client-supplied value is discarded on the way in. Absent means unknown,
+       * never "not a remix".
+       */
+      sourceImageIds: z.number().array().optional(),
     })
     .optional()
     .catch(undefined),
@@ -220,6 +232,12 @@ export const imageSchema = z.object({
   modelVersionId: z.number().nullish(),
   type: z.enum(MediaType).default(MediaType.image),
   metadata: z.record(z.string(), z.any()).optional(),
+  /**
+   * The generation this upload claims to be an output of. Only ever used to
+   * look up provenance the server itself wrote, against a workflow the session
+   * user owns — see remix-provenance.ts. Never stored.
+   */
+  generationWorkflowId: z.string().optional(),
   externalDetailsUrl: z.url().optional(),
   toolIds: z.number().array().optional(),
   techniqueIds: z.number().array().optional(),

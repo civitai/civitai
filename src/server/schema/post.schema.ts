@@ -175,6 +175,7 @@ export const addPostImageSchema = z.object({
     .nullish(),
   type: z.enum(MediaType).default(MediaType.image),
   metadata: z.object({}).passthrough().optional(),
+  generationWorkflowId: z.string().optional(),
   externalDetailsUrl: z.url().optional(),
 });
 

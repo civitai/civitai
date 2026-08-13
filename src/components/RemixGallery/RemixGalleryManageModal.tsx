@@ -213,9 +213,33 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                       <Group gap="sm" wrap="nowrap" className="min-w-0">
                         {row.image && <SubmissionThumb image={row.image} />}
                         <Stack gap={2} className="min-w-0">
-                          <Text size="sm" fw={500} className="truncate">
-                            {row.placer?.username ?? 'Someone'}
-                          </Text>
+                          <Group gap={6} wrap="nowrap" className="min-w-0">
+                            <Text size="sm" fw={500} className="truncate">
+                              {row.placer?.username ?? 'Someone'}
+                            </Text>
+                            {/* Shown only when we resolved it ourselves. There is
+                                deliberately no counterpart for its absence: an
+                                off-site remix can never earn this, and marking
+                                those would turn a missing signal into a verdict. */}
+                            {row.data.derivedFromHost && (
+                              <Tooltip
+                                label="Our generator recorded your image as an input to this generation"
+                                withArrow
+                                multiline
+                                w={240}
+                              >
+                                <Badge
+                                  size="sm"
+                                  variant="light"
+                                  color="green"
+                                  leftSection={<IconShieldCheck size={12} />}
+                                  className="shrink-0"
+                                >
+                                  Made from yours
+                                </Badge>
+                              </Tooltip>
+                            )}
+                          </Group>
                           <Group gap={4} wrap="nowrap">
                             <CurrencyIcon currency={Currency.BUZZ} size={12} />
                             <Text size="xs" c="dimmed">

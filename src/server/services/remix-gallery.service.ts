@@ -45,6 +45,7 @@ type SubmissionImage = {
   needsReview: string | null;
   publishedAt: Date | null;
   remixOfId: number | null;
+  sourceImageIds: number[] | null;
 };
 
 /**
@@ -59,7 +60,17 @@ async function loadSubmissionImage(imageId: number): Promise<SubmissionImage> {
     SELECT i.id, i."userId", i."nsfwLevel", i.minor, i.poi, i."tosViolation",
            i.ingestion::text AS ingestion, i."needsReview",
            p."publishedAt",
-           (i.meta -> 'extra' ->> 'remixOfId')::int AS "remixOfId"
+           (i.meta -> 'extra' ->> 'remixOfId')::int AS "remixOfId",
+           ARRAY(
+             SELECT (value #>> '{}')::int
+             FROM jsonb_array_elements(
+               CASE
+                 WHEN jsonb_typeof(i.meta -> 'extra' -> 'sourceImageIds') = 'array'
+                 THEN i.meta -> 'extra' -> 'sourceImageIds'
+                 ELSE '[]'::jsonb
+               END
+             )
+           ) AS "sourceImageIds"
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE i.id = ${imageId}
@@ -225,6 +236,11 @@ export async function createRemixGallerySubmission({
       data: {
         imageId,
         remixOfId: submission.remixOfId,
+        // Present only when the server itself resolved this host image as an
+        // input to the generation. Left off rather than set false: "made
+        // elsewhere" and "no signal" are the same state, and the owner-review
+        // UI must keep saying nothing about either.
+        ...(submission.sourceImageIds?.includes(hostImageId) ? { derivedFromHost: true } : {}),
       } satisfies RemixGalleryPlacementData,
     },
     select: { id: true },
