@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { applyModelMonetizationPolicy } from '~/server/services/model-monetization-policy';
 
@@ -79,5 +81,30 @@ describe('applyModelMonetizationPolicy', () => {
   it('does not ask to clear the fee columns on a model that may charge', () => {
     expect(applyModelMonetizationPolicy(ordinary, {}).clearFee).toBe(false);
     expect(applyModelMonetizationPolicy(priv, {}).clearFee).toBe(false);
+  });
+});
+
+// The helper being right protects nothing if the write doesn't use it. Both shipped bugs were exactly
+// that — the policy was correct and the call site read a pre-strip copy — and no test in this repo
+// exercises `upsertModelVersion`, so a revert of either line stays green above. Structural, and it fails
+// on the omission itself; the same guard the Creator Studio bulk action needed for the same reason.
+describe('upsertModelVersion consumes the policy result', () => {
+  const source = () =>
+    readFileSync(
+      fileURLToPath(new URL('../model-version.service.ts', import.meta.url)),
+      'utf8'
+    ).slice(0, 40_000);
+
+  it.each([
+    // B-2: the goal is written on its own arm, so a gate-only strip leaves it funding nothing.
+    ['donationGoal = policy.donationGoal', 'the donation goal must leave with the gate'],
+    // B-1: reading the pre-strip fee here made every stripped version demand an affirmation it cannot give.
+    ['policy.feeMonetizes', 'the affirmation gate must read the post-strip fee'],
+  ])('uses `%s` — %s', (needle) => {
+    expect(source()).toContain(needle);
+  });
+
+  it('no longer feeds the affirmation gate from the pre-strip fee', () => {
+    expect(source()).not.toContain('monetizes: hasLicensingFee');
   });
 });
