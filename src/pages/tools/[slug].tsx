@@ -72,6 +72,7 @@ function ToolFeedPage() {
             <IsClient>
               <ImageCategories />
               <ImagesInfinite
+                showFeedbackPrompt
                 filters={{
                   period,
                   sort,

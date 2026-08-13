@@ -530,6 +530,7 @@ export interface User {
   engagedModelVersions?: ModelVersionEngagement[];
   metrics?: UserMetric[];
   reports?: Report[];
+  feedback?: Feedback[];
   questions?: Question[];
   answers?: Answer[];
   commentsv2?: CommentV2[];
@@ -1778,6 +1779,17 @@ export interface Partner {
 export interface KeyValue {
   key: string;
   value: JsonValue;
+}
+
+export interface Feedback {
+  id: number;
+  area: string;
+  userId: number;
+  user?: User;
+  message: string;
+  context: JsonValue;
+  status: string;
+  createdAt: Date;
 }
 
 export interface ApiKey {
