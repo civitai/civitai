@@ -17,7 +17,13 @@ vi.mock('~/server/createContext', () => ({
 }));
 
 // PublicEndpoint is a simple passthrough wrapper in tests.
-vi.mock('~/server/utils/endpoint-helpers', () => ({
+// 🔴 Spread the ORIGINAL. This handler's catch now delegates to
+// `handleEndpointError` (civitai#3845/4 — the hand-rolled envelope it used to
+// carry leaked driver text), so replacing the module wholesale with a one-key
+// object makes the route call `undefined` and fail for a reason unrelated to
+// what this suite tests.
+vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   PublicEndpoint: (handler: any) => handler,
 }));
 
@@ -144,8 +150,16 @@ describe('/api/v1/creators error-body JSON.parse guard', () => {
     // The real prod non-transient shape: a Prisma/app failure becomes a TRPCError
     // INTERNAL_SERVER_ERROR whose `message` is a bare string, NOT JSON. Against the
     // UN-hardened handler `JSON.parse('Database connection lost')` throws a
-    // SyntaxError that escapes the catch → raw unhandled Next 500. The hardened
-    // handler falls back to { message } with the correct HTTP status.
+    // SyntaxError that escapes the catch → raw unhandled Next 500. The point of
+    // this test is that no input shape can produce that throw; it still holds.
+    //
+    // 🔴 The BODY assertion changed with civitai#3845/4. It used to read
+    // `toEqual({ message: 'Database connection lost' })` — i.e. it PINNED the
+    // driver text reaching an unauthenticated caller. This route now delegates to
+    // `handleEndpointError`, which genericizes every 5xx and logs the un-redacted
+    // text instead. The generic body is asserted by VALUE (not just "some 500") so
+    // a regression that re-widens it fails here as well as in
+    // `src/tests/api/rest-envelope-consolidation.test.ts`.
     const dbError = new TRPCError({
       code: 'INTERNAL_SERVER_ERROR',
       message: 'Database connection lost',
@@ -156,7 +170,11 @@ describe('/api/v1/creators error-body JSON.parse guard', () => {
     await expect(handler(req, res)).resolves.toBeUndefined();
 
     expect(res._getStatusCode()).toBe(500);
-    expect(res._getJSONData()).toEqual({ message: 'Database connection lost' });
+    expect(res._getJSONData()).toEqual({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'An unexpected error occurred',
+      error: 'An unexpected error occurred',
+    });
   });
 
   it('client abort (499) branch is unchanged — ends without a body', async () => {

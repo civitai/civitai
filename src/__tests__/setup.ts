@@ -233,8 +233,19 @@ vi.mock('~/server/prom/client', () => ({
   imageScanWebhookCounter: promMetricStub(),
 }));
 
-// Mock logging
-vi.mock('~/server/logging/client', () => ({
+// Mock logging.
+//
+// 🔴 Spreads the ORIGINAL rather than replacing the module with a one-key object.
+// `~/server/logging/client` has 7 exports; the previous wholesale mock provided
+// exactly one, so ANY code path reaching a second one died with
+// `[vitest] No "<name>" export is defined on the mock` — an error that surfaces
+// far from its cause. It bit when the REST routes were consolidated onto
+// `handleEndpointError` (civitai#3845/4): the helper needs `buildCentralErrorLog`
+// and `wasServerFaultLogged`, so nine previously-green route tests broke for a
+// reason that had nothing to do with what they assert. Only `logToAxiom` is
+// stubbed, because that is the one with an I/O side effect a test must not do.
+vi.mock('~/server/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   logToAxiom: vi.fn().mockResolvedValue(undefined),
 }));
 
