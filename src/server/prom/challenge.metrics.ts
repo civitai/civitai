@@ -197,6 +197,21 @@ const winnerConflictUnresolvedCounter = registerCounter({
   name: 'challenge_winner_conflict_unresolved_total',
   help: 'ChallengeWinner inserts that conflicted (P2002) but whose stored row could not be read; the payout was LEFT on the freshly-picked place with no winner row to key it to (expected to stay at zero)',
 });
+// Judging-quality anomaly, and separate from the duplicate-pick counter above for the same reason
+// that one is separate from divergence: a duplicate pick names a REAL entrant twice and costs
+// nothing (the creator's single row is still paid), whereas this one means a pick named nothing we
+// could resolve, so a placement the challenge had funded goes unawarded. One is a wasted slot, the
+// other is a prize that reaches no one; an operator reading a shared series could not tell them
+// apart, and only this one warrants going and awarding somebody.
+//
+// Until the resolution fix this was invisible: the drop was a bare `.filter(isDefined)` on a path
+// whose only other signal, `challenge-partial-winner-residual`, excluded System challenges. Three
+// challenges lost a placement that way before a user reported one. Expected to sit flat at zero.
+const winnerUnmatchedPickCounter = registerCounterWithLabels({
+  name: 'challenge_winner_unmatched_pick_total',
+  help: 'Winner picks discarded because the judge returned a creatorId matching no judged entry; the placement was not awarded (expected to stay at zero)',
+  labelNames: ['source'] as const,
+});
 
 // ---------------------------------------------------------------------------
 // Never-throw record helpers — called from business logic emit sites
@@ -409,6 +424,20 @@ export function recordChallengeWinnerDuplicatePick(args: {
     if (args.count !== undefined && !isPositiveFinite(args.count)) return;
     const count = isPositiveFinite(args.count) ? args.count : 1;
     winnerDuplicatePickCounter.inc({ source: normSource(args.source), origin: args.origin }, count);
+  } catch {
+    /* never throw from telemetry */
+  }
+}
+
+/** One unit = one funded placement that was never awarded because its pick resolved to no entry. */
+export function recordChallengeWinnerUnmatchedPick(args: {
+  source?: string | null;
+  count?: number;
+}) {
+  try {
+    if (args.count !== undefined && !isPositiveFinite(args.count)) return;
+    const count = isPositiveFinite(args.count) ? args.count : 1;
+    winnerUnmatchedPickCounter.inc({ source: normSource(args.source) }, count);
   } catch {
     /* never throw from telemetry */
   }

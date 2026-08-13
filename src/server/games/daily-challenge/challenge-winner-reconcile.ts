@@ -64,6 +64,83 @@ export function reconcileWinnerToPersisted<T extends WinnerPayoutEntry>(
   return { ...entry, position: persisted.place, prize: persisted.buzzAwarded };
 }
 
+/** One winner as `generateWinners` returned it — raw LLM JSON, so every field is untrusted. */
+export type GeneratedWinnerPick = { creatorId?: unknown; reason?: string | null };
+
+/** A pick that resolved to a judged entry, carrying the placement it will be paid and recorded at. */
+export type ResolvedWinnerPick = {
+  userId: number;
+  imageId: number | null;
+  position: number;
+  reason: string | null;
+};
+
+/** A pick that resolved to nothing, with enough context to say WHICH slot was lost. */
+export type UnmatchedWinnerPick = { index: number; creatorId: unknown };
+
+/**
+ * `generateWinners` casts the model's JSON to a TS type and validates nothing, so `creatorId` is
+ * whatever came back. A numeric string is the failure that actually reaches production — strict
+ * `===` against `userId` rejects `"9182050"` — and it is indistinguishable from a correct answer in
+ * the judge playground, which renders the model's `creator` name and never resolves the id at all.
+ *
+ * Accepts an integer, or a string that is only digits. Not `parseInt`/`Number`: those take
+ * `"9182050abc"`, `" 9182050 "` and `""`, and a payout identity should not be recovered from a value
+ * the model got that wrong.
+ */
+function toEntryUserId(creatorId: unknown): number | null {
+  if (typeof creatorId === 'number') return Number.isSafeInteger(creatorId) ? creatorId : null;
+  if (typeof creatorId === 'string' && /^\d+$/.test(creatorId)) {
+    const parsed = Number(creatorId);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+/**
+ * Resolve the judge's picks to judged entries, numbering the survivors 1..n.
+ *
+ * Placement comes from POSITION AMONG THE SURVIVORS, not from the pick's index in the model's array,
+ * and that is the whole fix. Numbering by index and filtering afterwards means one unresolvable pick
+ * deletes a placement rather than shifting the rest up: challenge 390 completed with rows at places 2
+ * and 3 and nothing at place 1, so its 5,000 Buzz and 150 points were never awarded to anyone and
+ * the challenge page rendered no winner. Two earlier challenges (84, 46) lost place 2 the same way.
+ *
+ * Callers must derive prize and points from the returned `position`, never from the pick's index —
+ * the two are no longer the same number, and place is what the `ChallengeWinner` row and the payout's
+ * externalTransactionId both embed.
+ *
+ * A repeated creator is deliberately left in: `dedupeWinnersForPayout` below is the one place that
+ * drops those, for reasons that depend on it seeing them.
+ *
+ * Never matches on `creator` (the display name). That is entrant-controlled, and matching on it let
+ * one entrant set their name to another's and take the payout.
+ */
+export function resolveWinnerPicks<E extends { userId: number; imageId: number | null }>(
+  picks: readonly GeneratedWinnerPick[],
+  entries: readonly E[]
+): { winners: ResolvedWinnerPick[]; unmatched: UnmatchedWinnerPick[] } {
+  const winners: ResolvedWinnerPick[] = [];
+  const unmatched: UnmatchedWinnerPick[] = [];
+
+  picks.forEach((pick, index) => {
+    const userId = toEntryUserId(pick.creatorId);
+    const entry = userId === null ? undefined : entries.find((e) => e.userId === userId);
+    if (!entry) {
+      unmatched.push({ index, creatorId: pick.creatorId });
+      return;
+    }
+    winners.push({
+      userId: entry.userId,
+      imageId: entry.imageId,
+      position: winners.length + 1,
+      reason: pick.reason ?? null,
+    });
+  });
+
+  return { winners, unmatched };
+}
+
 /**
  * Drop winner entries that would pay a creator already paid earlier in the SAME batch.
  *
