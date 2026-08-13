@@ -5322,6 +5322,7 @@ export interface Placement {
   takenDownAt: Date | null;
   takenDownById: number | null;
   metricCountedAt: Date | null;
+  metricClaimedAt: Date | null;
   transactions?: PlacementTransaction[];
 }
 

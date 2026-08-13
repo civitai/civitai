@@ -86,6 +86,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // collections pool. Default-off, and the job's config carries its own `dryRun` on top,
   // so the homepage cannot change until both are deliberately turned on.
   AUTO_FEATURE_IMAGES = 'auto-feature-images',
+  // Arms the placement Buzz reconcile sweep. Default-off, and it must STAY off
+  // until the migration's backfill has been re-run against the deployed code —
+  // everything approved between the ALTER and that re-run carries no
+  // `metricCountedAt` while already having been counted, so a sweep running
+  // first re-emits all of it and roughly doubles those counters permanently.
+  PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

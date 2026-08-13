@@ -157,32 +157,53 @@ export const sweepDeletedRemixGallerySubmissionsJob = createJob(
  * Approved placements whose Buzz never reached the target's counter.
  *
  * Drains on `counted`, not on `considered` — rows leave this set only by being
- * marked, and a run that cannot emit (ClickHouse down) would otherwise re-select
- * the same hundred every pass and burn the cap without reaching row 101. Same
- * trap the deleted-submission sweep documents beside it.
+ * counted, and a run that cannot emit (ClickHouse down) would otherwise re-claim
+ * the same hundred every pass and burn the cap without reaching row 101.
  *
- * `lockExpiration` is a ceiling on how long the lock is held, not a timeout: it
- * is *released* at that point with the run still going, and a second run would
- * then select the same unmarked rows and count them twice. Held wide here
- * because the emit now waits for delivery, so a slow-but-healthy tracker
- * stretches a run that a failing one would cut short. A dead pod is still
- * recovered by the short refresh TTL lapsing, which this does not affect.
+ * `emitted` is shared across the whole drain because the sweep's collision
+ * guarantee is per page: two pages of one (image, placer) would emit twice
+ * within the same second and the pipeline would keep one. The second page's
+ * group is left for the next tick instead, which is what `deferred` counts.
+ *
+ * A run that claimed work and counted none of it is reported — that reads
+ * identically to a quiet run otherwise — but a run that only *deferred* is not,
+ * because deferring is this design working.
  */
 export const sweepUncountedPlacementsJob = createJob(
   'placement-sweep-uncounted',
   '*/5 * * * *',
   async (jobContext) => {
+    const emitted = new Set<string>();
     const { runs, hitCap } = await drain(
       'placement-sweep-uncounted',
       jobContext,
-      () => sweepUncountedPlacements({ limit: BATCH }),
+      () => sweepUncountedPlacements({ limit: BATCH, alreadyEmitted: emitted }),
       (result) => result.counted
     );
 
+    const considered = sum(runs, (run) => run.considered);
+    const counted = sum(runs, (run) => run.counted);
+    const deferred = sum(runs, (run) => run.deferred);
+
+    // Deferred rows are the design working, not a failure — a run that only
+    // deferred has counted nothing and is fine. Alarming on it would make this
+    // noisy on its own intended path, which is how an alarm stops being read.
+    if (considered > deferred && counted === 0)
+      await logToAxiom({
+        name: 'placement-jobs',
+        type: 'warning',
+        message: 'placement-sweep-uncounted claimed work and counted none of it',
+        considered,
+      }).catch(() => null);
+
     return {
-      considered: sum(runs, (run) => run.considered),
-      counted: sum(runs, (run) => run.counted),
+      considered,
+      counted,
       amount: sum(runs, (run) => run.amount),
+      deferred,
+      // The flag is off, so nothing was even looked at. Distinct from a run that
+      // found nothing to do.
+      skipped: runs.every((run) => run.skipped),
       hitCap,
     };
   },

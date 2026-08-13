@@ -74,11 +74,10 @@ export const updateEntityMetric = async ({
 
   // Queue with clickhouse tracker
   try {
-    await ctx.track.entityMetric(
+    return await ctx.track.entityMetric(
       { entityType, entityId, metricType, metricValue: amount },
       { awaitDelivery }
     );
-    return true;
   } catch (e) {
     const error = e as Error;
     logError('Failed to queue metric into CH', {
@@ -111,8 +110,9 @@ export const updateEntityMetricDetached = async ({
    * Who caused it. Worth threading through rather than letting a request-less
    * `Tracker` default to 0: `userId` is part of the dedupe key the metric
    * pipeline replaces rows on, so several events attributed to the same
-   * non-user, on the same entity and metric, within the same millisecond
-   * collapse into one and silently undercount. A real id makes them distinct
+   * non-user, on the same entity and metric, within the same SECOND
+   * collapse into one and silently undercount — the pipeline's `createdAt` is
+   * `DateTime`, not `DateTime64`. A real id makes them distinct
    * for the same reason a tip's does.
    */
   userId?: number;

@@ -1,0 +1,102 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+/**
+ * `Tracker.send`'s two delivery modes.
+ *
+ * The retry loop had no test at all, which mattered once something started
+ * deciding durability on its answer: reverting the raise to a `return` deletes
+ * the whole guarantee — every failure reports success and the caller writes down
+ * that a counter moved — and nothing else in the suite notices.
+ */
+
+vi.mock('~/env/server', () => ({
+  env: {
+    CLICKHOUSE_TRACKER_URL: 'http://tracker.test',
+    CLICKHOUSE_HOST: undefined,
+    CLICKHOUSE_USERNAME: undefined,
+    CLICKHOUSE_PASSWORD: undefined,
+    IS_BUILD: true,
+    LOGGING: [],
+  },
+}));
+vi.mock('~/env/other', () => ({ isProd: false, isDev: true }));
+vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
+vi.mock('~/server/auth/get-server-auth-session', () => ({
+  getServerAuthSession: vi.fn(async () => null),
+}));
+vi.mock('~/server/flipt/client', () => ({
+  isFlipt: vi.fn(async () => false),
+  FLIPT_FEATURE_FLAGS: {},
+}));
+
+import { Tracker } from '../client';
+
+const metric = () => ({
+  entityType: 'Image' as const,
+  entityId: 1,
+  metricType: 'Buzz' as const,
+  metricValue: 100,
+});
+
+const respond = (status: number) =>
+  vi.fn(async () => ({ ok: status < 400, status, text: async () => '' }));
+
+let fetchMock: ReturnType<typeof respond>;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  fetchMock = respond(200);
+  vi.stubGlobal('fetch', fetchMock);
+});
+
+describe('awaitDelivery', () => {
+  it('raises when the retries are exhausted, so the caller does not record a lost event', async () => {
+    fetchMock = respond(500);
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(new Tracker().entityMetric(metric(), { awaitDelivery: true })).rejects.toThrow(
+      /500/
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('reports delivered on a 2xx', async () => {
+    await expect(new Tracker().entityMetric(metric(), { awaitDelivery: true })).resolves.toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a 4xx — the payload is wrong and will stay wrong', async () => {
+    fetchMock = respond(400);
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(new Tracker().entityMetric(metric(), { awaitDelivery: true })).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds each attempt, so a wedged tracker cannot hold the caller open', async () => {
+    await new Tracker().entityMetric(metric(), { awaitDelivery: true });
+
+    // Nothing configures an undici dispatcher, so an unsignalled fetch inherits
+    // a 300s header timeout — three of those on one row is a wedge, not a retry.
+    const [, init] = fetchMock.mock.calls[0] as [string, { signal?: AbortSignal }];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+describe('fire and forget', () => {
+  it('swallows an exhausted failure, because nothing is waiting on it', async () => {
+    fetchMock = respond(500);
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(new Tracker().entityMetric(metric())).resolves.toBe(true);
+  });
+
+  it('leaves the request unsignalled — nobody is holding a response open for it', async () => {
+    await new Tracker().entityMetric(metric());
+    // The dispatch is not awaited, so let its first attempt reach fetch.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const [, init] = fetchMock.mock.calls[0] as [string, { signal?: AbortSignal }];
+    expect(init.signal).toBeUndefined();
+  });
+});

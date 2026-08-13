@@ -720,55 +720,30 @@ describe("a placement counts toward the image's Buzz counter", () => {
       resolvedAt: null,
     });
 
-  it('counts what the placer paid when an auto space approves on placement', async () => {
-    resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE, mode: 'auto' });
-    givenStickerAndBalance();
-
-    await createStickerPlacement(placeInput);
-
-    expect(updateEntityMetricDetached).toHaveBeenCalledWith({
-      entityType: 'Image',
-      entityId: IMAGE,
-      metricType: 'Buzz',
-      // `price`, not `setPrice`: the cap is what was actually charged.
-      amount: PRICE,
-      // Attributed to the placer, the way a tip is attributed to its tipper —
-      // and load-bearing, because `userId` is part of the pipeline's dedupe key.
-      userId: PLACER,
-      // Waited on rather than dispatched: the stamp that follows records that
-      // this landed, and recording a dropped event as counted is unrecoverable.
-      awaitDelivery: true,
-    });
-  });
-
   /**
-   * The guard that stops one payment being counted twice. `settlePlacement`
-   * returns `settled: false` when something else claimed the transition first —
-   * a double-submitted approve, a retried call — so counting on the action asked
-   * for rather than on the transition won would add the Buzz again with no
-   * second payment behind it.
+   * The settlement paths emit NOTHING. The counter is moved by
+   * `placement-sweep-uncounted` reading `metricCountedAt`, and these paths
+   * exist here so that stays true: an emit put back on any of them is one the
+   * sweep will emit again, and the counter never comes back down.
    */
-  it('does not count a settle that lost the race', async () => {
+  it('emits nothing when an auto space approves on placement', async () => {
     resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE, mode: 'auto' });
     givenStickerAndBalance();
-    settlePlacement.mockImplementation(async () => ({ settled: false }));
 
     await createStickerPlacement(placeInput);
 
     expect(updateEntityMetricDetached).not.toHaveBeenCalled();
   });
 
-  it('counts when the owner approves from the queue', async () => {
+  it('emits nothing when the owner approves from the queue', async () => {
     givenApprovable();
 
     await actOnStickerPlacement({ placementId: PLACEMENT, action: 'approve', userId: OWNER });
 
-    expect(updateEntityMetricDetached).toHaveBeenCalledWith(
-      expect.objectContaining({ entityId: IMAGE, amount: PRICE, userId: PLACER })
-    );
+    expect(updateEntityMetricDetached).not.toHaveBeenCalled();
   });
 
-  it('counts nothing when the owner declines', async () => {
+  it('emits nothing when the owner declines', async () => {
     givenApprovable();
 
     await actOnStickerPlacement({ placementId: PLACEMENT, action: 'decline', userId: OWNER });

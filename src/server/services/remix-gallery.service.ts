@@ -7,7 +7,6 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getAllImages } from '~/server/services/image.service';
 import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
-import { recordPlacementTip } from '~/server/services/placement-metrics.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
@@ -438,26 +437,6 @@ export async function actOnRemixGallerySubmission({
   // appeared to work and did not is what this cost us on chunk D.
   if (!result.settled)
     throw throwBadRequestError('remix gallery: that submission was already resolved elsewhere');
-
-  // A gallery entry is a paid placement on this image, so it counts toward the
-  // same Buzz counter a sticker does (Justin, 2026-08-12). A decline counts
-  // nothing even though its fee reaches the owner — see `recordPlacementTip`.
-  //
-  // `result.settled` is re-checked even though the throw above already covers
-  // it, and not as belt and braces: it is the gate the sticker twin actually
-  // uses, so writing it here keeps the two surfaces the same shape. The throw
-  // is the kind of thing that gets softened into a returned value — the
-  // moderator removal path already made exactly that change — and whoever does
-  // that would otherwise be introducing a double count with nothing beside it
-  // to say so.
-  if (action === 'approve' && result.settled)
-    await recordPlacementTip({
-      surface: SURFACE,
-      placementId,
-      imageId: placement.targetId,
-      amount: placement.amount,
-      placerId: placement.placerId,
-    });
 
   return result;
 }

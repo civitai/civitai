@@ -3057,6 +3057,16 @@ export type Placement = {
    * `approved` is the reconcile sweep's work queue.
    */
   metricCountedAt: Timestamp | null;
+  /**
+   * When a sweep took this row to count it. Two columns rather than one because
+   * the claim has to be atomic and the confirmation cannot be: two sweeps can
+   * overlap (the job lock fails open when Redis is down), and without a claim
+   * both read the same unstamped rows and both emit before either stamps. The
+   * counter never reverses, so that over-count is permanent. A claim older than
+   * the recovery window is retried, which is what stops a crash between the two
+   * writes turning into the loss this whole feature exists to end.
+   */
+  metricClaimedAt: Timestamp | null;
 };
 export type PlacementSpace = {
   id: Generated<number>;

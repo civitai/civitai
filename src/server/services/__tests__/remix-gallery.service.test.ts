@@ -1007,37 +1007,20 @@ describe('an approved submission counts toward the host image buzz counter', () 
     createdAt: new Date(0),
   };
 
-  it('counts what the submitter paid, against the host image', async () => {
+  /**
+   * The settlement paths emit NOTHING. The counter is moved by
+   * `placement-sweep-uncounted` reading `metricCountedAt`; an emit put back here
+   * is one the sweep will emit a second time, and the counter never falls.
+   */
+  it('emits nothing when the owner approves', async () => {
     placementFindUnique.mockResolvedValue(pending);
 
     await actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER });
 
-    expect(updateEntityMetricDetached).toHaveBeenCalledWith({
-      entityType: 'Image',
-      // The HOST, not the submitted image. The submitter's own image gained
-      // nothing; the creator was paid to have it shown on theirs.
-      entityId: HOST_IMAGE,
-      metricType: 'Buzz',
-      amount: PRICE,
-      // The submitter, not the host's owner: attribution follows who paid.
-      userId: PLACER,
-      // Waited on rather than dispatched: the stamp that follows records that
-      // this landed, and recording a dropped event as counted is unrecoverable.
-      awaitDelivery: true,
-    });
-    // Exactly once, which the payload assertion above cannot see. The two
-    // negative tests in this block would both pass against a full revert, so
-    // without this the whole commit rests on an assertion that a second,
-    // duplicate emission would satisfy just as happily.
-    expect(updateEntityMetricDetached).toHaveBeenCalledTimes(1);
+    expect(updateEntityMetricDetached).not.toHaveBeenCalled();
   });
 
-  /**
-   * A decline still moves 30% of the fee to the owner and still counts nothing
-   * (Justin, 2026-08-12). Counting it would grow the counter fastest for a
-   * creator who refuses everything.
-   */
-  it('counts nothing when the owner declines, though the fee is kept', async () => {
+  it('emits nothing when the owner declines, though the fee is kept', async () => {
     placementFindUnique.mockResolvedValue(pending);
 
     await actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'decline', userId: OWNER });

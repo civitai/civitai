@@ -44,6 +44,9 @@ import { isFlipt } from '~/server/flipt/client';
  */
 export type TrackDelivery = { awaitDelivery?: boolean };
 
+/** Per attempt, so three of these plus the backoff is the worst case wait. */
+const AWAIT_DELIVERY_TIMEOUT_MS = 5_000;
+
 export type ViewType =
   | 'ProfileView'
   | 'ImageView'
@@ -271,12 +274,12 @@ export class Tracker {
     data: object | ((args: { session: Session | null; actor: TrackRequest }) => object),
     options?: TrackDelivery
   ) {
-    // Not silently "delivered": a caller that records durability off the return
-    // value would write down that a counter moved on a host with no tracker.
-    if (!env.CLICKHOUSE_TRACKER_URL) {
-      if (options?.awaitDelivery) throw new Error('tracker: CLICKHOUSE_TRACKER_URL is not set');
-      return;
-    }
+    // No tracker configured is closer to the kill-switch than to a failure —
+    // it is every dev and preview environment — so it is reported through the
+    // same channel rather than raised. `awaitDelivery` callers must still not
+    // read it as delivered: `send` returns false, `updateEntityMetric` passes
+    // that on, and the row stays queued instead of being stamped counted.
+    if (!env.CLICKHOUSE_TRACKER_URL) return false;
     await this.resolveSession();
 
     const body =
@@ -293,9 +296,13 @@ export class Tracker {
     // that writes a durable "this was counted" record afterwards. Dispatching
     // and marking would record a lost event as delivered, which is worse than
     // the loss it replaced — the row then looks accounted for forever.
-    if (options?.awaitDelivery) return this.sendWithRetry(url, body, table, 1, true);
+    if (options?.awaitDelivery) {
+      await this.sendWithRetry(url, body, table, 1, true);
+      return true;
+    }
 
     void this.sendWithRetry(url, body, table);
+    return true;
   }
 
   private async sendWithRetry(
@@ -323,6 +330,14 @@ export class Tracker {
           method: 'POST',
           body: JSON.stringify(body),
           headers: { 'Content-Type': 'application/json' },
+          // Built per attempt, and only when someone is waiting. Nothing here
+          // configures an undici dispatcher, so an unsignalled fetch inherits a
+          // 300s header timeout — three of those on one row is a wedge rather
+          // than a retry. One signal for the whole loop would be worse than
+          // none: `fetch` rejects immediately on an already-aborted signal, so
+          // the first slow attempt would consume the other two. Fire-and-forget
+          // keeps the unbounded behaviour; nobody is holding a response open.
+          signal: rethrow ? AbortSignal.timeout(AWAIT_DELIVERY_TIMEOUT_MS) : undefined,
         });
 
         if (res.ok) return;
@@ -420,10 +435,10 @@ export class Tracker {
     table: string,
     custom: object | ((session: Session | null) => object),
     options?: { skipActorMeta: boolean } & TrackDelivery
-  ): Promise<void> {
+  ): Promise<boolean> {
     const { skipActorMeta = false, awaitDelivery } = options ?? {};
 
-    await this.send(
+    return this.send(
       table,
       ({ session, actor }) => {
         const actorMeta = skipActorMeta ? { userId: actor.userId } : { ...actor };

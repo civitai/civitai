@@ -7881,13 +7881,25 @@ model Placement {
   /// counted is recorded here or nowhere. NULL on a placement that reached
   /// `approved` is the reconcile sweep's work queue.
   metricCountedAt       DateTime?
+  /// When a sweep took this row to count it. Two columns rather than one because
+  /// the claim has to be atomic and the confirmation cannot be: two sweeps can
+  /// overlap (the job lock fails open when Redis is down), and without a claim
+  /// both read the same unstamped rows and both emit before either stamps. The
+  /// counter never reverses, so that over-count is permanent. A claim older than
+  /// the recovery window is retried, which is what stops a crash between the two
+  /// writes turning into the loss this whole feature exists to end.
+  metricClaimedAt       DateTime?
   transactions          PlacementTransaction[]
 
   @@index([surface, targetType, targetId, status])
   @@index([ownerId, status])
   @@index([placerId, status])
   @@index([status, expiresAt])
-  @@index([status, metricCountedAt])
+  /// Applied as a PARTIAL index (`WHERE "metricCountedAt" IS NULL`) — see the
+  /// migration. Prisma can express neither the predicate nor the reason the key
+  /// is `resolvedAt` alone, so the declaration here is the shape and the
+  /// migration is the truth.
+  @@index([resolvedAt])
 }
 
 /// One row per movement of money for a placement. `UNIQUE (placementId, kind)` is the
