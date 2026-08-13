@@ -15,6 +15,7 @@ import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsClient } from '~/providers/IsClientProvider';
+import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 
 /**
  * The conditions that drive which sub-nav tabs are visible. Sourced from the
@@ -53,39 +54,103 @@ const EMPTY_SUMMARY: AppsNavSummary = {
   hasPendingInvites: false,
 };
 
+/**
+ * The viewer CAPABILITIES that drive tab visibility, as opposed to the
+ * `getNavSummary` booleans above. Kept a SEPARATE object (rather than folded
+ * into {@link AppsNavSummary}) because the two have different provenance and
+ * different hydration behaviour, and that difference is load-bearing:
+ *
+ *  - `AppsNavSummary` comes from the client-only `blocks.getNavSummary` query,
+ *    so it is ABSENT during SSR + the first client paint (see the `useIsClient`
+ *    note on the container) and its tabs reveal only after mount.
+ *  - `AppsNavContext` is resolved from values that are SSR-seeded and identical
+ *    on the first client render, so it can be applied to the very first paint
+ *    without a hydration mismatch. See the container for the derivation.
+ */
+export type AppsNavContext = {
+  /**
+   * May AUTHOR apps (submit / `dev:live`) → show "Create". Resolved via the
+   * shared {@link isAppDeveloper} predicate — moderators are a hard floor, the
+   * `appBlocksAuthor` capability widens it to the curated non-mod cohort.
+   */
+  isAuthor: boolean;
+};
+
+/** No capabilities — the shape a logged-out / non-author viewer resolves to. */
+const NO_CAPABILITIES: AppsNavContext = { isAuthor: false };
+
 type SubNavLink = {
   href: string;
   label: string;
   icon: typeof IconPlugConnected;
-  /** Whether this tab renders for the given summary. */
-  visible: (s: AppsNavSummary) => boolean;
+  /** Whether this tab renders for the given summary + viewer capabilities. */
+  visible: (s: AppsNavSummary, c: AppsNavContext) => boolean;
 };
 
 /**
- * Tab order = discovery → author → manage → revenue → moderate. The two
- * always-on tabs (Marketplace + Create) lead so the bar never collapses to
- * fewer than two entries.
+ * Tab order = discovery → author → manage → revenue → moderate.
+ *
+ * Only **Marketplace** is unconditional. "Create" links at `/apps/submit`,
+ * whose `getServerSideProps` gates on `features.appBlocksAuthor` +
+ * `isAppDeveloper` and otherwise returns `notFound` — so a store-visible
+ * NON-author (the widened `app-listings` tester cohort: `app-listings=true`,
+ * `app-blocks-author=false`) would click a tab straight into a 404. The tab now
+ * keys off the SAME predicate the page does.
+ *
+ * With "Create" conditional the bar can collapse to a single entry, so
+ * {@link AppsSubNavView} hides itself entirely below two tabs — a one-tab
+ * "navigation" is chrome that navigates nowhere.
  */
 const SUB_NAV_LINKS: SubNavLink[] = [
   { href: '/apps', label: 'Marketplace', icon: IconBuildingStore, visible: () => true },
-  { href: '/apps/submit', label: 'Create', icon: IconSquarePlus, visible: () => true },
+  {
+    href: '/apps/submit',
+    label: 'Create',
+    icon: IconSquarePlus,
+    visible: (_s, c) => c.isAuthor,
+  },
   {
     href: '/apps/installed',
     label: 'Installed',
     icon: IconPlugConnected,
     visible: (s) => s.hasInstalls,
   },
+  /**
+   * 🔴 BOTH OF THESE NEED `c.isAuthor` AS WELL AS THEIR SUMMARY FLAG, for exactly the
+   * reason #3899 gave for "Create" — and the merge that brought the two changes together
+   * is where this could have been missed. `git` auto-merged this table cleanly: main
+   * added the `context` argument and gated Create on it; this branch added these two
+   * entries against the OLD one-argument signature. The result compiled, every test
+   * passed, and both tabs were left un-gated.
+   *
+   * `/apps/mine` and `/apps/invites` both `getServerSideProps`-gate on
+   * `features.appBlocksAuthor` + `isAppDeveloper` and otherwise return `notFound`. The
+   * summary that drives them does NOT: `blocks.getNavSummary` is gated on the
+   * marketplace `appBlocks` flag, not the author one — so a store-visible NON-author
+   * (`app-listings=true`, `app-blocks-author=false`, the cohort #3899 was written for)
+   * can legitimately have both flags set and would click straight into a 404.
+   *
+   * Reachable on both: `inviteCollaborator` accepts ANY existing, non-banned user id as
+   * the target — nothing requires the invitee to be an author — so `hasPendingInvites`
+   * goes true for a non-author whenever an owner invites them. `hasEditableApps` is the
+   * slower path: an owner who loses the author capability keeps their listings, which is
+   * the same cohort-widening scenario #3899 describes.
+   *
+   * (The pre-existing `Revenue` entry below deliberately does NOT do this — see its own
+   * comment. That is a recorded decision about an OWNERSHIP affordance, not an oversight,
+   * and it is left exactly as main has it.)
+   */
   {
     href: '/apps/mine',
     label: 'My apps',
     icon: IconApps,
-    visible: (s) => s.hasEditableApps,
+    visible: (s, c) => c.isAuthor && s.hasEditableApps,
   },
   {
     href: '/apps/invites',
     label: 'Invites',
     icon: IconMail,
-    visible: (s) => s.hasPendingInvites,
+    visible: (s, c) => c.isAuthor && s.hasPendingInvites,
   },
   {
     href: '/apps/my-submissions',
@@ -142,6 +207,12 @@ export function activeAppsTab(currentPath: string): string | null {
  * there's no `onChange` (the route is the single source of truth, so clicking
  * just follows the link and the new route lights the matching tab).
  *
+ * Renders NOTHING when fewer than two tabs qualify (moderators included). A
+ * single-entry "navigation" bar is pure chrome — it can only link to the page
+ * you are already on — and it still costs the tab row's height plus its bottom
+ * rule on every `/apps/*` surface. Two is the floor at which the bar is a
+ * navigation affordance rather than a decoration.
+ *
  * `activateTabWithKeyboard={false}`: Mantine's default arrow-key handler
  * synthesizes a `.click()` on the focused tab, which on these real `<Link>`
  * anchors triggers a full page navigation — so a keyboard user can't ARROW to
@@ -151,12 +222,17 @@ export function activeAppsTab(currentPath: string): string | null {
  */
 export function AppsSubNavView({
   summary,
+  context,
   currentPath,
 }: {
   summary: AppsNavSummary;
+  context: AppsNavContext;
   currentPath: string;
 }) {
-  const links = SUB_NAV_LINKS.filter((l) => l.visible(summary));
+  const links = SUB_NAV_LINKS.filter((l) => l.visible(summary, context));
+  // Fewer than two qualifying tabs ⇒ no navigation bar at all. Applies to every
+  // viewer, moderators included.
+  if (links.length < 2) return null;
   const active = activeAppsTab(currentPath);
   return (
     <Box component="nav" aria-label="App sections" w="100%">
@@ -219,8 +295,8 @@ export function AppsSubNavView({
  *
  * Gated on `features.appBlocks` (the page itself 404s without it, so this is a
  * belt for non-flag callers) and on a logged-in user (the summary query is a
- * `protectedProcedure`; anon viewers — once the segment widens — just see the
- * two always-on tabs).
+ * `protectedProcedure`; an anon viewer resolves to `NO_CAPABILITIES` + an empty
+ * summary ⇒ Marketplace alone ⇒ the bar hides itself entirely).
  */
 export function AppsSubNav() {
   const router = useRouter();
@@ -249,5 +325,26 @@ export function AppsSubNav() {
 
   const summary = isClient ? data ?? EMPTY_SUMMARY : EMPTY_SUMMARY;
 
-  return <AppsSubNavView summary={summary} currentPath={router.pathname} />;
+  // 🔴 NOT gated on `useIsClient()` — deliberately, and verified against the
+  // incident above rather than assumed. Both inputs are SSR-seeded and FROZEN,
+  // so this value is byte-identical on the server render and the first client
+  // render, which is the whole condition for hydration safety:
+  //   • `features.appBlocksAuthor` is resolved server-side in `_app`'s
+  //     `getInitialProps` (`getFeatureFlagsAsync({ user: session.user, … })`,
+  //     Flipt included), serialized into `pageProps.flags`, and frozen by
+  //     `useState(initialFlags)` in `FeatureFlagsProvider`. It is NOT a
+  //     `toggleable: true` flag, so `computeUserFeatureFlagsOverlay` never emits
+  //     it and the client `user.getFeatureFlags` overlay cannot move it.
+  //   • `currentUser.isModerator` rides `SessionProvider`'s `useState(initial)`,
+  //     seeded from the same SSR `pageProps.session`. When that seed is
+  //     `undefined` (auth cookie present, session unresolved) the SERVER also
+  //     rendered without a user, so the first client paint still matches — the
+  //     session only arrives in a LATER render, post-hydration.
+  // Contrast `getNavSummary` above, which really is client-only and therefore
+  // really does need the `isClient` deferral.
+  const context: AppsNavContext = currentUser
+    ? { isAuthor: isAppDeveloper(currentUser, { appBlocksAuthor: features.appBlocksAuthor }) }
+    : NO_CAPABILITIES;
+
+  return <AppsSubNavView summary={summary} context={context} currentPath={router.pathname} />;
 }

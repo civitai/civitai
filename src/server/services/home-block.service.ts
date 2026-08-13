@@ -45,6 +45,7 @@ import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { HOME_BLOCK_ITEMS_PER_ROW } from '~/shared/constants/home-block.constants';
 import { HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
@@ -440,18 +441,8 @@ export const getHomeBlockData = async ({
         candidates = eligible;
       }
 
-      // Clamp to sane bounds — metadata is mutable JSON, don't trust blindly.
-      // Deliberately not `input.limit`: the by-id cache path passes one fixed number for
-      // every block type, and letting it win made this block's own `limit` dead config.
-      const limit = Math.min(
-        100,
-        Math.max(1, effectivePool.limit || FEATURED_COLLECTIONS_DEFAULTS.limit)
-      );
-      const rows = Math.min(4, Math.max(1, effectivePool.rows || 2));
-      const maxPerUser = effectivePool.maxPerUser ?? FEATURED_COLLECTIONS_DEFAULTS.maxPerUser;
-      const renderCount = Math.min(
-        10,
-        Math.max(1, effectivePool.renderCount ?? 3),
+      const { limit, rows, maxPerUser, renderCount } = resolveFeaturedCollectionsLayout(
+        effectivePool,
         candidates.length
       );
 
@@ -490,7 +481,9 @@ export const getHomeBlockData = async ({
       return {
         ...homeBlock,
         type: HomeBlockType.FeaturedCollections,
-        metadata,
+        // A clone's own copy is a snapshot from clone time; serving it advertises config that
+        // isn't in effect.
+        metadata: { ...metadata, featuredCollections: effectivePool },
         pickedCollections,
       };
     }
@@ -664,6 +657,30 @@ export const deleteHomeBlockById = async ({
     // Ignore errors
   }
 };
+
+type FeaturedCollectionsPool = NonNullable<HomeBlockMetaSchema['featuredCollections']>;
+
+/**
+ * `limit` is the fetch pool, not the visible count — it meant the visible count once, and stored
+ * metadata predating that still says 8. Floored at the visible slice so it can't starve the grid.
+ */
+export function resolveFeaturedCollectionsLayout(
+  // Partial: the caller's value is an unvalidated JSON cast, not schema output.
+  pool: Partial<Pick<FeaturedCollectionsPool, 'limit' | 'rows' | 'renderCount' | 'maxPerUser'>>,
+  candidateCount: number
+) {
+  const rows = Math.min(4, Math.max(1, pool.rows || 2));
+  // Deliberately not `input.limit`: the by-id cache path passes one fixed number for every
+  // block type, and letting it win made this block's own `limit` dead config.
+  const limit = Math.min(
+    100,
+    Math.max(rows * HOME_BLOCK_ITEMS_PER_ROW, pool.limit || FEATURED_COLLECTIONS_DEFAULTS.limit)
+  );
+  const maxPerUser = pool.maxPerUser ?? FEATURED_COLLECTIONS_DEFAULTS.maxPerUser;
+  const renderCount = Math.min(10, Math.max(1, pool.renderCount ?? 3), candidateCount);
+
+  return { limit, rows, maxPerUser, renderCount };
+}
 
 export const FEATURED_COLLECTIONS_DEFAULTS = {
   // The fetch pool, not the visible count (rows * 7 of these render). Sized well above the

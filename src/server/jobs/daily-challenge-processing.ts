@@ -45,6 +45,7 @@ import {
 import {
   dedupeWinnersForPayout,
   reconcileWinnerToPersisted,
+  resolveWinnerPicks,
 } from '~/server/games/daily-challenge/challenge-winner-reconcile';
 import {
   ChallengeReviewCostType,
@@ -88,6 +89,7 @@ import {
   recordChallengeCompleted,
   recordChallengePrizePaidBuzz,
   recordChallengeWinnerDuplicatePick,
+  recordChallengeWinnerUnmatchedPick,
 } from '~/server/prom/challenge.metrics';
 import {
   challengeJudgingCategoriesSchema,
@@ -1709,32 +1711,52 @@ export async function pickWinnersForChallenge(
           await incrementOperationSpent(currentChallenge.challengeId, winnersBuzzCost);
         }
 
-        // Map winners to entries by numeric creatorId only. `winner.creator` is the LLM's echo of
-        // the (user-controlled, spoofable) display name — matching on it let a second entrant who
-        // set their name equal to another entrant's name hijack `find`'s first-match semantics and
-        // steal that entrant's payout. judgedEntries is already deduped to one entry per userId
-        // (see getJudgedEntries), so creatorId alone fully disambiguates.
-        winningEntries = engineWinners
-          ? engineWinners.map((winner, i) => ({
-              userId: winner.userId,
-              imageId: winner.imageId,
-              position: i + 1,
-              prize: currentChallenge.prizes[i]?.buzz ?? 0,
-              reason: winner.reason,
-            }))
-          : generated.winners
-              .map((winner, i) => {
-                const entry = rankedEntries.find((e) => e.userId === winner.creatorId);
-                if (!entry) return null;
-                return {
-                  userId: entry.userId,
-                  imageId: entry.imageId,
-                  position: i + 1,
-                  prize: currentChallenge.prizes[i]?.buzz ?? 0,
-                  reason: winner.reason,
-                };
-              })
-              .filter(isDefined);
+        if (engineWinners) {
+          // The engine picked from the ranked field, so every place already resolves to a real
+          // entrant — there is nothing to look up and nothing that can go unresolved.
+          winningEntries = engineWinners.map((winner, i) => ({
+            userId: winner.userId,
+            imageId: winner.imageId,
+            position: i + 1,
+            prize: currentChallenge.prizes[i]?.buzz ?? 0,
+            reason: winner.reason,
+          }));
+        } else {
+          // Resolve the LLM's picks to entries by numeric creatorId only, numbering the survivors
+          // 1..n — see `resolveWinnerPicks`. Prize is keyed to the RESOLVED position, not to the
+          // pick's index in the judge's array: they diverge as soon as one pick resolves to
+          // nothing, and place is what the winner row and the payout's transaction id both embed.
+          // `rankedEntries` is the set handed to the model on this path: the legacy engine's
+          // shortlistSize is 0, so recapField collapses to exactly these entries.
+          const { winners: resolvedWinners, unmatched: unmatchedPicks } = resolveWinnerPicks(
+            generated.winners,
+            rankedEntries
+          );
+          winningEntries = resolvedWinners.map((winner) => ({
+            ...winner,
+            prize: currentChallenge.prizes[winner.position - 1]?.buzz ?? 0,
+          }));
+
+          if (unmatchedPicks.length) {
+            await logToAxiom({
+              type: 'warning',
+              name: 'challenge-winner-unmatched-pick',
+              message: `Winner pick named a creatorId matching no judged entry; that placement was not awarded: challenge=${currentChallenge.challengeId}`,
+              challengeId: currentChallenge.challengeId,
+              unmatchedIndexes: unmatchedPicks.map((pick) => pick.index),
+              unmatchedCreatorIds: unmatchedPicks.map((pick) => String(pick.creatorId)),
+              // Resolved, NOT awarded: the duplicate-creator dedupe below can still drop one of
+              // these, so reading this as "placements paid" would overstate on a pick that both
+              // named an unknown id and repeated a creator.
+              resolvedPlaces: winningEntries.length,
+              pickedPlaces: generated.winners.length,
+            }).catch(() => undefined);
+            recordChallengeWinnerUnmatchedPick({
+              source: challengeJudgeRow?.source ?? ChallengeSource.System,
+              count: unmatchedPicks.length,
+            });
+          }
+        }
 
         // Nothing above stops the LLM naming the same creator in two slots — "exactly 3 different
         // winners" is prompt text, and `find()` happily matches the same entry twice — which would
@@ -1825,7 +1847,10 @@ export async function pickWinnersForChallenge(
     const challengeRecord = await getChallengeById(currentChallenge.challengeId);
 
     // Partial-winner residual: unfilled prize buzz stays in account 0 by design (spec decision).
-    if (challengeRecord?.source === ChallengeSource.User) {
+    // Emitted for EVERY source. Restricting this to user challenges is how challenge 390 completed a
+    // place short in silence — the daily challenges are the ones whose prize pool is ours, so they
+    // are the last thing that should be exempt from noticing that a prize reached nobody.
+    if (challengeRecord) {
       const totalPrizeBuzz = challengeRecord.prizes.reduce((sum, p) => sum + (p.buzz ?? 0), 0);
       const distributedPrizeBuzz = winningEntries.reduce((sum, e) => sum + e.prize, 0);
       const residualBuzz = totalPrizeBuzz - distributedPrizeBuzz;
@@ -1833,9 +1858,9 @@ export async function pickWinnersForChallenge(
         await logToAxiom({
           type: 'info',
           name: 'challenge-partial-winner-residual',
-          message:
-            'User challenge completed with fewer winners than prize places; buzz not paid out',
+          message: 'Challenge completed with fewer winners than prize places; buzz not paid out',
           challengeId: currentChallenge.challengeId,
+          source: challengeRecord.source,
           residualBuzz,
           winnersCount: winningEntries.length,
           prizePlaces: challengeRecord.prizes.length,

@@ -9,12 +9,15 @@ import {
   classifyEmptyAllowance,
   classifyRun,
   compare,
+  countTestFilesInProgram,
   detectRenames,
   diffExcludes,
   isGatedTestFile,
+  isTestFileLine,
   parseDiagnostics,
   stripJsonComments,
   testFileFloor,
+  toPosixPath,
   validateBaseline,
 } from '../ci/typecheck-tests-compare.mjs';
 
@@ -1218,5 +1221,229 @@ describe('the gate, end to end: an unusable baseline is exit 2, not a pass', () 
     const res = runGate(wrapperStub('oc', 'process.exit(0);'), bl);
     expect(res.status).toBe(2);
     expect(res.all).toContain('measured against');
+  });
+});
+
+// ------------------------------------------------------- the platform seam
+/**
+ * REGRESSION COVERAGE — reported by a developer running `pnpm run test:unit:run`
+ * on Windows, where 18 of this file's cases were RED while CI stayed green.
+ *
+ * The gate built its `__tests__` marker out of `path.sep`
+ * (`` `${path.sep}__tests__${path.sep}` ``) and matched it against the output of
+ * `tsc --listFilesOnly`. **tsc emits FORWARD slashes on every platform, Windows
+ * included.** On Windows `path.sep` is `\`, so the marker matched nothing: 948
+ * output lines containing `__tests__`, 0 matching the marker, positive control
+ * trips, `CANNOT MEASURE — POSITIVE CONTROL FAILED … contains 0 file(s)`.
+ *
+ * WHY THE EXISTING SUITE COULD NOT SEE IT. Every case ran on Linux, where
+ * `path.sep === '/'`, so the marker happened to equal the shape tsc emits. The
+ * platform was a PINNED DIMENSION — not under-tested, structurally invisible:
+ * no amount of extra cases written the same way could have moved it, because
+ * every one of them would have read the same host separator.
+ *
+ * SO THESE CASES NEVER READ `path.sep`. They name both separators explicitly via
+ * `path.win32.sep` / `path.posix.sep`, which are the same two characters on every
+ * host, and they drive the gate end to end with `--listFilesOnly` output in each
+ * shape. That is what makes them mean the same thing on Linux and on Windows.
+ */
+
+// Always '\' and always '/', on every host. The whole point: the assertions
+// below are about a SEPARATOR, not about the machine running them.
+const WIN_SEP = path.win32.sep;
+const POSIX_SEP = path.posix.sep;
+
+/**
+ * The pre-fix predicate, transcribed verbatim from
+ * `typecheck-tests-gate.mjs`, with the one thing it read from the host — the
+ * separator — lifted into a parameter. This is the injection the production code
+ * could not offer: it read `path.sep` at module scope, which is exactly what made
+ * the behaviour untestable in-process.
+ */
+const preFixPredicate = (line: string, sep: string) =>
+  line.includes(`${sep}__tests__${sep}`) && !line.includes(`${sep}node_modules${sep}`);
+
+// The two shapes of the same path. `posixShaped` is what tsc ACTUALLY emits, on
+// both platforms; `winShaped` is what a naive reader assumes it emits on Windows.
+const posixShaped = 'C:/repo/src/a/__tests__/x.test.ts';
+const winShaped = 'C:\\repo\\src\\a\\__tests__\\x.test.ts';
+
+describe('the __tests__ marker must not depend on the host separator', () => {
+  it('DOCUMENTS THE DEFECT: the pre-fix marker cannot match tsc output on Windows', () => {
+    // Both halves are host-independent facts, so this case asserts the same
+    // thing wherever it runs — including on the Windows box that reported it.
+    expect(preFixPredicate(posixShaped, WIN_SEP)).toBe(false); // <- the Windows box
+    expect(preFixPredicate(posixShaped, POSIX_SEP)).toBe(true); // <- CI, green by luck
+  });
+
+  it.each([
+    ['posix-shaped (what tsc emits, everywhere)', posixShaped],
+    ['windows-shaped (a backslash path, if one ever reaches us)', winShaped],
+  ])('isTestFileLine claims a %s line', (_label, line) => {
+    expect(isTestFileLine(line)).toBe(true);
+  });
+
+  it.each([
+    ['posix-shaped', 'C:/repo/node_modules/pkg/src/a/__tests__/x.test.ts'],
+    ['windows-shaped', 'C:\\repo\\node_modules\\pkg\\src\\a\\__tests__\\x.test.ts'],
+  ])('isTestFileLine still excludes node_modules in a %s line', (_label, line) => {
+    // The exclusion half was built from `path.sep` too. Normalising only the
+    // marker and not this one would let vendored test files inflate the count —
+    // a positive control that passes by counting the wrong population.
+    expect(isTestFileLine(line)).toBe(false);
+  });
+
+  it('countTestFilesInProgram counts BOTH shapes in one listing, and neither vendored one', () => {
+    const listing = [
+      posixShaped,
+      winShaped,
+      'C:/repo/node_modules/pkg/src/a/__tests__/x.test.ts',
+      'C:\\repo\\node_modules\\pkg\\src\\a\\__tests__\\x.test.ts',
+      'C:/repo/src/a/notATest.ts',
+      'C:\\repo\\src\\a\\notATest.ts',
+    ].join('\n');
+    expect(countTestFilesInProgram(listing)).toBe(2);
+  });
+
+  it('toPosixPath is idempotent and leaves an already-posix path alone', () => {
+    expect(toPosixPath(winShaped)).toBe(posixShaped);
+    expect(toPosixPath(posixShaped)).toBe(posixShaped);
+    expect(toPosixPath(toPosixPath(winShaped))).toBe(posixShaped);
+  });
+
+  it('a diagnostic path is normalised to posix, so BASELINE KEYS are host-independent', () => {
+    // The baseline is a committed JSON file whose keys come straight from this
+    // parse. Normalising with `split(path.sep)` meant the key a Windows machine
+    // produced and the key a Linux machine produced were only ever equal because
+    // tsc happens to emit one shape. A key built with a host separator would
+    // never match the committed baseline written on the other host.
+    const r = parseDiagnostics(
+      [plain('src\\a\\__tests__\\x.test.ts'), plain('src/a/__tests__/x.test.ts')].join('\n')
+    );
+    expect(r.counts.get('src/a/__tests__/x.test.ts')).toBe(2);
+    expect([...r.counts.keys()]).toEqual(['src/a/__tests__/x.test.ts']);
+    // and the normalised key is one `isGatedTestFile` claims — the predicate is
+    // written against forward slashes, so a backslash key would be silently
+    // discarded as "outside src/**/__tests__/".
+    expect(isGatedTestFile([...r.counts.keys()][0])).toBe(true);
+  });
+
+  it('LEDGER: neither production module reads path.sep in executable code', () => {
+    // Structural, not behavioural, and deliberately a ledger over BOTH files: the
+    // defect is a class, and the two normalisation sites (the listFilesOnly
+    // filter and the diagnostic-path parse) sit in different modules. A future
+    // `path.sep` anywhere in either re-pins the dimension these cases exist to
+    // unpin, and would do it silently on Linux.
+    //
+    // Comments are stripped first — both files now DISCUSS `path.sep` at length,
+    // and a ledger that counted prose would be permanently red, i.e. a gate
+    // everyone learns to delete.
+    const stripComments = (src: string) =>
+      src
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .split('\n')
+        .filter((l) => !/^\s*(\/\/|\*)/.test(l))
+        .join('\n');
+
+    // NEGATIVE CONTROL on the instrument: the stripper must not be so eager that
+    // it eats real code. Without this the assertion below is satisfied by a
+    // function that returns the empty string.
+    expect(stripComments('/** `path.sep` */\n// path.sep\nconst m = path.sep;')).toContain(
+      'const m = path.sep;'
+    );
+    expect(stripComments('/** `path.sep` */\n// path.sep\nconst m = 1;')).not.toContain('path.sep');
+
+    for (const f of ['../ci/typecheck-tests-gate.mjs', '../ci/typecheck-tests-compare.mjs']) {
+      const code = stripComments(readFileSync(path.resolve(__dirname, f), 'utf8'));
+      expect({ file: f, hits: code.match(/path\.sep/g) ?? [] }).toEqual({ file: f, hits: [] });
+      // and the stripper genuinely read this file, rather than returning nothing
+      expect(code.length).toBeGreaterThan(500);
+    }
+  });
+});
+
+describe('the gate, end to end: a Windows-shaped run must not read as CANNOT MEASURE', () => {
+  /**
+   * A wrapper stub whose `--listFilesOnly` arm answers in BACKSLASH paths. This
+   * is the separator mismatch the reporter hit, mirrored: there the marker was
+   * `\__tests__\` and the lines were posix; here the lines are win32 and the
+   * marker (pre-fix, on this Linux host) is `/__tests__/`. Same defect, same
+   * symptom, and it is reproducible on the host the suite actually runs on —
+   * which is the only reason this bug is now catchable in CI at all.
+   */
+  function winWrapperStub(name: string, body: string) {
+    const file = path.join(dir, `${name}.mjs`);
+    writeFileSync(
+      file,
+      [
+        'const args = process.argv.slice(2);',
+        "if (args.includes('--listFilesOnly')) {",
+        '  const lines = [];',
+        // built by substitution rather than escaping, so the separator in the
+        // generated file is unambiguous when read back.
+        '  for (let i = 0; i < 950; i++)',
+        '    lines.push(`/repo/src/x${i}/__tests__/f${i}.test.ts`.split("/").join(String.fromCharCode(92)));',
+        "  console.log(lines.join('\\n'));",
+        '  process.exit(0);',
+        '}',
+        body,
+      ].join('\n')
+    );
+    return file;
+  }
+
+  const unchanged = [
+    ...Array(5).fill(plain('src/a/__tests__/x.test.ts')),
+    ...Array(2).fill(plain('src/b/__tests__/y.test.ts')),
+  ];
+  const emit = (lines: string[], code = 2) =>
+    `console.log(${JSON.stringify(lines.join('\n'))});\nprocess.exit(${code});`;
+
+  it('counts a BACKSLASH --listFilesOnly listing and reaches a real verdict', () => {
+    const res = runGate(
+      winWrapperStub('win-list', emit(unchanged)),
+      fixtureBaseline('win1', BASE_FILES)
+    );
+    // Pre-fix this is exit 3 with "POSITIVE CONTROL FAILED … contains 0 file(s)"
+    // — the reporter's exact symptom, arrived at from the other side.
+    expect(res.all).not.toContain('POSITIVE CONTROL FAILED');
+    expect(res.all).toContain('positive control OK — 950 test file(s)');
+    expect(res.status).toBe(0);
+    expect(res.all).toContain('7 error(s) across 2 file(s) (baseline: 7 across 2)');
+    expect(res.all).toContain('PASS —');
+  });
+
+  it('still BLOCKS a real regression when the listing is backslash-shaped', () => {
+    // The arm above proves the gate stops refusing; this proves it did not
+    // start rubber-stamping. A normalisation that made everything match would
+    // pass the first case and fail this one.
+    const res = runGate(
+      winWrapperStub('win-list-block', emit([...unchanged, plain('src/c/__tests__/z.test.ts')])),
+      fixtureBaseline('win2', BASE_FILES)
+    );
+    expect(res.status).toBe(1);
+    expect(res.all).toContain('src/c/__tests__/z.test.ts  (1)');
+  });
+
+  it('normalises BACKSLASH diagnostic paths, so they match the committed baseline keys', () => {
+    // Separate arm, separate module: this one exercises `parseDiagnostics`, not
+    // the listFilesOnly filter. Pre-fix on Linux the keys keep their backslashes,
+    // `isGatedTestFile` rejects them as "outside src/**/__tests__/", the measured
+    // total is 0, and the plausibility control refuses the run.
+    const winDiag = (f: string) => plain(f.split('/').join('\\'));
+    const res = runGate(
+      wrapperStub(
+        'win-diag',
+        emit([
+          ...Array(5).fill(winDiag('src/a/__tests__/x.test.ts')),
+          ...Array(2).fill(winDiag('src/b/__tests__/y.test.ts')),
+        ])
+      ),
+      fixtureBaseline('win3', BASE_FILES)
+    );
+    expect(res.all).not.toContain('file(s) with errors outside');
+    expect(res.status).toBe(0);
+    expect(res.all).toContain('7 error(s) across 2 file(s) (baseline: 7 across 2)');
+    expect(res.all).toContain('PASS —');
   });
 });

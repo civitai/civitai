@@ -79,7 +79,9 @@ vi.mock('~/server/services/paid-access.service', () => ({
   earlyAccessDonationGoalFromLegacyConfig: vi.fn(() => null),
   earlyAccessConfigFromPaidAccess: vi.fn(),
 }));
-vi.mock('~/server/services/model-file.service', () => ({ filesForModelVersionCache: {} }));
+vi.mock('~/server/services/model-file.service', () => ({
+  deleteFilesForModelVersionCache: vi.fn(),
+}));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();

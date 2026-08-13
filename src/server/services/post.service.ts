@@ -1408,7 +1408,17 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     userPostCountCache.refresh(result.userId),
   ];
   if (image.hideMeta && currentImage && currentImage.hideMeta !== image.hideMeta) {
-    cacheRefreshPromises.push(purgeResizeCache({ url: result.url }));
+    // 🔴 SCOPED — this image STAYS LIVE. The flip re-keys it (the cache key includes hideMeta), so
+    // what needs clearing is only the variants derived BEFORE the flip, which still carry the
+    // metadata the user just asked to hide and remain publicly fetchable at stable URLs until the
+    // cache bucket ages them out. The post-flip variants are what the page is serving right now;
+    // removing those too would blank a live image until each cache tier caught up.
+    //
+    // The delete path (deleteImageFromS3 below) deliberately does NOT pass a scope — there the row
+    // is already gone and the image must stop serving entirely.
+    cacheRefreshPromises.push(
+      purgeResizeCache({ url: result.url, scope: 'hidden-meta-orphans' })
+    );
   }
   // Bust the image-delivery metadata cache on ANY hideMeta change (both directions): that
   // cache serves { hideMeta } to the delivery/resize path, and a stale value would keep

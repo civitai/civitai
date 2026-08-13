@@ -85,6 +85,10 @@ vi.mock('~/server/redis/caches', () => {
   };
 });
 
+const { mockPurgeResizeCache } = vi.hoisted(() => ({
+  mockPurgeResizeCache: vi.fn().mockResolvedValue(undefined),
+}));
+
 // The heavy image.service graph — replaced wholesale with the named exports post.service
 // imports. `purgeResizeCache` is spied so we can assert the hide-only path independently.
 vi.mock('~/server/services/image.service', () => ({
@@ -97,7 +101,7 @@ vi.mock('~/server/services/image.service', () => ({
   enqueueImageIngestion: vi.fn(),
   invalidateManyImageExistence: vi.fn(),
   purgeImageGenerationDataCache: vi.fn(),
-  purgeResizeCache: vi.fn().mockResolvedValue(undefined),
+  purgeResizeCache: mockPurgeResizeCache,
   queueImageSearchIndexUpdate: vi.fn(),
 }));
 
@@ -163,6 +167,14 @@ describe('updatePostImage — image-delivery metadata cache bust wiring', () => 
 
     expect(mockBustImageDeliveryMetadataCache).toHaveBeenCalledTimes(1);
     expect(mockBustImageDeliveryMetadataCache).toHaveBeenCalledWith(KEY_URL);
+
+    // 🔴 SCOPED, and the scope is the whole point. This image stays LIVE — the flip re-keys it, so
+    // only the variants derived BEFORE the flip are stale. Passing the default ('all') here would
+    // also drop the variants the page is serving right now. Nothing else pins this argument, so
+    // without this assertion the caller could silently regress to a full purge of a live image.
+    expect(mockPurgeResizeCache).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'hidden-meta-orphans' })
+    );
   });
 
   it('ALSO busts on a true -> false hideMeta flip (both-direction guarantee)', async () => {
@@ -172,6 +184,12 @@ describe('updatePostImage — image-delivery metadata cache bust wiring', () => 
 
     // This is the case the adjacent purgeResizeCache guard MISSES — the bust must still fire.
     expect(mockBustImageDeliveryMetadataCache).toHaveBeenCalledTimes(1);
+
+    // 🔴 AND NO PURGE. `keep=hm` retains the _hm variants, which on a true -> false flip are the
+    // ORPHANS, not the live set — the scope is inverted in this direction and the cache service
+    // says so in its own rejection message. Widening the guard to fire on both directions passed
+    // every other test in this suite, so without this the invariant rested on nothing.
+    expect(mockPurgeResizeCache).not.toHaveBeenCalled();
     expect(mockBustImageDeliveryMetadataCache).toHaveBeenCalledWith(KEY_URL);
   });
 

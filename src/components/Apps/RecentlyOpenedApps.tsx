@@ -7,7 +7,6 @@ import {
   Group,
   SimpleGrid,
   Stack,
-  Text,
   Title,
   Tooltip,
 } from '@mantine/core';
@@ -402,12 +401,12 @@ export function RecentlyOpenedListingsView({
 
   return (
     <Stack gap="xs" component="section" aria-label="Recently opened" data-testid="apps-recent-rail">
-      <Group justify="space-between" align="center">
-        <Title order={4}>Recently opened</Title>
-        <Text size="xs" c="dimmed">
-          Jump back in
-        </Text>
-      </Group>
+      {/* The "Jump back in" caption that used to sit opposite the title is gone —
+          it restated what "Recently opened" already says. With one child left the
+          `Group justify="space-between"` had nothing to space, so it went too;
+          the Title is the section heading directly. The rail + its tiles are
+          untouched. */}
+      <Title order={4}>Recently opened</Title>
       <SimpleGrid cols={{ base: 2, sm: 3, md: 4, lg: 6 }} spacing="xs">
         {entries.map((entry) => (
           <RecentTile

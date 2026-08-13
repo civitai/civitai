@@ -27,6 +27,7 @@ import {
   recordChallengeDeleted,
   recordChallengePrizePaidBuzz,
   recordChallengeWinnerDuplicatePick,
+  recordChallengeWinnerUnmatchedPick,
 } from '~/server/prom/challenge.metrics';
 import {
   ChallengeParticipation,
@@ -115,6 +116,7 @@ import {
 import {
   dedupeWinnersForPayout,
   reconcileWinnerToPersisted,
+  resolveWinnerPicks,
 } from '~/server/games/daily-challenge/challenge-winner-reconcile';
 import {
   deriveDomainCurrency,
@@ -2709,31 +2711,48 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
       process = generated.process;
       outcome = generated.outcome;
 
-      // Map winners to entries by numeric creatorId only. `winner.creator` is the LLM's echo of the
-      // (user-controlled, spoofable) display name — matching on it let a second entrant who set their
-      // name equal to another's hijack `find`'s first-match and steal the payout. judgedEntries is
-      // deduped to one entry per userId, so creatorId alone disambiguates. (Parity with the cron path.)
-      winningEntries = engineWinners
-        ? engineWinners.map((winner, i) => ({
-            userId: winner.userId,
-            imageId: winner.imageId,
-            position: i + 1,
-            prize: challenge.prizes[i]?.buzz ?? 0,
-            reason: winner.reason,
-          }))
-        : generated.winners
-            .map((winner, i) => {
-              const entry = rankedEntries.find((e) => e.userId === winner.creatorId);
-              if (!entry) return null;
-              return {
-                userId: entry.userId,
-                imageId: entry.imageId,
-                position: i + 1,
-                prize: challenge.prizes[i]?.buzz ?? 0,
-                reason: winner.reason,
-              };
-            })
-            .filter(isDefined);
+      if (engineWinners) {
+        // The engine picked from the ranked field, so every place already resolves to a real
+        // entrant — nothing to look up, nothing that can go unresolved.
+        winningEntries = engineWinners.map((winner, i) => ({
+          userId: winner.userId,
+          imageId: winner.imageId,
+          position: i + 1,
+          prize: challenge.prizes[i]?.buzz ?? 0,
+          reason: winner.reason,
+        }));
+      } else {
+        // Resolve the LLM's picks to entries by numeric creatorId only, numbering the survivors
+        // 1..n — see `resolveWinnerPicks`. Prize is keyed to the RESOLVED position, not to the
+        // pick's index in the judge's array. (Parity with the cron path.)
+        const { winners: resolvedWinners, unmatched: unmatchedPicks } = resolveWinnerPicks(
+          generated.winners,
+          rankedEntries
+        );
+        winningEntries = resolvedWinners.map((winner) => ({
+          ...winner,
+          prize: challenge.prizes[winner.position - 1]?.buzz ?? 0,
+        }));
+
+        if (unmatchedPicks.length) {
+          await logToAxiom({
+            type: 'warning',
+            name: 'challenge-winner-unmatched-pick',
+            message: `Winner pick named a creatorId matching no judged entry; that placement was not awarded: challenge=${challengeId}`,
+            challengeId,
+            unmatchedIndexes: unmatchedPicks.map((pick) => pick.index),
+            unmatchedCreatorIds: unmatchedPicks.map((pick) => String(pick.creatorId)),
+            // Resolved, not awarded — the dedupe below can still drop one. (Parity with the cron
+            // path.)
+            resolvedPlaces: winningEntries.length,
+            pickedPlaces: generated.winners.length,
+          }).catch(() => undefined);
+          recordChallengeWinnerUnmatchedPick({
+            source: challenge.source,
+            count: unmatchedPicks.length,
+          });
+        }
+      }
 
       // Nothing above stops the LLM naming the same creator in two slots — "exactly 3 different
       // winners" is prompt text, and `find()` happily matches the same entry twice — which would put
@@ -2856,7 +2875,8 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
     }
 
     // Partial-winner residual: unfilled prize buzz stays in account 0 by design (spec decision).
-    if (challenge.source === ChallengeSource.User) {
+    // Emitted for every source — see the matching note on the cron path.
+    {
       const totalPrizeBuzz = challenge.prizes.reduce((sum, p) => sum + (p.buzz ?? 0), 0);
       const distributedPrizeBuzz = winningEntries.reduce((sum, e) => sum + e.prize, 0);
       const residualBuzz = totalPrizeBuzz - distributedPrizeBuzz;
@@ -2864,9 +2884,9 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
         await logToAxiom({
           type: 'info',
           name: 'challenge-partial-winner-residual',
-          message:
-            'User challenge completed with fewer winners than prize places; buzz not paid out',
+          message: 'Challenge completed with fewer winners than prize places; buzz not paid out',
           challengeId,
+          source: challenge.source,
           residualBuzz,
           winnersCount: winningEntries.length,
           prizePlaces: challenge.prizes.length,
@@ -3153,6 +3173,7 @@ export async function checkImageEligibility(
       nsfwLevel: number;
       createdAt: Date;
       modelVersionIds: number[] | null;
+      modelVersionIdsManual: number[] | null;
     }>
   >(
     `
@@ -3160,7 +3181,8 @@ export async function checkImageEligibility(
       i.id,
       i."nsfwLevel",
       i."createdAt",
-      array_agg(DISTINCT ir."modelVersionId") FILTER (WHERE ir."modelVersionId" IS NOT NULL) AS "modelVersionIds"
+      array_agg(DISTINCT ir."modelVersionId") FILTER (WHERE ir."modelVersionId" IS NOT NULL AND ir.detected IS TRUE) AS "modelVersionIds",
+      array_agg(DISTINCT ir."modelVersionId") FILTER (WHERE ir."modelVersionId" IS NOT NULL AND ir.detected IS NOT TRUE) AS "modelVersionIdsManual"
     FROM "Image" i
     LEFT JOIN "ImageResourceNew" ir ON ir."imageId" = i.id
     WHERE i.id = ANY($1::int[])
@@ -3187,14 +3209,20 @@ export async function checkImageEligibility(
       reasons.push('Created before challenge');
     }
 
-    // Check model version requirement
+    // Check model version requirement. Only auto-detected resources count — a `detected: false` row
+    // is asserted by the uploader (post model-version link, or the hand-credit mutation), so it
+    // cannot certify the requirement. The two failures are told apart because they mean different
+    // things to the entrant: "wrong model" is their mistake, "not detected" means the image carries
+    // no generation metadata naming the model, which is what an off-site upload looks like.
     if (challenge.modelVersionIds.length > 0) {
-      const imageVersionIds = image.modelVersionIds ?? [];
-      const hasEligibleModel = imageVersionIds.some((vid) =>
-        challenge.modelVersionIds.includes(vid)
-      );
+      const detectedIds = image.modelVersionIds ?? [];
+      const hasEligibleModel = detectedIds.some((vid) => challenge.modelVersionIds.includes(vid));
       if (!hasEligibleModel) {
-        reasons.push('Wrong model');
+        const manualIds = image.modelVersionIdsManual ?? [];
+        const claimsEligibleModel = manualIds.some((vid) =>
+          challenge.modelVersionIds.includes(vid)
+        );
+        reasons.push(claimsEligibleModel ? 'Model not detected' : 'Wrong model');
       }
     }
 

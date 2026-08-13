@@ -5,15 +5,13 @@ import { REDIS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client
 import { hSetWithTTL } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
-import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-encryption';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
+/** Unused since the cookie store was retired. Kept so the 39 call sites don't churn. */
 type Context = {
   req: NextApiRequest;
   res: NextApiResponse;
 };
-
-const TOKEN_STORE: 'redis' | 'cookie' = false ? 'cookie' : 'redis';
 
 type GetOrchestratorTokenOptions = {
   /**
@@ -42,29 +40,21 @@ export async function getOrchestratorToken(
 ) {
   const redisKey = userId.toString();
   // Fail open on sysRedis: fall through to the getTemporaryUserApiKey
-  // fallback path below by setting token=null on error. Catch is scoped
-  // to the redis branch so an exception from getEncryptedCookie (cookie
-  // mode) isn't silently masked as a "sysRedis" issue.
+  // fallback path below by setting token=null on error.
   let token: string | null;
-  if (TOKEN_STORE === 'redis') {
-    try {
-      // Wall-clock deadline so a silent sysRedis half-open can't park this read
-      // ~11min on every authenticated generation call. A fast DOWN already
-      // rejects into the catch below; the SLOW half-open needs the race.
-      token = await withSysReadDeadline(
-        sysRedis.hGet(REDIS_KEYS.GENERATION.TOKENS, redisKey)
-      ).then((x) => x ?? null);
-    } catch (err) {
-      logSysRedisFailOpen(
-        'token-mint-amplification',
-        'getOrchestratorToken hGet',
-        err,
-        { userId, action: 'minting-fresh-token' }
-      );
-      token = null;
-    }
-  } else {
-    token = getEncryptedCookie(ctx, generationServiceCookie.name);
+  try {
+    // Wall-clock deadline so a silent sysRedis half-open can't park this read
+    // ~11min on every authenticated generation call. A fast DOWN already
+    // rejects into the catch below; the SLOW half-open needs the race.
+    token = await withSysReadDeadline(sysRedis.hGet(REDIS_KEYS.GENERATION.TOKENS, redisKey)).then(
+      (x) => x ?? null
+    );
+  } catch (err) {
+    logSysRedisFailOpen('token-mint-amplification', 'getOrchestratorToken hGet', err, {
+      userId,
+      action: 'minting-fresh-token',
+    });
+    token = null;
   }
 
   if (env.ORCHESTRATOR_MODE === 'dev') token = env.ORCHESTRATOR_ACCESS_TOKEN;
@@ -90,7 +80,7 @@ export async function getOrchestratorToken(
     const mint = () =>
       getTemporaryUserApiKey({
         name: generationServiceCookie.name,
-        // make the db token live just slightly longer than the cookie token
+        // make the db token live just slightly longer than the cached one
         maxAge: generationServiceCookie.maxAge + 5,
         type: 'System',
         userId,
@@ -98,46 +88,36 @@ export async function getOrchestratorToken(
     // Cross-user mints (moderator path) must NOT populate the per-pod
     // cache — Round-5 audit H2. See GetOrchestratorTokenOptions.bypassCache.
     token = options.bypassCache ? await mint() : await getOrMintCachedToken(userId, mint);
-    if (TOKEN_STORE === 'redis') {
-      // Cache populate is best-effort: if sysRedis is down we still return
-      // the freshly-minted token. Without this catch, the writeback would
-      // 500 every call during a sysRedis outage — defeating the read-side
-      // fail-open above.
-      //
-      // Phase 1.5 (PR #2331 follow-up): atomic single-EVAL set+TTL via
-      // hSetWithTTL helper. Replaces the prior Promise.all([hSet, hExpire])
-      // pair, which had the failure modes catalogued below — most
-      // critically the "no-TTL key on a healthy server" case where HEXPIRE
-      // arrives before HSET, finds the field missing, and returns 0
-      // silently; HSET then writes without TTL.
-      //
-      // Blast radius if no-TTL landed (pre-fix): NOT a transparent
-      // re-mint. The underlying API key from getTemporaryUserApiKey has a
-      // DB-side expiresAt (generationServiceCookie.maxAge + 5 ≈ 1h).
-      // After that expired, the API key was dead orchestrator-side, but
-      // the cached no-TTL token stayed in this hash. Subsequent calls hit
-      // the hGet read path above → returned the dead token → orchestrator
-      // 401 → user-visible auth failure with no automatic recovery.
-      await hSetWithTTL(
-        sysRedis,
-        REDIS_KEYS.GENERATION.TOKENS,
-        redisKey,
-        token,
-        generationServiceCookie.maxAge * 1000
-      ).catch((err) => {
-        logSysRedisFailOpen(
-          'write-degraded',
-          'getOrchestratorToken cache writeback',
-          err,
-          { userId }
-        );
+    // Cache populate is best-effort: if sysRedis is down we still return
+    // the freshly-minted token. Without this catch, the writeback would
+    // 500 every call during a sysRedis outage — defeating the read-side
+    // fail-open above.
+    //
+    // Phase 1.5 (PR #2331 follow-up): atomic single-EVAL set+TTL via
+    // hSetWithTTL helper. Replaces the prior Promise.all([hSet, hExpire])
+    // pair, which had the failure modes catalogued below — most
+    // critically the "no-TTL key on a healthy server" case where HEXPIRE
+    // arrives before HSET, finds the field missing, and returns 0
+    // silently; HSET then writes without TTL.
+    //
+    // Blast radius if no-TTL landed (pre-fix): NOT a transparent
+    // re-mint. The underlying API key from getTemporaryUserApiKey has a
+    // DB-side expiresAt (generationServiceCookie.maxAge + 5 ≈ 1h).
+    // After that expired, the API key was dead orchestrator-side, but
+    // the cached no-TTL token stayed in this hash. Subsequent calls hit
+    // the hGet read path above → returned the dead token → orchestrator
+    // 401 → user-visible auth failure with no automatic recovery.
+    await hSetWithTTL(
+      sysRedis,
+      REDIS_KEYS.GENERATION.TOKENS,
+      redisKey,
+      token,
+      generationServiceCookie.maxAge * 1000
+    ).catch((err) => {
+      logSysRedisFailOpen('write-degraded', 'getOrchestratorToken cache writeback', err, {
+        userId,
       });
-    } else
-      setEncryptedCookie(ctx, {
-        name: generationServiceCookie.name,
-        maxAge: generationServiceCookie.maxAge,
-        value: token,
-      });
+    });
   }
   return token;
 }
