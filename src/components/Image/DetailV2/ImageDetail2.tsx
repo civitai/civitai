@@ -77,7 +77,6 @@ import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettings
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
-import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -85,7 +84,7 @@ import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddo
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
-import { generationGraphPanel } from '~/store/generation-graph.store';
+import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 
@@ -121,7 +120,6 @@ const sharedIconProps: IconProps = {
 export function ImageDetail2() {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
-  const { trackAction } = useTrackEvent();
   const {
     images,
     active,
@@ -200,8 +198,8 @@ export function ImageDetail2() {
 
   const handleSidebarToggle = () => setSidebarOpen((o) => !o);
 
-  const canCreate = image.hasPositivePrompt ?? image.hasMeta;
   const isOwner = currentUser?.id === image.user.id;
+  const canRemix = isRemixMenuVisible(image);
 
   const IconChevron = !active ? IconChevronUp : IconChevronDown;
   const IconLayoutSidebarRight = !sidebarOpen
@@ -210,28 +208,15 @@ export function ImageDetail2() {
 
   const LeftImageControls = (
     <>
-      {canCreate && (
-        <Button
-          {...sharedButtonProps}
-          color="blue"
-          onClick={() => {
-            trackAction({
-              type: 'Image_Remix_Click',
-              details: {
-                imageId: image.id,
-                imageType: image.type,
-                source: 'remix:image',
-              },
-            }).catch(() => undefined);
-            generationGraphPanel.open({ type: image.type, id: image.id });
-          }}
-          data-activity="remix:image"
-        >
-          <Group gap={4} wrap="nowrap">
-            <IconBrush size={16} />
-            <Text size="xs">Remix</Text>
-          </Group>
-        </Button>
+      {canRemix && (
+        <RemixMenu image={image} source="remix:image">
+          <Button {...sharedButtonProps} color="blue" data-activity="remix:image">
+            <Group gap={4} wrap="nowrap">
+              <IconBrush size={16} />
+              <Text size="xs">Remix</Text>
+            </Group>
+          </Button>
+        </RemixMenu>
       )}
       <Button {...sharedButtonProps} onClick={handleSaveClick}>
         <IconBookmark {...sharedIconProps} />

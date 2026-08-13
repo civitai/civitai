@@ -202,6 +202,53 @@ const generationDataCache = new Map<string, Promise<GenerationData>>();
  */
 let inFlightFetchCount = 0;
 
+/**
+ * Run an externally-driven fetch under the same `loading` bookkeeping `open()`
+ * uses for its own.
+ *
+ * A caller that fetches its own data and then calls `setData` (the remix menu
+ * seeding a chosen engine) still needs the panel to show a spinner, or the
+ * previous session's form sits there live and submittable while it waits.
+ * Setting `loading` from outside does not work: the bail-out paths above clear
+ * the flag when `inFlightFetchCount` reaches zero, and a fetch they cannot see
+ * is not counted — so an unrelated superseded `open()` resolving mid-flight
+ * clears a spinner that is still needed. Participating in the counter is what
+ * makes the flag coherent, and the counter is deliberately module-scoped.
+ *
+ * Returns the `openSequence` captured at entry so the caller can detect being
+ * superseded, exactly as `open()` does.
+ *
+ * CONTRACT: the caller must have bumped the sequence first (any `open()` does
+ * this synchronously). Calling this without one shares a sequence with whatever
+ * fetch is already in flight, so neither sees itself as superseded and both
+ * apply their data.
+ */
+export async function withExternalFetch<T>(
+  run: () => Promise<T>
+): Promise<{ result: T; superseded: boolean }> {
+  const store = useGenerationGraphStore;
+  const capturedSequence = store.getState().openSequence;
+  store.setState({ loading: true });
+  inFlightFetchCount++;
+
+  const settle = () => {
+    inFlightFetchCount--;
+    const superseded = store.getState().openSequence !== capturedSequence;
+    // Mirror of the bail-out invariant in `open()`: only the last fetch
+    // standing owns the flag. A newer one still pending will clear it itself.
+    if (!superseded || inFlightFetchCount === 0) store.setState({ loading: false });
+    return superseded;
+  };
+
+  try {
+    const result = await run();
+    return { result, superseded: settle() };
+  } catch (e) {
+    settle();
+    throw e;
+  }
+}
+
 export function fetchGenerationData(input: GetGenerationDataInput): Promise<GenerationData> {
   const key = buildGenerationDataKey(input);
 

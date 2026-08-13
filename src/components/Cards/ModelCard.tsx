@@ -186,7 +186,7 @@ function ModelCardContent({ data }: Props) {
           </div>
           <div className="flex flex-col items-center gap-2">
             <ModelCardContextMenu data={data} />
-            <RemixButton type="modelVersion" id={data.version.id} canGenerate={data.canGenerate} />
+            <RemixButton id={data.version.id} canGenerate={data.canGenerate} />
 
             <CivitaiLinkManageButton
               modelId={data.id}

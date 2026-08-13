@@ -22,8 +22,8 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { ImageSort } from '~/server/common/enums';
-import { generationGraphPanel } from '~/store/generation-graph.store';
-import { useTrackEvent } from '~/components/TrackView/track.utils';
+import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
+import { tourOverlayZIndex } from '~/shared/constants/app-layout.constants';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
@@ -54,7 +54,6 @@ export function ModelCarousel(props: Props) {
 function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10 }: Props) {
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
-  const { trackAction } = useTrackEvent();
   const { images, flatData, isLoading } = useQueryImages({
     modelVersionId: modelVersionId,
     prioritizedUserIds: [modelUserId],
@@ -118,8 +117,20 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                               className="absolute right-2 top-2 z-10"
                             >
                               <ImageContextMenu image={image} />
-                              {features.imageGeneration &&
-                                (image.hasPositivePrompt ?? image.hasMeta) && (
+                              {features.imageGeneration && isRemixMenuVisible(image) && (
+                                <RemixMenu
+                                  image={image}
+                                  source="remix:model-carousel"
+                                  sourceModelVersionId={modelVersionId}
+                                  onAction={() => {
+                                    if (running) helpers?.next();
+                                  }}
+                                  // Both model-page tours put a step on this
+                                  // button whose only way forward is clicking
+                                  // through it, and the overlay swallows clicks
+                                  // below it.
+                                  zIndex={running ? tourOverlayZIndex + 1 : undefined}
+                                >
                                   <HoverActionButton
                                     label="Remix"
                                     size={30}
@@ -130,28 +141,12 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                                     onClick={(e) => {
                                       e.preventDefault();
                                       e.stopPropagation();
-
-                                      trackAction({
-                                        type: 'Image_Remix_Click',
-                                        details: {
-                                          imageId: image.id,
-                                          imageType: image.type,
-                                          sourceModelVersionId: modelVersionId,
-                                          source: 'remix:model-carousel',
-                                        },
-                                      }).catch(() => undefined);
-
-                                      generationGraphPanel.open({
-                                        type: image.type,
-                                        id: image.id,
-                                      });
-
-                                      if (running) helpers?.next();
                                     }}
                                   >
                                     <IconBrush stroke={2.5} size={16} />
                                   </HoverActionButton>
-                                )}
+                                </RemixMenu>
+                              )}
                             </Stack>
                             <RoutedDialogLink
                               name="imageDetail"
