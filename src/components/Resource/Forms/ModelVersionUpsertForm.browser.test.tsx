@@ -494,6 +494,11 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     ).toHaveLength(1);
     // The wrong sentence for this removal: nothing here is about early access ending.
     expect(page.getByText(/your payment for early access will be lost/).elements()).toHaveLength(0);
+    // The way back is the picker, not a link, and the sentence has to say so — unlike POI and private,
+    // this removal is reversible.
+    expect(
+      page.getByText(/Switch back to a commercial base model to restore it/).elements()
+    ).toHaveLength(1);
     // And no restore: it would re-apply a fee and a gate the server rejects for this base model — the
     // fee behind an editor that is unmounted for non-commercial base models, which is the hidden charge
     // the disclosure work exists to prevent.

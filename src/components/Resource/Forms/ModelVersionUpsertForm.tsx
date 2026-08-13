@@ -1295,7 +1295,7 @@ export function ModelVersionUpsertForm({
                             : model?.poi
                             ? "A model depicting a real person can't have paid access, so this can't be kept."
                             : isNonCommercial
-                            ? "This base model is licensed for non-commercial use, so this can't be kept."
+                            ? "This base model is licensed for non-commercial use, so this can't be kept. Switch back to a commercial base model to restore it."
                             : "This version's usage control can't be gated, so this can't be kept."}
                         </Text>
                       ) : (
