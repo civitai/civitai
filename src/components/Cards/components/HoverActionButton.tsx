@@ -20,6 +20,7 @@ const HoverActionButton = React.forwardRef<HTMLButtonElement, Props>(function Ho
     onClick,
     keepIconOnHover = false,
     style,
+    className,
     ...props
   },
   ref
@@ -36,8 +37,16 @@ const HoverActionButton = React.forwardRef<HTMLButtonElement, Props>(function Ho
         '--size': `${size}px`,
       }}
       onClick={onClick}
-      className={clsx(classes.wrapper, isCustomVariant ? classes[colorCustomVariant] : undefined)}
       {...props}
+      // After the spread, and merged rather than replaced: as a Mantine
+      // `Menu.Target` this component is cloned with a `className` of the
+      // popover's own, which would otherwise drop `wrapper` and take the icon
+      // layout and hover-expand animation with it.
+      className={clsx(
+        classes.wrapper,
+        isCustomVariant ? classes[colorCustomVariant] : undefined,
+        className
+      )}
     >
       <Badge className={classes.label} size="xs" variant={variant} color={color}>
         {label}

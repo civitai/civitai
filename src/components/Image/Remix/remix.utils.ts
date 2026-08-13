@@ -1,6 +1,7 @@
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import type { RemixKind } from '~/shared/constants/remix.constants';
+import type { RemixEngine, RemixKind, RemixTier } from '~/shared/constants/remix.constants';
 import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import {
@@ -14,10 +15,11 @@ import { getImageDimensions } from '~/utils/image-utils';
 /**
  * Fields the remix entry-points need.
  *
- * `nsfwLevel` is required rather than optional on purpose. It is the one field
- * that marks an unscanned image on *both* backends, and a surface that omitted
- * it would silently get the unsafe branch of `getEngineRefusal`. Required means
- * that mistake fails typecheck instead of shipping.
+ * `nsfwLevel` is required rather than optional on purpose: it decides which
+ * engine an image is sent to, and an absent value reads as 0, which routes to
+ * the safe tier. A surface that forgot the field would therefore send mature
+ * images to a provider that refuses them, and the user would pay for it.
+ * Required means that mistake fails typecheck instead of shipping.
  */
 export type RemixSourceImage = {
   id: number;
@@ -34,42 +36,22 @@ export type RemixSourceImage = {
   hasPositivePrompt?: boolean | null;
 };
 
-/**
- * Ingestion states that mean the classifiers have not produced a verdict for
- * this image. `Rescan` and `PendingManualAssignment` are deliberately absent —
- * both are states an already-classified image passes through, so `minor`/`poi`
- * are populated, and a re-ingestion sweep can put a large slice of the
- * catalogue into `Rescan` at once.
- */
-const UNVERDICTED_INGESTION = new Set<string>([
-  ImageIngestionStatus.Pending,
-  ImageIngestionStatus.Error,
-  ImageIngestionStatus.NotFound,
-]);
-
 const FALLBACK_DIMENSIONS = { width: 512, height: 512 };
 
 /**
  * Why this image can't be sent to an engine, or undefined if it can.
  *
- * The unscanned check is the load-bearing one. `minor` and `poi` are written by
- * the ingestion classifiers, so on an image that has not been scanned they are
- * null and every check below them passes vacuously — and both feeds show a user
- * their own uploads before the scan finishes (the DB path renders the "Not
- * published" badge for exactly those; the search path returns `nsfwLevel === 0`
- * docs when `isOwnContent`, `images.feed.ts`). So the unsafe case is not an edge
- * case, it is the ordinary "I just uploaded this" one.
- *
- * `nsfwLevel === 0` is the check because it is the only unscanned marker present
- * on both backends — the search path's document type carries no `ingestion` at
- * all. The `ingestion` clause below it is a DB-path refinement that additionally
- * catches a scan which ran and failed, where `nsfwLevel` may be nonzero.
+ * An image with no rating yet is NOT refused — it routes to the safe tier
+ * instead (see `getRemixTier`), so an unscanned upload offers the same options
+ * as any other image rather than a message the viewer can do nothing about.
+ * What that costs: `minor` and `poi` are written by the ingestion classifiers,
+ * so on an unscanned image they are null and the two checks below pass
+ * vacuously. The safe tier's provider runs its own refusal on the content it
+ * receives, which is what the routing leans on in place of our own verdict.
  */
 export function getEngineRefusal(image: RemixSourceImage): string | undefined {
   if (image.ingestion === ImageIngestionStatus.Blocked || image.blockedFor)
     return 'This image was blocked, so it cannot be remixed.';
-  if (!image.nsfwLevel || (image.ingestion != null && UNVERDICTED_INGESTION.has(image.ingestion)))
-    return 'This image is still being reviewed. Try again once it finishes scanning.';
   if (image.minor) return 'Images that may depict a minor cannot be remixed.';
   if (image.poi) return 'Images of real people cannot be remixed.';
   return undefined;
@@ -87,6 +69,25 @@ export function isReuseRefused(image: RemixSourceImage): boolean {
 /** Remix kinds that need only the image itself. */
 export function getRemixKinds(image: RemixSourceImage): RemixKind[] {
   return image.type === 'image' ? ['edit', 'video'] : [];
+}
+
+/**
+ * Which tier an image routes to. Anything above the safe browsing levels goes
+ * to a self-hosted engine, because the external providers refuse it — an
+ * unrouted mature image would cost the user Buzz for a provider-side refusal.
+ *
+ * An unrated image (level 0 — the scan has not finished) takes the safe tier.
+ * That needs stating explicitly: `getIsSafeBrowsingLevel` returns FALSE for 0,
+ * so leaning on it alone would send exactly the images we know least about to
+ * the mature engine.
+ */
+export function getRemixTier(image: RemixSourceImage): RemixTier {
+  if (!image.nsfwLevel) return 'safe';
+  return getIsSafeBrowsingLevel(image.nsfwLevel) ? 'safe' : 'mature';
+}
+
+export function getRemixEngine(kind: RemixKind, image: RemixSourceImage): RemixEngine {
+  return REMIX_ENGINES[kind][getRemixTier(image)];
 }
 
 /** Whether the original prompt-and-resource path has anything to offer. */
@@ -117,7 +118,7 @@ async function resolveDimensions(image: RemixSourceImage, sourceUrl: string) {
  * the meantime — including the form they are already typing in.
  */
 export async function startRemix({ kind, image }: { kind: RemixKind; image: RemixSourceImage }) {
-  const engine = REMIX_ENGINES[kind];
+  const engine = getRemixEngine(kind, image);
   generationGraphPanel.open(undefined, { preserveEntryAction: true });
 
   const sourceUrl = getEdgeUrl(image.url, { original: true });

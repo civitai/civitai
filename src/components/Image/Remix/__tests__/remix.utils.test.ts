@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { canReusePrompt, getEngineRefusal, getRemixKinds, isReuseRefused } from '../remix.utils';
+import {
+  canReusePrompt,
+  getEngineRefusal,
+  getRemixEngine,
+  getRemixKinds,
+  getRemixTier,
+  isReuseRefused,
+} from '../remix.utils';
 import type { RemixSourceImage } from '../remix.utils';
 import { isRemixMenuVisible } from '../RemixMenu';
+import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
 import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -25,38 +33,23 @@ describe('getEngineRefusal', () => {
     expect(getEngineRefusal(image())).toBeUndefined();
   });
 
-  // The reason the check is on nsfwLevel rather than ingestion: the search
-  // backend's document type has no ingestion field at all, and it returns
-  // unscanned images to their owner. `minor`/`poi` are null there because the
-  // classifiers have not run, so every later check would pass vacuously.
-  it('refuses an unscanned image even when no ingestion status is present', () => {
+  // Justin, 2026-08-12: an unrated image routes to the safe tier instead of
+  // refusing. The viewer cannot hurry a scan, so a refusal message was a dead
+  // end for the one case that is most common — your own fresh upload.
+  it('does not refuse an unscanned image', () => {
     const searchDoc = image({ nsfwLevel: 0, ingestion: undefined, minor: null, poi: null });
-    expect(getEngineRefusal(searchDoc)).toMatch(/still being reviewed/);
+    expect(getEngineRefusal(searchDoc)).toBeUndefined();
   });
 
-  it('refuses a pending image on the db path', () => {
-    expect(getEngineRefusal(image({ ingestion: ImageIngestionStatus.Pending }))).toMatch(
-      /still being reviewed/
-    );
+  it.each([
+    ImageIngestionStatus.Pending,
+    ImageIngestionStatus.Error,
+    ImageIngestionStatus.NotFound,
+    ImageIngestionStatus.Rescan,
+    ImageIngestionStatus.PendingManualAssignment,
+  ])('does not refuse on ingestion status %s', (ingestion) => {
+    expect(getEngineRefusal(image({ ingestion }))).toBeUndefined();
   });
-
-  // A scan that ran and failed can leave a nonzero level, so nsfwLevel alone
-  // does not catch these.
-  it.each([ImageIngestionStatus.Error, ImageIngestionStatus.NotFound])(
-    'refuses %s even with a rated level',
-    (ingestion) => {
-      expect(getEngineRefusal(image({ ingestion }))).toMatch(/still being reviewed/);
-    }
-  );
-
-  // Both are states an already-classified image passes through, and a
-  // re-ingestion sweep can put a large slice of the catalogue into Rescan.
-  it.each([ImageIngestionStatus.Rescan, ImageIngestionStatus.PendingManualAssignment])(
-    'allows %s, which keeps its earlier verdict',
-    (ingestion) => {
-      expect(getEngineRefusal(image({ ingestion }))).toBeUndefined();
-    }
-  );
 
   it('refuses a blocked image by status or by reason', () => {
     expect(getEngineRefusal(image({ ingestion: ImageIngestionStatus.Blocked }))).toMatch(/blocked/);
@@ -91,6 +84,36 @@ describe('getRemixKinds', () => {
 
   it.each([MediaType.video, MediaType.audio])('offers no engine kinds for %s', (type) => {
     expect(getRemixKinds(image({ type }))).toEqual([]);
+  });
+});
+
+describe('engine routing by rating', () => {
+  // NsfwLevel is a bitflag set: PG=1, PG13=2, R=4, X=8, XXX=16.
+  it.each([1, 2])('routes level %i to the safe engine', (nsfwLevel) => {
+    expect(getRemixTier(image({ nsfwLevel }))).toBe('safe');
+    expect(getRemixEngine('edit', image({ nsfwLevel }))).toBe(REMIX_ENGINES.edit.safe);
+  });
+
+  it.each([4, 8, 16])('routes level %i to the mature engine', (nsfwLevel) => {
+    expect(getRemixTier(image({ nsfwLevel }))).toBe('mature');
+    expect(getRemixEngine('edit', image({ nsfwLevel }))).toBe(REMIX_ENGINES.edit.mature);
+  });
+
+  // Unrated means the classifiers have not run, so we know least about it —
+  // routing that to the mature engine would be exactly backwards. Note
+  // getIsSafeBrowsingLevel(0) is FALSE, so this needs its own branch.
+  it('routes an unrated image to the safe engine', () => {
+    expect(getRemixTier(image({ nsfwLevel: 0 }))).toBe('safe');
+    expect(getRemixEngine('edit', image({ nsfwLevel: 0 }))).toBe(REMIX_ENGINES.edit.safe);
+  });
+
+  // The failure this prevents is a charged request that the provider refuses,
+  // which looks like a broken generator rather than a routing bug.
+  it("never sends a mature image to the safe tier's ecosystem", () => {
+    const mature = image({ nsfwLevel: 16 });
+    expect(getRemixEngine('edit', mature).ecosystemKey).not.toBe(
+      REMIX_ENGINES.edit.safe.ecosystemKey
+    );
   });
 });
 

@@ -25,6 +25,12 @@ export const nanoBananaVersionIds = {
 
 export const ltxVersionIds = {
   v23Dev: 2749908,
+  /** Sulphur 2 — routes through the LTXV23 ecosystem with a diffusionModel AIR override. */
+  sulphur2Dev: 2921800,
+} as const;
+
+export const qwenVersionIds = {
+  imageEdit2511: 2558804,
 } as const;
 
 export const viduVersionIds = {

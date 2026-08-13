@@ -1,4 +1,4 @@
-import { Menu, Text } from '@mantine/core';
+import { Menu, Text, ThemeIcon } from '@mantine/core';
 import { useRef } from 'react';
 import { IconBrush, IconMovie, IconWand } from '@tabler/icons-react';
 import type { RemixKind } from '~/shared/constants/remix.constants';
@@ -14,11 +14,56 @@ import {
 } from '~/components/Image/Remix/remix.utils';
 import { remixMenuZIndex } from '~/shared/constants/app-layout.constants';
 
-const kindLabels: Record<RemixKind, { label: string; description: string; icon: typeof IconWand }> =
-  {
-    edit: { label: 'Edit image', description: 'Change this image with a prompt', icon: IconWand },
-    video: { label: 'Animate', description: 'Turn this image into a video', icon: IconMovie },
-  };
+type RemixOption = {
+  label: string;
+  description: string;
+  icon: typeof IconWand;
+  /** A colour per option so the three read as distinct things, not a list. */
+  color: string;
+};
+
+const kindLabels: Record<RemixKind, RemixOption> = {
+  edit: {
+    label: 'Edit image',
+    description: 'Change this image with a prompt',
+    icon: IconWand,
+    color: 'violet',
+  },
+  video: {
+    label: 'Animate',
+    description: 'Turn this image into a video',
+    icon: IconMovie,
+    color: 'blue',
+  },
+};
+
+const reuseOption: RemixOption = {
+  label: 'Reuse prompt & resources',
+  description: "Start from this image's settings",
+  icon: IconBrush,
+  color: 'teal',
+};
+
+function OptionIcon({ option }: { option: RemixOption }) {
+  return (
+    <ThemeIcon size={36} radius="md" variant="light" color={option.color}>
+      <option.icon size={20} stroke={1.7} />
+    </ThemeIcon>
+  );
+}
+
+function OptionLabel({ option }: { option: RemixOption }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <Text size="sm" fw={600} lh={1.2}>
+        {option.label}
+      </Text>
+      <Text size="xs" c="dimmed" lh={1.2}>
+        {option.description}
+      </Text>
+    </div>
+  );
+}
 
 /** Whether the button has anything to offer. Not a hook — callable after an early return. */
 export function isRemixMenuVisible(image: RemixSourceImage) {
@@ -92,6 +137,7 @@ export function RemixMenu({
     >
       <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown
+        className="w-[290px] p-1.5"
         onClick={(e) => {
           // These live inside RoutedDialogLink on the feed cards, which would
           // otherwise navigate to the image detail behind the menu.
@@ -107,29 +153,27 @@ export function RemixMenu({
         {!engineRefusal && (
           <>
             {kinds.map((kind) => {
-              const { label, description, icon: Icon } = kindLabels[kind];
+              const option = kindLabels[kind];
               return (
                 <Menu.Item
                   key={kind}
-                  leftSection={<Icon size={16} stroke={1.5} />}
+                  className="rounded-md px-2 py-2.5"
+                  leftSection={<OptionIcon option={option} />}
                   onClick={() => handleKind(kind)}
                 >
-                  <Text size="sm">{label}</Text>
-                  <Text size="xs" c="dimmed">
-                    {description}
-                  </Text>
+                  <OptionLabel option={option} />
                 </Menu.Item>
               );
             })}
           </>
         )}
-        {(engineRefusal || kinds.length > 0) && showReuse && <Menu.Divider />}
         {showReuse && (
-          <Menu.Item leftSection={<IconBrush size={16} stroke={1.5} />} onClick={handleReuse}>
-            <Text size="sm">Reuse prompt &amp; resources</Text>
-            <Text size="xs" c="dimmed">
-              Start from this image&apos;s settings
-            </Text>
+          <Menu.Item
+            className="rounded-md px-2 py-2.5"
+            leftSection={<OptionIcon option={reuseOption} />}
+            onClick={handleReuse}
+          >
+            <OptionLabel option={reuseOption} />
           </Menu.Item>
         )}
       </Menu.Dropdown>

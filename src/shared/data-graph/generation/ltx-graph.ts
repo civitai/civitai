@@ -60,7 +60,7 @@ const LTXV25_DEV_ID = 3220143;
 const LTXV25_DISTILLED_ID = 3220250;
 
 /** Sulphur 2 model version IDs (LTXV23 ecosystem) */
-const SULPHUR2_DEV_ID = 2921800;
+const SULPHUR2_DEV_ID = ltxVersionIds.sulphur2Dev;
 const SULPHUR2_DISTILLED_ID = 2923808;
 
 /** Set of all distilled version IDs (across every LTX ecosystem) */
