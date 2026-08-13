@@ -1,6 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
-import { incrementOperationSpent } from '~/server/games/daily-challenge/challenge-helpers';
+import {
+  incrementOperationSpent,
+  operationBudgetRemaining,
+} from '~/server/games/daily-challenge/challenge-helpers';
 import {
   JUDGING_ENGINES,
   type ChallengeJudgingEngine,
@@ -21,6 +24,7 @@ import {
 } from '~/server/games/daily-challenge/challenge-pairwise';
 import * as store from '~/server/games/daily-challenge/challenge-pairwise-store';
 import {
+  budgetCallCap,
   DEFAULT_BOUT_BUDGET,
   GROUP_SIZE,
   planGroups,
@@ -89,13 +93,32 @@ export const rollingSwissEngine: ChallengeJudgingEngine = {
     if (standings.length < GROUP_SIZE) return 0;
 
     const { progress, callsSoFar } = await challengeClock(ctx.challengeId);
-    const maxCalls = tickCallBudget({
-      fieldSize: standings.length,
-      callsSoFar,
-      progress,
-      budget: DEFAULT_BOUT_BUDGET,
-    });
-    if (maxCalls < 1 || Date.now() >= deadlineMs) return 0;
+    const { remaining, spent } = await operationBudgetRemaining(ctx.challengeId);
+
+    // Two independent caps: the clock decides how much work is DUE, the budget decides how much is
+    // AFFORDABLE. Both are applied at plan time — a spend ceiling enforced inside concurrent lanes
+    // is not a ceiling (see `budgetCallCap`).
+    const maxCalls = Math.min(
+      tickCallBudget({
+        fieldSize: standings.length,
+        callsSoFar,
+        progress,
+        budget: DEFAULT_BOUT_BUDGET,
+      }),
+      budgetCallCap({ budgetRemaining: remaining, spentSoFar: spent, callsSoFar })
+    );
+    if (maxCalls < 1 || Date.now() >= deadlineMs) {
+      if (remaining != null && remaining <= 0) {
+        logToAxiom({
+          type: 'warning',
+          name: 'challenge-swiss-budget-exhausted',
+          challengeId: ctx.challengeId,
+          field: standings.length,
+          spent,
+        }).catch(() => undefined);
+      }
+      return 0;
+    }
 
     return runGroups(
       ctx,
@@ -203,6 +226,8 @@ async function runGroups(
   await runPool(groups, LADDER_CONCURRENCY, async (group) => {
     // Checked per group rather than once up front: the deadline is what holds when the provider is
     // slower than we assumed, and a limit that is only tested before the work starts cannot do that.
+    // The SPEND ceiling is deliberately not here — it is applied when groups are planned, because a
+    // check inside concurrent lanes all read zero before any lane has paid for anything.
     if (deadlineMs != null && Date.now() >= deadlineMs) return;
 
     const groupImages = group

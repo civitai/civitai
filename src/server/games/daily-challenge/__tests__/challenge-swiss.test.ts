@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   allowance,
   BAND_SIZE,
+  budgetCallCap,
   countFreshPairs,
   DEFAULT_BOUT_BUDGET,
   GROUP_SIZE,
@@ -141,6 +142,28 @@ describe('tick call budget', () => {
         budget: DEFAULT_BOUT_BUDGET,
       })
     ).toBe(MAX_CALLS_PER_TICK);
+  });
+});
+
+describe('budget call cap', () => {
+  it('is unbounded when no budget is set', () => {
+    // 🔴 operationBudget is 0 on every production challenge. Reading 0 as a zero ceiling rather
+    // than as "unset" would stop judging everywhere the moment this shipped.
+    expect(budgetCallCap({ budgetRemaining: null, spentSoFar: 0, callsSoFar: 0 })).toBe(
+      Number.POSITIVE_INFINITY
+    );
+  });
+
+  it('prices a call from history and caps to what is affordable', () => {
+    expect(budgetCallCap({ budgetRemaining: 40, spentSoFar: 60, callsSoFar: 5 })).toBe(3);
+  });
+
+  it('buys exactly one to price itself when there is no history', () => {
+    expect(budgetCallCap({ budgetRemaining: 1000, spentSoFar: 0, callsSoFar: 0 })).toBe(1);
+  });
+
+  it('stops dead at an exhausted budget', () => {
+    expect(budgetCallCap({ budgetRemaining: 0, spentSoFar: 500, callsSoFar: 40 })).toBe(0);
   });
 });
 

@@ -874,6 +874,32 @@ export async function updateChallengeField<K extends keyof CreateChallengeInput>
   });
 }
 
+/**
+ * Buzz this challenge may still spend on judging, or `null` when it is unbounded.
+ *
+ * 🔴 `operationBudget = 0` means UNBOUNDED, not "spend nothing". The column is `Int @default(0)` and
+ * is 0 on every challenge in production, so reading 0 as a zero ceiling would stop judging on all of
+ * them the moment this shipped. Enforcement therefore only bites once somebody sets a budget, and
+ * until they do this returns null and nothing is capped — which is a real limitation, not a fix
+ * hiding behind a helper.
+ *
+ * The number is also a floor rather than a true remaining balance: `operationSpent` under-reports,
+ * partly because the permissive route bills reasoning tokens it does not declare (#3815). A budget
+ * set here will be overshot by roughly that margin.
+ */
+export async function operationBudgetRemaining(
+  challengeId: number
+): Promise<{ remaining: number | null; spent: number }> {
+  const challenge = await dbRead.challenge.findUnique({
+    where: { id: challengeId },
+    select: { operationBudget: true, operationSpent: true },
+  });
+  const budget = challenge?.operationBudget ?? 0;
+  const spent = challenge?.operationSpent ?? 0;
+  if (budget <= 0) return { remaining: null, spent };
+  return { remaining: Math.max(0, budget - spent), spent };
+}
+
 export async function incrementOperationSpent(challengeId: number, amount: number): Promise<void> {
   // Use atomic increment to avoid race conditions
   await dbWrite.$executeRaw`

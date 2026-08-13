@@ -194,6 +194,31 @@ export function tickCallBudget(input: {
 }
 
 /**
+ * Calls affordable within a spend ceiling, decided BEFORE any are made.
+ *
+ * 🔴 An in-flight "have we spent too much yet" check is not a ceiling when calls run concurrently.
+ * With a pool of 16, sixteen lanes all read a spend of zero before any of them has paid for
+ * anything, so every one proceeds and the ceiling is decorative. Measured by the engine test: a
+ * budget of 10 against calls costing 12 let all 8 planned groups through. The cap therefore has to
+ * be applied when the work is PLANNED, where it is one decision rather than a race.
+ *
+ * A call's price is not knowable in advance, so it is taken from what this challenge has already
+ * paid: `spentSoFar / callsSoFar`. With no history there is nothing to divide, and the honest move
+ * is to buy exactly one and price it — hence the probe. Overshoot is bounded by one call.
+ */
+export function budgetCallCap(input: {
+  budgetRemaining: number | null;
+  spentSoFar: number;
+  callsSoFar: number;
+}): number {
+  const { budgetRemaining, spentSoFar, callsSoFar } = input;
+  if (budgetRemaining == null) return Number.POSITIVE_INFINITY;
+  if (budgetRemaining <= 0) return 0;
+  if (callsSoFar <= 0 || spentSoFar <= 0) return 1;
+  return Math.floor(budgetRemaining / (spentSoFar / callsSoFar));
+}
+
+/**
  * Final table, best first. Ranked by win rate rather than raw wins: entries legitimately differ in
  * games played — a late arrival owes fewer — and raw wins would rank the field by arrival time
  * wearing a score.
