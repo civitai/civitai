@@ -108,8 +108,6 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
 
 const { purgeResizeCache } = await import('../image.service');
 
-
-
 const invalidateCalls = () =>
   mockFetch.mock.calls.filter((call) => String(call[0]).includes('/admin/invalidate'));
 
