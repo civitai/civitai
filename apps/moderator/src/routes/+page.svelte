@@ -38,6 +38,15 @@
   // runs ~200ms, which does not belong in the dashboard's first paint.
   let reported = $state<Reported[] | null>(null);
 
+  // A ternary held two of these; a fourth would have made it unreadable and a fifth would have made
+  // one of them silently wrong.
+  const SWEEP_LABELS: Record<string, string> = {
+    blockedImages: 'Unusually blocked images',
+    civitaiModels: 'Official-account models',
+    articles: 'New articles',
+    bounties: 'New bounties',
+  };
+
   // Retool's "Urgent Content (N)" banner. The same rows the Most reported table renders — a pile-up on
   // one item is a live incident, not a long queue — but stated at the top, since the table is below
   // three screens of queue counts and the whole point is that it should not need looking for.
@@ -414,9 +423,7 @@
         {#each board.sweeps as s (s.task)}
           <div class="mt-3 border-t border-dark-4 pt-3">
             <div class="flex flex-wrap items-baseline justify-between gap-2">
-              <span class="text-sm text-dark-0">
-                {s.task === 'blockedImages' ? 'Unusually blocked images' : 'Official-account models'}
-              </span>
+              <span class="text-sm text-dark-0">{SWEEP_LABELS[s.task] ?? s.task}</span>
               <span class="text-sm tabular-nums {queueSeverityClass(s.task, s.since ? s.count : null) ?? (s.count ? 'text-white' : 'text-dark-2')}">
                 {s.since ? format(s.count) : 'never swept'}
               </span>

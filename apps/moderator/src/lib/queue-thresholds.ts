@@ -64,6 +64,11 @@ const COUNT_KEY_ALIASES: Record<string, string> = {
   // backlog, which Retool scored with `articleTask`; without this alias the fallthrough put a
   // two-is-critical scale on a queue whose own nav entry says nobody works through it.
   articles: 'articleTask',
+  // Same trap as `articles`, one level down: the bare `bounties` scale is the bounty-REPORT one that
+  // `report:bounty` resolves to, where 2 is critical. The sweep task of the same name counts bounties
+  // published since the last claim, which is a workload, so it takes `bountyTask`. Aliases resolve
+  // once, so `report:bounty` -> `bounties` is unaffected by this entry.
+  bounties: 'bountyTask',
   articleRatings: 'articleReviews',
   minor: 'minors',
   tag: 'blockedTags',

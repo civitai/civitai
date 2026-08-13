@@ -916,7 +916,23 @@ that reporter to that build.
           AND "status" = 'Published'
       ```
 
-      So the work is **two more `SWEEP_TASKS` entries and two count functions**, not a new subsystem.
+      **Articles and bounties shipped 2026-08-13** — and they were not a design question at all: the
+      moderator database already holds **2,028 `articles` and 1,213 `bounties` acknowledgements, the
+      most recent written the same day**, so both queues are live and worked daily and the port simply
+      never rendered them. Two `SWEEP_TASKS` entries and one count function, bounded on `createdAt`
+      because that is the column Retool bounded on.
+      ⚠️ **The threshold alias was the trap**: the bare `bounties` scale is the bounty-*report* one
+      (2 is critical) that `report:bounty` resolves to, so the sweep needed an explicit `bountyTask`
+      alias or a routine day would have rendered permanently red — the same mistake the `articles`
+      alias comment already documents. Aliases resolve once, so `report:bounty` is unaffected.
+      Verified on the dashboard: four sweep rows, *New articles* and *New bounties* reading 0 against a
+      2-hour-old mark, which is correct — the same window holds 89 articles and 12 bounties over 7 days,
+      so the bound is being applied rather than the query being dead.
+      **Not exercised: the *Mark swept* write.** `Mods_TaskTimers` is the live Retool table, and
+      advancing a real watermark would tell a moderator articles had been checked when they had not.
+      The write path is `acknowledgeSweep`, unchanged and already used by the two existing tasks.
+
+      The remaining work here is **the models queue below**, not a new subsystem.
       `queue-thresholds.ts` already carries Retool's own `articleTask` and `bountyTask` scales, recovered
       from the export — which is independent evidence Retool ran both, so these are parity, not additions.
       Same for `modelTask` and `trainingData`, which are also scales with no queue behind them.

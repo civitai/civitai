@@ -115,7 +115,10 @@ export async function getTaskLag(): Promise<TaskLag[]> {
 // Two queries the old audit filed as "backfill jobs" that are neither jobs nor backfills: each counts
 // what has arrived in a queue SINCE the last acknowledgement, which is what makes them a workload
 // rather than a total. Both read their bound from `Mods_TaskTimers`.
-export const SWEEP_TASKS = ['blockedImages', 'civitaiModels'] as const;
+// `articles` and `bounties` are Retool's own task names, and both are LIVE — 2,028 and 1,213
+// acknowledgements, the most recent written the same day the port was measured. So these are not new
+// queues, they are two the port simply never rendered.
+export const SWEEP_TASKS = ['blockedImages', 'civitaiModels', 'articles', 'bounties'] as const;
 export type SweepTask = (typeof SWEEP_TASKS)[number];
 
 async function getSweepAt(task: SweepTask): Promise<Date | null> {
@@ -157,24 +160,45 @@ async function countCivitaiModelsSince(since: Date): Promise<number> {
   return Number(row?.count ?? 0);
 }
 
+/** Retool's `ArticleTimer` / `BountyTimer`: what has been published since the last sweep. `createdAt`
+ *  rather than `publishedAt` because that is the column Retool bounded on, and the two differ for a
+ *  draft that sat before publishing — matching it keeps the count comparable across the cutover. */
+async function countSince(
+  table: 'Article' | 'Bounty',
+  since: Date
+): Promise<number> {
+  const row = await dbRead
+    .selectFrom(table)
+    .select((eb) => eb.fn.countAll<string>().as('count'))
+    .where('createdAt', '>', since)
+    .executeTakeFirst();
+  return Number(row?.count ?? 0);
+}
+
 export type SweepCount = { task: SweepTask; since: Date | null; count: number };
 
 export async function getSweepCounts(): Promise<SweepCount[]> {
-  const [blockedAt, civitaiAt] = await Promise.all([
+  const [blockedAt, civitaiAt, articlesAt, bountiesAt] = await Promise.all([
     getSweepAt('blockedImages'),
     getSweepAt('civitaiModels'),
+    getSweepAt('articles'),
+    getSweepAt('bounties'),
   ]);
 
   // No acknowledgement yet means no bound, and an unbounded count over all history is a different
   // question — reported as "never swept" rather than as a number nobody can act on.
-  const [blocked, civitai] = await Promise.all([
+  const [blocked, civitai, articles, bounties] = await Promise.all([
     blockedAt ? countBlockedImagesSince(blockedAt) : Promise.resolve(0),
     civitaiAt ? countCivitaiModelsSince(civitaiAt) : Promise.resolve(0),
+    articlesAt ? countSince('Article', articlesAt) : Promise.resolve(0),
+    bountiesAt ? countSince('Bounty', bountiesAt) : Promise.resolve(0),
   ]);
 
   return [
     { task: 'blockedImages', since: blockedAt, count: blocked },
     { task: 'civitaiModels', since: civitaiAt, count: civitai },
+    { task: 'articles', since: articlesAt, count: articles },
+    { task: 'bounties', since: bountiesAt, count: bounties },
   ];
 }
 
