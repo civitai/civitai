@@ -389,7 +389,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
 
     await dbWrite.$transaction([
       dbWrite.$executeRawUnsafe(`
-        UPDATE "BountyBenefactor" bf SET "awardedToId" = ${winnerEntryId} WHERE bf."bountyId" = ${id} AND bf."awardedToId" IS NULL;
+        UPDATE "BountyBenefactor" bf SET "awardedToId" = ${winnerEntryId}, "awardedAt" = NOW() WHERE bf."bountyId" = ${id} AND bf."awardedToId" IS NULL;
       `),
       dbWrite.$executeRawUnsafe(`
         UPDATE "Bounty" b SET "complete" = true WHERE b.id = ${id};
