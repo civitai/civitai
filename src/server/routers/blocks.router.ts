@@ -2540,12 +2540,19 @@ export const blocksRouter = router({
       hasSubmissions: false,
       hasApprovedApps: false,
       isReviewer: false,
+      hasEditableApps: false,
+      hasPendingInvites: false,
     };
     if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return allFalse;
     const user = ctx.user;
     if (!user) return allFalse;
 
-    const [install, submission, approvedApp] = await Promise.all([
+    // 🔴 The two COLLABORATOR-AWARE flags are resolved by `resolveAppsNavAccess`, NOT
+    // open-coded here. Writing the seat probes inline put a third copy of the
+    // `status: 'accepted'` consent filter in the codebase and failed
+    // `app-access.call-site-ledger.test.ts` on the growth — one home, one filter.
+    const { resolveAppsNavAccess } = await import('~/server/services/blocks/app-access.service');
+    const [install, submission, approvedApp, navAccess] = await Promise.all([
       dbRead.blockUserSubscription.findFirst({
         where: { userId: user.id },
         select: { id: true },
@@ -2558,6 +2565,7 @@ export const blocksRouter = router({
         where: { app: { userId: user.id }, status: 'approved' },
         select: { id: true },
       }),
+      resolveAppsNavAccess(user.id),
     ]);
 
     return {
@@ -2565,6 +2573,15 @@ export const blocksRouter = router({
       hasSubmissions: submission !== null,
       hasApprovedApps: approvedApp !== null,
       isReviewer: isAppReviewer(user),
+      /**
+       * 🔴 The seat disjunct inside `hasEditableApps` is the load-bearing half, and is
+       * why this cannot reuse `hasSubmissions`: a collaborator has submitted nothing, so
+       * every pre-existing flag on this summary is `false` for them and there would be no
+       * nav entry to any app they can actually edit. `hasPendingInvites` is
+       * owner-independent for the same reason.
+       */
+      hasEditableApps: navAccess.hasEditableApps,
+      hasPendingInvites: navAccess.hasPendingInvites,
     };
   }),
 

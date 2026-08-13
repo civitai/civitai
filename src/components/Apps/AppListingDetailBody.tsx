@@ -42,6 +42,7 @@ import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
 import { RelatedListings } from '~/components/Apps/RelatedListings';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
+import { ListingCollaboratorByline } from '~/components/Apps/ListingCollaboratorByline';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AppListingComments } from '~/components/Apps/AppListingComments';
 import { ReportListingButton } from '~/components/Apps/ReportListingButton';
@@ -544,6 +545,13 @@ export function AppListingDetailBody({
               </Text>
             )}
             <CreatorChip creator={detail.creator} />
+            {/* 🔴 The PUBLIC collaborator byline. `detail.collaborators` has ALREADY been
+                filtered server-side to ACCEPTED **and** `displayed` seats and projected
+                to `{id, username, image}` — this renders it verbatim and applies no
+                policy of its own (see ListingCollaboratorByline's header). Until now
+                nothing consumed the field, so every accepted collaborator who had opted
+                IN to the byline was invisible on the surface the opt-in is about. */}
+            <ListingCollaboratorByline collaborators={detail.collaborators} />
             {detail.contentRating && (
               <Group gap="xs" mt={2}>
                 <Badge variant="light" color="gray" size="sm">

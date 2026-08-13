@@ -1,9 +1,11 @@
 import { Box, rem, ScrollArea, Tabs } from '@mantine/core';
 import {
+  IconApps,
   IconBuildingStore,
   IconCurrencyDollar,
   IconGavel,
   IconListDetails,
+  IconMail,
   IconPlugConnected,
   IconSquarePlus,
 } from '@tabler/icons-react';
@@ -30,6 +32,16 @@ export type AppsNavSummary = {
   hasApprovedApps: boolean;
   /** app reviewer (mod) → show "Review". */
   isReviewer: boolean;
+  /**
+   * ≥1 listing owned OR held via an ACCEPTED collaborator seat → show "My apps".
+   *
+   * 🔴 The seat half is why this cannot be folded into `hasSubmissions`: a collaborator
+   * has submitted nothing, so every other flag on this summary is `false` for them and
+   * there would be no nav route to an app they can genuinely edit.
+   */
+  hasEditableApps: boolean;
+  /** ≥1 PENDING invitation → show "Invites". True for someone who owns nothing. */
+  hasPendingInvites: boolean;
 };
 
 const EMPTY_SUMMARY: AppsNavSummary = {
@@ -37,6 +49,8 @@ const EMPTY_SUMMARY: AppsNavSummary = {
   hasSubmissions: false,
   hasApprovedApps: false,
   isReviewer: false,
+  hasEditableApps: false,
+  hasPendingInvites: false,
 };
 
 type SubNavLink = {
@@ -60,6 +74,18 @@ const SUB_NAV_LINKS: SubNavLink[] = [
     label: 'Installed',
     icon: IconPlugConnected,
     visible: (s) => s.hasInstalls,
+  },
+  {
+    href: '/apps/mine',
+    label: 'My apps',
+    icon: IconApps,
+    visible: (s) => s.hasEditableApps,
+  },
+  {
+    href: '/apps/invites',
+    label: 'Invites',
+    icon: IconMail,
+    visible: (s) => s.hasPendingInvites,
   },
   {
     href: '/apps/my-submissions',

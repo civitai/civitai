@@ -824,3 +824,56 @@ describe('AppListingDetailBody', () => {
     });
   });
 });
+
+/**
+ * The PUBLIC COLLABORATOR BYLINE, asserted from an ANONYMOUS view.
+ *
+ * 🔴 ANONYMOUS is the load-bearing part of the setup, not a detail: `mocks.currentUser`
+ * is `null` for every test in this file (see `beforeEach`), so what renders here is what
+ * a logged-out visitor to the store page sees. The server hands this component the
+ * ACCEPTED-and-`displayed` set only — the consent + opt-out filters live in
+ * `listDisplayedCollaboratorUserIds` and are pinned in `app-access.service.test.ts`, and
+ * the three-key projection in `app-collaborator.public-projection.test.ts`. What is
+ * pinned HERE is that the surface consumes the field at all (nothing did before this PR,
+ * so an accepted collaborator who opted IN was invisible on the page the opt-in is about)
+ * and that it neither widens nor re-filters it.
+ */
+describe('AppListingDetailBody — the public collaborator byline (anonymous view)', () => {
+  test('a DISPLAYED accepted collaborator appears in the byline for a logged-out viewer', async () => {
+    expect(mocks.currentUser).toBeNull();
+    renderWithProviders(
+      <AppListingDetailBody
+        detail={base({ collaborators: [{ id: 42, username: 'bob', image: null }] })}
+      />
+    );
+    await expect.element(page.getByTestId('apps-listing-collaborators')).toBeInTheDocument();
+    const chip = page.getByTestId('apps-listing-collaborator-42');
+    await expect.element(chip).toBeInTheDocument();
+    expect(chip.element().getAttribute('href')).toBe('/user/bob');
+  });
+
+  /**
+   * 🔴 THE NEGATIVE HALF. A pending invitee, a rejected invitee and an accepted seat with
+   * `displayed:false` are all absent from `detail.collaborators` server-side — so an
+   * empty projection must render NO byline row at all. If this rendered a stray "with"
+   * with nothing after it, an app with no public collaborators would look like it had
+   * one whose name failed to load.
+   */
+  test('an EMPTY collaborator set renders no byline — pending/rejected/undisplayed are absent', async () => {
+    renderWithProviders(<AppListingDetailBody detail={base({ collaborators: [] })} />);
+    // The page itself rendered (so this zero is not "nothing rendered at all").
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-collaborators').elements()).toHaveLength(0);
+  });
+
+  test('the byline is rendered alongside — not instead of — the creator chip', async () => {
+    renderWithProviders(
+      <AppListingDetailBody
+        detail={base({ collaborators: [{ id: 42, username: 'bob', image: null }] })}
+      />
+    );
+    // base()'s creator is `alice`. Owner AND displayed collaborators, per the decision.
+    await expect.element(page.getByText('by alice')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-listing-collaborator-42')).toBeInTheDocument();
+  });
+});

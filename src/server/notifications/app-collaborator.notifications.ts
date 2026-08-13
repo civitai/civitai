@@ -44,6 +44,8 @@ export type AppCollaboratorNotificationDetails = {
  * the pre-existing behaviour for a null `appBlockId`, kept deliberately rather than
  * inventing a route that does not exist.
  */
+const APP_INVITES_URL = '/apps/invites';
+
 function appUrl(details: AppCollaboratorNotificationDetails): string {
   return details.appBlockId ? `/apps/${details.appBlockId}` : '/apps';
 }
@@ -63,7 +65,12 @@ export const appCollaboratorNotifications = createNotificationProcessor({
       const details = notification.details as AppCollaboratorNotificationDetails;
       return {
         message: `You were invited to collaborate on ${appLabel(details)}.`,
-        url: appUrl(details),
+        // 🔴 THE INVITE INBOX, not `appUrl`. A PENDING invitee owns nothing and holds no
+        // accepted seat, so every `/apps/<id>/…` page resolves their role, finds none and
+        // refuses — pointing this notification at the app would land them on a 404 for
+        // the app they were just invited to. `/apps/invites` is keyed to their own user
+        // id (`listMyPendingInvites`) and is the only surface that can show it.
+        url: APP_INVITES_URL,
       };
     },
   },

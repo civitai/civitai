@@ -319,3 +319,16 @@ export const backfillListingAssetsSchema = z.object({
   dryRun: z.boolean().optional(),
 });
 export type BackfillListingAssetsInput = z.infer<typeof backfillListingAssetsSchema>;
+
+/**
+ * The single-listing AUTHORING-CONTEXT read (`appListings.getAuthoringContext`).
+ *
+ * 🔴 A NEW schema on a NEW proc — no pre-existing input schema is touched. The bounds
+ * mirror the rest of the App Blocks surface (`min(1).max(64)`), matching
+ * `app-collaborator.schema`'s `appListingId`, so a request-size guard is consistent
+ * across routers.
+ */
+export const appListingAuthoringContextSchema = z.object({
+  appListingId: z.string().min(1).max(64),
+});
+export type AppListingAuthoringContextInput = z.infer<typeof appListingAuthoringContextSchema>;

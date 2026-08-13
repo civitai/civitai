@@ -211,12 +211,27 @@ const GATE_LEDGER: Record<string, string> = {
  * would be invisible to `GATE_LEDGER`, because it would open no new gate.
  */
 const KIND_CAPABILITY_LEDGER: Record<string, string> = {
+  'src/shared/constants/app-capabilities.constants.ts':
+    'DEFINES the table. Moved out of app-access.service so CLIENT code can derive ' +
+    '`earnings` / `submitVersion` without pulling that module’s ~/server/db/client import ' +
+    'into the browser bundle — the alternative was a second, drifting copy of a ' +
+    'permission table in the UI. Same two structural false cells, same fail-closed ' +
+    'fallback to the narrower (offsite) row for an unknown kind; app-access.service ' +
+    're-exports every symbol, so there is still exactly one definition.',
+  'src/components/Apps/AppInvitesBody.tsx':
+    'CONSUMES the whole row to build the INVITEE-side disclosure: an on-site invite says ' +
+    'the seat exposes `earnings` and `submitVersion` (Buzz figures + pushing code), an ' +
+    'off-site one must promise NEITHER, because no BlockBuzzAttribution row can exist and ' +
+    'there is no repo. Reading the table rather than hard-coding the copy is what keeps ' +
+    'the invitee’s disclosure identical to the owner’s at invite time.',
   'src/server/services/blocks/app-access.service.ts':
-    'DEFINES the table (CAPABILITIES_BY_KIND / capabilitiesForKind / ' +
-    'listingKindSupports) and resolves each listing’s kind + appBlockId. The two false ' +
-    'cells — earnings and submitVersion on offsite — are STRUCTURAL: BlockBuzzAttribution ' +
-    'is keyed on appBlockId, and an offsite listing has no bundle and no Forgejo repo. An ' +
-    'unknown kind falls back to the NARROWER (offsite) row, i.e. fail closed.',
+    'RE-EXPORTS the table and resolves each listing’s kind + appBlockId, and is where ' +
+    'every server consumer still reaches it (CAPABILITIES_BY_KIND / capabilitiesForKind / ' +
+    'listingKindSupports). The two false cells — earnings and submitVersion on offsite — ' +
+    'are STRUCTURAL: BlockBuzzAttribution is keyed on appBlockId, and an offsite listing ' +
+    'has no bundle and no Forgejo repo. It also stamps each row of listMyAppListings / ' +
+    'getAppListingAuthoringContext with `capabilitiesForKind`, so the authoring UI derives ' +
+    'its tab set from the table instead of re-deriving one.',
   'src/server/services/blocks/app-collaborator-earnings.service.ts':
     'CONSUMES `earnings`. Refuses an offsite listing with an explicit unsupportedKind ' +
     'before running any aggregate — never a zeroed summary, which would be ' +

@@ -36,6 +36,8 @@ const NONE: AppsNavSummary = {
   hasSubmissions: false,
   hasApprovedApps: false,
   isReviewer: false,
+  hasEditableApps: false,
+  hasPendingInvites: false,
 };
 
 function tab(name: string) {
@@ -132,9 +134,20 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
       hasSubmissions: true,
       hasApprovedApps: true,
       isReviewer: true,
+      hasEditableApps: true,
+      hasPendingInvites: true,
     };
     renderWithProviders(<AppsSubNavView summary={ALL} currentPath="/apps" />);
-    for (const name of ['Marketplace', 'Create', 'Installed', 'My submissions', 'Revenue', 'Review']) {
+    for (const name of [
+      'Marketplace',
+      'Create',
+      'My apps',
+      'Invites',
+      'Installed',
+      'My submissions',
+      'Revenue',
+      'Review',
+    ]) {
       await expect.element(tab(name)).toBeInTheDocument();
     }
   });
@@ -211,11 +224,19 @@ describe('AppsSubNavView (each tab navigates to its route)', () => {
       hasSubmissions: true,
       hasApprovedApps: true,
       isReviewer: true,
+      hasEditableApps: true,
+      hasPendingInvites: true,
     };
     renderWithProviders(<AppsSubNavView summary={ALL} currentPath="/apps" />);
     const cases: Array<[string, string]> = [
       ['Marketplace', '/apps'],
       ['Create', '/apps/submit'],
+      // Collaborator surfaces: "My apps" is the ownership-OR-seat list
+      // (`appListings.listMine`) and "Invites" is the invitee inbox
+      // (`appCollaborators.listMyPendingInvites`). Both are owner-INDEPENDENT — a
+      // collaborator who owns nothing reaches every other tab's page empty.
+      ['My apps', '/apps/mine'],
+      ['Invites', '/apps/invites'],
       ['Installed', '/apps/installed'],
       ['My submissions', '/apps/my-submissions'],
       ['Revenue', '/apps/revenue'],
