@@ -233,10 +233,22 @@ Open, with the evidence each audit produced:
       mute, ban or change the account, so it needs no confirmation.
       Mute / ban / purge stay under Admin deliberately — see the Placement item below, which is about
       those three and is still open.
-- [ ] **Paddle account linking is absent.** Retool had a three-step wizard behind the Membership
-      panel's Paddle button — find account by customer id, unlink an old one, link this one — writing
-      `User.paddleCustomerId` with a `retool_db` audit row. The port reads that column and deep-links
-      to Paddle, but nothing can re-link a mis-linked billing account.
+- [x] **Paddle account linking** (2026-08-12). Retool's three steps are one form on the Subscription
+      panel: enter a customer id → if another account holds it the submit comes back **refused (409)
+      naming that account**, and only a second, explicitly-labelled submit ("Unlink there and link
+      here") moves it. Taking a customer id off another account is the destructive half, so it is never
+      automatic. Unlink is there too.
+      The holder is re-checked **at submit time**, not trusted from the rendered page — it can change
+      between the two clicks, and the moderator's confirmation was about a specific account. Both sides
+      get their own `ModActivity` row (`paddleUnlink` on the old account, `paddleLink` on the new), and
+      the subscription caches are reset afterwards or the panel keeps rendering the pre-link state and
+      invites a second link.
+      Written directly rather than through a main-app endpoint: the column has no mod endpoint, and it
+      is a plain pointer — Paddle's webhooks resolve the account BY it, which is exactly why a mis-link
+      matters and why this needed fixing.
+      Verified end to end on dev: conflict refused and named (`Maxfield already holds that customer
+      id`), take-over moved it with both audit rows written, panel re-rendered with the new id. Both
+      accounts restored afterwards.
 - [x] **"Content (click rows!)" is a drill-down, and ours goes somewhere else** (2026-08-11). Rows now
       prefer an in-app destination: Images → Bulk Image Manager, both comment rows → the Comments
       section, Reviews → Reviews, Chat Messages → Chat. Those last four linked **nowhere** before, and
@@ -261,20 +273,38 @@ Open, with the evidence each audit produced:
       on mute specifically; that is the only one of the six with a real argument for promotion.
 - [x] **`sections.ts` is inverted against the live nav**: it ships *Content Overview* (which the live
       sidebar does **not** show) and omits *Bulk Image Manager* (which it does). That page now exists.
-- [ ] **"Talked to a mod"** — a header button opening a *Chats with Mods* modal listing chat ids.
-      🎥 *"You get to see if they've talked to a moderator previously."*
-      **Partially built:** `ChatContactPanel` already shows a chats-count and last-contact warning from
-      `getModContact`. Missing is the header placement and the chat-id list — not the signal.
-- [ ] **Report banner** — a pending/processing `UserReport` shown clearly at the top, actionable from
-      this page. 🎥 *"You get to see if there's a user report on their account."*
-      **Partially built:** `getReportsOnUser` already filters to Pending/Processing and `ReportsPanel`
-      renders an amber block. Missing is the header placement and any way to action it from here.
+- [x] **"Talked to a mod"** (2026-08-12). The header chip is now the button Retool had: clicking it
+      drops the chat ids under the header, each linking straight to that transcript in Chat Audit, with
+      "+N more" pointing at the Chat section. Collapsed by default — the chip is the signal, the ids are
+      what you want once it has fired.
+      🔴 **Found while wiring it: every existing chat link on this page 404'd.** `ChatContactPanel`
+      linked to `/retool/chat-audit/search?q=<id>`, and `search` is not one of the four tabs — the tab
+      param is validated with `error(404)`, so following the ids the ticket asked for landed on Unknown
+      tab. Both places now use `/retool/chat-audit/chats?chat=<id>`, the form `$lib/reports` already
+      used. Verified on 43555: seven chat links, all resolving.
+- [x] **Report banner** (2026-08-12 — the header placement was already there; **the action was the
+      missing half**). Its link went to `/reports/user`, the whole 533-row queue, which leaves the
+      moderator to find the account again. It now points at `/retool/user-reports?user=<id>` — that
+      account's own drill-down, where the report can be actioned with their content and history in
+      front of you. Verified on 2271388: `1 open report against this account. → Work this account's
+      reports` resolving to `/retool/user-reports?user=2271388`.
 - [x] **CSAM banner** (2026-08-09 — `getIdentity` counts `CsamReport` and the layout header carries a
       `CSAM report ×N` chip on every section).
-- [ ] **Mute state must distinguish system from manual.** 🎥 *"if they're muted, if they're muted,
-      overturned or pending."* **Partially built** (2026-08-09): the header now shows the latest
-      `UserRestriction` as `<type>: <status>`, so a system auto-mute no longer reads as a manual one.
-      Still missing: unmuting from here goes straight to the mute toggle and skips the Overturn path.
+- [x] **Mute state must distinguish system from manual** (2026-08-12 — the Overturn path is the half
+      that was missing). The header chip has read `<type>: <status>` since 2026-08-09; what a moderator
+      could not do was *rule* on it. Unmute clears `muted` and nothing else: the row stays **Pending**,
+      the subscription cancelled by the restriction stays cancelled, the prohibited-request count stays
+      where it was, and the user is never told which way it went.
+      `resolveUserRestriction` in the main app is the single write path that does all of that, and it
+      was reachable only from the tRPC moderator router — i.e. not from this app at all. So this needed
+      **a new main-app endpoint**: `POST /api/mod/retool/restriction` with one `resolve` action, in the
+      same `defineRetoolEndpoint` family as `strike`/`user`. The Admin section shows Overturn / Uphold
+      with an optional message **above** the mute toggle whenever the latest restriction is Pending, and
+      says why unmuting alone is not the same thing.
+      Verified end to end against a seeded Pending row on 1290051: `status = Overturned`, `resolvedBy`
+      and `resolvedAt` set, the message stored, `muted = false`, and a `restriction:overturned`
+      ModActivity row. (Seeded row deleted afterwards; the write path also reinstates the subscription
+      and emails the account, which is why it was not exercised on a real user's restriction.)
 - [x] **Reports: a Status filter, and the 50-row cap** (2026-08-09 — status chips filter server-side and
       the cap is 200 per list; the filter is part of the derived fetch, so changing it refetches).
 - [x] `getReportsSubmitted` drops the commonest kind (2026-08-09 — `UserReport` and `ChatReport` are
@@ -354,12 +384,19 @@ browser as user 1290051, not by reading the code.
 - [x] 🔒 **Buzz sending was Senior-Mod-gated in Retool** (`tabbedContainer12`'s second pane carries
       `current_user.groups.some(i => i.name === "Senior Mod")`). Ours gates it on the general `/users`
       permission — **a restricted capability silently widened**. Highest priority in this block.
-- [~] **The account-edit capability.** Username and Email are editable behind the *Enable Edits*
-      toggle. **Still missing** (this was ticked in error — caught by the 2026-08-09 fidelity pass):
-      **Full Name**, which `updateIdentity` and `/api/mod/retool/user` both already accept, and the
-      whole **Quick Info checkbox block** — Accepted TOS (`onboarding`), Excluded Leaderboards,
-      Buzz-Blocked, FP Curator, plus `browsingLevel`/`showNsfw`/`blurNsfw`. `UserContent` selects all
-      of them and none reaches the DOM. (The *sub-permission* that should guard it is a backlog item.)
+- [x] **The account-edit capability** (closed 2026-08-12). **Full Name** was stale — it is in the
+      *Enable Edits* form and in `updateIdentity` since 2026-08-10.
+      The **Quick Info checkbox block** is now on Basic: Accepted TOS (`onboarding` — a bitfield, so
+      nonzero, not truthy-object), Excluded from leaderboards, Buzz-blocked (`rewardsEligibility =
+      Ineligible`, which is exactly what the Add Buzz-Block button writes), FP curator, Shows mature
+      content and Blurs mature content. The last two needed selecting at all — `showNsfw`/`blurNsfw`
+      reached no query; `browsingLevel` was already a header chip and stays there, since it is the
+      ceiling and these two are whether mature content is shown and whether it arrives blurred.
+      **Read-only, deliberately**: the gap was *seeing* these, and editing an account's own TOS
+      acceptance or viewing preferences is a different capability from correcting a mistyped username.
+      (The sub-permission that would guard such edits is a backlog item.)
+      Verified on 1290051: `☑ Accepted TOS  ☐ Excluded from leaderboards  ☐ Buzz-blocked  ☐ FP curator
+      ☑ Shows mature content  ☐ Blurs mature content`.
 - [x] **Admin actions**: Make/Remove Moderator, Add/Remove **Buzz-Block**, Generator Buzz Earnings
       (2026-08-09 — all three on the Admin section; see 1a).
 - [x] **Notifications: Link field** (2026-08-12 — see the `notificationLink` entry above; the send form
@@ -392,7 +429,7 @@ browser as user 1290051, not by reading the code.
 
 ## 2. Bulk Image Manager
 
-- [ ] 🔴 **`TosReasons` — the removal reason picker, and its user-facing messages.** Found 2026-08-10
+- [x] 🔴 **`TosReasons` — the removal reason picker, and its user-facing messages.** Found 2026-08-10
       by re-extracting the raw export; it appears in **no** committed inventory because it is typed
       `Function`, which the skill said to bucket as plumbing. `tosReasonsRadio` is a radio group over
       eleven reasons, each carrying **the message the user is sent** and, for three of them, the flag
@@ -412,43 +449,86 @@ browser as user 1290051, not by reading the code.
       | Likeness/DMCA | Person depicted has requested to have images taken down | |
       | Other | free text from the box beside it | |
 
-      Ours offers the `violationType` enum plus a free-text reason: the canned messages and the
-      automatic flagging are both absent, so every moderator writes their own wording and sets POI or
-      minor by hand afterwards. **The same widget is on User Reports** — fix once, in `ImageActionBar`.
-- [ ] 🎥 **Strike the user as part of the TOS action.** *"TOS, affect the reason, also strike the user."*
-      Retool did both in one gesture; ours requires leaving for User Lookup per owner. The export's
-      `strikeCheckbox` ("Strike User's Account") is the control, on **both** this page and User Reports.
+      Shipped in `ImageActionBar`, so both this page and User Reports get it: all eleven chips fill the
+      reason box with the message the user is sent, pre-select the `violationType` the removal is filed
+      under, and carry the `poi`/`minor` flag as `alsoFlag` — applied only **after** the removal lands,
+      so a failed removal cannot flag anything. `tag` is offered by the list but is not an image flag,
+      and the action says so rather than dropping it silently. Verified in a browser 2026-08-12.
+- [x] 🎥 **Strike the user as part of the TOS action** (2026-08-12). *"TOS, affect the reason, also
+      strike the user."* Retool's `strikeCheckbox` is now on the remove form in the shared
+      `ImageActionBar`, so it is on **both** pages. Owners are resolved **server-side** from the image
+      ids (`strikeBatchOwners`), not from the grid: a selection outlives the page in front of the
+      moderator, and on Bulk Image Manager it can span accounts — every distinct owner is struck once.
+      The strike is the main app's (`issueStrike` → `retool/strike`), and its description is the canned
+      message, which is what makes one gesture out of two: the same wording the removal was filed under
+      is what the account is told.
+      Two failure modes closed deliberately: a ticked box with an empty reason **blocks the submit**
+      rather than disabling the checkbox — a disabled checkbox does not post, so emptying the reason
+      would have removed the images and dropped the strike silently — and the server refuses the same
+      case *before* removing, since afterwards the images are gone and the other half cannot be retried.
+      Verified end to end on 1290051 from both pages: `Removed 1 images … Struck 1 owner.`, a real
+      `UserStrike` row carrying the canned text with `reason = ManualModAction`, and at three active
+      points the strike system's own escalation muted the account — the whole point of not writing the
+      legacy table. Test strikes voided and the mute cleared afterwards.
+- [x] 🔴 **User Reports issued strikes into the dead legacy table** (found and fixed 2026-08-12 while
+      wiring the checkbox above). §1b records this being fixed for User Lookup; the same defect was
+      still live on the other page, so its Strike button wrote the moderator database's Retool-era
+      `UserStrikes` — no escalation, no points, no expiry, no typed notification, no void path. It now
+      calls `issueStrike` like User Lookup does, and the writer function is **deleted** rather than left
+      exported with no callers, so a third page cannot reach for it again.
+      The panel's strike LIST had the mirror-image bug: it read that same legacy table, so it showed
+      **`Strikes (0)` on an account carrying ten live ones** — the worst possible number to be wrong
+      about on the screen where the next strike is issued. It now lists the main app's rows with points,
+      expiry, and voided/expired badged distinctly from active, with the legacy count kept as a
+      one-line footnote.
 - [x] 🔴 **`violationType` / `violationDetails` are never sent on removal.** `/api/mod/remove-images`
       accepts a `violationType` **enum** plus a details string and forwards both to the ClickHouse
       `DeleteTOS` event; the port sends only free-text `reason`. **Every removal from this page is
       logged with an empty violation classification** — silent and permanent. The endpoint's own zod
       schema is the authoritative list, so this needs **no re-extract**; the BIM audit's "re-extract
       before trusting the action set" was the wrong conclusion for this item.
-- [ ] 🎥 **Filter by rating** — *"you can filter to see specific ratings"*. Worse than missing: the
-      rating is **never displayed**. `nsfwLevel` is selected and typed but the card renders
-      ingestion/needsReview/poi/minor/date/prompt and drops it.
-- [ ] **A toggle to hide or isolate removed images.** (Correction: an earlier draft claimed removed
-      images were only reachable via the user source. **Wrong — every source already returns them**,
-      badged `blocked: <reason>`, because `imageBase()` applies no ingestion filter. What Retool had and
-      we lack is the client-side *toggle* — "Show only ToS'd" / "Clear Filter" — plus a removed-only
-      view for the non-user sources.)
+- [x] 🎥 **Filter by rating** (2026-08-12). The "never displayed" half was **stale**: the rating badge is
+      rendered by the shared `ImageQueueGrid`, so it is on every card on both image pages. The filter is
+      now there too — a `ListFilterBar` over the loaded batch with PG / PG-13 / R / X / XXX / Blocked /
+      **Unrated**. Unrated is its own entry because `nsfwLevel = 0` means no scanner has judged the image,
+      which is a different question from every rating and the one a ticked-everything filter would hide.
+- [x] **A toggle to hide or isolate removed images** (2026-08-12 — "Only ToS'd" / "Hide removed" in the
+      same bar, so it composes with the rating and prompt filters instead of being a mode).
+      Filtering client-side, as Retool did: the batch is one query already paid for, and re-fetching per
+      filter change would discard the selection being assembled. Two consequences handled: `Select all`
+      counts the **filtered** set, which is the point of filtering to ToS'd before acting; and the action
+      bar now says "**N not shown by the current filter**" when the selection includes images the filter
+      hides — the removal posts ids, not what is on screen, so without it filtering after selecting is a
+      way to remove 40 images while looking at 12.
 - [x] **Bulk selection helpers** — Select All / Select 100 / Unselect All (2026-08-09, in the shared
       `ImageActionBar` that Bulk Image Manager and User Reports both use).
-- [ ] `negativePrompt` is selected and rendered nowhere.
-- [ ] **Image-only account nuke** (`remove-images` with `userId`, no id list) — absent; the user source
-      caps at 200.
-- [ ] Remove/restore counts are rows **found**, not rows **changed**, so re-removing an already-blocked
-      batch reports success.
+- [x] `negativePrompt` is selected and rendered nowhere (2026-08-12 — on the card under the prompt, and
+      the bar's prompt search matches it as well as the positive: a prohibited term sitting in the
+      negative is the same finding, and Retool's search matched both).
+- [x] **Image-only account nuke** (2026-08-12 — `remove-images` with `userId` and no id list, on the
+      user-shaped sources only). It exists precisely because it is *not* the selection: the page caps at
+      200 images, so on a prolific account "select all" and this are different sizes.
+      Armed behind **typing the account's username**, and the expected name is resolved **server-side**
+      from the id being acted on rather than compared against what the page rendered — this is the one
+      action here whose blast radius is not visible on screen. Distinct from Purge Content in User
+      Lookup, which also takes models, posts and articles; the copy says so.
+      Verified on 1290051: a wrong confirmation refused with "nothing was removed", the real one blocked
+      all 5 and wrote one `removeAllImages` ModActivity row against the account. Restored afterwards.
+- [x] Remove/restore counts are rows **found**, not rows **changed** (2026-08-12). The endpoint reports
+      what it matched, so re-removing a blocked batch came back with a full count. The already-blocked
+      share is now counted **before** the write and subtracted, on both pages: `Removed 0 images — 5 of
+      the 5 submitted were already blocked`, with an amber "Nothing changed" beside it. Fixed on this
+      side rather than in `/api/mod/remove-images` because that is a cross-app change, and subtracting
+      here is exact for the same submitted ids.
 
 ## 3. User Reports
 
 🎥 *"press the report and then their images load below… previous removals, previous reports… everything
 in the same screen instead of having to click around a bunch."*
 
-- [ ] 🔴 **`tosReasonsRadio` + `strikeCheckbox`** — this page carries the same two widgets as Bulk
-      Image Manager, so the eleven canned TOS reasons, their user-facing messages, the `poi`/`minor`/
-      `tag` flagging and "Strike User's Account" are missing here too. See §2 for the full table; the
-      fix belongs in the shared `ImageActionBar`.
+- [x] 🔴 **`tosReasonsRadio` + `strikeCheckbox`** — both arrived with the shared `ImageActionBar`, which
+      is what fixing it there was for. See §2; verified on this page too (`Removed 1 of 1. Struck 1
+      owner.`).
 - [x] Queue and account side by side (2026-08-09 — was stacked). **The screenshot settles what Retool
       did**: history tabs top-left, queue table top-right, image grid full-width below. So ours is a
       deliberate improvement, not parity. Caveat: the split is `xl:` only, so it still stacks below
@@ -473,9 +553,20 @@ in the same screen instead of having to click around a bunch."*
       above that are the only thing that reads it).
 - [x] 60-image cap **with no paging wired** (2026-08-09 — cursor paging wired; the whole account is
       reachable 60 at a time, and the filters narrow it server-side rather than the batch).
-- [ ] The suspect's history — Retool's top-left was a three-tab panel **ModActivity / Reports / UserReport
-      History** with actor and reason per row. **Strikes are the one piece already here**; mod activity,
-      notes and received reports are not.
+- [x] The suspect's history — Retool's three-tab panel **ModActivity / Reports / UserReport History**
+      (2026-08-12). Notes were already here; **moderation activity** and **reports received** are now
+      beside them, each with actor, reason and date, capped at 20 with the full history in User Lookup.
+      Both are server-side in this page's own `load` rather than the client-fetched endpoints User
+      Lookup uses: those guard on `/retool/user-lookup`, so a moderator with the reports permission and
+      not that one would have got an empty panel instead of a history.
+      **Reports received is filtered to human-filed reasons.** `Automated` is ~99.9% of that table —
+      one dev account carries **556** of them against **2** human — so the unfiltered list of 20 that
+      shipped first was 20 Clavata rows and answered nothing. Filtered, the same account reads
+      `Actioned · Child abuse and exploitation · by dcdcdcdcdcdcdc · actioned by CHESHIRE_OS`, which is
+      the anti-overlap signal the tab exists for. `getReportsOnUser` grew a `reasons` option to do it.
+      ⚠️ Noted while there: the User Lookup Reports **section** applies no reason filter, so it shows
+      the same automated flood. Left alone — it has its own status filter UI and a different job — but
+      it is the next place this bites.
 - [ ] 🎥 **Post reports** — *"Same for post reports."* **Unverifiable from what we hold**: the User
       Reports export has no post-report queue, and there is no separate post-reports export. A generic
       post-report *queue* is shipped at `/reports/post` with filters and actions; the drill-down half
@@ -496,20 +587,32 @@ in the same screen instead of having to click around a bunch."*
       column).
 - [x] `hasImageEvents` is an unguarded ClickHouse call in `load`, so ClickHouse being down turns "no
       image matches" into an error page.
-- [ ] `ImageReaction.updatedAt` and the image row's `updatedAt` are dropped.
+- [x] `ImageReaction.updatedAt` and the image row's `updatedAt` are dropped (2026-08-12). The image's
+      `Updated` sits beside `Uploaded` and `Scanned` — on a row whose moderation history is a separate
+      panel, an `Updated` far from `Uploaded` is the tell that something touched it. A reaction's shows
+      **only when it differs from `createdAt`**: that means the reaction was changed rather than first
+      given, and printing an identical second timestamp on every other row would bury the one that is
+      not identical. (No dev row has a differing pair, so that branch is unexercised.)
 
 ## 5. Chat Audit
 
-- [ ] **The reports tab has no Status filter.** Retool's `select1` ("Status", bound to
-      `ChatReport.data`) let a moderator pick; ours hardcodes `DEFAULT_REPORT_STATUSES`, so resolved
-      chat reports cannot be reached at all. Same shape as the User Lookup reports filter fixed on
-      2026-08-09. `select2` ("Username", bound to `FindChatById.data`) is the second half.
+- [x] **The reports tab Status filter** — **already built; this entry was stale** (verified 2026-08-12).
+      `rstatus` is in the query schema, the service call reads it, and `ReportsPanel` renders a chip per
+      status with a Clear.
+      The `select2` half was **misread**: it is not a second report filter. Its `change` event calls
+      `setFilter` on **`chatTable`** (`columnId: username`), so it filters the open transcript to one
+      participant's messages — which is the "From" control `TranscriptPanel` already ships, beside the
+      content search. Both halves are present; nothing to build.
 - [x] Content search reachable for spam terms; "Open reports" actually filtered (both fixed 2026-08-09).
 - [x] The reporter's `details->>'comment'` is fetched and never rendered — for a chat report that
       comment is the entire substance.
 - [x] `TopChatters` capped at 25 where Retool showed 50 (surfaced, so not silent).
-- [ ] **A sixth tab, "Send Mod Chat"** — a moderator-initiated DM from this screen. In no export, no
-      build and no list; the screenshot is the only record. Needs a re-extract to size.
+- [ ] **A sixth tab, "Send Mod Chat"** — a moderator-initiated DM from this screen. **The re-extract is
+      done and it does not help** (checked 2026-08-12): `tabbedContainer1` carries **six** slots whose
+      labels are `["Chats","Chat Reports","Stats","Newest","",""]` — the two extra slots are real but
+      **unlabelled, with no queries bound to them**, and the export holds no `sendChat`/`SendMessage`
+      query of any name. So the export can confirm two tabs existed and can say nothing about what they
+      did. Sizing this needs the screenshot or a decision, not another extract.
 - [x] **"SPAM Detector" is already built** — it is `SpamGroupsPanel` on the stats tab. Recorded so
       nobody builds it from the screenshot.
 - [ ] Retool also had **Ban Reason + "Ban and Set Note"** here. Deliberately delegated to User Lookup —
@@ -519,9 +622,19 @@ in the same screen instead of having to click around a bunch."*
 
 - [x] `unlisted` is selected and rendered nowhere — an unlisted article looks identical to a public one.
       Retool's data table shows an **Unlisted** column.
-- [ ] `Article.metadata` dropped (Retool showed a **Metadata** column); confirm nothing
-      moderation-bearing lives in it — that half needs the column's live contents.
-- [ ] `coverId` is declared on `ArticleRow`, never selected, and `as unknown as ArticleRow` hides it.
+- [x] `Article.metadata` (2026-08-12). The raw dump was already there; **the open half was the question
+      of what is in it, and the answer is: plenty.** Across the 3,392 articles carrying any metadata on
+      the dev clone, the keys include `profanityMatches` (2,207), `profanityEvaluation` (1,884),
+      `unpublishedBy`/`unpublishedAt` (863), `unpublishedReason` (224) and `customMessage` (223) — who
+      unpublished an article, why, and what the author was told.
+      So the moderation subset is now lifted out into its own block above the raw JSON, because none of
+      it was being read inside a dump: profanity shows the evaluation's own `reason` sentence with the
+      match count and first terms, and the metrics stay below. The rest of `metadata` is challenge
+      bookkeeping (modelId, prizes, winners) and stays raw. Verified on article 27215.
+- [x] `coverId` is declared on `ArticleRow`, never selected — **stale, it is selected** and rendered
+      beside the three NSFW levels, which is where it belongs since the cover is usually why the
+      effective level is what it is. The `as unknown as ArticleRow` cast remains and is worth removing
+      on its own merits: it is what let this go unnoticed.
 - [x] **No hidden tab.** The audit doc guessed the container tabs were "Article / Metrics"; the
       screenshot shows a single **Article Info** tab with Data and Stats stacked below. Re-extract
       request closed.
@@ -554,9 +667,11 @@ in the same screen instead of having to click around a bunch."*
 - [x] `GetSplitQueue` — **closed, not a queue.** It is
       `SELECT "lastCheckedAt" FROM "FrontPageTimers" WHERE username = 'splitQueue'`, consumed by
       `ImageSfwDataCatchup` as a time bound. Group-E backfill plumbing; there was never a page.
-- [ ] `ReviewGrouped` — **not an unmatched query: it is the dashboard.** `COUNT(*) GROUP BY needsReview`
-      plus a pending-report count, i.e. the *Content Needing Review* block. Moved to the Dashboard
-      section below.
+- [x] `ReviewGrouped` — **it is the dashboard, and the dashboard already runs it** (verified
+      2026-08-12). `getImageReviewCounts` is exactly `COUNT(*) GROUP BY needsReview` (excluding
+      `appeal`, which has its own queue and count), and the pending-report half is the distinct-image
+      count beside it in `sidebar-counts.service.ts`. Both feed the Images block's per-queue counts and
+      their threshold colours. Nothing to port.
 - [x] **`image-help` gates on `/images`**, a group node whose grant is the union of its children — the
       same hazard Front Page Audit documents as its reason for gating on its own path. A moderator
       granted only `/images/to-ingest` gets action rights here.
@@ -565,16 +680,34 @@ in the same screen instead of having to click around a bunch."*
 
 Retool's board is the triage entry point, and the walkthrough's colour quote lands here.
 
-- [ ] 🎥 **Per-queue severity colour with per-queue thresholds** — *"green indicates this is fine, four
-      images in POI, but 400 reported images is more of an emergency."* Ours renders every count in the
-      same style, which is exactly what the colour exists to prevent.
-- [ ] **Who last worked each queue, and how long ago** (staleness).
-- [ ] **An "Urgent Content (N)" banner** — a lot of reports on a recent image.
-- [ ] **Per-entity report breakdown across all 11 types** (models, comments, commentV2, reviews,
-      articles, posts, users, collections, bounties, bountyEntries, chats), each with colour and
-      staleness. Ours covers 6 types app-wide.
-- [ ] **A Front Page block** reading "N hours behind" with a Split control, and **Special Queues**
-      (Blocked Images, Civitai Models, Training Data, Appeals).
+- [x] 🎥 **Per-queue severity colour with per-queue thresholds** — **already built; entry was stale**
+      (verified 2026-08-12). `$lib/queue-thresholds.ts` carries Retool's own `thresholds`/`colors`
+      recovered from the raw export, per queue and descending, and the dashboard colours every count
+      through `queueSeverityClass`. A queue with no standard renders plainly rather than borrowing
+      another's scale.
+- [x] **Who last worked each queue, and how long ago** — **already built** (verified 2026-08-12):
+      *Recently worked* (oldest first, so the untouched queue is the visible one) and *Queue sweeps*
+      off `Mods_TaskTimers`, including the front-page per-level rows.
+- [x] **An "Urgent Content (N)" banner** (2026-08-12). The data was already there — *Most reported* is
+      pending reports from the last week with more than one reporter — but it sits below three screens
+      of queue counts, and a pile-up on one item is a live incident rather than a long queue. A red
+      banner now states it at the top and jumps to the table. The bar is `URGENT_REPORT_COUNT = 5`,
+      kept in `queue-thresholds.ts` with the other operating standards so the number is changed in one
+      deliberate place.
+      Verified both ways on dev: with the real bar nothing renders (the busiest item has 2 reports), and
+      with the bar temporarily at 2 the banner reads `Urgent content (1) — one item has 2+ open reports
+      in the last week, worst at 2.` Threshold restored to 5.
+- [x] **Per-entity report breakdown across all 11 types** — **stale, and it is now more than 11**
+      (verified 2026-08-12). The Reports nav is built from `Object.values(ReportEntity)`, so every
+      entity type gets its own queue entry, count key and threshold colour — 14 of them, including the
+      comic-project and 3D-model types that postdate the list above.
+- [~] **A Front Page block and Special Queues.** Mostly present: the front-page per-level rows appear
+      in *Queue sweeps* with who claimed each and when (`Front page PG`, `Front page PG-13`, …), and
+      Blocked Images, Civitai Models and Appeals are all queues on the board.
+      **Still missing, and each needs a decision rather than code:** the *Split* control (Retool's
+      `splitQueue` timer — §8 established it is a time bound, not a queue, so what "split" should mean
+      here is a question for the mod team), and a **Training Data** queue, which exists nowhere in this
+      app's navigation and has no source query in any export.
 
 ## 9. Workflows (cron)
 
@@ -594,11 +727,16 @@ Retool's board is the triage entry point, and the walkthrough's colour quote lan
 
 ## 10. Cross-cutting
 
-- [ ] **Report `details` — the reporter's own words — is fetched and dropped on most pages.**
-      (Correction: **not** User Reports. `QueuePanel` renders `details->>'violation' ?? 'reason'` and
-      `details->>'comment'` as its own paragraph, matching Retool. Verify each page before "adding" it.)
-- [ ] `getReports` applies status/reason filters only when passed, silently returning all history
-      otherwise. Chat Audit was the first caller to trip on it.
+- [x] **Report `details` — the reporter's own words** (2026-08-12). Audited all five renderers rather
+      than assuming: User Lookup, User Reports, Chat Audit and Image Lookup all already rendered
+      `details->>'comment'` inline. **The generic `/reports/<type>` queue was the one that did not** —
+      its table had no Details column at all, and the words were reachable only by opening the sheet and
+      reading them out of a raw JSON dump. Retool had that column, and it is what decides whether a row
+      is worth opening. Now a clamped Details cell on every row (full text on hover) and the comment as
+      prose above the dump in the sheet. Verified on `/reports/user`.
+- [x] `getReports` applies status/reason filters only when passed — **stale, already fixed**:
+      `statuses` and `reasons` are required parameters and `'all'` has to be said out loud. Verified
+      2026-08-12.
 
 ## 11. Operational
 
