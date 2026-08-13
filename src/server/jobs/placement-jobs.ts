@@ -6,7 +6,10 @@ import {
   sweepUnpaidLegs,
   sweepUnplannedSettlements,
 } from '~/server/services/placement-escrow.service';
-import { sweepUncountedPlacements } from '~/server/services/placement-metrics.service';
+import {
+  countAbandonedPlacements,
+  sweepUncountedPlacements,
+} from '~/server/services/placement-metrics.service';
 import { sweepDeletedRemixGallerySubmissions } from '~/server/services/remix-gallery-sweep.service';
 
 const BATCH = 100;
@@ -201,6 +204,10 @@ export const sweepUncountedPlacementsJob = createJob(
       counted,
       amount: sum(runs, (run) => run.amount),
       deferred,
+      // Rows the sweep has given up on. Past the attempt ceiling they are never
+      // selected again, so this is the only thing that says the counter is short
+      // and by how much.
+      abandoned: await countAbandonedPlacements(),
       // The flag is off, so nothing was even looked at. Distinct from a run that
       // found nothing to do.
       skipped: runs.every((run) => run.skipped),

@@ -1,3 +1,4 @@
+import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -149,6 +150,15 @@ export async function sweepUncountedPlacements({
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.PLACEMENT_METRIC_SWEEP)))
     return { ...idle, skipped: true };
 
+  // Hoisted ahead of the claim, because both are process-global rather than
+  // per-group. Discovering them after claiming burned an attempt and held the
+  // claim for the full stale window on every row it touched — ten cycles of that
+  // is two and a half hours, and an incident kill-switch left on for an
+  // afternoon would have taken the entire queue past its ceiling and made it
+  // permanently invisible. Nothing is claimed unless an emit could land.
+  if (!env.CLICKHOUSE_TRACKER_URL || (await isFlipt('disable-app-entity-metrics')))
+    return { ...idle, skipped: true };
+
   const staleBefore = new Date(Date.now() - CLAIM_RETRY_MS);
 
   /**
@@ -239,6 +249,14 @@ export async function sweepUncountedPlacements({
       continue;
     }
 
+    // The fence stops a run that lost its lease from *writing*, but the emit is
+    // the irreversible half and no database guard reaches it. A run slow enough
+    // to outlive its own claim would emit for rows its successor has already
+    // emitted for — two events, different seconds, additive metric, permanent.
+    // The rest of the page keeps its stale claim, which is the recovery path
+    // that already exists.
+    if (Date.now() - lease.getTime() > CLAIM_RETRY_MS) break;
+
     try {
       // A zero-amount group is confirmed without an emit rather than skipped:
       // left unconfirmed it would be re-claimed every time its claim went stale
@@ -254,10 +272,14 @@ export async function sweepUncountedPlacements({
           awaitDelivery: true,
         }));
 
-      // `false` is the metric kill-switch being on, or no tracker configured —
-      // not a failure. The group is left for a later tick, which is the whole
-      // point of the queue.
-      if (!delivered) continue;
+      // Not a failure, so it is handed back rather than left holding a claim:
+      // the checks above make this all but unreachable, but a caller that
+      // reports "not delivered" for a reason this function does not know about
+      // must not cost the row an attempt it never spent.
+      if (!delivered) {
+        deferredIds.push(...group.ids);
+        continue;
+      }
 
       alreadyEmitted?.add(group.key);
       counted += await markPlacementsCounted(group.ids, lease);
@@ -289,7 +311,11 @@ export async function sweepUncountedPlacements({
       // longer hold would hand rows another run is actively emitting for to a
       // third one.
       where: { id: { in: deferredIds }, metricCountedAt: null, metricClaimedAt: lease },
-      data: { metricClaimedAt: null },
+      // The attempt is given back with the claim. A deferred row was never
+      // tried — nothing was emitted for it — and letting deferrals burn the
+      // ceiling would abandon a group whose only fault is being large enough to
+      // span pages ten times.
+      data: { metricClaimedAt: null, metricAttempts: { decrement: 1 } },
     });
 
   return {
@@ -299,4 +325,17 @@ export async function sweepUncountedPlacements({
     deferred: deferredIds.length,
     skipped: false,
   };
+}
+
+/**
+ * How many placements the sweep has given up on.
+ *
+ * The ceiling turns a starving queue into a bounded loss, and this is what makes
+ * the loss visible: past it the claim stops selecting these rows entirely, so
+ * without a count the counter is quietly short by an unknown amount forever.
+ */
+export async function countAbandonedPlacements() {
+  return dbWrite.placement.count({
+    where: { metricCountedAt: null, metricAttempts: { gte: MAX_CLAIM_ATTEMPTS } },
+  });
 }

@@ -7,8 +7,15 @@ const updateEntityMetricDetached = vi.fn();
 const logToAxiom = vi.fn();
 const isFlipt = vi.fn();
 
+const count = vi.fn(async () => 0);
+
+vi.mock('~/env/server', () => ({ env: { CLICKHOUSE_TRACKER_URL: 'http://tracker.test' } }));
+
 vi.mock('~/server/db/client', () => ({
-  dbWrite: { $queryRaw: (...args: unknown[]) => queryRaw(...args), placement: { updateMany } },
+  dbWrite: {
+    $queryRaw: (...args: unknown[]) => queryRaw(...args),
+    placement: { updateMany, count },
+  },
 }));
 
 vi.mock('~/server/flipt/client', () => ({
@@ -34,7 +41,8 @@ type Row = {
   metricAttempts: number;
 };
 
-const LEASE = new Date('2026-08-13T12:00:00.000Z');
+/** Fresh, because the sweep stops emitting once its own lease has aged out. */
+const LEASE = new Date();
 
 const row = (over: Partial<Row> & { id: number }): Row => ({
   targetId: 10,
@@ -71,7 +79,9 @@ beforeEach(() => {
   updateMany.mockImplementation(async ({ where }) => ({ count: where.id.in.length }));
   updateEntityMetricDetached.mockResolvedValue(true);
   logToAxiom.mockResolvedValue(undefined);
-  isFlipt.mockResolvedValue(true);
+  // Only the sweep's own gate. `disable-app-entity-metrics` is the kill switch,
+  // and returning true for everything would have it permanently off.
+  isFlipt.mockImplementation(async (flag: string) => flag === 'placement-metric-sweep');
 });
 
 describe('sweepUncountedPlacements', () => {
@@ -139,6 +149,10 @@ describe('sweepUncountedPlacements', () => {
 
     const release = updateMany.mock.calls.find((call) => call[0].data.metricClaimedAt === null);
     expect(release?.[0].where.metricClaimedAt).toEqual(LEASE);
+    // And gives the attempt back: a deferred row was never tried, so letting
+    // deferrals burn the ceiling would abandon a group whose only fault is
+    // spanning pages often enough.
+    expect(release?.[0].data.metricAttempts).toEqual({ decrement: 1 });
   });
 
   it('excludes a placement that went straight from pending to removed', async () => {
@@ -227,13 +241,43 @@ describe('sweepUncountedPlacements', () => {
     expect(result.amount).toBe(400);
   });
 
-  it('leaves the work queued when metrics are switched off downstream', async () => {
-    claims([row({ id: 1, amount: 100 }), row({ id: 2, targetId: 11, amount: 400 })]);
+  it('claims nothing at all while the metric kill switch is on', async () => {
+    // Discovering it after claiming burned an attempt and held the claim for the
+    // full stale window on every row — ten cycles of that abandons the whole
+    // queue in a couple of hours, over an incident switch that gets left on for
+    // an afternoon.
+    isFlipt.mockImplementation(async () => true);
+
+    const result = await sweepUncountedPlacements({ limit: 100 });
+
+    expect(queryRaw).not.toHaveBeenCalled();
+    expect(result.skipped).toBe(true);
+  });
+
+  it('hands a group back rather than holding its claim when nothing was delivered', async () => {
+    claims([row({ id: 1, amount: 100 })]);
     updateEntityMetricDetached.mockResolvedValue(false);
 
     const result = await sweepUncountedPlacements({ limit: 100 });
 
     expect(confirmedIds()).toEqual([]);
+    expect(releasedIds()).toEqual([1]);
+    expect(result.counted).toBe(0);
+  });
+
+  it('stops emitting once its own lease has expired', async () => {
+    // The fence protects the writes; the emit is the irreversible half and no
+    // database guard reaches it. A run that outlives its claim would emit for
+    // rows its successor has already emitted for.
+    const expired = new Date(Date.now() - 60 * 60 * 1000);
+    claims([
+      row({ id: 1, metricClaimedAt: expired }),
+      row({ id: 2, targetId: 11, metricClaimedAt: expired }),
+    ]);
+
+    const result = await sweepUncountedPlacements({ limit: 100 });
+
+    expect(updateEntityMetricDetached).not.toHaveBeenCalled();
     expect(result.counted).toBe(0);
   });
 
