@@ -93,12 +93,21 @@ describe('jsonSafeSession', () => {
   // The load-bearing edge: the helper is worthless if it isn't applied. A unit test cannot drive
   // createServerSideProps without wholesale-mocking `~/server/routers` (banned by no-wholesale-module-mock),
   // so pin the call site itself.
-  it('is applied at the props boundary in createServerSideProps', () => {
-    const source = fs.readFileSync(
-      path.resolve(__dirname, '../utils/server-side-helpers.ts'),
-      'utf8'
-    );
+  describe('the call site in createServerSideProps', () => {
+    const source = () =>
+      fs.readFileSync(path.resolve(__dirname, '../utils/server-side-helpers.ts'), 'utf8');
 
-    expect(source).toContain('session: jsonSafeSession(session)');
+    it('applies jsonSafeSession to the session prop', () => {
+      expect(source()).toContain('session: jsonSafeSession(session)');
+    });
+
+    // `session` must stay the LAST key in the props object: a later spread would re-add the raw
+    // session over the sanitized one, which leaves the call above present but dead.
+    it('keeps it last, so nothing can spread a raw session over it', () => {
+      expect(
+        source(),
+        'nothing may be added after `session:` in the returned props object'
+      ).toMatch(/session: jsonSafeSession\(session\),\s*\}\s*as NonNullable<P>/);
+    });
   });
 });
