@@ -1,6 +1,20 @@
 import { defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
+import os from 'os';
 import path from 'path';
+
+// Vitest defaults to `cpus - 1` workers, so two concurrent suites saturate a 32-core dev box.
+// Measured here: 31 workers 235.9s, 8 workers 410.2s — 1.74x slower for a machine that stays usable.
+//
+// `Math.min`, not a flat 8: an explicit `maxWorkers` OVERRIDES the CPU default, and CI passes no
+// worker flag, so a flat 8 would RAISE a 4-vCPU runner from 3 workers to 8.
+//
+// Per-project overrides need a unique `sequence.groupOrder` or `groupSpecs` throws. And note
+// `test.poolOptions` was removed in Vitest 4 — `poolOptions.forks.maxForks` is silently ignored.
+// `VITEST_MAX_WORKERS` overrides this per run.
+const WORKER_CAP = 8;
+const cpuCount = os.availableParallelism?.() ?? os.cpus().length;
+const maxWorkers = Math.max(1, Math.min(WORKER_CAP, cpuCount - 1));
 
 // Mirror the workspace `@civitai/*` package mappings from tsconfig.json `paths` so Vitest
 // (which doesn't read tsconfig paths, and these packages aren't symlinked into the root
@@ -65,6 +79,7 @@ const componentAlias = [
 export default defineConfig({
   resolve: { alias },
   test: {
+    maxWorkers,
     projects: [
       // The nine `packages/*` suites, referenced by their OWN config files rather than
       // re-declared here. Until this line existed, nothing in CI invoked them: the `unit`
