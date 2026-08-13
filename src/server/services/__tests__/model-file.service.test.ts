@@ -18,8 +18,11 @@ vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }
 // live redis connection — these official-file helpers only touch dbRead.
 // `lookupFn` isn't reachable through this stub, so the cache-filter test below calls
 // the exported `fetchModelFilesForCache` directly instead of going through the cache object.
+// `mockCacheFetch` is hoisted so the getFilesForModelVersionCache tests below can drive what
+// the cache hands back (the point of those tests is what the ACCESSOR does to that value).
+const { mockCacheFetch } = vi.hoisted(() => ({ mockCacheFetch: vi.fn() }));
 vi.mock('~/server/utils/cache-helpers', () => ({
-  createCachedObject: () => ({ bust: vi.fn(), fetch: vi.fn(), lookupFn: undefined }),
+  createCachedObject: () => ({ bust: vi.fn(), fetch: mockCacheFetch, lookupFn: undefined }),
 }));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn() }));
 vi.mock('~/server/redis/client', () => ({
@@ -32,6 +35,7 @@ import {
   markFileReplaced,
   restoreReplacedFile,
   fetchModelFilesForCache,
+  getFilesForModelVersionCache,
 } from '~/server/services/model-file.service';
 import { constants } from '~/server/common/constants';
 import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
@@ -234,5 +238,112 @@ describe('fetchModelFilesForCache', () => {
     await fetchModelFilesForCache([10]);
     const arg = mockDbRead.modelFile.findMany.mock.calls[0][0];
     expect(arg.where).toMatchObject({ modelVersionId: { in: [10] }, replacedAt: null });
+  });
+});
+
+/**
+ * REGRESSION — the accessor must not hand a caller a `files` array that is shared with the
+ * cache layer.
+ *
+ * `createCachedArray` (packages/civitai-redis/src/cached-array.ts) only ever SHALLOW-clones a
+ * record before handing it out, and documents that nested refs stay shared: "shallow only
+ * protects TOP-LEVEL fields … consumers MUST treat returned values as read-only for nested
+ * fields". The healthy Redis path is fine — each hit msgpack-decodes a fresh object. The live
+ * sharing path is the FAIL-OPEN DEGRADED fetch: its per-id single-flight resolves ONE record
+ * for every caller that joins the in-flight lookup, so all of them end up holding the same
+ * `files` array. (An L1 hit would share it too, but this cache sets no `localTtl`.)
+ * `getModelsWithVersions` does `files.push(...vaeFile)` on that array, so without a copy one
+ * request's VAE append is visible to every other request sharing the flight.
+ *
+ * These tests drive the cache mock to return records that share ONE nested array — exactly
+ * what the degraded path produces — and assert the accessor isolates the caller from it.
+ * Before the fix the accessor returned `filesForModelVersionCache.fetch(...)` verbatim.
+ */
+describe('getFilesForModelVersionCache — nested files array is caller-owned', () => {
+  beforeEach(() => mockCacheFetch.mockReset());
+
+  // One record object reused across fetches, as an L1 hit / degraded single-flight would.
+  function sharedCacheSource() {
+    const cached = {
+      '42': { modelVersionId: 42, files: [{ id: 1, name: 'base.safetensors' }] },
+    };
+    mockCacheFetch.mockImplementation(async () => ({ '42': { ...cached['42'] } }));
+    return cached;
+  }
+
+  it('returns a files array that is NOT the cached record’s array', async () => {
+    const cached = sharedCacheSource();
+    const result = await getFilesForModelVersionCache([42]);
+    expect(result['42'].files).toEqual(cached['42'].files);
+    expect(result['42'].files).not.toBe(cached['42'].files);
+  });
+
+  it('appending a VAE file does not leak into a later read (the getModelsWithVersions path)', async () => {
+    const cached = sharedCacheSource();
+
+    const first = await getFilesForModelVersionCache([42]);
+    expect(first['42'].files).toHaveLength(1);
+    // exactly what model.service.ts getModelsWithVersions does with the linked VAE
+    first['42'].files.push({ id: 999, name: 'linked.vae.safetensors' });
+
+    const second = await getFilesForModelVersionCache([42]);
+    expect(second['42'].files).toHaveLength(1);
+    expect(second['42'].files.map((f) => f.name)).toEqual(['base.safetensors']);
+    expect(cached['42'].files).toHaveLength(1);
+  });
+
+  it('isolates two concurrent callers from each other (degraded single-flight shape)', async () => {
+    const shared = { modelVersionId: 42, files: [{ id: 1, name: 'base.safetensors' }] };
+    // The degraded path awaits ONE promise per id and shallow-clones it per caller, so every
+    // caller's record carries the SAME nested array. Model that exactly.
+    mockCacheFetch.mockImplementation(async () => ({ '42': { ...shared } }));
+
+    const [a, b] = await Promise.all([
+      getFilesForModelVersionCache([42]),
+      getFilesForModelVersionCache([42]),
+    ]);
+    expect(a['42'].files).not.toBe(b['42'].files);
+
+    a['42'].files.push({ id: 999, name: 'linked.vae.safetensors' });
+    expect(b['42'].files).toHaveLength(1);
+  });
+
+  it('preserves the record shape and the file contents', async () => {
+    sharedCacheSource();
+    const result = await getFilesForModelVersionCache([42]);
+    expect(Object.keys(result)).toEqual(['42']);
+    expect(result['42']).toEqual({
+      modelVersionId: 42,
+      files: [{ id: 1, name: 'base.safetensors' }],
+    });
+  });
+
+  // EVERY record must be isolated, not just the first one the map happens to visit — a
+  // batched fetch is the normal shape here (a feed page hydrates ~100 version ids at once).
+  it('isolates every record in a multi-id batch, not only the first', async () => {
+    const cached = {
+      '42': { modelVersionId: 42, files: [{ id: 1, name: 'a.safetensors' }] },
+      '43': { modelVersionId: 43, files: [{ id: 2, name: 'b.safetensors' }] },
+      '44': { modelVersionId: 44, files: [{ id: 3, name: 'c.safetensors' }] },
+    };
+    mockCacheFetch.mockImplementation(async () =>
+      Object.fromEntries(Object.entries(cached).map(([k, v]) => [k, { ...v }]))
+    );
+
+    const result = await getFilesForModelVersionCache([42, 43, 44]);
+    expect(Object.keys(result)).toEqual(['42', '43', '44']);
+    for (const id of ['42', '43', '44'] as const) {
+      expect(result[id].files).not.toBe(cached[id].files);
+      result[id].files.push({ id: 999, name: 'linked.vae.safetensors' });
+      expect(cached[id].files).toHaveLength(1);
+    }
+  });
+
+  // The copy is guarded so a record that somehow carries no `files` array keeps its shape
+  // rather than throwing on a public-API read path.
+  it('passes through a record with no files array instead of throwing', async () => {
+    mockCacheFetch.mockImplementation(async () => ({ '42': { modelVersionId: 42 } }));
+    const result = await getFilesForModelVersionCache([42]);
+    expect(result['42']).toEqual({ modelVersionId: 42 });
   });
 });

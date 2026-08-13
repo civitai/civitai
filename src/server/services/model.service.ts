@@ -3862,6 +3862,12 @@ export async function getModelsWithVersions({
               const vaeFile = vaeVersionId
                 ? vaeFiles.filter((x) => x.modelVersionId === vaeVersionId)
                 : [];
+              // This append is safe ONLY because getFilesForModelVersionCache hands back a
+              // per-caller copy of `files`. The cache layer shallow-clones records and
+              // documents nested fields as read-only, and its fail-open degraded path gives
+              // one shared `files` array to every concurrent reader of that version — so a
+              // push straight onto `filesForModelVersionCache.fetch(...)` output leaks this
+              // VAE into other in-flight requests. Don't bypass the accessor.
               const files = groupedFiles[version.id]?.files ?? [];
               files.push(...vaeFile);
 

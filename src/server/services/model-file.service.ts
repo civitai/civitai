@@ -78,8 +78,39 @@ export function reduceToBasicFileMetadata(
   };
 }
 
+/**
+ * Read the per-version file lists, returning records whose nested `files` array is the
+ * CALLER'S OWN — safe to append to, sort, or splice.
+ *
+ * 🔴 WHY THE COPY. `createCachedArray` only ever SHALLOW-clones a record before handing it
+ * out, and says so: "shallow only protects TOP-LEVEL fields — nested refs are shared …
+ * consumers MUST treat returned values as read-only for nested fields"
+ * (`packages/civitai-redis/src/cached-array.ts`). So the contract the cache offers is
+ * read-only-for-`files`, while `getModelsWithVersions` appends the linked VAE file to
+ * exactly that array. This function is the seam that converts one contract into the other.
+ *
+ * The healthy Redis path is NOT the concern — every hit msgpack-decodes a fresh object per
+ * read, so nothing is shared there. The live sharing path is the FAIL-OPEN DEGRADED fetch
+ * (taken whenever a cluster read rejects): its per-id single-flight resolves ONE record for
+ * every caller that joins the in-flight lookup, and the shallow clone it then makes leaves
+ * every one of those callers holding the SAME `files` array. Without this copy, one
+ * request's VAE append is visible to every other request sharing that flight — including
+ * `generation.service` and the `modelFile.getByVersionId` handler, which never expected a
+ * VAE file in the list at all. (An in-process L1 hit would share it too, but this cache
+ * sets no `localTtl`, so that path is latent rather than live.)
+ *
+ * Array-level is the right DEPTH: no consumer mutates an individual file object, only the
+ * list. Guarded rather than unconditional so a record without a `files` array keeps its
+ * pre-existing shape instead of throwing on a hot public-API path.
+ */
 export async function getFilesForModelVersionCache(modelVersionIds: number[]) {
-  return await filesForModelVersionCache.fetch(modelVersionIds);
+  const records = await filesForModelVersionCache.fetch(modelVersionIds);
+  return Object.fromEntries(
+    Object.entries(records).map(([id, record]) => [
+      id,
+      { ...record, files: Array.isArray(record.files) ? [...record.files] : record.files },
+    ])
+  ) as typeof records;
 }
 export async function deleteFilesForModelVersionCache(modelVersionId: number) {
   await filesForModelVersionCache.bust(modelVersionId);
