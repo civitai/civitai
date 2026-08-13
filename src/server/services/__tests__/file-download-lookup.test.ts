@@ -150,7 +150,7 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
   // box that transform can exceed a per-test timeout (a 30s describe override
   // flaked here under contention). Pay it ONCE in beforeAll with a generous hook
   // timeout, then every test uses the warm reference — no per-test import race.
-  let getFileForModelVersion: (typeof import('../file.service'))['getFileForModelVersion'];
+  let getFileForModelVersion: typeof import('../file.service')['getFileForModelVersion'];
   beforeAll(async () => {
     ({ getFileForModelVersion } = await import('../file.service'));
   }, 60000);
@@ -368,5 +368,198 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
 
       expect(result.status).toBe('not-found');
     });
+  });
+});
+
+/**
+ * THE SEAM: a serialized `downloadUrl` is a CLAIM that the download route will
+ * resolve it. Nothing tested that claim — the endpoint suites assert URL
+ * strings, and this file's other cases never touch `fileId` or the
+ * linked-component fallback. So a URL pairing a spliced VAE file's id with the
+ * HOST version passed every assertion in the repo and 404s in production.
+ *
+ * These cases build the URL with the REAL helper the endpoints use, parse it the
+ * way `/api/download/models/[modelVersionId]` does, and feed it to the REAL
+ * `getFileForModelVersion` over a Prisma stub that enforces the actual `where`
+ * clauses. `not-found` here IS the production 404.
+ */
+describe('serialized downloadUrl → getFileForModelVersion (the pair actually resolves)', () => {
+  let getFileForModelVersion: typeof import('../file.service')['getFileForModelVersion'];
+  let createSerializedFileDownloadUrl: typeof import('~/server/common/model-helpers')['createSerializedFileDownloadUrl'];
+  beforeAll(async () => {
+    ({ getFileForModelVersion } = await import('../file.service'));
+    ({ createSerializedFileDownloadUrl } = await import('~/server/common/model-helpers'));
+  }, 60000);
+
+  const HOST_VERSION_ID = 4242;
+  const LINKED_VAE_VERSION_ID = 9999;
+  const PUBLIC_REQUESTER = { id: 1234, isModerator: false };
+
+  // The whole file universe, with the version each file REALLY belongs to.
+  const OWNED_PRIMARY = {
+    id: 21,
+    modelVersionId: HOST_VERSION_ID,
+    url: 'https://r2/host-primary.safetensors',
+    name: 'host-primary.safetensors',
+    overrideName: null,
+    type: 'Model',
+    visibility: 'Public',
+    metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp16' },
+    hashes: [{ hash: 'aaaa1111' }],
+  };
+  const OWNED_SECOND = {
+    id: 22,
+    modelVersionId: HOST_VERSION_ID,
+    url: 'https://r2/host-second.ckpt',
+    name: 'host-second.ckpt',
+    overrideName: null,
+    type: 'Model',
+    visibility: 'Public',
+    metadata: { format: 'PickleTensor', size: 'full', fp: 'fp32' },
+    hashes: [{ hash: 'bbbb2222' }],
+  };
+  // Lives on the LINKED version. `getVaeFiles` relabels its `type` to 'VAE'
+  // when splicing it into the host response; in the DB it is still 'Model'.
+  const LINKED_VAE = {
+    id: 91,
+    modelVersionId: LINKED_VAE_VERSION_ID,
+    url: 'https://r2/linked-vae.safetensors',
+    name: 'linked-vae.safetensors',
+    overrideName: null,
+    type: 'Model',
+    visibility: 'Public',
+    metadata: { format: 'SafeTensor', size: 'full', fp: 'fp32' },
+    hashes: [{ hash: 'eeee5555' }],
+  };
+  const UNIVERSE = [OWNED_PRIMARY, OWNED_SECOND, LINKED_VAE];
+
+  const matches = (f: (typeof UNIVERSE)[number], where: Record<string, unknown>) =>
+    (where.id === undefined || f.id === where.id) &&
+    (where.modelVersionId === undefined || f.modelVersionId === where.modelVersionId) &&
+    (where.type === undefined || f.type === where.type) &&
+    (where.visibility === undefined || f.visibility === where.visibility);
+
+  beforeEach(() => {
+    modelVersionFindFirst.mockReset();
+    modelFileFindMany.mockReset();
+    modelFileFindFirst.mockReset();
+    recommendedResourceFindFirst.mockReset();
+    hasEntityAccessMock.mockReset();
+    resolveDownloadUrlMock.mockReset();
+    getPaidAccessMock.mockReset();
+
+    hasEntityAccessMock.mockResolvedValue([{ hasAccess: true, permissions: 0 }]);
+    getPaidAccessMock.mockResolvedValue({});
+    modelVersionFindFirst.mockImplementation(async () =>
+      publishedModelVersion({ id: HOST_VERSION_ID })
+    );
+    resolveDownloadUrlMock.mockImplementation(async (_id: number, url: string) => ({
+      url,
+      urlExpiryDate: new Date(),
+    }));
+
+    // Prisma stubs that ENFORCE the where clause — this is what makes a
+    // mismatched (versionId, fileId) pair come back empty, exactly as in prod.
+    modelFileFindFirst.mockImplementation(async ({ where }: any) => {
+      const found = UNIVERSE.filter((f) => matches(f, where)).sort((a, b) => a.id - b.id);
+      return found[0] ?? null;
+    });
+    modelFileFindMany.mockImplementation(async ({ where }: any) =>
+      UNIVERSE.filter((f) => matches(f, where))
+    );
+    // The host version links the VAE version as a component.
+    recommendedResourceFindFirst.mockImplementation(async ({ where }: any) =>
+      where.sourceId === HOST_VERSION_ID
+        ? {
+            resourceId: LINKED_VAE_VERSION_ID,
+            settings: { isLinkedComponent: true, componentType: 'VAE' },
+          }
+        : null
+    );
+  });
+
+  /** Parse an emitted URL into the route's handler input (schema at
+   * src/pages/api/download/models/[modelVersionId].ts). */
+  function toRouteInput(path: string) {
+    const url = new URL(`https://civitai.com${path}`);
+    const modelVersionId = Number(url.pathname.split('/').pop());
+    const q = url.searchParams;
+    const fileIdParam = q.get('fileId');
+    return {
+      modelVersionId,
+      fileId: fileIdParam ? Number(fileIdParam) : undefined,
+      type: q.get('type') ?? undefined,
+      format: q.get('format') ?? undefined,
+      size: q.get('size') ?? undefined,
+      fp: q.get('fp') ?? undefined,
+      quantType: q.get('quantType') ?? undefined,
+    } as never;
+  }
+
+  it('a pinned URL for a file the version OWNS resolves to exactly that file', async () => {
+    const path = createSerializedFileDownloadUrl({
+      file: OWNED_SECOND,
+      hostVersionId: HOST_VERSION_ID,
+    });
+    // Positive control: this URL really is the pinned shape.
+    expect(path).toBe('/api/download/models/4242?fileId=22');
+
+    const result = (await getFileForModelVersion({
+      ...toRouteInput(path),
+      noAuth: true,
+      // A plain signed-in, non-owner, non-mod requester: `requireAuth` is
+      // satisfied (UNAUTHENTICATED_DOWNLOAD is off in the test env) while the
+      // Public visibility filter still applies, i.e. the public download path.
+      user: PUBLIC_REQUESTER,
+    })) as { status: string; fileId?: number; url?: string };
+    expect(result.status).toBe('success');
+    expect(result.fileId).toBe(22);
+    expect(result.url).toBe(OWNED_SECOND.url);
+  });
+
+  it('the URL emitted for a SPLICED VAE file resolves (it is not pinned to the host version)', async () => {
+    const path = createSerializedFileDownloadUrl({
+      // `type: 'VAE'` is the relabel getVaeFiles applies.
+      file: { ...LINKED_VAE, type: 'VAE' },
+      hostVersionId: HOST_VERSION_ID,
+    });
+    expect(new URL(`https://x.test${path}`).searchParams.get('fileId')).toBeNull();
+
+    const result = (await getFileForModelVersion({
+      ...toRouteInput(path),
+      noAuth: true,
+      // A plain signed-in, non-owner, non-mod requester: `requireAuth` is
+      // satisfied (UNAUTHENTICATED_DOWNLOAD is off in the test env) while the
+      // Public visibility filter still applies, i.e. the public download path.
+      user: PUBLIC_REQUESTER,
+    })) as { status: string; fileId?: number };
+    // Resolved through the linked-component fallback, to the VAE file itself.
+    expect(result.status).toBe('success');
+    expect(result.fileId).toBe(91);
+  });
+
+  it('NEGATIVE CONTROL: the pair the bug emitted (fileId=91 on version 4242) is a 404', async () => {
+    // Built by hand, NOT by the helper — this is the URL the unguarded pin
+    // produced, and it must be observably not-found, or the two tests above
+    // prove nothing about the seam.
+    const result = (await getFileForModelVersion({
+      ...toRouteInput('/api/download/models/4242?fileId=91'),
+      noAuth: true,
+      // A plain signed-in, non-owner, non-mod requester: `requireAuth` is
+      // satisfied (UNAUTHENTICATED_DOWNLOAD is off in the test env) while the
+      // Public visibility filter still applies, i.e. the public download path.
+      user: PUBLIC_REQUESTER,
+    })) as { status: string };
+    expect(result.status).toBe('not-found');
+  });
+
+  it('a pinned URL respects the version boundary in the DB query itself', async () => {
+    await getFileForModelVersion({
+      ...toRouteInput('/api/download/models/4242?fileId=21'),
+      noAuth: true,
+      user: PUBLIC_REQUESTER,
+    });
+    const where = modelFileFindFirst.mock.calls[0][0].where;
+    expect(where).toMatchObject({ id: 21, modelVersionId: 4242 });
   });
 });
