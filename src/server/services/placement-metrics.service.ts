@@ -82,16 +82,18 @@ export async function recordPlacementTip({
   placerId: number;
 }) {
   try {
-    if (amount > 0)
-      await updateEntityMetricDetached({
+    const counted =
+      amount <= 0 ||
+      (await updateEntityMetricDetached({
         entityType: 'Image',
         entityId: imageId,
         metricType: 'Buzz',
         amount,
         userId: placerId,
-      });
+        awaitDelivery: true,
+      }));
 
-    await markPlacementsCounted([placementId]);
+    if (counted) await markPlacementsCounted([placementId]);
   } catch (error) {
     await logToAxiom({
       name: 'placement-metrics',
@@ -210,14 +212,21 @@ export async function sweepUncountedPlacements({ limit = 100 }: { limit?: number
       // A zero-amount group is marked without an emit rather than skipped: left
       // unmarked it would be re-selected on every tick and eat the batch ahead
       // of rows that do need counting.
-      if (group.amount > 0)
-        await updateEntityMetricDetached({
+      const delivered =
+        group.amount <= 0 ||
+        (await updateEntityMetricDetached({
           entityType: 'Image',
           entityId: group.imageId,
           metricType: 'Buzz',
           amount: group.amount,
           userId: group.placerId,
-        });
+          awaitDelivery: true,
+        }));
+
+      // `false` here is the metric flag being off, not a failure. The group
+      // stays unmarked and is counted on a later tick, which is the whole point
+      // of the queue — marking it now would lose the flag's whole window.
+      if (!delivered) continue;
 
       counted += await markPlacementsCounted(group.ids);
       amount += group.amount;

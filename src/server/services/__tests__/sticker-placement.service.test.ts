@@ -735,6 +735,9 @@ describe("a placement counts toward the image's Buzz counter", () => {
       // Attributed to the placer, the way a tip is attributed to its tipper —
       // and load-bearing, because `userId` is part of the pipeline's dedupe key.
       userId: PLACER,
+      // Waited on rather than dispatched: the stamp that follows records that
+      // this landed, and recording a dropped event as counted is unrecoverable.
+      awaitDelivery: true,
     });
   });
 

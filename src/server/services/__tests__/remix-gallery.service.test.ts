@@ -1021,6 +1021,9 @@ describe('an approved submission counts toward the host image buzz counter', () 
       amount: PRICE,
       // The submitter, not the host's owner: attribution follows who paid.
       userId: PLACER,
+      // Waited on rather than dispatched: the stamp that follows records that
+      // this landed, and recording a dropped event as counted is unrecoverable.
+      awaitDelivery: true,
     });
     // Exactly once, which the payload assertion above cannot see. The two
     // negative tests in this block would both pass against a full revert, so

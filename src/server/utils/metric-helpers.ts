@@ -29,14 +29,27 @@ export const updateEntityMetric = async ({
   entityId,
   metricType,
   amount = 1,
+  awaitDelivery = false,
 }: {
   ctx: EntityMetricContext;
   entityType?: EntityMetric_EntityType_Type;
   entityId: number;
   metricType: EntityMetric_MetricType_Type;
   amount?: number;
-}) => {
-  if (await isFlipt('disable-app-entity-metrics')) return;
+  /**
+   * Wait for the tracker to accept the row, and raise if it does not.
+   *
+   * For a caller that records afterwards that this counter moved. The default
+   * dispatches and returns, so `await` on this function otherwise says the
+   * event was *sent*, not that it arrived — a caller that wrote "counted" off
+   * that would bury a dropped event under a record saying it was fine.
+   */
+  awaitDelivery?: boolean;
+}): Promise<boolean> => {
+  // Reported rather than swallowed: with the flag on nothing is counted, and a
+  // caller that stamped the row anyway would lose the whole window's placements
+  // instead of counting them when it comes back off.
+  if (await isFlipt('disable-app-entity-metrics')) return false;
 
   const logData = JSON.stringify({
     userId: ctx.user?.id,
@@ -61,7 +74,11 @@ export const updateEntityMetric = async ({
 
   // Queue with clickhouse tracker
   try {
-    await ctx.track.entityMetric({ entityType, entityId, metricType, metricValue: amount });
+    await ctx.track.entityMetric(
+      { entityType, entityId, metricType, metricValue: amount },
+      { awaitDelivery }
+    );
+    return true;
   } catch (e) {
     const error = e as Error;
     logError('Failed to queue metric into CH', {
@@ -70,6 +87,10 @@ export const updateEntityMetric = async ({
       cause: error.cause,
       stack: error.stack,
     });
+    // Swallowed for the fire-and-forget callers, who have nothing to do with
+    // it. A caller that asked to wait is deciding something on the answer.
+    if (awaitDelivery) throw error;
+    return false;
   }
 };
 
@@ -102,7 +123,7 @@ export const updateEntityMetricDetached = async ({
     undefined,
     userId ? ({ user: { id: userId } } as ConstructorParameters<typeof Tracker>[2]) : undefined
   );
-  await updateEntityMetric({ ...input, ctx: { track } });
+  return updateEntityMetric({ ...input, ctx: { track } });
 };
 
 export const incrementEntityMetric = async ({

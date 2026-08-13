@@ -32,6 +32,18 @@ import type { EntityChangeRow } from '~/server/common/entity-change.constants';
 import { ENTITY_CHANGE_TRACKING_FLAG } from '~/server/common/entity-change.constants';
 import { isFlipt } from '~/server/flipt/client';
 
+/**
+ * Whether the caller waits for the tracker to accept the row.
+ *
+ * Off by default, and that default is right for the request paths this class
+ * exists for — a view or a reaction must not add a network round trip to a
+ * response. It is wrong for a caller that writes down "this was counted"
+ * afterwards, which is what `awaitDelivery` is for: without it the write
+ * records a dispatch, and a dropped event becomes permanently invisible instead
+ * of being retried. Raises on a failure the retries could not fix.
+ */
+export type TrackDelivery = { awaitDelivery?: boolean };
+
 export type ViewType =
   | 'ProfileView'
   | 'ImageView'
@@ -256,9 +268,15 @@ export class Tracker {
 
   private async send(
     table: string,
-    data: object | ((args: { session: Session | null; actor: TrackRequest }) => object)
+    data: object | ((args: { session: Session | null; actor: TrackRequest }) => object),
+    options?: TrackDelivery
   ) {
-    if (!env.CLICKHOUSE_TRACKER_URL) return;
+    // Not silently "delivered": a caller that records durability off the return
+    // value would write down that a counter moved on a host with no tracker.
+    if (!env.CLICKHOUSE_TRACKER_URL) {
+      if (options?.awaitDelivery) throw new Error('tracker: CLICKHOUSE_TRACKER_URL is not set');
+      return;
+    }
     await this.resolveSession();
 
     const body =
@@ -270,6 +288,13 @@ export class Tracker {
     // Prior version only handled network rejection from fetch(), so any
     // 5xx response from the tracker — common when NATS publish ack times
     // out — was silently dropped.
+    //
+    // `awaitDelivery` is for the one kind of caller that cannot use that: one
+    // that writes a durable "this was counted" record afterwards. Dispatching
+    // and marking would record a lost event as delivered, which is worse than
+    // the loss it replaced — the row then looks accounted for forever.
+    if (options?.awaitDelivery) return this.sendWithRetry(url, body, table, 1, true);
+
     void this.sendWithRetry(url, body, table);
   }
 
@@ -277,75 +302,87 @@ export class Tracker {
     url: string,
     body: object,
     table: string,
-    attempt = 1
+    attempt = 1,
+    /** Raise on a failure the retries could not fix, instead of only logging it. */
+    rethrow = false
   ): Promise<void> {
     const MAX_ATTEMPTS = 3;
     const baseDelayMs = 250;
 
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        body: JSON.stringify(body),
-        headers: { 'Content-Type': 'application/json' },
-      });
+    // A loop rather than recursion, so `rethrow` has somewhere to throw from
+    // that the retry `catch` cannot swallow. Recursing and throwing inside the
+    // `try` would be caught by this frame's own handler and retried as if it
+    // were a network fault, multiplying the attempts.
+    let failure: Error | null = null;
 
-      if (res.ok) return;
+    for (; attempt <= MAX_ATTEMPTS; attempt++) {
+      if (attempt > 1) await sleep(baseDelayMs * 2 ** (attempt - 2) + Math.random() * baseDelayMs);
 
-      // 4xx: tracker rejected the payload. Retrying won't help. Log and bail.
-      if (res.status >= 400 && res.status < 500) {
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          body: JSON.stringify(body),
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+        if (res.ok) return;
+
+        // 4xx: tracker rejected the payload. Retrying won't help. Log and bail.
+        if (res.status >= 400 && res.status < 500) {
+          const errBody = await res.text().catch(() => '');
+          logToAxiom(
+            {
+              type: 'warning',
+              name: 'Failed to track (4xx)',
+              details: { table, status: res.status, attempt, response: errBody.slice(0, 500) },
+              message: `Tracker returned ${res.status}`,
+            },
+            'clickhouse'
+          ).catch(() => {});
+          failure = new Error(`tracker: ${table} rejected with ${res.status}`);
+          break;
+        }
+
+        // 5xx: transient — NATS publish timeout, JetStream rejection, etc.
+        failure = new Error(`tracker: ${table} returned ${res.status}`);
+        if (attempt < MAX_ATTEMPTS) continue;
+
         const errBody = await res.text().catch(() => '');
         logToAxiom(
           {
-            type: 'warning',
-            name: 'Failed to track (4xx)',
-            details: { table, status: res.status, attempt, response: errBody.slice(0, 500) },
-            message: `Tracker returned ${res.status}`,
+            type: 'error',
+            name: 'Failed to track (5xx, exhausted)',
+            details: {
+              table,
+              status: res.status,
+              attempts: attempt,
+              response: errBody.slice(0, 500),
+            },
+            message: `Tracker returned ${res.status} after ${attempt} attempts`,
           },
           'clickhouse'
         ).catch(() => {});
-        return;
-      }
+      } catch (e) {
+        const error = e as Error;
+        failure = error;
+        // Network-level failure. Retry the same as 5xx.
+        if (attempt < MAX_ATTEMPTS) continue;
 
-      // 5xx: transient — NATS publish timeout, JetStream rejection, etc.
-      if (attempt < MAX_ATTEMPTS) {
-        await sleep(baseDelayMs * 2 ** (attempt - 1) + Math.random() * baseDelayMs);
-        return this.sendWithRetry(url, body, table, attempt + 1);
-      }
-
-      const errBody = await res.text().catch(() => '');
-      logToAxiom(
-        {
-          type: 'error',
-          name: 'Failed to track (5xx, exhausted)',
-          details: {
-            table,
-            status: res.status,
-            attempts: attempt,
-            response: errBody.slice(0, 500),
+        logToAxiom(
+          {
+            type: 'error',
+            name: 'Failed to track (network, exhausted)',
+            details: { table, attempts: attempt },
+            message: error.message,
+            stack: error.stack,
+            cause: error.cause,
           },
-          message: `Tracker returned ${res.status} after ${attempt} attempts`,
-        },
-        'clickhouse'
-      ).catch(() => {});
-    } catch (e) {
-      const error = e as Error;
-      // Network-level failure. Retry the same as 5xx.
-      if (attempt < MAX_ATTEMPTS) {
-        await sleep(baseDelayMs * 2 ** (attempt - 1) + Math.random() * baseDelayMs);
-        return this.sendWithRetry(url, body, table, attempt + 1);
+          'clickhouse'
+        ).catch(() => {});
       }
-      logToAxiom(
-        {
-          type: 'error',
-          name: 'Failed to track (network, exhausted)',
-          details: { table, attempts: attempt },
-          message: error.message,
-          stack: error.stack,
-          cause: error.cause,
-        },
-        'clickhouse'
-      ).catch(() => {});
     }
+
+    if (rethrow && failure) throw failure;
   }
 
   private async sendMany(
@@ -382,19 +419,23 @@ export class Tracker {
   private async track(
     table: string,
     custom: object | ((session: Session | null) => object),
-    options?: { skipActorMeta: boolean }
+    options?: { skipActorMeta: boolean } & TrackDelivery
   ): Promise<void> {
-    const { skipActorMeta = false } = options ?? {};
+    const { skipActorMeta = false, awaitDelivery } = options ?? {};
 
-    await this.send(table, ({ session, actor }) => {
-      const actorMeta = skipActorMeta ? { userId: actor.userId } : { ...actor };
-      const customData = typeof custom === 'function' ? custom(session) : custom;
+    await this.send(
+      table,
+      ({ session, actor }) => {
+        const actorMeta = skipActorMeta ? { userId: actor.userId } : { ...actor };
+        const customData = typeof custom === 'function' ? custom(session) : custom;
 
-      return {
-        ...actorMeta,
-        ...customData,
-      };
-    });
+        return {
+          ...actorMeta,
+          ...customData,
+        };
+      },
+      { awaitDelivery }
+    );
   }
 
   private async trackMany(
@@ -713,16 +754,19 @@ export class Tracker {
     return this.track('knights_new_order_image_rating', { ...values, createdAt: new Date() });
   }
 
-  public entityMetric(values: {
-    entityType: EntityMetric_EntityType_Type;
-    entityId: number;
-    metricType: EntityMetric_MetricType_Type;
-    metricValue: number;
-  }) {
+  public entityMetric(
+    values: {
+      entityType: EntityMetric_EntityType_Type;
+      entityId: number;
+      metricType: EntityMetric_MetricType_Type;
+      metricValue: number;
+    },
+    options?: TrackDelivery
+  ) {
     return this.track(
       'entityMetricEvents',
       { ...values, createdAt: new Date() },
-      { skipActorMeta: true }
+      { skipActorMeta: true, awaitDelivery: options?.awaitDelivery }
     );
   }
 

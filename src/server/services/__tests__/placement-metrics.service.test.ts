@@ -47,14 +47,17 @@ beforeEach(() => {
   vi.clearAllMocks();
   findMany.mockResolvedValue([]);
   updateMany.mockImplementation(async ({ where }) => ({ count: where.id.in.length }));
-  updateEntityMetricDetached.mockResolvedValue(undefined);
+  updateEntityMetricDetached.mockResolvedValue(true);
   logToAxiom.mockResolvedValue(undefined);
 });
 
 describe('recordPlacementTip', () => {
   it('marks the placement counted only after the emit has landed', async () => {
     const order: string[] = [];
-    updateEntityMetricDetached.mockImplementation(async () => void order.push('emit'));
+    updateEntityMetricDetached.mockImplementation(async () => {
+      order.push('emit');
+      return true;
+    });
     updateMany.mockImplementation(async () => {
       order.push('mark');
       return { count: 1 };
@@ -74,6 +77,35 @@ describe('recordPlacementTip', () => {
 
   it('leaves the placement unmarked when the emit throws, so the sweep can still find it', async () => {
     updateEntityMetricDetached.mockRejectedValue(new Error('clickhouse is down'));
+
+    await recordPlacementTip({
+      surface: 'sticker',
+      placementId: 7,
+      imageId: 10,
+      amount: 100,
+      placerId: 20,
+    });
+
+    expect(markedIds()).toEqual([]);
+  });
+
+  it('waits for delivery rather than for dispatch', async () => {
+    await recordPlacementTip({
+      surface: 'sticker',
+      placementId: 7,
+      imageId: 10,
+      amount: 100,
+      placerId: 20,
+    });
+
+    // Without this the tracker returns as soon as it has handed the row to a
+    // fire-and-forget POST, and the stamp below records a dropped event as
+    // counted — which is worse than the loss it replaced.
+    expect(updateEntityMetricDetached.mock.calls[0][0].awaitDelivery).toBe(true);
+  });
+
+  it('leaves the placement unmarked when metrics are switched off, so nothing in that window is lost', async () => {
+    updateEntityMetricDetached.mockResolvedValue(false);
 
     await recordPlacementTip({
       surface: 'sticker',
@@ -129,6 +161,7 @@ describe('sweepUncountedPlacements', () => {
       metricType: 'Buzz',
       amount: 350,
       userId: 20,
+      awaitDelivery: true,
     });
     expect(result).toEqual({ considered: 2, counted: 2, amount: 350 });
     expect(markedIds()).toEqual([1, 2]);
@@ -171,12 +204,23 @@ describe('sweepUncountedPlacements', () => {
     pending([row({ id: 1, targetId: 10, amount: 100 }), row({ id: 2, targetId: 11, amount: 400 })]);
     updateEntityMetricDetached.mockImplementation(async ({ entityId }: { entityId: number }) => {
       if (entityId === 10) throw new Error('clickhouse is down');
+      return true;
     });
 
     const result = await sweepUncountedPlacements({ limit: 100 });
 
     expect(markedIds()).toEqual([2]);
     expect(result).toEqual({ considered: 2, counted: 1, amount: 400 });
+  });
+
+  it('marks nothing while metrics are switched off, and leaves the work in the queue', async () => {
+    pending([row({ id: 1, amount: 100 }), row({ id: 2, targetId: 11, amount: 400 })]);
+    updateEntityMetricDetached.mockResolvedValue(false);
+
+    const result = await sweepUncountedPlacements({ limit: 100 });
+
+    expect(markedIds()).toEqual([]);
+    expect(result).toEqual({ considered: 2, counted: 0, amount: 0 });
   });
 
   it('does nothing at all when there is nothing uncounted', async () => {
