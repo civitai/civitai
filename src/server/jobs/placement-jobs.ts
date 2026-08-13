@@ -160,6 +160,13 @@ export const sweepDeletedRemixGallerySubmissionsJob = createJob(
  * marked, and a run that cannot emit (ClickHouse down) would otherwise re-select
  * the same hundred every pass and burn the cap without reaching row 101. Same
  * trap the deleted-submission sweep documents beside it.
+ *
+ * `lockExpiration` is a ceiling on how long the lock is held, not a timeout: it
+ * is *released* at that point with the run still going, and a second run would
+ * then select the same unmarked rows and count them twice. Held wide here
+ * because the emit now waits for delivery, so a slow-but-healthy tracker
+ * stretches a run that a failing one would cut short. A dead pod is still
+ * recovered by the short refresh TTL lapsing, which this does not affect.
  */
 export const sweepUncountedPlacementsJob = createJob(
   'placement-sweep-uncounted',
@@ -179,7 +186,7 @@ export const sweepUncountedPlacementsJob = createJob(
       hitCap,
     };
   },
-  { lockExpiration: 10 * 60 }
+  { lockExpiration: 30 * 60 }
 );
 
 export const placementJobs = [
