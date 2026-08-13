@@ -5321,6 +5321,7 @@ export interface Placement {
   resolvedById: number | null;
   takenDownAt: Date | null;
   takenDownById: number | null;
+  metricCountedAt: Date | null;
   transactions?: PlacementTransaction[];
 }
 

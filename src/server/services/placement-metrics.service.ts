@@ -1,3 +1,4 @@
+import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { updateEntityMetricDetached } from '~/server/utils/metric-helpers';
 import type { PlacementSurface } from '~/shared/utils/placement';
@@ -45,27 +46,26 @@ import type { PlacementSurface } from '~/shared/utils/placement';
  * so the whole call is wrapped rather than trusting where that boundary happens
  * to fall today.
  *
- * **The consequence, stated rather than left implied: this counter is
- * best-effort and permanently lossy.** The emission is a separate step after a
- * committed settle, outside any transaction, and nothing reconciles it. A
- * failure loses that placement's Buzz from the number for good, and a pod
- * killed between the two loses it without even the log line above. There is no
- * backfill, and a lost emit is indistinguishable from a placement that was
- * never approved.
- *
- * That is the right trade — a counter must not be able to fail a payment — but
- * it means the number is a display total and not a ledger. Anything that has to
- * be *right* about money reads `PlacementTransaction`, which is the record that
- * is written in the same transaction as the status.
+ * This is still the best-effort half: it runs after a committed settle, outside
+ * any transaction. What changed is that a failure is now recoverable rather than
+ * permanent — the emit only writes `metricCountedAt` once it has happened, and
+ * {@link sweepUncountedPlacements} counts whatever is still missing it.
  */
 export async function recordPlacementTip({
   surface,
+  placementId,
   imageId,
   amount,
   placerId,
 }: {
   /** For the log only — the counter does not distinguish them. */
   surface: PlacementSurface;
+  /**
+   * The row to mark once the Buzz has been counted. Without it the emit is
+   * unrepeatable *and* unrecoverable: nothing downstream carries a placement id,
+   * so a lost emit would stay indistinguishable from one that never happened.
+   */
+  placementId: number;
   imageId: number;
   amount: number;
   /**
@@ -74,32 +74,166 @@ export async function recordPlacementTip({
    * Not cosmetic: `userId` is part of the key the metric pipeline dedupes on
    * — `(entityType, entityId, metricType, userId, createdAt)`, with no
    * `metricValue` in it — so two placements landing on the same image, under
-   * the same attribution, in the same millisecond would replace one another
-   * and the second payment would vanish from the counter. A request-less
-   * `Tracker` attributes everything to 0, which is exactly the collision this
-   * avoids; a bulk approval loop is the shape that would hit it.
+   * the same attribution, in the same second would replace one another and the
+   * second payment would vanish from the counter. A request-less `Tracker`
+   * attributes everything to 0, which is exactly the collision this avoids; a
+   * bulk approval loop is the shape that would hit it.
    */
   placerId: number;
 }) {
-  if (amount <= 0) return;
-
   try {
-    await updateEntityMetricDetached({
-      entityType: 'Image',
-      entityId: imageId,
-      metricType: 'Buzz',
-      amount,
-      userId: placerId,
-    });
+    if (amount > 0)
+      await updateEntityMetricDetached({
+        entityType: 'Image',
+        entityId: imageId,
+        metricType: 'Buzz',
+        amount,
+        userId: placerId,
+      });
+
+    await markPlacementsCounted([placementId]);
   } catch (error) {
     await logToAxiom({
       name: 'placement-metrics',
       type: 'error',
       message: 'could not count an approved placement toward the image buzz counter',
       surface,
+      placementId,
       imageId,
       amount,
       error: (error as Error).message,
     }).catch(() => null);
   }
+}
+
+/**
+ * Marked after the emit, never before.
+ *
+ * The two orders trade one failure for the other and they are not equal: marking
+ * first means a failed emit is recorded as counted and the Buzz is gone for
+ * good, which is the bug this whole path exists to end. Marking after leaves a
+ * window — emit lands, pod dies, the sweep counts it again — whose cost is one
+ * placement counted twice on a counter that is a display total. Recoverable
+ * over-count beats unrecoverable loss.
+ *
+ * `updateMany` with the NULL guard rather than `update`, so a row the sweep and
+ * a live approval both reached does not have its original stamp overwritten.
+ */
+async function markPlacementsCounted(placementIds: number[]) {
+  if (!placementIds.length) return 0;
+
+  const { count } = await dbWrite.placement.updateMany({
+    where: { id: { in: placementIds }, metricCountedAt: null },
+    data: { metricCountedAt: new Date() },
+  });
+
+  return count;
+}
+
+/**
+ * How long a settled placement is left to the live emit before the sweep takes
+ * it. Only to keep the two off the same row at the same moment: the live emit
+ * runs milliseconds after the settle commits, so anything still unmarked this
+ * much later is genuinely lost rather than in flight.
+ */
+const LIVE_EMIT_GRACE_MS = 5 * 60 * 1000;
+
+/**
+ * The durable half: count every placement that reached `approved` and never made
+ * it onto the counter.
+ *
+ * Why a sweep over Postgres rather than CDC on `Placement` (the other option on
+ * the ticket): the property that makes this correct is `metricCountedAt` on the
+ * row, written in the same place the money is, and it needs no publication
+ * membership, no `REPLICA IDENTITY FULL`, and no handler that has to tell a
+ * `pending → approved` transition from the four paths that write `removed`.
+ * Getting that wrong makes a counter that decrements, which is the one thing it
+ * must never do.
+ *
+ * **Emits one event per (image, placer), not per placement.** The pipeline's key
+ * has no `metricValue` in it and its `createdAt` is second-precision, so two
+ * events for the same image and placer inside one second collapse into one and
+ * the second payment disappears. A bulk approval is exactly that shape. Summing
+ * the group first makes the collision unreachable instead of unlikely.
+ *
+ * **`removed` is swept too.** Those placements were approved first — the money
+ * moved — and the counter counts the approval and never reverses. Skipping them
+ * would mean a placement removed before the next tick was never counted at all,
+ * while an identical one removed an hour later was; the counter would then say
+ * something different depending on cron timing.
+ *
+ * Never throws for one bad group: a single image whose emit fails must not stop
+ * the rest of the backlog. Its rows stay unmarked and come back next tick.
+ */
+export async function sweepUncountedPlacements({ limit = 100 }: { limit?: number } = {}) {
+  const pending = await dbWrite.placement.findMany({
+    where: {
+      status: { in: ['approved', 'removed'] },
+      metricCountedAt: null,
+      // The counter is an `Image` metric. A surface that places on something
+      // else needs its own counter and its own decision about what it means, so
+      // this counts what it understands rather than guessing.
+      targetType: 'image',
+      resolvedAt: { not: null, lt: new Date(Date.now() - LIVE_EMIT_GRACE_MS) },
+    },
+    select: { id: true, targetId: true, placerId: true, amount: true, surface: true },
+    orderBy: { resolvedAt: 'asc' },
+    take: limit,
+  });
+
+  if (!pending.length) return { considered: 0, counted: 0, amount: 0 };
+
+  const groups = new Map<
+    string,
+    { imageId: number; placerId: number; amount: number; ids: number[]; surface: string }
+  >();
+
+  for (const row of pending) {
+    const key = `${row.targetId}:${row.placerId}`;
+    const group = groups.get(key) ?? {
+      imageId: row.targetId,
+      placerId: row.placerId,
+      amount: 0,
+      ids: [],
+      surface: row.surface,
+    };
+    group.amount += row.amount;
+    group.ids.push(row.id);
+    groups.set(key, group);
+  }
+
+  let counted = 0;
+  let amount = 0;
+
+  for (const group of groups.values()) {
+    try {
+      // A zero-amount group is marked without an emit rather than skipped: left
+      // unmarked it would be re-selected on every tick and eat the batch ahead
+      // of rows that do need counting.
+      if (group.amount > 0)
+        await updateEntityMetricDetached({
+          entityType: 'Image',
+          entityId: group.imageId,
+          metricType: 'Buzz',
+          amount: group.amount,
+          userId: group.placerId,
+        });
+
+      counted += await markPlacementsCounted(group.ids);
+      amount += group.amount;
+    } catch (error) {
+      await logToAxiom({
+        name: 'placement-metrics',
+        type: 'error',
+        message: 'could not reconcile a placement group onto the image buzz counter',
+        imageId: group.imageId,
+        placerId: group.placerId,
+        placementIds: group.ids,
+        amount: group.amount,
+        error: (error as Error).message,
+      }).catch(() => null);
+    }
+  }
+
+  return { considered: pending.length, counted, amount };
 }

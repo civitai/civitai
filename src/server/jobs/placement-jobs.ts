@@ -6,6 +6,7 @@ import {
   sweepUnpaidLegs,
   sweepUnplannedSettlements,
 } from '~/server/services/placement-escrow.service';
+import { sweepUncountedPlacements } from '~/server/services/placement-metrics.service';
 import { sweepDeletedRemixGallerySubmissions } from '~/server/services/remix-gallery-sweep.service';
 
 const BATCH = 100;
@@ -152,9 +153,39 @@ export const sweepDeletedRemixGallerySubmissionsJob = createJob(
   { lockExpiration: 10 * 60 }
 );
 
+/**
+ * Approved placements whose Buzz never reached the target's counter.
+ *
+ * Drains on `counted`, not on `considered` — rows leave this set only by being
+ * marked, and a run that cannot emit (ClickHouse down) would otherwise re-select
+ * the same hundred every pass and burn the cap without reaching row 101. Same
+ * trap the deleted-submission sweep documents beside it.
+ */
+export const sweepUncountedPlacementsJob = createJob(
+  'placement-sweep-uncounted',
+  '*/5 * * * *',
+  async (jobContext) => {
+    const { runs, hitCap } = await drain(
+      'placement-sweep-uncounted',
+      jobContext,
+      () => sweepUncountedPlacements({ limit: BATCH }),
+      (result) => result.counted
+    );
+
+    return {
+      considered: sum(runs, (run) => run.considered),
+      counted: sum(runs, (run) => run.counted),
+      amount: sum(runs, (run) => run.amount),
+      hitCap,
+    };
+  },
+  { lockExpiration: 10 * 60 }
+);
+
 export const placementJobs = [
   expirePlacementsJob,
   sweepUnpaidPlacementLegsJob,
   sweepUnplannedPlacementSettlementsJob,
   sweepDeletedRemixGallerySubmissionsJob,
+  sweepUncountedPlacementsJob,
 ];

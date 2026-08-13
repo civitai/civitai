@@ -453,6 +453,7 @@ export async function actOnRemixGallerySubmission({
   if (action === 'approve' && result.settled)
     await recordPlacementTip({
       surface: SURFACE,
+      placementId,
       imageId: placement.targetId,
       amount: placement.amount,
       placerId: placement.placerId,

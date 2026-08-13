@@ -267,7 +267,13 @@ export async function createStickerPlacement({
     // there first, and counting then would add the placement's Buzz to the image
     // twice for one payment.
     if (settled)
-      await recordPlacementTip({ surface: SURFACE, imageId, amount: space.price, placerId });
+      await recordPlacementTip({
+        surface: SURFACE,
+        placementId: placement.id,
+        imageId,
+        amount: space.price,
+        placerId,
+      });
   }
 
   return { placementId: placement.id, status: space.mode === 'auto' ? 'approved' : 'pending' };
@@ -691,6 +697,7 @@ export async function actOnStickerPlacement({
   if (action === 'approve' && settled)
     await recordPlacementTip({
       surface: SURFACE,
+      placementId,
       imageId: placement.targetId,
       amount: placement.amount,
       placerId: placement.placerId,

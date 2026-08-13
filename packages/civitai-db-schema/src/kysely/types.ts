@@ -3050,6 +3050,13 @@ export type Placement = {
    */
   takenDownAt: Timestamp | null;
   takenDownById: number | null;
+  /**
+   * When this placement's Buzz reached the target's counter. The counter lives in
+   * ClickHouse, which has no per-placement key to ask, so the fact that it was
+   * counted is recorded here or nowhere. NULL on a placement that reached
+   * `approved` is the reconcile sweep's work queue.
+   */
+  metricCountedAt: Timestamp | null;
 };
 export type PlacementSpace = {
   id: Generated<number>;
