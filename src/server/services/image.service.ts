@@ -367,9 +367,19 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
     // The `.catch` is belt and braces with the `await` fix inside resolveMediaLocation: no failure
     // of the lookup may stop the delete, and inlining the guard keeps that true even if the
     // resolver later grows a throwing path again.
-    let resolverError: unknown;
+    //
+    // The reason is sanitised INSIDE that `.catch`, under its own try, which is what keeps it total.
+    // `safeError` ends in `String(e)` for a non-Error, and that throws on a value with no primitive
+    // conversion — `Object.create(null)`, or anything with a throwing `toString`. Calling it in the
+    // log payload below instead would put that throw inside the OUTER try, skipping the B2 delete:
+    // the exact failure this `.catch` exists to prevent, reintroduced by the code reporting it.
+    let resolverError: MixedObject | undefined;
     const location = await resolveMediaLocation(url).catch((error: unknown) => {
-      resolverError = error;
+      try {
+        resolverError = safeError(error);
+      } catch {
+        resolverError = { message: 'resolver rejected with a value that could not be serialised' };
+      }
       return null;
     });
     if (!location) {
@@ -384,7 +394,7 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
         message: 'storage-resolver returned no location; deleting from B2 anyway',
         imageId: id,
         url,
-        ...(resolverError !== undefined && { error: safeError(resolverError) }),
+        ...(resolverError !== undefined && { error: resolverError }),
       }).catch(() => undefined);
     }
 

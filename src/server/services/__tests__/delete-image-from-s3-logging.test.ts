@@ -233,10 +233,9 @@ describe('deleteImageFromS3', () => {
   });
 
   // THE REGRESSION. `resolveMediaLocation` returns null for a 404, a service error AND a timeout,
-  // and the code used to route that to a DigitalOcean bucket deleted 2026-05-18 — the delete threw
-  // on the proxy's text/plain "404 page not found", the row was already gone, and the object stayed
-  // publicly fetchable on an unsigned CDN url. 2,545 objects accumulated that way. An unregistered
-  // image is still on B2; there is nowhere else for it to be.
+  // and the code used to route that to a decommissioned second backend — the delete threw
+  // on a non-XML error body, the row was already gone, and the object stayed publicly fetchable on
+  // an unsigned CDN url. An unregistered image is still on B2; there is nowhere else for it to be.
   it('deletes the object from B2 when the resolver returns no location', async () => {
     mockFindFirst.mockResolvedValue(null);
     mockResolveMediaLocation.mockResolvedValue(null);
@@ -349,7 +348,38 @@ describe('deleteImageFromS3', () => {
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'delete-image-from-s3-unresolved-location',
-        error: expect.anything(),
+        // Content, not just presence. `expect.anything()` alone passed with the sanitiser dropped
+        // AND with the wrong value bound in — it pins that the key exists, not that it carries the
+        // reason this event is logged for.
+        error: expect.objectContaining({
+          message: expect.stringContaining('unexpected end of JSON input'),
+        }),
+      })
+    );
+  });
+
+  // `safeError` ends in `String(e)`, which THROWS on a value with no primitive conversion. Doing
+  // that work in the log payload put it inside the outer try, so a rejection carrying such a value
+  // skipped the B2 delete — the precise failure the `.catch` above exists to prevent, reintroduced
+  // by the code that reports it. Measured: this case passed at 85a31d11c7 and regressed at
+  // 156e050d69, so it is a real round-trip and not a hypothetical.
+  it('still deletes from B2 when the resolver rejects with an unserialisable value', async () => {
+    mockFindFirst.mockResolvedValue(null);
+    mockResolveMediaLocation.mockRejectedValue(Object.create(null));
+
+    await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg' });
+
+    expect(mockB2Send).toHaveBeenCalledTimes(1);
+    expect(mockLogToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'delete-image-from-s3-failed' })
+    );
+    // The reason is unknowable here, but the event must still say so rather than vanish.
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'delete-image-from-s3-unresolved-location',
+        error: expect.objectContaining({
+          message: expect.stringContaining('could not be serialised'),
+        }),
       })
     );
   });

@@ -251,6 +251,6 @@ export class S3Bucket implements HasKeys<S3Client> {
 }
 
 // The legacy DO Spaces image client lived here. Its last caller was deleteImageFromS3's fallback
-// branch, which pointed at a bucket deleted 2026-05-18 — every delete routed through it failed.
+// branch, which pointed at a decommissioned bucket — every delete routed through it failed.
 // Nothing constructs an S3 client from S3_IMAGE_UPLOAD_* any more; those vars are inert and can be
 // dropped from prod config independently of this change.
