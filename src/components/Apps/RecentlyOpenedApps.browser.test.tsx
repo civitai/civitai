@@ -156,6 +156,46 @@ describe('RecentlyOpenedListingsView', () => {
     await expect.element(page.getByText('Other App')).toBeInTheDocument();
   });
 
+  /**
+   * The "Jump back in" caption that sat opposite the section title is REMOVED.
+   *
+   * 🔴 PAIRED WITH A POSITIVE CONTROL, on purpose. "the copy is gone" is trivially
+   * satisfiable by deleting the rail — or by any render that produces nothing at all
+   * (see RENDER_BARRIER: an un-committed tree makes every absence assertion pass).
+   * So the absence is asserted in the SAME test as the rail, its section label, its
+   * remaining heading and one tile PER ENTRY, with the barrier awaited first. Deleting
+   * the rail to satisfy the absence fails the four positive assertions; restoring the
+   * caption fails the absence.
+   */
+  test('the "Jump back in" caption is gone — and the rail + its tiles still render', async () => {
+    renderWithProviders(
+      <>
+        <RenderBarrier />
+        <RecentlyOpenedListingsView
+          entries={[
+            onsite(),
+            onsite({ id: 'ab_2', slug: 'other', blockId: 'other', name: 'Other App' }),
+          ]}
+          canOpenPage={false}
+        />
+      </>
+    );
+    // Barrier first, so "absent" is a real observation and not an empty container.
+    await expect.element(page.getByTestId(RENDER_BARRIER)).toBeInTheDocument();
+
+    // POSITIVE CONTROL — the rail, its landmark, its heading and its tiles are intact.
+    await expect.element(page.getByTestId('apps-recent-rail')).toBeInTheDocument();
+    await expect.element(page.getByRole('region', { name: 'Recently opened' })).toBeInTheDocument();
+    await expect
+      .element(page.getByRole('heading', { name: 'Recently opened' }))
+      .toBeInTheDocument();
+    expect(page.getByTestId('apps-recent-rail-item').elements()).toHaveLength(2);
+    await expect.element(page.getByText('Gen Matrix')).toBeInTheDocument();
+
+    // THE CHANGE — the caption is nowhere in the rendered output.
+    expect(page.getByText('Jump back in').elements()).toHaveLength(0);
+  });
+
   test('an on-site page app re-opens at /apps/run/<blockId> when the pages flag is lit', async () => {
     renderWithProviders(<RecentlyOpenedListingsView entries={[onsite()]} canOpenPage />);
     await expect

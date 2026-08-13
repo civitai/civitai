@@ -42,11 +42,19 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 
+// 🔴 The viewer MUST be one the sub-nav renders for. `AppsSubNav` now hides itself
+// entirely below two qualifying tabs, and the summary query is stubbed empty here, so
+// an anonymous / non-author viewer would render NO `<nav>` at all and `measure()` would
+// throw on a null lookup instead of measuring. An author (`appBlocksAuthor`) yields
+// Marketplace + Create — the same two-tab bar every number in the table above was
+// measured against, so the pixels are unchanged.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
-  useFeatureFlags: () => ({ appBlocks: true }),
+  useFeatureFlags: () => ({ appBlocks: true, appBlocksAuthor: true }),
 }));
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => ({ id: 1, username: 'author', isModerator: false }),
+}));
 // Spread the REAL module and override only `trpc` (local-rules/no-wholesale-
 // module-mock) — see the sibling browser test for why.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
