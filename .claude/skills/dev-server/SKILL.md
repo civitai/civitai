@@ -321,8 +321,9 @@ What's already handled:
 - **Independent branch watching + prewarming** per session.
 - **Port allocation sees listeners the daemon does not own.** The picker connects to both loopback
   addresses before it tries to bind, so a port held by a process the daemon has lost track of — a
-  session it marked `crashed`, or anything outside the daemon entirely — is skipped rather than
-  handed out. Passing an explicit port is no longer a workaround for that.
+  session it marked `crashed`, or any other local server on loopback — is skipped rather than handed
+  out. Passing an explicit port is no longer a workaround for that. It still cannot see a listener
+  bound only to a non-loopback address (`next dev -H <lan-ip>`), which on Windows nothing detects.
 
 Fresh worktrees still need `pnpm install` (or a `node_modules` junction) and `git submodule update --init event-engine-common`.
 
