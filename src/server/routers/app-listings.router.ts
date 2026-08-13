@@ -237,7 +237,7 @@ function mapOffsiteError(err: unknown): TRPCError {
         : code === 'ALREADY_REPORTED'
         ? 'CONFLICT'
         : 'BAD_REQUEST';
-    return new TRPCError({ code: trpcCode, message: err.message });
+    return new TRPCError({ code: trpcCode, message: err.message, cause: err });
   }
   return new TRPCError({
     code: 'INTERNAL_SERVER_ERROR',
@@ -491,7 +491,11 @@ export const appListingsRouter = router({
           userId: ctx.user.id,
         });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
       return { ok: true };
     }),

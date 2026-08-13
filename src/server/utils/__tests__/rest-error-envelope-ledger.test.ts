@@ -540,7 +540,7 @@ describe('LEDGER: GENERIC_CLIENT_ERROR_BY_STATUS covers every 4xx a driver can r
   });
 
   /**
-   * 🔴 A KNOWN, BOUNDED GAP — recorded so it cannot grow silently.
+   * 🔴 A KNOWN GAP, now CLOSED — and the ledger stays, at zero.
    *
    * `isDriverAuthoredMessage` matches on message identity against a driver error
    * in the `cause` chain. A site that re-wraps a caught error's `.message` into a
@@ -548,54 +548,118 @@ describe('LEDGER: GENERIC_CLIENT_ERROR_BY_STATUS covers every 4xx a driver can r
    * wire is the driver's, but nothing in the chain proves that. If the underlying
    * error is a Prisma or pg error, its text still reaches a 4xx body.
    *
-   * There are 17 such sites today, all on the App Blocks / referral tRPC surface.
-   * They are NOT fixed here: the one-word fix (`cause: err`) touches four router
-   * files on a different surface, with its own review and test considerations,
-   * and a mechanical sweep over them is exactly the sort of edit that should not
-   * ride along inside a security fix. Tracked as follow-up.
+   * There were 17 such sites, all on the App Blocks / referral tRPC surface. All
+   * 17 now pass `cause`, so the expected set is EMPTY — which is precisely the
+   * reading a broken detector also produces. Three things separate the two, and
+   * all three run below before the empty-set assertion:
+   *   1. the walk finds files at all;
+   *   2. `TRPC_CTOR` extracts constructor bodies at all;
+   *   3. the whole detector, run on a synthetic no-cause site, returns 1 — and on
+   *      the with-cause version of the SAME site, returns 0.
+   * Without (3) a regex typo reads as "gap closed". A zero is only evidence
+   * alongside a positive control that made the number move.
    *
-   * This test pins the CURRENT set. It fails if a fifth file joins (the gap is
-   * spreading — fix it there) and equally if the counts drop (someone fixed some;
-   * update the ledger and delete the entry when it reaches zero). Either way the
-   * gap stays visible instead of decaying into folklore.
+   * 🔴 The caught-name alternation `(?:e|err|error|ex)` is DELIBERATE and
+   * MEASURED, not an oversight. Widening it to any identifier — the fix that was
+   * right for the `.json()` body sweep above — adds four sites in
+   * `routers/orchestrator.router.ts`, and all four are FALSE POSITIVES:
+   * `message: status.message ?? generationStatusDefaultMessage`, where `status`
+   * is the operator-configured generation status, not a caught error. `x.message`
+   * is far too common a benign shape to anchor on here. The blind spot that
+   * remains, stated: a catch that binds something other than those four names is
+   * invisible to this ledger.
    */
-  it('LEDGER: the known `no-cause` bypass sites are exactly these — grow or shrink and this fails', () => {
+  it('LEDGER: no TRPCError forwards a caught error\'s `.message` at a 4xx without `cause`', () => {
     const SERVER_ROOT = path.resolve(__dirname, '../..');
-    const KNOWN_BYPASS: [string, number][] = [
-      ['routers/app-listings.router.ts', 2],
-      ['routers/apps-shared.router.ts', 1],
-      ['routers/blocks.router.ts', 13],
-      ['routers/referral.router.ts', 1],
-    ];
+    // All 17 sites are fixed. An entry reappearing here means the gap re-opened.
+    const KNOWN_BYPASS: [string, number][] = [];
 
-    const ctor = /new TRPCError\(\{(?<body>[^{}]*?)\}\)/gs;
+    const TRPC_CTOR = /new TRPCError\(\{(?<body>[^{}]*?)\}\)/gs;
     const fromCaught = /message:\s*\(?(?:e|err|error|ex)\)?(?:\s+as\s+\w+)?\)?\.message/;
 
-    const found: Record<string, number> = {};
-    for (const file of walk(SERVER_ROOT)) {
-      if (file.includes('__tests__')) continue;
-      const source = stripLineComments(readFileSync(file, 'utf8'));
+    /**
+     * A `cause` that CANNOT carry the driver error is no better than none.
+     *
+     * 🔴 Found by mutation: this was `!body.includes('cause')`, and changing a
+     * real `cause: e` to `cause: undefined` left the ledger fully GREEN — the
+     * substring was still there, the bypass fully re-opened. The same
+     * spelled-vs-structural failure as the `.json()` body sweep above, in
+     * miniature.
+     *
+     * 🔴 And the FIRST fix for it was also wrong, which is why the value is
+     * EXTRACTED here rather than excluded by a lookahead. A
+     * `cause\s*:\s*(?!undefined)` reads as correct and is not: `\s*` is
+     * variable-length, so the engine backtracks it to zero width and tests the
+     * lookahead against " undefined", which does not begin with "undefined" —
+     * the negative lookahead passes and the inert cause reads as fixed again.
+     * Pull the value out, trim it, compare it.
+     */
+    function hasUsefulCause(body: string): boolean {
+      // `{ ..., cause }` shorthand — a binding, so it carries something.
+      if (/(?:^|[{,])\s*cause\s*(?:[,}]|$)/.test(body)) return true;
+      const m = /(?:^|[{,])\s*cause\s*:\s*([^,}]+)/.exec(body);
+      if (!m) return false;
+      const value = m[1].trim();
+      return value !== '' && value !== 'undefined' && value !== 'null';
+    }
+
+    /** The WHOLE detector, over one source string — so a control can drive it. */
+    function bypassCount(source: string): number {
       let n = 0;
-      for (const m of source.matchAll(ctor)) {
+      for (const m of stripLineComments(source).matchAll(TRPC_CTOR)) {
         const body = m.groups?.body ?? '';
-        if (fromCaught.test(body) && !body.includes('cause')) n++;
+        if (fromCaught.test(body) && !hasUsefulCause(body)) n++;
       }
+      return n;
+    }
+
+    const files = walk(SERVER_ROOT).filter((f) => !f.includes('__tests__'));
+    const found: Record<string, number> = {};
+    for (const file of files) {
+      const n = bypassCount(readFileSync(file, 'utf8'));
       if (n) found[path.relative(SERVER_ROOT, file).split(path.sep).join('/')] = n;
     }
 
-    // Positive control: the detector must be able to see a site at all, or the
-    // "exactly these" assertion below is satisfied by a regex that matches nothing.
+    // ── Controls. All three must pass or the empty result below means nothing. ──
+    expect(files.length, 'the src/server walk returned nothing — the ledger is inert').
+      toBeGreaterThan(200);
     expect(
-      fromCaught.test(`code: 'BAD_REQUEST', message: (err as Error).message`),
-      'the bypass detector cannot match its own exemplar — this ledger would be vacuous'
-    ).toBe(true);
+      files.reduce(
+        (acc, f) => acc + [...readFileSync(f, 'utf8').matchAll(TRPC_CTOR)].length,
+        0
+      ),
+      'no `new TRPCError({…})` bodies extracted — the detector is wired to nothing'
+    ).toBeGreaterThan(50);
+
+    // 🔴 The one that makes a ZERO mean something: the number must MOVE.
+    const bypassSample = `throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });`;
+    const fixedSample = `throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message, cause: err });`;
+    expect(bypassCount(bypassSample), 'the detector cannot see a no-cause site at all').toBe(1);
+    expect(bypassCount(fixedSample), 'the detector cannot see that `cause` fixes it').toBe(0);
+    // …and with the OTHER binding the fix uses. `apps-shared.router.ts` binds `e`,
+    // and a mechanical sweep on the `err` spelling got that site wrong.
+    expect(bypassCount(`new TRPCError({ code: 'BAD_REQUEST', message: e.message })`)).toBe(1);
+    expect(bypassCount(`new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: e })`)).toBe(
+      0
+    );
+    // 🔴 And an INERT `cause` must NOT count as fixed — the mutant that survived
+    // the first version of this ledger.
+    expect(
+      bypassCount(`new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: undefined })`),
+      '`cause: undefined` carries no driver error — it must not read as fixed'
+    ).toBe(1);
+    expect(
+      bypassCount(`new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: null })`)
+    ).toBe(1);
 
     expect(
       Object.entries(found).sort(),
-      'the set of TRPCError sites that forward a caught error\'s `.message` at a 4xx WITHOUT ' +
-        '`cause` has changed. Adding one re-opens the civitai#3845/3 leak at that site, because ' +
-        '`isDriverAuthoredMessage` cannot see a driver error that is not in the cause chain. ' +
-        'Fix: pass `cause: err` alongside the message.'
+      'a TRPCError site forwards a caught error\'s `.message` at a 4xx WITHOUT `cause`. That ' +
+        're-opens the civitai#3845/3 leak at that site, because `isDriverAuthoredMessage` ' +
+        'cannot see a driver error that is not in the cause chain, so a genuine ' +
+        '`Invalid `prisma.…` invocation` reaches the client verbatim at a 4xx. Fix: pass ' +
+        '`cause: <the caught binding>` alongside the message — and CHECK THE BINDING NAME, ' +
+        'which is `e` in apps-shared.router.ts and `err` everywhere else.'
     ).toEqual(KNOWN_BYPASS.sort());
   });
 
