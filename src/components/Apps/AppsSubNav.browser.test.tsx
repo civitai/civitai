@@ -44,6 +44,8 @@ const NONE: AppsNavSummary = {
   hasSubmissions: false,
   hasApprovedApps: false,
   isReviewer: false,
+  hasEditableApps: false,
+  hasPendingInvites: false,
 };
 
 const ALL: AppsNavSummary = {
@@ -51,6 +53,8 @@ const ALL: AppsNavSummary = {
   hasSubmissions: true,
   hasApprovedApps: true,
   isReviewer: true,
+  hasEditableApps: true,
+  hasPendingInvites: true,
 };
 
 /** May author apps (mod, or a non-mod holding `appBlocksAuthor`). */
@@ -176,6 +180,8 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
     for (const name of [
       'Marketplace',
       'Create',
+      'My apps',
+      'Invites',
       'Installed',
       'My submissions',
       'Revenue',
@@ -185,17 +191,28 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
     }
   });
 
-  // 🔴 THE FOUR SUMMARY PREDICATES ARE UNCHANGED BY THE AUTHOR GATE. Only
-  // `Create` reads `context`; the rest still read the summary alone. Asserted
-  // against a NON-author so a predicate that accidentally picked up `isAuthor`
-  // (e.g. `(s, c) => c.isAuthor && s.hasInstalls`) fails here even though the
+  // 🔴 THE FOUR SUMMARY PREDICATES ARE UNCHANGED BY THE AUTHOR GATE. THREE tabs
+  // read `context` — `Create`, `My apps` and `Invites` — and the four asserted
+  // below still read the summary alone. Asserted against a NON-author so a
+  // predicate that accidentally picked up `isAuthor` (e.g.
+  // `(s, c) => c.isAuthor && s.hasInstalls`) fails here even though the
   // author-context tests above would stay green.
+  //
+  // 🔴 Do NOT "simplify" `My apps` / `Invites` back to a summary-only predicate.
+  // They were exactly that until a merge with main silently reverted them: main
+  // widened `visible` to `(summary, context)`, this branch had added both against
+  // the OLD one-argument signature, and git merged the two edits with no conflict.
+  // It compiled and the whole suite passed while both tabs were un-gated. Their
+  // dedicated non-author tests above are what pin them now.
   test('the four summary-driven tabs are independent of isAuthor (non-author, all-true summary)', async () => {
     renderWithProviders(<AppsSubNavView summary={ALL} context={NOT_AUTHOR} currentPath="/apps" />);
     for (const name of ['Marketplace', 'Installed', 'My submissions', 'Revenue', 'Review']) {
       await expect.element(tab(name)).toBeInTheDocument();
     }
-    // …and Create is the ONLY one the author gate removes.
+    // …while the author gate removes Create (asserted here) along with `My apps`
+    // and `Invites`, which have their own dedicated non-author tests above.
+    // (The awaited loop above is this assertion's positive control — without a
+    // present element first, `.elements()` is synchronous and would pass vacuously.)
     expect(tab('Create').elements()).toHaveLength(0);
   });
 });
@@ -421,6 +438,12 @@ describe('AppsSubNavView (each tab navigates to its route)', () => {
     const cases: Array<[string, string]> = [
       ['Marketplace', '/apps'],
       ['Create', '/apps/submit'],
+      // Collaborator surfaces: "My apps" is the ownership-OR-seat list
+      // (`appListings.listMine`) and "Invites" is the invitee inbox
+      // (`appCollaborators.listMyPendingInvites`). Both are owner-INDEPENDENT — a
+      // collaborator who owns nothing reaches every other tab's page empty.
+      ['My apps', '/apps/mine'],
+      ['Invites', '/apps/invites'],
       ['Installed', '/apps/installed'],
       ['My submissions', '/apps/my-submissions'],
       ['Revenue', '/apps/revenue'],
@@ -508,5 +531,90 @@ describe('isActiveAppsRoute / activeAppsTab (route-matching helpers)', () => {
     expect(activeAppsTab('/apps/revenue')).toBe('/apps/revenue');
     // A deep /apps/* route with no corresponding tab → no active tab.
     expect(activeAppsTab('/apps/run/some-slug')).toBeNull();
+  });
+});
+
+/**
+ * 🔴 THE COLLABORATOR TABS ARE AUTHOR-GATED TOO — the semantic defect that a CLEAN git
+ * merge produced and that no test would have caught.
+ *
+ * `origin/main` (#3899) widened `SubNavLink.visible` to `(summary, context)` and gated
+ * "Create" on `context.isAuthor`, because `/apps/submit` `notFound`s a non-author. This
+ * branch added "My apps" and "Invites" against the OLD one-argument signature. Git
+ * auto-merged the table with no conflict, the result compiled, and every test passed —
+ * leaving two tabs whose pages gate on `features.appBlocksAuthor` + `isAppDeveloper`
+ * visible to viewers those pages refuse.
+ *
+ * Both directions are asserted for each tab: presence for an author, absence for a
+ * non-author with the SAME summary. Asserting only the absence would pass on a tab that
+ * renders for nobody.
+ */
+describe('AppsSubNavView (collaborator tabs are gated on the author capability)', () => {
+  const CASES: Array<[string, keyof AppsNavSummary]> = [
+    ['My apps', 'hasEditableApps'],
+    ['Invites', 'hasPendingInvites'],
+  ];
+
+  for (const [label, flag] of CASES) {
+    test(`${label} renders for an AUTHOR whose ${flag} is true`, async () => {
+      renderWithProviders(
+        <AppsSubNavView summary={{ ...NONE, [flag]: true }} context={AUTHOR} currentPath="/apps" />
+      );
+      await expect.element(tab(label)).toBeInTheDocument();
+    });
+
+    test(`🔴 ${label} is HIDDEN from a NON-author, even with ${flag} true`, async () => {
+      // The store-visible tester cohort (`app-listings=true`, `app-blocks-author=false`).
+      // `blocks.getNavSummary` is gated on the MARKETPLACE flag, not the author one, so
+      // this combination is reachable — an owner can invite any existing user, and an
+      // author who loses the capability keeps their listings.
+      renderWithProviders(
+        <>
+          <RenderBarrier />
+          <AppsSubNavView
+            summary={{ ...NONE, [flag]: true }}
+            context={NOT_AUTHOR}
+            currentPath="/apps"
+          />
+        </>
+      );
+      await awaitCommit();
+      expect(tab(label).elements()).toHaveLength(0);
+    });
+  }
+
+  test('a NON-author invitee gets no sub-nav at all (1 qualifying tab ⇒ hidden)', async () => {
+    // Marketplace alone survives, and main's `links.length < 2` rule then hides the bar —
+    // so the two changes compose to the right end state rather than merely not crashing.
+    renderWithProviders(
+      <>
+        <RenderBarrier />
+        <AppsSubNavView
+          summary={{ ...NONE, hasPendingInvites: true }}
+          context={NOT_AUTHOR}
+          currentPath="/apps"
+        />
+      </>
+    );
+    await awaitCommit();
+    expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(0);
+  });
+
+  test('an AUTHOR invitee DOES get the bar: Marketplace + Create + Invites', async () => {
+    // The positive control for the case above — without it, "the bar is hidden" would
+    // pass on a bar that is hidden for everyone.
+    renderWithProviders(
+      <AppsSubNavView
+        summary={{ ...NONE, hasPendingInvites: true }}
+        context={AUTHOR}
+        currentPath="/apps"
+      />
+    );
+    await expect
+      .element(page.getByRole('navigation', { name: 'App sections' }))
+      .toBeInTheDocument();
+    for (const name of ['Marketplace', 'Create', 'Invites']) {
+      await expect.element(tab(name)).toBeInTheDocument();
+    }
   });
 });

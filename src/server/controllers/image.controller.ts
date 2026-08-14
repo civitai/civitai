@@ -349,7 +349,7 @@ export const getInfiniteImagesHandler = async ({
         }),
       });
     } else {
-      return await getAllImages({
+      const result = await getAllImages({
         ...input,
         user,
         domain: getRequestBoardDomainColor(ctx.req),
@@ -358,6 +358,12 @@ export const getInfiniteImagesHandler = async ({
         include: [...input.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
       });
+      // Name this branch too, like the index path's `source`. Stamped here rather
+      // than inside getAllImages because the index result type is derived from its
+      // return. Without it, a DB page and an index page that returned nothing are
+      // indistinguishable on the wire, and a client asking "is BitDex serving this
+      // feed" cannot tell the flag going off mid-session from the end of the feed.
+      return { ...result, source: 'db' as const };
     }
   } catch (error) {
     if (error instanceof TRPCError) throw error;

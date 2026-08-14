@@ -163,6 +163,11 @@
     <div class="flex flex-col gap-2">
       <span class="text-sm text-dark-1">Generating on-site</span>
       <input type="hidden" name="freeGeneration" value={genMode === 'free' ? 'true' : 'false'} />
+      <!-- Submitted so the server can tell "cheaper generation-only price" from "same as the access
+           price". Without it the two produce identical form data — the price input is simply absent —
+           and a blank box stores a generation tier with no price of its own, which is charged at the
+           DOWNLOAD price. -->
+      <input type="hidden" name="genMode" value={genMode} />
       <RadioGroup bind:value={genMode} class="flex flex-col gap-1.5">
         <div class="flex items-center gap-2">
           <RadioGroupItem value="bundled" id="ea-gen-bundled" />

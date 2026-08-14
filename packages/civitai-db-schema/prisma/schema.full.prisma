@@ -466,6 +466,7 @@ model User {
   engagedModelVersions ModelVersionEngagement[]
   metrics              UserMetric[]
   reports              Report[]
+  feedback             Feedback[]
   questions            Question[]
   answers              Answer[]
   commentsv2           CommentV2[]
@@ -2299,6 +2300,22 @@ model Partner {
 model KeyValue {
   key   String @id
   value Json
+}
+
+/// Free-text feedback captured from in-product prompts. `area` is a plain
+/// string, not an enum, so adding a feedback surface needs no migration.
+model Feedback {
+  id        Int      @id @default(autoincrement())
+  area      String
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message   String
+  context   Json     @default("{}")
+  status    String   @default("new")
+  createdAt DateTime @default(now())
+
+  @@index([area, status, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
 }
 
 enum ApiKeyType {

@@ -85,6 +85,14 @@ export const paidAccessBlockedFor = (model: MonetizationSubject): boolean =>
 export const licensingFeeBlockedFor = (model: MonetizationSubject): boolean => !!model.poi;
 
 /**
+ * Whether a chosen "cheaper generation-only price" is missing the price it promises. Such a grant is
+ * indistinguishable in `terms` from generation bundled with the download, and `generationPrice` prices
+ * both at the download price — so an editor must refuse the write rather than store the choice.
+ */
+export const separateGenerationPriceMissing = (price: number | null | undefined): boolean =>
+  price == null || !Number.isFinite(price) || price <= 0;
+
+/**
  * Build a ModelVersion's `terms` from an editor's pricing. "Price for access" (accessPrice) is the one
  * required charge; for a `genOnly` version (no download tier) it IS the generation price, otherwise it's
  * the download bundle price and `generationPrice` is an optional cheaper generation-only tier. The

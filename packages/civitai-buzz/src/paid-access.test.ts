@@ -14,6 +14,7 @@ import {
   paidGenerationGrant,
   paidAccessBlockedFor,
   licensingFeeBlockedFor,
+  separateGenerationPriceMissing,
   CAP_TIERS,
   nextCapTier,
   shouldUpsellCap,
@@ -128,6 +129,27 @@ describe('model-level monetization policy', () => {
   it('treats missing fields as unblocked rather than guessing', () => {
     expect(paidAccessBlockedFor({})).toBe(false);
     expect(licensingFeeBlockedFor({ poi: null })).toBe(false);
+  });
+});
+
+describe('separateGenerationPriceMissing — the blank "cheaper price" box', () => {
+  it('a stated price is not missing', () => {
+    expect(separateGenerationPriceMissing(200)).toBe(false);
+  });
+  it.each([
+    ['undefined', undefined],
+    ['null', null],
+    // Defensive: the form's zod schema rejects NaN before the guard runs, and its number input maps a
+    // cleared box to undefined. Kept so the predicate is total for callers without that schema.
+    ['NaN', Number.NaN],
+    ['zero', 0],
+    ['negative', -50],
+  ])('%s is missing', (_label, value) => {
+    expect(separateGenerationPriceMissing(value as number | null | undefined)).toBe(true);
+  });
+  it('what an unrefused blank costs the buyer: the FULL download price', () => {
+    const blank = buildModelVersionTerms({ accessPrice: 500, generationPrice: undefined });
+    expect(generationPrice(blank)).toBe(500);
   });
 });
 

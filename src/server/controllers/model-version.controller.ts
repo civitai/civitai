@@ -146,6 +146,10 @@ const loadModelVersion = async ({
             status: true,
             publishedAt: true,
             nsfw: true,
+            // The version editor gates paid access on this. Omitted, `model.poi` reads undefined and the
+            // gate is neither hidden nor suppressed at submit — the editor renders as if the model were
+            // ordinary.
+            poi: true,
             uploadType: true,
             user: { select: { id: true } },
             availability: true,

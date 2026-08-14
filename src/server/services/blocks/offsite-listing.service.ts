@@ -1312,6 +1312,14 @@ export type ListingEditScreenshot = {
 };
 
 export type GetMyListingForEditResult = {
+  /**
+   * The listing's KIND. 🔴 Additive OUTPUT field (no input schema is touched), and the
+   * edit form branches on it: an ON-SITE listing must not be offered the App URL step or
+   * the OAuth-scope disclosure, and `buildScalarPatch` refuses to emit `externalUrl` for
+   * it. Needed because the canonical authoring page now opens on the DETAILS tab, which
+   * routes on-site owners into this form for the first time.
+   */
+  kind: string;
   /** The LIVE (parent) listing id — always the caller's edit target identity. */
   parentId: string;
   /** The parent's PUBLIC slug — immutable in edit mode (identity/URL). */
@@ -1564,6 +1572,7 @@ export async function getMyListingForEdit(opts: {
 
   return {
     parentId: listingId,
+    kind: listing.kind,
     slug: listing.slug,
     status: listing.status,
     hasPendingRevision,

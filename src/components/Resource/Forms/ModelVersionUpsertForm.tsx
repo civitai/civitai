@@ -90,6 +90,7 @@ import {
   monetizationLimits,
   ratioToFee,
   resolveCapTier,
+  separateGenerationPriceMissing,
   suggestedFee,
 } from '@civitai/buzz';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
@@ -409,6 +410,14 @@ export function ModelVersionUpsertForm({
   const currentLicensingFee = form.watch('licensingFee') ?? 0;
   const existingSettlementCurrency = version?.licensingFeeSettlementCurrency ?? null;
   const hasExistingLicensingFee = Number(version?.licensingFee ?? 0) > 0;
+  // Two reasons a version can't earn anything at all — not a gate, not a per-generation fee. Every
+  // control goes and the section explains itself, rather than leaving editable inputs whose values the
+  // submit would drop. Private models keep their fee editor; only the gate is theirs to lose.
+  const monetizationBlockedReason = model?.poi ? 'poi' : isNonCommercial ? 'nonCommercial' : null;
+  const monetizationBlocked = !!monetizationBlockedReason;
+  // What the submit actually sends, so the warnings and the affirmation gate read the same value the
+  // payload carries instead of the untouched form state.
+  const submittedFee = monetizationBlocked ? 0 : currentLicensingFee ?? 0;
   // A version that already charges opens with the monetization section expanded; everything else starts
   // collapsed behind the master switch below.
   const hasExistingCharge = !!version?.paidAccess || hasExistingLicensingFee;
@@ -471,13 +480,20 @@ export function ModelVersionUpsertForm({
   // version (which has no download tier, so `download?.price` alone would read as unpriced).
   const storedAccessPrice = storedTerms?.download?.price ?? storedPaidGen?.price ?? 0;
   const showLicensingFeeBlock =
-    !isNonCommercial &&
+    !monetizationBlocked &&
     (!!features.licensingFee ||
       hasExistingLicensingFee ||
       existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash);
   const showLicensingFeeSettlementCurrency =
     existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash ||
     !!currentUser?.isModerator;
+
+  // POI and private: the two model-level reasons a gate can't exist. Read by both the hidden editor
+  // (`showPaidAccessInput`, which has further reasons of its own) and the submitted gate, because hiding
+  // alone leaves the stored config intact (`shouldUnregister: false`) and resubmits a gate the creator can
+  // neither see nor clear — which is what POI did.
+  const gateSuppressed =
+    model?.availability === Availability.Private || !!model?.poi || isNonCommercial;
 
   // Asked once per version, the first time it earns anything — a version already on record keeps its
   // affirmation, so editing a price later doesn't ask again.
@@ -488,9 +504,7 @@ export function ModelVersionUpsertForm({
   // The cast is the input-vs-output type of the form schema; both seed paths write concrete values.
   const gateCharges = paidAccessCharges(
     toPaidAccessInput(
-      model?.availability === Availability.Private
-        ? null
-        : (paidAccessConfig as FormPaidAccessConfig | null | undefined),
+      gateSuppressed ? null : (paidAccessConfig as FormPaidAccessConfig | null | undefined),
       usageControl
     )
   );
@@ -507,7 +521,7 @@ export function ModelVersionUpsertForm({
   const moderatingSomeoneElsesModel =
     !!currentUser?.isModerator && modelOwnerId != null && modelOwnerId !== currentUser.id;
   const requiresRightsAffirmation =
-    !alreadyAffirmed && !moderatingSomeoneElsesModel && (currentLicensingFee > 0 || gateCharges);
+    !alreadyAffirmed && !moderatingSomeoneElsesModel && (submittedFee > 0 || gateCharges);
   // Step 2 of the disclosure: asked as soon as the creator says they want to charge, so the pricing
   // controls never appear before the affirmation. Distinct from `requiresRightsAffirmation`, which is the
   // submit gate and stays keyed to an actual charge — toggling the switch and changing your mind must not
@@ -529,7 +543,7 @@ export function ModelVersionUpsertForm({
   // Step 4 for the fee: its own opt-in, so the fee editor is reached by saying you want to charge per
   // generation rather than by the section being open at all.
   const feeEditorOpen = showChargeSettings && showLicensingFeeBlock && feeEnabled;
-  const removingStoredFee = hasExistingLicensingFee && (currentLicensingFee ?? 0) <= 0;
+  const removingStoredFee = hasExistingLicensingFee && submittedFee <= 0;
   // Read through `gateCharges` — what the submit actually sends — for the same reason it exists: the raw
   // config survives behind a hidden editor, so a version that went private, or whose usage control can no
   // longer be gated, drops its gate on save while the config still reads non-null.
@@ -710,6 +724,28 @@ export function ModelVersionUpsertForm({
       return;
     }
 
+    const gatedConfig = gateSuppressed ? null : data.paidAccessConfig;
+    // Keyed to the gate the submit actually sends, not to the config: a usage control that can't be gated
+    // leaves the pricing controls unmounted with their values intact, and refusing over a price nobody can
+    // see (for a gate that would be dropped anyway) is a save the creator has no way to unblock.
+    const submittedGate = toPaidAccessInput(gatedConfig, data.usageControl);
+
+    // A generation grant with no price of its own is charged at the DOWNLOAD price (see `generationPrice`),
+    // so an empty box under "a cheaper generation-only price" bills the full access price while the screen
+    // says cheaper. Nothing downstream can tell that apart from a deliberate "same as access price", so the
+    // refusal has to happen here, where the creator's choice still exists.
+    if (
+      genMode === 'separate' &&
+      submittedGate &&
+      data.usageControl !== ModelUsageControl.Generation &&
+      separateGenerationPriceMissing(data.paidAccessConfig?.generationPrice)
+    ) {
+      const message = 'Enter a generation-only price, or choose "Same as the access price"';
+      form.setError('paidAccessConfig.generationPrice', { message });
+      showErrorNotification({ error: new Error(message), title: 'Generation price required' });
+      return;
+    }
+
     if (requiresRightsAffirmation && !data.rightsAffirmed) {
       const message = 'You must confirm you hold the rights to monetize this model';
       form.setError('rightsAffirmed', { message });
@@ -741,8 +777,6 @@ export function ModelVersionUpsertForm({
           settings: { strength },
         })) ?? [];
 
-      const gatedConfig =
-        model?.availability === Availability.Private ? null : data.paidAccessConfig;
       const result = await upsertVersionMutation.mutateAsync({
         ...data,
         // Don't persist a stale clip skip for base models that don't use it.
@@ -750,11 +784,16 @@ export function ModelVersionUpsertForm({
         epochs: data.epochs ?? null,
         steps: data.steps ?? null,
         modelId: model?.id ?? -1,
-        paidAccess: toPaidAccessInput(gatedConfig, data.usageControl),
-        donationGoal: toDonationGoalInput(gatedConfig),
+        // A POI model earns nothing: the fee editor is unmounted for one, so its stored value would
+        // otherwise ride along untouched behind a section that shows no controls at all.
+        licensingFee: submittedFee,
+        paidAccess: submittedGate,
+        // Keyed to the gate that is actually sent: a goal ends a timed window early, so writing one for a
+        // version whose gate was just rejected leaves a goal against nothing to end.
+        donationGoal: submittedGate ? toDonationGoalInput(gatedConfig) : null,
         trainedWords: skipTrainedWords ? [] : trainedWords,
         baseModelType: data.baseModelType,
-        monetization: data.monetization,
+        monetization: monetizationBlocked ? null : data.monetization,
         recommendedResources,
         templateId,
         bountyId,
@@ -868,8 +907,7 @@ export function ModelVersionUpsertForm({
       (!isPublished || atEarlyAccess)) ||
     isPublished;
   const showPaidAccessInput =
-    !model?.poi && // POI models won't allow EA.
-    !isPrivateModel &&
+    !gateSuppressed &&
     !isNonCommercial && // Non-commercial base models can't be monetized.
     paidAccessUsageOk &&
     canConfigurePaidAccess;
@@ -904,9 +942,11 @@ export function ModelVersionUpsertForm({
   // A card header carrying its own toggle needs to read as a header, not as another row of fields.
   const cardHeaderBg = colorScheme === 'dark' ? 'dark.6' : 'gray.1';
 
-  // A private model, or a usage control that can't be gated, loses its gate on save no matter what the
-  // creator does — the submit substitutes null either way. Nothing to offer them, so say why instead.
-  const gateRemovalIsStructural = removingStoredGate && (isPrivateModel || !paidAccessUsageOk);
+  // Removals the creator cannot prevent — the gate goes on save whatever they do, whether the submit
+  // substitutes null (suppressed model, ungatable usage control) or an effect already cleared the config
+  // (non-commercial base model). Nothing to offer them, so say why instead. Anything reachable here
+  // without an arm below reads as the reversible early-access loss, which is the wrong sentence.
+  const gateRemovalIsStructural = removingStoredGate && (gateSuppressed || !paidAccessUsageOk);
   // Whether the control each sentence is about is actually on screen (see the colour rule below).
   const removalControlsVisible =
     (!removingStoredFee || (showChargeSettings && showLicensingFeeBlock)) &&
@@ -1223,13 +1263,46 @@ export function ModelVersionUpsertForm({
               )}
             </Stack>
           </Card>
-          {(showPaidAccessInput || showLicensingFeeBlock || requiresRightsAffirmation) && (
+          {(showPaidAccessInput ||
+            showLicensingFeeBlock ||
+            requiresRightsAffirmation ||
+            removingStoredCharge ||
+            monetizationBlocked) && (
             <Card withBorder p="md">
               <Stack gap={0}>
                 <Text fw={600} mb="sm">
                   Monetization
                 </Text>
-                {(showPaidAccessInput || showLicensingFeeBlock) && (
+                {monetizationBlocked && (
+                  <Alert
+                    color="red"
+                    icon={<IconAlertTriangle size={18} />}
+                    title={
+                      monetizationBlockedReason === 'poi'
+                        ? "Models depicting a real person can't be monetized"
+                        : 'This base model is licensed for non-commercial use'
+                    }
+                  >
+                    <Text size="sm">
+                      Paid access and per-generation license fees are both unavailable for this{' '}
+                      {monetizationBlockedReason === 'poi' ? 'model' : 'base model'}.
+                      {monetizationBlockedReason === 'nonCommercial' &&
+                        ' Switch back to a commercial base model to restore them.'}
+                    </Text>
+                    {removingStoredCharge && (
+                      <Text size="xs" mt={4}>
+                        Saving now removes this version&apos;s{' '}
+                        {removingStoredFee && removingStoredGate
+                          ? 'license fee and paid access'
+                          : removingStoredFee
+                          ? 'license fee'
+                          : 'paid access'}
+                        .
+                      </Text>
+                    )}
+                  </Alert>
+                )}
+                {!monetizationBlocked && (showPaidAccessInput || showLicensingFeeBlock) && (
                   <Switch
                     label="I want to charge for this version"
                     description="Sell access to the version, charge a fee per generation, or both."
@@ -1242,7 +1315,7 @@ export function ModelVersionUpsertForm({
                     disabled={isEarlyAccessOver && !!version?.paidAccess}
                   />
                 )}
-                {removingStoredCharge && (
+                {removingStoredCharge && !monetizationBlocked && (
                   <Stack gap={4} mt="sm" align="flex-start">
                     {/* Red only when the control the sentence is about is off screen — that's the case
                         the creator can't see. On screen, this describes an edit they just made. */}
@@ -1269,7 +1342,9 @@ export function ModelVersionUpsertForm({
                         </Text>
                       ))}
                     {/* No affordance for a removal the creator cannot prevent: the submit substitutes
-                        null for these regardless, so restoring would clear nothing and read as broken. */}
+                        null for these regardless, so restoring would clear nothing and read as broken.
+                        The fully-blocked reasons (POI, non-commercial) never reach here — they render the
+                        alert above instead, which has no controls to restore into. */}
                     {(removingStoredFee || !gateRemovalIsStructural) && (
                       <Anchor
                         component="button"
@@ -1576,6 +1651,7 @@ export function ModelVersionUpsertForm({
                                       )}
                                       step={100}
                                       leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                                      withAsterisk
                                       disabled={isEarlyAccessOver}
                                     />
                                   )}

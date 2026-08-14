@@ -611,7 +611,8 @@ export async function leaveApp(opts: {
 }
 
 /**
- * COLLABORATOR: opt in/out of the public byline.
+ * Set the PUBLIC BYLINE flag on a seat — either the caller's own, or (as the app OWNER
+ * or a moderator) someone else's.
  *
  * 🔴 APPLIES IMMEDIATELY — no mod review, and no shadow revision. That is only safe
  * because the flag lives on the collaborator row: `applyApprovedRevision`'s offsite
@@ -620,37 +621,97 @@ export async function leaveApp(opts: {
  * revision. Being outside both branches' copy sets makes immediate-apply correct by
  * construction. `app-collaborator.revision-non-clobber.test.ts` pins that.
  *
- * Only an ACCEPTED collaborator may set it — a pending invitee toggling `displayed`
- * must not be able to pre-arrange public credit for a seat they have not taken.
+ * Only an ACCEPTED seat may be flagged — nobody, owner included, may pre-arrange public
+ * credit for an invitation that has not been taken.
+ *
+ * ## 🔴 WHO MAY SET IT — a deliberate product decision, recorded as one
+ *
+ * `targetUserId` is OPTIONAL:
+ *   - ABSENT (or equal to the caller) → SELF-SERVICE. Unchanged behaviour, and the shape
+ *     this proc already shipped with; a collaborator always controls their own byline.
+ *   - PRESENT and someone else → the caller must be the listing OWNER or a MODERATOR.
+ *
+ * The owner branch means an owner CAN remove a collaborator's public credit while leaving
+ * their seat intact. The narrower model — `displayed` as a preference belonging solely to
+ * the person named — was implemented first and explicitly overruled; this is the chosen
+ * product behaviour, not an oversight, and it is written down because the code alone
+ * cannot distinguish the two.
+ *
+ * The MODERATOR branch is granted for consistency with {@link listCollaborators}, which
+ * already admits a moderator to the full roster including `displayed:false` seats: a
+ * public byline is moderatable content.
+ *
+ * 🔴 OWNERSHIP IS RESOLVED CANONICALLY (`loadSeatListing` → `toSeatListing`, i.e.
+ * `AppBlock.app.userId` first and the denormalized `AppListing.userId` only as the
+ * off-site fallback). Comparing against the column would fail in BOTH directions on a
+ * drifted row — refusing the real owner on their own app while admitting whoever the
+ * stale row names, who could then strip a stranger's credit. Pinned both ways in
+ * `app-collaborator.service.test.ts`.
+ *
+ * 🔴 LAST WRITER WINS, and that is the v1 rule stated on purpose so the next reader does
+ * not invent a precedence one. There is no record of WHO last set the flag and no
+ * owner-over-collaborator (or collaborator-over-owner) priority: an owner can hide a
+ * collaborator who then shows themselves again, and vice versa. If that turns out to
+ * matter, it needs a stored provenance column and its own decision — do not simulate one
+ * by reading the audit log.
+ *
+ * The refusal message is VERBATIM and deliberately DIFFERENT from `assertOwner`'s
+ * ('Only the app owner can manage collaborators'), so a mutation that breaks this gate
+ * dies to THIS error rather than to a neighbouring owner check.
  */
 export async function setCollaboratorDisplayed(opts: {
   appListingId: string;
+  /** The CALLER. */
   userId: number;
+  /** Whose flag to set. Omitted ⇒ the caller's own row. */
+  targetUserId?: number;
   displayed: boolean;
+  /** Moderator override — see the header. */
+  isModerator?: boolean;
 }): Promise<{ appListingId: string; userId: number; displayed: boolean }> {
   const listing = await loadSeatListing(opts.appListingId);
+  const targetUserId = opts.targetUserId ?? opts.userId;
+
+  if (targetUserId !== opts.userId) {
+    // 🔴 `listing.ownerUserId` is the CANONICAL owner, not `AppListing.userId`.
+    const isOwner = listing.ownerUserId === opts.userId;
+    if (!isOwner && !opts.isModerator) {
+      throw new AppCollaboratorError(
+        'NOT_OWNER',
+        'Only the app owner can change a collaborator’s public byline'
+      );
+    }
+  }
 
   await dbWrite.$transaction(async (tx) => {
     const updated = await tx.appCollaborator.updateMany({
-      where: { appListingId: listing.appListingId, userId: opts.userId, status: ACCEPTED },
+      where: { appListingId: listing.appListingId, userId: targetUserId, status: ACCEPTED },
       data: { displayed: opts.displayed },
     });
     if (updated.count === 0) {
-      throw new AppCollaboratorError('NO_INVITE', 'You are not an active collaborator on this app');
+      throw new AppCollaboratorError(
+        'NO_INVITE',
+        targetUserId === opts.userId
+          ? 'You are not an active collaborator on this app'
+          : 'That user is not an active collaborator on this app'
+      );
     }
     await recordOwnershipEvent(tx, {
       appListingId: listing.appListingId,
       slug: listing.slug,
       action: 'display',
+      // 🔴 actor ≠ target once an owner can act on someone else's seat. Recording the
+      // caller as BOTH (the pre-change shape) would make an owner-driven un-crediting
+      // indistinguishable in the audit log from the collaborator opting out themselves.
       actorUserId: opts.userId,
-      targetUserId: opts.userId,
-      metadata: { displayed: opts.displayed },
+      targetUserId,
+      metadata: { displayed: opts.displayed, byOwner: targetUserId !== opts.userId },
     });
   });
 
   return {
     appListingId: listing.appListingId,
-    userId: opts.userId,
+    userId: targetUserId,
     displayed: opts.displayed,
   };
 }

@@ -2248,6 +2248,15 @@ export type FeaturedModelVersion = {
   validTo: Timestamp;
   position: number;
 };
+export type Feedback = {
+  id: Generated<number>;
+  area: string;
+  userId: number;
+  message: string;
+  context: Generated<unknown>;
+  status: Generated<string>;
+  createdAt: Generated<Timestamp>;
+};
 export type File = {
   id: Generated<number>;
   name: string;
@@ -4303,6 +4312,7 @@ export type DB = {
   EntityMetricImage: EntityMetricImage;
   EntityModeration: EntityModeration;
   FeaturedModelVersion: FeaturedModelVersion;
+  Feedback: Feedback;
   File: File;
   GenerationBaseModel: GenerationBaseModel;
   GenerationCoverage: GenerationCoverage;
