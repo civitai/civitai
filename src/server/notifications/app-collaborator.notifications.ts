@@ -117,7 +117,14 @@ export const appCollaboratorNotifications = createNotificationProcessor({
       const details = notification.details as AppCollaboratorNotificationDetails;
       return {
         message: `You were offered ownership of ${appLabel(details)}. Accept it to take over.`,
-        url: appUrl(details),
+        // 🔴 THE INBOX, not the app page — the same target `app-collaborator-invited`
+        // uses, and for the same reason. A pending offer confers NO role on the
+        // recipient, so `/apps/<appBlockId>` resolves their access, finds none and
+        // refuses; and an OFF-SITE listing has no such page at all, so `appUrl` fell
+        // back to `/apps`, which has no accept control on it either. Pointing a
+        // "accept it to take over" message at a page with no Accept button on it made
+        // the notification unactionable in every case.
+        url: APP_INVITES_URL,
       };
     },
   },

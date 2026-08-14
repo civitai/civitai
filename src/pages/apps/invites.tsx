@@ -3,6 +3,7 @@ import Link from 'next/link';
 
 import { AppInvitesBody } from '~/components/Apps/AppInvitesBody';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
+import { AppTransferOffers } from '~/components/Apps/AppTransferOffers';
 import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -45,9 +46,15 @@ export default function AppInvitesPage() {
       <AppsPageLayout
         size={APPS_PAGE_WIDTHS['/apps/invites']}
         title="App invitations"
-        subtitle="Invitations to collaborate on someone else's app."
+        subtitle="Invitations to collaborate on someone else's app, and offers to take one over."
       >
         <Stack gap="md">
+          {/* 🔴 OWNERSHIP OFFERS FIRST, and in their own titled section. An offer to take
+              over an app is a materially bigger decision than a seat invitation — the
+              previous owner loses the app — so it must not read as another row in the
+              same list. The section renders nothing at all when there are no offers, so
+              the ordinary invitee sees exactly what they saw before. */}
+          <AppTransferOffers />
           <AppInvitesBody />
           <Text size="sm" c="dimmed">
             Once you accept, the app appears in <Link href="/apps/mine">My apps</Link>.
