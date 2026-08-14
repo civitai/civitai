@@ -429,17 +429,24 @@ beforeEach(() => {
  */
 describe('civitai#3845 TIER 1 — fixture realism (the control the LEAK tests rest on)', () => {
   it('the Prisma fixture actually carries every secret the LEAK tests look for', () => {
-    const serialized = JSON.stringify({ error: prismaDriverError(), m: prismaDriverError().message });
+    const serialized = JSON.stringify({
+      error: prismaDriverError(),
+      m: prismaDriverError().message,
+    });
     for (const secret of PRISMA_SECRETS)
-      expect(serialized, `the fixture no longer carries ${secret} — LEAK tests are vacuous`).
-        toContain(secret);
+      expect(
+        serialized,
+        `the fixture no longer carries ${secret} — LEAK tests are vacuous`
+      ).toContain(secret);
   });
 
   it('the pg fixture actually carries every secret the LEAK tests look for', () => {
     const serialized = JSON.stringify({ error: pgDriverError(), m: pgDriverError().message });
     for (const secret of PG_SECRETS)
-      expect(serialized, `the fixture no longer carries ${secret} — LEAK tests are vacuous`).
-        toContain(secret);
+      expect(
+        serialized,
+        `the fixture no longer carries ${secret} — LEAK tests are vacuous`
+      ).toContain(secret);
   });
 
   it('the throwDbError-wrapped fixture forwards the driver text verbatim', () => {
@@ -452,7 +459,7 @@ describe('civitai#3845 TIER 1 — fixture realism (the control the LEAK tests re
   });
 });
 
-describe('civitai#3845 TIER 1 — no unauthenticated route serves a caught error\'s text', () => {
+describe("civitai#3845 TIER 1 — no unauthenticated route serves a caught error's text", () => {
   describe.each(ROUTES)('$name (was: $oldShape)', ({ run, runInvalid, invalidStatus }) => {
     it('LEAK: does NOT disclose Prisma driver, table or column detail', async () => {
       const throwing = (() => {
@@ -572,8 +579,7 @@ describe('civitai#3845 TIER 1 — no unauthenticated route serves a caught error
     // The browser arm answered, and with our text rather than the driver's.
     expect(typeof res._sent(), 'the browser arm must still send a body').toBe('string');
     expect(res._sent()).toBe('An unexpected error occurred');
-    for (const secret of PRISMA_SECRETS)
-      expect(String(res._sent())).not.toContain(secret);
+    for (const secret of PRISMA_SECRETS) expect(String(res._sent())).not.toContain(secret);
   });
 
   it('INVARIANT: download/models still logs the un-redacted text — genericizing relocates, never destroys', async () => {
@@ -647,7 +653,12 @@ describe('civitai#3845 TIER 1 — no unauthenticated route serves a caught error
   });
 
   it.each([
-    ['generation/data', generationDataHandler, { type: 'modelVersion', id: '1' }, mockGetGenerationData],
+    [
+      'generation/data',
+      generationDataHandler,
+      { type: 'modelVersion', id: '1' },
+      mockGetGenerationData,
+    ],
     ['generation/resources', generationResourcesHandler, { ids: '1' }, mockGetResourceData],
   ])(
     '%s does not write twice when the response was already sent',
@@ -701,8 +712,10 @@ describe('civitai#3845 TIER 1 — no unauthenticated route serves a caught error
     await tensorMetadataHandler(req, res, undefined);
 
     expect(res._status()).toBe(400);
-    expect(mockModelFileFindUnique, 'the query must be rejected BEFORE the DB call').
-      not.toHaveBeenCalled();
+    expect(
+      mockModelFileFindUnique,
+      'the query must be rejected BEFORE the DB call'
+    ).not.toHaveBeenCalled();
     // Caller feedback is retained — this is a rejection we wrote, not a disclosure.
     expect((res._json() as { error?: unknown }).error).toBeTruthy();
   });
@@ -747,10 +760,7 @@ describe('civitai#3845 TIER 1 — no unauthenticated route serves a caught error
  * the ledger stays green either way.
  */
 describe('LEDGER: download/models `errorResponse` is never called with caught-error text', () => {
-  const ROUTE = path.resolve(
-    __dirname,
-    '../../pages/api/download/models/[modelVersionId].ts'
-  );
+  const ROUTE = path.resolve(__dirname, '../../pages/api/download/models/[modelVersionId].ts');
   /**
    * Drop comments before scanning — a NAMED function, because the production
    * pipeline below and the tests must exercise the SAME code.
@@ -875,8 +885,10 @@ describe('LEDGER: download/models `errorResponse` is never called with caught-er
   it('sees the call sites at all (positive control — a zero here proves nothing)', () => {
     // 🔴 A regex that matches nothing satisfies "no call site forwards an error"
     // perfectly. Prove the instrument can see before believing what it reports.
-    expect(callArgs(source).length, 'no errorResponse call sites found — the guard is inert')
-      .toBeGreaterThan(5);
+    expect(
+      callArgs(source).length,
+      'no errorResponse call sites found — the guard is inert'
+    ).toBeGreaterThan(5);
   });
 
   it('COUNT PARITY: every `errorResponse(` occurrence yields a message argument', () => {
@@ -947,8 +959,10 @@ describe('LEDGER: download/models `errorResponse` is never called with caught-er
     // `stripLineComments`). That is fine and is the point: what the guard owes is
     // that the site is SEEN and REJECTED, not that the text is pretty.
     const apostropheInComment = `return errorResponse(\n  500, // it's the status\n  err.message\n);\n`;
-    expect(callArgLists(apostropheInComment).filter((l) => l === null), 'must not be dropped').
-      toEqual([]);
+    expect(
+      callArgLists(apostropheInComment).filter((l) => l === null),
+      'must not be dropped'
+    ).toEqual([]);
     expect(callArgs(apostropheInComment).length, 'an apostrophe in a trailing comment').toBe(1);
     expect(callArgs(apostropheInComment)[0]).toContain('err.message');
     expect(
@@ -957,7 +971,10 @@ describe('LEDGER: download/models `errorResponse` is never called with caught-er
     ).toBe(false);
 
     const regexLiteral = `return errorResponse(500, err.message.replace(/'/g, ''));\n`;
-    expect(callArgLists(regexLiteral).filter((l) => l === null), 'must not be dropped').toEqual([]);
+    expect(
+      callArgLists(regexLiteral).filter((l) => l === null),
+      'must not be dropped'
+    ).toEqual([]);
     expect(callArgs(regexLiteral).length, 'a regex literal containing a quote').toBe(1);
     expect(callArgs(regexLiteral)[0]).toContain('err.message');
     expect(callArgs(regexLiteral).every(isCallerFacingText)).toBe(false);
@@ -1033,8 +1050,9 @@ describe('LEDGER: download/models `errorResponse` is never called with caught-er
     //  (b) the PIPELINE stops calling it -> nothing above would notice, because
     //      those tests pass their own input. This identity pins that `source` is
     //      the stripped file and not the raw one.
-    expect(source, '`source` is not the output of `stripComments` — the pipeline diverged').
-      toBe(stripComments(readFileSync(ROUTE, 'utf8')));
+    expect(source, '`source` is not the output of `stripComments` — the pipeline diverged').toBe(
+      stripComments(readFileSync(ROUTE, 'utf8'))
+    );
 
     // And the one end-to-end statement that CAN fail on real content: the route's
     // own comment quotes `errorResponse(500, err.message)` verbatim, so if
@@ -1063,8 +1081,10 @@ describe('LEDGER: download/models `errorResponse` is never called with caught-er
 
   it('every call site passes a string literal or the shared generic constant', () => {
     for (const arg of callArgs(source))
-      expect(isCallerFacingText(arg), `errorResponse called with \`${arg}\` — that is not text we wrote`)
-        .toBe(true);
+      expect(
+        isCallerFacingText(arg),
+        `errorResponse called with \`${arg}\` — that is not text we wrote`
+      ).toBe(true);
   });
 
   /**
