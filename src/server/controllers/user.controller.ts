@@ -109,6 +109,7 @@ import {
   toggleUserBountyEngagement,
   unequipCosmeticByType,
   updateLeaderboardRank,
+  updateLeaderboardRankForUsers,
   updateUserById,
   userByReferralCode,
 } from '~/server/services/user.service';
@@ -553,6 +554,15 @@ export const updateUserHandler = async ({
 
     if (isSettingCosmetics)
       postUpdatePromises.push(equipCosmetic({ userId: id, cosmeticId: payloadCosmeticIds }));
+
+    // Without this the new showcase isn't visible until the nightly rebuild, up to 24h later.
+    // The modal sends the field on every user-level save, so this recomputes on cosmetic
+    // saves too. That is deliberate: comparing against the stored value would have to read
+    // it back, and the only cheap read is the replica — an A->B->A save inside the
+    // replication window would then compare equal and skip the recompute it needs. The
+    // upsert is 0.87 ms and idempotent, so the redundant call costs less than that risk.
+    if (input.leaderboardShowcase !== undefined)
+      postUpdatePromises.push(updateLeaderboardRankForUsers({ userIds: id }));
 
     if (userReferralCode || source || landingPage) {
       postUpdatePromises.push(

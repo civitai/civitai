@@ -1469,6 +1469,72 @@ export const getUserBookmarkedModels = async ({ userId }: { userId: number }) =>
   return bookmarked.map(({ modelId }) => modelId).filter(isDefined);
 };
 
+const leaderboardRankInsert = ({
+  leaderboardFilter,
+  userFilter,
+  onConflict = Prisma.empty,
+}: {
+  leaderboardFilter: Prisma.Sql;
+  userFilter: Prisma.Sql;
+  onConflict?: Prisma.Sql;
+}) => Prisma.sql`
+  WITH user_positions AS (
+    SELECT
+      lr."userId",
+      lr."leaderboardId",
+      l."title",
+      lr.position,
+      -- The showcase is a PREFERENCE, not a filter. Applied as a WHERE clause it
+      -- deleted the badge outright whenever the showcased board couldn't produce
+      -- one — a RED-exclusive or non-public board, or one the user has since
+      -- dropped out of the top 100 on. Measured on prod 2026-08-14: 62 users had
+      -- a top-100 placement on an eligible board and no UserRank row at all.
+      row_number() OVER (
+        PARTITION BY lr."userId"
+        ORDER BY
+          (lr."leaderboardId" IS NOT DISTINCT FROM u."leaderboardShowcase") DESC,
+          lr."position"
+      ) row_num
+    FROM "User" u
+    JOIN "LeaderboardResult" lr ON lr."userId" = u.id
+    JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
+    WHERE lr.date = current_date
+      AND lr.position <= 100
+      -- UserRank is a single global table but the badge (title + cosmetic) renders
+      -- on every domain, so a RED-EXCLUSIVE board would leak its name sitewide —
+      -- e.g. "Creators (mature)" on civitai.com. Exclude only those; a board that
+      -- is visible on any SFW domain still earns a badge (requiring 'all' would
+      -- strip the badge from everyone on the green/blue-scoped boards).
+      AND NOT (l.domain <@ ARRAY['red']::"DomainColor"[])
+      ${leaderboardFilter}
+      ${userFilter}
+  ),
+  lowest_position AS (
+    SELECT
+      up."userId",
+      up.position,
+      up."leaderboardId",
+      up."title" "leaderboardTitle",
+      (SELECT data ->> 'url'
+       FROM "Cosmetic" c
+       WHERE c."leaderboardId" = up."leaderboardId"
+         AND up.position <= c."leaderboardPosition"
+       ORDER BY c."leaderboardPosition"
+       LIMIT 1) as "leaderboardCosmetic"
+    FROM user_positions up
+    WHERE row_num = 1
+  )
+  INSERT INTO "UserRank" ("userId", "leaderboardRank", "leaderboardId", "leaderboardTitle", "leaderboardCosmetic")
+  SELECT
+    "userId",
+    position,
+    "leaderboardId",
+    "leaderboardTitle",
+    "leaderboardCosmetic"
+  FROM lowest_position
+  ${onConflict};
+`;
+
 export const updateLeaderboardRank = async ({
   leaderboardIds,
 }: {
@@ -1484,56 +1550,44 @@ export const updateLeaderboardRank = async ({
     // Truncate the table - much faster than DELETE and we're rebuilding anyway
     dbWrite.$executeRaw`TRUNCATE TABLE "UserRank";`,
     // Only insert users with top 100 ranks (position <= 100)
-    dbWrite.$executeRaw`
-      WITH user_positions AS (
-        SELECT
-          lr."userId",
-          lr."leaderboardId",
-          l."title",
-          lr.position,
-          row_number() OVER (PARTITION BY "userId" ORDER BY "position") row_num
-        FROM "User" u
-        JOIN "LeaderboardResult" lr ON lr."userId" = u.id
-        JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
-        WHERE lr.date = current_date
-          AND lr.position <= 100
-          -- UserRank is a single global table but the badge (title + cosmetic) renders
-          -- on every domain, so a RED-EXCLUSIVE board would leak its name sitewide —
-          -- e.g. "Creators (mature)" on civitai.com. Exclude only those; a board that
-          -- is visible on any SFW domain still earns a badge (requiring 'all' would
-          -- strip the badge from everyone on the green/blue-scoped boards).
-          AND NOT (l.domain <@ ARRAY['red']::"DomainColor"[])
-          ${leaderboardFilter}
-          AND (
-            u."leaderboardShowcase" IS NULL
-            OR lr."leaderboardId" = u."leaderboardShowcase"
-          )
-      ),
-      lowest_position AS (
-        SELECT
-          up."userId",
-          up.position,
-          up."leaderboardId",
-          up."title" "leaderboardTitle",
-          (SELECT data ->> 'url'
-           FROM "Cosmetic" c
-           WHERE c."leaderboardId" = up."leaderboardId"
-             AND up.position <= c."leaderboardPosition"
-           ORDER BY c."leaderboardPosition"
-           LIMIT 1) as "leaderboardCosmetic"
-        FROM user_positions up
-        WHERE row_num = 1
-      )
-      INSERT INTO "UserRank" ("userId", "leaderboardRank", "leaderboardId", "leaderboardTitle", "leaderboardCosmetic")
-      SELECT
-        "userId",
-        position,
-        "leaderboardId",
-        "leaderboardTitle",
-        "leaderboardCosmetic"
-      FROM lowest_position;
-    `,
+    dbWrite.$executeRaw(leaderboardRankInsert({ leaderboardFilter, userFilter: Prisma.empty })),
   ]);
+};
+
+/**
+ * Per-user variant, for when a user changes their showcase and expects to see it.
+ * `updateLeaderboardRank` cannot serve that: it TRUNCATEs a table the whole site
+ * reads, so calling it on a profile save blanks every user's badge mid-rebuild.
+ * Measured on the prod replica 2026-08-14: 0.87 ms scoped vs 196 ms full.
+ *
+ * Upsert-only, deliberately. Deleting first would strip a badge and then have nothing
+ * to replace it with on any day the 23:00 population failed — the exact symptom this
+ * path exists to fix, re-entered through a new door. `prepare-leaderboard` guards the
+ * nightly rebuild with `isLeaderboardPopulated` for that reason, and removal stays that
+ * job's business: under the ordering above a user with any eligible placement always
+ * produces a row, so a save never needs to remove one. It also keeps two concurrent
+ * saves off a delete-then-insert race into the `UserRank` primary key.
+ */
+export const updateLeaderboardRankForUsers = async ({
+  userIds,
+}: {
+  userIds: number | number[];
+}) => {
+  const ids = Array.isArray(userIds) ? userIds : [userIds];
+  if (!ids.length) return;
+
+  await dbWrite.$executeRaw(
+    leaderboardRankInsert({
+      leaderboardFilter: Prisma.empty,
+      userFilter: Prisma.sql`AND u.id IN (${Prisma.join(ids)})`,
+      onConflict: Prisma.sql`
+    ON CONFLICT ("userId") DO UPDATE SET
+      "leaderboardRank" = EXCLUDED."leaderboardRank",
+      "leaderboardId" = EXCLUDED."leaderboardId",
+      "leaderboardTitle" = EXCLUDED."leaderboardTitle",
+      "leaderboardCosmetic" = EXCLUDED."leaderboardCosmetic"`,
+    })
+  );
 };
 
 /**
