@@ -828,14 +828,30 @@ async function hydrateMyAppListings(
 
 /** The two booleans the `/apps/*` sub-nav needs in order to offer a route at all. */
 export type AppsNavAccess = {
-  /** ≥1 listing OWNED or held via an ACCEPTED seat → the "My apps" route is non-empty. */
+  /**
+   * ≥1 listing OWNED or held via an ACCEPTED seat → the "My apps" route is non-empty.
+   *
+   * 🔴 A PENDING OWNERSHIP TRANSFER DELIBERATELY DOES **NOT** COUNT HERE. It confers ZERO
+   * capability until accepted — the same consent principle as a pending seat invite, and
+   * `app-ownership-transfer.service` states it in as many words. Lighting "My apps" for an
+   * offer would advertise a page the recipient's every child query refuses.
+   */
   hasEditableApps: boolean;
-  /** ≥1 PENDING invitation → the "Invites" route is non-empty. */
+  /**
+   * ≥1 pending item ADDRESSED TO the caller → the "Invites" route is non-empty.
+   *
+   * 🔴 TWO KINDS OF PENDING ITEM, and the second used to be missing. `/apps/invites` is
+   * where BOTH a pending seat invite and an inbound ownership-transfer OFFER render, but
+   * this predicate knew only about seats — so a user with an offer and no seat invite got
+   * no tab at all, i.e. no route to the only page that shows the offer. The name is kept
+   * (it gates the "Invites" tab, and the tab covers both) but the meaning is now
+   * "anything pending for you", not "a seat invite".
+   */
   hasPendingInvites: boolean;
 };
 
 /**
- * The sub-nav's collaborator-aware visibility probe. EXISTENCE ONLY — two `findFirst`s,
+ * The sub-nav's collaborator-aware visibility probe. EXISTENCE ONLY — four `findFirst`s,
  * no rows, matching `getNavSummary`'s existing shape.
  *
  * 🔴 IT LIVES HERE RATHER THAN IN `blocks.router` FOR A MEASURED REASON. Writing the two
@@ -850,13 +866,35 @@ export type AppsNavAccess = {
  * copy of the branches — so the tab cannot appear for a set the page then renders empty,
  * or stay hidden over a set the page would fill.
  *
- * Both seat probes degrade to `false` while the manual-apply collaborator table is
- * absent: an un-degraded read here would 500 the sub-nav, i.e. every `/apps` page's
- * chrome, for the whole window between the code deploy and a human applying the
- * migration.
+ * 🔴 ALL THREE MANUAL-APPLY PROBES DEGRADE to `false` while their tables are absent: an
+ * un-degraded read here would 500 the sub-nav, i.e. every `/apps` page's chrome, for the
+ * whole window between the code deploy and a human applying the migration. That includes
+ * the TRANSFER probe — `app_ownership_transfers` is created by the very same manual-apply
+ * migration as `app_collaborators` (`20260811170000_rekey_app_collaborators_step_b_…`),
+ * and that migration's own rollback note says dropping them must return the deployed code
+ * to the 42P01 path, "inert-and-owner-only, NOT broken". An unwrapped transfer read would
+ * break exactly that promise. A 42703 (half-applied schema) still propagates, by design.
+ *
+ * 🔴 QUERY COST, stated rather than left to be discovered: this is now FOUR existence
+ * probes instead of three. They run inside the SAME `Promise.all`, so the added serial
+ * latency is zero, but it is one more concurrent round trip (and one more pool slot) per
+ * `getNavSummary` — which the `/apps` chrome renders on every page load. It cannot be
+ * folded into an existing query: the four probes hit three different tables, and unioning
+ * across them would mean hand-written SQL. The probe itself is as cheap as it gets — a
+ * `findFirst` selecting one column, narrowed on the indexed `(to_user_id, status)` pair
+ * (`app_ownership_transfers_to_status_idx`) with `expires_at` as a residual filter over
+ * the handful of rows that pair can return.
  */
-export async function resolveAppsNavAccess(userId: number): Promise<AppsNavAccess> {
-  const [ownedListing, seat, invite] = await Promise.all([
+export async function resolveAppsNavAccess(
+  userId: number,
+  /**
+   * Injected so the EXPIRY BOUNDARY is testable at an exact instant rather than raced
+   * against wall-clock. Mirrors `app-ownership-transfer.service`'s convention, where every
+   * lifecycle function threads a `now`.
+   */
+  now: Date = new Date()
+): Promise<AppsNavAccess> {
+  const [ownedListing, seat, invite, transferOffer] = await Promise.all([
     dbRead.appListing.findFirst({
       where: { revisionOfId: null, OR: canonicalOwnerWhereBranches(userId) },
       select: { id: true },
@@ -877,10 +915,31 @@ export async function resolveAppsNavAccess(userId: number): Promise<AppsNavAcces
         }),
       null
     ),
+    // 🔴 AN INBOUND OWNERSHIP OFFER LIGHTS THE SAME TAB — see {@link
+    // AppsNavAccess.hasPendingInvites}. `toUserId` is the ADDRESSEE, so this can never be
+    // lit by an offer the caller SENT, only by one they received.
+    //
+    // 🔴 `expiresAt: { gt: now }` IS NOT OPTIONAL, and it is the half a naive
+    // `status: 'pending'` check gets wrong. Expiry here is a READ-TIME PREDICATE with no
+    // sweeper behind it (schema.full.prisma says so on the column, and the migration
+    // repeats it), so a long-dead offer keeps `status = 'pending'` forever. Without this
+    // clause the tab would latch on permanently for anyone who was ever offered an app.
+    // STRICT `>` matches `app-ownership-transfer.service::isLive` exactly — an offer AT
+    // its expiry instant is already dead — so the tab and the page cannot disagree about
+    // the boundary.
+    safeCollaboratorQuery(
+      () =>
+        dbRead.appOwnershipTransfer.findFirst({
+          where: { toUserId: userId, status: 'pending', expiresAt: { gt: now } },
+          select: { id: true },
+        }),
+      null
+    ),
   ]);
   return {
+    // 🔴 `transferOffer` is deliberately ABSENT from this disjunct. See the type.
     hasEditableApps: ownedListing !== null || seat !== null,
-    hasPendingInvites: invite !== null,
+    hasPendingInvites: invite !== null || transferOffer !== null,
   };
 }
 

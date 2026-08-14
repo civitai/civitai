@@ -44,10 +44,12 @@ const {
     appBlockPublishRequest: { findFirst: vi.fn() },
     blockUserSubscription: { findFirst: vi.fn() },
     blockBuzzAttribution: { groupBy: vi.fn() },
-    // The two COLLABORATOR-aware probes (`resolveAppsNavAccess`): an owned-or-seated
-    // listing drives "My apps", a pending invite drives "Invites".
+    // The COLLABORATOR-aware probes (`resolveAppsNavAccess`): an owned-or-seated listing
+    // drives "My apps"; a pending SEAT INVITE **or** an inbound live OWNERSHIP-TRANSFER
+    // OFFER drives "Invites" — `/apps/invites` renders both, so the tab has to see both.
     appListing: { findFirst: vi.fn() },
     appCollaborator: { findFirst: vi.fn() },
+    appOwnershipTransfer: { findFirst: vi.fn() },
   },
 }));
 
@@ -167,12 +169,14 @@ beforeEach(() => {
   mockDbRead.appBlock.findFirst.mockReset();
   mockDbRead.appListing.findFirst.mockReset();
   mockDbRead.appCollaborator.findFirst.mockReset();
+  mockDbRead.appOwnershipTransfer.findFirst.mockReset();
   // Default: nothing exists for anyone.
   mockDbRead.blockUserSubscription.findFirst.mockResolvedValue(null);
   mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
   mockDbRead.appBlock.findFirst.mockResolvedValue(null);
   mockDbRead.appListing.findFirst.mockResolvedValue(null);
   mockDbRead.appCollaborator.findFirst.mockResolvedValue(null);
+  mockDbRead.appOwnershipTransfer.findFirst.mockResolvedValue(null);
 });
 
 describe('getNavSummary — gate', () => {
@@ -184,6 +188,7 @@ describe('getNavSummary — gate', () => {
     expect(mockDbRead.appBlock.findFirst).not.toHaveBeenCalled();
     expect(mockDbRead.appListing.findFirst).not.toHaveBeenCalled();
     expect(mockDbRead.appCollaborator.findFirst).not.toHaveBeenCalled();
+    expect(mockDbRead.appOwnershipTransfer.findFirst).not.toHaveBeenCalled();
   });
 
   it('flag OFF: returns the all-false shape and runs NO existence query', async () => {
@@ -321,6 +326,32 @@ describe('getNavSummary — the collaborator-aware flags', () => {
     expect(result.hasEditableApps).toBe(true);
     expect(result.hasSubmissions).toBe(false);
     expect(result.hasApprovedApps).toBe(false);
+  });
+
+  it('🔴 an inbound OWNERSHIP-TRANSFER OFFER lights "Invites" through the router', async () => {
+    // The router-level half of the gap: `/apps/invites` renders a pending transfer offer
+    // as well as a seat invite, so the tab that routes there must see both. With seats
+    // empty, the ONLY thing that can light this flag is the transfer probe.
+    mockDbRead.appOwnershipTransfer.findFirst.mockResolvedValue({ id: 'aot_1' });
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const result = await caller.getNavSummary();
+    expect(result.hasPendingInvites).toBe(true);
+    // …and an offer confers no capability, so "My apps" stays dark.
+    expect(result.hasEditableApps).toBe(false);
+  });
+
+  it('the transfer probe is scoped to ctx.user.id as the ADDRESSEE, and status-filtered', async () => {
+    // Cross-user leakage is the failure this shape prevents: `toUserId` is the addressee,
+    // so an offer the caller SENT can never light their own tab.
+    const caller = blocksRouter.createCaller(fakeCtx(otherModUser) as never);
+    await caller.getNavSummary();
+    const where = mockDbRead.appOwnershipTransfer.findFirst.mock.calls[0][0].where;
+    expect(where.toUserId).toBe(otherModUser.id);
+    expect(where.status).toBe('pending');
+    // Expiry is a READ-TIME predicate with no sweeper — a dead offer keeps
+    // `status='pending'` forever, so this bound is what stops the tab latching on.
+    expect(where.expiresAt.gt).toBeInstanceOf(Date);
+    expect(where.fromUserId).toBeUndefined();
   });
 
   it('a PENDING seat does NOT light "My apps" — only "Invites"', async () => {

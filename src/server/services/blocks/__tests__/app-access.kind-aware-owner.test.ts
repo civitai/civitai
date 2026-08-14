@@ -247,7 +247,13 @@ const { read, write, store, branchMatches, ids } = vi.hoisted(() => {
     },
     appListingModerationEvent: { create: vi.fn(async (a: { data: unknown }) => a.data) },
     appListingReport: { updateMany: vi.fn(async () => ({ count: 0 })) },
-    appOwnershipTransfer: { updateMany: vi.fn(async () => ({ count: 0 })) },
+    appOwnershipTransfer: {
+      updateMany: vi.fn(async () => ({ count: 0 })),
+      // `resolveAppsNavAccess` also probes for an inbound ownership OFFER (it lights the
+      // same "Invites" tab as a seat invite). No transfers exist in this suite's fixtures
+      // — the offer arm is covered by `app-access.nav-pending-invites.test.ts`.
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+    },
     appOwnershipEvent: { create: vi.fn(async (a: { data: unknown }) => a.data) },
     user: { findUnique: vi.fn(async (a: { where: { id: number } }) => ({ id: a.where.id })) },
     $transaction: vi.fn(async (arg: unknown): Promise<unknown> => arg),
