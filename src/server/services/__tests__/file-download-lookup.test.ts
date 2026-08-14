@@ -386,6 +386,7 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
 describe('serialized downloadUrl → getFileForModelVersion (the pair actually resolves)', () => {
   let getFileForModelVersion: typeof import('../file.service')['getFileForModelVersion'];
   let createSerializedFileDownloadUrl: typeof import('~/server/common/model-helpers')['createSerializedFileDownloadUrl'];
+  type RouteInput = Omit<Parameters<typeof getFileForModelVersion>[0], 'user' | 'noAuth'>;
   beforeAll(async () => {
     ({ getFileForModelVersion } = await import('../file.service'));
     ({ createSerializedFileDownloadUrl } = await import('~/server/common/model-helpers'));
@@ -404,7 +405,7 @@ describe('serialized downloadUrl → getFileForModelVersion (the pair actually r
     overrideName: null,
     type: 'Model',
     visibility: 'Public',
-    metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp16' },
+    metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp16' } as BasicFileMetadata,
     hashes: [{ hash: 'aaaa1111' }],
   };
   const OWNED_SECOND = {
@@ -415,7 +416,7 @@ describe('serialized downloadUrl → getFileForModelVersion (the pair actually r
     overrideName: null,
     type: 'Model',
     visibility: 'Public',
-    metadata: { format: 'PickleTensor', size: 'full', fp: 'fp32' },
+    metadata: { format: 'PickleTensor', size: 'full', fp: 'fp32' } as BasicFileMetadata,
     hashes: [{ hash: 'bbbb2222' }],
   };
   // Lives on the LINKED version. `getVaeFiles` relabels its `type` to 'VAE'
@@ -428,7 +429,7 @@ describe('serialized downloadUrl → getFileForModelVersion (the pair actually r
     overrideName: null,
     type: 'Model',
     visibility: 'Public',
-    metadata: { format: 'SafeTensor', size: 'full', fp: 'fp32' },
+    metadata: { format: 'SafeTensor', size: 'full', fp: 'fp32' } as BasicFileMetadata,
     hashes: [{ hash: 'eeee5555' }],
   };
   const UNIVERSE = [OWNED_PRIMARY, OWNED_SECOND, LINKED_VAE];
@@ -480,20 +481,23 @@ describe('serialized downloadUrl → getFileForModelVersion (the pair actually r
 
   /** Parse an emitted URL into the route's handler input (schema at
    * src/pages/api/download/models/[modelVersionId].ts). */
-  function toRouteInput(path: string) {
+  function toRouteInput(path: string): RouteInput {
     const url = new URL(`https://civitai.com${path}`);
     const modelVersionId = Number(url.pathname.split('/').pop());
     const q = url.searchParams;
     const fileIdParam = q.get('fileId');
+    // The enum-shaped params are cast one by one rather than the whole object being
+    // widened: the route's zod schema is what narrows them in production, and a cast
+    // per field still fails here if the service stops accepting one.
     return {
       modelVersionId,
       fileId: fileIdParam ? Number(fileIdParam) : undefined,
-      type: q.get('type') ?? undefined,
-      format: q.get('format') ?? undefined,
-      size: q.get('size') ?? undefined,
+      type: (q.get('type') ?? undefined) as RouteInput['type'],
+      format: (q.get('format') ?? undefined) as RouteInput['format'],
+      size: (q.get('size') ?? undefined) as RouteInput['size'],
       fp: q.get('fp') ?? undefined,
       quantType: q.get('quantType') ?? undefined,
-    } as never;
+    };
   }
 
   it('a pinned URL for a file the version OWNS resolves to exactly that file', async () => {

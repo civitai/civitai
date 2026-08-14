@@ -195,6 +195,12 @@ const JUDGING_CONFIG = {
   reviewTemplate: null,
 } as never;
 
+const PRIZES = [
+  { buzz: 500, points: 10 },
+  { buzz: 250, points: 5 },
+  { buzz: 100, points: 2 },
+];
+
 const currentChallenge = {
   challengeId: 1,
   type: 'daily',
@@ -206,7 +212,7 @@ const currentChallenge = {
   title: 'Test',
   invitation: '',
   coverUrl: '',
-  prizes: [{ buzz: 500, points: 10 }, { buzz: 250, points: 5 }, { buzz: 100, points: 2 }],
+  prizes: PRIZES,
   entryPrizeRequirement: 10,
   entryPrize: { buzz: 0, points: 0 },
 } as never;
@@ -268,8 +274,18 @@ describe('pickWinnersForChallenge winner mapping (name-spoof hardening)', () => 
     // name-based (or name-OR-id) match would resolve BOTH winners to whichever entry happens to
     // come first in array order, since both share the spoofed name.
     mockJudgedEntryRows([
-      { imageId: 1, userId: 100, username: 'Alice', score: { theme: 10, aesthetic: 10, humor: 10, wittiness: 10 } },
-      { imageId: 2, userId: 200, username: 'Alice', score: { theme: 8, aesthetic: 8, humor: 8, wittiness: 8 } },
+      {
+        imageId: 1,
+        userId: 100,
+        username: 'Alice',
+        score: { theme: 10, aesthetic: 10, humor: 10, wittiness: 10 },
+      },
+      {
+        imageId: 2,
+        userId: 200,
+        username: 'Alice',
+        score: { theme: 8, aesthetic: 8, humor: 8, wittiness: 8 },
+      },
     ]);
     // Global winner-cooldown query (System source, no event context) — nobody excluded.
     mockDbWriteQueryRaw.mockResolvedValueOnce([]);
@@ -362,7 +378,7 @@ describe('pickWinnersForChallenge unmatched picks (challenge 390)', () => {
     mockDbWriteQueryRaw.mockResolvedValueOnce([]);
     mockGetChallengeById.mockResolvedValue({
       source: ChallengeSource.System,
-      prizes: currentChallenge.prizes,
+      prizes: PRIZES,
       metadata: null,
     });
 

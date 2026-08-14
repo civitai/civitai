@@ -22,7 +22,11 @@ const { envOverrides } = vi.hoisted(() => ({
 const { mockLogToAxiom, mockFindFirst, mockFetch } = vi.hoisted(() => ({
   mockLogToAxiom: vi.fn(async () => undefined),
   mockFindFirst: vi.fn(),
-  mockFetch: vi.fn(async () => ({ ok: true })),
+  // Typed rather than inferred: a zero-arg `vi.fn` makes `mock.calls` the empty
+  // tuple, and `invalidateCalls()` below reads both positions off it.
+  mockFetch: vi.fn<(url: string | URL, init?: RequestInit) => Promise<{ ok: boolean }>>(
+    async () => ({ ok: true })
+  ),
 }));
 
 function makePermissive(overrides: Record<string, unknown> = {}): any {
