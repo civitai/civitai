@@ -5,6 +5,7 @@ import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import type {
   CollaboratorRosterRow,
   PendingTransferRow,
+  TransferListingFacts,
 } from '~/components/Apps/AppCollaboratorsPanelView';
 import {
   AppCollaboratorsPanelView,
@@ -32,10 +33,19 @@ export function AppCollaboratorsPanel({
   appListingId,
   role,
   capabilities,
+  listing,
 }: {
   appListingId: string;
   role: AppRole;
   capabilities: Readonly<Record<ListingCapability, boolean>>;
+  /**
+   * 🔴 REQUIRED, DELIBERATELY. This is the field whose absence WAS the bug: the transfer
+   * verdict is a property of the listing, so a caller that has an authoring context and
+   * does not hand it over would put the tab back to learning the refusal from a mutation
+   * error. Non-optional means `tsc` refuses the page that forgets it, rather than the page
+   * silently rendering an enabled control again.
+   */
+  listing: TransferListingFacts;
 }) {
   const currentUser = useCurrentUser();
   const utils = trpc.useUtils();
@@ -158,6 +168,9 @@ export function AppCollaboratorsPanel({
       }
       onLeave={() => leave.mutate({ appListingId })}
       pendingTransfer={(transferQuery.data ?? null) as PendingTransferRow | null}
+      // The listing facts the View reaches the up-front transfer verdict from. Forwarded
+      // whole rather than pre-computed here, so the rule has exactly one call site.
+      listing={listing}
       transferErrorMessage={transferErrorMessage}
       transferBusy={transferBusy}
       onCancelTransfer={(transferId) => cancelTransfer.mutate({ transferId })}

@@ -8,7 +8,10 @@ import {
 import { notifyAppCollaborator } from '~/server/services/blocks/app-collaborator-notify';
 import { grantAppRepoWrite, revokeAppRepoWrite } from '~/server/services/blocks/app-repo-access';
 import { newAppOwnershipTransferId } from '~/server/utils/app-block-ids';
-import { CONNECT_CLIENT_TRANSFER_REFUSAL } from '~/shared/constants/app-transfer.constants';
+import {
+  CONNECT_CLIENT_TRANSFER_REFUSAL,
+  refusesTransferForConnectClient,
+} from '~/shared/constants/app-transfer.constants';
 
 /**
  * App Listing COLLABORATORS — OWNERSHIP TRANSFER (owner initiates → recipient accepts).
@@ -130,18 +133,14 @@ function isLive(t: { status: string; expiresAt: Date }, now: Date): boolean {
 }
 
 /**
- * 🔴 THE ONE PREDICATE for "may this listing's ownership move?", written once so the
- * initiate-time check and the in-tx accept-time re-assert cannot drift apart.
+ * The predicate behind BOTH server gates below — and now behind the Collaborators tab's
+ * up-front disable as well.
  *
- * On-site listings are unaffected: their connect column is always null (an on-site
- * listing's OauthClient is reached through the AppBlock, and THAT one does move).
+ * 🔴 RE-EXPORTED FROM `shared/`, exactly like the message above and for the same reason:
+ * the tab has to reach the same verdict the server will, and it cannot import this module.
+ * See the definition for the shipped defect that moved it. One definition, three callers.
  */
-export function refusesTransferForConnectClient(listing: {
-  kind: string;
-  connectClientId: string | null;
-}): boolean {
-  return listing.kind === 'offsite' && listing.connectClientId != null;
-}
+export { refusesTransferForConnectClient };
 
 type OwnedListing = {
   appListingId: string;

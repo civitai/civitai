@@ -76,6 +76,8 @@ type AuthoringContext = {
   status: string;
   kind: 'onsite' | 'offsite';
   appBlockId: string | null;
+  /** Linked OAuth `client_id`, or null. Decides whether ownership transfer is offerable. */
+  connectClientId: string | null;
   role: AppRole;
   capabilities: Readonly<Record<ListingCapability, boolean>>;
 };
@@ -213,6 +215,11 @@ export default function AppListingEditPage() {
                   appListingId={context.appListingId}
                   role={context.role}
                   capabilities={context.capabilities}
+                  // 🔴 The two facts the transfer verdict is made of, straight off the
+                  // authoring context. Ownership of a connect-linked off-site listing can
+                  // never move, and the tab has to be able to say so BEFORE the owner
+                  // picks a recipient — see `refusesTransferForConnectClient`.
+                  listing={{ kind: context.kind, connectClientId: context.connectClientId }}
                 />
               </Tabs.Panel>
             ) : null}

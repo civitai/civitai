@@ -780,6 +780,19 @@ export type MyAppListing = {
   kind: ListingKind;
   /** `null` for an off-site listing — legitimately absent, not missing. */
   appBlockId: string | null;
+  /**
+   * The listing's linked OAuth `client_id`, or `null`. PUBLIC, not a secret — the same
+   * column the public listing-detail read already exposes (`ListingDetailKindData`).
+   *
+   * 🔴 CARRIED SO AN AUTHORING SURFACE CAN REACH THE TRANSFER VERDICT UP FRONT. A
+   * connect-linked off-site listing can never be transferred
+   * ({@link refusesTransferForConnectClient}), and without this field the Collaborators
+   * tab could not know that until the mutation came back refused — so it rendered an
+   * enabled recipient picker and the owner only found out after choosing someone.
+   * A field is not a guard, though: the branch that reads it lives in
+   * `AppCollaboratorsPanelView`, and the server gate is unchanged and still authoritative.
+   */
+  connectClientId: string | null;
   role: AppRole;
   /**
    * 🔴 DERIVED FROM THE KIND, at the same seam every gate derives it — never stored, and
@@ -797,7 +810,15 @@ async function hydrateMyAppListings(
   if (ids.allIds.length === 0) return [];
   const rows = await dbRead.appListing.findMany({
     where: { id: { in: ids.allIds } },
-    select: { id: true, slug: true, name: true, status: true, kind: true, appBlockId: true },
+    select: {
+      id: true,
+      slug: true,
+      name: true,
+      status: true,
+      kind: true,
+      appBlockId: true,
+      connectClientId: true,
+    },
     orderBy: { serialId: 'desc' },
     take: limit,
   });
@@ -810,6 +831,7 @@ async function hydrateMyAppListings(
       status: string;
       kind: string;
       appBlockId: string | null;
+      connectClientId: string | null;
     }) => {
       const kind = r.kind as ListingKind;
       return {
@@ -819,6 +841,7 @@ async function hydrateMyAppListings(
         status: r.status,
         kind,
         appBlockId: r.appBlockId,
+        connectClientId: r.connectClientId,
         role: (ownedSet.has(r.id) ? 'owner' : 'editor') as AppRole,
         capabilities: capabilitiesForKind(kind),
       };
@@ -985,7 +1008,11 @@ export async function getAppListingAuthoringContext(opts: {
   }
   const row = await dbRead.appListing.findUnique({
     where: { id: access.seatListingId },
-    select: { id: true, slug: true, name: true, status: true },
+    // 🔴 `connectClientId` IS READ FROM THE SEAT (PARENT) ROW, which is the same row
+    // `app-ownership-transfer::loadOwnedListing` reads — so the tab's up-front verdict and
+    // the server's refusal are looking at one column on one row. Reading it off a SHADOW
+    // would be the `kind`/`appBlockId` trap below in a new place.
+    select: { id: true, slug: true, name: true, status: true, connectClientId: true },
   });
   if (!row) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'App listing not found' });
@@ -1009,6 +1036,7 @@ export async function getAppListingAuthoringContext(opts: {
     // make an in-flight revision look off-site and silently strip the block-only tabs.
     kind: access.kind,
     appBlockId: access.appBlockId,
+    connectClientId: row.connectClientId,
     role: access.role,
     capabilities: capabilitiesForKind(access.kind),
   };

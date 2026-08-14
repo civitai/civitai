@@ -10,6 +10,7 @@ import {
   Stack,
   Switch,
   Text,
+  TextInput,
   Title,
 } from '@mantine/core';
 import { IconAlertTriangle, IconCoin, IconInfoCircle } from '@tabler/icons-react';
@@ -18,6 +19,10 @@ import { useMemo } from 'react';
 
 import { constants } from '~/server/common/constants';
 import type { AppRole, ListingCapability } from '~/shared/constants/app-capabilities.constants';
+import {
+  CONNECT_CLIENT_TRANSFER_REFUSAL,
+  refusesTransferForConnectClient,
+} from '~/shared/constants/app-transfer.constants';
 
 /**
  * App Listing COLLABORATORS — the PRESENTATIONAL roster panel.
@@ -89,6 +94,31 @@ export type AppCollaboratorsPanelViewProps = {
   transferPicker?: ReactNode;
   onCancelTransfer?: (transferId: string) => void;
   transferBusy?: boolean;
+  /**
+   * 🔴 THE LISTING ITSELF, so the transfer verdict can be reached BEFORE the owner acts.
+   *
+   * `transferErrorMessage` above is a mutation RESULT — it can only ever arrive after the
+   * owner has picked a recipient and submitted. A connect-linked off-site listing is
+   * refused every single time, so that path made the refusal something the owner could
+   * only discover by doing the work. This prop is the same fact BEFORE the click, and the
+   * verdict is {@link refusesTransferForConnectClient} — the SAME function the service
+   * gates on, imported from `shared/` so the two cannot drift.
+   *
+   * Optional so the roster half of this View stays renderable without it; when it is
+   * absent nothing is refused, which is the pre-existing behaviour exactly.
+   */
+  listing?: TransferListingFacts | null;
+};
+
+/**
+ * The listing facts the transfer verdict is computed from. Structurally the argument of
+ * {@link refusesTransferForConnectClient} — deliberately, so widening the rule cannot
+ * leave this surface behind.
+ */
+export type TransferListingFacts = {
+  kind: string;
+  /** The linked OAuth `client_id`, or `null`. Public, not a secret. */
+  connectClientId: string | null;
 };
 
 /** The live outgoing offer, as `appCollaborators.getPendingTransfer` returns it. */
@@ -181,6 +211,7 @@ function OwnerTransferSection({
   onCancelTransfer,
   transferBusy,
   renderUser,
+  listing,
 }: {
   pendingTransfer: PendingTransferRow | null;
   transferErrorMessage: string | null;
@@ -188,7 +219,16 @@ function OwnerTransferSection({
   onCancelTransfer?: (transferId: string) => void;
   transferBusy: boolean;
   renderUser: (userId: number) => ReactNode;
+  listing: TransferListingFacts | null;
 }) {
+  /**
+   * 🔴 THE UP-FRONT VERDICT, and it is the ONLY call of the rule on this surface. The
+   * service asks the same function at initiate and again in-transaction at accept; asking
+   * it here too is what stops the tab from offering an action the server will refuse. It
+   * is NOT a replacement for either server gate — those are unchanged and authoritative,
+   * and this one runs on data the client can lie to itself about.
+   */
+  const refusedForConnectClient = listing ? refusesTransferForConnectClient(listing) : false;
   return (
     <Stack gap="sm" data-testid="apps-transfer-owner-section">
       <Title order={4}>Transfer ownership</Title>
@@ -207,6 +247,22 @@ function OwnerTransferSection({
           <Text size="sm">Nothing moves until the person you choose accepts.</Text>
         </Stack>
       </Alert>
+
+      {/* 🔴 THE REFUSAL, UP FRONT — before a recipient is chosen, not after.
+          Rendered from the LISTING, so it is on screen the moment the tab opens. The
+          message is the server's own constant, not a paraphrase: the owner reads the same
+          sentence here that the mutation would have returned, including its remedy. */}
+      {refusedForConnectClient ? (
+        <Alert
+          color="yellow"
+          variant="light"
+          icon={<IconAlertTriangle size={16} />}
+          title="Ownership cannot be transferred for this app"
+          data-testid="apps-transfer-blocked"
+        >
+          {CONNECT_CLIENT_TRANSFER_REFUSAL}
+        </Alert>
+      ) : null}
 
       {/* 🔴 THE REFUSAL, WITH ITS REASON. See `transferErrorMessage`. */}
       {transferErrorMessage ? (
@@ -249,7 +305,24 @@ function OwnerTransferSection({
            lose on P2002 — offering the control while an offer is open would render an
            action that cannot succeed. */
         <Stack gap="xs">
-          {transferPicker}
+          {/* 🔴 DISABLED, NOT HIDDEN. Removing the section entirely would leave the owner
+              asking why their app has no transfer control at all — a different confusion,
+              not a smaller one. The control stays where they expect it, visibly off, with
+              the reason directly above it and a remedy they can act on. The real picker is
+              not merely disabled but UNMOUNTED, so no path through it can fire the
+              mutation; this stand-in occupies its place and states the same purpose. */}
+          {refusedForConnectClient ? (
+            <TextInput
+              disabled
+              readOnly
+              value=""
+              aria-label="Search for the person who should own this app"
+              placeholder="Search for the person who should own this app"
+              data-testid="apps-transfer-picker-disabled"
+            />
+          ) : (
+            transferPicker
+          )}
           <Text size="xs" c="dimmed">
             One transfer offer at a time. It expires after{' '}
             {constants.appCollaborators.transferExpiryDays} days if it is not accepted.
@@ -278,6 +351,7 @@ export function AppCollaboratorsPanelView({
   transferPicker,
   onCancelTransfer,
   transferBusy = false,
+  listing = null,
 }: AppCollaboratorsPanelViewProps) {
   const isOwner = role === 'owner';
   const identity = renderUser ?? ((userId: number) => <Text fw={500}>User #{userId}</Text>);
@@ -446,6 +520,7 @@ export function AppCollaboratorsPanelView({
           onCancelTransfer={onCancelTransfer}
           transferBusy={transferBusy}
           renderUser={identity}
+          listing={listing}
         />
       ) : null}
 

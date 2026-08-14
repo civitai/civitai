@@ -26,3 +26,28 @@ export const CONNECT_CLIENT_TRANSFER_REFUSAL =
   'This listing is linked to an OAuth application. Ownership transfer would either hand ' +
   'over that application’s credentials or split ownership between the listing and the ' +
   'client, so it is not available for connect listings. Unlink the OAuth client first.';
+
+/**
+ * 🔴 THE ONE PREDICATE for "may this listing's ownership move?", written once so the
+ * initiate-time check, the in-tx accept-time re-assert, and the COLLABORATORS TAB cannot
+ * drift apart.
+ *
+ * On-site listings are unaffected: their connect column is always null (an on-site
+ * listing's OauthClient is reached through the AppBlock, and THAT one does move).
+ *
+ * 🔴 IT MOVED HERE FROM `app-ownership-transfer.service.ts`, FOR THE SAME REASON THE
+ * MESSAGE ABOVE DID, and the reason is a shipped defect rather than tidiness. The
+ * Collaborators tab needs this verdict BEFORE the owner picks a recipient — otherwise the
+ * transfer control renders enabled on a listing the server will always refuse, and the
+ * owner learns that only after choosing someone. The tab cannot import the service (its
+ * module graph reaches the database client), so the choice was "a second copy of the rule
+ * in the component" or "one copy both sides import". A second copy is how the UI and the
+ * server end up disagreeing about who may transfer. The service RE-EXPORTS this, so every
+ * existing server-side import keeps working and there is still only one definition.
+ */
+export function refusesTransferForConnectClient(listing: {
+  kind: string;
+  connectClientId: string | null;
+}): boolean {
+  return listing.kind === 'offsite' && listing.connectClientId != null;
+}
