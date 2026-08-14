@@ -155,7 +155,6 @@ async function migrateChallenge(
           maxItemsPerUser,
           endsAt,
           disableTagRequired: true,
-          disableFollowOnSubmission: true,
         },
       },
     });

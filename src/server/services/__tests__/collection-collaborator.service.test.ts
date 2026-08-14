@@ -67,6 +67,7 @@ const {
   inviteCollaborator,
   respondToInvite,
   removeCollaborator,
+  updateCollaboratorRole,
   getCollaborators,
   getMyInvites,
   COLLABORATOR_CAP,
@@ -562,7 +563,13 @@ describe('respondToInvite', () => {
     });
   });
 
-  it('unions the role bits onto existing follow permissions', async () => {
+  it('writes the role bits plus whatever the collection grants for free', async () => {
+    mockDbRead.collection.findUnique.mockResolvedValue({
+      userId: OWNER_ID,
+      read: 'Public',
+      write: 'Review',
+      mode: null,
+    });
     mockDbWrite.collectionInvite.findUnique.mockResolvedValue({
       id: 1,
       collectionId: COLLECTION_ID,
@@ -571,16 +578,10 @@ describe('respondToInvite', () => {
       status: 'Pending',
       createdAt: new Date(),
     });
-    mockDbWrite.collectionContributor.findUnique.mockResolvedValue({
-      permissions: ['VIEW', 'ADD_REVIEW'],
-    });
     mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
       fn({
         collectionInvite: { update: mockDbWrite.collectionInvite.update },
-        collectionContributor: {
-          findUnique: mockDbWrite.collectionContributor.findUnique,
-          upsert: mockDbWrite.collectionContributor.upsert,
-        },
+        collectionContributor: { upsert: mockDbWrite.collectionContributor.upsert },
       })
     );
 
@@ -588,8 +589,36 @@ describe('respondToInvite', () => {
 
     const upsertArgs = mockDbWrite.collectionContributor.upsert.mock.calls[0][0];
     expect(new Set(upsertArgs.update.permissions)).toEqual(
-      new Set(['VIEW', 'ADD_REVIEW', 'ADD', 'MANAGE'])
+      new Set(['VIEW', 'ADD', 'MANAGE', 'ADD_REVIEW'])
     );
+  });
+
+  // Rebuilt from the invite's role rather than unioned onto the stored row: unioning makes
+  // accepting a Contributor invite a no-op for anyone who already holds MANAGE, which is how a
+  // collaborator kept reading as a Manager after being re-invited as a Contributor.
+  it('does not carry a stored MANAGE bit into a Contributor seat', async () => {
+    mockDbWrite.collectionInvite.findUnique.mockResolvedValue({
+      id: 1,
+      collectionId: COLLECTION_ID,
+      userId: TARGET_ID,
+      role: 'Contributor',
+      status: 'Pending',
+      createdAt: new Date(),
+    });
+    mockDbWrite.collectionContributor.findUnique.mockResolvedValue({
+      permissions: ['VIEW', 'ADD', 'MANAGE'],
+    });
+    mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
+      fn({
+        collectionInvite: { update: mockDbWrite.collectionInvite.update },
+        collectionContributor: { upsert: mockDbWrite.collectionContributor.upsert },
+      })
+    );
+
+    await respondToInvite({ inviteId: 1, userId: TARGET_ID, accept: true });
+
+    const upsertArgs = mockDbWrite.collectionContributor.upsert.mock.calls[0][0];
+    expect(upsertArgs.update.permissions).not.toContain('MANAGE');
   });
 
   it('rejects an invite older than 7 days', async () => {
@@ -669,6 +698,147 @@ describe('respondToInvite', () => {
       respondToInvite({ inviteId: 1, userId: TARGET_ID, accept: true })
     ).rejects.toThrow();
     expect(mockDbWrite.collectionContributor.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateCollaboratorRole', () => {
+  const contributorUpdate = vi.fn();
+  const inviteUpdate = vi.fn();
+
+  const arrangeSeat = ({
+    permissions = ['VIEW', 'ADD'],
+    seat = { id: 7, status: 'Accepted' } as { id: number; status: string } | null,
+    read = 'Private',
+    write = 'Private',
+  } = {}) => {
+    mockDbRead.collection.findUnique.mockResolvedValue({
+      id: COLLECTION_ID,
+      userId: OWNER_ID,
+      read,
+      write,
+      mode: null,
+    });
+    mockDbWrite.collectionContributor.findUnique.mockResolvedValue(
+      permissions ? { permissions } : null
+    );
+    mockDbWrite.collectionInvite.findUnique.mockResolvedValue(seat);
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    arrangeCounts();
+    arrangeSeat();
+    mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
+      fn({
+        collectionContributor: { update: contributorUpdate },
+        collectionInvite: { update: inviteUpdate },
+      })
+    );
+  });
+
+  it('drops MANAGE when the owner demotes a Manager', async () => {
+    asOwner();
+    arrangeSeat({ permissions: ['VIEW', 'ADD', 'MANAGE'] });
+
+    await updateCollaboratorRole({
+      collectionId: COLLECTION_ID,
+      userId: OWNER_ID,
+      targetUserId: TARGET_ID,
+      role: 'Contributor',
+    });
+
+    expect(contributorUpdate.mock.calls[0][0].data.permissions).not.toContain('MANAGE');
+  });
+
+  // `countCollaborators` reads the invite row's role as well as the stored bits, so a seat left
+  // at its old role keeps occupying a Manager slot the roster no longer shows.
+  it('moves the seats invite row to the new role', async () => {
+    asOwner();
+    arrangeSeat({ permissions: ['VIEW', 'ADD', 'MANAGE'] });
+
+    await updateCollaboratorRole({
+      collectionId: COLLECTION_ID,
+      userId: OWNER_ID,
+      targetUserId: TARGET_ID,
+      role: 'Contributor',
+    });
+
+    expect(inviteUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 7 }, data: { role: 'Contributor' } })
+    );
+  });
+
+  it('refuses a Manager promoting someone to Manager', async () => {
+    asManager();
+
+    await expect(
+      updateCollaboratorRole({
+        collectionId: COLLECTION_ID,
+        userId: MANAGER_ID,
+        targetUserId: TARGET_ID,
+        role: 'Manager',
+      })
+    ).rejects.toThrow();
+    expect(contributorUpdate).not.toHaveBeenCalled();
+  });
+
+  it('refuses a Manager demoting another Manager', async () => {
+    asManager();
+    arrangeSeat({ permissions: ['VIEW', 'ADD', 'MANAGE'] });
+
+    await expect(
+      updateCollaboratorRole({
+        collectionId: COLLECTION_ID,
+        userId: MANAGER_ID,
+        targetUserId: TARGET_ID,
+        role: 'Contributor',
+      })
+    ).rejects.toThrow();
+    expect(contributorUpdate).not.toHaveBeenCalled();
+  });
+
+  it('refuses to promote past the manager cap', async () => {
+    asOwner();
+    arrangeCounts({ collaborators: MANAGER_CAP, managers: MANAGER_CAP });
+    arrangeSeat();
+
+    await expect(
+      updateCollaboratorRole({
+        collectionId: COLLECTION_ID,
+        userId: OWNER_ID,
+        targetUserId: TARGET_ID,
+        role: 'Manager',
+      })
+    ).rejects.toThrow(new RegExp(`at most ${MANAGER_CAP} managers`));
+  });
+
+  // A follower on a write:Public collection holds {VIEW, ADD} exactly like a Contributor, so
+  // promoting off the bits alone would hand a Manager seat to anyone who clicked follow.
+  it('refuses to promote a follower who holds no seat', async () => {
+    asOwner();
+    arrangeSeat({ permissions: ['VIEW', 'ADD'], seat: null, read: 'Public', write: 'Public' });
+
+    await expect(
+      updateCollaboratorRole({
+        collectionId: COLLECTION_ID,
+        userId: OWNER_ID,
+        targetUserId: TARGET_ID,
+        role: 'Manager',
+      })
+    ).rejects.toThrow(/not a collaborator/i);
+  });
+
+  it('refuses to change the owner', async () => {
+    asOwner();
+
+    await expect(
+      updateCollaboratorRole({
+        collectionId: COLLECTION_ID,
+        userId: OWNER_ID,
+        targetUserId: OWNER_ID,
+        role: 'Contributor',
+      })
+    ).rejects.toThrow();
   });
 });
 

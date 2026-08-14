@@ -356,12 +356,6 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                         description="Makes it so that the + button takes you directly to the create flow, bypassing existing images selection. Users can still circumbent this by following the collection & selecting an image."
                       />
                     )}
-                    {isImageCollection && (
-                      <InputCheckbox
-                        name="metadata.disableFollowOnSubmission"
-                        label="Submitting an entry will not follow the collection"
-                      />
-                    )}
                     <InputDatePicker
                       name="metadata.votingPeriodStart"
                       label="When voting for this contest will start"

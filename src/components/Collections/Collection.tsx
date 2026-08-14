@@ -578,6 +578,17 @@ export function Collection({
     !!permissions?.collaborationDisabled && !permissions?.write && !permissions?.writeReview;
   const showSubmissionsClosedNotice =
     !!permissions?.collaborationDisabled && (submissionsClosed || !!permissions?.isOwner);
+  // Open collections get the same entry point contests have always had. Without it the only way
+  // in was the save picker on someone else's model or image page, so a collection asking for
+  // submissions had no way to accept one from its own page.
+  const canSubmitEntry =
+    collection?.mode !== CollectionMode.Contest &&
+    !permissions?.isOwner &&
+    !submissionsClosed &&
+    (permissions?.write || permissions?.writeReview) &&
+    (collectionType === CollectionType.Image || collectionType === CollectionType.Post) &&
+    (!metadata.submissionStartDate || new Date(metadata.submissionStartDate) < new Date()) &&
+    (!metadata.submissionEndDate || new Date(metadata.submissionEndDate) > new Date());
 
   const submissionPeriod =
     metadata.submissionStartDate ||
@@ -793,11 +804,32 @@ export function Collection({
                           </HoverCard>
                         ) : (
                           <>
+                            {canSubmitEntry && (
+                              <Button
+                                color="blue"
+                                radius="xl"
+                                onClick={() => {
+                                  if (
+                                    !!metadata.existingEntriesDisabled ||
+                                    collection.type === CollectionType.Post
+                                  ) {
+                                    router.push(`/posts/create?collectionId=${collection.id}`);
+                                  } else {
+                                    dialogStore.trigger({
+                                      component: AddUserContentModal,
+                                      props: { collectionId: collection.id },
+                                    });
+                                  }
+                                }}
+                              >
+                                Submit an entry
+                              </Button>
+                            )}
                             <CollectionFollowAction
                               collectionId={collection.id}
                               permissions={permissions}
                             />
-                            {!submissionsClosed && canAddContent && (
+                            {!canSubmitEntry && !submissionsClosed && canAddContent && (
                               <Tooltip label="Add from your library." position="bottom" withArrow>
                                 <LegacyActionIcon
                                   color="blue"

@@ -113,6 +113,15 @@ function CollectionCollaboratorsPanel({
       showErrorNotification({ title: 'Could not resend invite', error: new Error(error.message) }),
   });
 
+  const updateRoleMutation = trpc.collection.updateCollaboratorRole.useMutation({
+    onSuccess: async () => {
+      showSuccessNotification({ message: 'Role updated' });
+      await invalidateRoster();
+    },
+    onError: (error) =>
+      showErrorNotification({ title: 'Could not change the role', error: new Error(error.message) }),
+  });
+
   const removeMutation = trpc.collection.removeCollaborator.useMutation({
     onSuccess: () => invalidateRoster(),
     onError: (error) =>
@@ -140,6 +149,10 @@ function CollectionCollaboratorsPanel({
     seats.add(seat.userId);
     if (seat.role === CollectionCollaboratorRole.Manager) managerSeats.add(seat.userId);
   }
+  // Captured before the invite form's exclusion below: a role change is about the seats that
+  // exist, not about the seat the invite form is aiming at.
+  const managerSeatCount = managerSeats.size;
+
   if (selectedUser) {
     seats.delete(selectedUser.id);
     managerSeats.delete(selectedUser.id);
@@ -237,7 +250,8 @@ function CollectionCollaboratorsPanel({
             </Tooltip>
           </Group>
           <Text size="xs" c="dimmed">
-            Managers can invite Contributors. Only the owner can grant Manager or remove one.
+            Managers can invite Contributors. Only the owner can grant the Manager role, change it,
+            or remove a Manager.
           </Text>
         </Stack>
       )}
@@ -267,8 +281,31 @@ function CollectionCollaboratorsPanel({
             <CollaboratorRow
               key={collaborator.userId}
               userId={collaborator.userId}
-              subText={roleLabels[collaborator.role]}
+              subText={canGrantManager ? undefined : roleLabels[collaborator.role]}
               role={roleLabels[collaborator.role]}
+              roleValue={collaborator.role}
+              // Only the owner may touch a Manager seat in either direction, so for anyone else
+              // every available change is one the server refuses — the dropdown would be a list
+              // of errors. They keep the badge.
+              onRoleChange={
+                canGrantManager
+                  ? (nextRole) =>
+                      updateRoleMutation.mutate({
+                        collectionId,
+                        targetUserId: collaborator.userId,
+                        role: nextRole,
+                      })
+                  : undefined
+              }
+              roleChanging={
+                updateRoleMutation.isPending &&
+                updateRoleMutation.variables?.targetUserId === collaborator.userId
+              }
+              // A promotion needs a free Manager seat; the target's own seat is theirs already.
+              managerSeatAvailable={
+                collaborator.role === CollectionCollaboratorRole.Manager ||
+                managerSeatCount < MANAGER_CAP
+              }
               removable={canRemove(collaborator.userId, collaborator.role)}
               removing={
                 removeMutation.isPending &&
@@ -432,6 +469,10 @@ function CollaboratorRow({
   removable,
   removing,
   onRemove,
+  roleValue,
+  onRoleChange,
+  roleChanging,
+  managerSeatAvailable,
 }: {
   user?: Partial<UserWithCosmetics> | null;
   userId: number;
@@ -440,6 +481,11 @@ function CollaboratorRow({
   removable?: boolean;
   removing?: boolean;
   onRemove?: () => void;
+  roleValue?: CollectionCollaboratorRole;
+  /** Absent for the owner's row and for anyone who may not change this seat. */
+  onRoleChange?: (role: CollectionCollaboratorRole) => void;
+  roleChanging?: boolean;
+  managerSeatAvailable?: boolean;
 }) {
   return (
     <Group justify="space-between" wrap="nowrap" px={4} py={6}>
@@ -458,9 +504,29 @@ function CollaboratorRow({
         subTextForce
       />
       <Group gap={6} wrap="nowrap">
-        <Badge size="sm" variant="light">
-          {role}
-        </Badge>
+        {onRoleChange && roleValue ? (
+          <Select
+            aria-label={`Role for user ${userId}`}
+            size="xs"
+            w={140}
+            allowDeselect={false}
+            disabled={roleChanging}
+            value={roleValue}
+            onChange={(value) => value && onRoleChange(value as CollectionCollaboratorRole)}
+            data={[
+              { value: CollectionCollaboratorRole.Contributor, label: 'Contributor' },
+              {
+                value: CollectionCollaboratorRole.Manager,
+                label: 'Manager',
+                disabled: !managerSeatAvailable,
+              },
+            ]}
+          />
+        ) : (
+          <Badge size="sm" variant="light">
+            {role}
+          </Badge>
+        )}
         {removable && onRemove && (
           <LegacyActionIcon size="sm" color="red" loading={removing} onClick={onRemove}>
             <IconTrash size={14} />

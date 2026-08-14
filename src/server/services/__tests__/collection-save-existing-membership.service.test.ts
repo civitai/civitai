@@ -153,8 +153,9 @@ const removeFrom = ({
   } as never);
 };
 
-// Submitting to someone else's collection follows it. That follow is a side effect of the entry landing,
-// so a save that writes nothing must not leave the user following anything.
+// Submitting to someone else's collection is not joining it: following is its own action, taken
+// deliberately. Auto-following every submitter filled their collection list with collections they
+// had only posted to once.
 const OTHER_COLLECTION_ID = 55501;
 const saveToOthersCollection = ({ write }: { write: 'Public' | 'Private' }) => {
   mockDbRead.collection.findMany.mockResolvedValue([
@@ -191,22 +192,78 @@ describe('saveItemInCollections follow-on-submission', () => {
     vi.clearAllMocks();
   });
 
-  it('follows the collection once the entry is written', async () => {
+  it('does not follow the collection it wrote the entry to', async () => {
     await expect(saveToOthersCollection({ write: 'Public' })).resolves.toBeDefined();
-    expect(mockDbWrite.collectionContributor.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { userId_collectionId: { userId: USER_ID, collectionId: OTHER_COLLECTION_ID } },
-      })
-    );
+    expect(mockDbWrite.collectionContributor.upsert).not.toHaveBeenCalled();
   });
 
   it('does not follow a collection the save could not write to', async () => {
-    // read:Public grants `follow`, so the follow itself is permitted — but nothing was submitted, and
-    // following a collection the user never managed to post to is not what they asked for.
     await expect(saveToOthersCollection({ write: 'Private' })).rejects.toThrow(
       /no changes were made/i
     );
     expect(mockDbWrite.collectionContributor.upsert).not.toHaveBeenCalled();
+  });
+});
+
+// `writeReview` is granted to everyone on a write:Review collection, its owner and managers
+// included, so reading it alone filed the people who work the queue into their own queue.
+const REVIEW_COLLECTION_ID = 55502;
+const saveToReviewCollection = ({ collectionOwnerId }: { collectionOwnerId: number }) => {
+  mockDbRead.collection.findMany.mockResolvedValue([
+    collectionRow({ id: REVIEW_COLLECTION_ID, userId: collectionOwnerId, write: 'Review' }),
+  ]);
+  mockDbRead.collectionItem.findMany.mockResolvedValue([]);
+  mockDbRead.collectionItem.count.mockResolvedValue(0);
+  mockDbRead.model.findMany.mockResolvedValue([{ id: MODEL_ID, userId: USER_ID }]);
+  mockDbRead.modelVersion.findMany.mockResolvedValue([]);
+  mockDbRead.user.findUnique.mockResolvedValue({ id: USER_ID, meta: {} });
+  mockDbRead.$queryRaw.mockResolvedValue([
+    {
+      id: REVIEW_COLLECTION_ID,
+      userId: collectionOwnerId,
+      write: 'Review',
+      read: 'Public',
+      type: 'Model',
+      mode: null,
+      contributorPermissions: null,
+    },
+  ]);
+  mockDbWrite.$executeRaw.mockReturnValue('insert' as never);
+  mockDbWrite.$transaction.mockResolvedValue([]);
+
+  return saveItemInCollections({
+    input: {
+      modelId: MODEL_ID,
+      type: 'Model',
+      userId: USER_ID,
+      collections: [{ collectionId: REVIEW_COLLECTION_ID }],
+      removeFromCollectionIds: [],
+    },
+  } as never);
+};
+
+// The rows are handed to the INSERT as a jsonb payload rather than as prisma arguments, so the
+// status has to be read back out of it.
+const insertedStatuses = (): string[] =>
+  mockDbWrite.$executeRaw.mock.calls
+    .flatMap((call) => call.slice(1))
+    .filter((value): value is string => typeof value === 'string' && value.startsWith('['))
+    .flatMap((value) => JSON.parse(value) as { status: string }[])
+    .map((row) => row.status);
+
+describe('saveItemInCollections review queue', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('queues a stranger submitting to a review collection', async () => {
+    await saveToReviewCollection({ collectionOwnerId: 999 });
+    expect(insertedStatuses()).toEqual(['REVIEW']);
+  });
+
+  it('accepts the collection owner submitting to their own review collection', async () => {
+    await saveToReviewCollection({ collectionOwnerId: USER_ID });
+    expect(insertedStatuses()).toEqual(['ACCEPTED']);
   });
 });
 

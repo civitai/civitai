@@ -9,10 +9,12 @@ import {
   Select,
   Stack,
   Text,
+  TextInput,
   ThemeIcon,
   Modal,
   Tooltip,
 } from '@mantine/core';
+import { useDebouncedValue } from '@mantine/hooks';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import {
   CollectionContributorPermission,
@@ -21,7 +23,7 @@ import {
   CollectionType,
   CollectionWriteConfiguration,
 } from '~/shared/utils/prisma/enums';
-import { IconArrowLeft, IconCalendar, IconPlus } from '@tabler/icons-react';
+import { IconArrowLeft, IconCalendar, IconPlus, IconSearch } from '@tabler/icons-react';
 import { createElement, forwardRef, useEffect, useState } from 'react';
 import type * as z from 'zod';
 import {
@@ -106,9 +108,14 @@ type SelectedCollection = {
 // option that silently vanishes from the picker reads as deleted, not paused.
 const COLLABORATION_CLOSED_TOOLTIP = "This collection isn't accepting new entries right now.";
 
+// Matches the server's `openQuery` minimum. Below it the search only filters what the user
+// already holds; an empty term must never ask for "every open collection".
+const MIN_SEARCH_LENGTH = 2;
+
 // Reusable collection checkbox item component
 function CollectionCheckboxItem({
   collection,
+  meta,
   selectedItem,
   disabled,
   disabledReason,
@@ -121,6 +128,8 @@ function CollectionCheckboxItem({
     read: CollectionReadConfiguration;
     tags?: Array<{ id: number; name: string; filterableOnly?: boolean }>;
   };
+  /** Role and owner, for collections that aren't the user's own. */
+  meta?: string;
   selectedItem?: SelectedCollection;
   // disabled also covers "not yet known" (still loading) so nothing is briefly clickable;
   // disabledReason is true only once we know it's actually closed, for the tooltip.
@@ -146,9 +155,16 @@ function CollectionCheckboxItem({
           }}
           label={
             <Group gap="sm" justify="space-between" w="100%" wrap="nowrap">
-              <Text lineClamp={1} inherit className={classes.collectionName}>
-                {collection.name}
-              </Text>
+              <Stack gap={0} className="min-w-0">
+                <Text lineClamp={1} inherit className={classes.collectionName}>
+                  {collection.name}
+                </Text>
+                {meta && (
+                  <Text size="xs" c="dimmed" lineClamp={1}>
+                    {meta}
+                  </Text>
+                )}
+              </Stack>
               <ThemeIcon size={20} variant="light" color="gray" className={classes.privacyIcon}>
                 <Icon size={14} />
               </ThemeIcon>
@@ -186,6 +202,9 @@ function CollectionListForm({
   const { note, ...target } = props;
   const queryUtils = trpc.useUtils();
   const [selectedCollections, setSelectedCollections] = useState<SelectedCollection[]>([]);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch] = useDebouncedValue(search.trim(), 300);
+  const openQuery = debouncedSearch.length >= MIN_SEARCH_LENGTH ? debouncedSearch : undefined;
 
   // Model saves also surface active contest collections the user hasn't joined, so they can
   // submit an entry for review without following the collection first.
@@ -206,6 +225,7 @@ function CollectionListForm({
       // Active contests only surface for models the user owns, so the server can gate the branch
       // on ownership. Only meaningful when includeActiveContests is true (Model saves).
       contestModelId: props.modelId,
+      openQuery,
     });
 
   const { data: collectionItems = [], isLoading: loadingStatus } =
@@ -216,21 +236,44 @@ function CollectionListForm({
   // Ensures we don't present the user with a list of collections
   // before both things have loaded.
   const isLoading = loadingStatus || loadingCollections;
-  const ownedCollections = collections.filter((collection) => collection.isOwner);
+  const features = useFeatureFlags();
+  const { map: permissionsByCollectionId, isLoading: loadingPermissions } =
+    useCollectionsPermissionsMap(collections.map((c) => c.id));
+
+  // The search box filters what the user already holds and, past MIN_SEARCH_LENGTH, asks the
+  // server for open collections they hold nothing on. Both halves read from the same term so a
+  // name that matches one of their own collections doesn't also come back as a stranger's.
+  const matchesSearch = (collection: { name: string }) =>
+    !debouncedSearch || collection.name.toLowerCase().includes(debouncedSearch.toLowerCase());
+
+  const ownedCollections = collections.filter(
+    (collection) => collection.isOwner && matchesSearch(collection)
+  );
   // Active contests are only requested (and thus split out) for model saves; for every other type
   // the flag is off and this group is empty, so contributing behaves exactly as before.
   const activeContestCollections = includeActiveContests
     ? collections.filter(
-        (collection) => !collection.isOwner && collection.mode === CollectionMode.Contest
+        (collection) =>
+          !collection.isOwner &&
+          collection.mode === CollectionMode.Contest &&
+          matchesSearch(collection)
       )
     : [];
-  const contributingCollections = collections.filter(
+  const otherCollections = collections.filter(
     (collection) =>
-      !collection.isOwner && !(includeActiveContests && collection.mode === CollectionMode.Contest)
+      !collection.isOwner &&
+      !(includeActiveContests && collection.mode === CollectionMode.Contest) &&
+      matchesSearch(collection)
   );
-  const features = useFeatureFlags();
-  const { map: permissionsByCollectionId, isLoading: loadingPermissions } =
-    useCollectionsPermissionsMap(collections.map((c) => c.id));
+  // A row on the collection is what separates "shared with you" from a stranger's open collection
+  // — the search branch returns both. While permissions are still loading everything lands in the
+  // open group, which is also the group whose checkboxes are disabled until they arrive.
+  const contributingCollections = otherCollections.filter(
+    (collection) => permissionsByCollectionId.get(collection.id)?.isContributor
+  );
+  const openCollections = otherCollections.filter(
+    (collection) => !permissionsByCollectionId.get(collection.id)?.isContributor
+  );
   // While permission data for a collection is unknown, treat it as closed rather than open —
   // it must never be briefly selectable before flipping to disabled once data arrives. A lapse
   // keeps write for the owner and for elevated collaborators, so it only closes the picker for
@@ -327,6 +370,49 @@ function CollectionListForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collectionItems, props.articleId, props.imageId, props.modelId, props.postId]);
 
+  const metaFor = (collection: (typeof collections)[number]) => {
+    if (collection.isOwner) return undefined;
+    const permissions = permissionsByCollectionId.get(collection.id);
+    const role = permissions?.isCollaborator
+      ? permissions.manage
+        ? 'Manager'
+        : 'Contributor'
+      : null;
+    return [role, collection.ownerUsername ? `by ${collection.ownerUsername}` : null]
+      .filter(isDefined)
+      .join(' · ');
+  };
+
+  const renderItem = (collection: (typeof collections)[number]) => (
+    <CollectionCheckboxItem
+      key={collection.id}
+      collection={collection}
+      meta={metaFor(collection)}
+      selectedItem={selectedCollections.find((c) => c.collectionId === collection.id)}
+      {...getCollaborationState(collection.id)}
+      onToggle={(isSelected) => {
+        if (isSelected) {
+          setSelectedCollections((curr) => curr.filter((c) => c.collectionId !== collection.id));
+        } else {
+          setSelectedCollections((curr) => [
+            ...curr,
+            {
+              collectionId: collection.id,
+              tagId: collection.tags?.length > 0 ? collection.tags[0].id : null,
+              userId: collection.userId,
+              read: collection.read,
+            },
+          ]);
+        }
+      }}
+      onTagChange={(tagId) => {
+        setSelectedCollections((curr) =>
+          curr.map((c) => (c.collectionId === collection.id ? { ...c, tagId } : c))
+        );
+      }}
+    />
+  );
+
   return (
     <Stack>
       <ReadOnlyAlert />
@@ -345,6 +431,13 @@ function CollectionListForm({
               New collection
             </Button>
           </Group>
+          <TextInput
+            placeholder="Search your collections, or find one open to submissions"
+            leftSection={<IconSearch size={16} />}
+            value={search}
+            onChange={(event) => setSearch(event.currentTarget.value)}
+            size="xs"
+          />
           {isLoading ? (
             <Center py="xl">
               <Loader type="bars" />
@@ -353,50 +446,16 @@ function CollectionListForm({
             <>
               <ScrollArea.Autosize mah={200}>
                 {ownedCollections.length > 0 ? (
-                  <Stack gap={4}>
-                    {ownedCollections.map((collection) => {
-                      const selectedItem = selectedCollections.find(
-                        (c) => c.collectionId === collection.id
-                      );
-
-                      return (
-                        <CollectionCheckboxItem
-                          key={collection.id}
-                          collection={collection}
-                          selectedItem={selectedItem}
-                          {...getCollaborationState(collection.id)}
-                          onToggle={(isSelected) => {
-                            if (isSelected) {
-                              setSelectedCollections((curr) =>
-                                curr.filter((c) => c.collectionId !== collection.id)
-                              );
-                            } else {
-                              setSelectedCollections((curr) => [
-                                ...curr,
-                                {
-                                  collectionId: collection.id,
-                                  userId: collection.userId,
-                                  read: collection.read,
-                                },
-                              ]);
-                            }
-                          }}
-                          onTagChange={(tagId) => {
-                            setSelectedCollections((curr) =>
-                              curr.map((c) =>
-                                c.collectionId === collection.id ? { ...c, tagId } : c
-                              )
-                            );
-                          }}
-                        />
-                      );
-                    })}
-                  </Stack>
+                  <Stack gap={4}>{ownedCollections.map(renderItem)}</Stack>
                 ) : (
                   <Center py="xl">
-                    <Text c="dimmed">{`You don't have any ${
-                      props.type?.toLowerCase() || ''
-                    } collections yet.`}</Text>
+                    <Text c="dimmed">
+                      {debouncedSearch
+                        ? 'None of your collections match that search.'
+                        : `You don't have any ${
+                            props.type?.toLowerCase() || ''
+                          } collections yet.`}
+                    </Text>
                   </Center>
                 )}
               </ScrollArea.Autosize>
@@ -404,50 +463,10 @@ function CollectionListForm({
                 <>
                   <Divider my="md" />
                   <Text size="sm" fw="bold">
-                    Collections you contribute to
+                    Shared with you
                   </Text>
                   <ScrollArea.Autosize mah={300}>
-                    <Stack gap={4}>
-                      {contributingCollections.map((collection) => {
-                        const selectedItem = selectedCollections.find(
-                          (c) => c.collectionId === collection.id
-                        );
-
-                        return (
-                          <CollectionCheckboxItem
-                            key={collection.id}
-                            collection={collection}
-                            selectedItem={selectedItem}
-                            {...getCollaborationState(collection.id)}
-                            onToggle={(isSelected) => {
-                              if (isSelected) {
-                                setSelectedCollections((curr) =>
-                                  curr.filter((c) => c.collectionId !== collection.id)
-                                );
-                              } else {
-                                setSelectedCollections((curr) => [
-                                  ...curr,
-                                  {
-                                    collectionId: collection.id,
-                                    tagId:
-                                      collection.tags?.length > 0 ? collection.tags[0].id : null,
-                                    userId: collection.userId,
-                                    read: collection.read,
-                                  },
-                                ]);
-                              }
-                            }}
-                            onTagChange={(tagId) => {
-                              setSelectedCollections((curr) =>
-                                curr.map((c) =>
-                                  c.collectionId === collection.id ? { ...c, tagId } : c
-                                )
-                              );
-                            }}
-                          />
-                        );
-                      })}
-                    </Stack>
+                    <Stack gap={4}>{contributingCollections.map(renderItem)}</Stack>
                   </ScrollArea.Autosize>
                 </>
               )}
@@ -461,47 +480,22 @@ function CollectionListForm({
                     Submit this model as an entry. It will be sent to the contest for review.
                   </Text>
                   <ScrollArea.Autosize mah={300}>
-                    <Stack gap={4}>
-                      {activeContestCollections.map((collection) => {
-                        const selectedItem = selectedCollections.find(
-                          (c) => c.collectionId === collection.id
-                        );
-
-                        return (
-                          <CollectionCheckboxItem
-                            key={collection.id}
-                            collection={collection}
-                            selectedItem={selectedItem}
-                            {...getCollaborationState(collection.id)}
-                            onToggle={(isSelected) => {
-                              if (isSelected) {
-                                setSelectedCollections((curr) =>
-                                  curr.filter((c) => c.collectionId !== collection.id)
-                                );
-                              } else {
-                                setSelectedCollections((curr) => [
-                                  ...curr,
-                                  {
-                                    collectionId: collection.id,
-                                    tagId:
-                                      collection.tags?.length > 0 ? collection.tags[0].id : null,
-                                    userId: collection.userId,
-                                    read: collection.read,
-                                  },
-                                ]);
-                              }
-                            }}
-                            onTagChange={(tagId) => {
-                              setSelectedCollections((curr) =>
-                                curr.map((c) =>
-                                  c.collectionId === collection.id ? { ...c, tagId } : c
-                                )
-                              );
-                            }}
-                          />
-                        );
-                      })}
-                    </Stack>
+                    <Stack gap={4}>{activeContestCollections.map(renderItem)}</Stack>
+                  </ScrollArea.Autosize>
+                </>
+              )}
+              {openQuery && openCollections.length > 0 && (
+                <>
+                  <Divider my="md" />
+                  <Text size="sm" fw="bold">
+                    Open to submissions
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    Anyone can submit to these. Entries may need the owner&apos;s approval before
+                    they appear.
+                  </Text>
+                  <ScrollArea.Autosize mah={300}>
+                    <Stack gap={4}>{openCollections.map(renderItem)}</Stack>
                   </ScrollArea.Autosize>
                 </>
               )}

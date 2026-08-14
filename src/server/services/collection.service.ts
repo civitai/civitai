@@ -403,6 +403,17 @@ function freeGrantPermissions(collection: {
   return permissions;
 }
 
+// Where a new entry lands. `writeReview` is granted to EVERYONE on a write:Review collection —
+// the owner and its managers included — so reading it alone put the people who work the queue
+// into their own queue: production carries 108 items a collection's own owner submitted and never
+// approved, the oldest from 2025-01-03.
+export function submissionStatus(
+  permission: Pick<CollectionContributorPermissionFlags, 'writeReview' | 'manage' | 'isOwner'>
+): CollectionItemStatus {
+  const needsReview = permission.writeReview && !permission.manage && !permission.isOwner;
+  return needsReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED;
+}
+
 function createEmptyPermissions(collectionId: number): CollectionContributorPermissionFlags {
   return {
     collectionId,
@@ -447,6 +458,7 @@ export const getUserCollectionsWithPermissions = async <
     contributingOnly = true,
     includeActiveContests = false,
     contestModelId,
+    openQuery,
   } = input;
   let { permissions = [] } = input;
   // By default, owned collections will be always returned
@@ -556,6 +568,28 @@ export const getUserCollectionsWithPermissions = async <
     )`);
   }
 
+  // Collections that are open to anyone and that the user holds no row on — reachable only by
+  // name, and capped, because "every open collection" is an unbounded list nobody can read.
+  // Contest mode is excluded here as well: it has its own ownership- and window-gated branch
+  // above, and letting contests in through a name search would bypass both of those checks.
+  if (openQuery) {
+    queries.push(Prisma.sql`(
+        ${SELECT}
+        FROM "Collection" c
+        WHERE c."read" = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration"
+          AND c."write" IN (
+            ${CollectionWriteConfiguration.Public}::"CollectionWriteConfiguration",
+            ${CollectionWriteConfiguration.Review}::"CollectionWriteConfiguration"
+          )
+          AND c."mode" IS NULL
+          AND c."collaborationDisabledAt" IS NULL
+          AND c."name" ILIKE ${`%${openQuery}%`}
+          ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+        ORDER BY c."name"
+        LIMIT 20
+    )`);
+  }
+
   // Moved to using raw queries because of huge performance issues with Prisma.
   // Now we're doing Unions which makes it faster
   const db = await getDbWithoutLag('userCollections', userId);
@@ -587,11 +621,24 @@ export const getUserCollectionsWithPermissions = async <
     },
   });
 
+  // Someone else's collection needs to say whose it is — two people can name a collection the
+  // same thing, and the picker offers collections the user neither owns nor follows.
+  const ownerIds = Array.from(
+    new Set(collections.map((c) => c.userId).filter((id) => id !== userId))
+  );
+  const owners = ownerIds.length
+    ? await dbRead.user.findMany({
+        where: { id: { in: ownerIds } },
+        select: { id: true, username: true },
+      })
+    : [];
+
   // Return user collections first && add isOwner  property
   return collections
     .map((collection) => ({
       ...collection,
       isOwner: collection.userId === userId,
+      ownerUsername: owners.find((o) => o.id === collection.userId)?.username ?? null,
       image: images.find((i) => i.id === collection.imageId),
       tags: collectionTags
         .filter((t) => t.collectionId === collection.id)
@@ -828,12 +875,6 @@ export const saveItemInCollections = async ({
   });
   const permissionsMap = new Map(permissionsArray.map((p) => [p.collectionId, p]));
 
-  // Submitting to a collection you don't already follow follows it — but that's a side effect of the
-  // entry landing, so it's collected here and applied after the write. Doing it inline left a user
-  // following collections they never joined whenever the save went on to write nothing (no write
-  // permission on any of them, or the empty-transaction guard below).
-  const followCollectionIds: number[] = [];
-
   const data = (
     await Promise.all(
       upsertCollectionItems.map(async (upsertCollection) => {
@@ -866,22 +907,9 @@ export const saveItemInCollections = async ({
           throw throwBadRequestError('Provided tag is not part of this collection');
         }
 
-        const metadata = (collection?.metadata ?? {}) as CollectionMetadataSchema;
         // Use batched permissions instead of individual query
         const permission = permissionsMap.get(collectionId);
         if (!permission) {
-          return null;
-        }
-
-        // Non-owners who don't contribute may still submit to Public-write (write) or Review-write
-        // (writeReview) collections — the follow below is skipped when disableFollowOnSubmission is
-        // set, so gate on the standing write grant rather than contributor status.
-        if (
-          !permission.isContributor &&
-          !permission.isOwner &&
-          !permission.writeReview &&
-          !permission.write
-        ) {
           return null;
         }
 
@@ -889,26 +917,10 @@ export const saveItemInCollections = async ({
           return null;
         }
 
-        // Queued rather than written: applied once the entry is actually in. `follow`/`manage` is what
-        // addContributorToCollection would throw on, and a missing grant must not fail a save that has
-        // already succeeded — so an ineligible collection is simply not followed.
-        if (
-          !permission.isContributor &&
-          !permission.isOwner &&
-          !metadata?.disableFollowOnSubmission &&
-          (permission.follow || permission.manage)
-        ) {
-          followCollectionIds.push(collectionId);
-        }
-
         return {
           addedById: userId,
           collectionId,
-          status: permission.writeReview
-            ? CollectionItemStatus.REVIEW
-            : CollectionItemStatus.ACCEPTED,
-          reviewedById: permission.write ? userId : null,
-          reviewedAt: permission.write ? new Date() : null,
+          status: submissionStatus(permission),
           [itemKey]: input[itemKey],
           tagId,
         };
@@ -1009,19 +1021,6 @@ export const saveItemInCollections = async ({
   }
 
   await dbWrite.$transaction(transactions);
-
-  if (followCollectionIds.length > 0) {
-    await Promise.all(
-      followCollectionIds.map((collectionId) =>
-        addContributorToCollection({
-          targetUserId: userId,
-          userId,
-          collectionId,
-          permissionFlags: permissionsMap.get(collectionId),
-        })
-      )
-    );
-  }
 
   if (itemKey === 'imageId' && input.imageId) {
     const imageId = input.imageId;
@@ -1946,6 +1945,40 @@ export const getCollectionItemsByCollectionId = async ({
   return { items: collectionItemsExpanded, nextCursor };
 };
 
+// Who authored the entity itself. `removeCollectionItem` lets an author pull their own work out of
+// any collection, so the flag below has to account for them or the action is authorized on the
+// server and missing from the UI.
+async function getEntityOwnerId({
+  modelId,
+  imageId,
+  articleId,
+  postId,
+}: {
+  modelId?: number;
+  imageId?: number;
+  articleId?: number;
+  postId?: number;
+}): Promise<number | null> {
+  const select = { userId: true };
+  if (modelId) {
+    const model = await dbRead.model.findUnique({ where: { id: modelId }, select });
+    return model?.userId ?? null;
+  }
+  if (imageId) {
+    const image = await dbRead.image.findUnique({ where: { id: imageId }, select });
+    return image?.userId ?? null;
+  }
+  if (postId) {
+    const post = await dbRead.post.findUnique({ where: { id: postId }, select });
+    return post?.userId ?? null;
+  }
+  if (articleId) {
+    const article = await dbRead.article.findUnique({ where: { id: articleId }, select });
+    return article?.userId ?? null;
+  }
+  return null;
+}
+
 export const getUserCollectionItemsByItem = async ({
   input,
 }: {
@@ -1965,6 +1998,9 @@ export const getUserCollectionItemsByItem = async ({
   });
 
   if (userCollections.length === 0) return [];
+
+  const entityOwnerId = await getEntityOwnerId({ modelId, imageId, articleId, postId });
+  const ownsEntity = entityOwnerId !== null && entityOwnerId === userId;
 
   const collectionItems = await dbRead.collectionItem.findMany({
     select: {
@@ -1996,7 +2032,8 @@ export const getUserCollectionItemsByItem = async ({
 
       return {
         ...collectionItem,
-        canRemoveItem: collectionItem.addedById === userId || permission.manage,
+        canRemoveItem:
+          collectionItem.addedById === userId || ownsEntity || permission.manage || !!isModerator,
       };
     })
   );
@@ -2951,19 +2988,6 @@ export const bulkSaveItems = async ({
     throw throwBadRequestError('The tag provided is not allowed in this collection');
   }
 
-  if (
-    !permissions.isContributor &&
-    !permissions.isOwner &&
-    !(collection.metadata as CollectionMetadataSchema)?.disableFollowOnSubmission
-  ) {
-    // Make sure to follow the collection
-    await addContributorToCollection({
-      targetUserId: userId,
-      userId: userId,
-      collectionId,
-    });
-  }
-
   const metadata = (collection.metadata ?? {}) as CollectionMetadataSchema;
 
   if (collection.mode === CollectionMode.Contest) {
@@ -2992,12 +3016,13 @@ export const bulkSaveItems = async ({
     });
   }
 
+  const status = submissionStatus(permissions);
   const baseData = {
     collectionId,
     addedById: userId,
-    status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
-    reviewedAt: permissions.write ? new Date() : null,
-    reviewedById: permissions.write ? userId : null,
+    status,
+    reviewedAt: status === CollectionItemStatus.ACCEPTED ? new Date() : null,
+    reviewedById: status === CollectionItemStatus.ACCEPTED ? userId : null,
     tagId,
   };
   let data: Prisma.CollectionItemCreateManyInput[] = [];
@@ -3376,15 +3401,6 @@ export const removeCollectionItem = async ({
 
   isOwner = item.userId === userId;
 
-  // Deliberately does NOT accept `permissions.write` / `permissions.writeReview`: both are granted
-  // to every authenticated user on a Public/Review-write collection regardless of ownership, so
-  // honoring them here let anyone delete anyone else's item. A write grant authorizes adding.
-  if (!isOwner && !permissions.manage && !isModerator) {
-    throw throwAuthorizationError(
-      'You do not have permission to remove items from this collection.'
-    );
-  }
-
   const idColumn = Prisma.raw(`"${tableKey.toLowerCase()}Id"`);
 
   // Decided here rather than as a SQL predicate: both columns are nullable, and
@@ -3399,6 +3415,21 @@ export const removeCollectionItem = async ({
     FROM "CollectionItem"
     WHERE "collectionId" = ${collectionId} AND ${idColumn} = ${itemId}
   `;
+
+  // Every row, not some: removal below takes them all, so a submitter must not be able to drop
+  // someone else's duplicate row alongside their own.
+  const addedByCaller = existing.length > 0 && existing.every((row) => row.addedById === userId);
+
+  // Deliberately does NOT accept `permissions.write` / `permissions.writeReview`: both are granted
+  // to every authenticated user on a Public/Review-write collection regardless of ownership, so
+  // honoring them here let anyone delete anyone else's item. A write grant authorizes adding.
+  // `addedByCaller` is what the save modal's own Remove action offers ("you added this"), and
+  // leaving it out here meant that button rendered for a Contributor and then 401'd.
+  if (!isOwner && !addedByCaller && !permissions.manage && !isModerator) {
+    throw throwAuthorizationError(
+      'You do not have permission to remove items from this collection.'
+    );
+  }
 
   if (existing.length) {
     // An automatically featured item is rejected rather than deleted. Deleting it would let the

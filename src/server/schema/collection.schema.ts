@@ -103,6 +103,11 @@ export const getAllUserCollectionsInputSchema = z
     // The model the picker is targeting. Active contests only surface when the user owns it —
     // you can only submit your own models — so this gates the includeActiveContests branch.
     contestModelId: z.number(),
+    // Name search across collections that are open to submissions and that the user holds no row
+    // on. Submitting no longer follows the collection, so without a search there is no way back to
+    // one you have contributed to. A minimum length rather than an optional default: an empty
+    // search must return nothing, not every open collection on the site.
+    openQuery: z.string().trim().min(2).max(100),
   })
   .partial();
 
@@ -170,7 +175,6 @@ export const collectionMetadataSchema = z
     bannerPosition: z.string().optional(),
     judgesApplyBrowsingLevel: z.boolean().optional(),
     judgesCanScoreEntries: z.boolean().optional(),
-    disableFollowOnSubmission: z.boolean().optional(),
     disableTagRequired: z.boolean().optional(),
     youtubeSupportEnabled: z.boolean().optional(),
     vimeoSupportEnabled: z.boolean().optional(),

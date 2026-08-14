@@ -358,7 +358,6 @@ async function createChallengeFromSelection(
         endsAt,
         autoTagId: config.challengeTagId,
         disableTagRequired: true,
-        disableFollowOnSubmission: true,
       },
     },
     select: { id: true },
