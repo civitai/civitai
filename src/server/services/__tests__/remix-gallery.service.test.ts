@@ -125,8 +125,29 @@ const {
   REMIX_GALLERY_REMOVAL_LOCK_HOURS,
 } = await import('~/shared/utils/remix-gallery');
 
+/**
+ * Declared rather than inferred, because every test here builds its case by
+ * spreading the good one and overriding a field. Inference narrowed `null`s to
+ * `null` and the rating to a literal, so the overrides that make each test a
+ * test — `needsReview: 'reported'`, `nsfwLevel: 0`, `publishedAt: null` — were
+ * type errors against their own fixture.
+ */
+type SubmissionFixture = {
+  id: number;
+  userId: number;
+  nsfwLevel: number;
+  minor: boolean;
+  poi: boolean;
+  tosViolation: boolean;
+  ingestion: string;
+  needsReview: string | null;
+  publishedAt: Date | null;
+  remixOfId: number | null;
+  sourceImageIds: number[] | null;
+};
+
 /** A submission that passes every check, so each test breaks exactly one thing. */
-const goodSubmission = {
+const goodSubmission: SubmissionFixture = {
   id: REMIX_IMAGE,
   userId: PLACER,
   nsfwLevel: NsfwLevel.PG,
