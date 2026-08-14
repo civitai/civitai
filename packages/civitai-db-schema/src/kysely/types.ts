@@ -1610,6 +1610,7 @@ export type ChatMember = {
   leftAt: Timestamp | null;
   kickedAt: Timestamp | null;
   unkickedAt: Timestamp | null;
+  filteredAt: Timestamp | null;
 };
 export type ChatMessage = {
   id: Generated<number>;

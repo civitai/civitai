@@ -3,6 +3,7 @@ import { registerCustomProtocol } from 'linkifyjs';
 import React from 'react';
 import { ChatList } from '~/components/Chat/ChatList';
 import { useChatStore } from '~/components/Chat/ChatProvider';
+import { ChatSettings } from '~/components/Chat/ChatSettings';
 import { ExistingChat } from '~/components/Chat/ExistingChat';
 import { NewChat } from '~/components/Chat/NewChat';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
@@ -21,11 +22,13 @@ export function ChatWindow() {
 function ChatWindowContent() {
   const existingChatId = useChatStore((state) => state.existingChatId);
   const isCreating = useChatStore((state) => state.isCreating);
+  const isSettingsOpen = useChatStore((state) => state.isSettingsOpen);
   const colorScheme = useComputedColorScheme('dark');
 
   const isMobile = useContainerSmallerThan(700);
 
   if (isMobile) {
+    if (isSettingsOpen) return <ChatSettings />;
     if (!!existingChatId) return <ExistingChat />;
     if (isCreating) return <NewChat />;
     return <ChatList />;
@@ -45,7 +48,7 @@ function ChatWindowContent() {
       </Grid.Col>
       {/* Chat Panel */}
       <Grid.Col span={{ base: 12, xs: 8 }} h="100%">
-        {!existingChatId ? <NewChat /> : <ExistingChat />}
+        {isSettingsOpen ? <ChatSettings /> : !existingChatId ? <NewChat /> : <ExistingChat />}
       </Grid.Col>
     </Grid>
   );

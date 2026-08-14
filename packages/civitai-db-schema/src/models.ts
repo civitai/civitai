@@ -3696,6 +3696,7 @@ export interface ChatMember {
   leftAt: Date | null;
   kickedAt: Date | null;
   unkickedAt: Date | null;
+  filteredAt: Date | null;
   user?: User;
   chat?: Chat;
   lastViewedMessage?: ChatMessage | null;

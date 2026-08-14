@@ -5,6 +5,7 @@ import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 type ChatState = {
   open: boolean;
   isCreating: boolean;
+  isSettingsOpen: boolean;
   existingChatId: number | undefined;
   selectedUsers: Partial<UserWithCosmetics>[];
 };
@@ -12,6 +13,7 @@ type ChatState = {
 export const useChatStore = create<ChatState>(() => ({
   open: false,
   isCreating: false,
+  isSettingsOpen: false,
   existingChatId: undefined,
   selectedUsers: [],
 }));

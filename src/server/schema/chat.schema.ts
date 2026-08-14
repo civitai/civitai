@@ -69,11 +69,21 @@ export const isTypingInput = z.object({
 });
 export type isTypingOutput = IsTypingInput & { username: string };
 
+/**
+ * Who is allowed to start a conversation with you. Anything other than
+ * `everyone` sends non-qualifying senders to Requests rather than refusing
+ * them — only `nobody` refuses outright.
+ */
+export type ChatDmPolicy = z.infer<typeof chatDmPolicy>;
+export const chatDmPolicy = z.enum(['everyone', 'following', 'mutuals', 'nobody']);
+
 export type UserSettingsChat = z.infer<typeof userSettingsChat>;
 export const userSettingsChat = z.object({
   muteSounds: z.boolean().optional(),
   acknowledged: z.boolean().optional(),
   replaceBadWords: z.boolean().optional(),
+  dmPolicy: chatDmPolicy.optional(),
+  holdNewAccounts: z.boolean().optional(),
 });
 
 /**
@@ -88,9 +98,29 @@ export const DEFAULT_CHAT_SETTINGS: UserSettingsChat = {
   muteSounds: false,
   replaceBadWords: false,
   acknowledged: false,
+  dmPolicy: 'everyone',
+  holdNewAccounts: true,
 };
 
-/** Resolve a user's chat settings, substituting the shared default when absent. */
+/**
+ * Resolve a user's chat settings, filling absent keys from the shared default.
+ * Merges rather than substitutes: a user who stored `{ muteSounds: true }`
+ * before `dmPolicy` existed must still resolve to a policy.
+ */
 export function resolveChatSettings(chat: UserSettingsChat | undefined): UserSettingsChat {
-  return chat ?? DEFAULT_CHAT_SETTINGS;
+  return chat ? { ...DEFAULT_CHAT_SETTINGS, ...chat } : DEFAULT_CHAT_SETTINGS;
+}
+
+/**
+ * The recipient-side DM policy, reconciling the two places a user can express
+ * "don't message me". `features.chat` predates `dmPolicy` and gates the whole
+ * chat UI, not just inbound requests, so it is read as `nobody` here and left
+ * alone otherwise.
+ */
+export function resolveDmPolicy(settings: {
+  chat?: UserSettingsChat;
+  features?: Record<string, boolean>;
+}): ChatDmPolicy {
+  if (settings.features?.chat === false) return 'nobody';
+  return settings.chat?.dmPolicy ?? DEFAULT_CHAT_SETTINGS.dmPolicy ?? 'everyone';
 }

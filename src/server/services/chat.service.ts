@@ -8,11 +8,12 @@ import { SignalMessages } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { CreateChatInput, CreateMessageInput } from '~/server/schema/chat.schema';
+import { DEFAULT_CHAT_SETTINGS, resolveDmPolicy } from '~/server/schema/chat.schema';
 import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { getUserSettings } from '~/server/services/user.service';
 import { withSignals } from '~/server/signals/wrapper';
-import { getChatHash } from '~/server/utils/chat';
+import { decideDmRouting, getChatHash } from '~/server/utils/chat';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
@@ -22,7 +23,7 @@ import {
 import { getOwnedStickerCosmetics } from '~/server/services/cosmetic.service';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { resolveStickerTokens, stripStickerTokens } from '~/shared/utils/sticker-token';
-import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
+import { ChatMemberStatus, ChatMessageType, UserEngagementType } from '~/shared/utils/prisma/enums';
 import type { ChatAllMessages, ChatCreateChat } from '~/types/router';
 
 export const maxChats = 1000;
@@ -41,6 +42,62 @@ const messageLimiter = createLimiter({
   refetchInterval: 60 * 60, // 1 hour window
 });
 
+/**
+ * Split recipients by `decideDmRouting`: `refused` are dropped from the chat
+ * entirely, `filtered` join it but land in Requests.
+ */
+const evaluateDmPolicies = async ({
+  userId,
+  recipientIds,
+}: {
+  userId: number;
+  recipientIds: number[];
+}) => {
+  const refused = new Set<number>();
+  const filtered = new Set<number>();
+  if (!recipientIds.length) return { refused, filtered };
+
+  const [recipientSettings, sender, follows] = await Promise.all([
+    Promise.all(recipientIds.map((id) => getUserSettings(id))),
+    dbRead.user.findUnique({ where: { id: userId }, select: { createdAt: true } }),
+    dbRead.userEngagement.findMany({
+      where: {
+        type: UserEngagementType.Follow,
+        OR: [
+          { userId: { in: recipientIds }, targetUserId: userId },
+          { userId, targetUserId: { in: recipientIds } },
+        ],
+      },
+      select: { userId: true, targetUserId: true },
+    }),
+  ]);
+
+  const followsSender = new Set(
+    follows.filter((f) => f.targetUserId === userId).map((f) => f.userId)
+  );
+  const followedBySender = new Set(
+    follows.filter((f) => f.userId === userId).map((f) => f.targetUserId)
+  );
+  const senderIsNew = !!sender && dayjs().diff(dayjs(sender.createdAt), 'day') < newAccountAgeDays;
+
+  recipientIds.forEach((recipientId, i) => {
+    const settings = recipientSettings[i] ?? {};
+    const routing = decideDmRouting({
+      policy: resolveDmPolicy(settings),
+      holdNewAccounts:
+        settings.chat?.holdNewAccounts ?? DEFAULT_CHAT_SETTINGS.holdNewAccounts ?? true,
+      senderIsNew,
+      recipientFollowsSender: followsSender.has(recipientId),
+      senderFollowsRecipient: followedBySender.has(recipientId),
+    });
+
+    if (routing === 'refuse') refused.add(recipientId);
+    else if (routing === 'filter') filtered.add(recipientId);
+  });
+
+  return { refused, filtered };
+};
+
 export const upsertChat = async ({
   userIds,
   isModerator,
@@ -56,22 +113,21 @@ export const upsertChat = async ({
   const blockedUserIds = [...new Set(blockedUsers.flat().map((u) => u.id))];
   userIds = userIds.filter((u) => !blockedUserIds.includes(u));
 
-  // filter out recipients who have disabled chat in their settings (mods bypass).
-  // Like blocked users, these are silently dropped from the member list so a
-  // disabled account never receives an unsolicited chat request.
+  // Apply each recipient's DM policy (mods bypass). Only `nobody` refuses; a
+  // sender who fails a `following`/`mutuals` policy still gets a chat, it just
+  // lands in the recipient's Requests instead of their inbox.
+  let filteredIds = new Set<number>();
   if (!isModerator) {
-    const recipientIds = userIds.filter((u) => u !== userId);
-    if (recipientIds.length) {
-      const recipientSettings = await Promise.all(recipientIds.map((id) => getUserSettings(id)));
-      const chatDisabledIds = new Set(
-        recipientIds.filter((_, i) => recipientSettings[i]?.features?.chat === false)
-      );
-      if (chatDisabledIds.size) userIds = userIds.filter((u) => !chatDisabledIds.has(u));
-    }
+    const { refused, filtered } = await evaluateDmPolicies({
+      userId,
+      recipientIds: userIds.filter((u) => u !== userId),
+    });
+    if (refused.size) userIds = userIds.filter((u) => !refused.has(u));
+    filteredIds = filtered;
   }
 
   // `userIds` includes the creator; everyone else is a recipient. If every
-  // requested recipient was filtered out (blocked or chat-disabled), there is
+  // requested recipient was dropped (blocked, or not accepting chat), there is
   // no one to talk to — surface a friendly error instead of silently creating
   // a chat that only contains the creator.
   const remainingRecipients = userIds.filter((u) => u !== userId);
@@ -135,6 +191,7 @@ export const upsertChat = async ({
         isOwner: u === userId,
         status: u === userId || isModerator ? ChatMemberStatus.Joined : ChatMemberStatus.Invited,
         joinedAt: u === userId || isModerator ? newChat.createdAt : undefined,
+        filteredAt: filteredIds.has(u) ? newChat.createdAt : undefined,
       })),
     });
 

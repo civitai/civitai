@@ -62,10 +62,18 @@ export const setUserSettingsHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const { chat = {} } = await getUserSettings(userId);
+    const { chat = {}, features } = await getUserSettings(userId);
     const newChat = { ...chat, ...input };
 
-    await setUserSetting(userId, { chat: newChat });
+    // `features.chat === false` reads as `nobody` (resolveDmPolicy), so leaving it
+    // set would silently override any policy chosen here and the picker would
+    // appear to do nothing.
+    const reopenChat = !!input.dmPolicy && input.dmPolicy !== 'nobody' && features?.chat === false;
+
+    await setUserSetting(userId, {
+      chat: newChat,
+      ...(reopenChat ? { features: { ...features, chat: true } } : {}),
+    });
 
     return newChat;
   } catch (error) {
@@ -128,6 +136,8 @@ export const getUnreadMessagesForUserHandler = async ({
       group by memb."chatId"
     `;
 
+    // Requests (filteredAt set) are deliberately absent: a filtered request that
+    // still lights the header badge is not filtered.
     const pending = await dbRead.$queryRaw<{ chatId: number; cnt: number }[]>`
       select memb."chatId" as "chatId",
              1             as "cnt"
@@ -135,6 +145,7 @@ export const getUnreadMessagesForUserHandler = async ({
       where memb."userId" = ${userId}
         and memb.status = 'Invited'
         and memb."isMuted" is false
+        and memb."filteredAt" is null
       group by memb."chatId"
     `;
 

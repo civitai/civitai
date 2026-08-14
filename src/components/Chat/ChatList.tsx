@@ -1,6 +1,5 @@
 import type { GroupProps } from '@mantine/core';
 import {
-  ActionIcon,
   Badge,
   Box,
   Button,
@@ -12,7 +11,6 @@ import {
   Image,
   Indicator,
   Loader,
-  Menu,
   SegmentedControl,
   Stack,
   Text,
@@ -22,13 +20,10 @@ import {
 import {
   IconCirclePlus,
   IconCloudOff,
-  IconEar,
-  IconEarOff,
   IconEye,
-  IconMessageExclamation,
   IconPlugConnected,
   IconSearch,
-  IconTool,
+  IconSettings,
   IconUsers,
   IconUserX,
   IconX,
@@ -45,7 +40,6 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
 import type { ChatListMessage } from '~/types/router';
-import { isApril1 } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import styles from './ChatList.module.css';
@@ -73,22 +67,31 @@ const PGroup = createPolymorphicComponent<'div', GroupProps>(Group);
 //   },
 // }));
 
-const statusMap = {
-  [ChatMemberStatus.Invited]: 'Pending',
-  [ChatMemberStatus.Ignored]: 'Archived',
-  [ChatMemberStatus.Left]: 'Archived',
-  [ChatMemberStatus.Kicked]: 'Archived',
-  [ChatMemberStatus.Joined]: 'Active',
-};
-type StatusKeys = keyof typeof statusMap;
-type StatusValues = (typeof statusMap)[StatusKeys];
+type ChatBucket = 'Inbox' | 'Requests' | 'Archived';
+
+const archivedStatuses: ChatMemberStatus[] = [
+  ChatMemberStatus.Ignored,
+  ChatMemberStatus.Left,
+  ChatMemberStatus.Kicked,
+];
+
+/**
+ * Inbox holds accepted chats and invitations that cleared the recipient's DM
+ * policy; Requests holds only the invitations that policy or the new-account
+ * filter set aside.
+ */
+function bucketFor(member: { status: ChatMemberStatus; filteredAt: Date | null }): ChatBucket {
+  if (archivedStatuses.includes(member.status)) return 'Archived';
+  if (member.status === ChatMemberStatus.Invited && !!member.filteredAt) return 'Requests';
+  return 'Inbox';
+}
 
 export function ChatList() {
   const existingChatId = useChatStore((state) => state.existingChatId);
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
   const [searchInput, setSearchInput] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<StatusValues>('Active');
+  const [activeTab, setActiveTab] = useState<ChatBucket>('Inbox');
   const [filteredData, setFilteredData] = useState<ChatListMessage[]>([]);
   const { connected } = useSignalContext();
   const isMobile = useContainerSmallerThan(700);
@@ -96,18 +99,16 @@ export function ChatList() {
   const userSettings = queryUtils.chat.getUserSettings.getData();
   // const { data: userSettings } = trpc.chat.getUserSettings.useQuery(undefined, { enabled: !!currentUser });
 
-  const muteSounds = userSettings?.muteSounds ?? false;
   const replaceBadWords = userSettings?.replaceBadWords ?? false;
 
   const { data, isLoading } = trpc.chat.getAllByUser.useQuery();
   const chatCounts = queryUtils.chat.getUnreadCount.getData();
 
-  const pendingCount = !!data
-    ? data.filter(
-        (d) =>
-          d.chatMembers.find((cm) => cm.userId === currentUser?.id)?.status ===
-          ChatMemberStatus.Invited
-      ).length
+  const requestCount = !!data
+    ? data.filter((d) => {
+        const myMember = d.chatMembers.find((cm) => cm.userId === currentUser?.id);
+        return !!myMember && bucketFor(myMember) === 'Requests';
+      }).length
     : 0;
 
   const activeIds = !!data
@@ -126,22 +127,6 @@ export function ChatList() {
         return acc;
       }, 0)
     : 0;
-
-  const { mutate: modifySettings } = trpc.chat.setUserSettings.useMutation({
-    onSuccess(data) {
-      queryUtils.chat.getUserSettings.setData(undefined, (old) => {
-        if (!old) return old;
-        return data;
-      });
-    },
-    onError(error) {
-      showErrorNotification({
-        title: 'Failed to update settings.',
-        error: new Error(error.message),
-        autoClose: false,
-      });
-    },
-  });
 
   const { mutate: markAsRead } = trpc.chat.markAllAsRead.useMutation({
     onSuccess(data) {
@@ -184,21 +169,19 @@ export function ChatList() {
 
   useEffect(() => {
     if (!data) return;
-    const activeStatus = data
+    const activeMember = data
       .find((d) => d.id === existingChatId)
-      ?.chatMembers?.find((cm) => cm.userId === currentUser?.id)?.status;
-    if (!activeStatus) return;
-    const defaultActiveTab = statusMap[activeStatus];
-    setActiveTab(defaultActiveTab);
+      ?.chatMembers?.find((cm) => cm.userId === currentUser?.id);
+    if (!activeMember) return;
+    setActiveTab(bucketFor(activeMember));
   }, [currentUser?.id, data, existingChatId]);
 
   useEffect(() => {
     if (!data) return;
 
     const tabData = data.filter((d) => {
-      const tStatus = d.chatMembers.find((cm) => cm.userId === currentUser?.id)?.status;
-      if (!tStatus) return;
-      if (statusMap[tStatus] === activeTab) return d;
+      const myMember = d.chatMembers.find((cm) => cm.userId === currentUser?.id);
+      return !!myMember && bucketFor(myMember) === activeTab;
     });
 
     // TODO we could probably search all messages, but that involves another round trip to grab ALL messages for all chats
@@ -224,73 +207,48 @@ export function ChatList() {
     setFilteredData(tabFiltered);
   }, [currentUser?.id, data, searchInput, activeTab]);
 
-  const handleMute = () => {
-    modifySettings({ muteSounds: !muteSounds });
-  };
-
-  const handleReplaceBadWords = () => {
-    modifySettings({ replaceBadWords: !replaceBadWords });
-  };
-
   return (
     <Stack gap={0} h="100%">
       <Group p="sm" justify="space-between" align="center">
-        <Group>
+        <Group gap="xs">
+          <Tooltip label="Chat settings">
+            <LegacyActionIcon
+              variant="light"
+              aria-label="Chat settings"
+              onClick={() => useChatStore.setState({ isSettingsOpen: true })}
+            >
+              <IconSettings size={18} strokeWidth={1.5} />
+            </LegacyActionIcon>
+          </Tooltip>
           <Text>Chats</Text>
-          <Menu withArrow position="bottom">
-            <Menu.Target>
-              <LegacyActionIcon variant="light">
-                <IconTool size={18} strokeWidth={1.5} />
-              </LegacyActionIcon>
-            </Menu.Target>
-            <Menu.Dropdown>
-              <Menu.Item
-                leftSection={muteSounds ? <IconEar size={18} /> : <IconEarOff size={18} />}
-                onClick={handleMute}
-                disabled={isApril1() && !muteSounds}
-              >
-                {isApril1() && !muteSounds
-                  ? 'No muting for senpai! 🥰 '
-                  : `${muteSounds ? 'Play' : 'Mute'} sounds`}
-              </Menu.Item>
-              <Menu.Item
-                disabled={activeCount === 0}
-                leftSection={<IconEye size={18} />}
-                onClick={() => markAsRead()}
-              >
-                {`Mark all as read${activeCount > 0 ? ` (${activeCount})` : ''}`}
-              </Menu.Item>
-              {domainColor !== 'green' && (
-                <>
-                  <Menu.Divider />
-                  <Menu.Label>Moderation</Menu.Label>
-                  <Menu.Item
-                    color="yellow"
-                    leftSection={<IconMessageExclamation size={18} />}
-                    onClick={handleReplaceBadWords}
-                  >
-                    {replaceBadWords
-                      ? 'Disable conversation moderation'
-                      : 'Enable conversation moderation'}
-                  </Menu.Item>
-                </>
-              )}
-            </Menu.Dropdown>
-          </Menu>
           {!connected && (
             <Tooltip label="Not connected. May not receive live messages or alerts.">
               <IconPlugConnected color="orangered" />
             </Tooltip>
           )}
         </Group>
-        <Group>
+        <Group gap="xs">
+          <Button
+            size="compact-xs"
+            variant="subtle"
+            color="gray"
+            disabled={activeCount === 0}
+            leftSection={<IconEye size={14} />}
+            onClick={() => markAsRead()}
+          >
+            {`Mark all read${activeCount > 0 ? ` (${activeCount})` : ''}`}
+          </Button>
           <Button
             size="xs"
             variant="light"
             styles={{ section: { marginRight: 6 } }}
             leftSection={<IconCirclePlus size={18} />}
             onClick={() => {
-              useChatStore.setState({ isCreating: true, existingChatId: undefined });
+              useChatStore.setState({
+                isCreating: true,
+                existingChatId: undefined,
+                isSettingsOpen: false,
+              });
             }}
           >
             New
@@ -325,20 +283,20 @@ export function ChatList() {
       <Box>
         <SegmentedControl
           value={activeTab}
-          onChange={setActiveTab}
+          onChange={(value) => setActiveTab(value as ChatBucket)}
           fullWidth
           data={[
-            { value: 'Active', label: 'Active' },
+            { value: 'Inbox', label: 'Inbox' },
             {
-              value: 'Pending',
+              value: 'Requests',
               label: (
                 <Center>
-                  {pendingCount > 0 && (
-                    <Badge p={5} color="red" variant="filled">
-                      {pendingCount > 9 ? '9+' : pendingCount}
+                  {requestCount > 0 && (
+                    <Badge p={5} color="gray" variant="filled">
+                      {requestCount > 9 ? '9+' : requestCount}
                     </Badge>
                   )}
-                  <Box ml={6}>Pending</Box>
+                  <Box ml={6}>Requests</Box>
                 </Center>
               ),
             },
@@ -383,7 +341,7 @@ export function ChatList() {
                     animate={{ y: 0, opacity: 1 }}
                     transition={{ type: 'spring', duration: 0.4 }}
                     onClick={() => {
-                      useChatStore.setState({ existingChatId: d.id });
+                      useChatStore.setState({ existingChatId: d.id, isSettingsOpen: false });
                     }}
                   >
                     <Indicator

@@ -5224,12 +5224,14 @@ model ChatMember {
   leftAt              DateTime? // do we need a rejoin option?
   kickedAt            DateTime?
   unkickedAt          DateTime? // TODO maybe remove
+  filteredAt          DateTime? // reached this member via Requests rather than their inbox
 
   user              User         @relation(fields: [userId], references: [id])
   chat              Chat         @relation(fields: [chatId], references: [id])
   lastViewedMessage ChatMessage? @relation(fields: [lastViewedMessageId], references: [id])
 
   @@index([userId, status, isMuted])
+  @@index([userId, status, filteredAt])
 }
 
 enum ChatMessageType {
