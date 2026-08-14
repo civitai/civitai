@@ -250,12 +250,14 @@ export default PublicEndpoint(
       res.redirect(fileResult.url);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
+      // `token` is the caller's API key, and Axiom applies no redaction of its own.
+      const { token, ...loggableQuery } = req.query;
       logToAxiom({
         name: 'download-model-endpoint',
         type: 'error',
         message: err.message,
         stack: err.stack,
-        query: req.query,
+        query: loggableQuery,
       }).catch(() => {
         // swallow logging failure
       });

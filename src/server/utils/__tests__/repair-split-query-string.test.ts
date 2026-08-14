@@ -7,9 +7,13 @@ import { repairSplitQueryString } from '~/server/utils/request-helpers';
  *
  * The shape under test is what a caller produces by appending the documented
  * `?type=…&format=…` / `?token=…` suffix to a `downloadUrl` that already carries
- * `?fileId=<id>`. Every assertion below names what the caller loses without the
+ * `?fileId=<id>`. Every assertion names what the caller loses without the
  * repair, because a revert makes each one report a swallowed param rather than
  * a bare falsy.
+ *
+ * `query` fixtures are what Next itself would hand the route for the given url:
+ * the query string parsed with `URLSearchParams`, then the path params spread
+ * OVER it (`next-server.ts` — params win on a collision).
  */
 
 function makeReq(url: string, query: NextApiRequest['query']) {
@@ -78,7 +82,7 @@ describe('repairSplitQueryString', () => {
   it('treats an encoded %3F as data, not as a separator', () => {
     const req = makeReq('/api/download/models/1?fp=fp%3F16?type=Model', {
       modelVersionId: '1',
-      fp: 'fp?16',
+      fp: 'fp?16?type=Model',
     });
 
     repairSplitQueryString(req);
@@ -86,22 +90,41 @@ describe('repairSplitQueryString', () => {
     expect(req.query.fp, 'a percent-encoded ? is a value the client meant to send').toBe('fp?16');
     expect(req.query.type).toBe('Model');
   });
+});
 
-  it('never lets a repaired param overwrite a path param', () => {
-    // The route resolves `modelVersionId` from the path. A repair that let the
-    // query win would re-point the request at a different resource.
-    const req = makeReq('/api/download/models/568485?fileId=1?modelVersionId=999', {
+describe('repairSplitQueryString — what it refuses to touch', () => {
+  it('leaves a raw `?` that does not open a new param inside its value', () => {
+    // RFC 3986 §3.4 permits a raw `?` in a query value. Splitting on it would
+    // truncate the token and hand the route a phantom `cd` param.
+    const req = makeReq('/api/download/models/1?token=ab?cd', {
+      modelVersionId: '1',
+      token: 'ab?cd',
+    });
+
+    expect(repairSplitQueryString(req)).toBe(false);
+    expect(req.query.token).toBe('ab?cd');
+    expect(req.query).not.toHaveProperty('cd');
+  });
+
+  it('never lets a repaired param overwrite the path param it collides with', () => {
+    // The path is what a user reads and a log records. `modelVersionId` here is
+    // BOTH the route's path param and the first query key, which is the
+    // arrangement that defeats a naive "keys not in the query string are path
+    // params" guard — the query key deletes itself from that set.
+    const req = makeReq('/api/download/models/568485?modelVersionId=999?fileId=2', {
       modelVersionId: '568485',
-      fileId: '1?modelVersionId=999',
+      fileId: '2',
     });
 
     repairSplitQueryString(req);
 
-    expect(req.query.modelVersionId).toBe('568485');
-    expect(req.query.fileId).toBe('1');
+    expect(
+      req.query.modelVersionId,
+      'the repair re-pointed the request at another model version'
+    ).toBe('568485');
   });
 
-  it('keeps repeated params as an array, matching how the query was parsed', () => {
+  it('never replaces a param that already arrived intact', () => {
     const req = makeReq('/api/download/models/1?fileId=2?type=Model&type=Config', {
       modelVersionId: '1',
       fileId: '2?type=Model',
@@ -110,6 +133,36 @@ describe('repairSplitQueryString', () => {
 
     repairSplitQueryString(req);
 
-    expect(req.query.type).toEqual(['Model', 'Config']);
+    expect(req.query.fileId).toBe('2');
+    expect(req.query.type, 'a value Next parsed cleanly was overwritten by the repair').toBe(
+      'Config'
+    );
+  });
+});
+
+describe('repairSplitQueryString — what it leaves behind', () => {
+  it('drops the split entry rather than keeping it beside the repair', () => {
+    // Here the stray `?` lands inside a KEY, so Next parses `debug?type`. Left
+    // in place it reaches everything that iterates req.query, logging included.
+    const req = makeReq('/api/download/models/1?debug?type=Model', {
+      modelVersionId: '1',
+      'debug?type': 'Model',
+    });
+
+    repairSplitQueryString(req);
+
+    expect(req.query).not.toHaveProperty('debug?type');
+    expect(req.query.type).toBe('Model');
+  });
+
+  it('rewrites req.url without empty query segments', () => {
+    const req = makeReq('/api/download/models/1?fileId=2?&type=Model', {
+      modelVersionId: '1',
+      fileId: '2?',
+    });
+
+    repairSplitQueryString(req);
+
+    expect(req.url).toBe('/api/download/models/1?fileId=2&type=Model');
   });
 });

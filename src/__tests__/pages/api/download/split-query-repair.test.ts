@@ -19,12 +19,14 @@ const {
   mockGetFileForModelVersion,
   mockHasExceededLimit,
   mockIncrement,
+  mockLogToAxiom,
 } = vi.hoisted(() => ({
   mockFindUnique: vi.fn(),
   mockGetServerAuthSession: vi.fn(),
   mockGetFileForModelVersion: vi.fn(),
   mockHasExceededLimit: vi.fn(),
   mockIncrement: vi.fn(),
+  mockLogToAxiom: vi.fn(),
 }));
 
 vi.mock('~/server/db/client', () => ({
@@ -51,9 +53,7 @@ vi.mock('~/server/clickhouse/client', () => ({
   },
 }));
 
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 
 vi.mock('~/server/redis/client', () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -77,11 +77,17 @@ import handler from '~/pages/api/download/models/[modelVersionId]';
 
 const REDIRECT_URL = 'https://example.invalid/signed/model.safetensors';
 
-/** Drive the route the way Next would for `url`, with the query it parses out of it. */
+/**
+ * Drive the route the way Next would for `url`: the query string parsed with
+ * `URLSearchParams`, then the path params spread OVER it — params win on a
+ * collision (`next-server.ts`), which is the precedence the repair must not
+ * invert.
+ */
 function run(url: string, modelVersionId: string) {
   const parsed = new URL(url, 'https://civitai.com');
-  const query: Record<string, string> = { modelVersionId };
+  const query: Record<string, string> = {};
   for (const [key, value] of parsed.searchParams) query[key] = value;
+  query.modelVersionId = modelVersionId;
 
   const req = {
     method: 'GET',
@@ -113,6 +119,7 @@ beforeEach(() => {
   mockGetServerAuthSession.mockResolvedValue({ user: { id: 5 } });
   mockHasExceededLimit.mockResolvedValue(false);
   mockIncrement.mockResolvedValue(undefined);
+  mockLogToAxiom.mockResolvedValue(undefined);
   mockGetFileForModelVersion.mockResolvedValue({
     status: 'success',
     url: REDIRECT_URL,
@@ -161,6 +168,28 @@ describe('download route — a query split by a stray `?`', () => {
       seen.searchParams.get('token'),
       'auth saw the unrepaired url, so an API-key caller is treated as anonymous'
     ).toBe('secret-key');
+  });
+
+  it('resolves the version in the PATH, not one the repaired query names', async () => {
+    const { promise } = run('/api/download/models/568485?modelVersionId=999?fileId=2', '568485');
+    await promise;
+
+    expect(mockGetFileForModelVersion).toHaveBeenCalledWith(
+      expect.objectContaining({ modelVersionId: 568485 })
+    );
+  });
+
+  it('keeps the caller API key out of the error log', async () => {
+    mockGetFileForModelVersion.mockRejectedValue(new Error('resolver exploded'));
+
+    const { promise } = run(url, '568485');
+    await promise;
+
+    const logged = mockLogToAxiom.mock.calls[0][0] as { query: Record<string, unknown> };
+    expect(logged.query, 'the caller API key was shipped to Axiom in plaintext').not.toHaveProperty(
+      'token'
+    );
+    expect(logged.query.fileId, 'the rest of the query is still there to debug with').toBe('484398');
   });
 
   it('CONTROL: the same request already worked when the client used `&`', async () => {

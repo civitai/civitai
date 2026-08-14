@@ -17,25 +17,22 @@ export function getProtocol(req: ProtocolRequest): Protocol {
   return proto as Protocol;
 }
 
+/** A raw `?` is only a separator when what follows it opens a new param. */
+const RESUMES_QUERY = /^&*[^&=?]+=/;
+
 /**
- * Rejoin a query string a client built by appending a SECOND `?…` to a URL that
- * already carried one — `…/models/1?fileId=2?type=Model&token=abc`.
+ * Rejoin a query a client split by appending a second `?…` to a URL that already
+ * carried one, e.g. `…/models/1?fileId=2?type=Model&token=abc`. RFC 3986 makes
+ * that one param — `fileId=2?type=Model` — so the id fails to parse and every
+ * later param is swallowed, `token` (API-key auth) included.
  *
- * That is a legal URI whose query holds one param, `fileId=2?type=Model`, so
- * nothing upstream repairs it: the id fails to parse and every param the client
- * meant to send before the stray `?` is swallowed into it — including `token`,
- * which the endpoint reads for API-key auth.
+ * A raw `?` is legal INSIDE a value, so only a `?` followed by `key=` is treated
+ * as a separator; `?token=ab?cd` is left alone.
  *
- * Appending `?type=…&format=…` or `?token=…` to a `downloadUrl` we handed out is
- * a long-standing client habit that was harmless while those URLs had no query
- * of their own. `createModelFileDownloadUrl` now pins `?fileId=<id>` into them,
- * so the same habit produces the broken shape above.
- *
- * `%3F` is left alone — only a raw `?`, which cannot be part of a value the
- * client meant to send, is treated as a separator.
- *
- * Keys that reached `req.query` from the ROUTE PATH are never overwritten, so a
- * repaired param cannot rewrite the resource being addressed.
+ * Rewrites `req.url` as well as `req.query`, because auth re-parses the url.
+ * Only a param that is missing or itself split is written, so a repair can never
+ * replace a value that arrived intact — including the path params Next spreads
+ * over the query string.
  */
 export function repairSplitQueryString(req: NextApiRequest): boolean {
   const url = req.url;
@@ -45,17 +42,33 @@ export function repairSplitQueryString(req: NextApiRequest): boolean {
   if (start === -1) return false;
 
   const raw = url.slice(start + 1);
-  if (!raw.includes('?')) return false;
+  const [head, ...rest] = raw.split('?');
+  if (!rest.length) return false;
 
-  const repaired = raw.split('?').join('&');
-  const pathOwned = new Set(Object.keys(req.query));
-  for (const key of new URLSearchParams(raw).keys()) pathOwned.delete(key);
+  let repaired = head;
+  let split = false;
+  for (const segment of rest) {
+    if (!RESUMES_QUERY.test(segment)) {
+      repaired += `?${segment}`;
+      continue;
+    }
+    repaired += `&${segment.replace(/^&+/, '')}`;
+    split = true;
+  }
+  if (!split) return false;
 
   const params = new URLSearchParams(repaired);
   for (const key of new Set(params.keys())) {
-    if (pathOwned.has(key)) continue;
+    const current = req.query[key];
+    if (current !== undefined && !(typeof current === 'string' && current.includes('?'))) continue;
     const values = params.getAll(key);
     req.query[key] = values.length > 1 ? values : values[0];
+  }
+
+  // Drop the split entries themselves, so `req.query` never carries both a
+  // `fileId=2?type` key and the repaired pair it was split into.
+  for (const key of new URLSearchParams(raw).keys()) {
+    if (key.includes('?')) delete req.query[key];
   }
 
   req.url = `${url.slice(0, start)}?${repaired}`;
