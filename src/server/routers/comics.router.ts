@@ -4938,6 +4938,9 @@ export const comicsRouter = router({
       let buzzTransactionId: string | undefined;
       try {
         const externalTransactionIdPrefix = `comic-ea-${chapter.id}-${ctx.user.id}`;
+        // One currency, the domain's, spent AND received. `getAllowedAccountTypes`
+        // with no seed returns exactly one element.
+        const [spendType] = getAllowedAccountTypes(ctx.features);
         const data = await createMultiAccountBuzzTransaction({
           fromAccountId: ctx.user.id,
           toAccountId: chapter.project.userId,
@@ -4946,7 +4949,11 @@ export const comicsRouter = router({
           description: `Early access: ${chapter.project.name} - ${chapter.name}`,
           details: { comicChapterId: chapter.id, earlyAccessPurchase: true },
           externalTransactionIdPrefix,
-          fromAccountTypes: getAllowedAccountTypes(ctx.features),
+          fromAccountTypes: [spendType],
+          // Without this the buzz service applies its yellow default, so a green
+          // purchase pays the creator yellow — the defect fixed for model paid
+          // access in #3917, pre-shipped here with no traffic yet to reveal it.
+          toAccountType: spendType,
         });
 
         if (data?.transactionCount === 0) {
