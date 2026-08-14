@@ -29,6 +29,10 @@ provenance is the only reason it differs from the standard at all.
   so it can never pre-arm anyone). A row that already exists is never touched.
 - **A new page is unreachable until granted.** It has no `AppPageAccess` row, so only `moderator:admin`
   can see it until someone ticks the boxes on `/admin`. Say so in the handover.
+- **The role list is the auth hub's, never a constant here.** `$lib/server/roles.ts` reads the hub's
+  `Role` table (`moderator:` prefix), so a role created there gets a `/admin` column without a deploy.
+  Do not reintroduce a `ROLES` array — the one that existed made `moderator:community-manager` silently
+  invisible on the only screen that grants it. Roles are opaque strings everywhere else already.
 - **Two databases.** `$lib/server/db.ts` is the main app's Postgres; `getModeratorDb()` is moderation
   data that never lived there (notes, strikes, help requests), typed by hand in
   `moderator-db-types.ts` because those tables are not in the Prisma schema.

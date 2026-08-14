@@ -250,7 +250,7 @@
       {/if}
     </th>
     {#each data.roles as role (role)}
-      <td class="w-24 py-1.5 text-center">{@render cell(node, role)}</td>
+      <td class="min-w-24 px-3 py-1.5 text-center">{@render cell(node, role)}</td>
     {/each}
   </tr>
   {#if open}
@@ -268,8 +268,13 @@
         <th scope="col" class="py-2 pl-4 text-left text-xs tracking-wide text-dark-2 uppercase">
           Page
         </th>
+        <!-- Sized by content, never a fixed width: role names come from the hub at whatever length
+             someone gave them, and the panel already scrolls horizontally. -->
         {#each data.roles as role (role)}
-          <th scope="col" class="w-24 py-2 text-center text-xs tracking-wide text-dark-2 uppercase">
+          <th
+            scope="col"
+            class="min-w-24 px-3 py-2 text-center text-xs tracking-wide whitespace-nowrap text-dark-2 uppercase"
+          >
             {shortRole(role)}
           </th>
         {/each}
@@ -291,7 +296,8 @@
     Expand a page to grant individual actions inside it; those need the page as well, so revoking the
     page revokes them. A half-filled box means the role holds the page but not every action in it —
     tick the actions you want, since granting a page never grants the actions under it. Roles
-    themselves are assigned in the auth hub.
+    themselves are created and assigned in the auth hub — a new one appears here as a column with
+    nothing granted, and holds nothing until you tick it.
   </p>
   <p class="mt-2 text-dark-2">
     <strong class="font-medium">Admins reach every page and every action regardless of this screen</strong>

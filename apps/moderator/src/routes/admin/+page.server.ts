@@ -2,19 +2,19 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import {
-  GRANTABLE_ROLES,
   capabilitySubsetEntries,
   isGrantable,
   isGrantableCapability,
-  isGrantableRole,
   pageAccessState,
   requireAccess,
 } from '$lib/server/access';
 import { readPageAccessGrants, setPageRoles } from '$lib/server/page-access';
+import { grantableRoles } from '$lib/server/roles';
 
 export const load: PageServerLoad = async ({ locals, url }) => {
   requireAccess(locals.user, url.pathname);
-  return { roles: GRANTABLE_ROLES, ...pageAccessState(await readPageAccessGrants()) };
+  const [roles, grants] = await Promise.all([grantableRoles(), readPageAccessGrants()]);
+  return { roles, ...pageAccessState(grants, roles) };
 };
 
 const changesSchema = z.record(z.string(), z.array(z.string()));
@@ -33,11 +33,16 @@ export const actions: Actions = {
       return fail(400, { error: 'Could not read the submitted changes.' });
     }
 
+    // Validated against the hub's live catalogue, so a role retired there cannot be re-saved and a role
+    // added there needs no deploy to become grantable.
+    const grantable = await grantableRoles();
+
     const entries: { path: string; roles: string[] }[] = [];
     for (const [path, roles] of Object.entries(changes)) {
       if (!isGrantable(path) && !isGrantableCapability(path))
         return fail(400, { error: `${path} is not editable.` });
-      if (!roles.every(isGrantableRole)) return fail(400, { error: `Unknown role for ${path}.` });
+      if (!roles.every((role) => grantable.includes(role)))
+        return fail(400, { error: `Unknown role for ${path}.` });
       entries.push({ path, roles: [...new Set(roles)] });
     }
 

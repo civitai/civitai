@@ -145,6 +145,21 @@ Justin drew a tree; the page also has a role axis that predates it. Both survive
 rows with a role checkbox per column**, rather than the previous three role cards each holding a
 flat, padding-indented copy of the page list.
 
+**The role columns come from the auth hub, not from this app.** `$lib/server/roles.ts` reads the hub's
+`Role` table for ids prefixed `moderator:`, so a role created there gets a column here with nothing
+granted, on the next page load and without a deploy. It was a constant in `access.ts` until 2026-08-14,
+which meant `moderator:community-manager` was invisible on this screen for as long as it took someone
+to notice and ship a matching line — with no error anywhere, since every other screen reads roles off
+the session as opaque strings. The super role is filtered out (it bypasses grants entirely), and an
+empty catalogue is treated as a failed read rather than "nothing to grant": the page 503s instead of
+rendering a blank matrix whose Save would wipe every grant.
+
+Two things deliberately do **not** consult that catalogue. The request-path gate (`applyGrants`) filters
+stored roles against the super role alone — it runs on every gated request, and filtering against a
+catalogue that failed to load would revoke the app; a grant naming a deleted role matches nobody anyway.
+The `/admin` load and save do consult it, so a role retired in the hub stops being carried forward by
+the next save.
+
 A filter box narrows it, matching both labels and stored keys — so `buzz` finds the Buzz capabilities
 and `capability:` finds all of them, which is what you have in hand when reading a grant row. Matching
 keeps its ancestors so a hit never appears without the page and section that give it meaning.

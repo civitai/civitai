@@ -4,18 +4,19 @@ import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '
 
 export const APP = 'moderator';
 
-export const ROLES = [
-  'moderator:volunteer',
-  'moderator:staff',
-  'moderator:senior',
-  'moderator:admin',
-] as const;
-export type Role = (typeof ROLES)[number];
+/**
+ * A role id as the auth hub issues them (`app:slug`). Deliberately not a closed union: the hub's `Role`
+ * table is the catalogue, and a list kept here left a role created there invisible on `/admin` — with no
+ * error to notice, since every other screen reads roles off the session as opaque strings.
+ * `$lib/server/roles.ts` reads the live set.
+ */
+export type Role = string;
 
 // Reaches every page unconditionally and is never stored as a grant — otherwise revoking a page from admin
 // would strand the only role that can grant it back.
-const SUPER_ROLE: Role = 'moderator:admin';
-export const GRANTABLE_ROLES: Role[] = ROLES.filter((r) => r !== SUPER_ROLE);
+export const SUPER_ROLE: Role = 'moderator:admin';
+
+export const isStorableRole = (value: string): boolean => value !== SUPER_ROLE;
 
 // Reachable by every authenticated moderator. The gate bounces a denied user here, so making it grantable
 // would let an admin build an infinite redirect.
@@ -175,8 +176,11 @@ let storedCapabilities: Partial<Record<string, Role[]>> = {};
 export function applyGrants(map: Record<string, string[]>): void {
   const nextPages: Partial<Record<string, Role[]>> = {};
   const nextCapabilities: Partial<Record<string, Role[]>> = {};
+  // Checked against the super role only, never the hub's role catalogue: this runs on every gated request,
+  // and a grant filtered against a catalogue that failed to load would revoke the app. A grant naming a
+  // role nobody holds — a deleted one — matches nobody anyway.
   for (const [key, roles] of Object.entries(map)) {
-    const allowed = roles.filter(isGrantableRole);
+    const allowed = roles.filter(isStorableRole);
     if (isCapabilityKey(key)) {
       if (isGrantableCapability(key)) nextCapabilities[key] = allowed;
     } else if (isGrantable(key)) nextPages[key] = allowed;
@@ -233,7 +237,7 @@ function allows(path: string, user: RoleUser): boolean {
   if (UNRESTRICTED_PATHS.has(path)) return true;
   if (SUPER_ONLY_PATHS.has(path)) return false;
   const match = grants.find((g) => g.path === path);
-  return !!match && (user?.roles ?? []).some((r) => match.roles.has(r as Role));
+  return !!match && (user?.roles ?? []).some((r) => match.roles.has(r));
 }
 
 function pruneNav(links: NavLink[], user: RoleUser): NavLink[] {
@@ -277,7 +281,7 @@ export function canUse(user: RoleUser, capability: Capability): boolean {
   // whole job is settling that question.
   if (capability.requires.some((path) => !canAccess(user, path))) return false;
   const roles = storedCapabilities[capabilityKey(capability.id)] ?? [];
-  return (user?.roles ?? []).some((r) => roles.includes(r as Role));
+  return (user?.roles ?? []).some((r) => roles.includes(r));
 }
 
 /** The effective feature→roles map, for diagnostics. Pair with `grantsSnapshot`. */
@@ -344,14 +348,22 @@ export type AccessNode = {
 // can hold a grant. What isn't stored isn't checked — there are no implied grants to display.
 // `source` lets the admin page pass grants read straight from Postgres; omitting it falls back to the
 // request cache, which is fine for read-only callers but never for the editing surface.
-export function pageAccessState(source?: Record<string, string[]>): {
+//
+// `grantable` narrows the stored roles to the hub's live catalogue, so a role deleted there stops being
+// carried forward by the next save. Pass it only alongside `source` — the editing surface is the one
+// caller that has already paid for that read and can fail loudly if it comes back wrong.
+export function pageAccessState(
+  source?: Record<string, string[]>,
+  grantable?: readonly string[]
+): {
   tree: AccessNode[];
   granted: Record<string, Role[]>;
   /** Every routable path in the tree, groups included — what `whoami` reports verdicts for. */
   paths: string[];
 } {
+  const keep = grantable ? (role: string) => grantable.includes(role) : isStorableRole;
   const from = source
-    ? Object.fromEntries(Object.entries(source).map(([p, r]) => [p, r.filter(isGrantableRole)]))
+    ? Object.fromEntries(Object.entries(source).map(([p, r]) => [p, r.filter(keep)]))
     : { ...stored, ...storedCapabilities };
   const granted: Record<string, Role[]> = {};
   const paths: string[] = [];
@@ -409,8 +421,4 @@ export function isGrantable(path: string): boolean {
   if (UNRESTRICTED_PATHS.has(path) || SUPER_ONLY_PATHS.has(path)) return false;
   const item = findNavItem(path);
   return !!item && (!item.children || !!item.sharedAccess);
-}
-
-export function isGrantableRole(value: string): value is Role {
-  return (GRANTABLE_ROLES as string[]).includes(value);
 }

@@ -7,6 +7,20 @@ import type { DB } from '@civitai/db-schema/kysely';
 
 export type PageAccessGrants = Record<string, string[]>;
 
+/**
+ * Every role the auth hub has defined for one app, as `app:slug`. The hub's `Role` table is the
+ * catalogue: an app that keeps its own list cannot show a role someone created there.
+ */
+export async function listAppRoles(db: Kysely<DB>, app: string): Promise<string[]> {
+  const rows = await db
+    .selectFrom('Role')
+    .select('id')
+    .where('id', 'like', `${app}:%`)
+    .orderBy('id')
+    .execute();
+  return rows.map((r) => r.id);
+}
+
 export async function getPageAccessGrants(db: Kysely<DB>, app: string): Promise<PageAccessGrants> {
   const rows = await db
     .selectFrom('AppPageAccess')
