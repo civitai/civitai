@@ -1188,6 +1188,8 @@ export class DataGraph<
    * 2. A factory with deps: `.merge((ctx, ext) => createGraph(...), ['dep1', 'dep2'])`
    *    - Each entry's deps will be combined with the merge deps
    *    - Allows dynamic graph creation based on context
+   *    - Deps are ctx keys, or `ext:<key>` to re-run on an external-context
+   *      change (same convention `node` documents)
    */
   merge<
     ChildCtx extends Record<string, unknown>,
@@ -1210,7 +1212,7 @@ export class DataGraph<
     ChildExternal extends Record<string, unknown>,
     ChildMeta extends Record<string, unknown>,
     ChildValues extends Record<string, unknown>,
-    const Deps extends readonly (keyof Ctx & string)[]
+    const Deps extends readonly ((keyof Ctx & string) | `ext:${string}`)[]
   >(
     factory: (
       ctx: Ctx,

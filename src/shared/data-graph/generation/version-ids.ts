@@ -50,4 +50,5 @@ export const flux3VideoVersionIds = {
 export const grokVersionIds = {
   'v1.0': 2738377,
   'v1.5': 3197990,
+  'v2.0': 3225510,
 } as const;
