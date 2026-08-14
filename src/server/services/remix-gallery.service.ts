@@ -11,6 +11,8 @@ import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { imageReviewedSql } from '~/server/common/image-visibility';
+import type { QueueImage as SharedQueueImage } from '~/server/utils/queue-image';
+import { toQueueImage } from '~/server/utils/queue-image';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { onlySelectableLevels } from '~/shared/constants/browsingLevel.constants';
 import {
@@ -1156,48 +1158,11 @@ type GalleryThumbImage = {
 };
 
 /**
- * A queue image, or the fact that this domain may not be sent it.
- *
- * A discriminated union rather than a nullable `url`: the reviewer still has to
- * act on a row whose asset cannot be served here, so the row must survive with
- * its rating and its buttons — and the caller must be unable to reach for pixels
- * that were never sent. A null check is forgettable in a refactor; this is not.
+ * Re-exported rather than redeclared. Both queues answer one question — may this
+ * domain be sent this asset — and two copies of that answer is the drift the
+ * shared listability fragment exists to prevent.
  */
-export type QueueImage =
-  | ({ viewable: true; withinViewerLevel: boolean } & GalleryThumbImage)
-  | { viewable: false; id: number; nsfwLevel: number };
-
-/**
- * The asset is withheld, not merely unpainted.
- *
- * `ImageGuard2`'s blur is built from the viewer's own settings and never reads
- * the domain ceiling, and this queue deliberately sends no browsing level — so
- * on a SFW domain a component was the only thing between an X-rated payload and
- * the screen, and it consulted the wrong field. Refusing in the payload is the
- * control; anything the client does is a courtesy on top of it.
- *
- * Fails closed on an unrated image: `0 & mask` is 0.
- *
- * The viewer's own browsing level is carried as a mark, not applied as a filter.
- * The feed drops what is outside your band because nobody has to act on it; an
- * owner does, and a queue that silently hides a submission expires its escrow
- * without a decision. Marking lets the surface name what is being held back and
- * offer the band control — which is the only way the product widens a band.
- */
-const toQueueImage = (
-  image: GalleryThumbImage | undefined,
-  domainLevels: number,
-  viewerLevels: number
-): QueueImage | null =>
-  !image
-    ? null
-    : (image.nsfwLevel & domainLevels) !== 0
-    ? {
-        viewable: true,
-        withinViewerLevel: (image.nsfwLevel & viewerLevels) !== 0,
-        ...image,
-      }
-    : { viewable: false, id: image.id, nsfwLevel: image.nsfwLevel };
+export type QueueImage = SharedQueueImage<GalleryThumbImage>;
 
 /**
  * Whether an image can be shown in a review queue, as one definition rather than

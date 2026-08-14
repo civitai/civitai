@@ -170,19 +170,14 @@ export function RemixGallerySettings() {
             commit(mode, value);
           }}
         />
-        {/* Below the track's min/max marks, not lifted onto their line. It used
-            to sit on that row via a negative margin, which fit only while the
-            caption stayed on one line: the marks are pinned left and right, the
-            caption is centred, and a wrapped one ran straight into both. The
-            slider reserves that row for the marks, so this needs no offset.
-
-            The shared helper, so galleries get the over-cap and off-grid
-            warnings stickers already had; a hand-rolled caption here said only
-            what the price was and stayed silent when the cap had overridden it. */}
+        {/* Sits on the track's mark row rather than under it, so the price costs
+            no vertical space of its own. That only works while the caption is
+            one short line — the marks are pinned left and right and this is
+            centred, so anything longer runs into both. `placementPriceCaption`
+            is bounded to the amount for that reason; do not append to it here. */}
         {caption && (
-          <Text size="xs" ta="center" c={caption.warning ? 'yellow' : 'dimmed'}>
+          <Text size="xs" ta="center" mt={-22} c={caption.warning ? 'yellow' : 'dimmed'}>
             {caption.text}
-            {price === '' && ', the platform default'}
           </Text>
         )}
       </Stack>

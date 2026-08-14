@@ -384,19 +384,18 @@ export function placementPriceCaption(
 ): { text: string; warning: boolean } | null {
   if (cap == null) return null;
 
-  // Kept to one short line. These sit in a narrow settings column under a
-  // slider's own labels, and the long forms wrapped into them — which is a
-  // layout the copy must not be able to break from the inside.
-  if (price > cap) return { text: `${payer} pay ${cap} Buzz — your cap`, warning: true };
-
+  // The amount and nothing else. It sits on the slider's own mark row, between
+  // labels pinned left and right, so a second clause is not a wordier caption —
+  // it is one that wraps into them. The explanations it used to carry (the cap,
+  // the grid) live in the alert below, which has room for them.
+  //
+  // A price over the cap quotes the cap, because that is what a placer is
+  // charged; the colour is what says something is off, and it needs no words.
   const track = placementPriceTrack(surface, cap);
-  if (!onPlacementPriceGrid(price, track))
-    return {
-      text: `${payer} pay ${price} Buzz — the slider will round this`,
-      warning: true,
-    };
-
-  return { text: `${payer} pay ${price} Buzz`, warning: false };
+  return {
+    text: `${payer} pay ${Math.min(price, cap)} Buzz`,
+    warning: price > cap || !onPlacementPriceGrid(price, track),
+  };
 }
 
 export function placementPriceTrack(surface: PlacementSurface, cap: number | null) {
