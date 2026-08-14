@@ -229,6 +229,15 @@ const KIND_CAPABILITY_LEDGER: Record<string, string> = {
     'off-site one must promise NEITHER, because no BlockBuzzAttribution row can exist and ' +
     'there is no repo. Reading the table rather than hard-coding the copy is what keeps ' +
     'the invitee’s disclosure identical to the owner’s at invite time.',
+  'src/components/Apps/AppTransferOffersView.tsx':
+    'CONSUMES the row to build the RECIPIENT-side ownership-transfer disclosure, for the ' +
+    'same reason AppInvitesBody does and with the same two cells doing the work: an ' +
+    'on-site offer says the recipient takes over the repo (`submitVersion`) and that Buzz ' +
+    'accrued BEFORE the transfer stays with the previous owner (`earnings`); an off-site ' +
+    'offer must promise NEITHER, because there is no repo and no BlockBuzzAttribution row ' +
+    'can exist for a listing with no AppBlock. Reading the table rather than hard-coding ' +
+    'the copy is what stops the transfer disclosure and the invite disclosure drifting ' +
+    'into two different accounts of what an off-site listing can do.',
   'src/server/services/blocks/app-access.service.ts':
     'RE-EXPORTS the table and resolves each listing’s kind + appBlockId, and is where ' +
     'every server consumer still reaches it (CAPABILITIES_BY_KIND / capabilitiesForKind / ' +
@@ -654,9 +663,7 @@ describe('app-ownership gate ledger', () => {
         ['nested member, optional', 'if (shot.appListing?.userId !== user.id) throw e;'],
       ];
       for (const [label, sample] of REMOVED) {
-        expect(DENORM_OWNER_RE.test(sample), `DENORM_OWNER_RE must recognise: ${label}`).toBe(
-          true
-        );
+        expect(DENORM_OWNER_RE.test(sample), `DENORM_OWNER_RE must recognise: ${label}`).toBe(true);
       }
     });
 
@@ -694,9 +701,9 @@ describe('app-ownership gate ledger', () => {
     it('NEGATIVE CONTROL: it does not match the canonical resolution or an unrelated owner', () => {
       // The replacement must NOT itself count as a member of the class, or the assertion
       // below could never go green; and an Image/Post owner check is a different subject.
-      expect(DENORM_OWNER_RE.test('const role = await resolveListingRole(listingId, userId);')).toBe(
-        false
-      );
+      expect(
+        DENORM_OWNER_RE.test('const role = await resolveListingRole(listingId, userId);')
+      ).toBe(false);
       expect(
         DENORM_OWNER_RE.test('const ownerUserId = row.appBlock?.app?.userId ?? row.userId;')
       ).toBe(false);
@@ -791,9 +798,7 @@ describe('app-ownership gate ledger', () => {
       // `appBlockId` would compile (both are strings) and would silently match NOTHING —
       // demoting every editor to no-access with no error anywhere.
       for (const [file, call] of SEAT_CALLS) {
-        expect(call, `${file}: a seat call must be keyed on appListingId`).toMatch(
-          /appListingId/
-        );
+        expect(call, `${file}: a seat call must be keyed on appListingId`).toMatch(/appListingId/);
       }
     });
 
@@ -817,9 +822,7 @@ describe('app-ownership gate ledger', () => {
 
     it('NEGATIVE CONTROL: the composite-key probe CAN match', () => {
       // Proves the assertion above is testing a string that would be found if present.
-      expect('where: { appBlockId_userId: { appBlockId, userId } }').toContain(
-        'appBlockId_userId'
-      );
+      expect('where: { appBlockId_userId: { appBlockId, userId } }').toContain('appBlockId_userId');
     });
   });
 
