@@ -423,6 +423,13 @@ const featureFlags = createFeatureFlags({
   // from the img2model3d picker and rejected on submit (see ecosystem-graph.ts).
   tripoGenerator: { availability: ['mod'], fliptKey: 'tripo-generator' },
   hunyuan3dGenerator: { availability: ['mod'], fliptKey: 'hunyuan3d-generator' },
+  // Grok Imagine Image 2.0 — gates ONLY the v2.0 entry in the Grok version
+  // picker; v1.0 / v1.5 stay live regardless, so Grok image + video generation
+  // is unaffected when this is off. Mod-only until the `grok-imagine-2` Flipt
+  // flag exists (absent ⇒ this static fallback), which is also the widen and
+  // kill lever. Off ⇒ v2.0 is dropped from the picker and a submitted v2.0
+  // version id falls back to the ecosystem default (see grok-graph.ts).
+  grokImagine2: { availability: ['mod'], fliptKey: 'grok-imagine-2' },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay
