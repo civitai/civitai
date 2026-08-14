@@ -183,7 +183,25 @@ async function loadOwnedListing(appListingId: string, actorUserId: number): Prom
       'Ownership is transferred on the live listing, not on a revision draft'
     );
   }
-  const ownerUserId = row.appBlock?.app?.userId ?? row.userId;
+  // 🔴 KIND-AWARE, through the SHARED resolver — see `app-access.service
+  // ::resolveCanonicalListingOwner`. This was written here as `row.appBlock?.app?.userId
+  // ?? row.userId` (BLOCK-FIRST), which on an OFFSITE listing that carries a block named
+  // the PREVIOUS owner after `claimListing` / an offsite `acceptTransfer`, both of which
+  // move only the column. The consequence at THIS gate is the sharpest in the feature: an
+  // impersonator a moderator had just dispossessed could still INITIATE A TRANSFER of the
+  // listing and hand it straight back out — the very outcome `claimListing`'s in-tx
+  // pending-transfer cancellation exists to prevent. Dynamic import: this module is
+  // reached from `app-access.service`'s orbit and the helper is pure, but the file's
+  // existing discipline for cross-service reach is a deferred import (see
+  // `getPendingTransfer`), so it is kept.
+  const { resolveCanonicalListingOwner } = await import(
+    '~/server/services/blocks/app-access.service'
+  );
+  const ownerUserId = resolveCanonicalListingOwner({
+    kind: row.kind,
+    blockOwnerUserId: row.appBlock?.app?.userId,
+    listingUserId: row.userId,
+  });
   if (ownerUserId !== actorUserId) {
     throw new AppCollaboratorError('NOT_OWNER', 'Only the app owner can transfer ownership');
   }

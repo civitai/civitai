@@ -851,8 +851,10 @@ const editableListingSelect = {
  * copy of the owner for an ON-SITE listing — the canonical owner is the backing
  * `AppBlock.app.userId`. Comparing against the copy inverts the gate in BOTH directions
  * on a drifted row: it refuses the real owner and admits whoever the stale row names.
- * `resolveListingAccess` resolves the owner from the block, hops a shadow revision to its
- * parent, and answers the seat question in the same call.
+ * `resolveListingAccess` resolves the owner KIND-AWARE (the block's `OauthClient.userId`
+ * for an onsite listing; the PARENT listing's own column for an offsite one, even when it
+ * carries a block — issue #3844), hops a shadow revision to its parent, and answers the
+ * seat question in the same call.
  *
  * 🔴 WHERE THE DRIFT ACTUALLY COMES FROM — a SHADOW REVISION, and this is worth stating
  * precisely because an earlier version of this comment named the wrong mechanism and
