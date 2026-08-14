@@ -5210,6 +5210,12 @@ enum ChatMemberStatus {
   Kicked
 }
 
+enum ChatNotifyLevel {
+  All
+  Mentions
+  None
+}
+
 model ChatMember {
   id                  Int              @id @default(autoincrement())
   createdAt           DateTime         @default(now()) // doubles as invited_at
@@ -5225,6 +5231,9 @@ model ChatMember {
   kickedAt            DateTime?
   unkickedAt          DateTime? // TODO maybe remove
   filteredAt          DateTime? // reached this member via Requests rather than their inbox
+  notifyLevel         ChatNotifyLevel @default(All)
+  pinnedAt            DateTime?
+  clearedAt           DateTime? // this member's clean-slate watermark; messages before it are hidden from them only
 
   user              User         @relation(fields: [userId], references: [id])
   chat              Chat         @relation(fields: [chatId], references: [id])

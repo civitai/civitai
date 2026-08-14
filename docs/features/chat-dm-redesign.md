@@ -12,7 +12,7 @@ buildable against the chat system as it stands:
 | Phase | Slice | Migration? | Status |
 |-------|-------|-----------|--------|
 | 1 | Privacy & abuse — graded DM policy, Requests, new-account hold | yes | built |
-| 2 | Conversation management — settings, pin, notification levels, delete | yes | next |
+| 2 | Conversation management — settings, pin, notification levels, delete | yes | built |
 | 3 | Surface redesign — grouped rows, reply quotes, composer, virtualized list | no | |
 | 4 | Moderation audit — edit/clear events, edit length cap, per-message delete | yes | |
 
@@ -137,7 +137,13 @@ model ChatMember {
 `isMuted` already exists and today means "notifications off for this conversation" (it is
 unrelated to `ctx.user.muted`, which is the site-wide moderation mute that gates posting).
 `isMuted = true` backfills to `notifyLevel = None`; the column stays but stops being read for
-notification decisions.
+notification decisions, in the unread-count SQL and in the client signal handler alike.
+
+`Mentions` is evaluated client-side in `useChatNewMessageSignal` against a literal `@username`
+(`shouldNotifyForMessage`). Chat has no mention parser and the composer writes plain text, so
+that match is the whole rule — and a level that cannot be evaluated stays silent rather than
+falling back to notifying, or "only when mentioned" would read as broken. A message that does
+not notify still lands in the thread and the preview; it just does not ring.
 
 ### Delete conversation
 
@@ -148,8 +154,16 @@ participant. Because `Chat.hash` dedupes on participants, the next conversation 
 resolves to the same `Chat` row and reads as empty behind the watermark, which is the "clean
 slate" behaviour asked for.
 
-Read paths that must respect the watermark: `getInfiniteMessages` (filter
-`createdAt > clearedAt`), the `getAllByUser` preview, and unread counts.
+Read paths that respect the watermark: `getInfiniteMessages` (which now combines a `gt` bound
+with the existing left/kicked `lt` bounds rather than replacing them — a member who cleared and
+later left is bounded on both ends), the unread-count SQL, and `getChatsForUser`. The last one
+trims in the handler rather than the selector: `latestChat` is static and cannot be scoped per
+member. A cleared conversation drops out of the list entirely until the other side writes again,
+which is the "gone from my end" behaviour asked for; the new-message signal invalidates the list
+when a message arrives for a chat it does not know about, so it comes back on its own.
+
+`clearChat` also advances `lastViewedMessageId`, or the unread count would survive a delete and
+point at messages the user can no longer reach.
 
 ### Settings surface
 

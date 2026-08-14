@@ -88,6 +88,7 @@ import type {
   EntityCollaboratorStatus,
   ClubAdminPermission,
   ChatMemberStatus,
+  ChatNotifyLevel,
   ChatMessageType,
   PurchasableRewardUsage,
   EntityType,
@@ -1611,6 +1612,9 @@ export type ChatMember = {
   kickedAt: Timestamp | null;
   unkickedAt: Timestamp | null;
   filteredAt: Timestamp | null;
+  notifyLevel: Generated<ChatNotifyLevel>;
+  pinnedAt: Timestamp | null;
+  clearedAt: Timestamp | null;
 };
 export type ChatMessage = {
   id: Generated<number>;

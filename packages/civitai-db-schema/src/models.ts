@@ -356,6 +356,8 @@ export type ClubAdminPermission =
 
 export type ChatMemberStatus = 'Invited' | 'Joined' | 'Ignored' | 'Left' | 'Kicked';
 
+export type ChatNotifyLevel = 'All' | 'Mentions' | 'None';
+
 export type ChatMessageType = 'Markdown' | 'Image' | 'Video' | 'Audio' | 'Embed';
 
 export type PurchasableRewardUsage = 'SingleUse' | 'MultiUse';
@@ -3697,6 +3699,9 @@ export interface ChatMember {
   kickedAt: Date | null;
   unkickedAt: Date | null;
   filteredAt: Date | null;
+  notifyLevel: ChatNotifyLevel;
+  pinnedAt: Date | null;
+  clearedAt: Date | null;
   user?: User;
   chat?: Chat;
   lastViewedMessage?: ChatMessage | null;

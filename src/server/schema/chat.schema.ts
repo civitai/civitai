@@ -1,4 +1,4 @@
-import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
+import { ChatMemberStatus, ChatMessageType, ChatNotifyLevel } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 
@@ -20,6 +20,17 @@ export const modifyUserInput = z.object({
   isMuted: z.boolean().optional(),
   status: z.enum(ChatMemberStatus).optional(),
   lastViewedMessageId: z.number().optional(),
+  notifyLevel: z.enum(ChatNotifyLevel).optional(),
+  isPinned: z.boolean().optional(),
+});
+
+/**
+ * Delete a conversation: stamps the caller's own `clearedAt` watermark. Rows are
+ * retained — see `clearChatHandler`.
+ */
+export type ClearChatInput = z.infer<typeof clearChatInput>;
+export const clearChatInput = z.object({
+  chatId: z.number(),
 });
 
 // Per-chat read tracking for headless/agent (MCP) use. The website only exposes
@@ -103,12 +114,14 @@ export const DEFAULT_CHAT_SETTINGS: UserSettingsChat = {
 };
 
 /**
- * Resolve a user's chat settings, filling absent keys from the shared default.
- * Merges rather than substitutes: a user who stored `{ muteSounds: true }`
- * before `dmPolicy` existed must still resolve to a policy.
+ * Resolve a user's chat settings, substituting the shared default when absent.
+ *
+ * Deliberately does NOT backfill a partial stored blob — see the seed test. Every
+ * reader defaults its own keys, which it has to anyway: a user who stored
+ * settings before `dmPolicy` existed has no `dmPolicy` to read.
  */
 export function resolveChatSettings(chat: UserSettingsChat | undefined): UserSettingsChat {
-  return chat ? { ...DEFAULT_CHAT_SETTINGS, ...chat } : DEFAULT_CHAT_SETTINGS;
+  return chat ?? DEFAULT_CHAT_SETTINGS;
 }
 
 /**

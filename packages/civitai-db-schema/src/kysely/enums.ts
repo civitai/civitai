@@ -658,6 +658,12 @@ export const ChatMemberStatus = {
   Kicked: 'Kicked',
 } as const;
 export type ChatMemberStatus = (typeof ChatMemberStatus)[keyof typeof ChatMemberStatus];
+export const ChatNotifyLevel = {
+  All: 'All',
+  Mentions: 'Mentions',
+  None: 'None',
+} as const;
+export type ChatNotifyLevel = (typeof ChatNotifyLevel)[keyof typeof ChatNotifyLevel];
 export const ChatMessageType = {
   Markdown: 'Markdown',
   Image: 'Image',

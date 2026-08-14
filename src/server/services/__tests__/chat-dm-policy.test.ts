@@ -97,18 +97,13 @@ describe('resolveDmPolicy', () => {
   });
 });
 
-describe('resolveChatSettings', () => {
-  it('fills keys absent from a partial stored blob', () => {
-    // Users who stored settings before dmPolicy existed must still resolve to a
-    // policy — substituting the default wholesale would drop their muteSounds.
-    const resolved = resolveChatSettings({ muteSounds: true });
-    expect(resolved.muteSounds).toBe(true);
-    expect(resolved.dmPolicy).toBe('everyone');
-    expect(resolved.holdNewAccounts).toBe(true);
-  });
-
-  it('returns the shared default object when nothing is stored', () => {
-    // The _app SSR seed and the resolver must agree byte-for-byte (#2471).
+describe('DEFAULT_CHAT_SETTINGS', () => {
+  it('carries a policy, so a user with no stored settings still resolves to one', () => {
+    // resolveChatSettings does not backfill a partial blob (see the seed test),
+    // so this default only covers the nothing-stored case — the ?? fallbacks at
+    // each read site cover the rest.
+    expect(DEFAULT_CHAT_SETTINGS.dmPolicy).toBe('everyone');
+    expect(DEFAULT_CHAT_SETTINGS.holdNewAccounts).toBe(true);
     expect(resolveChatSettings(undefined)).toBe(DEFAULT_CHAT_SETTINGS);
   });
 });

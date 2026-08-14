@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  DEFAULT_CHAT_SETTINGS,
-  resolveChatSettings,
-} from '~/server/schema/chat.schema';
+import { DEFAULT_CHAT_SETTINGS, resolveChatSettings } from '~/server/schema/chat.schema';
 
 // `resolveChatSettings` is the SHARED source used by BOTH the
 // `chat.getUserSettings` tRPC resolver AND the `_app` SSR bootstrap seed. The
@@ -20,14 +17,16 @@ describe('resolveChatSettings (chat.getUserSettings SSR-seed byte-equality)', ()
   });
 
   it('substitutes the documented default when chat settings are absent', () => {
-    // This is the exact object the OLD inline resolver default produced:
-    //   { muteSounds: false, replaceBadWords: false, acknowledged: false }
-    // Both the resolver and the SSR seed now route through this helper, so the
-    // anon/no-settings path is identical on both sides.
+    // Both the resolver and the SSR seed route through this helper, so the
+    // anon/no-settings path is identical on both sides. The contract is that
+    // they agree, not that the default has a particular shape — adding a
+    // setting extends this object, and both sides pick it up together.
     expect(resolveChatSettings(undefined)).toEqual({
       muteSounds: false,
       replaceBadWords: false,
       acknowledged: false,
+      dmPolicy: 'everyone',
+      holdNewAccounts: true,
     });
     expect(resolveChatSettings(undefined)).toBe(DEFAULT_CHAT_SETTINGS);
   });

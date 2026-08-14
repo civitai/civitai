@@ -22,7 +22,8 @@ export const ReferralRedemptionType = {
   MembershipPerks: 'MembershipPerks',
 } as const;
 
-export type ReferralRedemptionType = (typeof ReferralRedemptionType)[keyof typeof ReferralRedemptionType];
+export type ReferralRedemptionType =
+  (typeof ReferralRedemptionType)[keyof typeof ReferralRedemptionType];
 
 export const BuzzWithdrawalRequestStatus = {
   Requested: 'Requested',
@@ -34,14 +35,16 @@ export const BuzzWithdrawalRequestStatus = {
   ExternallyResolved: 'ExternallyResolved',
 } as const;
 
-export type BuzzWithdrawalRequestStatus = (typeof BuzzWithdrawalRequestStatus)[keyof typeof BuzzWithdrawalRequestStatus];
+export type BuzzWithdrawalRequestStatus =
+  (typeof BuzzWithdrawalRequestStatus)[keyof typeof BuzzWithdrawalRequestStatus];
 
 export const UserPaymentConfigurationProvider = {
   Stripe: 'Stripe',
   Tipalti: 'Tipalti',
 } as const;
 
-export type UserPaymentConfigurationProvider = (typeof UserPaymentConfigurationProvider)[keyof typeof UserPaymentConfigurationProvider];
+export type UserPaymentConfigurationProvider =
+  (typeof UserPaymentConfigurationProvider)[keyof typeof UserPaymentConfigurationProvider];
 
 export const CashWithdrawalStatus = {
   Paid: 'Paid',
@@ -89,7 +92,8 @@ export const CryptoTransactionStatus = {
   Complete: 'Complete',
 } as const;
 
-export type CryptoTransactionStatus = (typeof CryptoTransactionStatus)[keyof typeof CryptoTransactionStatus];
+export type CryptoTransactionStatus =
+  (typeof CryptoTransactionStatus)[keyof typeof CryptoTransactionStatus];
 
 export const RewardsEligibility = {
   Eligible: 'Eligible',
@@ -267,7 +271,8 @@ export const ModelVersionSponsorshipSettingsType = {
   Bidding: 'Bidding',
 } as const;
 
-export type ModelVersionSponsorshipSettingsType = (typeof ModelVersionSponsorshipSettingsType)[keyof typeof ModelVersionSponsorshipSettingsType];
+export type ModelVersionSponsorshipSettingsType =
+  (typeof ModelVersionSponsorshipSettingsType)[keyof typeof ModelVersionSponsorshipSettingsType];
 
 export const ModelVersionMonetizationType = {
   PaidAccess: 'PaidAccess',
@@ -278,7 +283,8 @@ export const ModelVersionMonetizationType = {
   Sponsored: 'Sponsored',
 } as const;
 
-export type ModelVersionMonetizationType = (typeof ModelVersionMonetizationType)[keyof typeof ModelVersionMonetizationType];
+export type ModelVersionMonetizationType =
+  (typeof ModelVersionMonetizationType)[keyof typeof ModelVersionMonetizationType];
 
 export const LicensingFeeType = {
   PerImageBuzz: 'PerImageBuzz',
@@ -291,13 +297,15 @@ export const LicensingFeeSettlementCurrency = {
   Cash: 'Cash',
 } as const;
 
-export type LicensingFeeSettlementCurrency = (typeof LicensingFeeSettlementCurrency)[keyof typeof LicensingFeeSettlementCurrency];
+export type LicensingFeeSettlementCurrency =
+  (typeof LicensingFeeSettlementCurrency)[keyof typeof LicensingFeeSettlementCurrency];
 
 export const ModelVersionEngagementType = {
   Notify: 'Notify',
 } as const;
 
-export type ModelVersionEngagementType = (typeof ModelVersionEngagementType)[keyof typeof ModelVersionEngagementType];
+export type ModelVersionEngagementType =
+  (typeof ModelVersionEngagementType)[keyof typeof ModelVersionEngagementType];
 
 export const ModelHashType = {
   AutoV1: 'AutoV1',
@@ -383,7 +391,8 @@ export const ImageGenerationProcess = {
   inpainting: 'inpainting',
 } as const;
 
-export type ImageGenerationProcess = (typeof ImageGenerationProcess)[keyof typeof ImageGenerationProcess];
+export type ImageGenerationProcess =
+  (typeof ImageGenerationProcess)[keyof typeof ImageGenerationProcess];
 
 export const NsfwLevel = {
   None: 'None',
@@ -431,7 +440,8 @@ export const EntityModerationStatus = {
   Canceled: 'Canceled',
 } as const;
 
-export type EntityModerationStatus = (typeof EntityModerationStatus)[keyof typeof EntityModerationStatus];
+export type EntityModerationStatus =
+  (typeof EntityModerationStatus)[keyof typeof EntityModerationStatus];
 
 export const ImageEngagementType = {
   Favorite: 'Favorite',
@@ -558,7 +568,8 @@ export const CosmeticShopItemStatus = {
   Archived: 'Archived',
 } as const;
 
-export type CosmeticShopItemStatus = (typeof CosmeticShopItemStatus)[keyof typeof CosmeticShopItemStatus];
+export type CosmeticShopItemStatus =
+  (typeof CosmeticShopItemStatus)[keyof typeof CosmeticShopItemStatus];
 
 export const CosmeticEntity = {
   Model: 'Model',
@@ -598,14 +609,16 @@ export const ArticleIngestionStatus = {
   Rescan: 'Rescan',
 } as const;
 
-export type ArticleIngestionStatus = (typeof ArticleIngestionStatus)[keyof typeof ArticleIngestionStatus];
+export type ArticleIngestionStatus =
+  (typeof ArticleIngestionStatus)[keyof typeof ArticleIngestionStatus];
 
 export const ArticleEngagementType = {
   Favorite: 'Favorite',
   Hide: 'Hide',
 } as const;
 
-export type ArticleEngagementType = (typeof ArticleEngagementType)[keyof typeof ArticleEngagementType];
+export type ArticleEngagementType =
+  (typeof ArticleEngagementType)[keyof typeof ArticleEngagementType];
 
 export const GenerationSchedulers = {
   EulerA: 'EulerA',
@@ -636,7 +649,8 @@ export const CollectionWriteConfiguration = {
   Review: 'Review',
 } as const;
 
-export type CollectionWriteConfiguration = (typeof CollectionWriteConfiguration)[keyof typeof CollectionWriteConfiguration];
+export type CollectionWriteConfiguration =
+  (typeof CollectionWriteConfiguration)[keyof typeof CollectionWriteConfiguration];
 
 export const CollectionReadConfiguration = {
   Private: 'Private',
@@ -644,7 +658,8 @@ export const CollectionReadConfiguration = {
   Unlisted: 'Unlisted',
 } as const;
 
-export type CollectionReadConfiguration = (typeof CollectionReadConfiguration)[keyof typeof CollectionReadConfiguration];
+export type CollectionReadConfiguration =
+  (typeof CollectionReadConfiguration)[keyof typeof CollectionReadConfiguration];
 
 export const CollectionType = {
   Model: 'Model',
@@ -678,14 +693,16 @@ export const CollectionContributorPermission = {
   MANAGE: 'MANAGE',
 } as const;
 
-export type CollectionContributorPermission = (typeof CollectionContributorPermission)[keyof typeof CollectionContributorPermission];
+export type CollectionContributorPermission =
+  (typeof CollectionContributorPermission)[keyof typeof CollectionContributorPermission];
 
 export const CollectionCollaboratorRole = {
   Contributor: 'Contributor',
   Manager: 'Manager',
 } as const;
 
-export type CollectionCollaboratorRole = (typeof CollectionCollaboratorRole)[keyof typeof CollectionCollaboratorRole];
+export type CollectionCollaboratorRole =
+  (typeof CollectionCollaboratorRole)[keyof typeof CollectionCollaboratorRole];
 
 export const CollectionInviteStatus = {
   Pending: 'Pending',
@@ -693,7 +710,8 @@ export const CollectionInviteStatus = {
   Declined: 'Declined',
 } as const;
 
-export type CollectionInviteStatus = (typeof CollectionInviteStatus)[keyof typeof CollectionInviteStatus];
+export type CollectionInviteStatus =
+  (typeof CollectionInviteStatus)[keyof typeof CollectionInviteStatus];
 
 export const HomeBlockType = {
   Collection: 'Collection',
@@ -782,7 +800,8 @@ export const EntityCollaboratorStatus = {
   Rejected: 'Rejected',
 } as const;
 
-export type EntityCollaboratorStatus = (typeof EntityCollaboratorStatus)[keyof typeof EntityCollaboratorStatus];
+export type EntityCollaboratorStatus =
+  (typeof EntityCollaboratorStatus)[keyof typeof EntityCollaboratorStatus];
 
 export const ClubAdminPermission = {
   ManageMemberships: 'ManageMemberships',
@@ -806,6 +825,14 @@ export const ChatMemberStatus = {
 
 export type ChatMemberStatus = (typeof ChatMemberStatus)[keyof typeof ChatMemberStatus];
 
+export const ChatNotifyLevel = {
+  All: 'All',
+  Mentions: 'Mentions',
+  None: 'None',
+} as const;
+
+export type ChatNotifyLevel = (typeof ChatNotifyLevel)[keyof typeof ChatNotifyLevel];
+
 export const ChatMessageType = {
   Markdown: 'Markdown',
   Image: 'Image',
@@ -821,7 +848,8 @@ export const PurchasableRewardUsage = {
   MultiUse: 'MultiUse',
 } as const;
 
-export type PurchasableRewardUsage = (typeof PurchasableRewardUsage)[keyof typeof PurchasableRewardUsage];
+export type PurchasableRewardUsage =
+  (typeof PurchasableRewardUsage)[keyof typeof PurchasableRewardUsage];
 
 export const EntityType = {
   Image: 'Image',
@@ -973,7 +1001,8 @@ export const ChallengeReviewCostType = {
   Flat: 'Flat',
 } as const;
 
-export type ChallengeReviewCostType = (typeof ChallengeReviewCostType)[keyof typeof ChallengeReviewCostType];
+export type ChallengeReviewCostType =
+  (typeof ChallengeReviewCostType)[keyof typeof ChallengeReviewCostType];
 
 export const ChallengeIngestionStatus = {
   Pending: 'Pending',
@@ -982,19 +1011,22 @@ export const ChallengeIngestionStatus = {
   Error: 'Error',
 } as const;
 
-export type ChallengeIngestionStatus = (typeof ChallengeIngestionStatus)[keyof typeof ChallengeIngestionStatus];
+export type ChallengeIngestionStatus =
+  (typeof ChallengeIngestionStatus)[keyof typeof ChallengeIngestionStatus];
 
 export const ChallengeEngagementType = {
   Notify: 'Notify',
 } as const;
 
-export type ChallengeEngagementType = (typeof ChallengeEngagementType)[keyof typeof ChallengeEngagementType];
+export type ChallengeEngagementType =
+  (typeof ChallengeEngagementType)[keyof typeof ChallengeEngagementType];
 
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',
 } as const;
 
-export type EntityMetric_EntityType_Type = (typeof EntityMetric_EntityType_Type)[keyof typeof EntityMetric_EntityType_Type];
+export type EntityMetric_EntityType_Type =
+  (typeof EntityMetric_EntityType_Type)[keyof typeof EntityMetric_EntityType_Type];
 
 export const EntityMetric_MetricType_Type = {
   ReactionLike: 'ReactionLike',
@@ -1006,7 +1038,8 @@ export const EntityMetric_MetricType_Type = {
   Buzz: 'Buzz',
 } as const;
 
-export type EntityMetric_MetricType_Type = (typeof EntityMetric_MetricType_Type)[keyof typeof EntityMetric_MetricType_Type];
+export type EntityMetric_MetricType_Type =
+  (typeof EntityMetric_MetricType_Type)[keyof typeof EntityMetric_MetricType_Type];
 
 export const ComicProjectStatus = {
   Active: 'Active',
@@ -1083,7 +1116,8 @@ export const UserRestrictionStatus = {
   Overturned: 'Overturned',
 } as const;
 
-export type UserRestrictionStatus = (typeof UserRestrictionStatus)[keyof typeof UserRestrictionStatus];
+export type UserRestrictionStatus =
+  (typeof UserRestrictionStatus)[keyof typeof UserRestrictionStatus];
 
 export const StrikeReason = {
   BlockedContent: 'BlockedContent',
@@ -1119,7 +1153,8 @@ export const WildcardSetAuditStatus = {
   Dirty: 'Dirty',
 } as const;
 
-export type WildcardSetAuditStatus = (typeof WildcardSetAuditStatus)[keyof typeof WildcardSetAuditStatus];
+export type WildcardSetAuditStatus =
+  (typeof WildcardSetAuditStatus)[keyof typeof WildcardSetAuditStatus];
 
 export const WildcardSetCategoryAuditStatus = {
   Pending: 'Pending',
@@ -1127,7 +1162,8 @@ export const WildcardSetCategoryAuditStatus = {
   Dirty: 'Dirty',
 } as const;
 
-export type WildcardSetCategoryAuditStatus = (typeof WildcardSetCategoryAuditStatus)[keyof typeof WildcardSetCategoryAuditStatus];
+export type WildcardSetCategoryAuditStatus =
+  (typeof WildcardSetCategoryAuditStatus)[keyof typeof WildcardSetCategoryAuditStatus];
 
 export const ReviewVerdict = {
   TruePositive: 'TruePositive',
@@ -1154,14 +1190,16 @@ export const Model3DEngagementType = {
   Notify: 'Notify',
 } as const;
 
-export type Model3DEngagementType = (typeof Model3DEngagementType)[keyof typeof Model3DEngagementType];
+export type Model3DEngagementType =
+  (typeof Model3DEngagementType)[keyof typeof Model3DEngagementType];
 
 export const ShopifyMerchOrderStatus = {
   Pending: 'Pending',
   Granted: 'Granted',
 } as const;
 
-export type ShopifyMerchOrderStatus = (typeof ShopifyMerchOrderStatus)[keyof typeof ShopifyMerchOrderStatus];
+export type ShopifyMerchOrderStatus =
+  (typeof ShopifyMerchOrderStatus)[keyof typeof ShopifyMerchOrderStatus];
 
 export const OutboxEntity = {
   Article: 'Article',

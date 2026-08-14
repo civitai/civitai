@@ -13,6 +13,7 @@ import type {
   GetMessageByIdInput,
   IsTypingInput,
   isTypingOutput,
+  ClearChatInput,
   MarkChatReadInput,
   ModifyUserInput,
   UpdateMessageInput,
@@ -33,6 +34,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import type { ChatCreateChat } from '~/types/router';
+import { isDefined } from '~/utils/type-guards';
 
 /**
  * Get user chat settings
@@ -89,7 +91,7 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: ProtectedContext })
   try {
     const { id: userId } = ctx.user;
 
-    return await dbWrite.chat.findMany({
+    const chats = await dbWrite.chat.findMany({
       where: {
         chatMembers: {
           some: { userId },
@@ -101,6 +103,20 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: ProtectedContext })
         ...latestChat,
       },
     });
+
+    // A deleted conversation is gone from this user's list until the other side
+    // writes again, at which point it returns holding only what came after the
+    // watermark. `latestChat` is a static selector and cannot be scoped per
+    // member, so the preview is trimmed here instead.
+    return chats
+      .map((chat) => {
+        const clearedAt = chat.chatMembers.find((cm) => cm.userId === userId)?.clearedAt;
+        if (!clearedAt) return chat;
+
+        const messages = chat.messages.filter((msg) => msg.createdAt > clearedAt);
+        return messages.length ? { ...chat, messages } : null;
+      })
+      .filter(isDefined);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -128,10 +144,11 @@ export const getUnreadMessagesForUserHandler = async ({
                        on msg."chatId" = memb."chatId" and
                           (msg.id > memb."lastViewedMessageId" or
                            memb."lastViewedMessageId" is null
-                            )
+                            ) and
+                          (memb."clearedAt" is null or msg."createdAt" > memb."clearedAt")
       where memb."userId" = ${userId}
         and memb.status = 'Joined'
-        and memb."isMuted" is false
+        and memb."notifyLevel" <> 'None'
         and msg."userId" != ${userId}
       group by memb."chatId"
     `;
@@ -144,7 +161,7 @@ export const getUnreadMessagesForUserHandler = async ({
       from "ChatMember" memb
       where memb."userId" = ${userId}
         and memb.status = 'Invited'
-        and memb."isMuted" is false
+        and memb."notifyLevel" <> 'None'
         and memb."filteredAt" is null
       group by memb."chatId"
     `;
@@ -323,9 +340,9 @@ export const modifyUserHandler = async ({
   try {
     const { id: userId } = ctx.user;
 
-    const { chatMemberId, status, ...rest } = input;
+    const { chatMemberId, status, isPinned, ...rest } = input;
 
-    const definedValues = { status, ...rest };
+    const definedValues = { status, isPinned, ...rest };
     const definedValuesLength = Object.values(definedValues).filter(
       (val) => val !== undefined
     ).length;
@@ -395,6 +412,7 @@ export const modifyUserHandler = async ({
       ignoredAt: status === ChatMemberStatus.Ignored ? new Date() : undefined,
       leftAt: status === ChatMemberStatus.Left ? new Date() : undefined,
       kickedAt: status === ChatMemberStatus.Kicked ? new Date() : undefined,
+      pinnedAt: isPinned === undefined ? undefined : isPinned ? new Date() : null,
     };
 
     const resp = await dbWrite.chatMember.update({
@@ -429,6 +447,57 @@ export const modifyUserHandler = async ({
     }
 
     return resp;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+/**
+ * Delete a conversation, for the caller only.
+ *
+ * Stamps `clearedAt` on their own member row rather than deleting rows. Their
+ * read paths hide everything at or before the watermark, so the next chat with
+ * this person opens empty — but the messages stay resolvable, which is what
+ * keeps a `ChatReport` filed against the thread reviewable after either
+ * participant clears their side.
+ */
+export const clearChatHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ClearChatInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    const { chatId } = input;
+
+    const member = await dbWrite.chatMember.findFirst({
+      where: { chatId, userId },
+      select: { id: true },
+    });
+
+    if (!member) {
+      throw throwNotFoundError(`No chat found for ID (${chatId})`);
+    }
+
+    const latestMessage = await dbWrite.chatMessage.findFirst({
+      where: { chatId },
+      orderBy: { id: 'desc' },
+      select: { id: true },
+    });
+
+    const clearedAt = new Date();
+
+    // Advancing lastViewedMessageId alongside the watermark keeps the unread
+    // count from surviving a delete: everything behind it is now unreachable.
+    await dbWrite.chatMember.update({
+      where: { id: member.id },
+      data: { clearedAt, lastViewedMessageId: latestMessage?.id },
+    });
+
+    return { chatId, clearedAt };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -530,6 +599,7 @@ export const getInfiniteMessagesHandler = async ({
             status: true,
             leftAt: true,
             kickedAt: true,
+            clearedAt: true,
           },
         },
       },
@@ -540,17 +610,23 @@ export const getInfiniteMessagesHandler = async ({
     }
 
     const thisMember = chat.chatMembers.find((cm) => cm.userId === userId);
-    const dateLimit: { createdAt?: { lt: Date } } = {};
+    const createdAt: { lt?: Date; gt?: Date } = {};
     if (!thisMember) {
-      dateLimit.createdAt = { lt: new Date(1970) };
+      createdAt.lt = new Date(1970);
     } else if (thisMember.status === ChatMemberStatus.Left) {
-      dateLimit.createdAt = { lt: thisMember.leftAt ?? new Date(1970) };
+      createdAt.lt = thisMember.leftAt ?? new Date(1970);
     } else if (thisMember.status === ChatMemberStatus.Kicked) {
-      dateLimit.createdAt = { lt: thisMember.kickedAt ?? new Date(1970) };
+      createdAt.lt = thisMember.kickedAt ?? new Date(1970);
     } else if (thisMember.status === ChatMemberStatus.Ignored) {
       // TODO do we need ignoredAt?
-      dateLimit.createdAt = { lt: new Date(1970) };
+      createdAt.lt = new Date(1970);
     }
+    // Deleted-conversation watermark. Combines with the status limits above
+    // rather than replacing them — a member who cleared and later left is bounded
+    // on both ends.
+    if (thisMember?.clearedAt) createdAt.gt = thisMember.clearedAt;
+
+    const dateLimit = Object.keys(createdAt).length ? { createdAt } : {};
 
     const items = await dbWrite.chatMessage.findMany({
       where: { chatId: input.chatId, ...dateLimit },

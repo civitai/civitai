@@ -19,6 +19,9 @@ export const singleChatSelect = Prisma.validator<Prisma.ChatSelect>()({
       lastViewedMessageId: true,
       createdAt: true,
       filteredAt: true,
+      notifyLevel: true,
+      pinnedAt: true,
+      clearedAt: true,
       // TODO do we need these datetimes in the frontend?
       // joinedAt: true,
       // leftAt: true,

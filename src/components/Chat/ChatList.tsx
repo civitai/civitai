@@ -198,7 +198,13 @@ export function ChatList() {
           })
         : tabData;
 
+    const pinnedFor = (chat: ChatListMessage) =>
+      !!chat.chatMembers.find((cm) => cm.userId === currentUser?.id)?.pinnedAt;
+
     tabFiltered.sort((a, b) => {
+      const pinDiff = Number(pinnedFor(b)) - Number(pinnedFor(a));
+      if (pinDiff !== 0) return pinDiff;
+
       const aDate = a.messages[0]?.createdAt ?? a.createdAt;
       const bDate = b.messages[0]?.createdAt ?? b.createdAt;
       return aDate < bDate ? 1 : -1;
@@ -215,7 +221,9 @@ export function ChatList() {
             <LegacyActionIcon
               variant="light"
               aria-label="Chat settings"
-              onClick={() => useChatStore.setState({ isSettingsOpen: true })}
+              onClick={() =>
+                useChatStore.setState({ isSettingsOpen: true, settingsScope: 'global' })
+              }
             >
               <IconSettings size={18} strokeWidth={1.5} />
             </LegacyActionIcon>
@@ -377,6 +385,11 @@ export function ChatList() {
                       >
                         {otherMembers.map((cm) => cm.user.username).join(', ')}
                       </Highlight>
+                      {!!myMember?.pinnedAt && (
+                        <Text size="10px" c="blue" fw={600} tt="uppercase" lh={1.2}>
+                          Pinned
+                        </Text>
+                      )}
                       {/* TODO this is kind of a hack, we should be returning only valid latest message */}
                       {!!d.messages[0]?.content && myMember?.status === ChatMemberStatus.Joined && (
                         <BlurText

@@ -5,7 +5,8 @@ import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
-import { ChatMessageType } from '~/shared/utils/prisma/enums';
+import { ChatMessageType, ChatNotifyLevel } from '~/shared/utils/prisma/enums';
+import { shouldNotifyForMessage } from '~/shared/utils/chat';
 import type { ChatAllMessages, ChatCreateChat } from '~/types/router';
 import { isApril1 } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
@@ -26,14 +27,28 @@ export const useChatNewMessageSignal = () => {
       // - if chat is off or it's your message, ignore
       if (!currentUser || !features.chat || updated.userId === currentUser.id) return;
 
+      const chats = queryUtils.chat.getAllByUser.getData();
+      const thisChat = chats?.find((c) => c.id === updated.chatId);
+      // A chat absent from the list is one this user deleted — the message that
+      // just arrived is the first past their watermark, so refetch to bring it
+      // back rather than dropping the signal.
+      if (chats && !thisChat) queryUtils.chat.getAllByUser.invalidate();
+
+      const myMember = thisChat?.chatMembers.find((cm) => cm.userId === currentUser.id);
+      const notify = shouldNotifyForMessage({
+        level: myMember?.notifyLevel ?? ChatNotifyLevel.All,
+        content: updated.content,
+        username: currentUser.username,
+      });
+
       // - add the message to the chat list at the end
       queryUtils.chat.getInfiniteMessages.setInfiniteData(
         { chatId: updated.chatId },
         produce((old) => {
           if (!old) return old;
 
-          // The backend returns messages grouped in chunks (pages). 
-          // `old.pages[0]` contains the newest chunk of messages, while older messages 
+          // The backend returns messages grouped in chunks (pages).
+          // `old.pages[0]` contains the newest chunk of messages, while older messages
           // are appended to the end of the array during infinite scrolling.
           // Therefore, new incoming messages must be appended to `pages[0]`.
           const newestPage = old.pages[0];
@@ -62,6 +77,10 @@ export const useChatNewMessageSignal = () => {
           ];
         })
       );
+
+      // - a conversation set to Nothing (or Mentions, unmentioned) still updates
+      //   in place; it just does not announce itself
+      if (!notify) return;
 
       // - increment the unread message count
       queryUtils.chat.getUnreadCount.setData(
