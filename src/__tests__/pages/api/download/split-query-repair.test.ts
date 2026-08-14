@@ -189,7 +189,9 @@ describe('download route — a query split by a stray `?`', () => {
     expect(logged.query, 'the caller API key was shipped to Axiom in plaintext').not.toHaveProperty(
       'token'
     );
-    expect(logged.query.fileId, 'the rest of the query is still there to debug with').toBe('484398');
+    expect(logged.query.fileId, 'the rest of the query is still there to debug with').toBe(
+      '484398'
+    );
   });
 
   it('CONTROL: the same request already worked when the client used `&`', async () => {
