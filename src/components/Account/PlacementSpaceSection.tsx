@@ -199,8 +199,11 @@ export function PlacementSpaceSection() {
             commit(mode, value);
           }}
         />
+        {/* No negative margin lifting this onto the marks' row: the marks are
+            pinned left and right and this is centred, so a caption that wrapped
+            collided with both. Same fix as the gallery's. */}
         {caption && (
-          <Text size="xs" ta="center" mt={-22} c={caption.warning ? 'yellow' : 'dimmed'}>
+          <Text size="xs" ta="center" c={caption.warning ? 'yellow' : 'dimmed'}>
             {caption.text}
           </Text>
         )}

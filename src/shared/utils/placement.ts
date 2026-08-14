@@ -384,16 +384,15 @@ export function placementPriceCaption(
 ): { text: string; warning: boolean } | null {
   if (cap == null) return null;
 
-  if (price > cap)
-    return {
-      text: `${payer} pay ${cap} Buzz — your current cap — until your score or membership raises it`,
-      warning: true,
-    };
+  // Kept to one short line. These sit in a narrow settings column under a
+  // slider's own labels, and the long forms wrapped into them — which is a
+  // layout the copy must not be able to break from the inside.
+  if (price > cap) return { text: `${payer} pay ${cap} Buzz — your cap`, warning: true };
 
   const track = placementPriceTrack(surface, cap);
   if (!onPlacementPriceGrid(price, track))
     return {
-      text: `${payer} pay ${price} Buzz. The slider moves in ${PLACEMENT_PRICE_STEP}s from ${track.min}, so using it will change this price`,
+      text: `${payer} pay ${price} Buzz — the slider will round this`,
       warning: true,
     };
 
