@@ -1,7 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
-import { canAccess, isSenior } from '$lib/server/access';
+import { CAPABILITIES, canAccess, canUse, denied } from '$lib/server/access';
 import { parseForm, parseIdList, parseIdListStrict, parseQuery } from '$lib/server/query';
 import { BAN_REASON_CODES, setBanned } from '$lib/server/user-actions.service';
 import { addUserNote } from '$lib/server/moderation-memory.service';
@@ -50,7 +50,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 
   // Mass banning is the highest-blast-radius action in the app; Retool restricted this app to some
   // mods and the walkthrough treats widening it as a decision, not a default.
-  const canAct = isSenior(locals.user) && canAccess(locals.user, '/users');
+  const canAct = canUse(locals.user, CAPABILITIES.massBan);
 
   const fromNames = names ? await resolveUsernamesToIds(splitList(names)) : [];
   const userIds = [...new Set([...parseIdList(ids.replace(/[\s\n]+/g, ',')), ...fromNames])];
@@ -118,8 +118,7 @@ export const actions: Actions = {
    * retries every account in the list rather than stopping after the first few.
    */
   banAll: async ({ request, locals }) => {
-    if (!isSenior(locals.user) || !canAccess(locals.user, '/users'))
-      return actionFail('Mass banning requires a senior moderator.');
+    if (!canUse(locals.user, CAPABILITIES.massBan)) return actionFail(denied('massBan'));
 
     const input = parseForm(
       z.object({

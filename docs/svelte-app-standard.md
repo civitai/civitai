@@ -67,6 +67,34 @@ the columns that make it unique:
 
 Prefer selecting a real primary key in the query over composing one in the template.
 
+### A `$bindable` prop passed one-way can latch
+
+The shadcn wrappers declare interactive state — `checked`, `indeterminate`, `value`, `open` — as
+`$bindable`, and the underlying primitive **writes to it on interaction**. Passed as a plain prop, that
+write becomes a child-local override, and Svelte only discards it when the parent's expression yields a
+*different* value than it last pushed.
+
+So any interaction whose resulting state leaves that prop unchanged leaves the control rendering the
+opposite of your data — through re-renders, and through a reset button. A tri-state checkbox is the
+classic: clicking an unchecked box to reach `mixed` keeps `checked` false the whole time, so the box
+latches on `true` locally and disagrees with the buffer, the change set and the server.
+
+Whenever the parent owns the state, use a function binding:
+
+```svelte
+<Checkbox
+  bind:checked={() => state === 'on', () => toggle(row)}
+  bind:indeterminate={() => state === 'mixed', () => {}}
+/>
+```
+
+The setter may ignore its argument — often it must, since a primitive resolves a click on an
+indeterminate box to `true`, which would always grant rather than toggle.
+
+⚠️ **`svelte-check` cannot see this, and neither can a review that reads the diff** — the one-way version
+type-checks and reads correctly. It was found by clicking the page (`apps/moderator` `/admin`,
+2026-08-14). Interact with any tri-state or primitive-owned control before calling it done.
+
 ### Forms
 
 Server mutations are **form actions**, progressively enhanced with `use:enhance` — not `fetch` + JSON.

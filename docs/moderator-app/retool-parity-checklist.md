@@ -164,7 +164,7 @@ Open, with the evidence each audit produced:
       capability on everyone who can reach the page, shares the per-actor rate limits, and puts the key
       owner on every `retoolAudit` row. Note this now matters more, not less: strike issuing moved onto
       this key today, so a strike's `retoolAudit` row names the key owner while `ModActivity` names the
-      real moderator. **`updateIdentity` also still has no senior gate.**
+      real moderator. (`updateIdentity` had no local gate either; §12i gave it one — `identity.edit`.)
 - [x] **Filter rows missing on five list panels** (2026-08-11 completes this). Reviews, Bounties and
       Reports were done by the 2026-08-10 filter work; **Comments** now has Retool's search on both
       lists, matched against the plain text rather than the stored HTML — searching the markup meant
@@ -394,7 +394,8 @@ browser as user 1290051, not by reading the code.
       ceiling and these two are whether mature content is shown and whether it arrives blurred.
       **Read-only, deliberately**: the gap was *seeing* these, and editing an account's own TOS
       acceptance or viewing preferences is a different capability from correcting a mistyped username.
-      (The sub-permission that would guard such edits is a backlog item.)
+      (The mechanism that would guard such edits now exists — see §12i — and correcting a username sits
+      behind `identity.edit`. Making these fields editable is still a separate decision.)
       Verified on 1290051: `☑ Accepted TOS  ☐ Excluded from leaderboards  ☐ Buzz-blocked  ☐ FP curator
       ☑ Shows mature content  ☐ Blurs mature content`.
 - [x] **Admin actions**: Make/Remove Moderator, Add/Remove **Buzz-Block**, Generator Buzz Earnings
@@ -1160,19 +1161,31 @@ Filed against the page ported in §0, by the mod who uses it on bot chains.
 ### 12i. Permissions — sub-permissions inside a page (`1537519380148133980`)
 
 - [ ] 🔴 **There is no way to restrict individual actions within a page, and several actions need it.**
-      Access is per-route today, so anyone who can open User Lookup can do everything on it. Named as
+      **The mechanism is built** (2026-08-14 — [`page-feature-permissions.md`](page-feature-permissions.md));
+      one of the four named asks is not covered. No migration to apply — capabilities seed themselves
+      from their declared defaults.
+      Access was per-route, so anyone who could open User Lookup could do everything on it. Named as
       needing a narrower gate:
-      - editing email/username on Basic User Information
-      - adding or subtracting Buzz
-      - the entire Admin section
-      - granting badges in the Cosmetic Shop
-      **Confirmed in code.** `access.ts`'s `NAVIGATION` registers `/retool/user-lookup` as a *single*
-      path — every section under it is one grant, so anyone who can open the page can do everything on
-      it. The only narrower control that exists is `isSenior`, hand-rolled at exactly two call sites in
-      `[section]/+page.server.ts` (lines 222 and 487), which is the shape this ticket wants generalised.
-      Filed as *"Justin and Briant had a conversation earlier about sub-permissions inside of apps"* —
-      so the design may already exist elsewhere. §0 has the same shape open for Bulk Ban (*"gate it,
-      then widen deliberately"*) and §1b already hand-rolls the senior gate for `ToggleMod` — the third
-      instance, and the argument for solving it once.
-      ⚠️ **Blocked on §12g's Timed Mutes split**: `admin` and `mutes` render the same panel today, so a
-      gate on `admin` alone leaves the whole surface reachable at the other slug.
+      - [x] editing email/username on Basic User Information → `identity.edit`
+      - [x] adding or subtracting Buzz → `buzz.send`
+      - [x] granting badges in the Cosmetic Shop → `cosmetics.grant`
+      - [ ] **the entire Admin section** — only `moderator.toggle`, one button inside it, was carved
+            out. Ban, purge-all-content, force-logout, rewards eligibility, Paddle re-linking and
+            restriction rulings all still gate on `canAccess(user, '/users')` alone. No live hole
+            today — `/users` is `{staff, senior}` and Retool hid the Admin nav from `Volunteer Mod`,
+            so the two happen to agree — but nothing holds them together, and adding volunteer to
+            `/users` for an investigation hands over the ban button. Needs a decision on whether it is
+            one capability or several.
+      **Confirmed in code**: `NAVIGATION` registered `/retool/user-lookup` as a *single* path, and the
+      only narrower control was `isSenior`, hand-rolled at three call sites — with `updateIdentity`
+      carrying no local gate at all. §0 had the same shape open for Bulk Ban (*"gate it, then widen
+      deliberately"*) and §1b hand-rolled the same senior gate for `ToggleMod`.
+      **Solved once, for all of them.** `CAPABILITIES` in `access.ts` declares each capability, stored
+      as an `AppPageAccess` row keyed `<pagePath>#<featureKey>` — no schema change — and `canUse(user,
+      CAPABILITIES.x)` replaces every `isSenior` call site, which is now deleted. Access is
+      conjunctive: the page grant is still required, plus anything in the capability's `requires`.
+      `/admin` renders a tri-state tree.
+      Design confirmed on two recorded calls: 2026-08-07 (`1535334993470033991`, 42:00) landed the
+      model, 2026-08-14 (`1537865483989295196`) fixed the UI and named the capabilities.
+      ~~Blocked on §12g's Timed Mutes split~~ — that split shipped 2026-08-13, so `admin` and `mutes`
+      no longer render the same panel.

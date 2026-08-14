@@ -1,10 +1,12 @@
 import { json, type RequestHandler } from '@sveltejs/kit';
 import { createSessionClient } from '@civitai/auth';
 import {
+  CAPABILITIES,
   applyGrants,
   canAccess,
+  canUse,
+  featureGrantsSnapshot,
   grantsSnapshot,
-  isSenior,
   pageAccessState,
   navForUser,
 } from '$lib/server/access';
@@ -31,8 +33,16 @@ export const GET: RequestHandler = WebhookEndpoint(async ({ url }) => {
   const user = await sessions.getSessionUserById(userId);
   if (!user) return json({ userId, session: null, grants: { inProcess, loaded } }, { status: 404 });
 
+  // Groups included: `/images` and `/audit` are real routes a moderator can be bounced off, and a
+  // verdict map missing the path they named is the one question this endpoint cannot then answer.
   const access = Object.fromEntries(
-    pageAccessState().pages.map(({ path }) => [path, canAccess(user, path)])
+    pageAccessState().paths.map((path) => [path, canAccess(user, path)])
+  );
+  // The page verdict and the capability verdict answer different questions, and a moderator who can open
+  // User Lookup but cannot send Buzz looks identical to one who cannot reach the page at all from the
+  // outside — which is the confusion this endpoint exists to settle.
+  const capabilities = Object.fromEntries(
+    Object.entries(CAPABILITIES).map(([name, capability]) => [name, canUse(user, capability)])
   );
 
   return json({
@@ -41,10 +51,10 @@ export const GET: RequestHandler = WebhookEndpoint(async ({ url }) => {
       username: user.username ?? null,
       isModerator: user.isModerator === true,
       roles: user.roles ?? null,
-      senior: isSenior(user),
     },
-    grants: { inProcess, loaded, effective: grantsSnapshot() },
+    grants: { inProcess, loaded, effective: grantsSnapshot(), features: featureGrantsSnapshot() },
     access,
+    capabilities,
     nav: navForUser(user).map((link) => link.path ?? link.label),
   });
 });

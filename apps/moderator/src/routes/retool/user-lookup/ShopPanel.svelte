@@ -13,6 +13,7 @@
     account,
     userId,
     canAct,
+    canGrantCosmetics,
     form,
     onSubmit,
     submitting,
@@ -20,6 +21,7 @@
     account: Promise<Account> | null;
     userId: number;
     canAct: boolean;
+    canGrantCosmetics: boolean;
     form: FormResult;
     onSubmit: SubmitFunction;
     submitting: boolean;
@@ -84,8 +86,8 @@
         <p class="mb-3 text-xs text-dark-2">
           Badges this account does not already hold ({result.availableBadges.length}).
         </p>
-        {#if !canAct}
-          <p class="text-sm text-dark-2">Granting requires the Users permission.</p>
+        {#if !canGrantCosmetics}
+          <p class="text-sm text-dark-2">Granting requires the Grant cosmetics permission.</p>
         {:else if result.availableBadges.length === 0}
           <p class="text-sm text-dark-2">This account already holds every badge.</p>
         {:else}

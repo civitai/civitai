@@ -25,6 +25,7 @@
     curator,
     subscription,
     canAct,
+    canEditIdentity,
     form,
     civitaiUrl,
   }: {
@@ -33,6 +34,7 @@
     curator: Curator;
     subscription: Subscription;
     canAct: boolean;
+    canEditIdentity: boolean;
     form: FormResult;
     civitaiUrl: string;
   } = $props();
@@ -207,7 +209,7 @@
 
   <div class="mt-4 flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
     {#each quickInfo as [label, on] (label)}
-      <span class={on ? 'text-dark-0' : 'text-dark-3'}>
+      <span class={on ? 'text-dark-0' : 'text-dark-2'}>
         <span aria-hidden="true">{on ? '☑' : '☐'}</span>
         {label}
       </span>
@@ -222,7 +224,7 @@
       </div>
     {/each}
 
-    {#if canAct}
+    {#if canEditIdentity}
       <div class="sm:col-span-2 lg:col-span-3">
         {#if !editing}
           <Button size="sm" variant="outline" onclick={startEditing}>Enable edits</Button>

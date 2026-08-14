@@ -1,7 +1,7 @@
 import { error, fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
-import { canAccess, isSenior } from '$lib/server/access';
+import { CAPABILITIES, canAccess, canUse, denied } from '$lib/server/access';
 import { parseForm, userIdSchema } from '$lib/server/query';
 import { isSection } from '../sections';
 import {
@@ -194,9 +194,10 @@ export const actions: Actions = {
   },
 
   // Retool's Enable Edits form. The endpoint gates this on the `retoolUpdateIdentity` permission, so a
-  // moderator without it gets a clear refusal from the API rather than a silent no-op.
+  // moderator without it gets a clear refusal from the API rather than a silent no-op — but that is the
+  // other app's permission, not ours, so the local capability is what decides who sees the form at all.
   updateIdentity: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return identityFail('Not permitted.');
+    if (!canUse(locals.user, CAPABILITIES.editIdentity)) return identityFail(denied('editIdentity'));
     const input = parseForm(
       userIdSchema.extend({
         username: z.string().trim().min(1).max(50).optional(),
@@ -219,8 +220,8 @@ export const actions: Actions = {
   },
 
   toggleModerator: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users') || !isSenior(locals.user))
-      return accountFail('Changing moderator status requires a senior moderator.');
+    if (!canUse(locals.user, CAPABILITIES.toggleModerator))
+      return accountFail(denied('toggleModerator'));
     const input = parseForm(
       userIdSchema.extend({ isModerator: z.enum(['true', 'false']) }),
       await request.formData()
@@ -444,7 +445,7 @@ export const actions: Actions = {
   },
 
   grantCosmetic: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return shopFail('Not permitted.');
+    if (!canUse(locals.user, CAPABILITIES.grantCosmetics)) return shopFail(denied('grantCosmetics'));
     const input = parseForm(
       userIdSchema.extend({ cosmeticId: z.coerce.number().int().positive() }),
       await request.formData()
@@ -484,8 +485,7 @@ export const actions: Actions = {
   sendBuzz: async ({ request, locals }) => {
     // Retool gated the Buzz Transaction pane on the Senior Mod group; gating on /users alone handed a
     // restricted capability to every moderator who could reach the page.
-    if (!canAccess(locals.user, '/users') || !isSenior(locals.user))
-      return buzzFail('Sending or deducting Buzz requires a senior moderator.');
+    if (!canUse(locals.user, CAPABILITIES.sendBuzz)) return buzzFail(denied('sendBuzz'));
     const input = parseForm(
       userIdSchema.extend({
         amount: z.coerce.number().int().positive().max(1_000_000),

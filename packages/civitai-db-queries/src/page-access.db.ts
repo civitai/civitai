@@ -45,6 +45,34 @@ export async function setPageAccessRoles(
     .execute();
 }
 
+/**
+ * Insert rows only where none exists, leaving every stored row untouched — the write half of an app's
+ * "seed a newly declared grant with its default" reconcile. `DO NOTHING`, not `DO UPDATE`: a row that is
+ * already there is a decision someone made, including a row granting nobody, and re-running must never
+ * overwrite it. Returns how many rows were actually created.
+ */
+export async function insertMissingPageAccess(
+  db: Kysely<DB>,
+  input: { app: string; userId: number | null; entries: { path: string; roles: string[] }[] }
+): Promise<number> {
+  if (!input.entries.length) return 0;
+  const now = new Date();
+  const result = await db
+    .insertInto('AppPageAccess')
+    .values(
+      input.entries.map((entry) => ({
+        app: input.app,
+        path: entry.path,
+        roles: entry.roles,
+        updatedById: input.userId,
+        updatedAt: now,
+      }))
+    )
+    .onConflict((oc) => oc.columns(['app', 'path']).doNothing())
+    .executeTakeFirst();
+  return Number(result?.numInsertedOrUpdatedRows ?? 0);
+}
+
 export async function clearPageAccess(
   db: Kysely<DB>,
   input: { app: string; path: string }

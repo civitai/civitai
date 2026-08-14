@@ -75,6 +75,7 @@
         curator={result.curator}
         subscription={result.subscription}
         canAct={data.canAct}
+        canEditIdentity={data.canEditIdentity}
         {form}
         civitaiUrl={data.civitaiUrl}
       />
@@ -120,7 +121,7 @@
       <!-- Retool split these across two tabs. Granting or deducting Buzz is a judgement made AGAINST
            the balances and the history, so hiding one behind the other made the moderator carry the
            numbers in their head. Side by side instead, with the form sticky so it survives scrolling
-           a long history. Only a senior moderator sees it. -->
+           a long history. The form needs its own grant; the balances and history do not. -->
       <BuzzBalances {account} />
       <div class="flex flex-col gap-4 xl:flex-row xl:items-start">
         {#if data.canSendBuzz}
@@ -144,6 +145,7 @@
         {account}
         userId={result.identity.id}
         canAct={data.canAct}
+        canGrantCosmetics={data.canGrantCosmetics}
         {form}
         {onSubmit}
         {submitting}
@@ -206,7 +208,7 @@
       <AccountActionsPanel
         identity={result.identity}
         canAct={data.canAct}
-        isSenior={data.isSenior}
+        canToggleModerator={data.canToggleModerator}
         {form}
       />
     {/if}

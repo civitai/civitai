@@ -1,5 +1,5 @@
 import type { LayoutServerLoad } from './$types';
-import { canAccess, isSenior } from '$lib/server/access';
+import { CAPABILITIES, canAccess, canUse } from '$lib/server/access';
 import { lookupQuerySchema, parseQuery } from '$lib/server/query';
 import { getUserLookup, resolveUserId } from '$lib/server/user-lookup.service';
 
@@ -9,12 +9,20 @@ export const load: LayoutServerLoad = async ({ url, locals }) => {
   const { q } = parseQuery(url, lookupQuerySchema);
   // `canAct` gates the enforcement UI; the actions re-check it server-side regardless.
   const canAct = canAccess(locals.user, '/users');
-  // Senior gates the capabilities Retool restricted with a pane-level `only visible when`: sending
-  // buzz, and promoting or demoting a moderator. Every action re-checks it regardless.
-  const senior = canAct && isSenior(locals.user);
+  // The capabilities Retool restricted with a pane-level `only visible when`, now one grant each. These
+  // decide what renders; every action re-checks its own regardless. `canUse` carries the `/users`
+  // requirement itself, so there is nothing to AND in here.
   // Full content width: the panels are multi-column and data-dense (Buzz shows the transaction form
   // and the history together), and the 6xl cap forced them into a single narrow stack.
-  const base = { q, canAct, canSendBuzz: senior, isSenior: senior, wide: true };
+  const base = {
+    q,
+    canAct,
+    canSendBuzz: canUse(locals.user, CAPABILITIES.sendBuzz),
+    canEditIdentity: canUse(locals.user, CAPABILITIES.editIdentity),
+    canToggleModerator: canUse(locals.user, CAPABILITIES.toggleModerator),
+    canGrantCosmetics: canUse(locals.user, CAPABILITIES.grantCosmetics),
+    wide: true,
+  };
   if (!q) return { ...base, result: null, notFound: false };
 
   const userId = await resolveUserId(q);

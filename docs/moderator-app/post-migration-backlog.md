@@ -46,9 +46,13 @@ improvement gets moved down here rather than copied.
 
 ## Permissions
 
-- [ ] **Sub-permissions per app.** *"We need sub-permissions per app too or something. Some mods need to
-      be able to edit email/username."* Retool has a single "Enable Edits" toggle; the ask is for real
-      per-capability grants. Our `AppPageAccess` is per page, so this is a model change, not a UI one.
+- [x] **Sub-permissions per app.** *"We need sub-permissions per app too or something. Some mods need to
+      be able to edit email/username."* Retool has a single "Enable Edits" toggle; the ask was for real
+      per-capability grants. Built 2026-08-14 — [`page-feature-permissions.md`](page-feature-permissions.md).
+      It turned out **not** to need a model change: `AppPageAccess` is `(app, path) → roles[]`, so a
+      feature is a row keyed `<pagePath>#<featureKey>`.
+      No migration to apply: each capability declares `defaultRoles`, and the app writes them the first
+      time it finds the row missing.
 - [ ] 🎥 **Widen access to the mass ban tool** once it exists — *"That's good for other mods to have
       access to this too."* (Building it at all is parity; who can reach it is this.)
 
@@ -85,7 +89,8 @@ findings are done — see the parity checklist.
 ## User Lookup
 
 - [ ] **Editable socials & bio** — 🎥 *"Force logout, you know, edit their socials."* Read-only today.
-- [ ] **Editable email / username / display name**, behind the sub-permission above.
+- [x] **Editable email / username / display name**, behind the sub-permission above — now
+      `identity.edit`, seeded to senior. The form itself already existed; what it lacked was the gate.
 - [ ] **Display name from the user table** (distinct from username).
 - [ ] **Longer mod notes don't wrap** — a rendering fix carried over from Retool's own complaint.
 - [ ] **LoRA training metadata**, plus a clickthrough to the orchestrator dashboard

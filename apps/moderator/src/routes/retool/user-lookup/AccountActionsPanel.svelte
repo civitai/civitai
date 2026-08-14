@@ -22,9 +22,10 @@
   let {
     identity,
     canAct,
-    isSenior,
+    canToggleModerator,
     form,
-  }: { identity: Identity; canAct: boolean; isSenior: boolean; form: FormResult } = $props();
+  }: { identity: Identity; canAct: boolean; canToggleModerator: boolean; form: FormResult } =
+    $props();
 
   const error = $derived(form?.scope === 'account' ? form.error : null);
 
@@ -178,7 +179,7 @@
       </form>
     </div>
 
-    {#if isSenior}
+    {#if canToggleModerator}
       <div class="mt-4 border-t border-dark-4 pt-4">
         <h4 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Moderator role</h4>
         <form method="POST" action="?/toggleModerator" use:enhance={onSubmit} class="flex gap-2">

@@ -10,13 +10,25 @@ provenance is the only reason it differs from the standard at all.
 ## Deltas
 
 - **Route access is gated centrally** in `hooks.server.ts` against the `NAVIGATION` tree in
-  `$lib/server/access.ts` — register a page there rather than checking per-page. A *page-level*
-  permission and an *action-level* permission are different things: reaching a lookup page is an
-  investigation permission, acting on an account is not. Gate the action on the page's own path, never
-  on a parent group node (a group's grant is the union of its children).
-- **A new page is unreachable until granted.** It has no `AppPageAccess` rows, so only
-  `moderator:admin` can see it until someone ticks the boxes on `/admin`. Say so in the handover when
-  you add one.
+  `$lib/server/access.ts` — register a page there rather than checking per-page. Gate the action on the
+  page's own path, never on a parent group node (a group's grant is the union of its children).
+- **A page-level permission and an action-level permission are different things**, and the app has both.
+  Reaching a lookup page is an investigation permission; acting on an account is not. For an action that
+  only some holders of a page should have, add an entry to `CAPABILITIES` in `access.ts` and gate with
+  `canUse(user, CAPABILITIES.x)` — never a hand-rolled role check, and never an extra `&&` at the call
+  site. Every term of the gate belongs in the declaration (`path`, plus `requires` for other pages the
+  action needs), because `whoami` and `/admin` read the same object: a term left at one call site makes
+  the diagnostic disagree with the action it is meant to explain. **That entry is the whole job** — the
+  `/admin` tree, the storage key, the refusal wording and the default grant all derive from it, and no
+  migration is needed. Background and the current list:
+  [`docs/moderator-app/page-feature-permissions.md`](../../docs/moderator-app/page-feature-permissions.md).
+- **`CAPABILITIES[x].id` is a stored value — renaming one orphans its grants.** Grants are keyed
+  `capability:<id>`, deliberately never the page's URL, so retiring the `/retool/` prefix cannot switch
+  permissions off. Treat an id like a column name; add `defaultRoles` instead of a seed migration, and
+  the app writes it the first time it sees the row missing (intersected with the roles holding `path`,
+  so it can never pre-arm anyone). A row that already exists is never touched.
+- **A new page is unreachable until granted.** It has no `AppPageAccess` row, so only `moderator:admin`
+  can see it until someone ticks the boxes on `/admin`. Say so in the handover.
 - **Two databases.** `$lib/server/db.ts` is the main app's Postgres; `getModeratorDb()` is moderation
   data that never lived there (notes, strikes, help requests), typed by hand in
   `moderator-db-types.ts` because those tables are not in the Prisma schema.
@@ -44,6 +56,12 @@ standard is one link away**. Each of these has cost real time when broken. Full 
   and never undone makes the operator's own record wrong — and the item they skip is the one that failed.
 - **Treat 0 affected rows as a failure, not a success.** Reporting success on zero writes an audit row
   for something that did not happen.
+- **A `$bindable` prop passed one-way can latch.** shadcn wrappers declare `checked`/`value`/`open` as
+  `$bindable` and the primitive writes to them on click. Passed as a plain prop, that write is a
+  child-local override Svelte discards only when the parent expression yields a *different* value than it
+  last pushed — so any click whose new state leaves that prop unchanged (tri-state `off`→`mixed` is the
+  classic) leaves the control showing the opposite of your data, through a re-render and a reset. Use
+  function bindings — `bind:checked={() => expr, (v) => handler(v)}` — whenever the parent owns the state.
 - **Gate an action on the page's own path, never a parent group node.** A group's grant is the union of
   its children, so gating on the parent silently widens who can act.
 - **`typecheck`, never `check` — and `build` is not a check.** Both run `svelte-kit sync`, which fights
