@@ -1163,16 +1163,29 @@ describe('getCollaborators invite gating', () => {
     mockDbRead.collectionInvite.findMany.mockResolvedValue([]);
   });
 
-  it('blocks a Manager on a free owner’s collection before they pick anyone', async () => {
+  // The Manager is blocked, but is never told it is about the owner's membership — that reason
+  // names someone else's billing state, so it is collapsed to the generic one for anyone who
+  // isn't the owner. The payload is the disclosure surface, not just the copy.
+  it('blocks a Manager on a free owner’s collection without naming the reason', async () => {
     asManager();
     mockGetSessionUser.mockResolvedValue({ id: OWNER_ID, tier: 'free' });
 
     const result = await getCollaborators({ collectionId: COLLECTION_ID, userId: MANAGER_ID });
 
     expect(result.canInvite).toBe(false);
-    expect(result.inviteBlockedReason).toBe('owner-membership');
+    expect(result.inviteBlockedReason).toBe('collaboration-disabled');
     // The gate is the OWNER's tier, not the inviter's.
     expect(mockGetSessionUser).toHaveBeenCalledWith(OWNER_ID);
+  });
+
+  it('tells the owner their membership is what blocks the invite', async () => {
+    asOwner();
+    mockGetSessionUser.mockResolvedValue({ id: OWNER_ID, tier: 'free' });
+
+    const result = await getCollaborators({ collectionId: COLLECTION_ID, userId: OWNER_ID });
+
+    expect(result.canInvite).toBe(false);
+    expect(result.inviteBlockedReason).toBe('owner-membership');
   });
 
   it('allows inviting when the owner holds a membership', async () => {

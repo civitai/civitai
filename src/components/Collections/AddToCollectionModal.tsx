@@ -3,7 +3,6 @@ import {
   Button,
   Center,
   Checkbox,
-  Divider,
   Group,
   Loader,
   ScrollArea,
@@ -555,12 +554,14 @@ function CollectionListForm({
             </Stack>
           ) : (
             <ScrollArea.Autosize mah={400}>
-              <Stack gap={4}>
-                {groups.map((group, index) => (
+              {/* The headings carry the grouping on their own — rules between them read as extra
+                  structure the list doesn't have. Hierarchy is the gap: tight inside a group,
+                  generous between them. */}
+              <Stack gap="lg">
+                {groups.map((group) => (
                   <Stack key={group.key} gap={4}>
-                    {index > 0 && <Divider my="xs" />}
                     <Group gap={6} align="baseline" wrap="nowrap">
-                      <Text size="sm" fw="bold">
+                      <Text size="xs" fw={700} tt="uppercase" c="dimmed" className="tracking-wide">
                         {group.label}
                       </Text>
                       <Text size="xs" c="dimmed">

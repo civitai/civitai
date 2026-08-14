@@ -580,11 +580,17 @@ export async function getCollaborators({
     isModerator ? Promise.resolve(true) : isMemberUser(collection.userId),
   ]);
 
-  const inviteBlockedReason: InviteBlockedReason | null = permission.collaborationDisabled
+  // `owner-membership` names the owner's billing state, so only the owner is told it. Everyone
+  // else — Managers included — gets the same reason a lapse produces: the invite form is closed,
+  // and why is between the owner and their subscription. Collapsed here rather than in the copy so
+  // the payload itself carries nothing to read.
+  const blocked: InviteBlockedReason | null = permission.collaborationDisabled
     ? 'collaboration-disabled'
     : ownerIsMember
     ? null
     : 'owner-membership';
+  const inviteBlockedReason =
+    blocked === 'owner-membership' && !permission.isOwner ? 'collaboration-disabled' : blocked;
 
   return { collaborators, invites, canInvite: !inviteBlockedReason, inviteBlockedReason };
 }

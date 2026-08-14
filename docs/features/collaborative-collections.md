@@ -230,12 +230,14 @@ Three properties hold it together, and all three are load-bearing:
   membership, with moderators bypassing membership but not lapse. The pre-flight answer and the
   write path must not be able to disagree; if you add a refusal to one, add it to the other.
 - The reason is returned **only to `manage` holders** (everyone else gets `canInvite: false` with a
-  `null` reason). That is what keeps `'owner-membership'` — which does disclose that the owner has
-  no active membership — inside the set of people already running the collection. It must never
-  widen to read-level callers; the visitor-copy rule above is the same principle.
-- The client keeps the **copy**, the server keeps the **reason**. An owner sees an upgrade CTA to
-  `/pricing`; a Manager sees that the owner needs a membership. Templating one string for both is
-  how the visitor/owner split gets lost.
+  `null` reason), and **`'owner-membership'` narrows further to the owner alone** — it names
+  somebody's billing state, and a Manager can act on it no better than on the generic string, so
+  they get `'collaboration-disabled'` instead. Collapsed on the server, not in the copy: the
+  payload is the disclosure surface, and a client-side string swap leaves the fact sitting in the
+  network tab.
+- The client keeps the **copy**, the server keeps the **reason**. The owner sees an upgrade CTA to
+  `/pricing`; everyone else sees that the collection isn't accepting collaborators right now.
+  Templating one string for both is how that split gets lost.
 
 ## Detail header
 
@@ -289,11 +291,10 @@ no collaborators.
 
 Known gaps, roughly in the order they'd block a release.
 
-- **The Manager-facing `owner-membership` copy is an open question.** Telling a Manager that the
-  owner needs a membership discloses the owner's billing state to someone who is not the owner. It
-  is scoped to `manage` holders on purpose — the alternative, reusing the generic lapse string,
-  leaves the Manager with nothing to act on — but that trade has not been signed off. Tightening it
-  is one branch in `InviteBlockedNotice`.
+- **Should the picker offer collections the user has no relationship with at all?** Searching by
+  name surfaces any public collection open to submissions, which is what makes one findable now
+  that submitting no longer follows — but it also puts strangers' collections in a picker that used
+  to hold only your own. Live and unflagged; worth a product call before it grows.
 - **`getMyInvites` truncates at 50 silently.** The cap bounds the per-invite roster reads, but
   nothing tells a user with more than 50 pending invites that they are seeing a subset.
 - **Collection items are read straight from the database, not the feed index.** Flagged as

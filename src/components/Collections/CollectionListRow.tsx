@@ -41,9 +41,9 @@ export function CollectionListRow({
             <Text size="sm" lineClamp={1} inherit>
               {collection.name}
             </Text>
-            {meta && (
+            {typeData && (
               <Text size="sm" c="dimmed" className="shrink-0">
-                • {meta}
+                • {typeData.label}
               </Text>
             )}
           </span>

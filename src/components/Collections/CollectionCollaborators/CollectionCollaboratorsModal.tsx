@@ -418,18 +418,12 @@ function InviteBlockedNotice({
   reason: InviteBlockedReason;
   isOwner: boolean;
 }) {
-  if (reason === 'collaboration-disabled') {
+  // `owner-membership` only reaches the owner — the server sends everyone else the generic reason,
+  // so a Manager is never told about the owner's billing.
+  if (reason === 'collaboration-disabled' || !isOwner) {
     return (
       <Alert color="gray" variant="light">
         This collection is not accepting new collaborators right now.
-      </Alert>
-    );
-  }
-
-  if (!isOwner) {
-    return (
-      <Alert color="yellow" variant="light">
-        The collection owner needs an active membership before new collaborators can be added.
       </Alert>
     );
   }
