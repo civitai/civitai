@@ -74,13 +74,23 @@ export function getAllowedAccountTypes(
 }
 
 /**
- * The owner account a paid-access purchase pays into, given what the buyer spent.
+ * Where a paid-access purchase made BEFORE payouts went in-kind credited the seller.
  *
- * Blue pays out blue — the credit is non-withdrawable and must stay that way, or the purchase
- * launders it into cashable currency. Everything else pays into yellow.
+ * A record, not a policy. The charge used to name no destination account, so the buzz service
+ * applied its yellow default and every green purchase paid the seller yellow — 2,409 legs from
+ * 2025-10-30 until the charge started naming the buyer's own account. Purchases from then on pay in
+ * kind and never reach this function.
  *
- * Shared with the unpublish-refund guard, which has no other way to learn the payout account — the
- * ledger's multi-transaction listing reports each leg by the account the BUYER spent from.
+ * It survives for ONE reader: the unpublish-refund guard, which sizes a refund by the account
+ * reversing a purchase would debit, and cannot learn that from the ledger — the multi-transaction
+ * listing reports each leg by the account the BUYER spent from and carries no destination.
+ *
+ * ⚠️ That makes the guard right for pre-cutover purchases and increasingly wrong for post-cutover
+ * green ones, where it checks a seller's YELLOW balance against money now held in GREEN. The
+ * consequences are a misleading refusal on unpublish, or a refund that takes a green balance
+ * negative — accepted deliberately (Justin, 2026-08-14) rather than blocking the currency fix on a
+ * schema change. The real fix is to record the payout account per purchase, the way
+ * `Placement.spendType` does, at which point this function has no readers and goes.
  */
 export function paidAccessPayoutAccount(spendType: BuzzSpendType): BuzzSpendType {
   return spendType === 'blue' ? 'blue' : 'yellow';
