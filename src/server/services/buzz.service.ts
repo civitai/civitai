@@ -1111,13 +1111,33 @@ export async function refundTransaction(
   return buzzService.refundTransaction(transactionId, { description, details });
 }
 
+/**
+ * The bank (account 0) is a system ledger, not a balance-constrained account, so what it is
+ * credited in is bookkeeping: it pays out in colours it was never credited in. Callers paying the
+ * bank may omit the destination type and land here; callers paying a USER may not, because for
+ * them the colour is the payout.
+ */
+const BANK_LEDGER_ACCOUNT_TYPE = 'yellow' satisfies BuzzAccountType;
+
+type MultiAccountBuzzDestination =
+  | { toAccountId: 0; toAccountType?: BuzzAccountType }
+  | { toAccountId: number; toAccountType: BuzzAccountType };
+
 export async function createMultiAccountBuzzTransaction(
-  input: CreateMultiAccountBuzzTransactionInput & { fromAccountId: number },
+  input: Omit<CreateMultiAccountBuzzTransactionInput, 'toAccountId' | 'toAccountType'> & {
+    fromAccountId: number;
+  } & MultiAccountBuzzDestination,
   opts?: BuzzWriteOptions
 ) {
-  // Default user acc:
-  input.toAccountType = input.toAccountType ?? 'yellow'; // Default to bank if not provided
-  const data = await buzzService.createMultiTransaction(input, opts);
+  if (input.toAccountId !== 0 && !input.toAccountType)
+    throw throwBadRequestError(
+      `toAccountType is required when paying account ${input.toAccountId}; only the bank (account 0) may omit it`
+    );
+
+  const data = await buzzService.createMultiTransaction(
+    { ...input, toAccountType: input.toAccountType ?? BANK_LEDGER_ACCOUNT_TYPE },
+    opts
+  );
 
   return createMultiAccountBuzzTransactionResponse.parse(data);
 }
