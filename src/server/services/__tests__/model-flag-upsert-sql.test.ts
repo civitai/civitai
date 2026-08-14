@@ -148,6 +148,18 @@ describe('buildModelFlagUpsert — structure', () => {
         count: 1,
       });
     }
+
+    // The conflict target itself, not just the keyword. Removing it
+    // (`ON CONFLICT DO UPDATE`) or widening it (`("modelId", "poi")`) both
+    // change which rows collide, and both otherwise pass this whole suite.
+    expect(parenGroupAfter(text, anchorOf(text, /\bON CONFLICT\b/))).toBe('"modelId"');
+
+    // The table being written to, and the promise to return the whole row.
+    // Both are contract-level and both were previously visible only to
+    // Postgres: a wrong table name is silent here, and narrowing `RETURNING *`
+    // drops columns `ModelFlagRow` tells callers they will get.
+    expect(text).toMatch(/INSERT\s+INTO\s+"ModelFlag"\s*\(/);
+    expect(text).toMatch(/RETURNING\s+\*/);
   });
 
   it('inserts exactly one value per column', () => {
@@ -180,9 +192,14 @@ describe('buildModelFlagUpsert — structure', () => {
   it('assigns every non-key column exactly once in DO UPDATE, with no empty slot', () => {
     const { text } = buildModelFlagUpsert({ modelId: 1, scanResult: SCAN_RESULT });
 
-    const doUpdate = anchorOf(text, /DO UPDATE\s+SET\s/);
+    // Advance past the matched keyword rather than re-searching for `SET `:
+    // a re-search finds nothing if the SQL is reformatted as `SET\n  "poi"`,
+    // and the slice then starts mid-keyword and fails with a message that
+    // points at the wrong thing.
+    const doUpdate = text.match(/DO UPDATE\s+SET\s/);
+    if (!doUpdate?.index) throw new Error(`generated SQL is missing DO UPDATE SET:\n${text}`);
     const setClause = text.slice(
-      doUpdate + text.slice(doUpdate).indexOf('SET ') + 'SET '.length,
+      doUpdate.index + doUpdate[0].length,
       anchorOf(text, /\bRETURNING\s/)
     );
     const assignments = splitTopLevel(setClause);
@@ -193,12 +210,18 @@ describe('buildModelFlagUpsert — structure', () => {
       expect(assignment).toMatch(/^"(\w+)" = EXCLUDED\."\1"$/);
     }
 
-    const assigned = assignments.map((a) => a.split('"')[1]);
-    const columns = splitTopLevel(parenGroupAfter(text, anchorOf(text, /INSERT INTO\s/))).map((c) =>
-      c.replaceAll('"', '')
+    const assigned = assignments.map((a) => a.split('"')[1]).sort();
+    const columns = splitTopLevel(parenGroupAfter(text, anchorOf(text, /INSERT\s+INTO\s/))).map(
+      (c) => c.replaceAll('"', '')
     );
     // Every column except the conflict target is refreshed on conflict.
-    expect(new Set(assigned)).toEqual(new Set(columns.filter((c) => c !== 'modelId')));
+    //
+    // Compared as SORTED ARRAYS, not Sets. A Set is duplicate-blind, so
+    // `SET "poi" = EXCLUDED."poi", "poi" = EXCLUDED."poi", …` passed this
+    // assertion while Postgres rejects it outright with
+    // `multiple assignments to same column "poi"` — a survivor that directly
+    // contradicted this test's own name.
+    expect(assigned).toEqual(columns.filter((c) => c !== 'modelId').sort());
   });
 
   it('writes SQL NULL — not a JSON object — when details are absent', () => {
@@ -222,24 +245,24 @@ describe('buildModelFlagUpsert — structure', () => {
  * runs with no database, which matters: CI provides no Postgres server, so the
  * execution arm below never runs there and this is the guard that does.
  *
- * 🔴 What this does NOT cover, so nobody reads it as closing the class: these
- * cases read `statement.values`, so anything living only in the statement TEXT
- * has to be caught elsewhere. Over the 31 mutants measured so far, three
- * corruptions survive the whole always-on suite and are caught only by the
- * execution arm — i.e. never in CI:
+ * 🔴 Read this before trusting a green run. These cases read
+ * `statement.values`, so anything living only in the statement TEXT has to be
+ * caught by the shape suite above instead. Between the two, 35 mutants have
+ * been measured and none currently survives without a database: the column
+ * list's order and contents, the table name, the ON CONFLICT target,
+ * `DO UPDATE` vs `DO NOTHING`, a duplicated SET assignment, a commented-out
+ * SET clause, a misspelled or doubled SQL keyword, a cast-name typo, a cast on
+ * the wrong slot, a narrowed `RETURNING *`, and all three original punctuation
+ * defects.
  *
- *   - the table name
- *   - the ON CONFLICT target column
- *   - narrowing `RETURNING *`
- *
- * The rest of the text-only space that battery covers IS caught without a
- * database: the column list's order and contents, `DO UPDATE` vs `DO NOTHING`,
- * a commented-out SET clause, a misspelled or doubled SQL keyword, a cast-name
- * typo, and all three original punctuation defects. That list is a measurement
- * over the mutants someone thought of, NOT a proof about the whole grammar —
- * two earlier rounds each found survivors the previous battery had missed. Do
- * not treat a green always-on run as proof the statement is correct; run the
- * execution arm when you change it.
+ * 🔴 That is a MEASUREMENT OVER THE MUTANTS SOMEONE THOUGHT OF, not a proof
+ * about the PostgreSQL grammar, and the difference has been load-bearing here:
+ * five review rounds ran, and EVERY ONE of them found a family the previous
+ * battery had missed — wrong binds, then a swallowed error, then helpers that
+ * failed open on a missing clause, then duplicate-blind Set comparison and
+ * casts checked anywhere rather than on their slot. Assume a sixth family
+ * exists. Do not treat a green always-on run as proof the statement is
+ * correct; run the execution arm when you change it.
  */
 describe('buildModelFlagUpsert — value binding', () => {
   // Measured against the built statement, not assumed. `Prisma.sql`NULL`` is
@@ -306,10 +329,18 @@ describe('buildModelFlagUpsert — value binding', () => {
       JSON.stringify({ verdict: 'x' }),
       true,
     ]);
+    // Casts are checked ON THEIR SLOT, not anywhere in the statement. A
+    // whole-text search only proves the cast EXISTS: move `::jsonb` onto the
+    // `sfwOnly` value and a bare-text match still passes, while Postgres says
+    // `column "sfwOnly" is of type boolean but expression is of type jsonb`.
+    const slots = splitTopLevel(parenGroupAfter(text, anchorOf(text, /\bVALUES\s*\(/)));
+
     // A `::text` cast would store the payload as a string, not queryable jsonb.
-    expect(text).toMatch(/::jsonb\b/);
+    expect(slots[7]).toMatch(/::jsonb$/);
     // New flags must land Pending or they never reach the moderator queue.
-    expect(text).toMatch(/::"ModelFlagStatus"(?!\w)/);
+    expect(slots[6]).toMatch(/::"ModelFlagStatus"$/);
+    // …and no other slot carries a cast that would retype a boolean column.
+    expect(slots.filter((slot) => slot.includes('::'))).toHaveLength(2);
   });
 });
 
