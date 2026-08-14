@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import {
   approvedListingSlugQuery,
   resolveLegacyAppRedirect,
@@ -29,6 +30,24 @@ import {
  *     WHOLE suite; see that test for why.
  *   - rewrite a dot-only slug in the destination → 1 FAIL (the narrowed
  *     traversal-claim pin).
+ *
+ * The STORE-SCOPE guard (the disclosure gate added when the `/apps` page gate was
+ * widened to admit the external-only cohort) was measured the same way:
+ *   - delete the scope guard entirely → 4 FAIL.
+ *   - check the WRONG scope (`!== 'public-external'`) → 7 FAIL.
+ *   - denylist (`=== 'public-external'`) instead of the allowlist → 2 FAIL — and
+ *     note it is only 2, because a denylist is right about the headline case and
+ *     wrong only about `none`. That is precisely why the allowlist case exists.
+ *   - move the guard BELOW the DB read → 4 FAIL, and the first failure is a CALL
+ *     COUNT, not a result: the mutant still returns `notFound`, so only the
+ *     no-query assertions can see it.
+ *   - make the guard inert (`if (false)`) → 4 FAIL.
+ *   - 🔴 move the guard below the ROUTE-PARAM check → **0 FAIL — SURVIVES, and it
+ *     is an EQUIVALENT MUTANT, not a hole.** The param check has no side effect
+ *     and returns the identical bare `{ notFound: true }`, so no input can
+ *     distinguish the two orders. Recorded rather than papered over with a
+ *     fixture that fakes a difference; the overclaiming test name that used to
+ *     imply otherwise was removed. See that `it` for the full reasoning.
  *
  * 🔴 Two assertions in this file were REMOVED rather than kept, because they could
  * not fail: an `includes('/')` sub-assertion following a literal-equality assertion
@@ -227,6 +246,7 @@ describe('resolveLegacyAppRoute — SSR gate ordering', () => {
     const findApprovedListingSlug = lookup('model-benchmarking');
     const result = await resolveLegacyAppRoute({
       features: { appBlocks: false, appListings: false },
+      storeScope: 'none',
       appBlockId: 'apb_01KXPENN70SG0RXQKN7WMJMJHF',
       findApprovedListingSlug,
     });
@@ -238,7 +258,12 @@ describe('resolveLegacyAppRoute — SSR gate ordering', () => {
     for (const features of [undefined, null, {}]) {
       const findApprovedListingSlug = lookup('vitrine');
       expect(
-        await resolveLegacyAppRoute({ features, appBlockId: 'apb_x', findApprovedListingSlug })
+        await resolveLegacyAppRoute({
+          features,
+          storeScope: 'none',
+          appBlockId: 'apb_x',
+          findApprovedListingSlug,
+        })
       ).toEqual({ notFound: true });
       expect(findApprovedListingSlug).not.toHaveBeenCalled();
     }
@@ -251,7 +276,12 @@ describe('resolveLegacyAppRoute — SSR gate ordering', () => {
     ]) {
       const findApprovedListingSlug = lookup('vitrine');
       expect(
-        await resolveLegacyAppRoute({ features, appBlockId: 'apb_x', findApprovedListingSlug })
+        await resolveLegacyAppRoute({
+          features,
+          storeScope: 'full',
+          appBlockId: 'apb_x',
+          findApprovedListingSlug,
+        })
       ).toEqual({
         redirect: { destination: '/apps/store-preview/vitrine', permanent: false },
       });
@@ -260,14 +290,165 @@ describe('resolveLegacyAppRoute — SSR gate ordering', () => {
   });
 });
 
+/**
+ * 🔴 THE STORE-SCOPE GATE — the disclosure this route would otherwise arm.
+ *
+ * Until the `/apps` page gate gained its third term (`appListingsPublicExternal`,
+ * so the EXTERNAL-ONLY cohort could reach the store at all), gate (1) of
+ * `getListingDetail` — `scope === 'public-external' && kind !== 'offsite'` — was
+ * unreachable here purely by flag alignment: every viewer past the page gate
+ * resolved `full`. Widening the page gate ENDED that coincidence. Without the
+ * scope check, an external-only viewer would pass the page gate and receive
+ * `302 Location: /apps/store-preview/<onsite-slug>` — disclosing the slug AND the
+ * existence of an approved on-site listing to exactly the audience
+ * `public-external` exists to hide on-site apps from, plus a DB read on their
+ * behalf. The destination 404s for them, so the leak is the header and the query,
+ * not the page body.
+ *
+ * These pin BOTH halves, because `notFound` alone is only half the property: the
+ * gate-first ordering means an ungranted viewer also issues NO QUERY. A guard that
+ * returned `notFound` after the lookup would satisfy a result-only assertion while
+ * leaving the DB read (and its timing side channel) intact.
+ */
+describe('🔴 resolveLegacyAppRoute — the store-scope gate (on-site disclosure)', () => {
+  // The page gate is deliberately GRANTED in every case here, so the only thing
+  // that can decide the outcome is the scope. With `appListingsPublicExternal`
+  // this is the exact shape of a real external-only viewer.
+  const externalOnlyFeatures = {
+    appBlocks: false,
+    appListings: false,
+    appListingsPublicExternal: true,
+  };
+
+  it('public-external → notFound, and NO SLUG LOOKUP IS PERFORMED', async () => {
+    const findApprovedListingSlug = vi.fn(async () => 'model-benchmarking');
+    const result = await resolveLegacyAppRoute({
+      features: externalOnlyFeatures,
+      storeScope: 'public-external',
+      appBlockId: 'apb_01KXPENN70SG0RXQKN7WMJMJHF',
+      findApprovedListingSlug,
+    });
+    expect(result).toEqual({ notFound: true });
+    // 🔴 The half a result-only assertion cannot see. Moving the scope check
+    // BELOW the lookup still returns notFound; only this line catches it.
+    expect(findApprovedListingSlug).not.toHaveBeenCalled();
+    // …and nothing resembling a Location header escaped.
+    expect('redirect' in result).toBe(false);
+  });
+
+  it('🔴 CONTROL: the SAME viewer with scope `full` DOES redirect', async () => {
+    // Without this, the case above could be passing because the fixture is broken
+    // (a features object that never grants, a lookup that never resolves) rather
+    // than because the scope gate fired. Same features, same id, same lookup —
+    // only the scope differs.
+    const findApprovedListingSlug = vi.fn(async () => 'model-benchmarking');
+    const result = await resolveLegacyAppRoute({
+      features: externalOnlyFeatures,
+      storeScope: 'full',
+      appBlockId: 'apb_01KXPENN70SG0RXQKN7WMJMJHF',
+      findApprovedListingSlug,
+    });
+    expect(result).toEqual({
+      redirect: { destination: '/apps/store-preview/model-benchmarking', permanent: false },
+    });
+    expect(findApprovedListingSlug).toHaveBeenCalledTimes(1);
+  });
+
+  it('none → notFound, no query (the Flipt-outage case the page gate misses)', async () => {
+    // During a Flipt outage a MODERATOR's `features.appListings` resolves true from
+    // its static `availability: ['mod']` fallback while the server resolves scope
+    // `none` — so the page gate grants where the data layer would serve nothing.
+    // The allowlist rejects it; a denylist keyed only on `public-external` would not.
+    const findApprovedListingSlug = vi.fn(async () => 'vitrine');
+    const result = await resolveLegacyAppRoute({
+      features: { appListings: true, appBlocks: true },
+      storeScope: 'none',
+      appBlockId: 'apb_x',
+      findApprovedListingSlug,
+    });
+    expect(result).toEqual({ notFound: true });
+    expect(findApprovedListingSlug).not.toHaveBeenCalled();
+  });
+
+  it('full is the ONLY scope that proceeds (allowlist, not a denylist)', async () => {
+    // Data-driven over the whole union so a future fourth scope defaults to DENY
+    // and shows up here as a decision to make, rather than silently inheriting
+    // access. `satisfies` ties the list to the real type.
+    const scopes = ['full', 'public-external', 'none'] satisfies StoreVisibilityScope[];
+    const granting: StoreVisibilityScope[] = [];
+    for (const storeScope of scopes) {
+      const findApprovedListingSlug = vi.fn(async () => 'vitrine');
+      const result = await resolveLegacyAppRoute({
+        features: { appListings: true, appBlocks: true, appListingsPublicExternal: true },
+        storeScope,
+        appBlockId: 'apb_x',
+        findApprovedListingSlug,
+      });
+      if ('redirect' in result) granting.push(storeScope);
+      // The no-query property holds for EVERY non-granting scope, not just the
+      // one case spelled out above.
+      expect(findApprovedListingSlug.mock.calls.length, `scope ${storeScope} query count`).toBe(
+        'redirect' in result ? 1 : 0
+      );
+    }
+    expect(granting).toEqual(['full']);
+  });
+
+  it('a scope-rejected viewer gets an INDISTINGUISHABLE notFound for every param shape', async () => {
+    // The property that is actually observable and actually matters: a rejected
+    // viewer cannot tell a real app id from a malformed one — every param shape
+    // yields the same bare `notFound` with no `Location`, no body difference, and
+    // no query. So the route leaks nothing about which ids exist.
+    //
+    // 🔴 THIS `it` IS DELIBERATELY **NOT** NAMED "the gate runs before the param
+    // check", which is what it said in an earlier draft. That name was a claim it
+    // could not support, and the mutation run proved it: moving the scope guard to
+    // sit AFTER the param check left the entire suite green. It is an EQUIVALENT
+    // MUTANT — the param check has no side effect and returns the identical bare
+    // `{ notFound: true }`, so NO input distinguishes the two orders. Rather than
+    // invent a fixture that pretends otherwise, the overclaiming name is gone and
+    // the limit is recorded here.
+    //
+    // The ordering that IS security-relevant — guard before the DB READ — is a
+    // different thing entirely and IS killed: see the `NO SLUG LOOKUP IS
+    // PERFORMED` case above, which the after-the-query mutant fails on its own
+    // call-count assertion. The source keeps the guard above the param check for
+    // defence in depth (a future edit between the two would otherwise inherit an
+    // ungated param), not because a test can see it.
+    const findApprovedListingSlug = vi.fn(async () => 'vitrine');
+    const results = [];
+    for (const appBlockId of ['apb_real', '', undefined, 123, ['apb_x']]) {
+      results.push(
+        await resolveLegacyAppRoute({
+          features: externalOnlyFeatures,
+          storeScope: 'public-external',
+          appBlockId,
+          findApprovedListingSlug,
+        })
+      );
+    }
+    // Every outcome identical to the first — indistinguishability asserted as a
+    // relationship over the set, not case by case.
+    for (const result of results) expect(result).toEqual({ notFound: true });
+    expect(new Set(results.map((r) => JSON.stringify(r))).size).toBe(1);
+    expect(findApprovedListingSlug).not.toHaveBeenCalled();
+  });
+});
+
 describe('resolveLegacyAppRoute — route param handling', () => {
   const granted = { appBlocks: true };
+  const grantedScope = 'full' satisfies StoreVisibilityScope;
 
   it('a missing / non-string route param → notFound without querying', async () => {
     for (const appBlockId of [undefined, null, '', '   ', 123, ['apb_x']]) {
       const findApprovedListingSlug = vi.fn(async () => 'vitrine');
       expect(
-        await resolveLegacyAppRoute({ features: granted, appBlockId, findApprovedListingSlug })
+        await resolveLegacyAppRoute({
+          features: granted,
+          storeScope: grantedScope,
+          appBlockId,
+          findApprovedListingSlug,
+        })
       ).toEqual({ notFound: true });
       expect(findApprovedListingSlug).not.toHaveBeenCalled();
     }
@@ -287,6 +468,7 @@ describe('resolveLegacyAppRoute — route param handling', () => {
     expect(
       await resolveLegacyAppRoute({
         features: granted,
+        storeScope: grantedScope,
         appBlockId: '  apb_x  ',
         findApprovedListingSlug,
       })
@@ -300,6 +482,7 @@ describe('resolveLegacyAppRoute — route param handling', () => {
     expect(
       await resolveLegacyAppRoute({
         features: granted,
+        storeScope: grantedScope,
         appBlockId: 'apb_01KXPENN70SG0RXQKN7WMJMJHF',
         findApprovedListingSlug,
       })
@@ -312,6 +495,7 @@ describe('resolveLegacyAppRoute — route param handling', () => {
     const findApprovedListingSlug = vi.fn(async () => null);
     const result = await resolveLegacyAppRoute({
       features: granted,
+      storeScope: grantedScope,
       appBlockId: 'apb_pending',
       findApprovedListingSlug,
     });

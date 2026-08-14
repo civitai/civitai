@@ -397,7 +397,9 @@ export const APP_BLOCKS_DEV_TUNNEL_FLAG = 'app-blocks-dev-tunnel';
  * is a brand-new surface (no existing mod access to preserve), so fail-closed for
  * all until the flag exists is the safe posture.
  */
-export async function isAppBlocksDevTunnelEnabled(opts?: { user?: SessionUser }): Promise<boolean> {
+export async function isAppBlocksDevTunnelEnabled(opts?: {
+  user?: SessionUser;
+}): Promise<boolean> {
   if (!opts?.user) return isFlipt(APP_BLOCKS_DEV_TUNNEL_FLAG);
   const user = opts.user;
   return isFlipt(APP_BLOCKS_DEV_TUNNEL_FLAG, String(user.id), buildFliptContext(user));

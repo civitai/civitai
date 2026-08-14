@@ -39,6 +39,20 @@ import { describe, it, expect } from 'vitest';
  * (`preview / component-tests`) and do not block a merge. This unit-project ledger
  * does. So in CI all six sites are pinned STRUCTURALLY ONLY, by this file — which
  * is precisely why a hole in its masker (see below) is worth more than it looks.
+ *
+ * 🔴 TWO MEASURED LIMITS OF THIS FILE — issue #3932, not fixed here. Read them
+ * before treating a green run as "no site re-inlines the gate":
+ *   1. `INLINED_GATE` matches two flag names in PROXIMITY inside ONE expression.
+ *      Four re-inlining shapes evade it and were verified green: hoisted locals
+ *      (`const a = features.appListings; … a || b`), names split across a `;` (the
+ *      `[^;{}]` class stops there by design), a ternary, and
+ *      `[features.appListings, features.appBlocks].some(Boolean)`. Widening the
+ *      NAME list (as the external-only term did) does not touch the SHAPE.
+ *   2. The "EXACT" assertion below pins DIRECT importers only, so a site that
+ *      reaches the gate transitively is invisible to it — including
+ *      `pages/apps/[appBlockId]/index.tsx`, which routes through
+ *      `resolveLegacyAppRoute` → `resolveAppsPageAccess`. That is the site a real
+ *      disclosure defect appeared at, so the blindness is not academic.
  */
 
 const SRC = path.resolve(__dirname, '../../..');
