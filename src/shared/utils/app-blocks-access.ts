@@ -81,20 +81,19 @@ export type AppsStoreFeatureFlags =
  * (`appListings || appBlocks || appListingsPublicExternal`).
  *
  * 🔒 THE SINGLE SOURCE OF TRUTH for "may this viewer see the /apps store", for
- * the six surfaces under `components/Apps` and `pages/apps`: the `/apps` SSR
- * resolver (`resolveAppsPageAccess`), the `/apps` page body, the store-preview
- * route, the marketplace grid query, the related-listings rail, and the `/apps/*`
- * sub-nav. All six route through THIS predicate.
+ * seven surfaces: the `/apps` SSR resolver (`resolveAppsPageAccess`), the `/apps`
+ * page body, the store-preview route, the marketplace grid query, the
+ * related-listings rail, the `/apps/*` sub-nav — all six under `components/Apps`
+ * / `pages/apps` — and, since #3907, the user-menu "Apps" → `/apps` entry
+ * (`components/AppLayout/AppHeader/appsNavVisibility.ts`). All seven route
+ * through THIS predicate.
  *
- * ⚠️ "Every store surface" would be TOO STRONG, so it is not claimed. One
- * store-visibility decision is deliberately NOT converted:
- * `components/AppLayout/AppHeader/appsNavVisibility.ts` gates the user-menu
- * "Apps" → `/apps` entry on `appBlocks` alone, and its own doc says it "stays
- * gated on `appBlocks`" — a standing decision, not drift. Consequence worth
- * knowing before the launch: for a `{appListings, NOT appBlocks}` cohort the
- * store renders but has no in-product entry point, since that menu item is the
- * only route TO `/apps`. Tracked in issue #3907 — settle it BEFORE widening
- * `app-listings`, not after.
+ * ⚠️ "Every store surface" would still be TOO STRONG, so it is not claimed —
+ * only that these seven are pinned. The seventh was converted because it is the
+ * ONLY in-product route to `/apps`, so while it read `appBlocks` alone a
+ * `{appListings, NOT appBlocks}` or external-only cohort got a store that
+ * rendered but could not be found. Converting it widens DISCOVERY only: the
+ * block-runtime surfaces listed below keep their own gates.
  *
  * Do NOT re-inline `features.appListings || features.appBlocks`; the
  * gates drifting apart is exactly what this function exists to prevent, and it
@@ -104,7 +103,7 @@ export type AppsStoreFeatureFlags =
  * sub-navigation at all.
  *
  * ENFORCED, not merely requested: `components/Apps/__tests__/appsStoreAccessCallSites.test.ts`
- * pins the exact ledger of the six sites and fails if one is added, reverted, or
+ * pins the exact ledger of the seven sites and fails if one is added, reverted, or
  * re-inlines the boolean. Adding a store surface means adding it to that ledger.
  *
  * ## Why an OR, and which flag is which

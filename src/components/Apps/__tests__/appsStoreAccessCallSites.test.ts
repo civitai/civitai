@@ -28,17 +28,26 @@ import { describe, it, expect } from 'vitest';
  *   - `AppListingsMarketplaceBody.storeGate.browser.test.tsx` — the grid query gate
  *   - `hasAppsStoreAccess.test.ts`                 — the predicate + the SSR seam
  *
- * THREE of the six sites are pinned STRUCTURALLY ONLY — `pages/apps/index.tsx`
+ * THREE of the seven sites are pinned STRUCTURALLY ONLY — `pages/apps/index.tsx`
  * and `pages/apps/store-preview/[slug].tsx` (Next pages, no component harness) and
  * `components/Apps/RelatedListings.tsx` (its only existing test covers the pure
  * selection helper and never mounts the component, so it never touches
  * `useFeatureFlags` / `canSeeStore`). Those three are covered against REVERSION,
- * not against a wrong-argument call. Stated rather than implied.
+ * not against a wrong-argument call. Stated rather than implied. The seventh —
+ * `appsNavVisibility.ts` — has behavioural cover in the same unit project
+ * (`AppHeader/appsNavVisibility.test.ts`, which asserts the external-only and
+ * catalog-only cohorts resolve `marketplace: true`), so its own argument IS
+ * checked. What no test covers, there or here: that `useGetMenuItems` hands it
+ * the real `useFeatureFlags()` object and wires `appsNav.marketplace` to the
+ * right menu item. That seam is untested for BOTH nav entries and predates this
+ * ledger — do not read the behavioural cover as reaching it.
  *
  * 🔴 AND THE SCOPE THAT MATTERS IN CI: the component suites above are REPORT-ONLY
  * (`preview / component-tests`) and do not block a merge. This unit-project ledger
- * does. So in CI all six sites are pinned STRUCTURALLY ONLY, by this file — which
- * is precisely why a hole in its masker (see below) is worth more than it looks.
+ * does. So in CI six of the seven sites are pinned STRUCTURALLY ONLY, by this file
+ * — which is precisely why a hole in its masker (see below) is worth more than it
+ * looks. (`appsNavVisibility` is the exception: its behavioural test is a unit
+ * test, so it blocks too.)
  *
  * 🔴 TWO MEASURED LIMITS OF THIS FILE — issue #3932, not fixed here. Read them
  * before treating a green run as "no site re-inlines the gate":
@@ -69,30 +78,24 @@ const SRC = path.resolve(__dirname, '../../..');
  *    `appBlocks` ALONE because they need the runtime, not just the catalog.
  *    Sweeping them in here would be a silent access widening.
  *
- * 2. 🔴 `components/AppLayout/AppHeader/appsNavVisibility.ts` — `marketplace:
- *    !!features.appBlocks`, which drives the user-menu "Apps" → `/apps` entry.
- *    That IS a store-visibility decision and it is NOT converted, deliberately:
- *    that module's own doc comment states the entry "stays gated on `appBlocks`",
- *    so it is a standing decision, not drift. It is also outside `SCAN_ROOTS`
- *    (`components/AppLayout`), so grow-detection below is STRUCTURALLY BLIND to
- *    it — do not read the ledger's exactness as covering it.
+ * 2. The user-menu entry is IN the ledger now (#3907, resolved), and its module
+ *    lives outside `components/Apps` — `components/AppLayout/AppHeader/
+ *    appsNavVisibility.ts` — which is why `SCAN_ROOTS` carries that directory
+ *    too. Earlier revisions of this comment recorded it as deliberately NOT
+ *    converted and therefore structurally invisible here; both halves are now
+ *    false, and the reason it changed is worth keeping:
  *
- *    CONSEQUENCE, recorded so nobody rediscovers it during the launch: for the
- *    `{appListings, NOT appBlocks}` cohort the store renders but has NO in-product
- *    entry point — that menu item is the only route TO `/apps` (the sub-nav's
- *    Marketplace tab only appears once you are already on `/apps/*`). Reachable by
- *    direct URL only. Tracked in issue #3907; not this file's to fix.
- *
- *    🔴 THE EXTERNAL-ONLY COHORT INHERITS THAT GAP, AND IS THE FIRST REAL POPULATION
- *    TO HIT IT. `{appListingsPublicExternal, NOT appBlocks, NOT appListings}` holders
- *    now pass the six gates below but the user-menu entry still reads `appBlocks`
- *    alone, so `/apps` is direct-URL-only for them. Until #3907 lands, an
- *    external-only rollout needs its own entry point (a link in the announcement, a
- *    campaign URL) — the store being reachable is NOT the same as it being findable.
- *    Deliberately out of scope here: converting that menu item is a product decision
- *    on a module with its own standing doc, not a mechanical alignment.
+ *    that entry is the ONLY in-product route TO `/apps` (the sub-nav's
+ *    Marketplace tab only appears once you are already on `/apps/*`), and it read
+ *    `!!features.appBlocks`. So `{appListings, NOT appBlocks}` — the documented
+ *    shape of the store launch — and `{appListingsPublicExternal, NOT appBlocks,
+ *    NOT appListings}` — the live external-only tester cohort — both passed the
+ *    other six gates onto a store they could reach only by direct URL. Reachable
+ *    is not findable. Widening it moves DISCOVERY only: every runtime surface
+ *    behind `/apps` keeps its own `appBlocks` gate (see 1).
  */
 const STORE_GATE_SITES = [
+  'components/AppLayout/AppHeader/appsNavVisibility.ts',
   'components/Apps/AppListingsMarketplaceBody.tsx',
   'components/Apps/AppsSubNav.tsx',
   'components/Apps/RelatedListings.tsx',
@@ -104,8 +107,16 @@ const STORE_GATE_SITES = [
 /** The ONE module allowed to spell the boolean out — it defines it. */
 const DEFINING_MODULE = 'shared/utils/app-blocks-access.ts';
 
-/** Directories scanned for a re-inlined gate. The definition lives outside them. */
-const SCAN_ROOTS = ['components/Apps', 'pages/apps'];
+/**
+ * Directories scanned for a re-inlined gate. The definition lives outside them.
+ *
+ * `components/AppLayout/AppHeader` is here for ONE file — `appsNavVisibility.ts`,
+ * the user-menu route to the store (#3907). Scanning the whole directory rather
+ * than allowlisting that file is deliberate: the header is where a future "show
+ * the Apps entry when …" tweak would most plausibly open-code the gate, and the
+ * re-inline scan below only has teeth over directories it walks.
+ */
+const SCAN_ROOTS = ['components/AppLayout/AppHeader', 'components/Apps', 'pages/apps'];
 
 /**
  * 🔴 MASKING RUNS THROUGH THE REAL TypeScript PARSER, NOT A QUOTE SCANNER.
@@ -502,10 +513,10 @@ describe('🔒 every store-visibility site routes through the shared predicate',
         flatten(f.comments)
       )
     ).map((f) => f.rel);
-    // ⚠️ "EXACT" is scoped to SCAN_ROOTS. `components/AppLayout/AppHeader/
-    // appsNavVisibility.ts` is a real store-visibility decision that lives outside
-    // them and is deliberately excluded — see the STORE_GATE_SITES doc. This
-    // assertion cannot and does not speak for it.
+    // ⚠️ "EXACT" is scoped to SCAN_ROOTS — three directories now, the third
+    // added for the user-menu entry (#3907). A store-visibility decision made
+    // OUTSIDE those roots is still invisible here; the scoping is the limit, not
+    // the file list.
     expect(importers.sort()).toEqual([...STORE_GATE_SITES].sort());
   });
 });
