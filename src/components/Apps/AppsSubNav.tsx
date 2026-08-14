@@ -15,7 +15,7 @@ import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsClient } from '~/providers/IsClientProvider';
-import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
+import { hasAppsStoreAccess, isAppDeveloper } from '~/shared/utils/app-blocks-access';
 
 /**
  * The conditions that drive which sub-nav tabs are visible. Sourced from the
@@ -95,7 +95,20 @@ type SubNavLink = {
  * `isAppDeveloper` and otherwise returns `notFound` — so a store-visible
  * NON-author (the widened `app-listings` tester cohort: `app-listings=true`,
  * `app-blocks-author=false`) would click a tab straight into a 404. The tab now
- * keys off the SAME predicate the page does.
+ * keys off the SAME predicate the page's `getServerSideProps` does.
+ *
+ * ⚠️ KNOWN, PRE-EXISTING, DELIBERATELY NOT FIXED HERE — tracked in issue #3906:
+ * `/apps/submit`'s CLIENT BODY carries an EXTRA
+ * `if (!features?.appBlocks) return <NotFound />` (submit.tsx:68) that its own SSR
+ * gate does NOT. That check was always reachable by DIRECT navigation (a bookmark,
+ * a pasted link, the `?edit=` deep link from my-submissions); what the old
+ * `appBlocks` gate on this container prevented was reaching it *via this tab*.
+ * Now that the container is on the shared STORE predicate, the tab is one more
+ * route into it for the cohort {`appListings` yes, `appBlocks` no, author} — empty
+ * today, since `app-blocks-author` is a strict subset of `app-blocks-enabled`.
+ * The outlier is submit.tsx's body, not this tab: re-inlining `appBlocks` here
+ * would re-create the very drift this change removes, and whether authoring
+ * requires the block runtime is a product decision. See #3906.
  *
  * With "Create" conditional the bar can collapse to a single entry, so
  * {@link AppsSubNavView} hides itself entirely below two tabs — a one-tab
@@ -293,10 +306,19 @@ export function AppsSubNavView({
  * top of every apps page (the nav dropdown now exposes a single `/apps`
  * entry — this is the second-level navigation).
  *
- * Gated on `features.appBlocks` (the page itself 404s without it, so this is a
- * belt for non-flag callers) and on a logged-in user (the summary query is a
- * `protectedProcedure`; an anon viewer resolves to `NO_CAPABILITIES` + an empty
- * summary ⇒ Marketplace alone ⇒ the bar hides itself entirely).
+ * Gated on the SHARED store-visibility predicate `hasAppsStoreAccess(features)`
+ * — the SAME rule `resolveAppsPageAccess` enforces in `getServerSideProps` — and
+ * on a logged-in user (the summary query is a `protectedProcedure`; an anon
+ * viewer resolves to `NO_CAPABILITIES` + an empty summary ⇒ Marketplace alone ⇒
+ * the bar hides itself entirely).
+ *
+ * 🔴 THIS GATE USED TO READ `features.appBlocks` ALONE while the page it sits on
+ * granted access on `appListings || appBlocks`. The two could therefore disagree:
+ * a cohort holding `app-listings` WITHOUT `app-blocks-enabled` would load `/apps`
+ * successfully and get NO sub-navigation. That is not reachable today (both flags
+ * resolve true for the current mods + `app-dev-testers` cohort), but `app-listings`
+ * exists precisely so the catalog can widen INDEPENDENTLY of the block runtime, so
+ * the disagreement is one flag flip away. Both gates now call one predicate.
  */
 export function AppsSubNav() {
   const router = useRouter();
@@ -316,12 +338,24 @@ export function AppsSubNav() {
   // AFTER mount, once hydration has already matched.
   const isClient = useIsClient();
 
+  // 🔴 DELIBERATELY *NOT* `hasAppsStoreAccess` — this one stays on `appBlocks`
+  // alone, and that is not an oversight. A query gate must mirror the gate on the
+  // PROCEDURE it calls, not the gate on the page it renders in. `blocks.getNavSummary`
+  // is `protectedProcedure.use(enforceAppBlocksFlag)` (blocks.router.ts), i.e. the
+  // strict `app-blocks-enabled` check — and because it is a QUERY the middleware
+  // short-circuits rather than throwing, returning the ALL-FALSE summary without
+  // running a single DB read. So for an `app-listings`-only viewer, widening this
+  // `enabled` would buy a guaranteed round-trip to a guaranteed all-false answer.
+  // The conditional tabs it feeds (Installed / My submissions / Revenue / Review)
+  // all point at pages that themselves 404 without `appBlocks`, so all-false is
+  // also the CORRECT tab set for that viewer. If the server proc ever moves to
+  // `enforceAppListingsReadFlag`, move this with it.
   const { data } = trpc.blocks.getNavSummary.useQuery(undefined, {
     enabled: !!features.appBlocks && !!currentUser,
     staleTime: 60_000,
   });
 
-  if (!features.appBlocks) return null;
+  if (!hasAppsStoreAccess(features)) return null;
 
   const summary = isClient ? data ?? EMPTY_SUMMARY : EMPTY_SUMMARY;
 

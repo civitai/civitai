@@ -56,6 +56,7 @@
  * `/apps/store-preview/` (an open redirect) or splicing a query/fragment onto it.
  */
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
+import type { AppsStoreFeatureFlags } from '~/shared/utils/app-blocks-access';
 
 export type LegacyAppRedirectResult =
   | { redirect: { destination: string; permanent: false } }
@@ -161,7 +162,9 @@ export function approvedListingSlugQuery(appBlockId: string) {
  * past its current audience is the fix.
  */
 export async function resolveLegacyAppRoute(args: {
-  features?: { appBlocks?: boolean; appListings?: boolean } | null;
+  // The SHARED flag type (derived from `FeatureAccess`), so a rename at GA is a
+  // compile error here too — this resolver forwards straight into the store gate.
+  features?: AppsStoreFeatureFlags;
   appBlockId?: unknown;
   /** Approved-only slug lookup. Use `approvedListingSlugQuery` to build it. */
   findApprovedListingSlug: (appBlockId: string) => Promise<string | null | undefined>;

@@ -22,9 +22,16 @@ import { AppsSubNav } from '~/components/Apps/AppsSubNav';
  * subtitle and right-aligned header actions become props so the header geometry
  * is uniform; only the content slot differs.
  *
- * Flag-gating (`features.appBlocks`) + any per-page access redirect stay on the
- * page (`getServerSideProps` / the in-component `NotFound` guard) — this layout
- * is presentational chrome only and assumes the page already passed its gate.
+ * Flag-gating + any per-page access redirect stay on the page
+ * (`getServerSideProps` / the in-component `NotFound` guard) — this layout is
+ * presentational chrome only and assumes the page already passed its gate.
+ *
+ * Which flag depends on the surface, and the two are NOT interchangeable: the
+ * STORE surfaces (`/apps`, `/apps/store-preview/<slug>`) gate on the shared
+ * `hasAppsStoreAccess` predicate (`appListings || appBlocks`), while the block-
+ * RUNTIME surfaces (`/apps/installed`, `/apps/review`, `/apps/my-submissions`,
+ * `/apps/revenue`) gate on `appBlocks` alone because they need the runtime, not
+ * just the catalog.
  */
 export function AppsPageLayout({
   title,
