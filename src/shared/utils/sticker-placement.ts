@@ -106,6 +106,25 @@ export function stickerMaxScale(settings?: Record<string, unknown> | null) {
 
 export const STICKER_MAX_SCALE_KEY = 'maxScale';
 
+/**
+ * What a caller may hand IN, as against `StickerPlacementData`, which is what a
+ * stored row holds.
+ *
+ * `flip` and `opacity` are optional here and required there, deliberately. #3865
+ * added both and put the defaulting for rows written before they existed into
+ * `parseStickerPlacementData` — "which is now the one way to read
+ * `Placement.data`, rather than in each reader" — so data genuinely reaches the
+ * write path without them. The zod schema defaults both, so the router's parsed
+ * value always carries them and the real call path is unaffected.
+ *
+ * Do not collapse the two back together. `parseStickerPlacementData` and
+ * `PlacedSticker` are the narrowing half and must keep both required; making the
+ * input side match them is what left the defaulting below unreachable to the
+ * compiler while it stayed necessary at runtime.
+ */
+export type StickerPlacementInput = Omit<StickerPlacementData, 'flip' | 'opacity'> &
+  Partial<Pick<StickerPlacementData, 'flip' | 'opacity'>>;
+
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
 /**
@@ -113,9 +132,11 @@ const clamp = (value: number, min: number, max: number) => Math.min(Math.max(val
  * leaves the image by a pixel is a normal gesture, not a malformed request. The
  * schema still refuses anything non-finite — a NaN would render nowhere and be
  * indistinguishable from the sticker not existing.
+ *
+ * Widening to narrowing: it takes the input shape and returns the stored one.
  */
 export const normalizeStickerPlacement = (
-  data: Omit<StickerPlacementData, 'cosmeticId'>
+  data: Omit<StickerPlacementInput, 'cosmeticId'>
 ): Omit<StickerPlacementData, 'cosmeticId'> => ({
   x: clamp(data.x, 0, 1),
   y: clamp(data.y, 0, 1),
@@ -127,7 +148,9 @@ export const normalizeStickerPlacement = (
   // on its way through `parseStickerPlacementData`, and anything hand-written.
   // NaN would be written to the row and drawn as no sticker at all.
   opacity: clamp(
-    Number.isFinite(data.opacity) ? data.opacity : STICKER_PLACEMENT_DEFAULT_OPACITY,
+    typeof data.opacity === 'number' && Number.isFinite(data.opacity)
+      ? data.opacity
+      : STICKER_PLACEMENT_DEFAULT_OPACITY,
     STICKER_PLACEMENT_MIN_OPACITY,
     STICKER_PLACEMENT_MAX_OPACITY
   ),

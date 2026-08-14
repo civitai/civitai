@@ -26,7 +26,7 @@ const CAP = 700;
 const PRICE = 700;
 
 const holdPlacementEscrow = vi.fn();
-const settlePlacement = vi.fn(async () => ({ settled: true }));
+const settlePlacement = vi.fn<PrismaStub<{ settled: boolean }>>(async () => ({ settled: true }));
 vi.mock('~/server/services/placement-escrow.service', () => ({
   holdPlacementEscrow,
   settlePlacement,
@@ -51,22 +51,31 @@ vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValu
  */
 const calls: string[] = [];
 
+/**
+ * Every Prisma stub declares its argument, rather than letting `vi.fn(async () => …)`
+ * infer a zero-arg signature. That inference makes `mock.calls` the empty tuple `[]`,
+ * so the `calls[0][0]` reads below — which are how this file asserts the WHERE clauses
+ * the guards are made of — are type errors against their own mock. `unknown` is the
+ * honest parameter type: the per-site casts stay, and they are what pins each shape.
+ */
+type PrismaStub<T> = (args: unknown) => Promise<T>;
+
 const queryRaw = vi.fn();
-const placementCreate = vi.fn(async () => {
+const placementCreate = vi.fn<PrismaStub<{ id: number }>>(async () => {
   calls.push('create');
   return { id: PLACEMENT };
 });
-const placementCount = vi.fn(async () => 0);
-const placementFindMany = vi.fn(async () => [] as unknown[]);
-const placementGroupBy = vi.fn(async () => [] as unknown[]);
-const transactionFindMany = vi.fn(async () => [] as unknown[]);
-const placementFindFirst = vi.fn(async () => null as unknown);
-const cosmeticFindUnique = vi.fn(async () => null as unknown);
+const placementCount = vi.fn<PrismaStub<number>>(async () => 0);
+const placementFindMany = vi.fn<PrismaStub<unknown[]>>(async () => []);
+const placementGroupBy = vi.fn<PrismaStub<unknown[]>>(async () => []);
+const transactionFindMany = vi.fn<PrismaStub<unknown[]>>(async () => []);
+const placementFindFirst = vi.fn<PrismaStub<unknown>>(async () => null);
+const cosmeticFindUnique = vi.fn<PrismaStub<unknown>>(async () => null);
 
-const imageFindMany = vi.fn(async () => [] as unknown[]);
-const placementFindUnique = vi.fn(async () => null as unknown);
-const placementUpdate = vi.fn(async () => ({}));
-const placementUpdateMany = vi.fn(async () => ({ count: 1 }));
+const imageFindMany = vi.fn<PrismaStub<unknown[]>>(async () => []);
+const placementFindUnique = vi.fn<PrismaStub<unknown>>(async () => null);
+const placementUpdate = vi.fn<PrismaStub<object>>(async () => ({}));
+const placementUpdateMany = vi.fn<PrismaStub<{ count: number }>>(async () => ({ count: 1 }));
 
 vi.mock('~/server/db/client', () => ({
   dbWrite: {
@@ -152,7 +161,8 @@ beforeEach(() => {
   spendStickerUsesFor.mockImplementation(async () => {
     calls.push('spend');
   });
-  settlePlacement.mockImplementation(async ({ action }: { action: string }) => {
+  settlePlacement.mockImplementation(async (args) => {
+    const { action } = args as { action: string };
     calls.push(`settle:${action}`);
     return { settled: true };
   });

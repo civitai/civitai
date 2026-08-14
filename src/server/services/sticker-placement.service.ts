@@ -24,6 +24,7 @@ import {
 import type {
   PlacementSettlementState,
   StickerPlacementData,
+  StickerPlacementInput,
 } from '~/shared/utils/sticker-placement';
 import {
   isStickerPlacementData,
@@ -110,7 +111,7 @@ async function loadPlaceableSticker({
 export type CreateStickerPlacement = {
   placerId: number;
   imageId: number;
-  data: Omit<StickerPlacementData, 'cosmeticId'> & { cosmeticId: number };
+  data: Omit<StickerPlacementInput, 'cosmeticId'> & { cosmeticId: number };
   /** Moderators may exceed a creator's size limit. Justin's call. */
   isModerator?: boolean;
 };
