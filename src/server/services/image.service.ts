@@ -3068,8 +3068,6 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
     if (!result.cursor) break; // no more pages
   }
 
-  if (!accumulated.length && !ownExcludedPromise) return null;
-
   let data = accumulated;
 
   // Merge user's own excluded content, re-sort by the active sort, then limit.
@@ -3127,6 +3125,15 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
       }
     }
   }
+
+  // Nothing to serve → return null so the caller falls back to Meilisearch.
+  // Checked HERE, on the merged result, and not on `accumulated` alone: the
+  // own-excluded second pass can be the only source of content on the page
+  // (and its docs are content-scoped just above), so an empty main pass is not
+  // yet an empty result. Checking earlier would either discard that content or
+  // — as it did before — make the fallback unreachable for any caller for whom
+  // the second pass was issued at all, i.e. every signed-in first-page request.
+  if (!data.length) return null;
 
   data = data.slice(0, limit);
 
