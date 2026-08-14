@@ -187,20 +187,19 @@ const donationGoalByEntity = async ({
 // Creates a donation goal for an entity. This is purely a DonationGoal concern — it knows nothing
 // about PaidAccess/early-access; the gate is created separately by its own writer. Create-once:
 // later edits don't retroactively replace an existing goal (an entity has at most one).
-export async function ensureDonationGoal(
-  {
-    entityType,
-    entityId,
-    amount,
-    userId,
-    title = 'Donation Goal',
-  }: {
-    entityType: PaidAccessEntityType;
-    entityId: number;
-    amount: number;
-    userId: number;
-    title?: string;
-  }) {
+export async function ensureDonationGoal({
+  entityType,
+  entityId,
+  amount,
+  userId,
+  title = 'Donation Goal',
+}: {
+  entityType: PaidAccessEntityType;
+  entityId: number;
+  amount: number;
+  userId: number;
+  title?: string;
+}) {
   // Create-once is enforced by the partial unique index on (entityType, entityId), not by a prior
   // read: a read-then-create left a window where concurrent early-access writes all saw no goal and
   // each inserted one, splitting the entity's donations across rows that donationGoalByEntity then
@@ -262,6 +261,10 @@ export const donateToGoal = async ({
       amount,
       fromAccountId: userId,
       fromAccountTypes: [buzzType],
+      // The creator receives what the donor gave. Naming no destination let the
+      // buzz service apply its yellow default, so a green donation reached the
+      // creator as yellow — 137 legs / 85,210 Buzz since green launched.
+      toAccountType: buzzType,
       toAccountId: goal.userId,
       externalTransactionIdPrefix,
       description: `Donation to ${goal.title}`,
