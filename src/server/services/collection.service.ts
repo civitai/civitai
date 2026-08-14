@@ -42,7 +42,10 @@ import type {
   UpsertCollectionInput,
   SetCollectionAiReviewInput,
 } from '~/server/schema/collection.schema';
-import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
+import {
+  collectionAiReviewSchema,
+  OPEN_COLLECTION_SEARCH_LIMIT,
+} from '~/server/schema/collection.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import type { UserMeta } from '~/server/schema/user.schema';
@@ -586,7 +589,7 @@ export const getUserCollectionsWithPermissions = async <
           AND c."name" ILIKE ${`%${openQuery}%`}
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
         ORDER BY c."name"
-        LIMIT 20
+        LIMIT ${OPEN_COLLECTION_SEARCH_LIMIT}
     )`);
   }
 

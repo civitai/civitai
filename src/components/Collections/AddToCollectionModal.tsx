@@ -23,7 +23,7 @@ import {
   CollectionType,
   CollectionWriteConfiguration,
 } from '~/shared/utils/prisma/enums';
-import { IconArrowLeft, IconCalendar, IconPlus, IconSearch } from '@tabler/icons-react';
+import { IconArrowLeft, IconCalendar, IconPlus, IconSearch, IconX } from '@tabler/icons-react';
 import { createElement, forwardRef, useEffect, useState } from 'react';
 import type * as z from 'zod';
 import {
@@ -36,7 +36,11 @@ import {
   InputDatePicker,
 } from '~/libs/form';
 import type { AddCollectionItemInput } from '~/server/schema/collection.schema';
-import { upsertCollectionInput } from '~/server/schema/collection.schema';
+import {
+  OPEN_COLLECTION_SEARCH_LIMIT,
+  OPEN_COLLECTION_SEARCH_MIN,
+  upsertCollectionInput,
+} from '~/server/schema/collection.schema';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import type { PrivacyData } from './collection.utils';
@@ -51,6 +55,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
 import { closeAllModals, openModal } from '@mantine/modals';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import classes from './AddToCollectionModal.module.scss';
@@ -108,9 +113,10 @@ type SelectedCollection = {
 // option that silently vanishes from the picker reads as deleted, not paused.
 const COLLABORATION_CLOSED_TOOLTIP = "This collection isn't accepting new entries right now.";
 
-// Matches the server's `openQuery` minimum. Below it the search only filters what the user
-// already holds; an empty term must never ask for "every open collection".
-const MIN_SEARCH_LENGTH = 2;
+// Below the server's `openQuery` minimum the search only filters what the user already holds; an
+// empty term must never ask for "every open collection".
+const MIN_SEARCH_LENGTH = OPEN_COLLECTION_SEARCH_MIN;
+const OPEN_RESULT_LIMIT = OPEN_COLLECTION_SEARCH_LIMIT;
 
 // Reusable collection checkbox item component
 function CollectionCheckboxItem({
@@ -138,7 +144,8 @@ function CollectionCheckboxItem({
   onToggle: (selected: boolean) => void;
   onTagChange: (tagId: number | null) => void;
 }) {
-  const Icon = collectionReadPrivacyData[collection.read].icon;
+  const privacy = collectionReadPrivacyData[collection.read];
+  const Icon = privacy.icon;
   const availableTags = (collection.tags ?? []).filter(
     (t) => !t.filterableOnly || t.id === selectedItem?.tagId
   );
@@ -165,9 +172,11 @@ function CollectionCheckboxItem({
                   </Text>
                 )}
               </Stack>
-              <ThemeIcon size={20} variant="light" color="gray" className={classes.privacyIcon}>
-                <Icon size={14} />
-              </ThemeIcon>
+              <Tooltip label={privacy.label} position="left" withArrow>
+                <ThemeIcon size={20} variant="light" color="gray" className={classes.privacyIcon}>
+                  <Icon size={14} />
+                </ThemeIcon>
+              </Tooltip>
             </Group>
           }
         />
@@ -210,8 +219,11 @@ function CollectionListForm({
   // submit an entry for review without following the collection first.
   const includeActiveContests = props.type === CollectionType.Model;
 
-  const { data: collections = [], isLoading: loadingCollections } =
-    trpc.collection.getAllUser.useQuery({
+  const {
+    data: collections = [],
+    isLoading: loadingCollections,
+    isFetching: fetchingCollections,
+  } = trpc.collection.getAllUser.useQuery({
       // Only request collections where the user can actually add items.
       // MANAGE-only contributors on a Private-write collection can configure
       // the collection but can't write to it, so including MANAGE here would
@@ -243,37 +255,37 @@ function CollectionListForm({
   // The search box filters what the user already holds and, past MIN_SEARCH_LENGTH, asks the
   // server for open collections they hold nothing on. Both halves read from the same term so a
   // name that matches one of their own collections doesn't also come back as a stranger's.
-  const matchesSearch = (collection: { name: string }) =>
-    !debouncedSearch || collection.name.toLowerCase().includes(debouncedSearch.toLowerCase());
+  // A checked collection always survives the filter: hiding a row that is still queued for the
+  // save is how someone removes an entry without meaning to.
+  const matchesSearch = (collection: { id: number; name: string }) =>
+    !debouncedSearch ||
+    collection.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+    selectedCollections.some((c) => c.collectionId === collection.id);
 
-  const ownedCollections = collections.filter(
-    (collection) => collection.isOwner && matchesSearch(collection)
-  );
+  const visible = collections.filter(matchesSearch);
+  const ownedCollections = visible.filter((collection) => collection.isOwner);
   // Active contests are only requested (and thus split out) for model saves; for every other type
   // the flag is off and this group is empty, so contributing behaves exactly as before.
   const activeContestCollections = includeActiveContests
-    ? collections.filter(
-        (collection) =>
-          !collection.isOwner &&
-          collection.mode === CollectionMode.Contest &&
-          matchesSearch(collection)
+    ? visible.filter(
+        (collection) => !collection.isOwner && collection.mode === CollectionMode.Contest
       )
     : [];
-  const otherCollections = collections.filter(
+  const otherCollections = visible.filter(
     (collection) =>
       !collection.isOwner &&
-      !(includeActiveContests && collection.mode === CollectionMode.Contest) &&
-      matchesSearch(collection)
+      !(includeActiveContests && collection.mode === CollectionMode.Contest)
   );
-  // A row on the collection is what separates "shared with you" from a stranger's open collection
-  // — the search branch returns both. While permissions are still loading everything lands in the
-  // open group, which is also the group whose checkboxes are disabled until they arrive.
-  const contributingCollections = otherCollections.filter(
-    (collection) => permissionsByCollectionId.get(collection.id)?.isContributor
-  );
-  const openCollections = otherCollections.filter(
-    (collection) => !permissionsByCollectionId.get(collection.id)?.isContributor
-  );
+  // A row on the collection is what separates "shared with you" from a stranger's open collection,
+  // and only the search branch returns the latter — without a query every non-owned collection
+  // came back because the user holds a row on it, so the permission map isn't consulted at all and
+  // a shared collection can't flicker through the open group while that map loads.
+  const contributingCollections = openQuery
+    ? otherCollections.filter((c) => permissionsByCollectionId.get(c.id)?.isContributor)
+    : otherCollections;
+  const openCollections = openQuery
+    ? otherCollections.filter((c) => !permissionsByCollectionId.get(c.id)?.isContributor)
+    : [];
   // While permission data for a collection is unknown, treat it as closed rather than open —
   // it must never be briefly selectable before flipping to disabled once data arrives. A lapse
   // keeps write for the owner and for elevated collaborators, so it only closes the picker for
@@ -413,93 +425,124 @@ function CollectionListForm({
     />
   );
 
+  const groups = [
+    { key: 'owned', label: 'Your collections', items: ownedCollections },
+    { key: 'shared', label: 'Shared with you', items: contributingCollections },
+    {
+      key: 'contests',
+      label: 'Active contests',
+      description: 'Submit this model as an entry. It will be sent to the contest for review.',
+      items: activeContestCollections,
+    },
+    {
+      key: 'open',
+      label: 'Open to submissions',
+      description:
+        "Anyone can submit to these. Entries may need the owner's approval before they appear.",
+      items: openCollections,
+      // The server caps the search at OPEN_RESULT_LIMIT. Saying so beats a list that looks
+      // complete and isn't — the collection they wanted may be the one that got cut.
+      note:
+        openCollections.length >= OPEN_RESULT_LIMIT
+          ? `Showing the first ${OPEN_RESULT_LIMIT} matches. Keep typing to narrow them down.`
+          : undefined,
+    },
+  ].filter((group) => group.items.length > 0);
+
+  // The debounce means the list lags the keystrokes; without this the picker looks like it
+  // ignored the last thing typed.
+  const searching = search.trim() !== debouncedSearch || (!!openQuery && fetchingCollections);
+
   return (
     <Stack>
       <ReadOnlyAlert />
       <Stack gap="xl">
-        <Stack gap={4}>
-          <Group gap="xs" justify="space-between" wrap="nowrap">
-            <Text size="sm" fw="bold">
-              Your collections
-            </Text>
+        <Stack gap={8}>
+          <Group gap="xs" align="flex-start" wrap="nowrap">
+            <TextInput
+              className="grow"
+              placeholder="Search collections"
+              aria-label="Search collections"
+              leftSection={<IconSearch size={16} />}
+              value={search}
+              onChange={(event) => setSearch(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape' && search) {
+                  event.stopPropagation();
+                  setSearch('');
+                }
+              }}
+              rightSection={
+                search ? (
+                  <LegacyActionIcon size="sm" variant="subtle" onClick={() => setSearch('')}>
+                    <IconX size={14} />
+                  </LegacyActionIcon>
+                ) : null
+              }
+              size="xs"
+              autoFocus
+            />
             <Button
               variant="subtle"
               leftSection={<IconPlus size={16} />}
               onClick={onNewClick}
               size="compact-xs"
+              className="shrink-0"
+              h={30}
             >
               New collection
             </Button>
           </Group>
-          <TextInput
-            placeholder="Search your collections, or find one open to submissions"
-            leftSection={<IconSearch size={16} />}
-            value={search}
-            onChange={(event) => setSearch(event.currentTarget.value)}
-            size="xs"
-          />
           {isLoading ? (
             <Center py="xl">
               <Loader type="bars" />
             </Center>
+          ) : groups.length === 0 ? (
+            <Center py="xl" px="md">
+              <Text c="dimmed" ta="center">
+                {!debouncedSearch
+                  ? `You don't have any ${props.type?.toLowerCase() ?? ''} collections yet.`
+                  : searching
+                  ? 'Searching…'
+                  : debouncedSearch.length < MIN_SEARCH_LENGTH
+                  ? `No matches. Type ${MIN_SEARCH_LENGTH} characters or more to also search collections open to submissions.`
+                  : `No collections match “${debouncedSearch}”.`}
+              </Text>
+            </Center>
           ) : (
-            <>
-              <ScrollArea.Autosize mah={200}>
-                {ownedCollections.length > 0 ? (
-                  <Stack gap={4}>{ownedCollections.map(renderItem)}</Stack>
-                ) : (
-                  <Center py="xl">
-                    <Text c="dimmed">
-                      {debouncedSearch
-                        ? 'None of your collections match that search.'
-                        : `You don't have any ${
-                            props.type?.toLowerCase() || ''
-                          } collections yet.`}
-                    </Text>
-                  </Center>
+            <ScrollArea.Autosize mah={400}>
+              <Stack gap={4}>
+                {groups.map((group, index) => (
+                  <Stack key={group.key} gap={4}>
+                    {index > 0 && <Divider my="xs" />}
+                    <Group gap={6} align="baseline" wrap="nowrap">
+                      <Text size="sm" fw="bold">
+                        {group.label}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {group.items.length}
+                      </Text>
+                    </Group>
+                    {group.description && (
+                      <Text size="xs" c="dimmed">
+                        {group.description}
+                      </Text>
+                    )}
+                    {group.items.map(renderItem)}
+                    {group.note && (
+                      <Text size="xs" c="dimmed" fs="italic">
+                        {group.note}
+                      </Text>
+                    )}
+                  </Stack>
+                ))}
+                {searching && (
+                  <Text size="xs" c="dimmed" ta="center" py={4}>
+                    Searching…
+                  </Text>
                 )}
-              </ScrollArea.Autosize>
-              {contributingCollections.length > 0 && (
-                <>
-                  <Divider my="md" />
-                  <Text size="sm" fw="bold">
-                    Shared with you
-                  </Text>
-                  <ScrollArea.Autosize mah={300}>
-                    <Stack gap={4}>{contributingCollections.map(renderItem)}</Stack>
-                  </ScrollArea.Autosize>
-                </>
-              )}
-              {activeContestCollections.length > 0 && (
-                <>
-                  <Divider my="md" />
-                  <Text size="sm" fw="bold">
-                    Active Contests
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    Submit this model as an entry. It will be sent to the contest for review.
-                  </Text>
-                  <ScrollArea.Autosize mah={300}>
-                    <Stack gap={4}>{activeContestCollections.map(renderItem)}</Stack>
-                  </ScrollArea.Autosize>
-                </>
-              )}
-              {openQuery && openCollections.length > 0 && (
-                <>
-                  <Divider my="md" />
-                  <Text size="sm" fw="bold">
-                    Open to submissions
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    Anyone can submit to these. Entries may need the owner&apos;s approval before
-                    they appear.
-                  </Text>
-                  <ScrollArea.Autosize mah={300}>
-                    <Stack gap={4}>{openCollections.map(renderItem)}</Stack>
-                  </ScrollArea.Autosize>
-                </>
-              )}
-            </>
+              </Stack>
+            </ScrollArea.Autosize>
           )}
         </Stack>
 

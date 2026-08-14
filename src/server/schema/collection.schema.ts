@@ -90,6 +90,12 @@ export const bulkSaveCollectionItemsInput = z
     { error: 'Only one item can be added at a time.' }
   );
 
+// Shared with the picker so its hint copy and the input contract can't drift apart, and so the
+// picker can say when the open-collection search truncated rather than showing a short list that
+// looks complete.
+export const OPEN_COLLECTION_SEARCH_MIN = 2;
+export const OPEN_COLLECTION_SEARCH_LIMIT = 20;
+
 export type GetAllUserCollectionsInputSchema = z.infer<typeof getAllUserCollectionsInputSchema>;
 export const getAllUserCollectionsInputSchema = z
   .object({
@@ -107,7 +113,7 @@ export const getAllUserCollectionsInputSchema = z
     // on. Submitting no longer follows the collection, so without a search there is no way back to
     // one you have contributed to. A minimum length rather than an optional default: an empty
     // search must return nothing, not every open collection on the site.
-    openQuery: z.string().trim().min(2).max(100),
+    openQuery: z.string().trim().min(OPEN_COLLECTION_SEARCH_MIN).max(100),
   })
   .partial();
 
