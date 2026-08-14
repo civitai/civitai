@@ -52,7 +52,7 @@ async function callMainApp(
 // webhook token — a different auth scheme from every other main-app call here. Retool held the key in
 // its own config; the spoke needs `CIVITAI_MOD_API_KEY` set or these actions refuse rather than fail
 // obscurely at the endpoint.
-type JsonResult = { ok: true; body: Record<string, unknown> } | { ok: false; error: string };
+export type JsonResult = { ok: true; body: Record<string, unknown> } | { ok: false; error: string };
 
 /** The one JSON poster. Two auth schemes because the endpoint families disagree, not because the
  *  callers do — everything else about them was identical and drifted independently. */
@@ -99,7 +99,7 @@ async function postJson(opts: {
   }
 }
 
-const callRetoolEndpoint = (
+export const callRetoolEndpoint = (
   resource: string,
   body: Record<string, unknown>,
   label: string
