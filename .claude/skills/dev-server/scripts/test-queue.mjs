@@ -300,6 +300,9 @@ export class TestQueue {
     try {
       handle = this.startRun({ worktree: run.worktree, args: run.args, onLog, onExit });
     } catch (err) {
+      // A runner that reported an exit and then threw has already produced a verdict; overwriting
+      // it here would replace a real result with the noise that followed it.
+      if (settled) return;
       this.release(id);
       this.settle(run, 'error', null, err.message);
       this.pump();

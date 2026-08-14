@@ -345,6 +345,24 @@ describe('dev-server test queue', () => {
     expect(exitCodeFor(queue.get(run.id))).toBe(1);
   });
 
+  it('keeps the verdict of a runner that reported an exit and then threw', () => {
+    const queue = build();
+    runner.startRun = ({ worktree, onExit }: RunnerArgs): FakeRun => {
+      const handle = new EventEmitter() as FakeRun;
+      handle.kill = vi.fn();
+      handle.finish = () => {};
+      handle.worktree = worktree;
+      runner.started.push(handle);
+      onExit!(0);
+      throw new Error('boom after reporting');
+    };
+
+    const run = queue.request({ worktree: '/wt/a' });
+
+    expect(queue.get(run.id).status).toBe('completed');
+    expect(queue.get(run.id).exitCode).toBe(0);
+  });
+
   it('ignores a late exit arriving after the slot was force-released', () => {
     const queue = build({ killGraceMs: 5_000 });
     runner.startRun = ({ worktree }: RunnerArgs): FakeRun => {
