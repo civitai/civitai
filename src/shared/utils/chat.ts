@@ -1,6 +1,15 @@
 import type { ChatNotifyLevel } from '~/shared/utils/prisma/enums';
 
 /**
+ * Shared by the `createMessageInput` cap and the composer's counter. Lives here
+ * rather than in `server/common/constants` because `chat.schema.ts` is a leaf the
+ * client `_app` bundle imports — pulling the server constants module in from
+ * there throws `constants is not defined` at request time, which typecheck does
+ * not see.
+ */
+export const MAX_CHAT_MESSAGE_LENGTH = 2000;
+
+/**
  * Whether an incoming message should ring for a member, given their
  * per-conversation notification level.
  *

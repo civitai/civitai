@@ -382,6 +382,13 @@ export const createMessage = async ({
 
   const resp = await dbWrite.chatMessage.create({
     data: { chatId, contentType, content, referenceMessageId, userId },
+    // Same shape as a `getInfiniteMessages` item, so the optimistic push and the
+    // signal payload both carry the quote a reply needs to render immediately.
+    include: {
+      referenceMessage: {
+        select: { id: true, userId: true, content: true, contentType: true },
+      },
+    },
   });
 
   withSignals(() =>
@@ -447,6 +454,11 @@ export const createMessage = async ({
                   contentType: ChatMessageType.Embed,
                   userId: -1,
                   referenceMessageId: resp.id,
+                },
+                include: {
+                  referenceMessage: {
+                    select: { id: true, userId: true, content: true, contentType: true },
+                  },
                 },
               });
 

@@ -10,7 +10,6 @@ import {
   Group,
   Image,
   Loader,
-  Menu,
   Spoiler,
   Stack,
   Text,
@@ -30,7 +29,6 @@ import {
   IconCircleMinus,
   IconCircleX,
   IconCrown,
-  IconDotsVertical,
   IconSend,
   IconX,
 } from '@tabler/icons-react';
@@ -76,6 +74,7 @@ import {
   resolveStickerTokens,
   stripStickerTokens,
 } from '~/shared/utils/sticker-token';
+import { MAX_CHAT_MESSAGE_LENGTH } from '~/shared/utils/chat';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -84,6 +83,9 @@ import { useDomainColor } from '~/hooks/useDomainColor';
 type TypingStatus = {
   [key: string]: boolean;
 };
+
+/** The counter turns amber here, far enough out to still be editing rather than deleting. */
+const COUNTER_WARN_AT = 1800;
 
 const PStack = createPolymorphicComponent<'div', StackProps>(Stack);
 
@@ -274,21 +276,39 @@ export function ExistingChat() {
     });
   };
 
+  // Captured the moment an older page starts loading, so the prepend can be
+  // anchored. Reading it after the fact is too late — the DOM has already grown.
+  const olderPageAnchor = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+
+  const loadOlderMessages = useCallback(() => {
+    const el = lastReadRef.current;
+    if (el) olderPageAnchor.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop };
+    return fetchNextPage();
+  }, [fetchNextPage]);
+
   useEffect(() => {
-    // - on a new message or initial load, scroll to the bottom. on load more, don't scroll
+    olderPageAnchor.current = null;
+  }, [existingChatId]);
 
-    if (!messagesChronological.length) return;
+  useEffect(() => {
+    const el = lastReadRef.current;
+    if (!el || !messagesChronological.length) return;
 
-    // if (data.pages.length !== oldPagesLength.current) return;
-    //
-    // oldPagesLength.current = data.pages.length;
+    const anchor = olderPageAnchor.current;
+    if (anchor) {
+      // Older messages prepend, growing the list above the viewport. Jumping to
+      // the bottom here is what made paging unusable and forced the 1,000-message
+      // default page; hold the reader where they were instead.
+      el.scrollTop = anchor.scrollTop + (el.scrollHeight - anchor.scrollHeight);
+      olderPageAnchor.current = null;
+    } else {
+      el.scrollTop = el.scrollHeight - el.clientHeight;
+    }
+  }, [messagesChronological]);
 
-    lastReadRef.current?.scrollTo(
-      0,
-      lastReadRef.current?.scrollHeight - lastReadRef.current?.clientHeight
-    );
+  useEffect(() => {
+    if (!messagesChronological.length || !myMember) return;
 
-    if (!myMember) return;
     const newestMessageId = messagesChronological[messagesChronological.length - 1].id;
     if ((myMember.lastViewedMessageId ?? 0) >= newestMessageId) return;
     changeLastViewed({
@@ -471,7 +491,10 @@ export function ExistingChat() {
             ) : messagesChronological.length > 0 ? (
               <Stack style={{ overflowWrap: 'break-word' }} gap={12}>
                 {hasNextPage && (
-                  <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && hasNextPage}>
+                  <InViewLoader
+                    loadFn={loadOlderMessages}
+                    loadCondition={!isRefetching && hasNextPage}
+                  >
                     <Center p="xl" style={{ height: 36 }} mt="md">
                       <Loader />
                     </Center>
@@ -495,18 +518,25 @@ export function ExistingChat() {
           {myMember.status === ChatMemberStatus.Joined ? (
             <>
               {!!replyId && (
-                <>
-                  <Group p="xs" wrap="nowrap">
-                    <Text size="xs">Replying:</Text>
-                    <Box style={{ textOverflow: 'ellipsis', overflow: 'hidden' }}>
-                      {messagesChronological.find((ac) => ac.id === replyId)?.content ?? ''}
-                    </Box>
-                    <LegacyActionIcon onClick={() => setReplyId(undefined)} ml="auto">
-                      <IconX size={14} />
-                    </LegacyActionIcon>
-                  </Group>
-                  <Divider />
-                </>
+                <Group px="sm" pt="xs" gap={8} wrap="nowrap" className={classes.replyStrip}>
+                  <Text size="xs" c="blue" fw={600}>
+                    Replying to
+                  </Text>
+                  <Text size="xs" truncate style={{ minWidth: 0 }}>
+                    {stripStickerTokens(
+                      messagesChronological.find((ac) => ac.id === replyId)?.content ?? ''
+                    )}
+                  </Text>
+                  <LegacyActionIcon
+                    size="sm"
+                    variant="subtle"
+                    onClick={() => setReplyId(undefined)}
+                    ml="auto"
+                    aria-label="Cancel reply"
+                  >
+                    <IconX size={14} />
+                  </LegacyActionIcon>
+                </Group>
               )}
               <ChatInputBox
                 isModSender={!!modSender}
@@ -610,6 +640,14 @@ function ChatInputBox({
 
   const isMuted = currentUser?.muted && !isModSender;
 
+  // Counted against what actually gets sent: sticker tokens resolve to a longer
+  // `:sticker:<id>:` form, so counting the typed `:slug:` would under-report and
+  // the server would reject a message the counter called fine.
+  const charCount = resolveStickerTokens(chatMsg.trim(), {
+    resolveSlug: (slug) => ownedSticker.bySlug.get(slug)?.id,
+  }).length;
+  const isOverLimit = charCount > MAX_CHAT_MESSAGE_LENGTH;
+
   const { mutateAsync: doIsTyping } = trpc.chat.isTyping.useMutation();
   // const doIsTyping = async (x) => {};
 
@@ -711,7 +749,7 @@ function ChatInputBox({
   };
 
   const sendMessage = () => {
-    if (isSending) return;
+    if (isSending || isOverLimit) return;
 
     // TODO can probably handle this earlier to disable from sending blank messages
     const strippedMessage = chatMsg.trim();
@@ -746,45 +784,63 @@ function ChatInputBox({
   }, [existingChatId]);
 
   return (
-    <Group gap={0}>
-      <Textarea
-        style={{ flexGrow: 1 }}
-        disabled={isMuted}
-        placeholder={isMuted ? 'Your account has been restricted' : 'Send message'}
-        autosize
-        minRows={1}
-        maxRows={4}
-        value={chatMsg}
-        onChange={(event) => handleChatTyping(event.currentTarget.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            if (!e.shiftKey) {
-              e.preventDefault();
-              sendMessage();
+    <>
+      <div className={classes.composerRow}>
+        <Textarea
+          style={{ flexGrow: 1 }}
+          disabled={isMuted}
+          placeholder={isMuted ? 'Your account has been restricted' : 'Send message'}
+          autosize
+          minRows={1}
+          maxRows={4}
+          value={chatMsg}
+          onChange={(event) => handleChatTyping(event.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              if (!e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+              }
             }
+          }}
+          classNames={{ input: classes.chatInput }}
+        />
+        <StickerPicker
+          surface="chat"
+          disabled={isMuted}
+          onSelect={(sticker) =>
+            handleChatTyping(
+              `${chatMsg}${chatMsg && !chatMsg.endsWith(' ') ? ' ' : ''}:${sticker.slug}: `
+            )
           }
-        }}
-        classNames={{ input: classes.chatInput }} // should test this border more with active highlighting
-      />
-      <StickerPicker
-        surface="chat"
-        disabled={isMuted}
-        onSelect={(sticker) =>
-          handleChatTyping(
-            `${chatMsg}${chatMsg && !chatMsg.endsWith(' ') ? ' ' : ''}:${sticker.slug}: `
-          )
-        }
-      />
-      <LegacyActionIcon
-        h="100%"
-        w={60}
-        onClick={sendMessage}
-        disabled={isSending || !chatMsg.length || isMuted}
-        style={{ borderRadius: 0 }}
-      >
-        {isSending ? <Loader /> : <IconSend />}
-      </LegacyActionIcon>
-    </Group>
+        />
+        <LegacyActionIcon
+          radius="xl"
+          size="lg"
+          variant="filled"
+          onClick={sendMessage}
+          disabled={isSending || !chatMsg.length || isMuted || isOverLimit}
+          aria-label="Send"
+        >
+          {isSending ? <Loader size="xs" /> : <IconSend size={18} />}
+        </LegacyActionIcon>
+      </div>
+      <div className={classes.composerFoot}>
+        {isOverLimit && (
+          <Text size="xs" c="red">
+            Too long to send — trim {charCount - MAX_CHAT_MESSAGE_LENGTH} characters.
+          </Text>
+        )}
+        <Text
+          className={clsx(classes.counter, {
+            [classes.near]: !isOverLimit && charCount >= COUNTER_WARN_AT,
+            [classes.over]: isOverLimit,
+          })}
+        >
+          {`${charCount} / ${MAX_CHAT_MESSAGE_LENGTH}`}
+        </Text>
+      </div>
+    </>
   );
 }
 
@@ -869,26 +925,19 @@ function DisplayMessages({
   const { data: allChatData } = trpc.chat.getAllByUser.useQuery();
   const tChat = allChatData?.find((chat) => chat.id === existingChatId);
 
-  // TODO we should be checking first if this exists in `chats`
-  //      then, grab the content
-  //      then, grab the user info from chatMembers (but what if its not there?)
-  const replyIds = chats
-    .filter((c) => isDefined(c.referenceMessageId))
-    .map((c) => c.referenceMessageId as number);
-  const replyData = trpc.useQueries((t) =>
-    replyIds.map((r) => t.chat.getMessageById({ messageId: r }))
-  );
-
   const stickerIds = useMemo(
     () => [
-      ...new Set([
-        ...chats.flatMap((c) => parseStickerIds(c.content)),
-        ...replyData.flatMap((r) => (r.data ? parseStickerIds(r.data.content) : [])),
-      ]),
+      ...new Set(
+        chats.flatMap((c) => [
+          ...parseStickerIds(c.content),
+          ...(c.referenceMessage ? parseStickerIds(c.referenceMessage.content) : []),
+        ])
+      ),
     ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [chats, replyData.map((r) => r.dataUpdatedAt).join(',')]
+    [chats]
   );
+
+  const blur = replaceBadWords || domainColor === 'green';
 
   let loopMsgDate = new Date(1970);
   let loopPreviousChatter = 0;
@@ -900,149 +949,128 @@ function DisplayMessages({
           const hourDiff = (c.createdAt.valueOf() - loopMsgDate.valueOf()) / (1000 * 60 * 60);
           const sameChatter = loopPreviousChatter === c.userId;
           const shouldShowInfo = hourDiff >= 1 || !sameChatter;
+          const showDayChip = !isSameDay(c.createdAt, loopMsgDate);
 
           loopMsgDate = c.createdAt;
           loopPreviousChatter = c.userId;
 
           const cachedUser = tChat?.chatMembers?.find((cm) => cm.userId === c.userId)?.user;
           const isMe = c.userId === currentUser?.id;
-
-          const tReplyData =
-            !!c.referenceMessageId && replyIds.indexOf(c.referenceMessageId) > -1
-              ? replyData[replyIds.indexOf(c.referenceMessageId)]
-              : undefined;
-
           const isSystemChat = c.userId === -1;
 
+          const quotedUser = !!c.referenceMessage
+            ? tChat?.chatMembers?.find((cm) => cm.userId === c.referenceMessage?.userId)?.user
+            : undefined;
+
           return (
-            <PStack
-              component={div}
-              // ref={c.id === lastReadId ? lastReadRef : undefined}
-              key={c.id}
-              gap={12}
-              style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
-              initial={{ y: -20, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              transition={{ type: 'spring', duration: 0.4 }}
-            >
-              {isSystemChat && c.contentType === ChatMessageType.Embed ? (
-                <EmbedMessage content={c.content} />
-              ) : isSystemChat ? (
-                // <Group align="center" justify="center">
-                //   <Text size="xs">{formatDate(c.createdAt)}</Text>
-                //   ...Text (below)
-                // </Group>
-                <Text
-                  className={clsx(classes.chatMessage)}
-                  component="div"
-                  size="xs"
-                  py={0}
-                  style={{
-                    alignSelf: 'center',
-                    border: '1px solid gray',
-                  }}
-                >
-                  <CustomMarkdown allowedElements={['a', 'p', 'strong']} unwrapDisallowed>
-                    {c.content.replace(currentUser?.username ?? '', 'You')}
-                  </CustomMarkdown>
-                </Text>
-              ) : (
-                <>
-                  {shouldShowInfo && (
-                    <Group className={clsx({ [classes.myDetails]: isMe })}>
-                      {!!cachedUser ? (
-                        <UserAvatar user={cachedUser} withUsername />
-                      ) : (
-                        <UserAvatar userId={c.userId} withUsername />
-                      )}
-                      <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>
-                    </Group>
-                  )}
-                  {/* TODO this needs better styling and click -> message */}
-                  {!!c.referenceMessageId && (
-                    <Group
-                      gap={6}
-                      justify="flex-end"
-                      style={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
-                    >
-                      <IconArrowBack size={14} />
-                      {!!tReplyData?.data?.user && (
-                        <Tooltip label={tReplyData.data.user.username}>
-                          <Box>
-                            <UserAvatar user={tReplyData.data.user} size="xs" />
-                          </Box>
-                        </Tooltip>
-                      )}
-                      <Text className={clsx([classes.chatMessage, classes.replyMessage])}>
-                        {!tReplyData || tReplyData.isError ? (
-                          <em>Could not load message.</em>
-                        ) : tReplyData.isLoading ? (
-                          <em>Loading content...</em>
+            <React.Fragment key={c.id}>
+              {showDayChip && !isSystemChat && (
+                <div className={classes.dayChip}>{dayChipLabel(c.createdAt)}</div>
+              )}
+              <PStack
+                component={div}
+                gap={0}
+                style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
+                initial={{ y: -20, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ type: 'spring', duration: 0.4 }}
+              >
+                {isSystemChat && c.contentType === ChatMessageType.Embed ? (
+                  <EmbedMessage content={c.content} />
+                ) : isSystemChat ? (
+                  <Text className={classes.systemNote} component="div" size="xs">
+                    <CustomMarkdown allowedElements={['a', 'p', 'strong']} unwrapDisallowed>
+                      {c.content.replace(currentUser?.username ?? '', 'You')}
+                    </CustomMarkdown>
+                  </Text>
+                ) : (
+                  <div className={clsx(classes.messageRow, { [classes.grouped]: !shouldShowInfo })}>
+                    {shouldShowInfo && (
+                      <Group gap={8} align="center" wrap="nowrap" className={classes.messageHead}>
+                        {!!cachedUser ? (
+                          <UserAvatar user={cachedUser} withUsername size="sm" />
                         ) : (
-                          <ChatMessageContent
-                            content={tReplyData.data?.content ?? ''}
-                            blur={replaceBadWords || domainColor === 'green'}
-                            stickerSize={STICKER_SIZE.preview}
-                            fallback={<em>Could not load message.</em>}
-                          />
+                          <UserAvatar userId={c.userId} withUsername size="sm" />
                         )}
-                      </Text>
-                    </Group>
-                  )}
-                  <Group
-                    justify="flex-end"
-                    className={classes.highlightRow}
-                    style={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
-                  >
-                    <Menu withArrow position={isMe ? 'left-start' : 'right-start'}>
-                      <Menu.Target>
-                        <LegacyActionIcon style={{ alignSelf: 'flex-start', display: 'none' }}>
-                          <IconDotsVertical />
-                        </LegacyActionIcon>
-                      </Menu.Target>
-                      <Menu.Dropdown>
-                        <Menu.Item
-                          leftSection={<IconArrowBack size={14} />}
+                        <Text className={classes.messageTime}>
+                          {formatDate(c.createdAt, 'h:mm A')}
+                        </Text>
+                      </Group>
+                    )}
+
+                    <div className={classes.messageBody}>
+                      {!!c.referenceMessage && (
+                        <div className={classes.replyQuote}>
+                          <Text className={classes.replyQuoteName}>
+                            {quotedUser?.username ?? 'Unknown user'}
+                          </Text>
+                          <Text className={classes.replyQuoteText} component="div">
+                            <ChatMessageContent
+                              content={c.referenceMessage.content}
+                              blur={blur}
+                              stickerSize={STICKER_SIZE.preview}
+                              fallback={<em>Could not load message.</em>}
+                            />
+                          </Text>
+                        </div>
+                      )}
+                      <Tooltip
+                        label={formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}
+                        style={{ opacity: 0.85 }}
+                        openDelay={350}
+                        position={isMe ? 'top-end' : 'top-start'}
+                        withArrow
+                      >
+                        <div
+                          className={clsx(classes.messageText, {
+                            [classes.stickerOnlyMessage]: isStickerOnlyContent(c.content),
+                          })}
+                        >
+                          <ChatMessageContent content={c.content} blur={blur} />
+                        </div>
+                      </Tooltip>
+                    </div>
+
+                    <div className={classes.messageActions}>
+                      <Tooltip label="Reply" withArrow openDelay={350}>
+                        <LegacyActionIcon
+                          size="sm"
+                          variant="subtle"
+                          aria-label="Reply"
                           onClick={() => setReplyId(c.id)}
                         >
-                          Reply
-                        </Menu.Item>
-                      </Menu.Dropdown>
-                    </Menu>
-                    <Tooltip
-                      label={
-                        !shouldShowInfo
-                          ? formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')
-                          : undefined
-                      }
-                      disabled={shouldShowInfo}
-                      style={{ opacity: 0.85 }}
-                      openDelay={350}
-                      position={isMe ? 'top-end' : 'top-start'}
-                      withArrow
-                    >
-                      <div
-                        className={clsx(classes.chatMessage, {
-                          [classes.otherMessage]: !isMe,
-                          [classes.myMessage]: isMe,
-                          [classes.stickerOnlyMessage]: isStickerOnlyContent(c.content),
-                        })}
-                      >
-                        <ChatMessageContent
-                          content={c.content}
-                          blur={replaceBadWords || domainColor === 'green'}
-                        />
-                      </div>
-                    </Tooltip>
-                  </Group>
-                </>
-              )}
-            </PStack>
+                          <IconArrowBack size={16} />
+                        </LegacyActionIcon>
+                      </Tooltip>
+                    </div>
+                  </div>
+                )}
+              </PStack>
+            </React.Fragment>
           );
         })}
       </LazyMotion>
     </StickerProvider>
   );
+}
+
+function isSameDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function dayChipLabel(date: Date) {
+  const now = new Date();
+  if (isSameDay(date, now)) return 'Today';
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (isSameDay(date, yesterday)) return 'Yesterday';
+
+  return formatDate(date, 'MMM D, YYYY');
 }
 
 /**

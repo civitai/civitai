@@ -13,7 +13,7 @@ buildable against the chat system as it stands:
 |-------|-------|-----------|--------|
 | 1 | Privacy & abuse — graded DM policy, Requests, new-account hold | yes | built |
 | 2 | Conversation management — settings, pin, notification levels, delete | yes | built |
-| 3 | Surface redesign — grouped rows, reply quotes, composer, virtualized list | no | |
+| 3 | Surface redesign — grouped rows, reply quotes, composer, paging | no | built |
 | 4 | Moderation audit — edit/clear events, edit length cap, per-message delete | yes | |
 
 ## Corrections to the source card
@@ -189,16 +189,36 @@ composer with in-field send. Deliberately dropped from both: nested threads, voi
 complexity, server structure.
 
 - **Grouped rows** — consecutive messages from one sender collapse under a single header.
-- **Reply quotes** — `createMessageInput.referenceMessageId` already exists and the UI has a
-  read path, but it resolves each quote through a separate `getMessageById` query
-  (`ExistingChat.tsx` carries a TODO acknowledging this). The reference is joined into
-  `getInfiniteMessages` instead.
-- **Composer** — live character counter, amber at 1,800, red past 2,000. Today the cap surfaces
-  as an error after you have written the message.
-- **Virtualized message list** — `getInfiniteMessagesInput.limit` defaults to **1,000**, with
-  the comment *"this is high for now because of issues with scrolling"*. Fix the scrolling, then
-  drop the page size. This is a prerequisite for group chat, which multiplies volume onto the
-  same read path.
+- **Reply quotes** — `createMessageInput.referenceMessageId` already existed and the UI had a
+  read path, but it resolved each quote through a separate `getMessageById` query — up to one per
+  message on the page. The reference is joined into `getInfiniteMessages` instead, and
+  `createMessage` returns the same shape so an optimistic push and the realtime signal both carry
+  the quote a reply needs to render immediately.
+
+  The layout changes from left/right bubbles to flat grouped rows, which is what the mockup
+  specifies. `UserAvatar` still renders the avatar + username together in the row header rather
+  than being split apart, so cosmetics and badges keep working.
+- **Composer** — rounded bar, live character counter, amber at 1,800, red past 2,000, send
+  disabled over the cap. The count is taken over the *resolved* message: sticker tokens expand
+  from `:slug:` to `:sticker:<id>:` on send, so counting the typed form would under-report and the
+  server would reject a message the counter called fine.
+
+  The cap now has one definition, `MAX_CHAT_MESSAGE_LENGTH` in `~/shared/utils/chat`. It cannot
+  live in `server/common/constants`: `chat.schema.ts` is a leaf the client `_app` bundle imports,
+  and pulling the server constants module in from there throws `constants is not defined` at
+  request time on both server and client. Typecheck does not catch it — only loading a page does.
+- **Paging** — `getInfiniteMessagesInput.limit` defaulted to **1,000** with the comment *"this is
+  high for now because of issues with scrolling"*. The scrolling issue was the scroll-to-bottom
+  effect firing on *any* change to the message array, including the prepend that loading older
+  messages performs — so paging backwards yanked you to the newest message. Loading older pages
+  now captures the scroll position before the fetch (reading it afterwards is too late, the DOM
+  has already grown) and restores the reader's anchor; the default page is 50.
+
+  This is paging, **not** virtualization. Every loaded message is still a DOM node, so scrolling
+  a long way back still accumulates them — that is the same ceiling as the old 1,000 default, just
+  reached incrementally instead of on open. True virtualization is worth doing when group chat
+  lands and multiplies volume; it interacts with variable row heights (stickers and embeds change
+  height after load), so it belongs in its own change rather than riding along here.
 
 ## Phase 4 — Moderation audit
 

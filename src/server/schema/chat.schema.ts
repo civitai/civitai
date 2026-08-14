@@ -1,6 +1,7 @@
 import { ChatMemberStatus, ChatMessageType, ChatNotifyLevel } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
+import { MAX_CHAT_MESSAGE_LENGTH } from '~/shared/utils/chat';
 
 export type CreateChatInput = z.infer<typeof createChatInput>;
 export const createChatInput = z.object({
@@ -45,7 +46,7 @@ export const markChatReadInput = z.object({
 export type CreateMessageInput = z.infer<typeof createMessageInput>;
 export const createMessageInput = z.object({
   chatId: z.number(),
-  content: z.string().min(1).max(2000),
+  content: z.string().min(1).max(MAX_CHAT_MESSAGE_LENGTH),
   contentType: z.enum(ChatMessageType).optional().default('Markdown'),
   referenceMessageId: z.number().optional(),
 });
@@ -56,14 +57,12 @@ export const updateMessageInput = z.object({
   content: z.string().min(1),
 });
 
-// maybe increase default limit from 20
 export type GetInfiniteMessagesInput = z.infer<typeof getInfiniteMessagesInput>;
 export const getInfiniteMessagesInput = infiniteQuerySchema.merge(
   z.object({
     chatId: z.number(),
     sortDirection: z.enum(['asc', 'desc']).optional().default('desc'),
-    // this is high for now because of issues with scrolling
-    limit: z.coerce.number().min(1).default(1000),
+    limit: z.coerce.number().min(1).default(50),
   })
 );
 

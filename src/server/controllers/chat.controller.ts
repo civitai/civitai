@@ -633,6 +633,13 @@ export const getInfiniteMessagesHandler = async ({
       take: input.limit + 1,
       cursor: input.cursor ? { id: input.cursor } : undefined,
       orderBy: [{ id: input.sortDirection }],
+      // Reply quotes ride along. Resolving them client-side cost one
+      // getMessageById per quoted message, and a page holds up to `limit` of them.
+      include: {
+        referenceMessage: {
+          select: { id: true, userId: true, content: true, contentType: true },
+        },
+      },
     });
 
     let nextCursor: number | undefined;

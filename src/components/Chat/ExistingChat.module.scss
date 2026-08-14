@@ -14,37 +14,174 @@
   font-size: var(--mantine-spacing-sm);
 }
 
-.myDetails {
-  flex-direction: row-reverse;
-}
-
-.myMessage {
-  background-color: light-dark(var(--mantine-color-blue-4), var(--mantine-color-blue-8));
-}
-
-.otherMessage {
-  background-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-3));
-}
-
 .stickerOnlyMessage {
   background-color: transparent;
   padding: 0;
   max-width: 100%;
 }
 
-.highlightRow {
-  &:hover {
-    > button {
-      display: initial;
-    }
+/* ---- flat grouped message rows ---- */
+
+.dayChip {
+  align-self: center;
+  border-radius: 100px;
+  border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
+  color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1));
+  padding: 2px 12px;
+  margin: 10px 0 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.messageRow {
+  position: relative;
+  padding: 4px 8px 3px;
+  border-radius: var(--mantine-radius-sm);
+
+  &:hover,
+  &:focus-within {
+    background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
+  }
+
+  /* Consecutive messages from one sender collapse under a single header. */
+  &.grouped {
+    padding-top: 1px;
   }
 }
 
+.messageHead {
+  margin-bottom: 2px;
+}
+
+.messageTime {
+  font-size: 10px;
+  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
+  font-variant-numeric: tabular-nums;
+}
+
+/* Aligns a grouped message under its header's username rather than the avatar. */
+.messageBody {
+  padding-left: 34px;
+  min-width: 0;
+}
+
+.messageText {
+  white-space: pre-line;
+  overflow-wrap: break-word;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.replyQuote {
+  display: block;
+  border-left: 2px solid var(--mantine-color-blue-5);
+  background-color: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5));
+  border-radius: 0 var(--mantine-radius-sm) var(--mantine-radius-sm) 0;
+  padding: 3px 9px;
+  margin: 2px 0 4px;
+  max-width: 420px;
+}
+
+.replyQuoteName {
+  display: block;
+  color: var(--mantine-color-blue-5);
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.replyQuoteText {
+  color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1));
+  font-size: 11.5px;
+  line-height: 1.4;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.messageActions {
+  position: absolute;
+  top: -10px;
+  right: 10px;
+  display: none;
+  gap: 2px;
+  padding: 2px;
+  z-index: 5;
+  border-radius: var(--mantine-radius-sm);
+  border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
+  box-shadow: 0 4px 14px rgb(0 0 0 / 25%);
+
+  .messageRow:hover &,
+  .messageRow:focus-within & {
+    display: flex;
+  }
+}
+
+.systemNote {
+  align-self: center;
+  text-align: center;
+  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
+  border-top: 1px dashed light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  border-bottom: 1px dashed light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  padding: 6px 4px;
+  margin: 6px 0;
+  width: 100%;
+}
+
+/* ---- composer ---- */
+
 .chatInput {
-  border-radius: 0;
-  border-left: 0;
-  border-top: 0;
-  border-bottom: 0;
+  border: none;
+  background-color: transparent;
+}
+
+.composerRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  margin: 8px;
+  padding: 4px 5px 4px 8px;
+  border-radius: 19px;
+  border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
+
+  &:focus-within {
+    border-color: var(--mantine-color-blue-5);
+  }
+}
+
+.replyStrip {
+  border-left: 2px solid var(--mantine-color-blue-5);
+  background-color: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5));
+  border-radius: 0 var(--mantine-radius-sm) var(--mantine-radius-sm) 0;
+  margin: 8px 8px 0;
+  padding-bottom: var(--mantine-spacing-xs);
+}
+
+.composerFoot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 18px 6px;
+}
+
+.counter {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
+
+  &.near {
+    color: var(--mantine-color-orange-5);
+  }
+
+  &.over {
+    color: var(--mantine-color-red-5);
+    font-weight: 700;
+  }
 }
 
 .isTypingBox {
