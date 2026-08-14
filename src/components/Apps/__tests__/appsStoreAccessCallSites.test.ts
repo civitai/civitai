@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import ts from 'typescript';
 import { describe, it, expect } from 'vitest';
 
 /**
@@ -26,23 +27,47 @@ import { describe, it, expect } from 'vitest';
  *   - `AppsSubNav.storeGate.browser.test.tsx`      — the sub-nav's rendered output
  *   - `AppListingsMarketplaceBody.storeGate.browser.test.tsx` — the grid query gate
  *   - `hasAppsStoreAccess.test.ts`                 — the predicate + the SSR seam
- * The two page bodies (`pages/apps/index.tsx`, `pages/apps/store-preview/[slug].tsx`)
- * are pinned STRUCTURALLY ONLY — they are Next pages with no component harness, so
- * rendering them would cost more scaffolding than the gate is worth. Stated plainly
- * rather than implied: those two are covered against reversion, not against a
- * wrong-argument call.
+ *
+ * THREE of the six sites are pinned STRUCTURALLY ONLY — `pages/apps/index.tsx`
+ * and `pages/apps/store-preview/[slug].tsx` (Next pages, no component harness) and
+ * `components/Apps/RelatedListings.tsx` (its only existing test covers the pure
+ * selection helper and never mounts the component, so it never touches
+ * `useFeatureFlags` / `canSeeStore`). Those three are covered against REVERSION,
+ * not against a wrong-argument call. Stated rather than implied.
+ *
+ * 🔴 AND THE SCOPE THAT MATTERS IN CI: the component suites above are REPORT-ONLY
+ * (`preview / component-tests`) and do not block a merge. This unit-project ledger
+ * does. So in CI all six sites are pinned STRUCTURALLY ONLY, by this file — which
+ * is precisely why a hole in its masker (see below) is worth more than it looks.
  */
 
 const SRC = path.resolve(__dirname, '../../..');
 
 /**
- * Every module that decides store VISIBILITY. Adding a store surface means adding
- * it here — that is the point, not an inconvenience.
+ * Every module INSIDE {@link SCAN_ROOTS} that decides store VISIBILITY. Adding a
+ * store surface under those roots means adding it here — that is the point, not
+ * an inconvenience.
  *
- * NOT in this ledger, on purpose: the block-RUNTIME surfaces (`/apps/installed`,
- * `/apps/review`, `/apps/my-submissions`, `/apps/revenue`, `/apps/run/<slug>`)
- * gate on `appBlocks` ALONE because they need the runtime, not just the catalog.
- * Sweeping them in here would be a silent access widening.
+ * ── NOT in this ledger, on purpose ──────────────────────────────────────────
+ *
+ * 1. The block-RUNTIME surfaces (`/apps/installed`, `/apps/review`,
+ *    `/apps/my-submissions`, `/apps/revenue`, `/apps/run/<slug>`) gate on
+ *    `appBlocks` ALONE because they need the runtime, not just the catalog.
+ *    Sweeping them in here would be a silent access widening.
+ *
+ * 2. 🔴 `components/AppLayout/AppHeader/appsNavVisibility.ts` — `marketplace:
+ *    !!features.appBlocks`, which drives the user-menu "Apps" → `/apps` entry.
+ *    That IS a store-visibility decision and it is NOT converted, deliberately:
+ *    that module's own doc comment states the entry "stays gated on `appBlocks`",
+ *    so it is a standing decision, not drift. It is also outside `SCAN_ROOTS`
+ *    (`components/AppLayout`), so grow-detection below is STRUCTURALLY BLIND to
+ *    it — do not read the ledger's exactness as covering it.
+ *
+ *    CONSEQUENCE, recorded so nobody rediscovers it during the launch: for the
+ *    `{appListings, NOT appBlocks}` cohort the store renders but has NO in-product
+ *    entry point — that menu item is the only route TO `/apps` (the sub-nav's
+ *    Marketplace tab only appears once you are already on `/apps/*`). Reachable by
+ *    direct URL only. Tracked in issue #3907; not this file's to fix.
  */
 const STORE_GATE_SITES = [
   'components/Apps/AppListingsMarketplaceBody.tsx',
@@ -60,82 +85,146 @@ const DEFINING_MODULE = 'shared/utils/app-blocks-access.ts';
 const SCAN_ROOTS = ['components/Apps', 'pages/apps'];
 
 /**
- * Blank the CONTENTS of comments and string/template literals while preserving
- * length and line breaks, so a gate spelled out in a DOC COMMENT is not mistaken
- * for a live one. This is load-bearing here, not hygiene: the shared predicate's
- * own doc comment and `resolveAppsPageAccess`'s header both contain the literal
- * text `features.appListings || features.appBlocks`, so an unmasked scan would
- * report the very files that were fixed. Self-tested below.
+ * 🔴 MASKING RUNS THROUGH THE REAL TypeScript PARSER, NOT A QUOTE SCANNER.
+ *
+ * Masking is load-bearing, not hygiene: the shared predicate's own doc comment and
+ * `resolveAppsPageAccess`'s header both contain the literal text
+ * `features.appListings || features.appBlocks`, so an UNMASKED scan reports the
+ * very files that were fixed. But a hand-rolled masker is worse than none, because
+ * it fails SILENTLY and in one direction — toward a reassuring zero.
+ *
+ * The previous version treated every `'` as a string delimiter. An ASCII
+ * apostrophe in JSX TEXT (`The app's data…`, `installed.tsx:132`) therefore opened
+ * a phantom string that ran to EOF, blanking 71% of that file (14,229 / 20,037
+ * chars) and 17% of `my-submissions.tsx`. Measured with a discriminating control,
+ * not inferred: an open-coded `f.appListings || f.appBlocks` planted AFTER the
+ * apostrophe was INVISIBLE (suite 14/14 green); the identical probe planted BEFORE
+ * it was caught. A live store gate could have shipped through the hole.
+ *
+ * JSX text, template-literal chunks, regex literals and nested quotes are exactly
+ * the cases an ad-hoc lexer gets wrong, so the parser owns it now: parse as TSX,
+ * blank the ranges the AST says are literals, then strip comments from the result
+ * (safe at that point — every string is already blanked, so no `//` inside one can
+ * be misread). Expression holes inside `${...}` are children of the template node
+ * and are deliberately LEFT LIVE: they are real code.
  */
-function maskNonCode(code: string): string {
-  const out = code.split('');
-  const blank = (from: number, to: number) => {
-    for (let i = from; i < Math.min(to, out.length); i++) {
+function parseTsx(fileName: string, text: string): ts.SourceFile {
+  return ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+}
+
+function blankRanges(text: string, ranges: Array<[number, number]>): string {
+  const out = text.split('');
+  for (const [from, to] of ranges) {
+    for (let i = Math.max(from, 0); i < Math.min(to, out.length); i++) {
       if (out[i] !== '\n') out[i] = ' ';
-    }
-  };
-  let i = 0;
-  while (i < code.length) {
-    const two = code.slice(i, i + 2);
-    if (two === '//') {
-      const end = code.indexOf('\n', i);
-      blank(i, end === -1 ? code.length : end);
-      i = end === -1 ? code.length : end;
-    } else if (two === '/*') {
-      const end = code.indexOf('*/', i + 2);
-      blank(i, end === -1 ? code.length : end + 2);
-      i = end === -1 ? code.length : end + 2;
-    } else if (code[i] === '"' || code[i] === "'" || code[i] === '`') {
-      const quote = code[i];
-      let j = i + 1;
-      while (j < code.length && code[j] !== quote) {
-        if (code[j] === '\\') j++;
-        j++;
-      }
-      blank(i, j + 1);
-      i = j + 1;
-    } else {
-      i++;
     }
   }
   return out.join('');
+}
+
+/** Ranges the PARSER classifies as literal text — never live code. */
+function literalRanges(sf: ts.SourceFile): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  const visit = (node: ts.Node) => {
+    switch (node.kind) {
+      case ts.SyntaxKind.StringLiteral:
+      case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
+      case ts.SyntaxKind.TemplateHead:
+      case ts.SyntaxKind.TemplateMiddle:
+      case ts.SyntaxKind.TemplateTail:
+      case ts.SyntaxKind.RegularExpressionLiteral:
+      case ts.SyntaxKind.JsxText:
+        ranges.push([node.getStart(sf), node.getEnd()]);
+        break;
+    }
+    node.forEachChild(visit);
+  };
+  visit(sf);
+  return ranges;
+}
+
+/** Blank comments AND literals. Use for anything that scans for live code. */
+function maskNonCode(code: string, fileName = 'probe.tsx'): string {
+  const withoutLiterals = blankRanges(code, literalRanges(parseTsx(fileName, code)));
+  // Safe now: every string/template/JSX-text range is spaces, so a `//` or `/*`
+  // that survives can only be a real comment.
+  return stripComments(withoutLiterals);
 }
 
 /**
  * Blank COMMENT contents only, leaving string literals intact. Needed for the
  * import assertions: a module specifier IS a string (`from '~/shared/...'`), so
- * the full masker above blanks the very path being asserted — which is exactly
- * how the first version of this file failed all six site checks while the code
- * was correct.
+ * the full masker blanks the very path being asserted — which is exactly how the
+ * first version of this file failed all six site checks while the code was
+ * correct. Comment ranges come from the parser, so an apostrophe cannot desync it.
  */
-function maskComments(code: string): string {
-  const out = code.split('');
-  const blank = (from: number, to: number) => {
-    for (let i = from; i < Math.min(to, out.length); i++) {
-      if (out[i] !== '\n') out[i] = ' ';
+function maskComments(code: string, fileName = 'probe.tsx'): string {
+  const sf = parseTsx(fileName, code);
+  const ranges: Array<[number, number]> = [];
+  const seen = new Set<string>();
+  const add = (found: ts.CommentRange[] | undefined) => {
+    for (const c of found ?? []) {
+      const key = `${c.pos}:${c.end}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        ranges.push([c.pos, c.end]);
+      }
     }
   };
+  const visit = (node: ts.Node) => {
+    add(ts.getLeadingCommentRanges(code, node.getFullStart()));
+    add(ts.getTrailingCommentRanges(code, node.getEnd()));
+    node.forEachChild(visit);
+  };
+  visit(sf);
+  add(ts.getLeadingCommentRanges(code, 0));
+  return blankRanges(code, ranges);
+}
+
+/** Line + block comment strip, run only on text whose literals are already blank. */
+function stripComments(code: string): string {
+  const ranges: Array<[number, number]> = [];
   let i = 0;
   while (i < code.length) {
     const two = code.slice(i, i + 2);
     if (two === '//') {
       const end = code.indexOf('\n', i);
-      blank(i, end === -1 ? code.length : end);
-      i = end === -1 ? code.length : end;
+      const stop = end === -1 ? code.length : end;
+      ranges.push([i, stop]);
+      i = stop;
     } else if (two === '/*') {
       const end = code.indexOf('*/', i + 2);
-      blank(i, end === -1 ? code.length : end + 2);
-      i = end === -1 ? code.length : end + 2;
+      const stop = end === -1 ? code.length : end + 2;
+      ranges.push([i, stop]);
+      i = stop;
     } else {
       i++;
     }
   }
-  return out.join('');
+  return blankRanges(code, ranges);
 }
 
-/** An open-coded store gate in LIVE code (either operand order). */
+/**
+ * An open-coded store gate in LIVE code.
+ *
+ * Deliberately matched on PROXIMITY + a logical operator rather than one literal
+ * shape. The previous single-line `X || Y` regex was evaded by every form the
+ * codebase can actually produce: a prettier-wrapped multi-line OR (the formatter
+ * inserts the newline for you), a De Morgan negation
+ * (`!features.appListings && !features.appBlocks`), and a `??` chain. Whitespace is
+ * collapsed first so line wrapping is irrelevant, and `[^;{}]` keeps a match inside
+ * one expression rather than spanning statements.
+ *
+ * `\b` after each flag name matters: it stops `appBlocksPages` / `appBlocksAuthor`
+ * — different flags with their own rules — from being read as `appBlocks`.
+ */
 const INLINED_GATE =
-  /appListings\s*\|\|[^;\n]{0,80}appBlocks|appBlocks\s*\|\|[^;\n]{0,80}appListings/;
+  /appListings\b[^;{}]{0,120}?(?:\|\||&&|\?\?)[^;{}]{0,120}?appBlocks\b|appBlocks\b[^;{}]{0,120}?(?:\|\||&&|\?\?)[^;{}]{0,120}?appListings\b/;
+
+/** Collapse whitespace so a prettier line-wrap cannot hide a gate from the regex. */
+function flatten(code: string): string {
+  return code.replace(/\s+/g, ' ');
+}
 
 function read(rel: string): string {
   return fs.readFileSync(path.join(SRC, rel), 'utf8');
@@ -152,11 +241,8 @@ function walk(dir: string, out: string[] = []): string[] {
 
 const SCANNED = SCAN_ROOTS.flatMap((root) => walk(path.join(SRC, root))).map((file) => {
   const raw = fs.readFileSync(file, 'utf8');
-  return {
-    rel: path.relative(SRC, file).split(path.sep).join('/'),
-    raw,
-    code: maskNonCode(raw),
-  };
+  const rel = path.relative(SRC, file).split(path.sep).join('/');
+  return { rel, raw, code: maskNonCode(raw, file), comments: maskComments(raw, file) };
 });
 
 describe('the masker (validate the instrument before reading its verdict)', () => {
@@ -185,6 +271,88 @@ describe('the masker (validate the instrument before reading its verdict)', () =
   it('preserves line count so a reported offender can be located', () => {
     const src = 'a\n// x\n/* y\nz */\nb\n';
     expect(maskNonCode(src).split('\n')).toHaveLength(src.split('\n').length);
+  });
+
+  /**
+   * 🔴 THE REGRESSION THAT MOTIVATED THE PARSER REWRITE.
+   *
+   * The old quote-scanner treated every `'` as a delimiter, so an APOSTROPHE IN
+   * JSX TEXT opened a phantom string to EOF and blanked 71% of `installed.tsx`.
+   * The masker's controls at the time were all synthetic one-liners, which is
+   * exactly why they could not see it — none of them contained JSX. These use
+   * REALISTIC shapes, per the rule that a scanner allowlists its own examples.
+   */
+  it('🔴 an apostrophe in JSX TEXT does not desync the masker (71%-blind regression)', () => {
+    const src = [
+      'export function C() {',
+      '  return (',
+      '    <Text>',
+      "      The app's data and any other installs of it are untouched.",
+      '    </Text>',
+      '  );',
+      '}',
+      'const gate = features.appListings || features.appBlocks;',
+    ].join('\n');
+    const masked = maskNonCode(src, 'probe.tsx');
+    // Code AFTER the apostrophe must survive — this is the whole bug.
+    expect(masked).toMatch(INLINED_GATE);
+    // …and the JSX prose itself is still treated as non-code.
+    expect(masked).not.toContain('any other installs');
+  });
+
+  it('🔴 the real installed.tsx keeps its post-apostrophe code visible', () => {
+    // Anchored on the FILE that broke it, not a fixture: a synthetic case can be
+    // fixed while the real one still desyncs (different JSX nesting, entities…).
+    const raw = read('pages/apps/installed.tsx');
+    const masked = maskNonCode(raw, 'installed.tsx');
+    expect(raw).toMatch(/app's/); // the trigger is still present upstream
+    // Both live gates sit AFTER it (~line 460 and ~500) and must remain readable.
+    expect(masked.match(/features\.appBlocks/g) ?? []).toHaveLength(
+      (raw.match(/features\.appBlocks/g) ?? []).length
+    );
+    // Blanking must be bounded: the file cannot be mostly spaces.
+    const blanked = masked.split('').filter((c) => c === ' ').length;
+    expect(blanked / masked.length).toBeLessThan(0.55);
+  });
+
+  it('nested quotes, templates and regex literals do not desync it either', () => {
+    const src = [
+      'const a = "it\'s fine";',
+      'const b = `a ${features.appListings} b`;',
+      "const c = /don't/.test(x);",
+      'const gate = features.appListings || features.appBlocks;',
+    ].join('\n');
+    const masked = maskNonCode(src, 'probe.ts');
+    expect(masked).toMatch(INLINED_GATE);
+    // The template EXPRESSION hole is live code and must survive. (Its delimiters
+    // `${` and `}` belong to the TemplateHead/Tail TOKENS and are correctly
+    // blanked — only the expression between them is code.)
+    expect(masked).toContain('features.appListings');
+    // …while the literal chunks around it are blanked, apostrophe and all.
+    expect(masked).not.toContain("it's fine");
+    expect(masked).not.toContain("don't");
+  });
+
+  it('🔴 catches the evasions the single-line regex missed', () => {
+    const cases: Record<string, string> = {
+      'prettier-wrapped multi-line OR':
+        'const ok =\n  features.appListings ||\n  features.appBlocks;',
+      'De Morgan negation': 'if (!features.appListings && !features.appBlocks) return null;',
+      'nullish chain': 'const ok = features.appListings ?? features.appBlocks;',
+      destructured: 'const ok = appListings || appBlocks;',
+      'reversed order': 'const ok = features.appBlocks || features.appListings;',
+    };
+    for (const [label, src] of Object.entries(cases)) {
+      expect(flatten(maskNonCode(src, 'probe.ts')), label).toMatch(INLINED_GATE);
+    }
+  });
+
+  it('does NOT confuse sibling flags that have their own rules', () => {
+    // `appBlocksPages` / `appBlocksAuthor` are different gates; a `\b`-less regex
+    // would read them as `appBlocks` and flag legitimate code.
+    expect(
+      flatten(maskNonCode('const x = features.appListings || features.appBlocksPages;', 'p.ts'))
+    ).not.toMatch(INLINED_GATE);
   });
 
   it('🔴 maskComments keeps STRINGS (the import-path regression this file already hit)', () => {
@@ -217,11 +385,11 @@ describe('🔒 every store-visibility site routes through the shared predicate',
       const raw = read(rel);
       // The import — so a call cannot be satisfied by a same-named local helper.
       // Comment-masked only: the module specifier is a string literal.
-      expect(maskComments(raw)).toMatch(
+      expect(flatten(maskComments(raw, rel))).toMatch(
         /import\s*\{[^}]*\bhasAppsStoreAccess\b[^}]*\}\s*from\s*['"]~\/shared\/utils\/app-blocks-access['"]/
       );
       // …and a real invocation, not merely a mention in prose.
-      expect(maskNonCode(raw)).toMatch(/\bhasAppsStoreAccess\s*\(/);
+      expect(maskNonCode(raw, rel)).toMatch(/\bhasAppsStoreAccess\s*\(/);
     });
   }
 
@@ -234,20 +402,24 @@ describe('🔒 every store-visibility site routes through the shared predicate',
   it('the ledger is EXACT — it fails if a site is added OR silently reverted', () => {
     const importers = SCANNED.filter((f) =>
       /import\s*\{[^}]*\bhasAppsStoreAccess\b[^}]*\}\s*from\s*['"]~\/shared\/utils\/app-blocks-access['"]/.test(
-        maskComments(f.raw)
+        flatten(f.comments)
       )
     ).map((f) => f.rel);
+    // ⚠️ "EXACT" is scoped to SCAN_ROOTS. `components/AppLayout/AppHeader/
+    // appsNavVisibility.ts` is a real store-visibility decision that lives outside
+    // them and is deliberately excluded — see the STORE_GATE_SITES doc. This
+    // assertion cannot and does not speak for it.
     expect(importers.sort()).toEqual([...STORE_GATE_SITES].sort());
   });
 });
 
 describe('🔴 no store surface re-inlines the gate', () => {
   it('the boolean is spelled out in exactly one module — the one that defines it', () => {
-    const offenders = SCANNED.filter((f) => INLINED_GATE.test(f.code)).map((f) => f.rel);
+    const offenders = SCANNED.filter((f) => INLINED_GATE.test(flatten(f.code))).map((f) => f.rel);
     expect(offenders).toEqual([]);
     // The definition itself lives OUTSIDE the scanned roots and is where the
     // expression belongs; assert it is still there so "zero offenders" cannot be
     // achieved by the rule having evaporated entirely.
-    expect(maskNonCode(read(DEFINING_MODULE))).toMatch(INLINED_GATE);
+    expect(flatten(maskNonCode(read(DEFINING_MODULE), DEFINING_MODULE))).toMatch(INLINED_GATE);
   });
 });

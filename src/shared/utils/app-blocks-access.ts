@@ -79,11 +79,23 @@ export type AppsStoreFeatureFlags =
 /**
  * App Blocks — App STORE-VISIBILITY gate (`appListings || appBlocks`).
  *
- * 🔒 THE SINGLE SOURCE OF TRUTH for "may this viewer see the /apps store".
- * Every store surface — the `/apps` SSR resolver (`resolveAppsPageAccess`),
- * the `/apps` page body, the store-preview route, the marketplace grid query,
- * the related-listings rail, and the `/apps/*` sub-nav — routes through THIS
- * predicate. Do NOT re-inline `features.appListings || features.appBlocks`; the
+ * 🔒 THE SINGLE SOURCE OF TRUTH for "may this viewer see the /apps store", for
+ * the six surfaces under `components/Apps` and `pages/apps`: the `/apps` SSR
+ * resolver (`resolveAppsPageAccess`), the `/apps` page body, the store-preview
+ * route, the marketplace grid query, the related-listings rail, and the `/apps/*`
+ * sub-nav. All six route through THIS predicate.
+ *
+ * ⚠️ "Every store surface" would be TOO STRONG, so it is not claimed. One
+ * store-visibility decision is deliberately NOT converted:
+ * `components/AppLayout/AppHeader/appsNavVisibility.ts` gates the user-menu
+ * "Apps" → `/apps` entry on `appBlocks` alone, and its own doc says it "stays
+ * gated on `appBlocks`" — a standing decision, not drift. Consequence worth
+ * knowing before the launch: for a `{appListings, NOT appBlocks}` cohort the
+ * store renders but has no in-product entry point, since that menu item is the
+ * only route TO `/apps`. Tracked in issue #3907 — settle it BEFORE widening
+ * `app-listings`, not after.
+ *
+ * Do NOT re-inline `features.appListings || features.appBlocks`; the
  * gates drifting apart is exactly what this function exists to prevent, and it
  * had already happened once: of the SIX store-visibility sites, five spelled the
  * OR out and the sixth — `AppsSubNav` — spelled only half of it (`appBlocks`
