@@ -3,17 +3,22 @@ import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisib
 
 // Scope-A invariant: the PUBLIC "Build apps" → /apps/get-started nav entry is
 // visible whenever the public `appBlocksGetStarted` flag is on, INDEPENDENTLY of
-// the mod-only `appBlocks` flag; the "Apps Marketplace" → /apps entry stays gated
-// on `appBlocks` (mod-only) and never leaks to non-mods just because the public
-// get-started flag is on.
-describe('appsNavVisibility — public get-started vs mod-only marketplace', () => {
+// the store flags.
+//
+// #3907 invariant: the "Apps" → /apps entry is visible exactly when the STORE is
+// visible (`hasAppsStoreAccess` = appListings || appBlocks ||
+// appListingsPublicExternal). It is the ONLY in-product route to `/apps`, so a
+// cohort that can load the store but not see this entry has a store it cannot
+// find. It used to read `appBlocks` alone.
+describe('appsNavVisibility — public get-started vs store-gated marketplace', () => {
   it('shows the public get-started entry when appBlocksGetStarted is on', () => {
     const nav = appsNavVisibility({ appBlocksGetStarted: true, appBlocks: false });
     expect(nav.getStarted).toBe(true);
   });
 
-  it('keeps the marketplace entry mod-gated even when the public flag is on', () => {
-    // A non-mod (appBlocks off) with the public flag on sees ONLY get-started.
+  it('keeps the marketplace entry hidden for a viewer with NO store flag', () => {
+    // The public get-started flag alone grants no store access, so the entry that
+    // links to the store stays hidden.
     const nav = appsNavVisibility({ appBlocksGetStarted: true, appBlocks: false });
     expect(nav.getStarted).toBe(true);
     expect(nav.marketplace).toBe(false);
@@ -42,5 +47,64 @@ describe('appsNavVisibility — public get-started vs mod-only marketplace', () 
     const nav = appsNavVisibility({});
     expect(nav.getStarted).toBe(false);
     expect(nav.marketplace).toBe(false);
+  });
+
+  /**
+   * 🔴 THE THREE CASES THAT KILL A REVERT TO `!!features.appBlocks`.
+   *
+   * Each is a cohort that HAS store access without `appBlocks`. Under the old
+   * gate every one of them resolved `marketplace: false` — a store rendered by
+   * the SSR resolver with no in-product link to it. These are not hypothetical
+   * shapes: the external-only one is the live tester cohort as of 2026-08-14
+   * (Flipt `app-listings-public-external`, base off, rollout `[testers]`), and
+   * the catalog-only one is the documented shape of the public store launch.
+   */
+  describe('🔴 #3907 — the entry follows STORE visibility, not the block runtime', () => {
+    it('EXTERNAL-ONLY cohort (appListingsPublicExternal alone) sees the entry', () => {
+      const nav = appsNavVisibility({
+        appBlocksGetStarted: true,
+        appBlocks: false,
+        appListings: false,
+        appListingsPublicExternal: true,
+      });
+      expect(nav.marketplace).toBe(true);
+    });
+
+    it('CATALOG-ONLY cohort (appListings alone) sees the entry', () => {
+      const nav = appsNavVisibility({
+        appBlocksGetStarted: false,
+        appBlocks: false,
+        appListings: true,
+      });
+      expect(nav.marketplace).toBe(true);
+      // …and the get-started kill switch still governs its own entry.
+      expect(nav.getStarted).toBe(false);
+    });
+
+    it('a viewer with EVERY store flag off does not see it (the gate is not `true`)', () => {
+      // The negative control for the two above: without it, a mutation that made
+      // `marketplace` unconditionally true would pass both.
+      const nav = appsNavVisibility({
+        appBlocksGetStarted: true,
+        appBlocks: false,
+        appListings: false,
+        appListingsPublicExternal: false,
+      });
+      expect(nav.marketplace).toBe(false);
+    });
+  });
+
+  /**
+   * The entry widens DISCOVERY, not capability: it is a link, and every surface
+   * behind `/apps` keeps its own gate. Pinned as a relationship so the two
+   * cannot silently converge — the block-RUNTIME flag is not consulted for the
+   * catalog-only cohort, and the catalog flags are not consulted by the runtime
+   * surfaces (which live in their own modules and gate on `appBlocks` alone).
+   */
+  it('the marketplace entry is decided WITHOUT requiring the block runtime', () => {
+    const catalogOnly = appsNavVisibility({ appListings: true, appBlocks: false });
+    const runtimeOnly = appsNavVisibility({ appListings: false, appBlocks: true });
+    expect(catalogOnly.marketplace).toBe(true);
+    expect(runtimeOnly.marketplace).toBe(true);
   });
 });

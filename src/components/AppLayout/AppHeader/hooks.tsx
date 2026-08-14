@@ -195,10 +195,13 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2026-08-01'),
         },
         {
-          // Mod-only App Blocks marketplace + in-page AppsSubNav hub (installed,
-          // submit, my-submissions, revenue, review). Stays gated on `appBlocks`
-          // (mod-only today). Labeled "Apps" so it reads distinctly from the
-          // public "Build apps" entry above.
+          // App store + in-page AppsSubNav hub (installed, submit,
+          // my-submissions, revenue, review). Visible exactly when the STORE is
+          // — `hasAppsStoreAccess`, via `appsNavVisibility` (#3907): this is the
+          // only in-product route to `/apps`, so gating it on `appBlocks` alone
+          // hid the store from the catalog-only and external-only cohorts. The
+          // sub-nav entries behind it keep their own gates. Labeled "Apps" so it
+          // reads distinctly from the public "Build apps" entry above.
           href: '/apps',
           visible: appsNav.marketplace,
           icon: IconPlugConnected,
