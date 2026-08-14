@@ -36,7 +36,10 @@ export function isTerminal(status) {
  */
 export function exitCodeFor(run) {
   if (run.status === 'completed' && run.exitCode === 0) return 0;
-  return run.exitCode || 1;
+  // A real failing code is worth passing through, but a child killed by a signal reports no code
+  // at all (recorded as -1), and exiting -1 gives a shell 255 — a number that means nothing here
+  // and that `[ $? -eq 1 ]` misreads.
+  return Number.isInteger(run.exitCode) && run.exitCode > 0 ? run.exitCode : 1;
 }
 
 function defaultStartRun({ worktree, args, onLog, onExit }) {
@@ -84,8 +87,12 @@ function defaultStartRun({ worktree, args, onLog, onExit }) {
     try {
       if (isWindows) {
         const argv = ['/pid', String(child.pid), '/f', '/t'];
-        if (sync) execFileSync('taskkill', argv, { stdio: 'ignore' });
-        else spawn('taskkill', argv, { shell: true });
+        // The sync form runs on the daemon's event loop, including inside the SIGINT handler.
+        // Without a timeout a taskkill that blocks would wedge the daemon with no way to shut it
+        // down; a kill we cannot complete is better abandoned, since the sweep frees the slot.
+        if (sync)
+          execFileSync('taskkill', argv, { stdio: 'ignore', timeout: 5000, windowsHide: true });
+        else spawn('taskkill', argv, { shell: true, windowsHide: true });
       } else {
         process.kill(-child.pid, 'SIGKILL');
       }
@@ -307,7 +314,10 @@ export class TestQueue {
   outcomeFor(run, code) {
     if (run.timedOut) return 'timeout';
     if (run.cancelReason) return 'cancelled';
-    return code === 0 ? 'completed' : 'failed';
+    if (code === 0) return 'completed';
+    // No exit code means the child died by signal or never started — an OOM kill, not a verdict
+    // on the tests. Calling that `failed` would report a test result nothing produced.
+    return code < 0 ? 'error' : 'failed';
   }
 
   release(id) {

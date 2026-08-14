@@ -324,11 +324,54 @@ describe('dev-server test queue', () => {
 
   it('exits nonzero for every terminal state that is not a clean pass', () => {
     expect(exitCodeFor({ status: 'completed', exitCode: 0 })).toBe(0);
-    expect(exitCodeFor({ status: 'failed', exitCode: 1 })).toBe(1);
     expect(exitCodeFor({ status: 'timeout', exitCode: 0 })).toBe(1);
     expect(exitCodeFor({ status: 'cancelled', exitCode: 0 })).toBe(1);
     expect(exitCodeFor({ status: 'abandoned', exitCode: null })).toBe(1);
     expect(exitCodeFor({ status: 'error', exitCode: null })).toBe(1);
+    // A distinctive code, so the table distinguishes passing the real code through from
+    // returning a bare 1.
+    expect(exitCodeFor({ status: 'failed', exitCode: 130 })).toBe(130);
+    // A child killed by a signal reports no code; -1 must not reach a shell as 255.
+    expect(exitCodeFor({ status: 'error', exitCode: -1 })).toBe(1);
+  });
+
+  it('calls a signal-killed run an error, not a test failure', () => {
+    const queue = build();
+    const run = queue.request({ worktree: '/wt/a' });
+
+    runner.started[0].finish(-1); // node reports no code when a child dies by signal
+
+    expect(queue.get(run.id).status).toBe('error');
+    expect(exitCodeFor(queue.get(run.id))).toBe(1);
+  });
+
+  it('ignores a late exit arriving after the slot was force-released', () => {
+    const queue = build({ killGraceMs: 5_000 });
+    runner.startRun = ({ worktree }: RunnerArgs): FakeRun => {
+      const handle = new EventEmitter() as FakeRun;
+      handle.kill = vi.fn();
+      handle.finish = (code: number) => handle.emit('exit', code);
+      handle.worktree = worktree;
+      runner.started.push(handle);
+      return handle;
+    };
+    const stuck = queue.request({ worktree: '/wt/a' });
+    const next = queue.request({ worktree: '/wt/b' });
+
+    now += 60_001;
+    queue.get(next.id);
+    queue.sweep();
+    now += 5_001;
+    expect(queue.sweep().forced).toEqual([stuck.id]);
+    expect(queue.get(next.id).status).toBe('running');
+
+    // The abandoned process finally exits, cleanly, long after its slot was given away.
+    runner.started[0].finish(0);
+
+    expect(queue.get(stuck.id).status).toBe('timeout');
+    expect(queue.get(stuck.id).exitCode).toBeNull();
+    expect(queue.get(next.id).status).toBe('running');
+    expect(runner.started).toHaveLength(2);
   });
 
   it('settles a runner that reports its exit before it returns a handle', () => {
