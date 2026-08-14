@@ -95,3 +95,48 @@ describe('the other collaborator notifications still point at the APP', () => {
     expect(msg('app-collaborator-accepted', OFFSITE).url).toBe('/apps');
   });
 });
+
+/**
+ * 🔴 THE OWNERSHIP-OFFER NOTIFICATION MUST POINT AT THE INBOX, for exactly the reason the
+ * invite one does — and it did not.
+ *
+ * It pointed at `appUrl(details)`, i.e. `/apps/<appBlockId>` or `/apps`. Neither has an
+ * Accept control on it, and the first one REFUSES the recipient outright: a pending
+ * ownership offer confers no role, so `/apps/<appBlockId>` resolves their access, finds
+ * none, and 404s them. A notification that says "accept it to take over" pointing at a
+ * page with nothing to accept on it is the whole feature's only entry point, aimed at a
+ * dead end. `/apps/invites` is where the offer is now rendered and actionable.
+ */
+describe('🔴 the ownership-transfer OFFER points at the inbox where it can be accepted', () => {
+  it('links to /apps/invites for an ON-SITE listing', () => {
+    expect(msg('app-ownership-transfer-offered', ONSITE).url).toBe('/apps/invites');
+  });
+
+  it('…and for an OFF-SITE listing, which has no app-block route at all', () => {
+    expect(msg('app-ownership-transfer-offered', OFFSITE).url).toBe('/apps/invites');
+  });
+
+  it('the target does not vary with the app — it is the recipient’s own inbox', () => {
+    const a = msg('app-ownership-transfer-offered', ONSITE).url;
+    const b = msg('app-ownership-transfer-offered', {
+      ...ONSITE,
+      appBlockId: 'ab_totally_other',
+    }).url;
+    expect(a).toBe(b);
+    expect(a).not.toContain('ab_1');
+  });
+
+  it('still names the app in the MESSAGE, so the offer is identifiable', () => {
+    expect(msg('app-ownership-transfer-offered', ONSITE).message).toContain('My App');
+  });
+
+  /**
+   * CONTROL, mirroring the invite one: the ACCEPTED notification goes to the OLD owner,
+   * who no longer has an offer to answer — so it must NOT be redirected to the inbox.
+   */
+  it('the ACCEPTED notification still points at the app, not the inbox', () => {
+    const { url } = msg('app-ownership-transfer-accepted', ONSITE);
+    expect(url).not.toBe('/apps/invites');
+    expect(url).toContain('ab_1');
+  });
+});

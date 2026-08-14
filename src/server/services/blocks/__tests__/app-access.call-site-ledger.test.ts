@@ -239,6 +239,15 @@ const KIND_CAPABILITY_LEDGER: Record<string, string> = {
     'off-site one must promise NEITHER, because no BlockBuzzAttribution row can exist and ' +
     'there is no repo. Reading the table rather than hard-coding the copy is what keeps ' +
     'the invitee’s disclosure identical to the owner’s at invite time.',
+  'src/components/Apps/AppTransferOffersView.tsx':
+    'CONSUMES the row to build the RECIPIENT-side ownership-transfer disclosure, for the ' +
+    'same reason AppInvitesBody does and with the same two cells doing the work: an ' +
+    'on-site offer says the recipient takes over the repo (`submitVersion`) and that Buzz ' +
+    'accrued BEFORE the transfer stays with the previous owner (`earnings`); an off-site ' +
+    'offer must promise NEITHER, because there is no repo and no BlockBuzzAttribution row ' +
+    'can exist for a listing with no AppBlock. Reading the table rather than hard-coding ' +
+    'the copy is what stops the transfer disclosure and the invite disclosure drifting ' +
+    'into two different accounts of what an off-site listing can do.',
   'src/server/services/blocks/app-access.service.ts':
     'RE-EXPORTS the table and resolves each listing’s kind + appBlockId, and is where ' +
     'every server consumer still reaches it (CAPABILITIES_BY_KIND / capabilitiesForKind / ' +

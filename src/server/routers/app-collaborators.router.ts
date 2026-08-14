@@ -231,6 +231,30 @@ export const appCollaboratorsRouter = router({
       return run(() => listMyPendingInvites(ctx.user!.id));
     }),
 
+  /**
+   * The caller's own live ownership OFFERS (the same inbox surface).
+   *
+   * 🔴 KEYED ON THE RECIPIENT, which is what makes the transfer feature reachable at
+   * all. `getPendingTransfer` is keyed per LISTING, so it can only answer a question the
+   * recipient is unable to ask: a pending offer confers no role, so they cannot resolve
+   * the listing and, in the ordinary case, do not know it exists.
+   *
+   * Gated like its sibling `listMyPendingInvites` — `protectedProcedure +
+   * enforceAppBlocksAuthorFlag`, NOT `appDeveloperProcedure`. Being offered your FIRST
+   * app is precisely the case where "do you already own an app" is the wrong gate.
+   *
+   * Scoped to `ctx.user.id` in the SERVICE signature, so there is no id on the wire that
+   * a caller could point at somebody else's inbox.
+   */
+  listMyPendingTransfers: protectedProcedure
+    .use(enforceAppBlocksAuthorFlag)
+    .query(async ({ ctx }) => {
+      const { listMyPendingTransfers } = await import(
+        '~/server/services/blocks/app-ownership-transfer.service'
+      );
+      return run(() => listMyPendingTransfers(ctx.user!.id));
+    }),
+
   // -------------------------------------------------------------------------
   // READ.
   // -------------------------------------------------------------------------

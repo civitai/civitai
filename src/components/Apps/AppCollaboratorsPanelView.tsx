@@ -70,6 +70,32 @@ export type AppCollaboratorsPanelViewProps = {
   busy?: boolean;
   /** Identity renderer. Defaults to a plain id label so the View needs no data layer. */
   renderUser?: (userId: number) => ReactNode;
+
+  // ---------------------------------------------------------------------------
+  // OWNERSHIP TRANSFER — owner-only. See {@link OwnerTransferSection}.
+  // ---------------------------------------------------------------------------
+  /** The live outgoing offer on this listing, or null. */
+  pendingTransfer?: PendingTransferRow | null;
+  /**
+   * 🔴 The REASON the last transfer attempt was refused, rendered inline.
+   *
+   * A connect-linked off-site listing is refused with a specific, actionable message
+   * ("unlink the OAuth client first"). Collapsing that into a generic "something went
+   * wrong" toast would leave the owner with an action that fails forever and no way to
+   * learn why, so the message is surfaced where the control is.
+   */
+  transferErrorMessage?: string | null;
+  /** The recipient picker. Injected, like `userPicker`, to keep the search stack out. */
+  transferPicker?: ReactNode;
+  onCancelTransfer?: (transferId: string) => void;
+  transferBusy?: boolean;
+};
+
+/** The live outgoing offer, as `appCollaborators.getPendingTransfer` returns it. */
+export type PendingTransferRow = {
+  id: string;
+  toUserId: number;
+  expiresAt: Date | string;
 };
 
 /**
@@ -135,6 +161,105 @@ function statusBadge(status: string) {
   return <Badge color="gray">Declined</Badge>;
 }
 
+/**
+ * 🔴 OWNERSHIP TRANSFER — THE OWNER HALF, and it renders for the OWNER ONLY.
+ *
+ * `initiateTransfer` and `cancelTransfer` are owner-gated in the service
+ * (`loadOwnedListing` → NOT_OWNER; `cancelTransfer` → "you are not party to this
+ * transfer"), and the collaborator disclosure two sections up promises in so many words
+ * that "collaborators cannot invite or remove anyone, and cannot transfer the app".
+ * Rendering the control for an editor would both contradict that promise and offer a
+ * button that is guaranteed to 403.
+ *
+ * Extracted as its own component so the owner/editor split is ONE condition at ONE call
+ * site rather than a `isOwner &&` repeated across five controls.
+ */
+function OwnerTransferSection({
+  pendingTransfer,
+  transferErrorMessage,
+  transferPicker,
+  onCancelTransfer,
+  transferBusy,
+  renderUser,
+}: {
+  pendingTransfer: PendingTransferRow | null;
+  transferErrorMessage: string | null;
+  transferPicker?: ReactNode;
+  onCancelTransfer?: (transferId: string) => void;
+  transferBusy: boolean;
+  renderUser: (userId: number) => ReactNode;
+}) {
+  return (
+    <Stack gap="sm" data-testid="apps-transfer-owner-section">
+      <Title order={4}>Transfer ownership</Title>
+      <Alert
+        color="red"
+        variant="light"
+        icon={<IconAlertTriangle size={16} />}
+        title="Transferring hands the whole app to someone else"
+        data-testid="apps-transfer-owner-disclosure"
+      >
+        <Stack gap={4}>
+          <Text size="sm">
+            Once they accept, you are no longer the owner: you lose editing, submitting and every
+            other owner control. Buzz you have already earned stays with you.
+          </Text>
+          <Text size="sm">Nothing moves until the person you choose accepts.</Text>
+        </Stack>
+      </Alert>
+
+      {/* 🔴 THE REFUSAL, WITH ITS REASON. See `transferErrorMessage`. */}
+      {transferErrorMessage ? (
+        <Alert
+          color="red"
+          variant="filled"
+          icon={<IconAlertTriangle size={16} />}
+          title="Ownership cannot be transferred"
+          data-testid="apps-transfer-owner-error"
+        >
+          {transferErrorMessage}
+        </Alert>
+      ) : null}
+
+      {pendingTransfer ? (
+        <Paper withBorder p="sm" radius="md" data-testid="apps-transfer-pending">
+          <Group justify="space-between" wrap="wrap" gap="sm">
+            <Group gap="xs">
+              <Badge color="orange">Transfer pending</Badge>
+              <Text size="sm">Offered to</Text>
+              {renderUser(pendingTransfer.toUserId)}
+            </Group>
+            {onCancelTransfer ? (
+              <Button
+                size="xs"
+                variant="light"
+                color="red"
+                disabled={transferBusy}
+                data-testid="apps-transfer-cancel"
+                onClick={() => onCancelTransfer(pendingTransfer.id)}
+              >
+                Cancel transfer
+              </Button>
+            ) : null}
+          </Group>
+        </Paper>
+      ) : (
+        /* 🔴 The picker and the pending card are MUTUALLY EXCLUSIVE. One live offer per
+           listing is a partial-unique index in the database, so a second initiate would
+           lose on P2002 — offering the control while an offer is open would render an
+           action that cannot succeed. */
+        <Stack gap="xs">
+          {transferPicker}
+          <Text size="xs" c="dimmed">
+            One transfer offer at a time. It expires after{' '}
+            {constants.appCollaborators.transferExpiryDays} days if it is not accepted.
+          </Text>
+        </Stack>
+      )}
+    </Stack>
+  );
+}
+
 export function AppCollaboratorsPanelView({
   role,
   capabilities,
@@ -148,6 +273,11 @@ export function AppCollaboratorsPanelView({
   onLeave,
   busy = false,
   renderUser,
+  pendingTransfer = null,
+  transferErrorMessage = null,
+  transferPicker,
+  onCancelTransfer,
+  transferBusy = false,
 }: AppCollaboratorsPanelViewProps) {
   const isOwner = role === 'owner';
   const identity = renderUser ?? ((userId: number) => <Text fw={500}>User #{userId}</Text>);
@@ -306,6 +436,17 @@ export function AppCollaboratorsPanelView({
             </Group>
           ) : null}
         </Stack>
+      ) : null}
+
+      {isOwner ? (
+        <OwnerTransferSection
+          pendingTransfer={pendingTransfer}
+          transferErrorMessage={transferErrorMessage}
+          transferPicker={transferPicker}
+          onCancelTransfer={onCancelTransfer}
+          transferBusy={transferBusy}
+          renderUser={identity}
+        />
       ) : null}
 
       {!isOwner ? (
