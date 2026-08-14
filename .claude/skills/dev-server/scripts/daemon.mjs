@@ -13,7 +13,7 @@
 
 import http from 'http';
 import { spawn, execSync } from 'child_process';
-import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync, readdirSync, rmSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync, readdirSync, rmSync, realpathSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { randomBytes, createHash } from 'crypto';
@@ -159,6 +159,17 @@ function parseArgs() {
   }
 
   return config;
+}
+
+// Where the port scan starts. Set once from the parsed args so the session-side code paths — a
+// branch switch restarting itself, a session moved off a stolen port — can reach it too.
+let baseDevPort = DEFAULT_BASE_DEV_PORT;
+
+// Windows hands back whatever drive-letter and casing the caller typed.
+function samePath(a, b) {
+  return process.platform === 'win32'
+    ? resolve(a).toLowerCase() === resolve(b).toLowerCase()
+    : resolve(a) === resolve(b);
 }
 
 // Generate session ID
@@ -402,7 +413,13 @@ async function findAvailablePort(basePort, usedPorts = new Set()) {
   while (usedPorts.has(port) || !(await isPortFree(port))) {
     port++;
     if (port > basePort + 100) {
-      throw new Error('No available ports found within range');
+      // Reserved ports come back only when their session is stopped, so an agent reading this
+      // needs to be told that is the lever, not left to conclude the machine is out of ports.
+      const cli = 'node .claude/skills/dev-server/cli.mjs';
+      throw new Error(
+        `No available ports in ${basePort}-${basePort + 100}. ${usedPorts.size} are reserved by ` +
+          `tracked sessions — \`${cli} list\` shows them, \`${cli} stop <session-id>\` releases one.`
+      );
     }
   }
   return port;
@@ -547,6 +564,8 @@ class DevSession {
       spawnOptions.detached = true;
     }
 
+    this.detachRunningProcess();
+
     const proc = spawn(npmCmd, ['run', 'dev'], spawnOptions);
     this.process = proc;
 
@@ -573,6 +592,18 @@ class DevSession {
       status: this.status,
       ready: this.ready,
     };
+  }
+
+  // Anything still attached when a new process is about to take its place is a process this
+  // session is about to stop referring to, and the exit guard would then discard even its exit.
+  // Two starts can interleave — a branch switch restarting while a request takes the session over
+  // — and the loser would otherwise keep running, unreachable and holding the port, for the
+  // daemon's lifetime.
+  detachRunningProcess() {
+    if (!this.process) return;
+    this.addLog('warn', 'A process was still attached at start — killing it before replacing it');
+    this.killProcessTree(this.process);
+    this.process = null;
   }
 
   attachProcessHandlers(proc) {
@@ -638,7 +669,11 @@ class DevSession {
       } else {
         process.kill(-proc.pid, 'SIGKILL');
       }
-    } catch (e) {}
+    } catch (e) {
+      // A kill that fails leaves a server running while the session reports stopped, and that
+      // is only diagnosable if it is written down somewhere.
+      this.addLog('error', `Could not kill pid ${proc.pid}: ${e.message}`);
+    }
   }
 
   startBranchWatch() {
@@ -734,6 +769,10 @@ class DevSession {
       if (mustRestart) {
         await this.stop();
         this.restartCount++;
+        // Same check the request-driven restarts make. This one runs unattended, so a session
+        // silently coming back up on a port an orphan of its own still holds is the case nobody
+        // would be watching for.
+        await claimPortForReuse(this);
         this.switching = false;
         await this.start();
         return;
@@ -904,7 +943,9 @@ class DevSession {
     this.prewarming = false;
     const proc = this.process;
     if (!proc) {
-      this.status = 'stopped';
+      // An `error` session never had a process to stop; overwriting that with `stopped` would
+      // report a failed spawn as a clean shutdown.
+      if (this.status !== 'error') this.status = 'stopped';
       this.ready = false;
       return;
     }
@@ -927,13 +968,16 @@ class DevSession {
     });
   }
 
-  async restart() {
+  // `claimPort` runs between the stop and the start, which is the only moment the session's own
+  // process is gone and a probe of its port says something about anyone else.
+  async restart(claimPort) {
     await this.stop();
     this.restartCount++;
     this.logs = [];
     this.logIndex = 0;
     this.ready = false;
     this.readyAt = null;
+    if (claimPort) await claimPort(this);
     return this.start();
   }
 
@@ -1386,10 +1430,57 @@ function getUsedPorts() {
   return ports;
 }
 
+// Taking a session over means starting a server on the port that session owns, and its own
+// orphaned process may be the thing holding that port. `next dev` does not fail on a taken port —
+// it warns and moves to another one — so a session restarted onto an occupied port would report a
+// URL nothing of its own is serving, and the health check would go green against whatever is.
+//
+// A single probe cannot tell that apart from the session's own process still dying, and defaulting
+// to "stranger" is the destructive answer: it moves a healthy session off its port, which for the
+// primary session on 3000 silently unhooks the rgb-proxy (hardcoded to 3000) and rewrites the auth
+// URLs. Measured on this box, a killed listener releases the socket 630-668 ms after taskkill is
+// spawned, and stop() waits at most 500 ms — so the naive probe reads "held" on every restart. Wait
+// the port out instead, and move only when it stays held long past any plausible teardown.
+const PORT_RELEASE_TIMEOUT = 8000;
+const PORT_RELEASE_POLL = 250;
+
+async function claimPortForReuse(session, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? PORT_RELEASE_TIMEOUT;
+  const intervalMs = opts.intervalMs ?? PORT_RELEASE_POLL;
+  const scanFrom = opts.baseDevPort ?? baseDevPort;
+
+  if (await isPortFree(session.port)) return session.port;
+
+  session.addLog(
+    'info',
+    `Port ${session.port} is still held — waiting up to ${timeoutMs}ms for it to clear`
+  );
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    if (await isPortFree(session.port)) return session.port;
+  }
+
+  // Its own port is excluded from the reservations so that a port freeing during the scan can
+  // still be handed back to the session it belongs to.
+  const used = getUsedPorts();
+  used.delete(session.port);
+  const moved = await findAvailablePort(scanFrom, used);
+  session.addLog(
+    'warn',
+    `Port ${session.port} is held by something this daemon does not control — moving this session to ${moved}`
+  );
+  session.port = moved;
+  return moved;
+}
+
 function findSessionByWorktree(worktree) {
   const normalizedWorktree = resolve(worktree);
   for (const session of sessions.values()) {
-    if (resolve(session.worktree) === normalizedWorktree) {
+    // Case-insensitively on Windows: `cli start c:/dev/...` and a session created as `C:\Dev\...`
+    // are the same tree, and treating them as two would put two dev servers on it — each now
+    // holding a port for the daemon's lifetime. worktree.mjs already compares this way.
+    if (samePath(session.worktree, normalizedWorktree)) {
       return session;
     }
   }
@@ -1397,7 +1488,12 @@ function findSessionByWorktree(worktree) {
 }
 
 function listSessions() {
-  return Array.from(sessions.values()).map(s => s.getStatus());
+  // A session whose worktree has been deleted still holds its port and cannot be started again,
+  // and this listing is where someone hunting a reserved port actually looks.
+  return Array.from(sessions.values()).map((s) => ({
+    ...s.getStatus(),
+    worktreeMissing: !existsSync(s.worktree),
+  }));
 }
 
 // HTTP request body reader
@@ -1416,6 +1512,8 @@ async function main() {
 
   // Write PID file
   writeFileSync(pidFile, String(process.pid));
+
+  baseDevPort = config.baseDevPort;
 
   console.error(`Starting dev-server daemon...`);
   console.error(`  Daemon port: ${config.port}`);
@@ -1648,14 +1746,26 @@ async function main() {
 
         // Check if worktree exists
         if (!existsSync(resolvedWorktree)) {
+          // A tree deleted out from under its session leaves that session holding a port with no
+          // way to reach it through this endpoint, so name the session rather than only the tree.
+          const orphaned = findSessionByWorktree(resolvedWorktree);
           res.writeHead(400);
-          res.end(JSON.stringify({ error: `Worktree not found: ${resolvedWorktree}` }));
+          res.end(JSON.stringify({
+            error: `Worktree not found: ${resolvedWorktree}`,
+            ...(orphaned && {
+              trackedSession: orphaned.id,
+              hint: `Session ${orphaned.id} still holds port ${orphaned.port} for this path — release it with \`node .claude/skills/dev-server/cli.mjs stop ${orphaned.id}\`.`,
+            }),
+          }));
           return;
         }
 
         // Check if already running for this worktree
         const existing = findSessionByWorktree(resolvedWorktree);
-        if (existing && (existing.status === 'running' || existing.status === 'starting')) {
+        if (
+          existing &&
+          (existing.status === 'running' || existing.status === 'starting' || existing.switching)
+        ) {
           res.writeHead(200);
           res.end(JSON.stringify({
             existing: true,
@@ -1669,11 +1779,11 @@ async function main() {
         // a port for the life of the daemon. Only when a different port is asked for is a second
         // session created, and the old one keeps its reservation because its process may be alive.
         if (existing && (!requestedPort || requestedPort === existing.port)) {
-          await existing.restart();
+          await existing.restart((s) => claimPortForReuse(s));
 
           res.writeHead(200);
           res.end(JSON.stringify({
-            existing: false,
+            existing: true,
             reused: true,
             session: existing.getStatus(),
           }));
@@ -1765,7 +1875,7 @@ async function main() {
 
         // POST /sessions/:id/restart - Restart session
         if (subPath === '/restart' && req.method === 'POST') {
-          const result = await session.restart();
+          await session.restart((s) => claimPortForReuse(s));
 
           res.writeHead(200);
           res.end(JSON.stringify({
@@ -1777,12 +1887,18 @@ async function main() {
         // DELETE /sessions/:id - Stop session
         if (subPath === '' && req.method === 'DELETE') {
           await session.stop();
-          sessions.delete(sessionId);
 
-          // Removing the session is what releases its port, so say plainly when something is
-          // still listening on it — a kill that missed an orphaned grandchild leaves a port the
-          // daemon no longer reserves and only the picker's probe stands between it and reuse.
-          const stillListening = !(await isPortFree(session.port));
+          // A process winding down still answers, so a single busy read means nothing — only a
+          // port still held on a second look is worth reporting. The session is removed either
+          // way: keeping it would leave `wt stale` counting the tree as a keeper forever, and the
+          // picker's probe is what stands between a leftover listener and reuse.
+          let stillListening = !(await isPortFree(session.port));
+          if (stillListening) {
+            await new Promise((r) => setTimeout(r, 300));
+            stillListening = !(await isPortFree(session.port));
+          }
+
+          sessions.delete(sessionId);
 
           res.writeHead(200);
           res.end(JSON.stringify({
@@ -1896,15 +2012,20 @@ async function main() {
 
 // Importing this file must not start a daemon — the tests drive DevSession and the port
 // reservation directly, and a second daemon would fight the running one for its port.
-// Windows hands back whatever drive-letter case the caller typed, and a mismatch here would
-// look exactly like a daemon that starts and immediately does nothing.
-const samePath = (a, b) =>
-  process.platform === 'win32'
-    ? resolve(a).toLowerCase() === resolve(b).toLowerCase()
-    : resolve(a) === resolve(b);
+// `import.meta.url` is realpathed by node and `process.argv[1]` is not, so a launch through a
+// junction — which this repo's tooling creates routinely — would otherwise leave the daemon
+// exiting 0 having started nothing.
+function realPath(path) {
+  try {
+    return realpathSync(path);
+  } catch (e) {
+    return path;
+  }
+}
 
 const invokedDirectly =
-  !!process.argv[1] && samePath(process.argv[1], fileURLToPath(import.meta.url));
+  !!process.argv[1] &&
+  samePath(realPath(process.argv[1]), realPath(fileURLToPath(import.meta.url)));
 
 if (invokedDirectly) {
   main().catch(err => {
@@ -1913,4 +2034,4 @@ if (invokedDirectly) {
   });
 }
 
-export { DevSession, sessions, getUsedPorts };
+export { claimPortForReuse, DevSession, findSessionByWorktree, getUsedPorts, sessions };

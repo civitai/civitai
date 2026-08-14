@@ -333,6 +333,12 @@ What's already handled:
   own port rather than leaving it stranded and picking a new one. `start` and `restart` are now the
   same thing for an existing worktree; there is no longer a port to lose by picking the wrong one.
 
+  Both check the port is actually free in the moment between the stop and the start, and move the
+  session to a new one if something else is holding it — an orphan of its own that outlived a kill,
+  or another local server. That check is not optional: `next dev` does **not** fail on an occupied
+  port, it warns and quietly moves to another, so a session started onto a held port would report a
+  `url` and pass a health check against a server it does not own.
+
 Fresh worktrees still need `pnpm install` (or a `node_modules` junction) and `git submodule update --init event-engine-common`.
 
 ### Cache cannot be shared between worktrees
