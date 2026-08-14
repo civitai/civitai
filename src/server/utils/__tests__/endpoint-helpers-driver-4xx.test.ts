@@ -313,11 +313,13 @@ describe('handleEndpointError — driver-authored text at a 4xx (civitai#3845 in
   // ── Observability: genericizing must RELOCATE the text, never destroy it ────
   it('logs the UN-REDACTED driver text for every 4xx it genericizes', () => {
     const message =
-      "\nInvalid `prisma.appListing.create()` invocation:\n\nColumn: app_listings.slug";
+      '\nInvalid `prisma.appListing.create()` invocation:\n\nColumn: app_listings.slug';
     throughTheSeam(prismaError('P2000', message));
 
-    expect(mockLogToAxiom, 'a genericized 4xx must be logged — else the only copy is destroyed')
-      .toHaveBeenCalledTimes(1);
+    expect(
+      mockLogToAxiom,
+      'a genericized 4xx must be logged — else the only copy is destroyed'
+    ).toHaveBeenCalledTimes(1);
     const logged = mockLogToAxiom.mock.calls[0][0] as { message?: string };
     expect(logged.message, 'the LOG keeps the driver text the RESPONSE dropped').toContain(
       'app_listings.slug'

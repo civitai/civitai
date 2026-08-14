@@ -154,7 +154,11 @@ const VICTIM_EMAIL = 'victim@example.com';
 function prismaDriverError() {
   return new Prisma.PrismaClientKnownRequestError(
     `\nInvalid \`prisma.appCollaborator.findMany()\` invocation:\n\nThe column \`${LEAKED_TABLE}.${LEAKED_COLUMN}\` does not exist in the current database.`,
-    { code: 'P2022', clientVersion: CLIENT_VERSION, meta: { column: `${LEAKED_TABLE}.${LEAKED_COLUMN}` } }
+    {
+      code: 'P2022',
+      clientVersion: CLIENT_VERSION,
+      meta: { column: `${LEAKED_TABLE}.${LEAKED_COLUMN}` },
+    }
   );
 }
 
