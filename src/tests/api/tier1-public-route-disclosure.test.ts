@@ -795,16 +795,42 @@ describe('LEDGER: download/models `errorResponse` is never called with caught-er
    * What makes a call site safe is its MESSAGE, so nothing about the status may
    * decide whether the site is looked at. Scan the argument list.
    */
-  function callArgs(src: string): string[] {
-    const out: string[] = [];
-    const open = /(?<!function\s)errorResponse\(/g;
+  /** Matches every call site — NOT the `function errorResponse(...)` definition. */
+  const CALL_SITE = () => /(?<!function\s)errorResponse\(/g;
+
+  /**
+   * One entry per `errorResponse(` occurrence — `null` means the scan FAILED.
+   *
+   * 🔴 The null is surfaced instead of being dropped, because dropping it is
+   * exactly how the previous version defeated itself. `callArgs` did
+   * `if (args && args.length >= 2) out.push(args[1])`, so a site the scanner
+   * choked on vanished from the set and `every(...)` was vacuously true over it.
+   * An audit injected two LIVE `errorResponse(500, err.message)` forwards into the
+   * real route — one with an apostrophe in a trailing `// it's the status` comment,
+   * one with a `/'/g` regex literal — and both went 48/48 GREEN, because each
+   * leaves an odd number of quote characters so the quote-aware scan runs to EOF.
+   * 13 sites, 12 extracted, nothing noticed: the positive control is `> 5`.
+   * The PARENT version caught both. That is a regression introduced by the fix,
+   * on the TIER-1 guard for an unauthenticated public download route.
+   */
+  function callArgLists(src: string): (string[] | null)[] {
+    const out: (string[] | null)[] = [];
+    const open = CALL_SITE();
     for (let m = open.exec(src); m; m = open.exec(src)) {
-      const args = scanCallArgs(src, src.indexOf('(', m.index));
-      // A one-argument call has no message to check; an unterminated one yields
-      // null. Neither is a site this guard can speak about.
-      if (args && args.length >= 2) out.push(args[1]);
+      const lparen = src.indexOf('(', m.index);
+      // 🔴 The SAME fallback `bracedBodies` uses in the ledger, for the same
+      // reason: an unterminated quote must not make the scan emit nothing, because
+      // silence is the worse failure direction. Third time this lesson has come
+      // up in this file family — hence reusing the shape rather than re-deriving.
+      out.push(scanCallArgs(src, lparen, true) ?? scanCallArgs(src, lparen, false));
     }
     return out;
+  }
+
+  function callArgs(src: string): string[] {
+    return callArgLists(src)
+      .map((args) => (args && args.length >= 2 ? args[1] : null))
+      .filter((a): a is string => a !== null);
   }
 
   /**
@@ -815,19 +841,19 @@ describe('LEDGER: download/models `errorResponse` is never called with caught-er
    * truncated argument fails `isCallerFacingText` — i.e. it goes RED on safe code,
    * which is the failure direction that teaches the next author to edit the guard.
    */
-  function scanCallArgs(src: string, lparen: number): string[] | null {
+  function scanCallArgs(src: string, lparen: number, quoteAware: boolean): string[] | null {
     const args: string[] = [];
     let depth = 0;
     let quote: string | null = null;
     let argStart = lparen + 1;
     for (let i = lparen; i < src.length; i++) {
       const ch = src[i];
-      if (quote) {
+      if (quoteAware && quote) {
         if (ch === '\\') i++;
         else if (ch === quote) quote = null;
         continue;
       }
-      if (ch === "'" || ch === '"' || ch === '`') {
+      if (quoteAware && (ch === "'" || ch === '"' || ch === '`')) {
         quote = ch;
         continue;
       }
@@ -851,6 +877,30 @@ describe('LEDGER: download/models `errorResponse` is never called with caught-er
     // perfectly. Prove the instrument can see before believing what it reports.
     expect(callArgs(source).length, 'no errorResponse call sites found — the guard is inert')
       .toBeGreaterThan(5);
+  });
+
+  it('COUNT PARITY: every `errorResponse(` occurrence yields a message argument', () => {
+    // 🔴 The assertion that makes a SILENT DROP LOUD, and the only one here that
+    // does not depend on the scanner being correct. `> 5` cannot see a drop: an
+    // audit injected a 13th site the scan choked on, 12 were extracted, and
+    // 12 > 5 so the suite stayed green while a live `err.message` forward went
+    // uninspected. Counting the raw occurrences and demanding the same number of
+    // extracted arguments is scanner-independent — whatever the scan does, it must
+    // account for every site it was pointed at.
+    const occurrences = [...source.matchAll(CALL_SITE())].length;
+    const lists = callArgLists(source);
+
+    expect(occurrences, 'the occurrence counter itself must see the sites').toBeGreaterThan(5);
+    expect(lists.length, 'one entry per occurrence').toBe(occurrences);
+    expect(
+      lists.filter((l) => l === null).length,
+      'a call site the scanner could not parse — it would be silently EXEMPT from ' +
+        'the message check below. Do not filter it out; make the scan handle it.'
+    ).toBe(0);
+    expect(
+      callArgs(source).length,
+      'a site was dropped between parsing and the message check'
+    ).toBe(occurrences);
   });
 
   it('CAN detect a forwarded error (negative control on the detector itself)', () => {
@@ -882,6 +932,66 @@ describe('LEDGER: download/models `errorResponse` is never called with caught-er
     ).toEqual([`'Missing id, try again'`]);
     // …and the definition itself is never treated as a call site.
     expect(callArgs(`function errorResponse(status: number, message: string) {\n`)).toEqual([]);
+  });
+
+  it('an ODD number of quote characters must not make a site vanish', () => {
+    // 🔴 The two shapes an audit used to walk a LIVE `err.message` forward past
+    // this guard. Both leave an unbalanced quote inside the argument list, so the
+    // quote-aware scan runs to EOF and returned null — and the old `callArgs`
+    // dropped the site rather than reporting it. Asserted on the extracted VALUE,
+    // not merely on the count, so a fallback that "returns something" is not
+    // enough: it has to return the right thing.
+    // NB the extracted argument keeps a TRAILING `//` comment, because
+    // `stripComments` deliberately drops only whole-line ones — a `//` inside
+    // `'https://…'` must not be mangled (the same reasoning as the ledger's
+    // `stripLineComments`). That is fine and is the point: what the guard owes is
+    // that the site is SEEN and REJECTED, not that the text is pretty.
+    const apostropheInComment = `return errorResponse(\n  500, // it's the status\n  err.message\n);\n`;
+    expect(callArgLists(apostropheInComment).filter((l) => l === null), 'must not be dropped').
+      toEqual([]);
+    expect(callArgs(apostropheInComment).length, 'an apostrophe in a trailing comment').toBe(1);
+    expect(callArgs(apostropheInComment)[0]).toContain('err.message');
+    expect(
+      callArgs(apostropheInComment).every(isCallerFacingText),
+      'and it must be REJECTED — this is what turns the guard red'
+    ).toBe(false);
+
+    const regexLiteral = `return errorResponse(500, err.message.replace(/'/g, ''));\n`;
+    expect(callArgLists(regexLiteral).filter((l) => l === null), 'must not be dropped').toEqual([]);
+    expect(callArgs(regexLiteral).length, 'a regex literal containing a quote').toBe(1);
+    expect(callArgs(regexLiteral)[0]).toContain('err.message');
+    expect(callArgs(regexLiteral).every(isCallerFacingText)).toBe(false);
+
+    // The counterpart: neither site may be silently dropped either.
+    expect(callArgLists(apostropheInComment).filter((l) => l === null)).toEqual([]);
+    expect(callArgLists(regexLiteral).filter((l) => l === null)).toEqual([]);
+  });
+
+  it('an escaped quote inside a message does not truncate the argument', () => {
+    // 🔴 What makes `scanCallArgs`'s escape-skip OBSERVABLE, and it took two tries
+    // to find a shape that discriminates — worth stating, because the first one
+    // looked like coverage and was not.
+    //
+    // Without the escape-skip the quote-aware pass closes the string early at the
+    // `\'`, runs to EOF, and the quote-blind FALLBACK then takes over. The fallback
+    // usually lands correctly anyway, which masks the bug: with `'it\'s (bad)'` the
+    // parens balance and both versions return the same argument, so that exemplar
+    // killed nothing (measured — the mutant survived 51/51).
+    //
+    // It only becomes observable when the literal contains an UNBALANCED delimiter
+    // the quote-blind scan will act on. A comma is the realistic one, and it is an
+    // ordinary message: the fallback splits the argument there, yielding
+    // `'That didn\'t work` — not a complete literal, so the guard goes RED ON SAFE
+    // CODE. That failure direction is the whole reason the escape-skip exists.
+    //
+    // No `errorResponse` argument on the real route contains an escaped quote, so
+    // against `source` this branch is unreachable; this exemplar is what gives it
+    // an observable behaviour at all.
+    const escaped = String.raw`return errorResponse(400, 'That didn\'t work, try again');` + '\n';
+    expect(callArgs(escaped), 'the whole literal, comma and escape included').toEqual([
+      String.raw`'That didn\'t work, try again'`,
+    ]);
+    expect(callArgs(escaped).every(isCallerFacingText), 'and it is text we wrote').toBe(true);
   });
 
   it('accepts the literals we DID write, and rejects assembled ones', () => {
@@ -927,12 +1037,23 @@ describe('LEDGER: download/models `errorResponse` is never called with caught-er
       toBe(stripComments(readFileSync(ROUTE, 'utf8')));
 
     // And the one end-to-end statement that CAN fail on real content: the route's
-    // own comment at `:258` quotes `errorResponse(500, err.message)` verbatim, so
-    // if comment-stripping stops reaching the live scan this goes red.
+    // own comment quotes `errorResponse(500, err.message)` verbatim, so if
+    // comment-stripping stops reaching the live scan this goes red.
+    //
+    // Positive control first — without it, "the comment did not reach the scan" is
+    // also what you get when the comment no longer exists.
     expect(
-      callArgs(source).some((a) => a.includes('.message')),
+      readFileSync(ROUTE, 'utf8'),
+      'the exemplar comment is gone — this assertion no longer discriminates'
+    ).toContain('errorResponse(500, err.message)');
+    // 🔴 Exact-element, not `.includes('.message')`. The substring form went RED on
+    // a literal we wrote (`'Your request is missing a .message field'`) and blamed
+    // comment-stripping for it — failing loud on safe code AND pointing the next
+    // author at the wrong cause.
+    expect(
+      callArgs(source),
       'a commented-out `err.message` call reached the live scan'
-    ).toBe(false);
+    ).not.toContain('err.message');
 
     // 🔴 NOT asserted: that `source` contains no `/* … */`. The route file has
     // ZERO block comments, so such an assertion cannot fail on this input and
