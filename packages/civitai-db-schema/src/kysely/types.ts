@@ -3059,6 +3059,30 @@ export type Placement = {
    */
   takenDownAt: Timestamp | null;
   takenDownById: number | null;
+  /**
+   * When this placement's Buzz reached the target's counter. The counter lives in
+   * ClickHouse, which has no per-placement key to ask, so the fact that it was
+   * counted is recorded here or nowhere. NULL on a placement that reached
+   * `approved` is the reconcile sweep's work queue.
+   */
+  metricCountedAt: Timestamp | null;
+  /**
+   * When a sweep took this row to count it. Two columns rather than one because
+   * the claim has to be atomic and the confirmation cannot be: two sweeps can
+   * overlap (the job lock fails open when Redis is down), and without a claim
+   * both read the same unstamped rows and both emit before either stamps. The
+   * counter never reverses, so that over-count is permanent. A claim older than
+   * the recovery window is retried, which is what stops a crash between the two
+   * writes turning into the loss this whole feature exists to end.
+   */
+  metricClaimedAt: Timestamp | null;
+  /**
+   * How many times a sweep has taken this row. A row the tracker rejects fails
+   * identically on every retry, and the claim orders by `resolvedAt`, so
+   * without a ceiling one poisoned row sits at the head of the queue being
+   * re-claimed forever and starves everything behind it.
+   */
+  metricAttempts: Generated<number>;
 };
 export type PlacementSpace = {
   id: Generated<number>;

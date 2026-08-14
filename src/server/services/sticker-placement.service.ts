@@ -5,7 +5,6 @@ import {
   settlePlacement,
   MAX_LEG_ATTEMPTS,
 } from '~/server/services/placement-escrow.service';
-import { recordPlacementTip } from '~/server/services/placement-metrics.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { spendStickerUsesFor } from '~/server/services/sticker.service';
@@ -262,19 +261,12 @@ export async function createStickerPlacement({
 
   // `auto` settles immediately, which is what makes the placement live. `review`
   // leaves it pending, visible only to its placer, until the owner acts.
-  if (space.mode === 'auto') {
-    const { settled } = await settlePlacement({
+  if (space.mode === 'auto')
+    await settlePlacement({
       placementId: placement.id,
       action: 'approve',
       actorId: space.ownerId,
     });
-    // Gated on the settle actually claiming the transition, not on reaching this
-    // line: `settlePlacement` returns `settled: false` when something else got
-    // there first, and counting then would add the placement's Buzz to the image
-    // twice for one payment.
-    if (settled)
-      await recordPlacementTip({ surface: SURFACE, imageId, amount: space.price, placerId });
-  }
 
   return { placementId: placement.id, status: space.mode === 'auto' ? 'approved' : 'pending' };
 }
@@ -690,17 +682,6 @@ export async function actOnStickerPlacement({
     action: action === 'approve' ? 'approve' : 'decline',
     actorId: userId,
   });
-
-  // Gated on the settle claiming the transition rather than on the action asked
-  // for: two owners' tabs both pressing approve would otherwise count the same
-  // payment on the image twice.
-  if (action === 'approve' && settled)
-    await recordPlacementTip({
-      surface: SURFACE,
-      imageId: placement.targetId,
-      amount: placement.amount,
-      placerId: placement.placerId,
-    });
 
   return { settled };
 }
