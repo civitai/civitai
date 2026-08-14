@@ -5,12 +5,13 @@ import {
   getAutoFlaggedMinorDetail,
   getMinorHashMatchDetail,
 } from '$lib/server/minor-hash.service';
+import { MINOR_HASH_PATH } from '../../../models/minor-hash-matches/tabs';
 
 // Per-row on expand, not joined into the list: covers, uploader counts and flag provenance are
 // per-model lookups that would turn a 50-row page into 50x the work for detail most rows never show.
 // `/api/*` is exempt from the global route gate, so this checks the page's own path itself.
 export const GET: RequestHandler = async ({ params, url, locals }) => {
-  if (!locals.user || !canAccess(locals.user, '/minor-hash-matches'))
+  if (!locals.user || !canAccess(locals.user, MINOR_HASH_PATH))
     return json({ error: 'No access.' }, { status: 403 });
 
   const modelId = Number(params.modelId);
