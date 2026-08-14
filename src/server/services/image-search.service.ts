@@ -1,6 +1,6 @@
 import type { NextApiRequest } from 'next';
 import type { SessionUser } from '~/types/session';
-import requestIp from 'request-ip';
+import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { buildFliptContext, getFeatureFlags } from '~/server/services/feature-flags.service';
@@ -142,9 +142,45 @@ export async function runImageSearch(
     ? true
     : !!(data as { modelId?: unknown }).modelId && !(data as { modelVersionId?: unknown }).modelVersionId;
 
+  // ATTRIBUTION surface: this feeds the anonymous search-actor hash, whose only
+  // job is to keep distinct callers in distinct actor labels. The fail-closed
+  // derivation would collapse every non-edge caller into ONE label, which is the
+  // opposite of what a per-caller label is for.
+  //
+  // Moving this site KEEPS it in agreement with the two `ctx.ip`-fed
+  // `buildSearchActor` calls in `image.controller.ts`; it does not repair a
+  // disagreement, because there was none.
+  //
+  // 🔴 The three sites AGREED before this change, and the reason is worth
+  // stating so nobody "discovers" a bug here that never existed: all three
+  // resolved the SAME request through the SAME library resolver, differing only
+  // in sentinel (`string | null` here, `?? ''` in `ctx.ip`) — and
+  // `buildSearchActor` hashes `ip ?? ''`, which folds `null` and `''` to one
+  // input. Measured across every fixture that could distinguish them, including
+  // a request carrying two competing addresses: identical `anon:` hashes.
+  //
+  // What WOULD have broken the agreement is this PR itself. It moves `ctx.ip`
+  // onto the shared predicate, so leaving this one call site on the library
+  // resolver would have INTRODUCED the divergence — one caller hashed to two
+  // different actors depending on which entry point served the request.
+  // (Measured: on a request the two derivations resolve differently, the
+  // left-behind form and `ctx.ip` produce different hashes.) The sites moved
+  // together, so the agreement is preserved rather than newly won.
+  //
+  // The `OrNull` form matches this call site's own nullable parameter. Between
+  // `null` and `''` the choice is inert: passing `resolveClientIpOrNull(req) ?? ''`
+  // would be byte-equivalent, for the same `ip ?? ''` fold above.
+  //
+  // ⚠️ That freedom does NOT extend to the shared label. `resolveClientIp` would
+  // hand this site the literal `'unknown'`, which does not fold — it hashes as
+  // itself and would put this entry point on a different actor from the two
+  // `ctx.ip`-fed siblings for every unresolvable request. So: the DERIVATION must
+  // match across the three sites, `null` and `''` are interchangeable, and the
+  // label is not. That is exactly the distinction `resolveClientIpOrNull` exists
+  // to carry — see its own note in `~/server/utils/client-ip`.
   const actor = buildSearchActor({
     userId: user?.id,
-    ip: requestIp.getClientIp(req),
+    ip: resolveClientIpOrNull(req),
     userAgent: req.headers['user-agent'],
   });
 
