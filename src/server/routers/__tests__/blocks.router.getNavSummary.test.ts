@@ -91,7 +91,9 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
 }));
 vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
+  const actual = await vi.importActual<typeof import('@civitai/redis/client')>(
+    '@civitai/redis/client'
+  );
   return { ...actual, redis: mockRedis, sysRedis: mockSysRedis };
 });
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
@@ -346,14 +348,24 @@ describe('getNavSummary — the collaborator-aware flags', () => {
     ]);
   });
 
-  it('ownership is resolved BLOCK-FIRST, shadows excluded — same predicate as listMine', async () => {
+  it('ownership is resolved KIND-AWARE, shadows excluded — same predicate as listMine', async () => {
+    // 🔴 WAS "BLOCK-FIRST" (two branches) UNTIL ISSUE #3844. That predicate let an
+    // attached `AppBlock` decide ownership on an OFF-SITE listing, where
+    // `AppListing.userId` is canonical — so after `claimListing` or an off-site
+    // `acceptTransfer` (both of which move only the column) the sub-nav offered the
+    // "My apps" route to the PREVIOUS owner and hid it from the rightful one. The third
+    // branch is that fix, and this assertion is enumerated equality on purpose: it is the
+    // structural half of "the tab and the page it opens cannot disagree", the other half
+    // being `app-access.kind-aware-owner.test.ts`, which asserts both reads pass the
+    // shared `canonicalOwnerWhereBranches` output.
     const caller = blocksRouter.createCaller(fakeCtx(otherModUser) as never);
     await caller.getNavSummary();
     const where = mockDbRead.appListing.findFirst.mock.calls[0][0].where;
     expect(where.revisionOfId).toBeNull();
     expect(where.OR).toEqual([
-      { appBlock: { app: { userId: otherModUser.id } } },
-      { appBlock: { is: null }, userId: otherModUser.id },
+      { kind: 'onsite', appBlock: { app: { userId: otherModUser.id } } },
+      { kind: 'onsite', appBlock: { is: null }, userId: otherModUser.id },
+      { kind: { not: 'onsite' }, userId: otherModUser.id },
     ]);
   });
 

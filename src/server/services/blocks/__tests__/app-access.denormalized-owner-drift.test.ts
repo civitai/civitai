@@ -525,6 +525,223 @@ describe('app-listing-assets::resolveOwnerScreenshotTarget (via updateListingScr
   });
 });
 
+/**
+ * 🔴 ISSUE #3844, DRIVEN THROUGH ALL FIVE GATES — the same table twice, once per arm.
+ *
+ * The suites above pin the ON-SITE drift. These pin the OFF-SITE inversion the
+ * consolidation introduced, and they do it as a TABLE over the whole gate population
+ * rather than by sampling one gate: the population is every consumer of
+ * `resolveListingAccess` in these two services, and each is asserted in BOTH directions.
+ * A gate that only granted would leave "allow everyone" alive; one that only refused would
+ * leave "deny everyone" alive.
+ *
+ * The resolver-level assertions (and the `claimListing` seam) live in
+ * `app-access.kind-aware-owner.test.ts`; this file is the end-to-end half.
+ */
+const OFFSITE_GATES: Array<{
+  name: string;
+  /** Which fixture row this gate is entered through. */
+  entry: 'live' | 'shadow';
+  run: (userId: number) => Promise<unknown>;
+  granted: Record<string, unknown>;
+  refused: Record<string, unknown>;
+}> = [
+  {
+    name: 'offsite-listing::loadOwnedEditableListing (updateListing)',
+    entry: 'live',
+    run: (userId) => updateListing({ listingId: LIVE, patch: { name: 'Renamed' }, userId }),
+    granted: { listingId: LIVE },
+    refused: { code: 'NOT_OWNED', message: 'you can only edit your own listings' },
+  },
+  {
+    name: 'offsite-listing::getMyListingForApp',
+    entry: 'live',
+    run: (userId) => getMyListingForApp({ appBlockId: BLOCK, userId }),
+    granted: { appListingId: LIVE },
+    refused: { code: 'NOT_OWNED', message: 'you can only manage your own listings' },
+  },
+  {
+    name: 'app-listing-assets::loadOwnedListing (getListingAssets)',
+    entry: 'live',
+    run: (userId) => getListingAssets({ listingId: LIVE }, user(userId)),
+    granted: { listingId: LIVE },
+    refused: { code: 'FORBIDDEN', message: 'You do not own this listing' },
+  },
+  {
+    name: 'app-listing-assets::resolveOwnerScreenshotTarget (updateListingScreenshotCaption)',
+    entry: 'live',
+    run: (userId) =>
+      updateListingScreenshotCaption({ screenshotId: SHOT, caption: 'hi' }, user(userId)),
+    granted: { id: SHOT },
+    refused: { code: 'FORBIDDEN', message: 'You do not own this listing' },
+  },
+  {
+    name: 'offsite-listing::submitListingRevision',
+    entry: 'shadow',
+    run: (userId) => submitListingRevision({ shadowId: SHADOW, userId }),
+    granted: { shadowId: SHADOW },
+    refused: { code: 'NOT_OWNED', message: 'you can only submit your own revision' },
+  },
+];
+
+describe('🔴 #3844 ARM 1 — an OFF-SITE listing that CARRIES A BLOCK: the block must not decide', () => {
+  /**
+   * `mapAppBlockToListing` mints exactly this shape from an `AppBlock` with an
+   * `externalUrl`. The column names {@link REAL_OWNER}; the attached block names
+   * {@link STRANGER} — who, in the story this models, is the ex-owner or the impersonator
+   * `claimListing` just dispossessed, since both off-site ownership writers move only the
+   * column and leave the block naming whoever it named before.
+   */
+  const offsiteBlockParent = {
+    id: LIVE,
+    kind: 'offsite',
+    slug: 'my-app',
+    // `draft`, matching `liveRow()`: an APPROVED parent routes a material edit through
+    // `beginListingRevision`, which is a different code path and not what these gates are
+    // about. The shadow's own `revisionOf.status` below still says `approved`, exactly as
+    // the on-site fixture does.
+    status: 'draft',
+    userId: REAL_OWNER,
+    revisionOfId: null,
+    appBlockId: BLOCK,
+    appBlock: { app: { userId: STRANGER } },
+    name: 'My App',
+    tagline: null,
+    description: null,
+    category: null,
+    contentRating: 'g',
+    externalUrl: 'https://example.com/',
+    connectClientId: null,
+    connectRequestedScopes: null,
+    connectScopeJustifications: null,
+    iconId: 101,
+    coverId: 202,
+  };
+  const offsiteBlockShadow = {
+    ...shadowRow(),
+    kind: 'offsite',
+    // Frozen at clone time from the parent's column — the SAME user, so this arm varies
+    // only the block. Arm 2 below varies only the frozen column.
+    userId: REAL_OWNER,
+    externalUrl: 'https://example.com/',
+    revisionOf: {
+      id: LIVE,
+      slug: 'my-app',
+      status: 'approved',
+      kind: 'offsite',
+      // The PARENT's column — what the resolver must read for an off-site listing. Equal
+      // to the shadow's here on purpose: this arm varies the BLOCK and nothing else.
+      userId: REAL_OWNER,
+      appBlockId: BLOCK,
+      appBlock: { app: { userId: STRANGER } },
+    },
+  };
+
+  beforeEach(() => {
+    wireListings({ [LIVE]: offsiteBlockParent, [SHADOW]: offsiteBlockShadow });
+  });
+
+  it('🔴 POSITIVE CONTROL: the fixture is offsite, HAS a block, and the two owners differ', () => {
+    expect(offsiteBlockParent.kind).toBe('offsite');
+    expect(offsiteBlockParent.appBlockId).toBe(BLOCK);
+    expect(offsiteBlockParent.userId).toBe(REAL_OWNER);
+    expect(offsiteBlockParent.appBlock.app.userId).toBe(STRANGER);
+    expect(REAL_OWNER).not.toBe(STRANGER);
+  });
+
+  for (const gate of OFFSITE_GATES) {
+    it(`${gate.name} ADMITS the rightful (column) owner`, async () => {
+      await expect(gate.run(REAL_OWNER)).resolves.toMatchObject(gate.granted);
+    });
+
+    it(`${gate.name} REFUSES the user the attached block names`, async () => {
+      await expect(gate.run(STRANGER)).rejects.toMatchObject(gate.refused);
+    });
+  }
+});
+
+describe('🔴 #3844 ARM 2 — an OFF-SITE SHADOW must not freeze the pre-transfer owner', () => {
+  /**
+   * The arm that needs NO block, and therefore no unmintable shape:
+   * `beginListingRevision` clones the parent with `userId: parent.userId`, and neither
+   * `claimListing` nor `acceptTransfer`'s off-site path touches a shadow (both write
+   * `where: { id: <the parent> }`). So a shadow that outlives an off-site ownership move
+   * names the OLD owner forever, and for `offsite` the column is exactly what the resolver
+   * falls back to. Only the two shadow-reachable gates apply.
+   */
+  const offsiteParent = {
+    ...liveRow(),
+    kind: 'offsite',
+    userId: REAL_OWNER, // the ownership move already landed here
+    appBlockId: null,
+    appBlock: null,
+    externalUrl: 'https://example.com/',
+  };
+  const staleShadow = {
+    ...shadowRow(),
+    kind: 'offsite',
+    userId: STALE_NAME, // frozen at clone time, before the move
+    externalUrl: 'https://example.com/',
+    revisionOf: {
+      id: LIVE,
+      slug: 'my-app',
+      status: 'approved',
+      kind: 'offsite',
+      // 🔴 The PARENT's column, which the move DID update. This arm varies exactly this
+      // one field against the shadow's frozen copy — no block anywhere in the fixture.
+      userId: REAL_OWNER,
+      appBlockId: null,
+      appBlock: null,
+    },
+  };
+
+  beforeEach(() => {
+    wireListings({ [LIVE]: offsiteParent, [SHADOW]: staleShadow });
+  });
+
+  it('🔴 POSITIVE CONTROL: the shadow’s frozen column disagrees with its parent’s', () => {
+    expect(staleShadow.userId).toBe(STALE_NAME);
+    expect(offsiteParent.userId).toBe(REAL_OWNER);
+    expect(staleShadow.revisionOfId).toBe(LIVE);
+    expect(staleShadow.appBlockId).toBeNull();
+  });
+
+  it('submitListingRevision ADMITS the parent’s CURRENT owner', async () => {
+    await expect(
+      submitListingRevision({ shadowId: SHADOW, userId: REAL_OWNER })
+    ).resolves.toMatchObject({ shadowId: SHADOW });
+  });
+
+  it('submitListingRevision REFUSES the ex-owner the shadow still names', async () => {
+    await expect(
+      submitListingRevision({ shadowId: SHADOW, userId: STALE_NAME })
+    ).rejects.toMatchObject({
+      code: 'NOT_OWNED',
+      message: 'you can only submit your own revision',
+    });
+  });
+
+  it('the asset gate on the SHADOW admits the current owner and refuses the frozen one', async () => {
+    await expect(getListingAssets({ listingId: SHADOW }, user(REAL_OWNER))).resolves.toMatchObject({
+      listingId: SHADOW,
+    });
+    await expect(getListingAssets({ listingId: SHADOW }, user(STALE_NAME))).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'You do not own this listing',
+    });
+  });
+
+  it('an editor seated on the PARENT still reaches the shadow', async () => {
+    // The fix must move the OWNER half without disturbing the seat half.
+    seatFor(EDITOR);
+    await expect(
+      submitListingRevision({ shadowId: SHADOW, userId: EDITOR })
+    ).resolves.toMatchObject({
+      shadowId: SHADOW,
+    });
+  });
+});
+
 describe('🔴 THE OTHER DIRECTION: an OFF-SITE listing’s column IS the owner', () => {
   // The control on the fix itself. "Always take the block owner" would be a NEW inversion
   // — an off-site listing has no OauthClient in its ownership chain, so `AppListing.userId`
@@ -552,45 +769,41 @@ describe('🔴 THE OTHER DIRECTION: an OFF-SITE listing’s column IS the owner'
     ).rejects.toMatchObject({ code: 'NOT_OWNED' });
   });
 
-  it('🔴 KNOWN REGRESSION on an unreachable shape (issue #3844): offsite + a block ⇒ the BLOCK wins', async () => {
-    // 🔴 CALLED WHAT IT IS. An earlier version of this comment (and of the PR body)
-    // framed this as a "neutral recorded disagreement". It is not neutral: PRE-PR these
-    // five gates compared against `AppListing.userId` and were therefore CORRECT on this
-    // shape; routing them through the resolver makes them wrong on it. That is a
-    // regression — on a shape that cannot currently occur, but a regression.
+  it('🔴 FIXED (issue #3844): offsite + a block ⇒ the COLUMN still wins, the block does not', async () => {
+    // 🔴 THIS CASE WAS INVERTED, DELIBERATELY, AND THE OLD EXPECTATION IS RECORDED HERE
+    // SO NOBODY RE-DERIVES IT. Until #3844 it asserted the opposite — that the BLOCK
+    // decides on this shape — and called itself a KNOWN REGRESSION: PR #3840 routed five
+    // gates through `resolveListingAccess`, whose resolution was `appBlock.app.userId ??
+    // listing.userId` (BLOCK-FIRST, no branch on `kind`). That read as "kind-aware" only
+    // because an ordinary off-site listing has no block.
     //
-    // `resolveListingAccess` computes `appBlock.app.userId ?? listing.userId` —
-    // BLOCK-FIRST, with no branch on `kind`. That reads as "kind-aware" only because an
-    // ordinary off-site listing has no block, so the fallback is the only branch reached.
-    // On an OFFSITE listing that carries one, the block decides — and BOTH off-site
-    // ownership writers move only the column, so the block keeps naming the old owner:
+    // `mapAppBlockToListing` mints `kind:'offsite'` WITH an `appBlockId` from any
+    // `AppBlock` carrying an `externalUrl`, and BOTH off-site ownership writers move only
+    // the column:
     //   - `acceptTransfer` — its step (2) OauthClient move is `if (isOnsite)`-guarded;
     //   - `claimListing` — the mod impersonation remedy (report → delist → claim → ban),
     //     which refuses a non-offsite listing outright and writes only the column.
-    // So on this shape the ex-owner (or the impersonator the claim was meant to
-    // dispossess) keeps edit access and the rightful owner is refused.
+    // So block-first kept the ex-owner — or the impersonator the claim was meant to
+    // dispossess — in edit access, and refused the rightful owner. Both directions are
+    // asserted below, and the impersonation-remedy path has its own suite in
+    // `app-access.kind-aware-owner.test.ts`.
     //
-    // 🔴 WHY IT IS PINNED RATHER THAN FIXED: measured against production 2026-08-12 the
-    // shape is not merely 0-row, it is UNMINTABLE. `kind='offsite' AND app_block_id IS
-    // NOT NULL` → 0 rows; 0 of 22 `app_blocks` carry an `external_url`; and a grep of
-    // `src/server` finds NO writer of that column — every hit is a read, a projection or
-    // a test fixture. `mapAppBlockToListing` mints the shape only from an AppBlock that
-    // has one. Changing the resolver moves the primary listing-access predicate for every
-    // caller, so it belongs in its own PR: https://github.com/civitai/civitai/issues/3844
-    // (which also notes that `resolveAccessibleAppBlockIds`, in the same module, already
-    // discriminates on `kind` rather than on block-nullness — the two halves disagree
-    // about which discriminator is authoritative).
-    //
-    // This test failing means someone changed the resolver — read the issue first, and
-    // update this case deliberately rather than deleting it.
+    // The shape was measured UNMINTABLE on 2026-08-12 (`kind='offsite' AND app_block_id
+    // IS NOT NULL` → 0 rows; 0 of 22 `app_blocks` carry an `external_url`; no writer of
+    // that column in `src/server`), so this was a LATENT inversion closed before anything
+    // could mint it — not a live exploit.
     wireListings({
       [LIVE]: offsite({ appBlockId: BLOCK, appBlock: { app: { userId: STRANGER } } }),
     });
-    await expect(getListingAssets({ listingId: LIVE }, user(STRANGER))).resolves.toMatchObject({
+    // The listing's own column is canonical for offsite: its owner is admitted…
+    await expect(getListingAssets({ listingId: LIVE }, user(REAL_OWNER))).resolves.toMatchObject({
       listingId: LIVE,
     });
-    await expect(getListingAssets({ listingId: LIVE }, user(REAL_OWNER))).rejects.toMatchObject({
+    // …and the user the attached block names is a stranger, refused. Asserting only the
+    // first half would leave an "allow everyone" mutant alive.
+    await expect(getListingAssets({ listingId: LIVE }, user(STRANGER))).rejects.toMatchObject({
       code: 'FORBIDDEN',
+      message: 'You do not own this listing',
     });
   });
 });

@@ -339,7 +339,9 @@ export { nsfwLevelFromContentRating };
  * collaborator fallback. It is SHADOW-AWARE (a shadow revision carries `appBlockId: null`, so both the seat and
  * the canonical owner are resolved via its parent; without that an editor would lose
  * access to their own in-flight revision the moment their first media edit minted it)
- * and it is KIND-AWARE about ownership (`appBlock.app.userId ?? listing.userId`).
+ * and it is KIND-AWARE about ownership: `OauthClient.userId` via the block for `onsite`,
+ * the listing's own column for `offsite` — where the block, if one is attached, must NOT
+ * override it (issue #3844).
  *
  * 🔴 THIS IS THE ONLY OWNERSHIP GATE ON THE ASSET PATH. `resolveOwnerScreenshotTarget`
  * used to run a second, denormalized-column copy of it one line before calling this;
@@ -415,8 +417,9 @@ async function loadOwnedListing(
  * Extracted so every gate in this file asks the question the SAME way
  * (`resolveListingAccess` is the single predicate; this is a thin read of it) and so the
  * seam has one name to mock in tests. It answers BOTH halves: the canonical owner
- * (kind-aware — `appBlock.app.userId ?? listing.userId`, never the denormalized column
- * alone) and the ACCEPTED seat, in one call.
+ * (kind-aware — the BLOCK's `OauthClient.userId` for an onsite listing, the listing's own
+ * column for an offsite one even when it carries a block) and the ACCEPTED seat, in one
+ * call.
  *
  * `db` defaults to the replica and MUST be passed on by any caller that itself received
  * a pool override — see the note at the `loadOwnedListing` call site.

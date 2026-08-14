@@ -145,21 +145,34 @@ export type ListingAccess = {
    * roster — including `displayed:false` seats, `invitedBy` and the timestamps — to
    * whoever the stale row names, while refusing the REAL owner `NOT_OWNER` on their own
    * app. For an OFF-SITE listing there is no OauthClient in the ownership chain, so the
-   * column IS the owner and the fallback is exact.
+   * column IS the owner — which is why the resolution BRANCHES on `kind` rather than
+   * merely falling back to the column when no block happens to be present.
    *
-   * 🔴 …WITH ONE MEASURED EXCEPTION TO "kind-aware", tracked as
-   * https://github.com/civitai/civitai/issues/3844. The implementation is BLOCK-FIRST
-   * (`appBlock.app.userId ?? listing.userId`) and never branches on `kind`, which reads
-   * as kind-aware only because an ordinary off-site listing has no block. On an OFF-SITE
-   * listing that DOES carry one, the block decides — and both off-site ownership writers
-   * (`acceptTransfer`'s offsite path and `claimListing`) move only the column, so this
-   * function keeps naming the OLD owner. 0 rows of that shape in production and no code
-   * path can mint one today (see the issue for the measurement). Do not fix it here; the
-   * behaviour is pinned in `app-access.denormalized-owner-drift.test.ts`.
+   * 🔴 THE BRANCH ON `kind` IS THE WHOLE POINT, and it used to be missing (issue #3844,
+   * fixed here). The implementation was BLOCK-FIRST (`appBlock.app.userId ?? listing
+   * .userId`) with no branch at all, which READ as kind-aware only because an ordinary
+   * off-site listing has no block, so the fallback was the only branch reached. On an
+   * OFF-SITE listing that DOES carry one — `mapAppBlockToListing` mints exactly that shape
+   * from an `AppBlock` with an `externalUrl` — the block decided, while BOTH off-site
+   * ownership writers move only the column:
+   *   - `app-ownership-transfer.service::acceptTransfer` — its `OauthClient` step is
+   *     `if (isOnsite)`-guarded, so the offsite path writes `AppListing.userId` alone; and
+   *   - `offsite-moderation.service::claimListing` — the mod IMPERSONATION REMEDY
+   *     (report → delist → claim → ban), which refuses a non-offsite listing outright.
+   * So the resolver kept naming the OLD owner: the ex-owner — or the impersonator the
+   * claim exists to dispossess — retained edit access while the rightful owner was
+   * refused. Both directions are pinned in `app-access.kind-aware-owner.test.ts`.
+   *
+   * 🔴 AND FOR AN OFF-SITE LISTING THE CANONICAL COLUMN IS THE **PARENT'S**, never a
+   * shadow's own. `beginListingRevision` clones with `userId: parent.userId` and nothing
+   * revisits the clone, so a shadow that outlives an off-site ownership move carries the
+   * OLD owner frozen. Reading the shadow's copy re-opened the same inversion on the one
+   * shape that needs no unmintable block — see {@link resolveCanonicalListingOwner}.
    *
    * The same resolution is written in `app-collaborator.service::toSeatListing` and in
    * `app-ownership-transfer.service::loadOwnedListing`, the two WRITE-side seat/transfer
-   * loaders; every other consumer delegates to THIS function rather than re-deriving it.
+   * loaders — both now delegate to {@link resolveCanonicalListingOwner} rather than
+   * re-spelling it; every other consumer delegates to THIS function.
    *
    * 🔴 WHAT THE LEDGER ACTUALLY PINS, stated exactly, because two earlier versions of
    * this paragraph overstated it. The ledger enumerates the POPULATION of gate sites, and
@@ -190,6 +203,93 @@ export type ListingAccess = {
 
 /** The one status that confers capability. Nothing else does. */
 export const ACCEPTED = 'accepted' as const;
+
+/**
+ * 🔴 THE CANONICAL OWNER OF AN APP LISTING — the ONE place the kind branch is written.
+ *
+ * Ownership is not one column. It depends on the listing's KIND, and the two kinds have
+ * genuinely different ownership chains:
+ *
+ *   - `onsite`  → the owner is `OauthClient.userId`, reached as `AppBlock.app.userId`.
+ *                 `AppListing.userId` is a DENORMALIZED COPY there and is stale-able (a
+ *                 shadow revision freezes it at clone time). The copy is still the
+ *                 fallback, and it is the only owner signal left when a block carries a
+ *                 dangling `app_id` — an app nobody owns is worse than a stale name.
+ *   - `offsite` → there is no `OauthClient` in the chain at all (a connect client is a
+ *                 linked CREDENTIAL, not an owner), so `AppListing.userId` IS the owner —
+ *                 UNCONDITIONALLY, ignoring any backing `AppBlock`.
+ *
+ * 🔴 THE `offsite` BRANCH IS NOT DEAD CODE, AND ITS ABSENCE WAS ISSUE #3844.
+ * `mapAppBlockToListing` mints `kind:'offsite'` WITH a non-null `appBlockId` for any
+ * `AppBlock` that carries an `externalUrl` (reachable through `publish-request.service`'s
+ * approve path and the mod proc `backfillAppListings`). On that shape a block-first
+ * resolution lets the BLOCK decide — while both off-site ownership writers
+ * (`acceptTransfer`'s offsite path, and `claimListing`, the impersonation remedy) move
+ * only `AppListing.userId`. The result is a two-sided authorization inversion: the
+ * previous owner keeps edit access and the rightful owner is refused.
+ *
+ * 🔴 AN UNKNOWN KIND FALLS THROUGH TO THE COLUMN, deliberately, matching
+ * {@link capabilitiesForKind}'s fail-closed fallback to the narrower (offsite) row. A
+ * kind this code does not recognise must not be handed the block's owner.
+ *
+ * 🔴 `listingUserId` MUST BE THE PARENT LISTING'S COLUMN when the row asked about is a
+ * shadow revision. `beginListingRevision` clones the parent with `userId: parent.userId`
+ * and `appBlockId: null`, and no ownership write ever revisits the clone
+ * (`claimListing` and `acceptTransfer` both write `where: { id: <the parent> }`), so a
+ * shadow that outlives an OFF-SITE ownership move names the OLD owner forever. For
+ * `onsite` the block covers that; for `offsite` the column IS the answer, so passing the
+ * shadow's own copy would reproduce #3844 on a shape that needs no unmintable block at
+ * all. {@link resolveListingAccess} resolves the column from the PARENT for exactly this
+ * reason — the same row it already takes `kind` and `appBlockId` from.
+ *
+ * Pure: no IO, no db. Callers that already hold the row (the write-side seat and transfer
+ * loaders) call it directly rather than paying a second read.
+ */
+export function resolveCanonicalListingOwner(args: {
+  /** The PARENT listing's kind. */
+  kind: string;
+  /** `AppBlock.app.userId`, or null/undefined when there is no block (or no app). */
+  blockOwnerUserId: number | null | undefined;
+  /** The PARENT listing's `userId` column. */
+  listingUserId: number;
+}): number {
+  if (args.kind === 'onsite') return args.blockOwnerUserId ?? args.listingUserId;
+  return args.listingUserId;
+}
+
+/**
+ * {@link resolveCanonicalListingOwner} expressed as a Prisma `OR`, for the two SET reads
+ * that enumerate "listings this user owns" without resolving them one at a time.
+ *
+ * 🔴 IT MUST STAY EQUIVALENT TO THE FUNCTION, branch for branch. A set that disagreed
+ * with the per-listing resolver would hand a user an entry point that then 403s — or,
+ * worse, hide a listing they do own. The three branches are the function's two arms:
+ *
+ *   1. onsite + a block   → the block's `OauthClient.userId`;
+ *   2. onsite + no block  → the column (the `?? ` fallback);
+ *   3. NOT onsite         → the column, unconditionally — the #3844 branch. An offsite
+ *                           listing that HAS a block is matched HERE and by nothing else,
+ *                           which is exactly the shape a block-first predicate got wrong.
+ *
+ * Branch 2 is spelled `appBlock: { is: null }` rather than a third
+ * `{ appBlock: { app: { is: null } } }` because `AppBlock.appId` is a REQUIRED FK with
+ * `onDelete: Cascade` (schema.full.prisma) — a block with a dangling `app_id` cannot
+ * exist in the database, so the fallback is reachable only when there is no block at all.
+ * (`resolveAppAccess`'s `!block?.app` guard defends a narrow SELECT / a test fixture, not
+ * a DB state.) A `{ app: { is: null } }` branch would additionally be a Prisma
+ * *validation error* on a required to-one.
+ *
+ * 🔴 CALLERS MUST STILL ADD `revisionOfId: null` themselves — a shadow revision is an
+ * internal draft with no authoring surface, and this helper deliberately answers only the
+ * ownership question so the two concerns stay separable.
+ */
+export function canonicalOwnerWhereBranches(userId: number): Array<Record<string, unknown>> {
+  return [
+    { kind: 'onsite', appBlock: { app: { userId } } },
+    { kind: 'onsite', appBlock: { is: null }, userId },
+    { kind: { not: 'onsite' }, userId },
+  ];
+}
 
 // ---------------------------------------------------------------------------
 // CAPABILITIES — derived from the listing KIND. No per-seat configuration.
@@ -359,6 +459,11 @@ export async function resolveListingAccess(
       revisionOf: {
         select: {
           id: true,
+          // 🔴 THE PARENT'S OWNER COLUMN, and it is NOT redundant with the shadow's own.
+          // The shadow froze a copy of it at clone time; for an OFF-SITE listing that
+          // column IS the owner, so reading the frozen one keeps naming whoever owned the
+          // listing when the revision was opened. See {@link resolveCanonicalListingOwner}.
+          userId: true,
           kind: true,
           appBlockId: true,
           appBlock: { select: { app: { select: { userId: true } } } },
@@ -373,15 +478,30 @@ export async function resolveListingAccess(
   // fall back to the id — never to the shadow's own (always-null) appBlockId.
   const parent = listing.revisionOfId ? listing.revisionOf : null;
   const seatListingId = listing.revisionOfId ?? listing.id;
-  const kind = ((listing.revisionOfId ? parent?.kind : listing.kind) ?? listing.kind) as ListingKind;
+  const kind = ((listing.revisionOfId ? parent?.kind : listing.kind) ??
+    listing.kind) as ListingKind;
   const appBlockId = (listing.revisionOfId ? parent?.appBlockId : listing.appBlockId) ?? null;
-  // 🔴 `AppBlock.app.userId` FIRST, the column only as the fallback — which is exact for
-  // offsite (no OauthClient in the chain) and covers an onsite block with a dangling
-  // `app_id`. Identical resolution to `toSeatListing` and `loadOwnedListing`, so the
-  // read side and the write side cannot disagree about who the owner is.
-  const ownerUserId =
-    (listing.revisionOfId ? parent?.appBlock?.app?.userId : listing.appBlock?.app?.userId) ??
-    listing.userId;
+  // 🔴 KIND-AWARE, via the ONE helper — see {@link resolveCanonicalListingOwner} for why
+  // a block-first resolution inverted every gate on an OFFSITE-listing-that-has-a-block
+  // (issue #3844). The same helper backs `toSeatListing` and the transfer service's
+  // `loadOwnedListing`, so the read side and the write side cannot disagree about who the
+  // owner is.
+  //
+  // 🔴 EVERY INPUT COMES FROM THE **PARENT** ROW — the column included, not just the
+  // block. A shadow's `userId` is a frozen clone of the parent's, and for `offsite` that
+  // column IS the owner, so taking the shadow's copy would hand an ex-owner (or an
+  // impersonator a moderator just dispossessed via `claimListing`) their old listing's
+  // in-flight revision. `?? listing.userId` keeps a narrow fixture that omits the
+  // `revisionOf` relation working, exactly as `kind` and `appBlockId` above do.
+  const columnUserId = (listing.revisionOfId ? parent?.userId : listing.userId) ?? listing.userId;
+  const blockOwnerUserId = listing.revisionOfId
+    ? parent?.appBlock?.app?.userId
+    : listing.appBlock?.app?.userId;
+  const ownerUserId = resolveCanonicalListingOwner({
+    kind,
+    blockOwnerUserId,
+    listingUserId: columnUserId,
+  });
   const base = {
     appListingId: listing.id,
     seatListingId,
@@ -595,23 +715,16 @@ export type AccessibleListings = {
  * there to its actual owner. Do not substitute one for the other.
  *
  * 🔴 OWNERSHIP IS RESOLVED THE SAME WAY {@link resolveListingAccess} RESOLVES IT —
- * BLOCK-FIRST, column as the fallback — expressed as a query predicate:
+ * KIND-AWARE — expressed as a query predicate by {@link canonicalOwnerWhereBranches},
+ * which is the ONE place that decomposition is written (this read and
+ * {@link resolveAppsNavAccess} share it, so the tab and the page it opens cannot
+ * disagree). Read that helper for what each branch is for.
  *
- *     ownerUserId = appBlock.app.userId ?? listing.userId
- *
- * decomposes into exactly the two OR branches below, because `AppBlock.appId` is a
- * REQUIRED FK with `onDelete: Cascade` (schema.full.prisma) — a block with a dangling
- * `app_id` cannot exist in the database, so the `?? ` fallback is reachable only when
- * there is no block at all. (`resolveAppAccess`'s `!block?.app` guard defends a narrow
- * SELECT / a test fixture, not a DB state.) A third `{ appBlock: { app: { is: null } } }`
- * branch would additionally be a Prisma *validation error* on a required to-one.
- *
- * That block-first reading deliberately inherits the ONE measured exception documented on
- * {@link ListingAccess.ownerUserId} (issue #3844): on an OFFSITE listing that carries a
- * block, the block decides and the denormalized column is ignored. Reproducing the
- * exception is the point — a set that disagreed with the per-listing resolver would hand
- * a user an entry point that then 403s, which is the failure this whole surface exists to
- * prevent.
+ * The set and the per-listing resolver MUST agree: a set that disagreed would hand a user
+ * an entry point that then 403s, or hide a listing they do own. Before issue #3844 both
+ * were block-first, so they agreed on being WRONG on an offsite-listing-that-has-a-block;
+ * they now agree on being right, and `app-access.kind-aware-owner.test.ts` asserts the
+ * agreement on that exact shape rather than trusting that two edits stayed in step.
  *
  * 🔴 SHADOWS ARE EXCLUDED (`revisionOfId: null`). A shadow revision is an internal draft
  * that holds no seats (see the module header) and has no authoring surface of its own;
@@ -628,10 +741,7 @@ export type AccessibleListings = {
 export async function resolveAccessibleListingIds(userId: number): Promise<AccessibleListings> {
   const [owned, seats] = await Promise.all([
     dbRead.appListing.findMany({
-      where: {
-        revisionOfId: null,
-        OR: [{ appBlock: { app: { userId } } }, { appBlock: { is: null }, userId }],
-      },
+      where: { revisionOfId: null, OR: canonicalOwnerWhereBranches(userId) },
       select: { id: true },
     }),
     safeCollaboratorQuery(
@@ -735,9 +845,10 @@ export type AppsNavAccess = {
  * site that can forget it, and a seat query missing `status: 'accepted'` would let a
  * PENDING invite light up a nav route (and, by the same drift elsewhere, confer access).
  *
- * 🔴 The ownership half re-uses the SAME two OR branches as
- * {@link resolveAccessibleListingIds}, so the tab cannot appear for a set the page then
- * renders empty, or stay hidden over a set the page would fill.
+ * 🔴 The ownership half re-uses the SAME {@link canonicalOwnerWhereBranches} as
+ * {@link resolveAccessibleListingIds} — literally the same function call, not a second
+ * copy of the branches — so the tab cannot appear for a set the page then renders empty,
+ * or stay hidden over a set the page would fill.
  *
  * Both seat probes degrade to `false` while the manual-apply collaborator table is
  * absent: an un-degraded read here would 500 the sub-nav, i.e. every `/apps` page's
@@ -747,10 +858,7 @@ export type AppsNavAccess = {
 export async function resolveAppsNavAccess(userId: number): Promise<AppsNavAccess> {
   const [ownedListing, seat, invite] = await Promise.all([
     dbRead.appListing.findFirst({
-      where: {
-        revisionOfId: null,
-        OR: [{ appBlock: { app: { userId } } }, { appBlock: { is: null }, userId }],
-      },
+      where: { revisionOfId: null, OR: canonicalOwnerWhereBranches(userId) },
       select: { id: true },
     }),
     safeCollaboratorQuery(

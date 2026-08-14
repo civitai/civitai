@@ -143,9 +143,14 @@ const GATE_LEDGER: Record<string, string> = {
     'every gate that delegates here, refusing the real owner while admitting the name ' +
     'the row happens to carry. (NOT acceptTransfer’s onsite listing write, which is ' +
     'unconditional and heals the parent; see app-access.denormalized-owner-drift.test.ts ' +
-    'for the mechanism in full.) 🔴 The resolution is BLOCK-FIRST, not kind-branching, ' +
-    'and on an offsite-listing-that-carries-a-block it names the wrong owner after a ' +
-    'transfer or a mod claim — 0 rows and unmintable today, tracked as issue #3844.',
+    'for the mechanism in full.) 🔴 The resolution is KIND-AWARE, in ONE place — ' +
+    'resolveCanonicalListingOwner, plus canonicalOwnerWhereBranches as its query form: ' +
+    'onsite takes the block’s OauthClient.userId with the column as fallback, offsite ' +
+    'takes the column UNCONDITIONALLY even when a block is attached. It was BLOCK-FIRST ' +
+    'until issue #3844, which inverted every delegating gate on an offsite-with-a-block ' +
+    'listing after acceptTransfer’s offsite path or claimListing (both move only the ' +
+    'column) — the impersonation remedy’s ex-owner kept edit access. The column is read ' +
+    'from the PARENT on a shadow hop for the same reason.',
   'src/server/services/blocks/app-collaborator.service.ts':
     'assertOwner — seat management is OWNER-ONLY by product decision (an editor is a ' +
     'co-owner in every respect EXCEPT managing collaborators and initiating a ' +
@@ -153,7 +158,9 @@ const GATE_LEDGER: Record<string, string> = {
     'the wrong question here; only `owner` may pass. listCollaborators DOES use it, and ' +
     'requires a non-null role (or a moderator): the roster exposes accepted seats whose ' +
     'holder opted OUT of the public byline, plus invitedBy and timestamps, so it is not ' +
-    'a public read. A pending invitee reads their own invite via listMyPendingInvites.',
+    'a public read. A pending invitee reads their own invite via listMyPendingInvites. ' +
+    '🔴 toSeatListing (the write-side owner resolution) DELEGATES to ' +
+    'resolveCanonicalListingOwner rather than re-spelling it block-first — see #3844.',
   'src/server/services/blocks/app-ownership-transfer.service.ts':
     'loadOwnedListing — initiating a transfer is OWNER-ONLY, same reasoning as seat ' +
     'management. Accept is gated on being the transfer’s ADDRESSEE, not on any role, ' +
@@ -162,7 +169,10 @@ const GATE_LEDGER: Record<string, string> = {
     'anyone else, so the read cannot become an existence oracle. Editors are excluded: ' +
     'disposing of the listing is the one capability a seat never carries. 🔴 KIND-AWARE: ' +
     'onsite moves OauthClient.userId + AppListing.userId; offsite moves the listing ' +
-    'column ONLY and is REFUSED outright when the listing carries a connectClientId.',
+    'column ONLY and is REFUSED outright when the listing carries a connectClientId. ' +
+    '🔴 loadOwnedListing’s owner resolution DELEGATES to resolveCanonicalListingOwner, ' +
+    'so the gate that authorises a transfer reads ownership the same kind-aware way the ' +
+    'accept path WRITES it (#3844) — block-first, an ex-owner could re-offer the listing.',
   'src/server/services/blocks/app-collaborator-earnings.service.ts':
     'The app-scoped money read: resolves the role FIRST and filters by appBlockId + the ' +
     'CURRENT owner. Never appOwnerUserId alone — that is the portfolio leak. 🔴 Also the ' +
@@ -654,9 +664,7 @@ describe('app-ownership gate ledger', () => {
         ['nested member, optional', 'if (shot.appListing?.userId !== user.id) throw e;'],
       ];
       for (const [label, sample] of REMOVED) {
-        expect(DENORM_OWNER_RE.test(sample), `DENORM_OWNER_RE must recognise: ${label}`).toBe(
-          true
-        );
+        expect(DENORM_OWNER_RE.test(sample), `DENORM_OWNER_RE must recognise: ${label}`).toBe(true);
       }
     });
 
@@ -694,9 +702,9 @@ describe('app-ownership gate ledger', () => {
     it('NEGATIVE CONTROL: it does not match the canonical resolution or an unrelated owner', () => {
       // The replacement must NOT itself count as a member of the class, or the assertion
       // below could never go green; and an Image/Post owner check is a different subject.
-      expect(DENORM_OWNER_RE.test('const role = await resolveListingRole(listingId, userId);')).toBe(
-        false
-      );
+      expect(
+        DENORM_OWNER_RE.test('const role = await resolveListingRole(listingId, userId);')
+      ).toBe(false);
       expect(
         DENORM_OWNER_RE.test('const ownerUserId = row.appBlock?.app?.userId ?? row.userId;')
       ).toBe(false);
@@ -791,9 +799,7 @@ describe('app-ownership gate ledger', () => {
       // `appBlockId` would compile (both are strings) and would silently match NOTHING —
       // demoting every editor to no-access with no error anywhere.
       for (const [file, call] of SEAT_CALLS) {
-        expect(call, `${file}: a seat call must be keyed on appListingId`).toMatch(
-          /appListingId/
-        );
+        expect(call, `${file}: a seat call must be keyed on appListingId`).toMatch(/appListingId/);
       }
     });
 
@@ -817,9 +823,7 @@ describe('app-ownership gate ledger', () => {
 
     it('NEGATIVE CONTROL: the composite-key probe CAN match', () => {
       // Proves the assertion above is testing a string that would be found if present.
-      expect('where: { appBlockId_userId: { appBlockId, userId } }').toContain(
-        'appBlockId_userId'
-      );
+      expect('where: { appBlockId_userId: { appBlockId, userId } }').toContain('appBlockId_userId');
     });
   });
 
