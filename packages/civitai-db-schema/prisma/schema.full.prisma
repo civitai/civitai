@@ -7874,6 +7874,15 @@ model Placement {
   /// What the placer paid into escrow, in Buzz. Kept per row rather than read back from
   /// the space, whose price may move between placement and release.
   amount                Int
+  /// Which Buzz the placer paid in, so the settlement pays the same kind back out.
+  /// On the row for the same reason `amount` is: settlement is resumable, and the
+  /// domain that decided the currency is not visible to a sweeper.
+  ///
+  /// NULL means a placement made before this column existed. Those were booked
+  /// into escrow as yellow whatever was spent, and settle as yellow to match the
+  /// ledger. Deliberately not backfilled — the bank is not balance-constrained,
+  /// so it is a choice about legacy rows, not a limit. See `settledSpendType`.
+  spendType             String?
   /// Who sold the thing being placed, when an approved placement owes them a cut.
   /// On the row rather than passed in, because the settlement is resumable and a
   /// sweeper that never saw the argument would strand the seller's share.

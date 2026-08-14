@@ -247,9 +247,9 @@ describe("the creator's size limit", () => {
     resolvePlacementSpaceFor.mockResolvedValue(capped);
     givenStickerAndBalance();
 
-    await expect(createStickerPlacement({ ...placeInput, data: OVERSIZE })).rejects.toThrow(
-      /up to 20%/
-    );
+    await expect(
+      createStickerPlacement({ spendType: 'yellow', ...placeInput, data: OVERSIZE })
+    ).rejects.toThrow(/up to 20%/);
     expect(placementCreate).not.toHaveBeenCalled();
   });
 
@@ -258,7 +258,12 @@ describe("the creator's size limit", () => {
     givenStickerAndBalance();
 
     await expect(
-      createStickerPlacement({ ...placeInput, data: OVERSIZE, isModerator: true })
+      createStickerPlacement({
+        spendType: 'yellow',
+        ...placeInput,
+        data: OVERSIZE,
+        isModerator: true,
+      })
     ).resolves.toMatchObject({ placementId: PLACEMENT });
   });
 
@@ -268,9 +273,9 @@ describe("the creator's size limit", () => {
 
     // 0.35 is inside the global ceiling and outside the default, so this fails
     // only if the default is being applied rather than the hard maximum.
-    await expect(createStickerPlacement({ ...placeInput, data: OVERSIZE })).rejects.toThrow(
-      /up to 25%/
-    );
+    await expect(
+      createStickerPlacement({ spendType: 'yellow', ...placeInput, data: OVERSIZE })
+    ).rejects.toThrow(/up to 25%/);
   });
 
   /**
@@ -422,10 +427,24 @@ describe('the space mode decides whether a placement is live', () => {
 });
 
 describe('what gets written to the row', () => {
+  // The currency is decided by the domain at the router and carried through
+  // untouched. A placement that reached the escrow without it would be held —
+  // and later paid out — in whatever the Buzz service defaults to.
+  it('carries the caller currency into the escrow', async () => {
+    givenStickerAndBalance();
+
+    await createStickerPlacement({ ...placeInput, spendType: 'green' });
+
+    expect(holdPlacementEscrow).toHaveBeenCalledWith(
+      expect.objectContaining({ spendType: 'green' })
+    );
+  });
+
   it('persists the seller and the normalized position', async () => {
     givenStickerAndBalance();
 
     await createStickerPlacement({
+      spendType: 'yellow',
       ...placeInput,
       // Past the edges: a drag that left the image is a normal gesture, so the
       // position clamps rather than rejecting. Size is a different matter — it
@@ -890,6 +909,7 @@ describe('the note on a placement', () => {
     givenStickerAndBalance();
 
     await createStickerPlacement({
+      spendType: 'yellow',
       ...placeInput,
       data: { ...placeInput.data, comment: '  love   this\n\none  ' },
     });
@@ -901,7 +921,11 @@ describe('the note on a placement', () => {
   it('stores no comment key at all when the field was left blank', async () => {
     givenStickerAndBalance();
 
-    await createStickerPlacement({ ...placeInput, data: { ...placeInput.data, comment: '   ' } });
+    await createStickerPlacement({
+      spendType: 'yellow',
+      ...placeInput,
+      data: { ...placeInput.data, comment: '   ' },
+    });
 
     const [write] = placementCreate.mock.calls[0] as [{ data: { data: Record<string, unknown> } }];
     expect(write.data.data).not.toHaveProperty('comment');

@@ -214,6 +214,7 @@ beforeEach(() => {
 
 const submit = (over: Partial<Parameters<typeof createRemixGallerySubmission>[0]> = {}) =>
   createRemixGallerySubmission({
+    spendType: 'yellow',
     placerId: PLACER,
     hostImageId: HOST_IMAGE,
     imageId: REMIX_IMAGE,
@@ -623,6 +624,16 @@ describe('escrow ordering', () => {
   it('creates the row before taking the escrow', async () => {
     await submit();
     expect(calls).toEqual(['create', 'hold']);
+  });
+
+  // The currency is decided by the domain at the router and carried through
+  // untouched. A submission that reached the escrow without it would be held —
+  // and later paid out — in whatever the Buzz service defaults to.
+  it('carries the caller currency into the escrow', async () => {
+    await submit({ spendType: 'green' });
+    expect(holdPlacementEscrow).toHaveBeenCalledWith(
+      expect.objectContaining({ spendType: 'green' })
+    );
   });
 
   it('expires the row when the hold fails, rather than deleting it', async () => {

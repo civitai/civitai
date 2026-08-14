@@ -81,9 +81,35 @@ export function getAllowedAccountTypes(
  *
  * Shared with the unpublish-refund guard, which has no other way to learn the payout account — the
  * ledger's multi-transaction listing reports each leg by the account the BUYER spent from.
+ *
+ * ⚠️ Green paying out yellow is NOT a decision — the charge names no destination account, so the
+ * buzz service applies its yellow default (`buzz.service.ts`), and every green purchase since
+ * 2025-10-30 has credited the seller yellow. Making it pay in kind is a two-part change: this
+ * function is ALSO what sizes the unpublish refund, so change the charge alone and the guard checks
+ * yellow for money now held in green — blocking a creator who can afford it, or passing one who
+ * cannot, since the ledger exempts refunds from its own sufficiency check.
+ *
+ * Before writing that fix, confirm which account a refund DEBITS against the buzz service rather
+ * than reasoning from this comment: sampled prod refunds credit the account the payer was debited
+ * from, and the seller side is unverified here. The listing this guard reads reports each leg by
+ * the BUYER's account and carries no destination, which is why the real fix is to record the payout
+ * account per purchase — the way `Placement.spendType` now does.
  */
 export function paidAccessPayoutAccount(spendType: BuzzSpendType): BuzzSpendType {
   return spendType === 'blue' ? 'blue' : 'yellow';
+}
+
+/**
+ * The single currency a request may spend, from the domain it arrived on.
+ *
+ * `getAllowedAccountTypes` with no seed returns exactly the domain currency, so
+ * this is that list's one element named rather than indexed. Surfaces that must
+ * spend one currency and no other — placements — take it from here so there is
+ * no second derivation to drift from the generator's.
+ */
+export function domainSpendType(features: FeatureAccess): BuzzSpendType {
+  const [type] = getAllowedAccountTypes(features);
+  return type;
 }
 
 /**

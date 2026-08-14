@@ -14,6 +14,7 @@ import { imageReviewedSql } from '~/server/common/image-visibility';
 import type { QueueImage as SharedQueueImage } from '~/server/utils/queue-image';
 import { toQueueImage } from '~/server/utils/queue-image';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { onlySelectableLevels } from '~/shared/constants/browsingLevel.constants';
 import {
   declineFeeAmount,
@@ -120,6 +121,12 @@ export type CreateRemixGallerySubmission = {
   imageId: number;
   /** What the submitter was shown. Refused if the owner has moved it since. */
   expectedPrice?: number;
+  /**
+   * The domain's currency, decided at the router from the request's own feature
+   * flags rather than anything the client sends — a client-supplied currency
+   * would let a request on one domain spend the other's Buzz.
+   */
+  spendType: BuzzSpendType;
 };
 
 /**
@@ -140,6 +147,7 @@ export async function createRemixGallerySubmission({
   hostImageId,
   imageId,
   expectedPrice,
+  spendType,
 }: CreateRemixGallerySubmission) {
   if (hostImageId === imageId)
     throw throwBadRequestError('remix gallery: an image cannot be submitted to its own gallery');
@@ -260,6 +268,7 @@ export async function createRemixGallerySubmission({
       placerId,
       surface: SURFACE,
       amount: space.price,
+      spendType,
     });
   } catch (error) {
     await settlePlacement({ placementId: placement.id, action: 'expire' }).catch((settleError) =>

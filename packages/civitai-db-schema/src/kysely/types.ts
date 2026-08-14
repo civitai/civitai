@@ -3036,6 +3036,17 @@ export type Placement = {
    */
   amount: number;
   /**
+   * Which Buzz the placer paid in, so the settlement pays the same kind back out.
+   * On the row for the same reason `amount` is: settlement is resumable, and the
+   * domain that decided the currency is not visible to a sweeper.
+   *
+   * NULL means a placement made before this column existed. Those were held as
+   * yellow whatever was spent — the conversion happened on the way IN — so the
+   * escrow really does contain yellow for them and NULL must settle as yellow.
+   * Backfilling the true spend type would pay out Buzz the escrow never took.
+   */
+  spendType: string | null;
+  /**
    * Who sold the thing being placed, when an approved placement owes them a cut.
    * On the row rather than passed in, because the settlement is resumable and a
    * sweeper that never saw the argument would strand the seller's share.
