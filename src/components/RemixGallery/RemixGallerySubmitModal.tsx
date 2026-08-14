@@ -9,7 +9,7 @@ import { useQueryImages } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { PLACEMENT_SPEND_TYPES } from '~/shared/constants/placement.constants';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -23,6 +23,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
   const utils = trpc.useUtils();
+  const spendTypes = useAvailableBuzz();
   const [selected, setSelected] = useState<number | null>(null);
 
   const { data: visibility, isError: visibilityFailed } =
@@ -257,10 +258,11 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
               it rather than a silent charge. */}
             <BuzzTransactionButton
               buzzAmount={price ?? 0}
-              // Yellow and Green only, matching what the escrow will actually
-              // draw. The mutation refuses Blue regardless, so offering it here
-              // would promise a payment that is then refused.
-              accountTypes={PLACEMENT_SPEND_TYPES}
+              // This domain's currency alone, matching the single account the
+              // escrow now draws from. Offering both let one submission be
+              // funded part green and part yellow, which the settlement has no
+              // way to pay back in kind.
+              accountTypes={spendTypes}
               label="Submit"
               disabled={!selected || !visibility?.open || price == null}
               loading={submit.isPending}

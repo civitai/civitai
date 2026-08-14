@@ -27,7 +27,7 @@ import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { useCreateStickerPlacement } from '~/components/Sticker/placement.util';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import type { StickerTreatment } from '~/components/Sticker/treatments/sticker-treatments';
-import { PLACEMENT_SPEND_TYPES } from '~/shared/constants/placement.constants';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import {
   STICKER_COMMENT_MAX_LENGTH,
   STICKER_PLACEMENT_MIN_OPACITY,
@@ -114,6 +114,7 @@ export function DraftSticker({
   const cancelDraft = useStickerPlacementDraftStore((state) => state.cancelDraft);
   const move = useStickerPlacementDraftStore((state) => state.move);
   const place = useCreateStickerPlacement(draft.id);
+  const spendTypes = useAvailableBuzz();
 
   // Local to the draft rather than in the store: it is written once, read once
   // at purchase, and putting it in the store would make every keystroke a
@@ -613,10 +614,11 @@ export function DraftSticker({
           size="sm"
           style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
           buzzAmount={price}
-          // Yellow and Green only, matching what the escrow will actually
-          // draw. The mutation refuses Blue regardless; this keeps the button
-          // from promising a payment that would then be refused.
-          accountTypes={PLACEMENT_SPEND_TYPES}
+          // This domain's currency alone, matching the single account the
+          // escrow now draws from. Offering both let one placement be funded
+          // part green and part yellow, which the settlement has no way to pay
+          // back in kind.
+          accountTypes={spendTypes}
           label="Place"
           loading={place.isPending}
           onPerformTransaction={() =>

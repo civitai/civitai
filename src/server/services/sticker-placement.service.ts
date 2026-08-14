@@ -14,6 +14,7 @@ import {
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { PlacementStatus } from '~/shared/utils/placement';
 import {
   PLACEMENT_QUEUE_PAGE_SIZE,
@@ -113,6 +114,12 @@ export type CreateStickerPlacement = {
   data: Omit<StickerPlacementData, 'cosmeticId'> & { cosmeticId: number };
   /** Moderators may exceed a creator's size limit. Justin's call. */
   isModerator?: boolean;
+  /**
+   * The domain's currency, decided at the router from the request's own feature
+   * flags rather than anything the client sends — a client-supplied currency
+   * would let a request on one domain spend the other's Buzz.
+   */
+  spendType: BuzzSpendType;
 };
 
 /**
@@ -158,6 +165,7 @@ export async function createStickerPlacement({
   imageId,
   data,
   isModerator = false,
+  spendType,
 }: CreateStickerPlacement) {
   const space = await resolvePlacementSpaceFor({
     surface: SURFACE,
@@ -240,6 +248,7 @@ export async function createStickerPlacement({
       placerId,
       surface: SURFACE,
       amount: space.price,
+      spendType,
     });
 
     await spendStickerUsesFor({ userId: placerId, counts: new Map([[sticker.id, 1]]) });

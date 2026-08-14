@@ -13,7 +13,8 @@ import {
 } from '~/server/services/buzz.service';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
-import { PLACEMENT_SPEND_TYPES } from '~/shared/constants/placement.constants';
+import { isPlacementSpendType } from '~/shared/constants/placement.constants';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
   PlacementRemovedBy,
@@ -30,6 +31,21 @@ import {
 
 /** Where held Buzz sits between placement and settlement. */
 const ESCROW_ACCOUNT_ID = 0;
+
+/**
+ * What a placement's escrow is actually denominated in.
+ *
+ * A row written before the currency was recorded settles as yellow — not
+ * because yellow was spent, but because the old escrow debit named no
+ * destination account and the Buzz service credited its default, converting
+ * green to yellow on the way IN. Yellow is what the escrow holds for those rows,
+ * so yellow is what there is to pay. Reading the true spend type off the ledger
+ * instead would name money the escrow never received.
+ */
+export const settledSpendType = (placement: { spendType: string | null }): BuzzSpendType =>
+  isPlacementSpendType(placement.spendType ?? '')
+    ? (placement.spendType as BuzzSpendType)
+    : 'yellow';
 
 /**
  * Receipt for a leg where nothing leaves the escrow account. Without it the row
@@ -378,12 +394,24 @@ export async function holdPlacementEscrow({
   placerId,
   surface,
   amount,
+  spendType,
 }: {
   placementId: number;
   placerId: number;
   surface: PlacementSurface;
   amount: number;
+  /**
+   * The one currency this placement is paid in, decided by the domain it was
+   * made on. Required rather than defaulted: a default would silently reinstate
+   * the mixed-currency spend this parameter exists to end.
+   */
+  spendType: BuzzSpendType;
 }) {
+  // Checked here rather than trusted from the type: the value crosses a router
+  // boundary, and paying out a currency the escrow cannot hold is worse than a
+  // refused placement. Blue in particular must never reach this.
+  if (!isPlacementSpendType(spendType))
+    throw new Error(`placement escrow: ${spendType} is not a placement spend type`);
   if (!Number.isSafeInteger(amount) || amount < 0)
     throw new Error(`placement escrow: amount must be a non-negative integer, got ${amount}`);
 
@@ -395,9 +423,12 @@ export async function holdPlacementEscrow({
   // pending slots against that creator for good. The operator override is
   // applied immediately after, so a configured expiry still wins.
   const fallbackHours = PLACEMENT_SURFACES[surface].expiryHours;
+  // `spendType` rides the same statement so the two cannot disagree: settlement
+  // reads the currency off the row, and a row that got a deadline without one
+  // would settle as legacy yellow while its escrow really holds green.
   const stamped = await dbWrite.placement.updateMany({
     where: { id: placementId, expiresAt: null },
-    data: { expiresAt: new Date(Date.now() + fallbackHours * 3_600_000) },
+    data: { expiresAt: new Date(Date.now() + fallbackHours * 3_600_000), spendType },
   });
 
   const config = await getPlacementConfig();
@@ -423,9 +454,12 @@ export async function holdPlacementEscrow({
           fromAccountId: placerId,
           toAccountId: ESCROW_ACCOUNT_ID,
           type: TransactionType.Fee,
-          // Yellow and Green only. Blue is non-transferable by design, and a
-          // placement that took it and paid it out would be a laundering channel.
-          fromAccountTypes: PLACEMENT_SPEND_TYPES,
+          // One currency, the domain's, and the escrow holds it in kind. Naming
+          // no destination account credited escrow the service's default —
+          // yellow — so a green placement was converted on the way IN and there
+          // was no green left at settlement to pay the owner with.
+          fromAccountTypes: [spendType],
+          toAccountType: spendType,
           description: `Placement escrow (${kind}) for placement ${placementId}`,
           externalTransactionIdPrefix,
         },
@@ -661,13 +695,24 @@ async function payOutPlacement(placement: PlacementRow) {
   const held = await heldAmountsFor(placement.id);
   const plan = await planPayout(placement, held);
 
+  // What was paid in is what is paid out, and what the escrow is drawn from.
+  //
+  // NULL is a placement made before the currency was recorded. Those were held
+  // as yellow whatever was spent — the conversion happened at intake — so the
+  // escrow contains yellow for them and yellow is what there is to pay. This
+  // fallback is the reason the column is not backfilled from the ledger: the
+  // true spend type would name money the escrow never received.
+  const spendType = settledSpendType(placement);
+
   const payFromEscrow = (kind: PlacementTransactionKind, toAccountId: number, amount: number) =>
     runLeg(placement.id, kind, amount, async (externalTransactionId, payAmount) => {
       const { transactionId } = await createBuzzTransaction(
         {
           amount: payAmount,
           fromAccountId: ESCROW_ACCOUNT_ID,
+          fromAccountType: spendType,
           toAccountId,
+          toAccountType: spendType,
           type: TransactionType.Fee,
           description: `Placement ${placement.id} (${kind})`,
           externalTransactionId,

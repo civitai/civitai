@@ -59,6 +59,7 @@ import {
   setRemixGalleryPins,
 } from '~/server/services/remix-gallery.service';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { domainSpendType } from '~/server/utils/buzz-helpers';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { PlacementSurface } from '~/shared/utils/placement';
@@ -185,6 +186,9 @@ export const placementRouter = router({
         ...input,
         placerId: ctx.user.id,
         isModerator: ctx.user.isModerator,
+        // From the request's own domain, never the input: `...input` spreads
+        // first, so a client-sent `spendType` cannot survive this line.
+        spendType: domainSpendType(ctx.features),
       });
     }),
 
@@ -338,7 +342,11 @@ export const placementRouter = router({
     .input(submitToRemixGallerySchema)
     .mutation(({ input, ctx }) => {
       assertRemixGalleryEnabled(ctx);
-      return createRemixGallerySubmission({ ...input, placerId: ctx.user.id });
+      return createRemixGallerySubmission({
+        ...input,
+        placerId: ctx.user.id,
+        spendType: domainSpendType(ctx.features),
+      });
     }),
 
   /**

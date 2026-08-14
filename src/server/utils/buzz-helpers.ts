@@ -74,16 +74,35 @@ export function getAllowedAccountTypes(
 }
 
 /**
- * The owner account a paid-access purchase pays into, given what the buyer spent.
+ * Where a paid-access purchase made BEFORE payouts went in-kind credited the seller.
  *
- * Blue pays out blue — the credit is non-withdrawable and must stay that way, or the purchase
- * launders it into cashable currency. Everything else pays into yellow.
+ * Not a policy, a record. Until the same change that added this note, the charge named no
+ * destination account, so the buzz service applied its yellow default and every green purchase
+ * paid the seller yellow — 2,409 legs since 2025-10-30. New purchases pay in kind and do not go
+ * through this.
  *
- * Shared with the unpublish-refund guard, which has no other way to learn the payout account — the
- * ledger's multi-transaction listing reports each leg by the account the BUYER spent from.
+ * It survives for ONE reader: the unpublish-refund guard, which sizes a refund by the account
+ * reversing the purchase would debit, and has no way to ask the ledger where the credit landed —
+ * the multi-transaction listing reports each leg by the account the BUYER spent from and carries
+ * no destination. That makes the guard correct for pre-cutover purchases and increasingly wrong
+ * for post-cutover green ones, which needs its own fix: record the payout account per purchase,
+ * the way `Placement.spendType` now does.
  */
-export function paidAccessPayoutAccount(spendType: BuzzSpendType): BuzzSpendType {
+export function legacyPaidAccessPayoutAccount(spendType: BuzzSpendType): BuzzSpendType {
   return spendType === 'blue' ? 'blue' : 'yellow';
+}
+
+/**
+ * The single currency a request may spend, from the domain it arrived on.
+ *
+ * `getAllowedAccountTypes` with no seed returns exactly the domain currency, so
+ * this is that list's one element named rather than indexed. Surfaces that must
+ * spend one currency and no other — placements — take it from here so there is
+ * no second derivation to drift from the generator's.
+ */
+export function domainSpendType(features: FeatureAccess): BuzzSpendType {
+  const [type] = getAllowedAccountTypes(features);
+  return type;
 }
 
 /**

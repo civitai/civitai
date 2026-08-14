@@ -1,6 +1,5 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { PLACEMENT_SPEND_TYPES } from '~/shared/constants/placement.constants';
 // Stubbed globally in src/__tests__/setup.ts.
 import { placementUnfundedSettlementsGauge } from '~/server/prom/client';
 
@@ -358,6 +357,7 @@ describe('holding the escrow', () => {
   it('takes two holds so every release is a whole-hold operation', async () => {
     givenPlacement();
     const held = await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -374,6 +374,7 @@ describe('holding the escrow', () => {
   it('draws from paid Buzz only', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -381,15 +382,85 @@ describe('holding the escrow', () => {
     });
 
     for (const call of createMultiAccountBuzzTransaction.mock.calls) {
-      expect(call[0].fromAccountTypes).toEqual(PLACEMENT_SPEND_TYPES);
+      expect(call[0].fromAccountTypes).toEqual(['yellow']);
       expect(call[0].fromAccountTypes).not.toContain('blue');
       expect(call[0].toAccountId).toBe(0);
     }
   });
 
+  // The hold names its destination account. Leaving it unnamed let the buzz
+  // service apply its yellow default, which converted a green placement to
+  // yellow on the way INTO escrow — so by settlement there was no green left to
+  // pay the owner with, whatever the payout leg asked for.
+  it('holds green in green, rather than converting it at intake', async () => {
+    givenPlacement();
+    await holdPlacementEscrow({
+      spendType: 'green',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(2);
+    for (const call of createMultiAccountBuzzTransaction.mock.calls) {
+      expect(call[0].fromAccountTypes).toEqual(['green']);
+      expect(call[0].toAccountType).toBe('green');
+    }
+  });
+
+  // One currency per placement. Two would leave the settlement unable to pay
+  // back in kind: a placement funded 40 green and 60 yellow has no single
+  // account to release from.
+  it('draws from exactly one account, never the pair', async () => {
+    givenPlacement();
+    await holdPlacementEscrow({
+      spendType: 'green',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    for (const call of createMultiAccountBuzzTransaction.mock.calls)
+      expect(call[0].fromAccountTypes).toHaveLength(1);
+  });
+
+  it('refuses a currency the escrow cannot hold', async () => {
+    givenPlacement();
+
+    await expect(
+      holdPlacementEscrow({
+        spendType: 'blue',
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 1000,
+      })
+    ).rejects.toThrow('not a placement spend type');
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('records the currency on the row, so a resumed settlement can read it', async () => {
+    const placement = givenPlacement();
+    await holdPlacementEscrow({
+      spendType: 'green',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    expect(placement.spendType).toBe('green');
+    // Written by the same statement as the deadline. A row that got one without
+    // the other would settle as legacy yellow over an escrow holding green.
+    expect(placement.expiresAt).toBeInstanceOf(Date);
+  });
+
   it('uses row-derived external ids, so a retry cannot mint a fresh one', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -405,6 +476,7 @@ describe('holding the escrow', () => {
   it('is a no-op when run twice', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -413,6 +485,7 @@ describe('holding the escrow', () => {
     createMultiAccountBuzzTransaction.mockClear();
 
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -426,7 +499,13 @@ describe('holding the escrow', () => {
   it('refuses an amount that is not a whole number of Buzz', async () => {
     givenPlacement();
     await expect(
-      holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 10.5 })
+      holdPlacementEscrow({
+        spendType: 'yellow',
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 10.5,
+      })
     ).rejects.toThrow(/non-negative integer/);
     expect(moneyMoved()).toBe(0);
   });
@@ -434,7 +513,13 @@ describe('holding the escrow', () => {
 
 describe('settling', () => {
   const hold = () =>
-    holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 });
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
 
   it('pays the owner and keeps the platform share on approval', async () => {
     givenPlacement();
@@ -446,6 +531,49 @@ describe('settling', () => {
     // Defaults: owner 70%, platform 30%, seller 0.
     expect(payouts).toEqual([[OWNER, 700]]);
     expect(legsFor(1)).toMatchObject({ toOwner: 700, toPlatform: 300 });
+  });
+
+  // The whole point of the column. A green placement paid the owner yellow for
+  // ten months because this leg named no account and took the service default.
+  it('pays the owner in the currency the placer spent', async () => {
+    givenPlacement();
+    await holdPlacementEscrow({
+      spendType: 'green',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(createBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toAccountId: OWNER,
+        toAccountType: 'green',
+        // Drawn from the escrow's green too: paying green out of the yellow
+        // balance would mint it, which is the mirror of the bug being fixed.
+        fromAccountType: 'green',
+      }),
+      expect.anything()
+    );
+  });
+
+  // Rows made before the column existed were HELD as yellow whatever was spent,
+  // so yellow is what the escrow has for them. Settling one as green would pay
+  // out Buzz the escrow never received — which is why nothing backfills this.
+  it('settles a placement with no recorded currency as yellow', async () => {
+    givenPlacement({ spendType: null });
+    await hold();
+    // Written by the hold above; cleared to stand in for a legacy row.
+    db.placements.get(1)!.spendType = null;
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(createBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ toAccountType: 'yellow', fromAccountType: 'yellow' }),
+      expect.anything()
+    );
   });
 
   it('pays the fee to the owner and returns the principal hold on decline', async () => {
@@ -514,7 +642,13 @@ describe('settling', () => {
 
 describe('running a release path twice', () => {
   const hold = () =>
-    holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 });
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
 
   it.each([
     'approve',
@@ -563,7 +697,13 @@ describe('running a release path twice', () => {
 
 describe('crashing between the legs', () => {
   const hold = () =>
-    holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 });
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
 
   // The case the ledger exists for. A status column says the placement was
   // processed; only a receipt says the money moved.
@@ -627,6 +767,7 @@ describe('expiry sweep', () => {
     givenPlacement({ id: 1, expiresAt: new Date(Date.now() - 1000) });
     givenPlacement({ id: 2, expiresAt: new Date(Date.now() + 60_000) });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -643,6 +784,7 @@ describe('expiry sweep', () => {
   it('is a no-op on a second run', async () => {
     givenPlacement({ id: 1, expiresAt: new Date(Date.now() - 1000) });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -660,7 +802,13 @@ describe('expiry sweep', () => {
 
 describe('the amounts a resume replays', () => {
   const hold = () =>
-    holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 });
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
 
   // The holds are sized by the config as it stood when the placement was made.
   // Recomputing the fee at decline time paid out more than was ever held — a
@@ -741,6 +889,7 @@ describe('the seller share survives a resume', () => {
     givenPlacement({ sellerId: SELLER });
     storedShares({ seller: 0.3, platform: 0.3 });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -777,6 +926,7 @@ describe('two callers on one leg', () => {
     });
 
     const first = holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -784,6 +934,7 @@ describe('two callers on one leg', () => {
     });
     await Promise.resolve();
     const second = holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -810,6 +961,7 @@ describe('the expiry deadline', () => {
   it('is set when the escrow is taken', async () => {
     givenPlacement({ expiresAt: null });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -828,6 +980,7 @@ describe('when the lock cannot be acquired', () => {
   it('still records the claim, so the sweeper can finish it', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -857,7 +1010,13 @@ describe('when the lock cannot be acquired', () => {
     lockState.available = false;
 
     await expect(
-      holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 })
+      holdPlacementEscrow({
+        spendType: 'yellow',
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 1000,
+      })
     ).rejects.toThrow(/nothing was charged/);
 
     expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
@@ -867,7 +1026,13 @@ describe('when the lock cannot be acquired', () => {
     givenPlacement();
     lockState.available = false;
     await expect(
-      holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 })
+      holdPlacementEscrow({
+        spendType: 'yellow',
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 1000,
+      })
     ).rejects.toThrow();
 
     expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
@@ -875,6 +1040,7 @@ describe('when the lock cannot be acquired', () => {
 
     lockState.available = true;
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -894,6 +1060,7 @@ describe('the sweeper converges', () => {
   it('does not persist a leg that moves no money', async () => {
     givenPlacement({ sellerId: null });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -907,6 +1074,7 @@ describe('the sweeper converges', () => {
   it('reports nothing stranded once a placement is fully paid', async () => {
     givenPlacement({ sellerId: null });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -927,6 +1095,7 @@ describe('the sweeper converges', () => {
     for (const id of [1, 2, 3]) {
       givenPlacement({ id, sellerId: null });
       await holdPlacementEscrow({
+        spendType: 'yellow',
         placementId: id,
         placerId: PLACER,
         surface: 'sticker',
@@ -937,6 +1106,7 @@ describe('the sweeper converges', () => {
 
     givenPlacement({ id: 4, sellerId: null });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 4,
       placerId: PLACER,
       surface: 'sticker',
@@ -976,6 +1146,7 @@ describe('when two callers claim different amounts', () => {
     });
 
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -992,6 +1163,7 @@ describe('when two callers claim different amounts', () => {
   it('pays the payout amounts the ledger holds, not a freshly computed plan', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1027,6 +1199,7 @@ describe('a settlement always leaves a plan', () => {
   it('writes the payout plan in the same breath as the status', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1052,6 +1225,7 @@ describe('a settlement always leaves a plan', () => {
   it('does not let a later takedown forfeit what the owner had earned', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1165,6 +1339,7 @@ describe('the unpaid-leg sweep only covers legs it can finish', () => {
 
     givenPlacement({ id: 2 });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 2,
       placerId: PLACER,
       surface: 'sticker',
@@ -1190,6 +1365,7 @@ describe('a leg that can never succeed', () => {
   const givenPermanentlyFailingLeg = async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1277,6 +1453,7 @@ describe('a settlement with no funded escrow behind it', () => {
   it('counts a genuinely resumable settlement as planned', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1345,6 +1522,7 @@ describe('the retry budget measures elapsed failure, not sweep frequency', () =>
   it('skips a leg attempted too recently', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1369,6 +1547,7 @@ describe('the retry budget measures elapsed failure, not sweep frequency', () =>
   it('retries once the gap has passed', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1393,6 +1572,7 @@ describe('the exhausted-leg alert', () => {
   const exhaustLeg = async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1444,6 +1624,7 @@ describe('the Buzz call bound', () => {
   it('retries only failures that provably never reached the server', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
