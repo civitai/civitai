@@ -389,8 +389,10 @@ describe('LEDGER: no REST route serializes an error object or its text (civitai#
   it('finds the API tree (positive control — an empty sweep must not read as clean)', () => {
     // 🔴 A zero from a file walk is indistinguishable from a walk wired to
     // nothing. Prove the instrument can see before believing what it reports.
-    expect(files.length, 'the src/pages/api walk returned nothing — the guard is inert').
-      toBeGreaterThan(200);
+    expect(
+      files.length,
+      'the src/pages/api walk returned nothing — the guard is inert'
+    ).toBeGreaterThan(200);
     expect(files.some((f) => f.endsWith(path.join('v1', 'creators.ts')))).toBe(true);
   });
 
@@ -399,8 +401,10 @@ describe('LEDGER: no REST route serializes an error object or its text (civitai#
     // every shape would report zero offenders and the ledger would be a very
     // convincing no-op.
     const bodies = files.flatMap((f) => jsonBodies(stripLineComments(readFileSync(f, 'utf8'))));
-    expect(bodies.length, 'no `.json({…})` bodies extracted — the extractor is inert').
-      toBeGreaterThan(100);
+    expect(
+      bodies.length,
+      'no `.json({…})` bodies extracted — the extractor is inert'
+    ).toBeGreaterThan(100);
     // The extractor returns the DEPTH-1 SLICE with nested literals elided and
     // string contents blanked — both deliberate (see `scanBody`). Pinned by value
     // so a change to either behaviour is visible here rather than only as a
@@ -464,9 +468,7 @@ describe('LEDGER: no REST route serializes an error object or its text (civitai#
         KNOWN_UNFIXED_SAME_CLASS,
         `${rel} is in the exception list — it is supposed to be FIXED`
       ).not.toContain(rel);
-      const bodies = jsonBodies(
-        stripLineComments(readFileSync(path.join(API_ROOT, rel), 'utf8'))
-      );
+      const bodies = jsonBodies(stripLineComments(readFileSync(path.join(API_ROOT, rel), 'utf8')));
       for (const shape of LEAKING_BODY_SHAPES) {
         expect(
           bodies.some((b) => shape.test(b)),
@@ -521,9 +523,7 @@ describe('LEDGER: no REST route serializes an error object or its text (civitai#
     for (const sample of mustNotMatch) {
       const body = jsonBodies(sample)[0];
       for (const shape of LEAKING_BODY_SHAPES) {
-        expect(shape.test(body), `"${shape.name}" false-positives on: ${sample}`).toBe(
-          false
-        );
+        expect(shape.test(body), `"${shape.name}" false-positives on: ${sample}`).toBe(false);
       }
     }
   });
@@ -546,8 +546,10 @@ describe('LEDGER: GENERIC_CLIENT_ERROR_BY_STATUS covers every 4xx a driver can r
   ].sort((a, b) => a - b);
 
   it('derives a non-empty reachable set (positive control)', () => {
-    expect(reachable4xx.length, 'the derivation found no 4xx — the ledger would be vacuous').
-      toBeGreaterThan(0);
+    expect(
+      reachable4xx.length,
+      'the derivation found no 4xx — the ledger would be vacuous'
+    ).toBeGreaterThan(0);
   });
 
   it('the map keys EQUAL the reachable set — fails if either side grows or shrinks', () => {
@@ -593,7 +595,7 @@ describe('LEDGER: GENERIC_CLIENT_ERROR_BY_STATUS covers every 4xx a driver can r
    * remains, stated: a catch that binds something other than those four names is
    * invisible to this ledger.
    */
-  it('LEDGER: no TRPCError forwards a caught error\'s `.message` at a 4xx without `cause`', () => {
+  it("LEDGER: no TRPCError forwards a caught error's `.message` at a 4xx without `cause`", () => {
     const SERVER_ROOT = path.resolve(__dirname, '../..');
     // All 17 sites are fixed. An entry reappearing here means the gap re-opened.
     const KNOWN_BYPASS: [string, number][] = [];
@@ -643,8 +645,10 @@ describe('LEDGER: GENERIC_CLIENT_ERROR_BY_STATUS covers every 4xx a driver can r
     }
 
     // ── Controls. All three must pass or the empty result below means nothing. ──
-    expect(files.length, 'the src/server walk returned nothing — the ledger is inert').
-      toBeGreaterThan(200);
+    expect(
+      files.length,
+      'the src/server walk returned nothing — the ledger is inert'
+    ).toBeGreaterThan(200);
     expect(
       files.reduce((acc, f) => acc + trpcErrorBodies(readFileSync(f, 'utf8')).length, 0),
       'no `new TRPCError({…})` bodies extracted — the detector is wired to nothing'
@@ -680,9 +684,9 @@ describe('LEDGER: GENERIC_CLIENT_ERROR_BY_STATUS covers every 4xx a driver can r
     // …and with the OTHER binding the fix uses. `apps-shared.router.ts` binds `e`,
     // and a mechanical sweep on the `err` spelling got that site wrong.
     expect(bypassCount(`new TRPCError({ code: 'BAD_REQUEST', message: e.message })`)).toBe(1);
-    expect(bypassCount(`new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: e })`)).toBe(
-      0
-    );
+    expect(
+      bypassCount(`new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: e })`)
+    ).toBe(0);
     // 🔴 And an INERT `cause` must NOT count as fixed — the mutant that survived
     // the first version of this ledger.
     expect(
@@ -695,7 +699,7 @@ describe('LEDGER: GENERIC_CLIENT_ERROR_BY_STATUS covers every 4xx a driver can r
 
     expect(
       Object.entries(found).sort(),
-      'a TRPCError site forwards a caught error\'s `.message` at a 4xx WITHOUT `cause`. That ' +
+      "a TRPCError site forwards a caught error's `.message` at a 4xx WITHOUT `cause`. That " +
         're-opens the civitai#3845/3 leak at that site, because `isDriverAuthoredMessage` ' +
         'cannot see a driver error that is not in the cause chain, so a genuine ' +
         '`Invalid `prisma.…` invocation` reaches the client verbatim at a 4xx. Fix: pass ' +
