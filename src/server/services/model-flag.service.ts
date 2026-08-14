@@ -1,9 +1,10 @@
-import { Prisma } from '@prisma/client';
 import { ModelFlagStatus } from '~/shared/utils/prisma/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdsInput } from '~/server/schema/base.schema';
 import type { GetFlaggedModelsInput, ModelScanResult } from '~/server/schema/model-flag.schema';
+import type { ModelFlagRow, ModelFlagScanResult } from '~/server/services/model-flag.sql';
+import { buildModelFlagUpsert } from '~/server/services/model-flag.sql';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getPagedData } from '~/server/utils/pagination-helpers';
 
@@ -14,54 +15,15 @@ export async function upsertModelFlag({
 }: {
   modelId: number;
   poiName?: string;
-  scanResult?: {
-    poi: boolean;
-    nsfw: boolean;
-    minor: boolean;
-    triggerWords: boolean;
-    poiName: boolean;
-    sfwOnly?: boolean;
-  };
+  scanResult?: ModelFlagScanResult;
   details?: MixedObject;
 }) {
   const isFlagged = scanResult && Object.values(scanResult).some((flag) => flag);
   if (!isFlagged) return null;
 
-  const [modelFlag] = await dbWrite.$queryRaw<
-    {
-      modelId: number;
-      poi: boolean;
-      nsfw: boolean;
-      minor: boolean;
-      sfwOnly: boolean;
-      triggerWords: boolean;
-      poiName: string | null;
-      status: ModelFlagStatus;
-    }[]
-  >`
-    INSERT INTO "ModelFlag" ("modelId", "poi", "nsfw", "minor", "triggerWords", "poiName", "status", "details", "sfwOnly")
-    VALUES (
-      ${modelId},
-      ${scanResult?.poi ?? false},
-      ${scanResult?.nsfw ?? false},
-      ${scanResult?.minor ?? false},
-      ${scanResult?.triggerWords ?? false},
-      ${scanResult?.poiName ?? false},
-      ${Prisma.sql`${ModelFlagStatus.Pending}::"ModelFlagStatus"`},
-      ${details ? Prisma.sql`${JSON.stringify(details)}::jsonb` : Prisma.JsonNull}
-      ${scanResult?.sfwOnly ?? false}
-    )
-    ON CONFLICT ("modelId") DO UPDATE
-      SET "poi" = EXCLUDED."poi",
-        "nsfw" = EXCLUDED."nsfw",
-        "minor" = EXCLUDED."minor",
-        "triggerWords" = EXCLUDED."triggerWords",
-        "poiName" = EXCLUDED."poiName",
-        "status" = EXCLUDED."status",
-        "details" = EXCLUDED."details"
-        "sfwOnly" = EXCLUDED."sfwOnly",
-    RETURNING *;
-  `;
+  const [modelFlag] = await dbWrite.$queryRaw<ModelFlagRow[]>(
+    buildModelFlagUpsert({ modelId, scanResult, details })
+  );
 
   return modelFlag;
 }
