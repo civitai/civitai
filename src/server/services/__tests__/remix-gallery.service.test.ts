@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
 
 const updateEntityMetricDetached = vi.fn(async () => undefined);
@@ -68,6 +71,7 @@ const placementCount = vi.fn(async () => 0);
 const placementFindFirst = vi.fn(async () => null as unknown);
 const placementFindUnique = vi.fn(async () => null as unknown);
 const placementFindMany = vi.fn(async () => [] as unknown[]);
+const imageFindMany = vi.fn(async () => [] as unknown[]);
 const placementUpdate = vi.fn(async () => ({}));
 const placementUpdateMany = vi.fn(async () => ({ count: 1 }));
 const dbTransaction = vi.fn(async (ops: unknown) => (Array.isArray(ops) ? ops : []));
@@ -93,6 +97,7 @@ vi.mock('~/server/db/client', () => ({
       findUnique: placementFindUnique,
       count: placementCount,
     },
+    image: { findMany: imageFindMany },
     user: { findUnique: async () => ({ username: 'someone' }) },
   },
 }));
@@ -106,6 +111,7 @@ const {
   getRemixGallery,
   getRemixGalleryVisibility,
   getPendingRemixGallerySubmissions,
+  declineOutOfBandRemixGallerySubmissions,
 } = await import('~/server/services/remix-gallery.service');
 
 const {
@@ -463,7 +469,11 @@ describe('the ceiling is applied on read, not only on the mutation', () => {
   // gallery query will not return.
   it('carries it in the has-entries read', async () => {
     resolvePlacementSpaceFor.mockResolvedValue(openSpace);
-    await getRemixGalleryVisibility({ hostImageId: HOST_IMAGE, browsingLevel: 1 });
+    await getRemixGalleryVisibility({
+      hostImageId: HOST_IMAGE,
+      browsingLevel: 1,
+      domainLevels: allBrowsingLevelsFlag,
+    });
     expectCeiling(sqlFrom());
   });
 });
@@ -1094,10 +1104,36 @@ describe('getPendingRemixGallerySubmissions paging', () => {
   const isSql = (value: unknown): value is { strings: string[]; values: unknown[] } =>
     !!value && typeof value === 'object' && 'strings' in value;
 
+  /**
+   * Rebuilt in ORDER — each string, then the fragment interpolated after it.
+   * Concatenating all the outer strings and then all the values reads as valid
+   * SQL and is not: the `AND`/`OR` joining two fragments lives in the outer
+   * strings while the fragments live in the values, so an `AND` -> `OR` flip
+   * between them is invisible to any assertion made on the scrambled text.
+   * Measured: that exact mutation passed 91/91 before this was interleaved.
+   */
   const sqlTextOf = (value: unknown): string => {
+    if (isSql(value))
+      return value.strings
+        .map(
+          (part, index) =>
+            part + (index < value.values.length ? sqlTextOf(value.values[index]) : '')
+        )
+        .join('');
     if (Array.isArray(value)) return value.map(sqlTextOf).join(' ');
-    if (isSql(value)) return [sqlTextOf(value.strings), sqlTextOf(value.values)].join(' ');
     return typeof value === 'string' ? value : '';
+  };
+
+  /**
+   * A tagged-template call arrives as `(strings, ...values)`, which is the same
+   * interleaving problem one level up.
+   */
+  const renderCall = (args: unknown[]): string => {
+    const [strings, ...values] = args as [string[], ...unknown[]];
+    if (!Array.isArray(strings)) return '';
+    return strings
+      .map((part, index) => part + (index < values.length ? sqlTextOf(values[index]) : ''))
+      .join('');
   };
 
   const flatValues = (value: unknown): unknown[] => {
@@ -1121,7 +1157,7 @@ describe('getPendingRemixGallerySubmissions paging', () => {
     images: unknown[];
   }) =>
     queryRaw.mockImplementation(async (...args: unknown[]) => {
-      const sql = sqlTextOf(args);
+      const sql = renderCall(args);
       if (sql.includes('FROM "Placement"')) {
         queueSelects.push({ sql, values: flatValues(args) });
         return page;
@@ -1169,8 +1205,19 @@ describe('getPendingRemixGallerySubmissions paging', () => {
     const { sql } = lastQueueSelect();
     expect(sql).toContain(`data ->> 'imageId'`);
     expect(sql).toContain('pl."targetId"');
-    expect(sql).toContain('publishedAt');
-    expect(sql).toContain(`ingestion = 'Scanned'`);
+    // Named individually. `toContain('publishedAt')` alone survives deleting any
+    // of the other four, and a queue that stopped filtering `tosViolation` would
+    // read as covered.
+    for (const clause of ['publishedAt', `ingestion = 'Scanned'`, 'tosViolation', 'minor', 'poi'])
+      expect(sql, `${clause} is not in the select`).toContain(clause);
+
+    // Both images, ANDed. An `OR` here passes every assertion above while
+    // relisting exactly what the count excludes — badge and list disagree again,
+    // which is the bug this shares one fragment to prevent.
+    const [, betweenTheTwoTests] = sql.split('EXISTS');
+    expect(sql.match(/EXISTS/g)).toHaveLength(2);
+    expect(betweenTheTwoTests).toContain('AND');
+    expect(betweenTheTwoTests).not.toContain('OR');
   });
 
   it('hands back a cursor when every row it selected was dropped afterwards', async () => {
@@ -1262,5 +1309,240 @@ describe('getPendingRemixGallerySubmissions paging', () => {
 
       expect(lastQueueSelect().sql, `cursor ${cursor} reached the query`).not.toMatch(/pl\.id\s*>/);
     }
+  });
+});
+
+/**
+ * What the SFW domain is SENT, which is a different question from what it
+ * paints. Blur is built from the viewer's own settings and never reads the
+ * domain, and these queues carry no browsing level by design — so the payload is
+ * the only control, and it needs a test that fails when it is removed rather
+ * than a suite that passes either way.
+ */
+describe('getPendingRemixGallerySubmissions domain ceiling', () => {
+  const SUBMITTED = 301;
+
+  const rated = (id: number, nsfwLevel: number) => ({
+    id,
+    url: `asset-${id}`,
+    width: 1,
+    height: 1,
+    type: 'image',
+    metadata: { hash: `h-${id}` },
+    nsfwLevel,
+  });
+
+  const queueRow = (imageId: number) => ({
+    id: 1,
+    targetId: HOST_IMAGE,
+    placerId: PLACER,
+    amount: PRICE,
+    data: { imageId },
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    expiresAt: null,
+    placer: { id: PLACER, username: 'someone', image: null },
+  });
+
+  const ask = ({
+    submittedLevel,
+    hostLevel = NsfwLevel.PG,
+    domainLevels,
+    viewerLevels = allBrowsingLevelsFlag,
+  }: {
+    submittedLevel: number;
+    hostLevel?: number;
+    domainLevels: number;
+    viewerLevels?: number;
+  }) => {
+    queryRaw.mockImplementation(async (...args: unknown[]) => {
+      const [template] = args as [{ strings?: string[] }];
+      const sql = (template?.strings ?? []).join(' ');
+      if (sql.includes('FROM "Placement"'))
+        return [{ id: 1, createdAt: new Date('2026-01-01T00:00:00.000Z') }];
+      return [rated(SUBMITTED, submittedLevel), rated(HOST_IMAGE, hostLevel)];
+    });
+    placementFindMany.mockResolvedValue([queueRow(SUBMITTED)]);
+
+    return getPendingRemixGallerySubmissions({
+      ownerId: OWNER,
+      limit: 10,
+      domainLevels,
+      viewerLevels,
+    });
+  };
+
+  it('sends the asset when the image is inside the ceiling', async () => {
+    // The positive control. Without it, every assertion below passes against a
+    // query that withholds everything — including the vacuous case where
+    // `domainLevels` arrives undefined and `level & undefined` is 0.
+    const { items } = await ask({
+      submittedLevel: NsfwLevel.PG,
+      domainLevels: sfwBrowsingLevelsFlag,
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0].image).toMatchObject({ viewable: true, url: `asset-${SUBMITTED}` });
+  });
+
+  it('withholds the asset for a submission above the ceiling, keeping the row actionable', async () => {
+    const { items } = await ask({
+      submittedLevel: NsfwLevel.X,
+      domainLevels: sfwBrowsingLevelsFlag,
+    });
+
+    expect(items).toHaveLength(1);
+    const { image } = items[0];
+    expect(image).toEqual({ viewable: false, id: SUBMITTED, nsfwLevel: NsfwLevel.X });
+    // Asserted as absence of the FIELDS, not just of `viewable`. A branch that
+    // set the flag and spread the row anyway would pass an `image.viewable`
+    // check while shipping the bytes it claims to withhold.
+    for (const field of ['url', 'metadata', 'width', 'height', 'type'])
+      expect(image, `${field} was sent to a domain that may not serve it`).not.toHaveProperty(
+        field
+      );
+    // Still reviewable: the escrow behind it expires if the owner cannot act.
+    expect(items[0].earnings.approve).toBeGreaterThan(0);
+  });
+
+  it('withholds the host image by the same rule', async () => {
+    const { items } = await ask({
+      submittedLevel: NsfwLevel.PG,
+      hostLevel: NsfwLevel.XXX,
+      domainLevels: sfwBrowsingLevelsFlag,
+    });
+
+    expect(items[0].targetImage).toEqual({
+      viewable: false,
+      id: HOST_IMAGE,
+      nsfwLevel: NsfwLevel.XXX,
+    });
+    expect(items[0].targetImage).not.toHaveProperty('url');
+  });
+
+  it('sends an above-ceiling asset on a domain that may serve it', async () => {
+    // The other half of the control: withholding on green has to be the domain
+    // deciding, not the queue refusing X everywhere.
+    const { items } = await ask({
+      submittedLevel: NsfwLevel.X,
+      domainLevels: allBrowsingLevelsFlag,
+    });
+
+    expect(items[0].image).toMatchObject({ viewable: true, url: `asset-${SUBMITTED}` });
+  });
+
+  it('marks what is outside the viewer band without withholding it', async () => {
+    // The viewer's own band is a preference, not a delivery rule — an owner has
+    // to be able to widen it and act. Withholding here would be indistinguishable
+    // from the domain case, which is the distinction the UI turns on.
+    const { items } = await ask({
+      submittedLevel: NsfwLevel.R,
+      domainLevels: allBrowsingLevelsFlag,
+      viewerLevels: sfwBrowsingLevelsFlag,
+    });
+
+    expect(items[0].image).toMatchObject({
+      viewable: true,
+      withinViewerLevel: false,
+      url: `asset-${SUBMITTED}`,
+    });
+  });
+
+  it('withholds an unrated image rather than defaulting it in', async () => {
+    // `0 & mask` is 0, so this passes today by arithmetic. Pinned because the
+    // failure mode is silent: an unscanned image would ship its asset to green.
+    const { items } = await ask({ submittedLevel: 0, domainLevels: sfwBrowsingLevelsFlag });
+
+    expect(items[0].image).toMatchObject({ viewable: false });
+  });
+});
+
+describe('declining everything out of band', () => {
+  const IN_BAND = 201;
+  const OUT_OF_BAND = 202;
+  const UNRATED = 203;
+
+  /**
+   * Host at PG-13 under `atOrBelow`, so the band is PG-13 and only the R row is
+   * out of it. The unrated row is the one worth keeping in the fixture: it is
+   * inadmissible for approval and must still not be swept up here, because
+   * charging a decline fee for an image with no rating yet answers a question
+   * nobody asked.
+   */
+  const arrange = () => {
+    resolvePlacementSpaceFor.mockResolvedValue({
+      ownerId: OWNER,
+      mode: 'review',
+      price: PRICE,
+      settings: { contentRule: 'atOrBelow' },
+    });
+    queryRaw.mockImplementation(async () => [
+      { nsfwLevel: NsfwLevel.PG13, minor: false, showable: true },
+    ]);
+    placementFindMany.mockResolvedValue([
+      { id: IN_BAND, data: { imageId: 1 } },
+      { id: OUT_OF_BAND, data: { imageId: 2 } },
+      { id: UNRATED, data: { imageId: 3 } },
+    ]);
+    imageFindMany.mockResolvedValue([
+      { id: 1, nsfwLevel: NsfwLevel.PG },
+      { id: 2, nsfwLevel: NsfwLevel.R },
+      { id: 3, nsfwLevel: 0 },
+    ]);
+    // Each row re-reads itself through the single-placement path.
+    placementFindUnique.mockImplementation(async ({ where }: { where: { id: number } }) => ({
+      id: where.id,
+      ownerId: OWNER,
+      status: 'pending',
+      surface: 'remixGallery',
+      targetId: HOST_IMAGE,
+      data: { imageId: where.id === OUT_OF_BAND ? 2 : 1 },
+      resolvedAt: null,
+      createdAt: new Date('2026-01-01'),
+    }));
+  };
+
+  it('settles only the rows above the band, and reports what it did', async () => {
+    arrange();
+
+    const result = await declineOutOfBandRemixGallerySubmissions({
+      hostImageId: HOST_IMAGE,
+      userId: OWNER,
+    });
+
+    expect(result).toEqual({ considered: 1, settled: 1 });
+    // The identity matters more than the count: a guard that declined the whole
+    // queue also settles once when the queue holds one out-of-band row.
+    expect(settlePlacement).toHaveBeenCalledTimes(1);
+    expect(lastSettleArgs()?.placementId).toBe(OUT_OF_BAND);
+  });
+
+  it('counts a row that fails to settle without abandoning the rest', async () => {
+    arrange();
+    imageFindMany.mockResolvedValue([
+      { id: 1, nsfwLevel: NsfwLevel.X },
+      { id: 2, nsfwLevel: NsfwLevel.R },
+      { id: 3, nsfwLevel: 0 },
+    ]);
+    settlePlacement.mockRejectedValueOnce(new Error('payout leg is down'));
+
+    const result = await declineOutOfBandRemixGallerySubmissions({
+      hostImageId: HOST_IMAGE,
+      userId: OWNER,
+    });
+
+    // Two were out of band, one throw: the second must still have been tried,
+    // and the caller must be told the difference rather than shown a success.
+    expect(result).toEqual({ considered: 2, settled: 1 });
+    expect(settlePlacement).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses someone else’s gallery before touching anything', async () => {
+    arrange();
+
+    await expect(
+      declineOutOfBandRemixGallerySubmissions({ hostImageId: HOST_IMAGE, userId: STRANGER })
+    ).rejects.toThrow();
+
+    expect(settlePlacement).not.toHaveBeenCalled();
   });
 });
