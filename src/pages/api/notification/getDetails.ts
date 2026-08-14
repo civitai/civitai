@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { bareNotification } from '~/server/notifications/base.notifications';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
-import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 
 const schema = bareNotification;
 
@@ -16,7 +16,10 @@ export default AuthedEndpoint(
       await populateNotificationDetails([results.data]);
       return res.json(results.data);
     } catch (error) {
-      return res.status(500).json({ message: 'An unexpected error occurred', error });
+      // civitai#3845 (population B): `populateNotificationDetails` fans out over
+      // per-type detail fetchers that query the DB directly, so the whole error
+      // OBJECT serialized here was driver-derived.
+      return handleEndpointError(res, error);
     }
   },
   ['POST']

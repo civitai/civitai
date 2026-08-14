@@ -3,6 +3,7 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { dbRead, dbWrite } from '~/server/db/client';
 import * as z from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
+import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -61,7 +62,10 @@ export default async function runModel(req: NextApiRequest, res: NextApiResponse
       nsfw: modelVersion.model.nsfw,
     });
   } catch (error) {
-    return res.status(500).json({ error: 'Invalid database operation', cause: error });
+    // civitai#3845 (population B): `cause: error` serialized the whole error
+    // object under a second key. The generic `error` string next to it made this
+    // look sanitized — it was not; `cause` carried the driver payload.
+    return handleEndpointError(res, error);
   }
 
   // Append our QS

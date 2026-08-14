@@ -2,7 +2,7 @@ import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from '~/types/session';
 import { getOrCreateVault } from '~/server/services/vault.service';
-import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 
 export default AuthedEndpoint(
   async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
@@ -21,7 +21,10 @@ export default AuthedEndpoint(
         }
       }
 
-      res.status(500).json({ message: 'An unexpected error occurred', error });
+      // civitai#3845 (population B) — see `v1/vault/all.tsx`. Same shape, same
+      // MEMBERSHIP_REQUIRED arm kept, same delegation.
+      handleEndpointError(res, error);
+      return;
     }
   },
   ['GET']
