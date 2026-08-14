@@ -119,7 +119,30 @@ describe('watchlist entries describe reality', () => {
         // The pin the gate greps for in the EMITTED output has to be in the source that
         // produced it. A watchlist key nothing writes can only ever report a false FAIL.
         expect(entry.globalKey).toBeTruthy();
-        expect(source).toContain(`globalThis.${entry.globalKey}`);
+
+        // 🔴 Assert the ADOPT-OR-CREATE form, not merely that the key is spelled somewhere.
+        // Two mutants motivate each half of this, both of which a `toContain` passes:
+        //
+        //  - the key surviving in a COMMENT while the real binding went back to module scope.
+        //    Hence comments are stripped first: a token inside `//` or `/* */` is not code, and
+        //    "the text is present" and "the binding exists" are different facts.
+        //  - `??=` weakened to `=`. That is the ORIGINAL bug in one character: the second copy
+        //    of the module to evaluate REPLACES the registry instead of adopting it, orphaning
+        //    every mark the first copy recorded. The gate itself cannot see this — its
+        //    SHARED_STATE rule greps emitted chunks for a REFERENCE to the key, and `=`
+        //    references it just as `??=` does (measured: a chunk assigning with `=` passes the
+        //    gate). This assertion is the only thing standing between that and a silent
+        //    reintroduction.
+        // Deliberately narrow: it pins the ONE canonical form, so an equivalent spelling
+        // (`globalThis[KEY] ??=`, or an aliased `const g = globalThis`) fails here even though
+        // it would satisfy the gate. That trade is on purpose — this failure is LOUD and takes
+        // one line to fix, whereas the false PASS it replaces was silent and shipped a
+        // permanently-empty registry. If you land such a form, widen this, don't delete it.
+        const code = source
+          .replace(/\/\*[\s\S]*?\*\//g, '') // block comments
+          .replace(/^\s*\/\/.*$/gm, ''); // line comments
+        const key = entry.globalKey!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        expect(code).toMatch(new RegExp(String.raw`globalThis\.${key}\s*\?\?=`));
       } else {
         // A SINGLETON is a copy-count rule; a globalKey on it would be silently ignored.
         expect(entry).not.toHaveProperty('globalKey');
