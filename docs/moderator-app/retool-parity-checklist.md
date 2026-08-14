@@ -903,7 +903,7 @@ that reporter to that build.
       index on `meta ? 'needsReview'` will not help this predicate** — `jsonb_exists` has no btree
       opfamily, so the planner reports `predOK=false`; the query has to repeat the literal clause.
 
-- [~] **Timestamp-swept queues — the "I've checked these" pattern.** Some queues are not a backlog but
+- [x] **Timestamp-swept queues — the "I've checked these" pattern.** Some queues are not a backlog but
       a *last-swept* marker: a mod reads the newest 20 articles, presses a button, and the timestamp
       advances. Asked for on **Articles**, **Bounties**, and **models handed to Civitai on account
       deletion** — *"if there's a better way than timestamps, feel free to change the method."*
@@ -940,22 +940,34 @@ that reporter to that build.
       advancing a real watermark would tell a moderator articles had been checked when they had not.
       The write path is `acknowledgeSweep`, unchanged and already used by the two existing tasks.
 
-      The remaining work here is **the models queue below**, not a new subsystem.
+      The models queue below shipped the same day, so this item is closed.
       `queue-thresholds.ts` already carries Retool's own `articleTask` and `bountyTask` scales, recovered
       from the export — which is independent evidence Retool ran both, so these are parity, not additions.
       Same for `modelTask` and `trainingData`, which are also scales with no queue behind them.
-- [ ] 🚧 **The three queues from `civitai.red/moderator/minor-hash-matches`** — **blocked on a main-app
-      count endpoint, deliberately.** The three are *Pending review* (`getMinorHashMatchesForReview`),
-      *Auto-flagged* (`getAutoFlaggedMinorModels`) and *Appeals* (`getMinorFlagAppealsForReview`).
-      **Do not reimplement these predicates in the spoke.** They are not simple counts: each is a CTE
-      query carrying tuned exclusions — `minorHashDismissed`, `notMinorHashClearedPredicate`,
-      `humanConfirmedPredicate`, `MINOR_HASH_ACCEPTED_KEY`, a review-window cutoff — and a *drifted copy*
-      of a minor-safety queue is worse than no copy, because it would read as authoritative while
-      disagreeing with the page that actually works the rows.
-      The models queue above sets the pattern that fits: surface the count, link out to the page that
-      already works them. That needs the count exposed once from the main app (the procedures are
-      `moderatorProcedure`-gated tRPC, so the spoke cannot call them), which is a cross-app change and
-      an owner's call. **Ask for a `retool/*`-family count endpoint, then this is a 20-line item.**
+- [x] **The three queues from `civitai.red/moderator/minor-hash-matches`** (2026-08-13). Filed here as
+      blocked on a main-app count endpoint; that was the wrong call. The right move was to **port the
+      page**, which `docs/moderator-app/page-migration-checklist.md` already has a pattern for
+      (procedures → `load`/actions, services → Kysely in `$lib/server`), with `comics-review` as the
+      nearest precedent. ⚠️ **The page is absent from that checklist**, which is how it was missed.
+      Now at `/models/minor-hash-matches`, under a new **Models** nav group between Images and Articles.
+      **Reads ported, writes not — that split is the point.** `revert` runs `setModelMinor`, which owns
+      the search-index sync, the cache busting and the per-image propagation, then restores five columns
+      from the flag snapshot; `resolveAppeal` also closes the `Appeal` row and refuses to uphold against
+      a model someone else has since reverted. So the verdicts go to a new
+      `/api/mod/retool/minor-flag` (same shape as `retool/restriction.ts`) and the spoke calls it.
+      The three predicates are copied **verbatim** and must stay that way — each population is defined
+      by exclusions that look like noise (`minorHashDismissed`, the cleared-stamp window, the
+      human-confirmation check, the accepted key, the 30-day bound).
+      **Verified row-for-row against the main app's own SQL on the same database**: first five model ids
+      identical on all three tabs, appeals total exact (28). Tab counts 416 / 296 / 28, fetched
+      separately and cached — the Pending count alone is ~10s, which is also why the nav entry carries
+      no `countKey`. Offset paging per tab, with the drain hazard stated on the page.
+      Three defects found by loading the page rather than by review: `export const TABS` from
+      `+page.server.ts` 500s the whole route; a `use:enhance` callback without `applyAction` renders a
+      refused verdict as an applied one; and `versionId?:` in an arrow function makes the Svelte script
+      parser read the `?` as a ternary and fail the route at a column that does not exist in the file —
+      `svelte-check`, `esbuild` and a direct `svelte.compile` all accept it.
+
 - [ ] **Drop the unpublished-articles queue.** (`1537514064580714507`) *"There's no need for
       unpublished articles to be an item/queue."* `src/routes/articles/unpublished` exists in the port;
       removing it is the ask, so confirm before deleting — this is the one item in the round that
