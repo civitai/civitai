@@ -759,6 +759,13 @@ const baseLicenses: Record<string, LicenseDetails> = {
     // Ideogram Non-Commercial Model Agreement forbids commercial use.
     nonCommercial: true,
   },
+  'minimax h3': {
+    url: 'https://huggingface.co/MiniMaxAI/MiniMax-H3',
+    name: 'MiniMax H3 Community License Agreement',
+    notice:
+      'MiniMax H3 is licensed by MiniMax under the MiniMax H3 Community License Agreement. That agreement’s Applicable Territory currently excludes the EU, the UK, South Korea and the USA; we are working with MiniMax on coverage for creators in those regions.',
+    poweredBy: 'MiniMax H3',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -841,6 +848,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Vidu Q1': baseLicenses['vidu'],
   Seedance: baseLicenses['seedream'],
   'Ideogram 4.0': baseLicenses['ideogram nc'],
+  'MiniMax H3': baseLicenses['minimax h3'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];

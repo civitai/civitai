@@ -34,7 +34,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
@@ -83,7 +83,11 @@ import {
   getEcosystemsForWorkflow,
   isWorkflowAvailable,
 } from '~/shared/data-graph/generation/config/workflows';
-import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
+import {
+  ecosystemByKey,
+  getBaseModelLicense,
+  getBaseModelsByEcosystemId,
+} from '~/shared/constants/basemodel.constants';
 import {
   pickStrongerGate,
   rulesToStates,
@@ -974,6 +978,51 @@ function BlueBuzzMatureReminder() {
 // FormFooter Component
 // =============================================================================
 
+/**
+ * Model attribution under the submit button. Some vendor licences require the
+ * model to be named in the product's own UI, not just on the model page (e.g.
+ * the MiniMax H3 Community License §IV.2), and link a copy of the licence to
+ * anyone receiving the work (§III.1). Driven off the licence's `poweredBy`, so
+ * it covers any base model carrying one rather than naming ecosystems here.
+ */
+function EcosystemAttribution() {
+  const graph = useGraph<GenerationGraphTypes>();
+  const { ecosystem } = useGraphSubscriptions(graph, ['ecosystem'] as const) as {
+    ecosystem?: string;
+  };
+
+  const license = useMemo(() => {
+    const ecosystemId = ecosystem ? ecosystemByKey.get(ecosystem)?.id : undefined;
+    if (ecosystemId == null) return undefined;
+    return getBaseModelsByEcosystemId(ecosystemId)
+      .map((baseModel) => getBaseModelLicense(baseModel.id))
+      .find((found) => !!found?.poweredBy);
+  }, [ecosystem]);
+
+  if (!license?.poweredBy) return null;
+
+  return (
+    <Text size="xs" c="dimmed" ta="center">
+      {license.poweredBy}
+      {license.url && (
+        <>
+          {' · '}
+          <Text
+            component="a"
+            href={license.url}
+            target="_blank"
+            rel="noreferrer"
+            td="underline"
+            inherit
+          >
+            License
+          </Text>
+        </>
+      )}
+    </Text>
+  );
+}
+
 export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void } = {}) {
   const graph = useGraph<GenerationGraphTypes>();
   const currentUser = useCurrentUser();
@@ -1366,6 +1415,8 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
           </Tooltip>
         </div>
       )}
+
+      <EcosystemAttribution />
     </>
   );
 }

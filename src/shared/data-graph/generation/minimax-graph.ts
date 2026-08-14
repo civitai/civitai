@@ -21,8 +21,8 @@ import {
   aspectRatioNode,
   createCheckpointGraph,
   createResourcesGraph,
+  createTextEditorGraph,
   imagesNode,
-  promptGraph,
   seedNode,
   sliderNode,
   snippetsGraph,
@@ -168,6 +168,8 @@ export const minimaxGraph = new DataGraph<
 
   .merge(triggerWordsGraph)
   .merge(snippetsGraph)
-  .merge(promptGraph);
+  // Unlike the shared promptGraph, an attached image does not excuse the prompt:
+  // H3 rejects a text-less request outright (`content[0].text is empty`, 2013).
+  .merge(createTextEditorGraph({ name: 'prompt', required: true }));
 
 export { minimaxAspectRatios };

@@ -2386,6 +2386,16 @@ export const licenses: LicenseRecord[] = [
     name: 'LTX-2.x Community License Agreement',
     url: 'https://github.com/Lightricks/LTX-2/blob/2362161611a61154d342e02724fb8fe58efd455d/LICENSE.md',
   },
+  {
+    id: 41,
+    // Separate from id 33: that is the Hailuo hosted-service ToS, this is the
+    // 2 Aug 2026 open-weights licence the on-site H3 models carry.
+    name: 'MiniMax H3 Community License Agreement',
+    url: 'https://huggingface.co/MiniMaxAI/MiniMax-H3',
+    notice:
+      'MiniMax H3 is licensed by MiniMax under the MiniMax H3 Community License Agreement. That agreement’s Applicable Territory currently excludes the EU, the UK, South Korea and the USA; we are working with MiniMax on coverage for creators in those regions.',
+    poweredBy: 'MiniMax H3',
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -3405,7 +3415,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: "MiniMax's video generation model with cinematic quality",
     type: 'video',
     ecosystemId: ECO.MiniMaxH3,
-    licenseId: 33,
+    licenseId: 41,
   },
 
   // Kling

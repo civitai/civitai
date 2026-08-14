@@ -32,6 +32,10 @@ export const createMiniMaxInput = defineHandler<MiniMaxCtx, [VideoGenStepTemplat
   const isRef2Vid = data.workflow === 'img2vid:ref2vid';
   const hasImages = !!images?.length;
 
+  // H3 rejects a text-less request on every workflow, images or not (2013).
+  const prompt = data.prompt?.trim();
+  if (!prompt) throw new Error('A prompt is required for MiniMax H3');
+
   if (data.minimaxVariant === 'comfy') {
     const loras: Record<string, number> = {};
     for (const resource of data.resources ?? []) {
@@ -40,7 +44,7 @@ export const createMiniMaxInput = defineHandler<MiniMaxCtx, [VideoGenStepTemplat
 
     const shared = {
       engine: 'minimax-h3-comfy' as const,
-      prompt: data.prompt,
+      prompt,
       duration: data.duration,
       seed: data.seed,
       steps: data.steps,
@@ -95,7 +99,7 @@ export const createMiniMaxInput = defineHandler<MiniMaxCtx, [VideoGenStepTemplat
       $type: 'videoGen',
       input: removeEmpty({
         engine: 'minimax-h3',
-        prompt: data.prompt,
+        prompt,
         // A supplied frame dictates the framing, so let the provider adapt to it.
         aspectRatio: firstFrameImage
           ? 'adaptive'
