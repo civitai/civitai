@@ -183,6 +183,56 @@ describe('deregisterFileLocationsByFile', () => {
     );
   });
 
+  it('sets the per-chunk timeout to 30s, not merely "some AbortSignal"', async () => {
+    // 🔴 THE TIMEOUT VALUE, PINNED. `expect(signal).toBeInstanceOf(AbortSignal)`
+    // is satisfied by ANY timeout: an audit showed AbortSignal.timeout(30_000)
+    // could be changed to timeout(1) — aborting every call before the resolver
+    // can answer, making the feature inert — with the suite fully green. Assert
+    // the argument, not the type.
+    const spy = vi.spyOn(AbortSignal, 'timeout');
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ deleted: 1 }),
+    });
+
+    await deregisterFileLocationsByFile([123]);
+
+    expect(spy).toHaveBeenCalledWith(30_000);
+    spy.mockRestore();
+  });
+
+  it('tags its Axiom events with key=file so an inert deploy is distinguishable', async () => {
+    // The version-keyed batch path emits the IDENTICAL event names and payload
+    // shape, and success is never logged, so without a discriminator a wholly
+    // inert deploy of this feature looks exactly like a failing bulk deregister.
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: () => Promise.resolve('boom'),
+    });
+
+    await deregisterFileLocationsByFile([123]);
+
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'deregister-file-locations-failed', key: 'file' })
+    );
+  });
+
+  it('tags the not-configured SKIP with key=file too', async () => {
+    // The skip is the likeliest inert-deploy signal of the three — a pod
+    // missing the env emits it on every delete — so it needs the discriminator
+    // at least as much as the failure events. Asserted separately because a
+    // per-event mutation showed the failed-event assertion does not cover it.
+    envValues.STORAGE_RESOLVER_INTERNAL_URL = undefined;
+
+    await expect(deregisterFileLocationsByFile([123])).resolves.toBeNull();
+
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'deregister-file-locations-skipped', key: 'file' })
+    );
+  });
+
   it('never throws when the request times out against a hung resolver', async () => {
     fetchMock.mockRejectedValue(
       new DOMException('The operation was aborted due to timeout', 'TimeoutError')
@@ -190,7 +240,10 @@ describe('deregisterFileLocationsByFile', () => {
 
     await expect(deregisterFileLocationsByFile([1, 2, 3])).resolves.toEqual({ deleted: 0 });
     expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'deregister-file-locations-error' })
+      // key=file asserted here too: all three of this function's Axiom events
+      // need the discriminator, and a per-event mutation showed each site has
+      // to be pinned individually — covering two of three left the third free.
+      expect.objectContaining({ name: 'deregister-file-locations-error', key: 'file' })
     );
   });
 });

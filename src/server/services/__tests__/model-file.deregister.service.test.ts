@@ -149,6 +149,31 @@ describe('deleteFile — file_locations deregistration', () => {
     expect(mockDeleteModelFileObject).not.toHaveBeenCalled();
   });
 
+  it('does NOT await the deregister — a hung resolver must not stall the delete', async () => {
+    // 🔴 THE NON-BLOCKING CONTRACT, PINNED. An audit showed that adding `await`
+    // in front of deregisterFileLocationsByFile left the whole suite green:
+    // every other case resolves its mock immediately, so nothing could tell
+    // "fire-and-forget" from "awaited". A future edit could therefore add up to
+    // the full request timeout of user-facing latency to EVERY file delete
+    // against a hung resolver, with no test objecting.
+    //
+    // Hold the deregister open and require deleteFile to resolve anyway.
+    let release: (() => void) | undefined;
+    mockDeregisterFileLocationsByFile.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ deleted: 1 });
+        })
+    );
+    stubDeletableFile();
+
+    await expect(deleteFile({ id: FILE_ID, userId: USER_ID })).resolves.toBeDefined();
+
+    expect(mockDeregisterFileLocationsByFile).toHaveBeenCalled();
+    expect(release).toBeDefined(); // it really was still pending
+    release?.();
+  });
+
   it('does not deregister when the delete is refused before the DELETE runs', async () => {
     // Training data on a still-draft model is refused up front — nothing was
     // removed, so nothing may be deregistered.

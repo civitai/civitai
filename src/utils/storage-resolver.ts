@@ -231,6 +231,14 @@ export async function deregisterFileLocationsByFile(
     logToAxiom({
       type: 'warning',
       name: 'deregister-file-locations-skipped',
+      // 🔴 Discriminates this per-FILE path from the version-keyed batch,
+      // which emits the identical event name and payload shape. Without it a
+      // wholly-inert deploy of this feature is indistinguishable in Axiom from
+      // a failing bulk version deregister. Mirrors the resolver's key="file"
+      // metric label. Success is deliberately NOT logged here — it is a
+      // per-delete hot path; confirm success server-side via
+      // storage_resolver_deregister_rows_deleted_total{key="file"}.
+      key: 'file',
       reason: 'storage-resolver-not-configured',
       count: fileIds.length,
     }).catch(() => undefined);
@@ -263,6 +271,14 @@ export async function deregisterFileLocationsByFile(
         logToAxiom({
           type: 'error',
           name: 'deregister-file-locations-failed',
+      // 🔴 Discriminates this per-FILE path from the version-keyed batch,
+      // which emits the identical event name and payload shape. Without it a
+      // wholly-inert deploy of this feature is indistinguishable in Axiom from
+      // a failing bulk version deregister. Mirrors the resolver's key="file"
+      // metric label. Success is deliberately NOT logged here — it is a
+      // per-delete hot path; confirm success server-side via
+      // storage_resolver_deregister_rows_deleted_total{key="file"}.
+      key: 'file',
           count: chunkIds.length,
           status: response.status,
           message: text,
@@ -279,6 +295,14 @@ export async function deregisterFileLocationsByFile(
       logToAxiom({
         type: 'error',
         name: 'deregister-file-locations-error',
+      // 🔴 Discriminates this per-FILE path from the version-keyed batch,
+      // which emits the identical event name and payload shape. Without it a
+      // wholly-inert deploy of this feature is indistinguishable in Axiom from
+      // a failing bulk version deregister. Mirrors the resolver's key="file"
+      // metric label. Success is deliberately NOT logged here — it is a
+      // per-delete hot path; confirm success server-side via
+      // storage_resolver_deregister_rows_deleted_total{key="file"}.
+      key: 'file',
         count: chunkIds.length,
         error,
       }).catch(() => undefined);
