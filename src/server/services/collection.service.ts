@@ -406,15 +406,24 @@ function freeGrantPermissions(collection: {
   return permissions;
 }
 
-// Where a new entry lands. `writeReview` is granted to EVERYONE on a write:Review collection —
-// the owner and its managers included — so reading it alone put the people who work the queue
-// into their own queue: production carries 108 items a collection's own owner submitted and never
-// approved, the oldest from 2025-01-03.
+// Where a new entry lands. The queue is for the public: everyone the collection has actually
+// vouched for — the owner, its managers, and the collaborators it invited — posts straight through.
+//
+// `writeReview` alone can't express that. It is granted to EVERYONE on a write:Review collection,
+// the owner included, so reading it by itself put the people who work the queue into their own
+// queue: production carries 108 items a collection's own owner submitted and never approved, the
+// oldest from 2025-01-03. `isCollaborator` is the invited half, and it is false on contest and
+// system collections, so contest entries keep going to review.
 export function submissionStatus(
-  permission: Pick<CollectionContributorPermissionFlags, 'writeReview' | 'manage' | 'isOwner'>
+  permission: Pick<
+    CollectionContributorPermissionFlags,
+    'writeReview' | 'manage' | 'isOwner' | 'isCollaborator'
+  >
 ): CollectionItemStatus {
-  const needsReview = permission.writeReview && !permission.manage && !permission.isOwner;
-  return needsReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED;
+  const vouchedFor = permission.manage || permission.isOwner || permission.isCollaborator;
+  return permission.writeReview && !vouchedFor
+    ? CollectionItemStatus.REVIEW
+    : CollectionItemStatus.ACCEPTED;
 }
 
 function createEmptyPermissions(collectionId: number): CollectionContributorPermissionFlags {

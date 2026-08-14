@@ -74,20 +74,27 @@ once. Two consequences worth knowing:
 
 ## Where a submission lands
 
-`submissionStatus(permission)` decides `REVIEW` vs `ACCEPTED`, and both save paths call it. The rule
-is that a submission queues only when the submitter is not one of the people who would approve it:
-`writeReview && !manage && !isOwner`.
+`submissionStatus(permission)` decides `REVIEW` vs `ACCEPTED`, and both save paths call it. **The
+queue is for the public**: everyone the collection has vouched for — the owner, its managers, and
+the collaborators it invited — posts straight through. `writeReview && !manage && !isOwner &&
+!isCollaborator`.
 
 Reading `writeReview` alone — which is what both call sites did — files the owner and every Manager
 into their own queue, because that flag is granted to *everyone* on a `write: Review` collection.
 Production carries 108 items a collection's own owner submitted and never approved, the oldest from
 2025-01-03.
 
+`isCollaborator` carries the invited half, and it is what makes the Contributor role mean something
+on an open collection: without it, an invited Contributor's grant is identical to a follower's. It
+is false on contest and system collections (see `collectionSupportsCollaborators`), so contest
+entries still go to review. A follower whose row only mirrors the free grant is not elevated, so
+they queue like anyone else — `collection-save-existing-membership.service.test.ts` pins both.
+
 ## Roles
 
 | Role | Bits | Can do |
 | --- | --- | --- |
-| Contributor | `VIEW`, `ADD` | Add items, and remove the ones they added or authored. |
+| Contributor | `VIEW`, `ADD` | Add items without going through the review queue, and remove the ones they added or authored. |
 | Manager | `VIEW`, `ADD`, `MANAGE` | The above, plus remove anyone's item, work the review queue, edit name/description/cover, and invite Contributors. |
 
 No new permission bits. A Manager may invite and remove **Contributors** only; granting the Manager
@@ -106,6 +113,13 @@ occupying a Manager seat nothing displays.
 Removing an item accepts the entity's author, whoever added the row, a `manage` holder, or a
 moderator. For "whoever added the row", **every** row for that entity has to be theirs — removal
 takes them all, so holding one duplicate is not authorization over the others.
+
+Both collection surfaces gate their **Remove** menu entry on that same rule. They did not before,
+and each got it wrong in a different direction: the image collection offered it to `manage` holders
+but not to the image's author, the model collection the reverse. The image feed carries
+`collectionItemAddedById` (one column on the collection CTE in `getAllImages`, only selected when
+the feed is filtered by collection) so the card can offer removal to the submitter; the model feed
+does not, so a Contributor who added someone else's model still has to use the save picker.
 
 That last split is why `collection.upsert` carries **no ownership middleware**. Authorization lives in
 `upsertCollection`, which requires `manage` and then strips `read`/`write`/`mode` for anyone who is
@@ -280,9 +294,6 @@ Known gaps, roughly in the order they'd block a release.
   is scoped to `manage` holders on purpose — the alternative, reusing the generic lapse string,
   leaves the Manager with nothing to act on — but that trade has not been signed off. Tightening it
   is one branch in `InviteBlockedNotice`.
-- **A Contributor still queues on a `write: Review` collection.** Only the owner and `manage`
-  holders skip the queue. Whether an invited Contributor should post straight through — the thing
-  that would make the role mean something on an open collection — is a product call, not a bug.
 - **`getMyInvites` truncates at 50 silently.** The cap bounds the per-invite roster reads, but
   nothing tells a user with more than 50 pending invites that they are seeing a subset.
 - **Collection items are read straight from the database, not the feed index.** Flagged as

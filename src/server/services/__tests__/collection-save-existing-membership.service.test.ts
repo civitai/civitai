@@ -208,7 +208,13 @@ describe('saveItemInCollections follow-on-submission', () => {
 // `writeReview` is granted to everyone on a write:Review collection, its owner and managers
 // included, so reading it alone filed the people who work the queue into their own queue.
 const REVIEW_COLLECTION_ID = 55502;
-const saveToReviewCollection = ({ collectionOwnerId }: { collectionOwnerId: number }) => {
+const saveToReviewCollection = ({
+  collectionOwnerId,
+  contributorPermissions = null,
+}: {
+  collectionOwnerId: number;
+  contributorPermissions?: string[] | null;
+}) => {
   mockDbRead.collection.findMany.mockResolvedValue([
     collectionRow({ id: REVIEW_COLLECTION_ID, userId: collectionOwnerId, write: 'Review' }),
   ]);
@@ -225,7 +231,7 @@ const saveToReviewCollection = ({ collectionOwnerId }: { collectionOwnerId: numb
       read: 'Public',
       type: 'Model',
       mode: null,
-      contributorPermissions: null,
+      contributorPermissions,
     },
   ]);
   mockDbWrite.$executeRaw.mockReturnValue('insert' as never);
@@ -264,6 +270,26 @@ describe('saveItemInCollections review queue', () => {
   it('accepts the collection owner submitting to their own review collection', async () => {
     await saveToReviewCollection({ collectionOwnerId: USER_ID });
     expect(insertedStatuses()).toEqual(['ACCEPTED']);
+  });
+
+  // An invited collaborator is someone the collection vouched for; the queue is for the public.
+  // ADD is beyond the free grant on a write:Review collection, which is what marks the row as a
+  // seat rather than a follow.
+  it('accepts an invited collaborator on a review collection', async () => {
+    await saveToReviewCollection({
+      collectionOwnerId: 999,
+      contributorPermissions: ['VIEW', 'ADD'],
+    });
+    expect(insertedStatuses()).toEqual(['ACCEPTED']);
+  });
+
+  // A follower on the same collection holds exactly the free grant, so they stay in the queue.
+  it('queues a follower whose row only mirrors the free grant', async () => {
+    await saveToReviewCollection({
+      collectionOwnerId: 999,
+      contributorPermissions: ['VIEW', 'ADD_REVIEW'],
+    });
+    expect(insertedStatuses()).toEqual(['REVIEW']);
   });
 });
 

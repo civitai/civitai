@@ -200,7 +200,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   onIndexNameChange: (indexName: TIndex) => void;
 }) {
   // const currentUser = useCurrentUser();
-  const { query, refine: setQuery } = useSearchBox();
+  const { query, refine: setQuery, isSearchStalled } = useSearchBox();
   const { hits, results } = useHitsTransformed<TIndex>();
   const features = useFeatureFlags();
   const [search, setSearch] = useState(query);
@@ -268,6 +268,10 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
     setQuery(debouncedSearch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearch, query]);
+
+  // Covers both halves of the wait: the 300ms debounce before the query is even sent, and the
+  // request itself. `isSearchStalled` alone leaves the first 300ms looking like a dead input.
+  const loading = search.length > 0 && (search !== query || isSearchStalled);
 
   return (
     <Group className={classes.wrapper} gap={0} wrap="nowrap">
@@ -347,6 +351,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
         // prevent default filtering behavior
         filter={({ options }) => options}
         clearable={query.length > 0}
+        loading={loading}
         {...autocompleteProps}
       />
     </Group>

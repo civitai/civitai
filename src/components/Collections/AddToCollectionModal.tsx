@@ -1,4 +1,5 @@
 import {
+  Badge,
   Button,
   Center,
   Checkbox,
@@ -65,6 +66,9 @@ type Props = Partial<AddCollectionItemInput> & { createNew?: boolean };
 export default function AddToCollectionModal(props: Props) {
   const dialog = useDialogContext();
   const [creating, setCreating] = useState(props.createNew ?? false);
+  // Carried over from the picker's search: someone who searched for a collection that doesn't
+  // exist is describing the one they want to make.
+  const [newCollectionName, setNewCollectionName] = useState('');
 
   // Create dynamic title based on collection type
   const getModalTitle = () => {
@@ -88,13 +92,17 @@ export default function AddToCollectionModal(props: Props) {
       {creating ? (
         <NewCollectionForm
           {...props}
+          defaultName={newCollectionName}
           onBack={() => setCreating(false)}
           onSubmit={() => dialog.onClose()}
         />
       ) : (
         <CollectionListForm
           {...props}
-          onNewClick={() => setCreating(true)}
+          onNewClick={(name) => {
+            setNewCollectionName(name ?? '');
+            setCreating(true);
+          }}
           onSubmit={() => dialog.onClose()}
         />
       )}
@@ -122,6 +130,7 @@ const OPEN_RESULT_LIMIT = OPEN_COLLECTION_SEARCH_LIMIT;
 function CollectionCheckboxItem({
   collection,
   meta,
+  savedState,
   selectedItem,
   disabled,
   disabledReason,
@@ -136,6 +145,8 @@ function CollectionCheckboxItem({
   };
   /** Role and owner, for collections that aren't the user's own. */
   meta?: string;
+  /** Set only for collections this item is already in — 'removing' once it is unticked. */
+  savedState?: 'saved' | 'removing';
   selectedItem?: SelectedCollection;
   // disabled also covers "not yet known" (still loading) so nothing is briefly clickable;
   // disabledReason is true only once we know it's actually closed, for the tooltip.
@@ -163,9 +174,21 @@ function CollectionCheckboxItem({
           label={
             <Group gap="sm" justify="space-between" w="100%" wrap="nowrap">
               <Stack gap={0} className="min-w-0">
-                <Text lineClamp={1} inherit className={classes.collectionName}>
-                  {collection.name}
-                </Text>
+                <Group gap={6} wrap="nowrap">
+                  <Text lineClamp={1} inherit className={classes.collectionName}>
+                    {collection.name}
+                  </Text>
+                  {savedState && (
+                    <Badge
+                      size="xs"
+                      variant="light"
+                      color={savedState === 'removing' ? 'red' : 'gray'}
+                      className="shrink-0"
+                    >
+                      {savedState === 'removing' ? 'Removing' : 'Saved'}
+                    </Badge>
+                  )}
+                </Group>
                 {meta && (
                   <Text size="xs" c="dimmed" lineClamp={1}>
                     {meta}
@@ -207,7 +230,7 @@ function CollectionListForm({
   onNewClick,
   onSubmit,
   ...props
-}: Props & { onNewClick: VoidFunction; onSubmit: VoidFunction }) {
+}: Props & { onNewClick: (name?: string) => void; onSubmit: VoidFunction }) {
   const { note, ...target } = props;
   const queryUtils = trpc.useUtils();
   const [selectedCollections, setSelectedCollections] = useState<SelectedCollection[]>([]);
@@ -395,11 +418,22 @@ function CollectionListForm({
       .join(' · ');
   };
 
+  // What Save will actually do to a collection this item is already in. Without it a row the
+  // user is about to remove looks exactly like one they never touched.
+  const savedCollectionIds = new Set(collectionItems.map((item) => item.collectionId));
+  const savedStateFor = (collectionId: number) => {
+    if (!savedCollectionIds.has(collectionId)) return undefined;
+    return selectedCollections.some((c) => c.collectionId === collectionId)
+      ? ('saved' as const)
+      : ('removing' as const);
+  };
+
   const renderItem = (collection: (typeof collections)[number]) => (
     <CollectionCheckboxItem
       key={collection.id}
       collection={collection}
       meta={metaFor(collection)}
+      savedState={savedStateFor(collection.id)}
       selectedItem={selectedCollections.find((c) => c.collectionId === collection.id)}
       {...getCollaborationState(collection.id)}
       onToggle={(isSelected) => {
@@ -485,7 +519,7 @@ function CollectionListForm({
             <Button
               variant="subtle"
               leftSection={<IconPlus size={16} />}
-              onClick={onNewClick}
+              onClick={() => onNewClick(search.trim())}
               size="compact-xs"
               className="shrink-0"
               h={30}
@@ -498,7 +532,7 @@ function CollectionListForm({
               <Loader type="bars" />
             </Center>
           ) : groups.length === 0 ? (
-            <Center py="xl" px="md">
+            <Stack align="center" gap="sm" py="xl" px="md">
               <Text c="dimmed" ta="center">
                 {!debouncedSearch
                   ? `You don't have any ${props.type?.toLowerCase() ?? ''} collections yet.`
@@ -508,7 +542,17 @@ function CollectionListForm({
                   ? `No matches. Type ${MIN_SEARCH_LENGTH} characters or more to also search collections open to submissions.`
                   : `No collections match “${debouncedSearch}”.`}
               </Text>
-            </Center>
+              {!!debouncedSearch && !searching && (
+                <Button
+                  variant="light"
+                  size="compact-sm"
+                  leftSection={<IconPlus size={16} />}
+                  onClick={() => onNewClick(debouncedSearch)}
+                >
+                  Create “{debouncedSearch}”
+                </Button>
+              )}
+            </Stack>
           ) : (
             <ScrollArea.Autosize mah={400}>
               <Stack gap={4}>
@@ -564,8 +608,9 @@ const NOTIFICATION_ID = 'create-collection';
 function NewCollectionForm({
   onSubmit,
   onBack,
+  defaultName = '',
   ...props
-}: Props & { onSubmit: VoidFunction; onBack: VoidFunction }) {
+}: Props & { onSubmit: VoidFunction; onBack: VoidFunction; defaultName?: string }) {
   const currentUser = useCurrentUser();
   const isMember = !!currentUser?.tier && currentUser.tier !== 'free';
   const form = useForm({
@@ -573,7 +618,7 @@ function NewCollectionForm({
     defaultValues: {
       type: CollectionType.Model,
       ...props,
-      name: '',
+      name: defaultName,
       description: '',
       read: CollectionReadConfiguration.Private,
       write: CollectionWriteConfiguration.Private,

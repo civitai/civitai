@@ -297,14 +297,14 @@ const ImageCollection = ({
         );
       }}
       additionalMenuItemsAfter={(image) => {
-        // Mirrors `removeCollectionItem`: a manage holder, the collection owner, a moderator, or
-        // the image's author. The server also allows whoever added the row, but the card payload
-        // carries no addedById, so that case only surfaces in the save picker.
+        // Mirrors `removeCollectionItem`: a manage holder, the collection owner, a moderator, the
+        // image's author, or whoever put it in the collection.
         const canRemove =
           permissions?.manage ||
           currentUser?.id === collection.user.id ||
           currentUser?.isModerator ||
-          currentUser?.id === (image.userId ?? image.user?.id);
+          currentUser?.id === (image.userId ?? image.user?.id) ||
+          currentUser?.id === image.collectionItemAddedById;
         return (
           <>
             {canRemove && (
