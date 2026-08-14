@@ -17,6 +17,8 @@ import { IconCheck, IconX } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useServerDomains } from '~/providers/AppProvider';
+import { syncAccount } from '~/utils/sync-account';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { Meta } from '~/components/Meta/Meta';
 import { SubmissionPair } from '~/components/RemixGallery/SubmissionPair';
@@ -148,6 +150,16 @@ export default function RemixSubmissions() {
   );
 }
 
+/**
+ * Where to send someone whose domain will not serve an image. The queue keeps
+ * the row so the escrow can still be answered; this is the only route left to
+ * the picture itself, since the withheld tile has no pixels to reveal.
+ */
+function useWithheldHref() {
+  const domains = useServerDomains();
+  return (image: { id: number }) => syncAccount(`//${domains.red}/images/${image.id}`);
+}
+
 type ReceivedRow = RouterOutput['placement']['getPendingRemixGallerySubmissions']['items'][number];
 
 function ReceivedTab({
@@ -166,6 +178,7 @@ function ReceivedTab({
   onLoadMore: () => void;
 }) {
   const utils = trpc.useUtils();
+  const withheldHref = useWithheldHref();
 
   const act = trpc.placement.actOnRemixGallerySubmission.useMutation({
     onSuccess: (_result, variables) => {
@@ -247,6 +260,7 @@ function ReceivedTab({
                 hostLabel="Open your image in a new tab"
                 remixLabel="Open this remix in a new tab"
                 hostMissing="Your image is no longer available to preview"
+                withheldHref={withheldHref}
               />
               <Stack gap={4}>
                 <Text size="sm">
@@ -314,6 +328,7 @@ type SentRow = RouterOutput['placement']['getMyRemixGallerySubmissions'][number]
 
 function SentTab({ rows, isLoading }: { rows: SentRow[]; isLoading: boolean }) {
   const utils = trpc.useUtils();
+  const withheldHref = useWithheldHref();
 
   const retract = trpc.placement.retractRemixGallerySubmission.useMutation({
     onSuccess: () => {
@@ -375,6 +390,7 @@ function SentTab({ rows, isLoading }: { rows: SentRow[]; isLoading: boolean }) {
                 hostLabel="Open the gallery image in a new tab"
                 remixLabel="Open your remix in a new tab"
                 hostMissing="This gallery image is no longer available to preview"
+                withheldHref={withheldHref}
               />
               <Stack gap={4}>
                 <Group gap="xs">

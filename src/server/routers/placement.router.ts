@@ -299,16 +299,14 @@ export const placementRouter = router({
     .input(placerSchema)
     .mutation(({ input }) => restorePlacementPrivileges(input.userId)),
 
-  getPending: protectedProcedure
-    .input(getPendingStickerPlacementsSchema)
-    .query(({ input, ctx }) =>
-      getPendingStickerPlacements({
-        ownerId: ctx.user.id,
-        cursor: input.cursor,
-        domainLevels: domainServableLevels(ctx),
-        viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
-      })
-    ),
+  getPending: protectedProcedure.input(getPendingStickerPlacementsSchema).query(({ input, ctx }) =>
+    getPendingStickerPlacements({
+      ownerId: ctx.user.id,
+      cursor: input.cursor,
+      domainLevels: domainServableLevels(ctx),
+      viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
+    })
+  ),
 
   // How many pending placements blocking someone would decline, so the confirm
   // dialog can say. Advisory by construction — holding it accurate across a

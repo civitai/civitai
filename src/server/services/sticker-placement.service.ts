@@ -1,3 +1,4 @@
+import { toQueueImage } from '~/server/utils/queue-image';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -824,10 +825,16 @@ export async function getPendingStickerPlacements({
   ownerId,
   limit = PLACEMENT_QUEUE_PAGE_SIZE,
   cursor,
+  domainLevels,
+  viewerLevels,
 }: {
   ownerId: number;
   limit?: number;
   cursor?: string | null;
+  /** Levels this domain may serve. Rows above it come back without their asset. */
+  domainLevels: number;
+  /** The viewer own band. Marked on each row, never filtered on. */
+  viewerLevels: number;
 }) {
   const rows = await dbRead.placement.findMany({
     where: {
@@ -856,9 +863,22 @@ export async function getPendingStickerPlacements({
   const page = rows.slice(0, limit);
   const nextCursor = rows.length > limit ? encodePlacementQueueCursor(page[page.length - 1]) : null;
 
+  // `nsfwLevel` is not decoration here: without it this payload cannot express
+  // the domain ceiling at all, and the queue deliberately sends no browsing
+  // level — so it was an image listing with nothing between an above-ceiling
+  // asset and a SFW client.
   const images = await dbRead.image.findMany({
     where: { id: { in: page.map((row) => row.targetId) } },
-    select: { id: true, url: true, name: true, width: true, height: true, type: true },
+    select: {
+      id: true,
+      url: true,
+      name: true,
+      width: true,
+      height: true,
+      type: true,
+      metadata: true,
+      nsfwLevel: true,
+    },
   });
   const byId = new Map(images.map((image) => [image.id, image]));
 
@@ -866,7 +886,16 @@ export async function getPendingStickerPlacements({
     const data = parseStickerPlacementData(row.data);
     if (!data) return [];
 
-    return [{ ...row, data, image: byId.get(row.targetId) ?? null }];
+    return [
+      {
+        ...row,
+        data,
+        // The image is the owner's own upload, so nothing is filtered out here.
+        // Dropping the row would take the approve/decline with it and the escrow
+        // would expire unanswered — withheld, not hidden.
+        image: toQueueImage(byId.get(row.targetId), domainLevels, viewerLevels),
+      },
+    ];
   });
 
   return { items, nextCursor };

@@ -37,16 +37,33 @@ function MissingThumb({ reason }: { reason: string }) {
  * work is worse than showing none. The rating is named instead, which is what
  * the reviewer needs to decide.
  */
-export function WithheldThumb({ nsfwLevel }: { nsfwLevel: number }) {
+export function WithheldThumb({ nsfwLevel, href }: { nsfwLevel: number; href?: string }) {
   const rating = getBrowsingLevelLabel(nsfwLevel);
+  const tile = (
+    <div className="relative flex aspect-square w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-solid border-gray-3 bg-gray-1 dark:border-dark-4 dark:bg-dark-6">
+      <IconEyeOff size={18} className="text-dimmed" />
+      <Text size="xs" fw={600} className="leading-none">
+        {rating}
+      </Text>
+    </div>
+  );
+
+  // The destination is the caller's, never this component's: the submissions
+  // page points at the image, the manage modal at the host. Without one, an
+  // owner on a SFW domain has no route to their own content at all — which is
+  // the hole that opened when the queue stopped linking through its text.
+  if (!href)
+    return (
+      <Tooltip label={`Rated ${rating} — not viewable here`} withArrow>
+        {tile}
+      </Tooltip>
+    );
+
   return (
-    <Tooltip label={`Rated ${rating} — not viewable on this domain`} withArrow>
-      <div className="relative flex aspect-square w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-solid border-gray-3 bg-gray-1 dark:border-dark-4 dark:bg-dark-6">
-        <IconEyeOff size={18} className="text-dimmed" />
-        <Text size="xs" fw={600} className="leading-none">
-          {rating}
-        </Text>
-      </div>
+    <Tooltip label={`Rated ${rating} — open it on the domain that shows it`} withArrow>
+      <a href={href} target="_blank" rel="noreferrer" className="block w-20 shrink-0">
+        {tile}
+      </a>
     </Tooltip>
   );
 }
@@ -58,23 +75,26 @@ export function WithheldThumb({ nsfwLevel }: { nsfwLevel: number }) {
  * "what do we draw when there are no pixels" is how one of them ends up drawing
  * a reveal control over an asset that was never sent.
  *
- * No href of its own: the callers point at different things — the submissions
- * page at the image, the manage modal at the host on the domain that can serve
- * it — so the link belongs beside the tile rather than inside it.
+ * The withheld destination is passed in rather than defaulted, because the
+ * callers point at different things — the submissions page at the image, the
+ * manage modal at the host — and a default would quietly be wrong for one.
  */
 export function QueueThumb({
   image,
   label,
   missing,
+  withheldHref,
 }: {
   image: QueueImage | null;
   label: string;
   missing: string;
+  /** Where to send someone whose domain may not show this. */
+  withheldHref?: string;
 }) {
   if (!image) return <MissingThumb reason={missing} />;
   // The union is the control: with `viewable: false` there is no url to reach
   // for, so this cannot fall through to a card that expects one.
-  if (!image.viewable) return <WithheldThumb nsfwLevel={image.nsfwLevel} />;
+  if (!image.viewable) return <WithheldThumb nsfwLevel={image.nsfwLevel} href={withheldHref} />;
   return <SubmissionThumb image={image} label={label} />;
 }
 
@@ -105,6 +125,7 @@ export function SubmissionPair({
   hostLabel,
   remixLabel,
   hostMissing,
+  withheldHref,
   remixMissing = 'This image is no longer available to preview',
 }: {
   host: QueueImage | null;
@@ -115,14 +136,26 @@ export function SubmissionPair({
   remixLabel: string;
   hostMissing: string;
   remixMissing?: string;
+  /** Applied to whichever side is withheld; both point at the same pair. */
+  withheldHref?: (image: QueueImage) => string;
 }) {
   return (
     <div className="flex shrink-0 gap-2">
       <Captioned caption={hostCaption}>
-        <QueueThumb image={host} label={hostLabel} missing={hostMissing} />
+        <QueueThumb
+          image={host}
+          label={hostLabel}
+          missing={hostMissing}
+          withheldHref={host && withheldHref ? withheldHref(host) : undefined}
+        />
       </Captioned>
       <Captioned caption={remixCaption}>
-        <QueueThumb image={remix} label={remixLabel} missing={remixMissing} />
+        <QueueThumb
+          image={remix}
+          label={remixLabel}
+          missing={remixMissing}
+          withheldHref={remix && withheldHref ? withheldHref(remix) : undefined}
+        />
       </Captioned>
     </div>
   );
