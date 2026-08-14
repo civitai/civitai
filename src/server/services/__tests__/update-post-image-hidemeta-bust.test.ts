@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -48,7 +49,7 @@ vi.mock('@civitai/db', () => ({
   createLagTracker: vi.fn(() => ({})),
   loadDbEnv: vi.fn(() => ({})),
 }));
-vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {},  pgDbRead: {}, pgDbWrite: {} }));
+vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, pgDbRead: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
   preventReplicationLag: vi.fn(),
@@ -143,15 +144,27 @@ const KEY_URL = IMAGE_URL;
 
 // Build a currentImage row. blockedFor is anything BUT AiNotVerified so shouldIngest=false
 // (no enqueueImageIngestion side effect on this path).
-function wireCurrentImage(hideMeta: boolean) {
+function wireCurrentImage(hideMeta: boolean, meta: unknown = null) {
   mockFindUniqueOrThrow.mockResolvedValue({
     hideMeta,
     ingestion: 'Scanned',
     blockedFor: null,
     metadata: {},
     nsfwLevel: 1,
+    meta,
   });
   mockImageUpdate.mockResolvedValue({ id: IMAGE_ID, url: IMAGE_URL, userId: USER_ID });
+}
+
+/**
+ * The `data` object actually handed to `dbWrite.image.update`. Asserting the update
+ * HAPPENED first is load-bearing: `expect(data.meta).toBeUndefined()` passes vacuously
+ * against a mock that was never called, which is exactly how a "meta is untouched"
+ * claim can be green while the column is being nulled.
+ */
+function updateData() {
+  expect(mockImageUpdate).toHaveBeenCalledTimes(1);
+  return mockImageUpdate.mock.calls[0][0].data as Record<string, unknown>;
 }
 
 beforeEach(() => {
@@ -207,5 +220,97 @@ describe('updatePostImage — image-delivery metadata cache bust wiring', () => 
     await updatePostImage({ id: IMAGE_ID } as any); // hideMeta not part of the update
 
     expect(mockBustImageDeliveryMetadataCache).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What gets WRITTEN to `Image.meta`. The suite above pins the cache wiring and asserts
+ * nothing about the write, which is how a hideMeta-only toggle came to null the column:
+ * `meta` is absent from the input for that call, and an absent `meta` must mean "leave the
+ * stored value alone", not "clear it". Prisma distinguishes the two by `undefined` (field
+ * omitted from the UPDATE) vs `Prisma.JsonNull` (SQL NULL written), so these tests assert
+ * on the `data` object handed to `dbWrite.image.update` rather than on any return value.
+ */
+describe('updatePostImage — Image.meta write semantics', () => {
+  it('does NOT write meta when the input omits it (hideMeta: true — hide direction)', async () => {
+    wireCurrentImage(false, { prompt: 'stored prompt' });
+
+    await updatePostImage({ id: IMAGE_ID, hideMeta: true } as any);
+
+    const data = updateData();
+    expect(data.meta).toBeUndefined();
+    // Explicit: `undefined` omits the column, `Prisma.JsonNull` destroys it. Only the
+    // second is a data-loss bug, so name it rather than relying on toBeUndefined alone.
+    expect(data.meta).not.toBe(Prisma.JsonNull);
+    expect(data.hideMeta).toBe(true);
+  });
+
+  it('does NOT write meta when the input omits it (hideMeta: false — un-hide direction)', async () => {
+    // The button toggles, so the destructive path fires in BOTH directions; a fix that
+    // only covered the hide direction would leave "Show prompt" wiping the prompt.
+    wireCurrentImage(true, { prompt: 'stored prompt' });
+
+    await updatePostImage({ id: IMAGE_ID, hideMeta: false } as any);
+
+    const data = updateData();
+    expect(data.meta).toBeUndefined();
+    expect(data.meta).not.toBe(Prisma.JsonNull);
+    expect(data.hideMeta).toBe(false);
+  });
+
+  it('does NOT write meta when the input carries neither meta nor hideMeta', async () => {
+    wireCurrentImage(false, { prompt: 'stored prompt' });
+
+    await updatePostImage({ id: IMAGE_ID } as any);
+
+    const data = updateData();
+    expect(data.meta).toBeUndefined();
+    expect(data.meta).not.toBe(Prisma.JsonNull);
+  });
+
+  it('DOES write Prisma.JsonNull when meta is explicitly null (the clear path still works)', async () => {
+    // `updatePostImageSchema` also folds an all-undefined meta object down to `null`, so
+    // this is the shape an intentional "clear the metadata" edit arrives in.
+    wireCurrentImage(false, { prompt: 'stored prompt' });
+
+    await updatePostImage({ id: IMAGE_ID, meta: null } as any);
+
+    expect(updateData().meta).toBe(Prisma.JsonNull);
+  });
+
+  it('writes the supplied meta object when meta is provided', async () => {
+    wireCurrentImage(false, { prompt: 'stored prompt' });
+
+    await updatePostImage({ id: IMAGE_ID, meta: { prompt: 'new prompt' } } as any);
+
+    const data = updateData();
+    expect(data.meta).toEqual({ prompt: 'new prompt' });
+    expect(data.meta).not.toBe(Prisma.JsonNull);
+  });
+
+  it('still re-derives provenance from the stored row when meta is provided', async () => {
+    // #3871's actual purpose: a client cannot assert a derivation by editing its own
+    // image. The verified ids come from the stored row, never from the payload.
+    wireCurrentImage(false, { prompt: 'stored', extra: { sourceImageIds: [42] } });
+
+    await updatePostImage({
+      id: IMAGE_ID,
+      meta: { prompt: 'new prompt', extra: { sourceImageIds: [999] } },
+    } as any);
+
+    const meta = updateData().meta as { extra: { sourceImageIds: number[] } };
+    expect(meta.extra.sourceImageIds).toEqual([42]);
+  });
+
+  it('strips an unverified provenance claim when the stored row has none', async () => {
+    wireCurrentImage(false, { prompt: 'stored' });
+
+    await updatePostImage({
+      id: IMAGE_ID,
+      meta: { prompt: 'new prompt', extra: { sourceImageIds: [999] } },
+    } as any);
+
+    const meta = updateData().meta as { extra: Record<string, unknown> };
+    expect(meta.extra).not.toHaveProperty('sourceImageIds');
   });
 });
