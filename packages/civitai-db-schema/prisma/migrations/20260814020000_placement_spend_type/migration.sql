@@ -3,30 +3,36 @@
 -- APPLY BEFORE deploying the app that writes this column. The column is nullable
 -- with no default, so an old pod writing a row without it stays valid.
 --
--- THERE IS DELIBERATELY NO BACKFILL, and that is the load-bearing decision here.
+-- THERE IS DELIBERATELY NO BACKFILL.
 --
--- Every placement made before this column existed was HELD as yellow whatever
--- the placer spent: the escrow debit named no destination account, so the Buzz
--- service credited the escrow account its default, and green was converted to
--- yellow on the way IN. Verified in ClickHouse `buzzTransactions` — the hold
--- legs read `fromAccountType: green, toAccountType: yellow`.
+-- Every placement made before this column existed was BOOKED into escrow as
+-- yellow whatever the placer spent: the escrow debit named no destination
+-- account, so the Buzz service credited its default. Verified in ClickHouse
+-- `buzzTransactions` — those hold legs read `fromAccountType: green,
+-- toAccountType: yellow`.
 --
--- So for an existing row the escrow genuinely contains YELLOW, whatever the
--- placer originally spent. Backfilling the true spend type from the ledger would
--- make settlement pay out green the escrow never received. NULL must mean
--- "legacy: held as yellow, settle as yellow", and the application reads it that
--- way.
+-- NULL therefore means "legacy: booked as yellow, settle as yellow", which is
+-- what the application reads it as.
 --
--- At the time of writing that is 8 production rows, 7 already settled and 1
--- pending, so the cost of leaving them alone is one placement settling in the
--- currency it is actually funded in.
+-- Be clear about what kind of decision this is: a CHOICE, not a constraint. The
+-- escrow is the bank, which is not balance-constrained, so a legacy row could be
+-- paid in the placer's true currency and it would succeed. Leaving settled
+-- history reading the way the ledger recorded it is simply the smaller change,
+-- for 8 production rows — 7 already settled, 1 pending, worth 100 Buzz. Going
+-- forward the column carries the truth and nothing has to be inferred.
 --
--- ⚠️ THE DANGEROUS COMBINATION IS A GREEN PLACEMENT SETTLED BY OLD CODE, and it
--- is reachable in BOTH directions. New code holds green in GREEN; old settlement
--- code names no account, so it pays the owner YELLOW out of the escrow account
--- while that placement's escrow is green. The escrow's pooled yellow — other
--- placements' holds — is drained, the green is stranded with no leg that will
--- ever draw it, and the receipt stops any later run from correcting it.
+-- ⚠️ THE WRONG COMBINATION IS A GREEN PLACEMENT SETTLED BY OLD CODE, and it is
+-- reachable in BOTH directions. New code books the hold in GREEN; old settlement
+-- code names no account, so it pays the owner YELLOW.
+--
+-- What that costs, stated accurately: the OWNER IS PAID THE WRONG CURRENCY, and
+-- the receipt stops any later run from correcting it. It is NOT stranded money —
+-- the escrow is the bank, which is not balance-constrained (`buzz.service.ts`
+-- exempts account 0), so paying yellow against a green-booked hold succeeds and
+-- costs the platform nothing. An earlier draft of this file claimed the green
+-- was stranded and the pooled yellow drained; that was wrong, and the cosmetic
+-- shop has been paying creators green out of a yellow-credited bank for months
+-- to prove it.
 --
 --   created by │ settled by │ escrow │ pays   │
 --   ───────────┼────────────┼────────┼────────┤

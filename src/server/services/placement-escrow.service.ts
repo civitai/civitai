@@ -33,14 +33,18 @@ import {
 const ESCROW_ACCOUNT_ID = 0;
 
 /**
- * What a placement's escrow is actually denominated in.
+ * What a placement settles in.
  *
- * A row written before the currency was recorded settles as yellow — not
- * because yellow was spent, but because the old escrow debit named no
- * destination account and the Buzz service credited its default, converting
- * green to yellow on the way IN. Yellow is what the escrow holds for those rows,
- * so yellow is what there is to pay. Reading the true spend type off the ledger
- * instead would name money the escrow never received.
+ * A row written before the currency was recorded settles as yellow, which is
+ * what its escrow legs record: the old debit named no destination, so the Buzz
+ * service credited its default and a green placement was booked into escrow as
+ * yellow.
+ *
+ * Yellow rather than the placer's true currency is a choice, not a constraint —
+ * the bank is not balance-constrained, so those rows COULD be paid in green. The
+ * choice is to leave settled history reading the way the ledger recorded it
+ * rather than re-characterising it from the outside, for one pending prod row
+ * worth 100 Buzz. Going forward the column carries the truth.
  */
 export const settledSpendType = (placement: { spendType: string | null }): BuzzSpendType =>
   isPlacementSpendType(placement.spendType ?? '')
@@ -488,10 +492,16 @@ export async function holdPlacementEscrow({
           fromAccountId: placerId,
           toAccountId: ESCROW_ACCOUNT_ID,
           type: TransactionType.Fee,
-          // One currency, the domain's, and the escrow holds it in kind. Naming
-          // no destination account credited escrow the service's default —
-          // yellow — so a green placement was converted on the way IN and there
-          // was no green left at settlement to pay the owner with.
+          // One currency, the domain's, and the escrow records it in kind.
+          //
+          // Bookkeeping, NOT solvency: the escrow is the bank, which is not a
+          // balance-constrained account (`buzz.service.ts` exempts account 0
+          // from the sufficiency check), so a payout can be made in a currency
+          // the bank was never credited in — the cosmetic shop has paid creators
+          // green out of a yellow-credited bank in production for months. What
+          // naming the destination buys is a ledger that says what actually
+          // happened, so a reader reconciling a placement is not told the escrow
+          // took yellow for a green placement.
           fromAccountTypes: [spendType],
           toAccountType: spendType,
           description: `Placement escrow (${kind}) for placement ${placementId}`,
@@ -730,12 +740,8 @@ async function payOutPlacement(placement: PlacementRow) {
   const plan = await planPayout(placement, held);
 
   // What was paid in is what is paid out, and what the escrow is drawn from.
-  //
-  // NULL is a placement made before the currency was recorded. Those were held
-  // as yellow whatever was spent — the conversion happened at intake — so the
-  // escrow contains yellow for them and yellow is what there is to pay. This
-  // fallback is the reason the column is not backfilled from the ledger: the
-  // true spend type would name money the escrow never received.
+  // NULL settles as yellow — see `settledSpendType` for why that is a choice
+  // about legacy rows rather than a limit on what the bank can pay.
   const spendType = settledSpendType(placement);
 
   const payFromEscrow = (kind: PlacementTransactionKind, toAccountId: number, amount: number) =>
