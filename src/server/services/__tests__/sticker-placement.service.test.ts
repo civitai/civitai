@@ -412,6 +412,19 @@ describe('the space mode decides whether a placement is live', () => {
 });
 
 describe('what gets written to the row', () => {
+  // The currency is decided by the domain at the router and carried through
+  // untouched. A placement that reached the escrow without it would be held —
+  // and later paid out — in whatever the Buzz service defaults to.
+  it('carries the caller currency into the escrow', async () => {
+    givenStickerAndBalance();
+
+    await createStickerPlacement({ ...placeInput, spendType: 'green' });
+
+    expect(holdPlacementEscrow).toHaveBeenCalledWith(
+      expect.objectContaining({ spendType: 'green' })
+    );
+  });
+
   it('persists the seller and the normalized position', async () => {
     givenStickerAndBalance();
 

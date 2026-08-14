@@ -144,6 +144,7 @@ import { deleteModelFileObjects } from '~/utils/s3-utils';
 import { deregisterFileLocations } from '~/utils/storage-resolver';
 import { purgeCache } from '~/server/cloudflare/client';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { paidAccessPayoutAccount } from '~/server/utils/buzz-helpers';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
@@ -2143,10 +2144,7 @@ export const earlyAccessPurchase = async ({
       details: { modelVersionId, type, earlyAccessPurchase: true, permanent },
       externalTransactionIdPrefix: externalTransactionIdPrefix,
       fromAccountTypes: [buzzType],
-      // Paid in kind. Naming the buyer's own account here is what stops the
-      // service applying its yellow default, which converted every green
-      // purchase into yellow for the seller.
-      toAccountType: buzzType,
+      toAccountType: paidAccessPayoutAccount(buzzType),
     });
 
     if (data?.transactionCount === 0)

@@ -20,6 +20,17 @@
 -- At the time of writing that is 8 production rows, 7 already settled and 1
 -- pending, so the cost of leaving them alone is one placement settling in the
 -- currency it is actually funded in.
+--
+-- ⚠️ ROLLING THE APP BACK IS NOT SAFE while any green placement is pending.
+-- Forward is fine — an old pod writes no `spendType`, and NULL settles as
+-- yellow over an escrow that really is yellow. Backwards is not: a new pod
+-- holds green in GREEN and stamps `spendType='green'`, but old settlement code
+-- names no account, so it pays the owner YELLOW out of the escrow account while
+-- that placement's escrow is green. The escrow's yellow is drained, the green is
+-- stranded with no ledger row to find it by, and the owner is paid a currency
+-- nobody funded. Before rolling back, settle or expire every row matching:
+--
+--   SELECT id FROM "Placement" WHERE status = 'pending' AND "spendType" = 'green';
 
 -- 1.
 ALTER TABLE "Placement" ADD COLUMN IF NOT EXISTS "spendType" TEXT;

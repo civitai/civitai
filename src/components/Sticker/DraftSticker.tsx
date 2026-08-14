@@ -614,10 +614,10 @@ export function DraftSticker({
           size="sm"
           style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
           buzzAmount={price}
-          // This domain's currency alone, matching the single account the
-          // escrow now draws from. Offering both let one placement be funded
-          // part green and part yellow, which the settlement has no way to pay
-          // back in kind.
+          // Says what it means. `BuzzTransactionButton` already ran the pair
+          // through `useAvailableBuzz`, which strips both and appends the
+          // domain's, so this renders identically — the pair was never the hole.
+          // That was server-side, where the escrow drew from both.
           accountTypes={spendTypes}
           label="Place"
           loading={place.isPending}

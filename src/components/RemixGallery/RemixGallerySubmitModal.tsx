@@ -258,10 +258,10 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
               it rather than a silent charge. */}
             <BuzzTransactionButton
               buzzAmount={price ?? 0}
-              // This domain's currency alone, matching the single account the
-              // escrow now draws from. Offering both let one submission be
-              // funded part green and part yellow, which the settlement has no
-              // way to pay back in kind.
+              // Says what it means. `BuzzTransactionButton` already ran the pair
+              // through `useAvailableBuzz`, which strips both and appends the
+              // domain's, so this renders identically — the pair was never the
+              // hole. That was server-side, where the escrow drew from both.
               accountTypes={spendTypes}
               label="Submit"
               disabled={!selected || !visibility?.open || price == null}

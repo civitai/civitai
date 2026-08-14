@@ -74,21 +74,23 @@ export function getAllowedAccountTypes(
 }
 
 /**
- * Where a paid-access purchase made BEFORE payouts went in-kind credited the seller.
+ * The owner account a paid-access purchase pays into, given what the buyer spent.
  *
- * Not a policy, a record. Until the same change that added this note, the charge named no
- * destination account, so the buzz service applied its yellow default and every green purchase
- * paid the seller yellow — 2,409 legs since 2025-10-30. New purchases pay in kind and do not go
- * through this.
+ * Blue pays out blue — the credit is non-withdrawable and must stay that way, or the purchase
+ * launders it into cashable currency. Everything else pays into yellow.
  *
- * It survives for ONE reader: the unpublish-refund guard, which sizes a refund by the account
- * reversing the purchase would debit, and has no way to ask the ledger where the credit landed —
- * the multi-transaction listing reports each leg by the account the BUYER spent from and carries
- * no destination. That makes the guard correct for pre-cutover purchases and increasingly wrong
- * for post-cutover green ones, which needs its own fix: record the payout account per purchase,
- * the way `Placement.spendType` now does.
+ * Shared with the unpublish-refund guard, which has no other way to learn the payout account — the
+ * ledger's multi-transaction listing reports each leg by the account the BUYER spent from.
+ *
+ * ⚠️ Green paying out yellow is NOT a decision — the charge named no destination account until
+ * #3911's sibling change, so the buzz service applied its yellow default and every green purchase
+ * since 2025-10-30 credited the seller yellow. Making it pay in kind is a two-part change: the two
+ * readers here must move together, because this function is also what sizes a refund, and the
+ * refund reverses into whichever account was CREDITED. Change the charge alone and the guard
+ * checks yellow for money now held in green — passing when it should block, and letting the
+ * reversal take a green balance negative.
  */
-export function legacyPaidAccessPayoutAccount(spendType: BuzzSpendType): BuzzSpendType {
+export function paidAccessPayoutAccount(spendType: BuzzSpendType): BuzzSpendType {
   return spendType === 'blue' ? 'blue' : 'yellow';
 }
 

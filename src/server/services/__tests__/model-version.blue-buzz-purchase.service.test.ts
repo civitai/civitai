@@ -149,10 +149,9 @@ describe('earlyAccessPurchase — Blue Buzz', () => {
     expect(charge.toAccountType).toBe('blue');
   });
 
-  // Every currency pays into itself. Green used to land in yellow — not by decision but because the
-  // charge named no destination account and the Buzz service applied its yellow default, so every
-  // green purchase since 2025-10-30 paid the seller a currency the buyer never spent.
-  it.each(['green', 'yellow'] as const)('pays a %s purchase in kind', async (buzzType) => {
+  // Only blue changes where the money lands. Green is a buyer-side currency with no payout account
+  // of its own — it pays into yellow, the bankable one, same as a yellow purchase.
+  it.each(['green', 'yellow'] as const)('pays a %s purchase into yellow', async (buzzType) => {
     seed({ acceptsBlueBuzz: true });
 
     await earlyAccessPurchase({
@@ -164,7 +163,7 @@ describe('earlyAccessPurchase — Blue Buzz', () => {
 
     const charge = mockCreateMultiAccountBuzzTransaction.mock.calls[0][0];
     expect(charge.fromAccountTypes).toEqual([buzzType]);
-    expect(charge.toAccountType).toBe(buzzType);
+    expect(charge.toAccountType).toBe('yellow');
   });
 
   it('rejects blue when the creator has not opted in', async () => {

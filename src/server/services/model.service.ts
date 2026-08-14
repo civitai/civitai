@@ -117,7 +117,7 @@ import {
   getUserBuzzAccountByAccountTypes,
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
-import { legacyPaidAccessPayoutAccount } from '~/server/utils/buzz-helpers';
+import { paidAccessPayoutAccount } from '~/server/utils/buzz-helpers';
 import { BuzzTypes } from '~/shared/constants/buzz.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -2855,7 +2855,7 @@ export const getModelEarlyAccessRefundRequirement = async ({
   // re-derived through the same mapping the charge used.
   const totalsByAccount: Partial<Record<BuzzSpendType, number>> = {};
   for (const leg of ledgers.flat()) {
-    const account = legacyPaidAccessPayoutAccount(BuzzTypes.toSpendType(leg.accountType));
+    const account = paidAccessPayoutAccount(BuzzTypes.toSpendType(leg.accountType));
     totalsByAccount[account] = (totalsByAccount[account] ?? 0) + leg.amount;
   }
 
