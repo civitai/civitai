@@ -27,7 +27,8 @@ const projectRoot = findProjectRoot(__dirname);
 const pidFile = resolve(__dirname, 'daemon.pid');
 const serverScript = resolve(__dirname, 'scripts/daemon.mjs');
 
-const DAEMON_PORT = 9444;
+// Overridable so a second daemon can be exercised without touching the shared one on 9444.
+const DAEMON_PORT = parseInt(process.env.DEV_DAEMON_PORT || '9444', 10);
 const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
 
 async function daemonRequest(path, options = {}) {
@@ -318,6 +319,152 @@ async function cmdApp(name, subcmd) {
   console.log(JSON.stringify(result.data, null, 2));
 }
 
+const WAIT_POLL_MS = 2000;
+
+// Exit codes: the run's own code when it ran, 2 when the daemon can no longer tell us anything.
+const EXIT_UNKNOWN_RUN = 2;
+
+function describeRun(run) {
+  const lines = [];
+  if (run.status === 'running') {
+    lines.push(`Run ${run.id} started (nothing ahead of it).`);
+  } else if (run.paused) {
+    lines.push(
+      `Run ${run.id} queued at position ${run.position}, but the queue is PAUSED (concurrency 0).`,
+      `Nothing will start until someone raises it: node .claude/skills/dev-server/cli.mjs test config 1`
+    );
+  } else {
+    lines.push(
+      `Run ${run.id} queued at position ${run.position} of ${run.queueLength} ` +
+        `(${run.running}/${run.concurrency} running).`
+    );
+  }
+  lines.push(`Wait for it in the background: ${run.waitCommand}`);
+  return lines.join('\n');
+}
+
+async function cmdTestRun(rest) {
+  await ensureDaemon();
+  const sep = rest.indexOf('--');
+  const args = sep === -1 ? [] : rest.slice(sep + 1);
+  const target = (sep === -1 ? rest : rest.slice(0, sep)).find((a) => !a.startsWith('--'));
+  const worktree = target ? resolve(target) : process.cwd();
+
+  const result = await daemonRequest('/test-runs', {
+    method: 'POST',
+    body: JSON.stringify({ worktree, args }),
+  });
+  if (!result.ok) {
+    console.error('Error:', result.error || result.data?.error);
+    process.exit(1);
+  }
+  console.log(describeRun(result.data));
+}
+
+async function cmdTestWait(id) {
+  if (!id) {
+    console.error('Usage: test wait <run-id>');
+    process.exit(1);
+  }
+
+  let lastStatus = null;
+  let lastLogIndex = -1;
+  let announcedPause = false;
+
+  for (;;) {
+    const result = await daemonRequest(`/test-runs/${id}`);
+
+    // A daemon that has forgotten this run — or that is gone — is terminal, not something to keep
+    // polling. Restarting the daemon drops the in-memory queue, and a waiter that polled through
+    // that would hang forever.
+    if (result.status === 404) {
+      console.error(
+        `Run ${id} is unknown to the daemon. It was most likely restarted, which drops queued and ` +
+          `in-flight runs. Request a new run.`
+      );
+      process.exit(EXIT_UNKNOWN_RUN);
+    }
+    if (!result.ok) {
+      console.error(`Cannot reach the daemon: ${result.error || result.data?.error}`);
+      process.exit(EXIT_UNKNOWN_RUN);
+    }
+
+    const run = result.data;
+    if (run.status !== lastStatus) {
+      console.log(
+        run.status === 'queued'
+          ? `queued at position ${run.position} of ${run.queueLength}`
+          : `${run.status}`
+      );
+      lastStatus = run.status;
+    }
+    if (run.paused && !announcedPause) {
+      console.log('queue is PAUSED (concurrency 0) — nothing will start until it is raised');
+      announcedPause = true;
+    }
+
+    if (run.status === 'running' || isTerminalStatus(run.status)) {
+      const logs = await daemonRequest(`/test-runs/${id}/logs?since=${lastLogIndex}`);
+      for (const entry of logs.data?.logs ?? []) {
+        console.log(entry.message);
+        lastLogIndex = entry.index;
+      }
+    }
+
+    if (isTerminalStatus(run.status)) {
+      console.log(`Run ${id} ${run.status}${run.error ? ` (${run.error})` : ''}`);
+      process.exit(run.status === 'completed' ? 0 : run.exitCode ?? 1);
+    }
+
+    await new Promise((r) => setTimeout(r, WAIT_POLL_MS));
+  }
+}
+
+function isTerminalStatus(status) {
+  return ['completed', 'failed', 'cancelled', 'timeout', 'abandoned', 'error'].includes(status);
+}
+
+async function cmdTest(sub, rest) {
+  const action = sub || 'list';
+  if (action === 'run') return cmdTestRun(rest);
+  if (action === 'wait') return cmdTestWait(rest[0]);
+
+  await ensureDaemon();
+  let result;
+  switch (action) {
+    case 'list':
+    case 'status':
+      result = await daemonRequest('/test-runs');
+      break;
+    case 'show':
+      result = await daemonRequest(`/test-runs/${rest[0]}`);
+      break;
+    case 'logs':
+      result = await daemonRequest(`/test-runs/${rest[0]}/logs`);
+      break;
+    case 'cancel':
+      result = await daemonRequest(`/test-runs/${rest[0]}`, { method: 'DELETE' });
+      break;
+    case 'config':
+      result = rest[0]
+        ? await daemonRequest('/test-runs/config', {
+            method: 'POST',
+            body: JSON.stringify({ concurrency: Number(rest[0]) }),
+          })
+        : await daemonRequest('/test-runs/config');
+      break;
+    default:
+      console.error(`Unknown test subcommand: ${action}`);
+      console.error('Usage: test [run|wait|list|show|logs|cancel|config]');
+      process.exit(1);
+  }
+  if (!result.ok) {
+    console.error('Error:', result.error || result.data?.error || JSON.stringify(result.data));
+    process.exit(1);
+  }
+  console.log(JSON.stringify(result.data, null, 2));
+}
+
 async function cmdShutdown() {
   const result = await daemonRequest('/shutdown', { method: 'POST' });
   if (!result.ok && result.status !== 0) {
@@ -396,6 +543,9 @@ switch (command) {
   case 'shutdown':
     cmdShutdown();
     break;
+  case 'test':
+    cmdTest(arg1, args.slice(2));
+    break;
   case 'wt':
     cmdWorktree(args.slice(1));
     break;
@@ -415,6 +565,11 @@ Commands:
   app                 List spoke apps (moderator, creator-studio, storage, notifications)
   app <name> [subcmd] Spoke app control (status|start|stop|restart|logs)
   shutdown            Shutdown the daemon
+  test run [wt]       Queue a unit-test run; returns position + the command to wait on it
+  test wait <run-id>  Block until that run finishes; exits with the run's exit code
+  test list           List runs and queue state
+  test cancel <id>    Cancel a queued or running run
+  test config [n]     Show or set the concurrency limit (0 pauses the queue)
   wt stale            List worktrees whose PR merged (read-only)
   wt rm <path>        Remove a worktree safely (unlinks junctions first)
                       [--stop-server] [--force]

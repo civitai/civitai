@@ -43,7 +43,49 @@ node .claude/skills/dev-server/cli.mjs stop <session-id>
 | `app` | List the spoke apps and their state |
 | `app <name> [subcmd]` | Spoke app control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
 | `auth [subcmd]` | Auth hub control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
+| `test run [worktree]` | Queue a unit-test run; returns position + the command to wait on it |
+| `test wait <run-id>` | Block until that run finishes; exits with the run's exit code |
+| `test list` / `test show <id>` / `test logs <id>` | Queue state, one run, one run's output |
+| `test cancel <id>` | Cancel a queued or running run |
+| `test config [n]` | Show or set the concurrency limit (`0` pauses the queue) |
 | `shutdown` | Shutdown the daemon |
+
+## Queued test runs
+
+The unit suite takes every core. One run is fine; five agents each starting one at the same moment
+is what flattens the machine. The daemon serialises them.
+
+```bash
+# 1. Request a run. Returns immediately, whether it started or queued.
+node .claude/skills/dev-server/cli.mjs test run
+#    Run t3f9a2 queued at position 2 of 3 (1/1 running).
+#    Wait for it in the background: node .claude/skills/dev-server/cli.mjs test wait t3f9a2
+
+# 2. Wait for it — in the background, so you can work meanwhile.
+node .claude/skills/dev-server/cli.mjs test wait t3f9a2
+```
+
+`test wait` exits with the run's own exit code, so it substitutes for `pnpm run test:unit:run`
+wherever that was being checked. Extra args after `--` are passed to vitest, so
+`test run . -- path/to/one.test.ts` narrows the run.
+
+**Concurrency defaults to 1**, configurable with `TEST_CONCURRENCY` in the skill's `.env` or at
+runtime with `test config <n>`. `0` is legal and means *paused* — nothing starts until it is raised.
+A caller that queues behind a paused queue is told so explicitly rather than being handed a position
+and left waiting.
+
+Things worth knowing before you rely on it:
+
+- **The daemon owns the run, not you.** An agent that dies mid-wait releases nothing, because it was
+  holding nothing. The slot frees when the child process exits.
+- **A queued run whose caller stopped polling is dropped** after 10 minutes, so a dead agent cannot
+  hold the queue. `test wait` polls every 2s, so a live waiter never trips this.
+- **A run that overruns 30 minutes is killed** and reported as `timeout`. If the kill produces no
+  exit, the slot is released anyway after a grace period rather than held forever.
+- **A daemon restart drops the queue.** `test wait` treats an unknown run id as terminal and exits
+  nonzero telling you to re-request — it will not poll forever against a daemon that has forgotten
+  you.
+- **Position is exact**, not an estimate: it is the index in one ordered list.
 
 ## Session Object
 

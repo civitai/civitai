@@ -19,6 +19,7 @@ import { fileURLToPath } from 'url';
 import { randomBytes, createHash } from 'crypto';
 import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
+import { TestQueue } from './test-queue.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const skillDir = resolve(__dirname, '..');
@@ -53,6 +54,7 @@ function loadSkillConfig() {
     autoInstall: true,
     prewarmRoutes: [],
     prewarmTimeout: 300000,
+    testConcurrency: 1,
   };
 
   if (existsSync(envPath)) {
@@ -122,6 +124,9 @@ function loadSkillConfig() {
           break;
         case 'PREWARM_TIMEOUT':
           if (value) config.prewarmTimeout = parseInt(value, 10);
+          break;
+        case 'TEST_CONCURRENCY':
+          if (value) config.testConcurrency = parseInt(value, 10);
           break;
       }
     }
@@ -1462,6 +1467,8 @@ async function stopSpokeApps() {
 // Session manager
 const sessions = new Map();
 
+const testQueue = new TestQueue({ concurrency: skillConfig.testConcurrency });
+
 // A tracked session owns its port whatever its status says. Status is a report the daemon
 // writes about a process it cannot see into — it has read `crashed` for a session whose
 // process was alive and serving 200s, and it necessarily reads dead for the window inside
@@ -1848,6 +1855,114 @@ async function main() {
         return;
       }
 
+      // Test-run queue. Registered above the /sessions/:id regex so these paths are not read as
+      // session ids. Deadlines are swept on every request as well as on a timer, so a queue that
+      // is being polled cannot sit on a stale slot between ticks.
+      if (path.startsWith('/test-runs')) {
+        testQueue.sweep();
+
+        if (path === '/test-runs' && req.method === 'GET') {
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            runs: testQueue.list(),
+            concurrency: testQueue.concurrency,
+            paused: testQueue.paused,
+          }));
+          return;
+        }
+
+        if (path === '/test-runs' && req.method === 'POST') {
+          let parsed;
+          try {
+            parsed = JSON.parse(await readBody(req) || '{}');
+          } catch (e) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+            return;
+          }
+          if (!parsed.worktree) {
+            res.writeHead(400);
+            res.end(JSON.stringify({
+              error: 'worktree path required',
+              usage: '{ "worktree": "/path/to/worktree", "args": ["path/to/one.test.ts"] }',
+            }));
+            return;
+          }
+          res.writeHead(200);
+          res.end(JSON.stringify(testQueue.request({
+            worktree: resolve(parsed.worktree),
+            args: Array.isArray(parsed.args) ? parsed.args : [],
+          })));
+          return;
+        }
+
+        if (path === '/test-runs/config') {
+          if (req.method === 'POST') {
+            let parsed;
+            try {
+              parsed = JSON.parse(await readBody(req) || '{}');
+            } catch (e) {
+              res.writeHead(400);
+              res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+              return;
+            }
+            try {
+              testQueue.setConcurrency(parsed.concurrency);
+            } catch (err) {
+              res.writeHead(400);
+              res.end(JSON.stringify({ error: err.message }));
+              return;
+            }
+          }
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            concurrency: testQueue.concurrency,
+            paused: testQueue.paused,
+            queued: testQueue.order.length,
+            running: testQueue.running.size,
+          }));
+          return;
+        }
+
+        const runMatch = path.match(/^\/test-runs\/([^/]+)(\/logs)?$/);
+        if (runMatch) {
+          const [, runId, logsSuffix] = runMatch;
+
+          if (logsSuffix && req.method === 'GET') {
+            const since = parseInt(url.searchParams.get('since') || '-1', 10);
+            const logs = testQueue.logs(runId, since);
+            if (logs === null) {
+              res.writeHead(404);
+              res.end(JSON.stringify({ error: 'Unknown run', id: runId }));
+              return;
+            }
+            res.writeHead(200);
+            res.end(JSON.stringify({ logs }));
+            return;
+          }
+
+          const run =
+            req.method === 'DELETE' ? testQueue.cancel(runId) :
+            req.method === 'GET' ? testQueue.get(runId) : undefined;
+
+          if (run === undefined) {
+            res.writeHead(405);
+            res.end(JSON.stringify({ error: 'Method not allowed', path }));
+            return;
+          }
+          // The 404 is load-bearing: it is how `test wait` learns the daemon was restarted and its
+          // run is gone, instead of polling for a result nobody will produce.
+          if (run === null) {
+            res.writeHead(404);
+            res.end(JSON.stringify({ error: 'Unknown run', id: runId }));
+            return;
+          }
+          res.writeHead(200);
+          res.end(JSON.stringify(run));
+          return;
+        }
+      }
+
       // GET /sessions - List all sessions
       if (path === '/sessions' && req.method === 'GET') {
         res.writeHead(200);
@@ -2077,6 +2192,7 @@ async function main() {
           await session.stop();
         }
         sessions.clear();
+        testQueue.shutdown();
         await rgbProxy.stop();
         await authHub.stop();
         await stopSpokeApps();
@@ -2101,6 +2217,11 @@ async function main() {
       res.end(JSON.stringify({ error: err.message }));
     }
   };
+
+  // Deadlines still have to advance when nobody is polling — an abandoned queue is exactly the
+  // case where no requests arrive.
+  const testSweeper = setInterval(() => testQueue.sweep(), 5000);
+  testSweeper.unref();
 
   // Start server - bind to localhost only for security
   const server = http.createServer(handler);
@@ -2144,6 +2265,7 @@ async function main() {
     for (const session of sessions.values()) {
       await session.stop();
     }
+    testQueue.shutdown();
     await rgbProxy.stop();
     await authHub.stop();
     await stopSpokeApps();
@@ -2157,6 +2279,7 @@ async function main() {
     for (const session of sessions.values()) {
       await session.stop();
     }
+    testQueue.shutdown();
     await rgbProxy.stop();
     await authHub.stop();
     await stopSpokeApps();
