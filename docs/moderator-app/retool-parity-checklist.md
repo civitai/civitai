@@ -748,7 +748,10 @@ Retool's board is the triage entry point, and the walkthrough's colour quote lan
 - [ ] **The database cutover itself** — four scripts in `apps/moderator/moderator-db/cutover/`, run in
       order, with Retool writes frozen from the export until the app is repointed. `04-verify.sql` is the
       gate; a non-zero exit means stop.
-- [ ] Grant five new pages on `/admin`.
+- [ ] **Grant the new pages on `/admin`.** A new page has no `AppPageAccess` rows, so only
+      `moderator:admin` can see it until someone ticks the boxes — it is invisible rather than broken,
+      which is the hard failure to notice. `/models/minor-hash-matches` (2026-08-13) is the newest and
+      is **not yet granted to anyone**.
 - [x] **Re-extract every export while access remains** — done 2026-08-10; all nine carry option sets
       and layout geometry, and sanitized copies are committed under `retool-exports/raw/`.
 - [x] 🔒 **Support-tool credential** — never committed (verified 2026-08-10). Ticket-body hygiene is an
