@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildScalarPatch,
   isOnsiteEdit,
+  listingEditHeaderCopy,
   editContextToForm,
   hasScalarChanges,
   isApprovedEdit,
@@ -241,5 +242,54 @@ describe('isApprovedEdit', () => {
     expect(isApprovedEdit(makeCtx({ status: 'approved' }))).toBe(true);
     expect(isApprovedEdit(makeCtx({ status: 'draft' }))).toBe(false);
     expect(isApprovedEdit(makeCtx({ status: 'pending' }))).toBe(false);
+  });
+});
+
+/**
+ * 🔴 THE HEADER BLURB, keyed on the SAME flag as the wizard shape.
+ *
+ * The defect this pins was observed in production: the canonical editor for an ON-SITE
+ * listing rendered "Update your external-link app. Change the link, details, or
+ * assets…" over an external-link icon, about an app with no link and no URL step. The
+ * wizard SHAPE was already kind-aware; only the header was left behind.
+ */
+describe('listingEditHeaderCopy', () => {
+  it('🔴 the ON-SITE blurb never promises a link', () => {
+    const onsite = listingEditHeaderCopy(false);
+    expect(onsite.kind).toBe('onsite');
+    expect(onsite.blurb).not.toMatch(/\blinks?\b/i);
+    expect(onsite.blurb).not.toMatch(/external/i);
+    expect(onsite.blurb).not.toMatch(/\burl\b/i);
+    // …and it still says what CAN be changed, so the fix is not "delete the sentence".
+    expect(onsite.blurb).toMatch(/details/i);
+    expect(onsite.blurb).toMatch(/assets/i);
+  });
+
+  it('the OFF-SITE blurb is UNCHANGED, character for character', () => {
+    const offsite = listingEditHeaderCopy(true);
+    expect(offsite.kind).toBe('offsite');
+    // 🔴 A LITERAL, not a pattern derived from the implementation. An off-site listing
+    // really does have a link, and this is the string that shipped.
+    expect(offsite.blurb).toBe(
+      'Update your external-link app. Change the link, details, or assets across the steps below, then save.'
+    );
+  });
+
+  it('the two branches render DIFFERENT elements, so a test can pin STATE not spelling', () => {
+    expect(listingEditHeaderCopy(true).testId).not.toBe(listingEditHeaderCopy(false).testId);
+  });
+
+  /**
+   * 🔴 THE SEAM WITH THE WIZARD SHAPE. `showUrlStep` is `!isOnsiteEdit(edit)`, so an
+   * absent kind must yield the OFF-SITE header for the same reason it yields the URL
+   * step — one predicate, one answer. Asserting the composition rather than the two
+   * halves is what stops the header promising a step the wizard does not render.
+   */
+  it('🔴 a header that mentions the link is rendered EXACTLY when the URL step is', () => {
+    for (const ctx of [makeCtx({ kind: 'onsite' }), makeCtx({ kind: 'offsite' }), makeCtx()]) {
+      const showUrlStep = !isOnsiteEdit(ctx);
+      const copy = listingEditHeaderCopy(showUrlStep);
+      expect(/\blink\b/i.test(copy.blurb), `kind=${String(ctx.kind)}`).toBe(showUrlStep);
+    }
   });
 });
