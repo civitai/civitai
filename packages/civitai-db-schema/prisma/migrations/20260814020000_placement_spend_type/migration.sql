@@ -21,18 +21,56 @@
 -- pending, so the cost of leaving them alone is one placement settling in the
 -- currency it is actually funded in.
 --
--- ⚠️ ROLLING THE APP BACK IS NOT SAFE while any green placement is pending.
--- Forward is fine — an old pod writes no `spendType`, and NULL settles as
--- yellow over an escrow that really is yellow. Backwards is not: a new pod
--- holds green in GREEN and stamps `spendType='green'`, but old settlement code
--- names no account, so it pays the owner YELLOW out of the escrow account while
--- that placement's escrow is green. The escrow's yellow is drained, the green is
--- stranded with no ledger row to find it by, and the owner is paid a currency
--- nobody funded. Before rolling back, settle or expire every row matching:
+-- ⚠️ THE DANGEROUS COMBINATION IS A GREEN PLACEMENT SETTLED BY OLD CODE, and it
+-- is reachable in BOTH directions. New code holds green in GREEN; old settlement
+-- code names no account, so it pays the owner YELLOW out of the escrow account
+-- while that placement's escrow is green. The escrow's pooled yellow — other
+-- placements' holds — is drained, the green is stranded with no leg that will
+-- ever draw it, and the receipt stops any later run from correcting it.
 --
---   SELECT id FROM "Placement" WHERE status = 'pending' AND "spendType" = 'green';
+--   created by │ settled by │ escrow │ pays   │
+--   ───────────┼────────────┼────────┼────────┤
+--   old        │ old        │ yellow │ yellow │ safe
+--   old        │ new        │ yellow │ yellow │ safe (NULL -> yellow)
+--   new        │ new        │ green  │ green  │ safe
+--   new        │ OLD        │ green  │ YELLOW │ ✗
+--
+-- A canary is a mixed-pod window by construction, so the last row happens on the
+-- way FORWARD too, not only on rollback — and measured on prod, owners have
+-- approved 34 seconds after a placement was made, well inside one. **Turn the
+-- `sticker-placement` and `remix-gallery` Flipt flags OFF before deploying and
+-- back ON only after the canary is fully promoted.** Both surfaces are flag-
+-- gated and mod-only today, so the pause costs nothing.
+--
+-- Expiry and removals are safe in both directions: they refund through the hold's
+-- own ledger legs, which reverse in kind without naming an account.
+--
+-- Before rolling the app back, drain green placements that old code could still
+-- settle. `status = 'pending'` alone is NOT enough — an approved placement whose
+-- payout legs are only partly receipted is resumed by the unpaid-leg sweep:
+--
+--   SELECT DISTINCT p.id, p.status
+--   FROM "Placement" p
+--   LEFT JOIN "PlacementTransaction" t ON t."placementId" = p.id
+--   WHERE p."spendType" = 'green'
+--     AND ( p.status = 'pending'
+--        OR (t.kind IN ('toOwner','feeToOwner','toSeller') AND t."transactionId" IS NULL) );
+--
+-- Settle those under NEW code, or expire them; then stop new placements (flags
+-- off) so the set cannot refill while the rollback rolls.
+--
+-- ⚠️ NEVER DROP THIS COLUMN on a rollback. Old Prisma clients emit explicit
+-- column lists, so an extra column is inert to them — leaving it costs nothing.
+-- Dropping it destroys the only record of which escrows hold green, and makes a
+-- later roll-forward pay yellow out of them with no way to find them.
 
--- 1.
+-- 1 and 2 together: a dropped session between them leaves the column with no
+-- CHECK, which is the second of the two guards keeping a currency the escrow
+-- cannot hold out of a payout. The whole block is idempotent, so a retry after a
+-- failure is safe.
+SET lock_timeout = '5s';
+BEGIN;
+
 ALTER TABLE "Placement" ADD COLUMN IF NOT EXISTS "spendType" TEXT;
 
 -- 2. The same shape as "Placement_removedBy_check": the column is TEXT because
@@ -48,18 +86,39 @@ ALTER TABLE "Placement" DROP CONSTRAINT IF EXISTS "Placement_spendType_check";
 ALTER TABLE "Placement" ADD CONSTRAINT "Placement_spendType_check"
   CHECK ("spendType" IS NULL OR "spendType" IN ('green', 'yellow'));
 
--- 3. VERIFY. Step 1 is a no-op on retry and step 2 reports success either way,
---    so confirm both landed rather than reading a clean exit as proof:
+COMMIT;
+
+-- 3. VERIFY THE SCHEMA. Step 1 is a no-op on retry and step 2 reports success
+--    either way, so confirm both landed rather than reading a clean exit as
+--    proof. Both must return exactly one row:
 --
 --      SELECT column_name, is_nullable, data_type
 --      FROM information_schema.columns
 --      WHERE table_name = 'Placement' AND column_name = 'spendType';
 --
---      SELECT conname, pg_get_constraintdef(oid)
+--      SELECT conname, pg_get_constraintdef(oid), convalidated
 --      FROM pg_constraint
 --      WHERE conrelid = '"Placement"'::regclass AND conname = 'Placement_spendType_check';
 --
---    Expect one row each: a nullable `text` column, and a CHECK naming both
---    'green' and 'yellow'. A missing constraint is not cosmetic — it is the only
---    thing standing between a bad write and a payout in a currency that does not
---    exist.
+--    Expect a nullable `text` column, and a CHECK naming both 'green' and
+--    'yellow' with `convalidated = true`. A missing constraint is not cosmetic —
+--    it is the second of the two guards standing between a bad write and a
+--    payout in a currency the escrow cannot hold.
+--
+-- 4. VERIFY THE BEHAVIOUR, after the deploy and after the flags go back on.
+--    Everything above proves the schema; none of it proves the app is writing
+--    the column. Make one placement, then:
+--
+--      SELECT id, status, "spendType", "expiresAt"
+--      FROM "Placement" ORDER BY id DESC LIMIT 5;
+--
+--    The new row must carry a `spendType` matching the domain it was made on
+--    (green on the SFW domain, yellow otherwise) and a non-NULL `expiresAt`.
+--
+--    Standing check afterwards — this should never return a row created after
+--    the deploy, because such a row was charged in one currency and will settle
+--    in another:
+--
+--      SELECT id, "createdAt" FROM "Placement"
+--      WHERE "expiresAt" IS NOT NULL AND "spendType" IS NULL
+--        AND "createdAt" > '<deploy time>';

@@ -286,6 +286,10 @@ const givenPlacement = (overrides: Record<string, unknown> = {}) => {
     status: 'pending',
     removedBy: null,
     amount: 1000,
+    // Present and NULL, as the column is on a real row. Omitting it made the
+    // double answer `undefined` where Postgres answers NULL, which is a
+    // different thing to a `where: { spendType: null }` predicate.
+    spendType: null,
     expiresAt: null,
     resolvedAt: null,
     resolvedById: null,
@@ -350,7 +354,21 @@ beforeEach(() => {
   configState.shares = { seller: 0, platform: 0.3 };
   createMultiAccountBuzzTransaction.mockResolvedValue({ transactionCount: 2, totalAmount: 0 });
   createBuzzTransaction.mockResolvedValue({ transactionId: 'buzz-tx' });
-  refundMultiAccountTransaction.mockResolvedValue({ externalTransactionIdPrefix: 'refund-tx' });
+  // The real response carries the legs it reversed. The double used to return
+  // only the prefix, which let a refund that moved NOTHING look identical to one
+  // that moved everything — the exact discrepancy the service now refuses on.
+  refundMultiAccountTransaction.mockResolvedValue({
+    externalTransactionIdPrefix: 'refund-tx',
+    refundedTransactions: [
+      {
+        originalTransactionId: 'orig',
+        refundTransactionId: 'refund-tx',
+        accountType: 'User',
+        amount: 1,
+      },
+    ],
+    totalRefunded: 1,
+  });
 });
 
 describe('holding the escrow', () => {
@@ -438,6 +456,42 @@ describe('holding the escrow', () => {
         amount: 1000,
       })
     ).rejects.toThrow('not a placement spend type');
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  // The currency write rides the `expiresAt: null` stamp, which a second run
+  // does not match — but this function is deliberately idempotent, so a row that
+  // already has a deadline must still end up carrying its currency. Otherwise
+  // the holds charge green against a row that settles yellow.
+  it('records the currency even when the deadline was already stamped', async () => {
+    const placement = givenPlacement({ expiresAt: new Date('2030-01-01') });
+
+    await holdPlacementEscrow({
+      spendType: 'green',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    expect(placement.spendType).toBe('green');
+  });
+
+  // The one case that cannot be reconciled: the escrow can hold only one
+  // currency, so charging a second one against the same row would strand
+  // whichever the settlement does not pay.
+  it('refuses to charge a currency the row is not held in', async () => {
+    givenPlacement({ expiresAt: new Date('2030-01-01'), spendType: 'yellow' });
+
+    await expect(
+      holdPlacementEscrow({
+        spendType: 'green',
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 1000,
+      })
+    ).rejects.toThrow('refusing to charge green');
     expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
   });
 
@@ -950,8 +1004,19 @@ describe('two callers on one leg', () => {
     expect(feeCalls).toHaveLength(1);
     // The loser fails rather than reporting an escrow it did not take — its
     // caller must not go on to create a placement backed by nothing.
-    expect(firstResult.status).toBe('fulfilled');
-    expect(secondResult.status).toBe('rejected');
+    //
+    // WHICH caller loses is not the property, and neither is "exactly one wins".
+    // Whoever reaches the row second spends an extra query reconciling the
+    // currency, so how the two interleave at the per-leg locks is an artefact of
+    // how many awaits precede them — they can end up holding one leg each, and
+    // then BOTH refuse. That is still safe: a refusal sends the caller into its
+    // compensating expire, which refunds the holds that were taken.
+    //
+    // What must never happen is a caller reporting success over an escrow it did
+    // not take. So: no more than one success, and only one Buzz call.
+    const fulfilled = [firstResult, secondResult].filter((r) => r.status === 'fulfilled');
+    expect(fulfilled.length).toBeLessThanOrEqual(1);
+    expect([firstResult.status, secondResult.status]).toContain('rejected');
   });
 });
 

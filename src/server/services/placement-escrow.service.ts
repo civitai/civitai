@@ -165,6 +165,12 @@ export const listExhaustedLegs = ({ limit = 100 }: { limit?: number } = {}) =>
       attempts: true,
       lastAttemptAt: true,
       lastError: true,
+      // The currency, because escrow is no longer yellow-only. An operator
+      // releasing a stuck leg by hand can read every other field and still pay
+      // the wrong kind — the bank does not refuse it, so that mints one currency
+      // and strands the other with nothing left to report it. NULL means the row
+      // predates the column and its escrow really is yellow.
+      placement: { select: { spendType: true } },
     },
     orderBy: { lastAttemptAt: 'desc' },
     take: limit,
@@ -430,6 +436,34 @@ export async function holdPlacementEscrow({
     where: { id: placementId, expiresAt: null },
     data: { expiresAt: new Date(Date.now() + fallbackHours * 3_600_000), spendType },
   });
+
+  // The stamp is conditional; the charge below is not. A second run — this
+  // function is deliberately idempotent, so a hold retried after a lock failure
+  // re-enters here — must still leave the currency recorded, or the holds below
+  // charge in green against a row whose NULL `spendType` settles as yellow,
+  // stranding the green with no leg naming it.
+  //
+  // Recording it separately rather than refusing keeps the re-run a no-op. What
+  // is refused is the one case that cannot be reconciled: a row already carrying
+  // a DIFFERENT currency, where the escrow can only hold one of them.
+  if (!stamped.count) {
+    const recorded = await dbWrite.placement.updateMany({
+      where: { id: placementId, spendType: null },
+      data: { spendType },
+    });
+
+    if (!recorded.count) {
+      const row = await dbWrite.placement.findUnique({
+        where: { id: placementId },
+        select: { spendType: true },
+      });
+
+      if (row?.spendType !== spendType)
+        throw new Error(
+          `placement escrow: placement ${placementId} is held in ${row?.spendType}, refusing to charge ${spendType}`
+        );
+    }
+  }
 
   const config = await getPlacementConfig();
   const configured = config.expiryHours(surface);
@@ -738,6 +772,19 @@ async function payOutPlacement(placement: PlacementRow) {
         },
         BUZZ_CALL_OPTIONS
       );
+
+      // The mirror of the hold's `transactionCount === 0` check, and it matters
+      // more here: this is the only path that returns a placer's money. Without
+      // it a refund that moved nothing still gets a receipt, and a receipted leg
+      // is invisible to BOTH recovery queries — the unpaid sweep skips it
+      // because `transactionId` is set, and `listExhaustedLegs` skips it for the
+      // same reason. The money would sit in escrow with nothing able to find it.
+      //
+      // Zero rather than an exact-amount assertion: the service reverses per
+      // original leg, and refusing a short-but-real refund would burn attempts
+      // and strand the leg for a discrepancy a human should read, not a retry.
+      if (!result.refundedTransactions.length)
+        throw new Error(`placement escrow: ${kind} refunded nothing for placement ${placement.id}`);
 
       return result.externalTransactionIdPrefix;
     });

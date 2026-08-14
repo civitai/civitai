@@ -82,13 +82,18 @@ export function getAllowedAccountTypes(
  * Shared with the unpublish-refund guard, which has no other way to learn the payout account — the
  * ledger's multi-transaction listing reports each leg by the account the BUYER spent from.
  *
- * ⚠️ Green paying out yellow is NOT a decision — the charge named no destination account until
- * #3911's sibling change, so the buzz service applied its yellow default and every green purchase
- * since 2025-10-30 credited the seller yellow. Making it pay in kind is a two-part change: the two
- * readers here must move together, because this function is also what sizes a refund, and the
- * refund reverses into whichever account was CREDITED. Change the charge alone and the guard
- * checks yellow for money now held in green — passing when it should block, and letting the
- * reversal take a green balance negative.
+ * ⚠️ Green paying out yellow is NOT a decision — the charge names no destination account, so the
+ * buzz service applies its yellow default (`buzz.service.ts`), and every green purchase since
+ * 2025-10-30 has credited the seller yellow. Making it pay in kind is a two-part change: this
+ * function is ALSO what sizes the unpublish refund, so change the charge alone and the guard checks
+ * yellow for money now held in green — blocking a creator who can afford it, or passing one who
+ * cannot, since the ledger exempts refunds from its own sufficiency check.
+ *
+ * Before writing that fix, confirm which account a refund DEBITS against the buzz service rather
+ * than reasoning from this comment: sampled prod refunds credit the account the payer was debited
+ * from, and the seller side is unverified here. The listing this guard reads reports each leg by
+ * the BUYER's account and carries no destination, which is why the real fix is to record the payout
+ * account per purchase — the way `Placement.spendType` now does.
  */
 export function paidAccessPayoutAccount(spendType: BuzzSpendType): BuzzSpendType {
   return spendType === 'blue' ? 'blue' : 'yellow';
