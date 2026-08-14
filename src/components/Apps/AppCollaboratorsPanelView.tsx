@@ -261,7 +261,8 @@ function OwnerTransferSection({
       {/* 🔴 THE REFUSAL, UP FRONT — before a recipient is chosen, not after.
           Rendered from the LISTING, so it is on screen the moment the tab opens. The
           message is the server's own constant, not a paraphrase: the owner reads the same
-          sentence here that the mutation would have returned, including its remedy. */}
+          sentence here that the mutation would have returned. It states a CONSTRAINT and
+          instructs nothing — there is no unlink flow to send them to; see the constant. */}
       {refusedForConnectClient ? (
         <Alert
           color="yellow"
