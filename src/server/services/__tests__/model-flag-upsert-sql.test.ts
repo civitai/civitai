@@ -79,9 +79,28 @@ function splitTopLevel(input: string): string[] {
   return parts;
 }
 
+/**
+ * Index of `needle`, or throw.
+ *
+ * 🔴 This exists because `indexOf` FAILS OPEN here. It returns -1 when the
+ * clause is missing, and `String.prototype.indexOf` CLAMPS a negative start
+ * position to 0 — so `parenGroupAfter(text, -1)` used to quietly re-scan from
+ * the top of the statement and hand back a perfectly valid group belonging to
+ * a different clause. A misspelled `INSER INTO` then passed every structural
+ * assertion below. An anchor that cannot be missing is the point; a keyword
+ * typo in raw SQL is the exact defect class this file exists for.
+ */
+function anchorOf(sql: string, needle: string | RegExp): number {
+  const index = typeof needle === 'string' ? sql.indexOf(needle) : sql.search(needle);
+  if (index < 0) throw new Error(`generated SQL is missing ${needle}:\n${sql}`);
+  return index;
+}
+
 /** Body of the first parenthesised group starting at `fromIndex`. */
 function parenGroupAfter(sql: string, fromIndex: number): string {
+  if (fromIndex < 0) throw new Error('parenGroupAfter called with a missing anchor');
   const open = sql.indexOf('(', fromIndex);
+  if (open < 0) throw new Error('generated SQL has no parenthesised group after the anchor');
   let depth = 0;
   for (let i = open; i < sql.length; i++) {
     if (sql[i] === '(') depth++;
@@ -101,11 +120,41 @@ describe('buildModelFlagUpsert — structure', () => {
     expect(statement.text).toContain('$1');
   });
 
+  it('has each SQL clause exactly once, so a keyword typo cannot slip through', () => {
+    const { text } = buildModelFlagUpsert({ modelId: 1, scanResult: SCAN_RESULT });
+
+    // A misspelled keyword (`INSER INTO`, `DO UPDATED`, `ON CONFLICTS`) is a
+    // text-only corruption that every shape assertion below happily tolerates,
+    // and it is the same class as the punctuation defects this file exists
+    // for. Counting occurrences rather than testing presence also catches a
+    // doubled keyword (`VALUES VALUES`), which an anchor would just skip past.
+    // Counted as BARE TOKENS, not as `VALUES\s*\(`-style shapes: a shaped
+    // pattern skips the first of a doubled `VALUES VALUES` and matches the
+    // second, reporting one. A bare token count sees two. A typo takes the
+    // count to zero.
+    const clauses: [string, RegExp][] = [
+      ['INSERT', /\bINSERT\b/g],
+      ['INTO', /\bINTO\b/g],
+      ['VALUES', /\bVALUES\b/g],
+      ['CONFLICT', /\bCONFLICT\b/g],
+      ['UPDATE', /\bUPDATE\b/g],
+      ['SET', /\bSET\b/g],
+      ['RETURNING', /\bRETURNING\b/g],
+    ];
+
+    for (const [name, pattern] of clauses) {
+      expect({ clause: name, count: text.match(pattern)?.length ?? 0 }).toEqual({
+        clause: name,
+        count: 1,
+      });
+    }
+  });
+
   it('inserts exactly one value per column', () => {
     const { text } = buildModelFlagUpsert({ modelId: 1, scanResult: SCAN_RESULT });
 
-    const columns = splitTopLevel(parenGroupAfter(text, text.indexOf('INSERT INTO')));
-    const values = splitTopLevel(parenGroupAfter(text, text.indexOf('VALUES')));
+    const columns = splitTopLevel(parenGroupAfter(text, anchorOf(text, /INSERT INTO\s/)));
+    const values = splitTopLevel(parenGroupAfter(text, anchorOf(text, /\bVALUES\s*\(/)));
 
     // Pinned literally rather than derived from `columns.length`, so a column
     // silently dropped from BOTH lists still fails here. The order is pinned
@@ -131,9 +180,10 @@ describe('buildModelFlagUpsert — structure', () => {
   it('assigns every non-key column exactly once in DO UPDATE, with no empty slot', () => {
     const { text } = buildModelFlagUpsert({ modelId: 1, scanResult: SCAN_RESULT });
 
+    const doUpdate = anchorOf(text, /DO UPDATE\s+SET\s/);
     const setClause = text.slice(
-      text.indexOf('SET ', text.indexOf('DO UPDATE')) + 'SET '.length,
-      text.indexOf('RETURNING')
+      doUpdate + text.slice(doUpdate).indexOf('SET ') + 'SET '.length,
+      anchorOf(text, /\bRETURNING\s/)
     );
     const assignments = splitTopLevel(setClause);
 
@@ -144,7 +194,7 @@ describe('buildModelFlagUpsert — structure', () => {
     }
 
     const assigned = assignments.map((a) => a.split('"')[1]);
-    const columns = splitTopLevel(parenGroupAfter(text, text.indexOf('INSERT INTO'))).map((c) =>
+    const columns = splitTopLevel(parenGroupAfter(text, anchorOf(text, /INSERT INTO\s/))).map((c) =>
       c.replaceAll('"', '')
     );
     // Every column except the conflict target is refreshed on conflict.
@@ -154,7 +204,7 @@ describe('buildModelFlagUpsert — structure', () => {
   it('writes SQL NULL — not a JSON object — when details are absent', () => {
     const { text, values } = buildModelFlagUpsert({ modelId: 1, scanResult: SCAN_RESULT });
 
-    const valueSlots = splitTopLevel(parenGroupAfter(text, text.indexOf('VALUES')));
+    const valueSlots = splitTopLevel(parenGroupAfter(text, anchorOf(text, /\bVALUES\s*\(/)));
     // `Prisma.JsonNull` interpolates as a bound parameter and lands as `{}`.
     expect(valueSlots).toContain('NULL');
     expect(values).not.toContainEqual({});
@@ -174,19 +224,22 @@ describe('buildModelFlagUpsert — structure', () => {
  *
  * 🔴 What this does NOT cover, so nobody reads it as closing the class: these
  * cases read `statement.values`, so anything living only in the statement TEXT
- * has to be caught elsewhere. Measured over a 25-mutant battery, exactly three
+ * has to be caught elsewhere. Over the 31 mutants measured so far, three
  * corruptions survive the whole always-on suite and are caught only by the
  * execution arm — i.e. never in CI:
  *
  *   - the table name
- *   - the ON CONFLICT target
+ *   - the ON CONFLICT target column
  *   - narrowing `RETURNING *`
  *
- * Everything else text-only IS covered without a database: the column list's
- * order and contents (pinned by the shape suite above), `DO UPDATE` vs
- * `DO NOTHING`, a commented-out SET clause, and all three original punctuation
- * defects. Do not treat a green always-on run as proof the statement is
- * correct; run the execution arm when you change it.
+ * The rest of the text-only space that battery covers IS caught without a
+ * database: the column list's order and contents, `DO UPDATE` vs `DO NOTHING`,
+ * a commented-out SET clause, a misspelled or doubled SQL keyword, a cast-name
+ * typo, and all three original punctuation defects. That list is a measurement
+ * over the mutants someone thought of, NOT a proof about the whole grammar —
+ * two earlier rounds each found survivors the previous battery had missed. Do
+ * not treat a green always-on run as proof the statement is correct; run the
+ * execution arm when you change it.
  */
 describe('buildModelFlagUpsert — value binding', () => {
   // Measured against the built statement, not assumed. `Prisma.sql`NULL`` is
@@ -254,9 +307,9 @@ describe('buildModelFlagUpsert — value binding', () => {
       true,
     ]);
     // A `::text` cast would store the payload as a string, not queryable jsonb.
-    expect(text).toContain('::jsonb');
+    expect(text).toMatch(/::jsonb\b/);
     // New flags must land Pending or they never reach the moderator queue.
-    expect(text).toContain('::"ModelFlagStatus"');
+    expect(text).toMatch(/::"ModelFlagStatus"(?!\w)/);
   });
 });
 

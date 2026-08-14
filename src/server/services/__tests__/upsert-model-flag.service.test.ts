@@ -89,6 +89,9 @@ describe('upsertModelFlag', () => {
     await expect(upsertModelFlag({ modelId: 7, scanResult: FLAGGED })).rejects.toThrow(
       'relation "ModelFlag" does not exist'
     );
+    // Without this the test also passes if the service threw that same message
+    // BEFORE reaching the query — a different bug wearing the same error.
+    expect(mockQueryRaw).toHaveBeenCalledTimes(1);
   });
 
   it('forwards modelId, every flag and details through to the statement', async () => {
