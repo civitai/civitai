@@ -1,11 +1,13 @@
 import {
   actOnRemixGallerySubmissionSchema,
+  declineOutOfBandRemixGallerySubmissionsSchema,
   actOnStickerPlacementsSchema,
   createStickerPlacementSchema,
   getPlacementSpaceRowSchema,
   getPlacementSpaceSchema,
   countPendingPlacementsFromSchema,
   getPlacementSettlementStatesSchema,
+  getMyRemixGallerySubmissionsSchema,
   getPendingRemixGallerySubmissionsSchema,
   getPendingStickerPlacementsSchema,
   getRemixGallerySchema,
@@ -50,6 +52,7 @@ import {
 } from '~/server/services/sticker-placement.service';
 import {
   actOnRemixGallerySubmission,
+  declineOutOfBandRemixGallerySubmissions,
   createRemixGallerySubmission,
   getMyRemixGallerySubmissions,
   getPendingRemixGallerySubmissions,
@@ -60,7 +63,10 @@ import {
 } from '~/server/services/remix-gallery.service';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import type { PlacementSurface } from '~/shared/utils/placement';
 import type { Context } from '~/server/createContext';
 
@@ -119,6 +125,17 @@ function assertSurfaceEnabled(ctx: Context, surface: PlacementSurface) {
  */
 const viewerBrowsingLevel = (ctx: Context, requested: number) =>
   ctx.features.isGreen ? requested & sfwBrowsingLevelsFlag : requested;
+
+/**
+ * What this domain may be SENT, as opposed to what the viewer asked for.
+ *
+ * The review queues carry no browsing level by design — an owner has to see what
+ * is waiting on them whatever their own settings say — which makes them the one
+ * path that hands an above-ceiling asset to a SFW client. Blur is not that
+ * control: it is built from the viewer's own level and never reads the domain's.
+ */
+const domainServableLevels = (ctx: Context) =>
+  ctx.features.isGreen ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
 
 export const placementRouter = router({
   getSpace: publicProcedure
@@ -282,11 +299,14 @@ export const placementRouter = router({
     .input(placerSchema)
     .mutation(({ input }) => restorePlacementPrivileges(input.userId)),
 
-  getPending: protectedProcedure
-    .input(getPendingStickerPlacementsSchema)
-    .query(({ input, ctx }) =>
-      getPendingStickerPlacements({ ownerId: ctx.user.id, cursor: input.cursor })
-    ),
+  getPending: protectedProcedure.input(getPendingStickerPlacementsSchema).query(({ input, ctx }) =>
+    getPendingStickerPlacements({
+      ownerId: ctx.user.id,
+      cursor: input.cursor,
+      domainLevels: domainServableLevels(ctx),
+      viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
+    })
+  ),
 
   // How many pending placements blocking someone would decline, so the confirm
   // dialog can say. Advisory by construction — holding it accurate across a
@@ -327,6 +347,7 @@ export const placementRouter = router({
       getRemixGalleryVisibility({
         hostImageId: input.imageId,
         browsingLevel: viewerBrowsingLevel(ctx, input.browsingLevel),
+        domainLevels: domainServableLevels(ctx),
         // The service only counts pending submissions when this matches the
         // space owner, so a signed-out or unrelated viewer never learns how
         // many someone has waiting.
@@ -356,6 +377,21 @@ export const placementRouter = router({
       })
     ),
 
+  /**
+   * Ungated for the same reason as the single action above: an owner must be
+   * able to clear submissions their own rule should never have taken, whatever
+   * the flag says.
+   *
+   * `isModerator` is deliberately not passed. This resolves a set from a
+   * gallery's own rule and settles every row in it — a moderator running it on
+   * someone else's gallery would be a bulk action attributed to the owner.
+   */
+  declineOutOfBandRemixGallerySubmissions: protectedProcedure
+    .input(declineOutOfBandRemixGallerySubmissionsSchema)
+    .mutation(({ input, ctx }) =>
+      declineOutOfBandRemixGallerySubmissions({ ...input, userId: ctx.user.id })
+    ),
+
   // Also ungated: a submitter must be able to get their Buzz back out of escrow
   // whatever the flag says.
   retractRemixGallerySubmission: protectedProcedure
@@ -378,10 +414,18 @@ export const placementRouter = router({
         ownerId: ctx.user.id,
         hostImageId: input.hostImageId,
         cursor: input.cursor,
+        domainLevels: domainServableLevels(ctx),
+        viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
       })
     ),
 
-  getMyRemixGallerySubmissions: protectedProcedure.query(({ ctx }) =>
-    getMyRemixGallerySubmissions({ placerId: ctx.user.id })
-  ),
+  getMyRemixGallerySubmissions: protectedProcedure
+    .input(getMyRemixGallerySubmissionsSchema)
+    .query(({ input, ctx }) =>
+      getMyRemixGallerySubmissions({
+        placerId: ctx.user.id,
+        domainLevels: domainServableLevels(ctx),
+        viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
+      })
+    ),
 });

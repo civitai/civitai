@@ -13,12 +13,16 @@ import {
 import { IconExternalLink } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { Meta } from '~/components/Meta/Meta';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
+import { WithheldThumb } from '~/components/RemixGallery/SubmissionPair';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
+import { useServerDomains } from '~/providers/AppProvider';
+import { syncAccount } from '~/utils/sync-account';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
@@ -32,9 +36,16 @@ import { trpc } from '~/utils/trpc';
  * and to clear a backlog in one pass.
  */
 export default function StickerPlacements() {
+  // Marked on each row rather than filtered on: a placement hidden for being
+  // outside your own band still expires, and expiry pays the placer back and
+  // costs the owner their fee.
+  const browsingLevel = useBrowsingLevelDebounced();
+  const domains = useServerDomains();
+  const withheldHref = (image: { id: number }) =>
+    syncAccount(`//${domains.red}/images/${image.id}`);
   const { data, isLoading, isError, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.placement.getPending.useInfiniteQuery(
-      {},
+      { browsingLevel },
       { getNextPageParam: (lastPage) => lastPage.nextCursor }
     );
   const [selected, setSelected] = useState<number[]>([]);
@@ -119,22 +130,32 @@ export default function StickerPlacements() {
                     aria-label="Select this placement"
                   />
 
-                  {row.image && (
-                    // `anim={false}` is what keeps a list of these quiet: it
-                    // suppresses the autoplay observer and the autoPlay
-                    // attribute, leaving a poster frame that plays on hover.
-                    // The type has to be the real one — forcing `image` asks the
-                    // CDN to transform a video as a still, which it will not do.
-                    <EdgeMedia
-                      src={row.image.url}
-                      type={row.image.type}
-                      anim={false}
-                      name={row.image.name ?? row.image.id.toString()}
-                      alt={row.image.name ?? undefined}
-                      width={180}
-                      style={{ width: 90, height: 'auto', borderRadius: 6 }}
-                    />
-                  )}
+                  {row.image &&
+                    (row.image.viewable ? (
+                      // `anim={false}` is what keeps a list of these quiet: it
+                      // suppresses the autoplay observer and the autoPlay
+                      // attribute, leaving a poster frame that plays on hover.
+                      // The type has to be the real one — forcing `image` asks the
+                      // CDN to transform a video as a still, which it will not do.
+                      <EdgeMedia
+                        src={row.image.url}
+                        type={row.image.type}
+                        anim={false}
+                        name={row.image.name ?? row.image.id.toString()}
+                        alt={row.image.name ?? undefined}
+                        width={180}
+                        style={{ width: 90, height: 'auto', borderRadius: 6 }}
+                      />
+                    ) : (
+                      // Your own image, on a domain that may not serve it. The
+                      // row stays actionable — the escrow behind it expires
+                      // either way — and the link is the only route left, since
+                      // no asset was sent to reveal.
+                      <WithheldThumb
+                        nsfwLevel={row.image.nsfwLevel}
+                        href={withheldHref(row.image)}
+                      />
+                    ))}
 
                   {art && (
                     // Drawn with the placer's own opacity and flip, not at full

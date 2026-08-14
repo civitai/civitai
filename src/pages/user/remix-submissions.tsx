@@ -4,24 +4,24 @@ import {
   Badge,
   Button,
   Card,
-  Center,
   Container,
   Group,
   Loader,
-  Skeleton,
   Stack,
   Tabs,
   Text,
   Title,
-  Tooltip,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { IconCheck, IconExternalLink, IconPhotoOff, IconX } from '@tabler/icons-react';
+import { IconCheck, IconX } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useServerDomains } from '~/providers/AppProvider';
+import { syncAccount } from '~/utils/sync-account';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { Meta } from '~/components/Meta/Meta';
-import { SubmissionThumb } from '~/components/RemixGallery/SubmissionThumb';
+import { SubmissionPair } from '~/components/RemixGallery/SubmissionPair';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
@@ -59,6 +59,11 @@ const agedLabel = (at: Date | string) => {
  */
 export default function RemixSubmissions() {
   const router = useRouter();
+  // The queue marks rows against this rather than filtering on it. A submission
+  // hidden for being outside the owner's band still expires, and expiry costs
+  // the submitter nothing and the owner their fee — so it has to be visible
+  // enough to act on.
+  const browsingLevel = useBrowsingLevelDebounced();
   const tab: TabValue = isTabValue(router.query.tab) ? router.query.tab : 'received';
 
   const setTab = (value: string | null) =>
@@ -78,11 +83,11 @@ export default function RemixSubmissions() {
     hasNextPage,
     isFetchingNextPage,
   } = trpc.placement.getPendingRemixGallerySubmissions.useInfiniteQuery(
-    {},
+    { browsingLevel },
     { getNextPageParam: (lastPage) => lastPage.nextCursor }
   );
   const { data: sent, isLoading: sentLoading } =
-    trpc.placement.getMyRemixGallerySubmissions.useQuery();
+    trpc.placement.getMyRemixGallerySubmissions.useQuery({ browsingLevel });
 
   const receivedRows = received?.pages.flatMap((page) => page.items) ?? [];
   const waiting = receivedRows.length;
@@ -145,6 +150,16 @@ export default function RemixSubmissions() {
   );
 }
 
+/**
+ * Where to send someone whose domain will not serve an image. The queue keeps
+ * the row so the escrow can still be answered; this is the only route left to
+ * the picture itself, since the withheld tile has no pixels to reveal.
+ */
+function useWithheldHref() {
+  const domains = useServerDomains();
+  return (image: { id: number }) => syncAccount(`//${domains.red}/images/${image.id}`);
+}
+
 type ReceivedRow = RouterOutput['placement']['getPendingRemixGallerySubmissions']['items'][number];
 
 function ReceivedTab({
@@ -163,6 +178,7 @@ function ReceivedTab({
   onLoadMore: () => void;
 }) {
   const utils = trpc.useUtils();
+  const withheldHref = useWithheldHref();
 
   const act = trpc.placement.actOnRemixGallerySubmission.useMutation({
     onSuccess: (_result, variables) => {
@@ -236,7 +252,16 @@ function ReceivedTab({
         <Card key={row.id} withBorder>
           <Group justify="space-between" wrap="nowrap" align="flex-start">
             <Group gap="sm" wrap="nowrap" align="flex-start">
-              {row.image && <SubmissionThumb image={row.image} />}
+              <SubmissionPair
+                host={row.targetImage}
+                remix={row.image}
+                hostCaption="Yours"
+                remixCaption="Theirs"
+                hostLabel="Open your image in a new tab"
+                remixLabel="Open this remix in a new tab"
+                hostMissing="Your image is no longer available to preview"
+                withheldHref={withheldHref}
+              />
               <Stack gap={4}>
                 <Text size="sm">
                   <Text span fw={600}>
@@ -254,12 +279,6 @@ function ReceivedTab({
                   Sent {agedLabel(row.createdAt)}
                   {row.expiresAt ? ` — expires ${formatDate(row.expiresAt)}` : ''}
                 </Text>
-                <Anchor component={Link} href={`/images/${row.targetId}`} size="xs">
-                  <Group gap={4} wrap="nowrap">
-                    <IconExternalLink size={12} />
-                    See your image
-                  </Group>
-                </Anchor>
               </Stack>
             </Group>
 
@@ -309,6 +328,7 @@ type SentRow = RouterOutput['placement']['getMyRemixGallerySubmissions'][number]
 
 function SentTab({ rows, isLoading }: { rows: SentRow[]; isLoading: boolean }) {
   const utils = trpc.useUtils();
+  const withheldHref = useWithheldHref();
 
   const retract = trpc.placement.retractRemixGallerySubmission.useMutation({
     onSuccess: () => {
@@ -362,22 +382,16 @@ function SentTab({ rows, isLoading }: { rows: SentRow[]; isLoading: boolean }) {
         <Card key={row.id} withBorder>
           <Group justify="space-between" wrap="nowrap" align="flex-start">
             <Group gap="sm" wrap="nowrap" align="flex-start">
-              {row.image ? (
-                <SubmissionThumb image={row.image} />
-              ) : (
-                // The row is kept even when its image will not resolve —
-                // unpublished, deleted, flagged — because the withdraw beside it
-                // is the only route back to the escrow. A placeholder says the
-                // preview is gone without implying the submission is.
-                <Tooltip label="This image is no longer available to preview" withArrow>
-                  <div className="relative w-20 shrink-0">
-                    <Skeleton animate={false} className="aspect-square w-full rounded-md" />
-                    <Center className="absolute inset-0">
-                      <IconPhotoOff size={20} className="text-dimmed" />
-                    </Center>
-                  </div>
-                </Tooltip>
-              )}
+              <SubmissionPair
+                host={row.targetImage}
+                remix={row.image}
+                hostCaption="Theirs"
+                remixCaption="Yours"
+                hostLabel="Open the gallery image in a new tab"
+                remixLabel="Open your remix in a new tab"
+                hostMissing="This gallery image is no longer available to preview"
+                withheldHref={withheldHref}
+              />
               <Stack gap={4}>
                 <Group gap="xs">
                   <Badge
@@ -401,12 +415,6 @@ function SentTab({ rows, isLoading }: { rows: SentRow[]; isLoading: boolean }) {
                     ? ` — expires ${formatDate(row.expiresAt)}`
                     : ''}
                 </Text>
-                <Anchor component={Link} href={`/images/${row.targetId}`} size="xs">
-                  <Group gap={4} wrap="nowrap">
-                    <IconExternalLink size={12} />
-                    See the gallery
-                  </Group>
-                </Anchor>
               </Stack>
             </Group>
 

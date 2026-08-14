@@ -311,13 +311,14 @@ type PriceCapTier = 'free' | MembershipTier;
  * What a creator may charge, capped by creator score and membership tier. The
  * creator sets the price; this only ceilings it.
  *
- * ⚠️ The numbers are placeholders pending a product decision. The shape is the
+ * ⚠️ The cap values are placeholders pending a product decision; the 10k
+ * threshold on band 2 is decided and published. The shape is the
  * commitment: read at request time, overridable through `KeyValue` without a
  * deploy, and never written to a placement row.
  */
 export const PLACEMENT_PRICE_CAP_TIERS: PlacementPriceTier[] = [
   { minScore: 0, caps: { free: 100, bronze: 200, silver: 300, gold: 500 } },
-  { minScore: 5_000, caps: { free: 250, bronze: 500, silver: 750, gold: 1_000 } },
+  { minScore: 10_000, caps: { free: 250, bronze: 500, silver: 750, gold: 1_000 } },
   { minScore: 25_000, caps: { free: 500, bronze: 1_000, silver: 1_500, gold: 2_500 } },
   { minScore: 100_000, caps: { free: 1_000, bronze: 2_000, silver: 3_000, gold: 5_000 } },
 ];
@@ -383,20 +384,18 @@ export function placementPriceCaption(
 ): { text: string; warning: boolean } | null {
   if (cap == null) return null;
 
-  if (price > cap)
-    return {
-      text: `${payer} pay ${cap} Buzz — your current cap — until your score or membership raises it`,
-      warning: true,
-    };
-
+  // The amount and nothing else. It sits on the slider's own mark row, between
+  // labels pinned left and right, so a second clause is not a wordier caption —
+  // it is one that wraps into them. The explanations it used to carry (the cap,
+  // the grid) live in the alert below, which has room for them.
+  //
+  // A price over the cap quotes the cap, because that is what a placer is
+  // charged; the colour is what says something is off, and it needs no words.
   const track = placementPriceTrack(surface, cap);
-  if (!onPlacementPriceGrid(price, track))
-    return {
-      text: `${payer} pay ${price} Buzz. The slider moves in ${PLACEMENT_PRICE_STEP}s from ${track.min}, so using it will change this price`,
-      warning: true,
-    };
-
-  return { text: `${payer} pay ${price} Buzz`, warning: false };
+  return {
+    text: `${payer} pay ${Math.min(price, cap)} Buzz`,
+    warning: price > cap || !onPlacementPriceGrid(price, track),
+  };
 }
 
 export function placementPriceTrack(surface: PlacementSurface, cap: number | null) {

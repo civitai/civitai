@@ -199,6 +199,8 @@ export function PlacementSpaceSection() {
             commit(mode, value);
           }}
         />
+        {/* On the marks' row, which only holds while the caption is one short
+            line — see `placementPriceCaption`, which is bounded to the amount. */}
         {caption && (
           <Text size="xs" ta="center" mt={-22} c={caption.warning ? 'yellow' : 'dimmed'}>
             {caption.text}

@@ -30,7 +30,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { RemixGalleryExplainer } from '~/components/RemixGallery/RemixGalleryExplainer';
 import { RemixGalleryManageModal } from '~/components/RemixGallery/RemixGalleryManageModal';
 import { RemixGallerySubmitModal } from '~/components/RemixGallery/RemixGallerySubmitModal';
-import { SubmissionThumb } from '~/components/RemixGallery/SubmissionThumb';
+import { QueueThumb } from '~/components/RemixGallery/SubmissionPair';
 import {
   dedupeGalleryItems,
   galleryDialogImages,
@@ -361,11 +361,14 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
             </Text>
           </Group>
           <Group gap={6} wrap="nowrap" className="overflow-x-auto">
-            {viewerPending.map((pending) =>
-              pending.image ? (
-                <SubmissionThumb key={pending.placementId} image={pending.image} />
-              ) : null
-            )}
+            {viewerPending.map((pending) => (
+              <QueueThumb
+                key={pending.placementId}
+                image={pending.image}
+                label="Open this remix in a new tab"
+                missing="This image is no longer available to preview"
+              />
+            ))}
           </Group>
           {/* No username: it wrapped this to two lines, and it was saying what
               the page already does — this card sits on that creator's own image.
