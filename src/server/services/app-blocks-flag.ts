@@ -397,9 +397,7 @@ export const APP_BLOCKS_DEV_TUNNEL_FLAG = 'app-blocks-dev-tunnel';
  * is a brand-new surface (no existing mod access to preserve), so fail-closed for
  * all until the flag exists is the safe posture.
  */
-export async function isAppBlocksDevTunnelEnabled(opts?: {
-  user?: SessionUser;
-}): Promise<boolean> {
+export async function isAppBlocksDevTunnelEnabled(opts?: { user?: SessionUser }): Promise<boolean> {
   if (!opts?.user) return isFlipt(APP_BLOCKS_DEV_TUNNEL_FLAG);
   const user = opts.user;
   return isFlipt(APP_BLOCKS_DEV_TUNNEL_FLAG, String(user.id), buildFliptContext(user));
@@ -608,40 +606,92 @@ export async function isAppBlocksSharedStorageEnabled(opts?: {
 }
 
 /**
- * Dedicated GLOBAL flag for the PUBLIC EXTERNAL App-store read GA — the mechanism
- * that lets the store serve `kind='offsite'` (external app) listings to the
- * ANONYMOUS public while `kind='onsite'` App Blocks stay gated to the existing
- * mods + app-dev-testers cohort. This is a SEPARATE, ORTHOGONAL axis from the
- * `app-listings` catalog-visibility flag: `app-listings` gates WHO sees the FULL
- * catalog (all kinds); this flag opens ONLY the offsite subset to EVERYONE.
+ * Dedicated flag for the EXTERNAL-ONLY App-store read scope — the mechanism that
+ * lets the store serve `kind='offsite'` (external app) listings to a viewer while
+ * `kind='onsite'` App Blocks stay hidden from them. This is a SEPARATE, ORTHOGONAL
+ * axis from the `app-listings` catalog-visibility flag: `app-listings` gates WHO
+ * sees the FULL catalog (all kinds); this flag opens ONLY the offsite subset.
  *
- * ## Why a GLOBAL boolean (not segmented)
+ * ## Audience: a SEGMENTED tester cohort FIRST, the anonymous public LATER
  *
- * The audience is the anonymous public — an anon viewer carries NO user context,
- * so a segment could never match and the flag would silently stay dark. It is
- * therefore evaluated globally (entityId='global', empty context), mirroring
- * `isAppBlocksPipelineEnabled` / `isAppBlocksRuntimeEnabled` exactly, and MUST be
- * created in Flipt as a PLAIN base-`enabled` boolean (NO segment).
+ * The first audience is a curated tester cohort (logged-in users) who should see
+ * external listings ONLY, with onsite apps held back until a later phase. A
+ * segment can only match when the eval carries the viewer's context, so
+ * {@link isExternalListingsPublicEnabled} is evaluated PER-USER when a user is
+ * present (entityId = user id, context from `buildFliptContext`) — the identical
+ * eval shape `isAppBlocksEnabled` / `isAppListingsEnabled` use.
+ *
+ * 🔴 That does NOT narrow the eventual anonymous-public flip. With NO user the
+ * helper preserves the ORIGINAL global eval (entityId='global', empty context)
+ * verbatim, and a flag created as a PLAIN base-`enabled` boolean (no rollout
+ * rules) resolves `true` for every entityId/context — so a base-enabled flip still
+ * lights the flag for everyone, logged-in or anon. Per-user context only ADDS the
+ * ability to segment; it can never subtract from a base-enabled flag. The two
+ * supported Flipt shapes are therefore:
+ *   - segment rollout (`app-dev-testers` / `moderators` / any user property) →
+ *     matches only for the in-segment logged-in cohort. Anon carries no context,
+ *     so anon stays dark — intended for this phase.
+ *   - plain base `enabled: true` (no rollouts) → matches for EVERYONE incl. anon.
+ * ⚠️ A PERCENTAGE (threshold) rollout is the one shape to avoid: it hashes the
+ * entityId, so the server's `'global'` anon eval and the client gate's
+ * `'anonymous'` anon eval can land on opposite sides. See the SEAM note on
+ * {@link isExternalListingsPublicEnabled}.
  *
  * ## Fail-closed / dark posture
  *
  * The flag does NOT exist in Flipt at merge time (it is created in a LATER phase,
- * base `enabled: false`, only when the offsite store is ready to go public) or if
- * Flipt is unreachable → `isFlipt` returns `false` → `resolveStoreVisibilityScope`
- * returns `none` for a non-privileged viewer and `full` for a mod/tester — i.e.
+ * base `enabled: false`, only when the external-only store is ready) or if Flipt is
+ * unreachable → `isFlipt` returns `false` → `resolveStoreVisibilityScope` returns
+ * `none` for a non-privileged viewer and `full` for a mod/tester — i.e.
  * BYTE-IDENTICAL to today. This flag NEVER upgrades a mod/tester away from `full`;
  * it only ever moves a non-privileged viewer from `none` → `public-external`.
  */
 export const APP_LISTINGS_PUBLIC_EXTERNAL_FLAG = 'app-listings-public-external';
 
 /**
- * GLOBAL gate for the PUBLIC EXTERNAL App-store read GA. Evaluates the dedicated
- * `app-listings-public-external` flag with no user context (entityId='global',
- * empty context), mirroring `isAppBlocksPipelineEnabled`. Fail-closed: absent flag
- * / Flipt-down → `false`. See APP_LISTINGS_PUBLIC_EXTERNAL_FLAG.
+ * Gate for the EXTERNAL-ONLY App-store read scope. Evaluates the dedicated
+ * `app-listings-public-external` flag WITH the viewer's context when a user is
+ * present (entityId = user id, context from `buildFliptContext`), so a `testers`
+ * segment can actually match — identical eval shape to `isAppBlocksEnabled` /
+ * `isAppListingsEnabled`. No user → the ORIGINAL global eval (entityId='global',
+ * empty context), byte-identical to the pre-segmentation behaviour, so the machine
+ * / anonymous callers are unchanged. Fail-closed: absent flag / Flipt-down →
+ * `false`. See APP_LISTINGS_PUBLIC_EXTERNAL_FLAG.
+ *
+ * 🔴 SERVER/CLIENT SEAM — this flag is evaluated TWICE per request, and the two
+ * evaluations must agree or a viewer passes the page gate and gets an empty store
+ * (or the reverse):
+ *   - HERE (server data path) → `isFlipt(FLAG, id, ctx)`, feeding
+ *     `resolveStoreVisibilityScope` → the store read procs + REST endpoints.
+ *   - `featureFlags.appListingsPublicExternal` (feature-flags.service.ts, same
+ *     `fliptKey`) → `isFliptSync(FLAG, id, ctx)` → `ctx.features` / `useFeatureFlags()`
+ *     → the shared `hasAppsStoreAccess` predicate → the `/apps` SSR + client gates.
+ * They agree BY CONSTRUCTION for a logged-in viewer: same flag key, same entityId
+ * (`String(user.id)`), same context object (both call the SHARED `buildFliptContext`).
+ * They agree in the fail-closed direction too: an absent flag makes the async
+ * `isFlipt` return `false` while the sync `isEnabledSync` returns `null` and falls
+ * through to the client entry's STATIC availability — which is `[]` (deliberately,
+ * not `['mod']`) precisely so that static answer is also `false`.
+ * RESIDUAL, bounded, and PRE-EXISTING for every flag in this family: for an
+ * ANONYMOUS viewer the entityId/context differ (`'global'`/`{}` here vs
+ * `'anonymous'`/`{isLoggedIn:'false'}` in the client gate). Irrelevant for a plain
+ * base-enabled boolean or a user-property segment (both sides resolve the same);
+ * it bites only under a percentage rollout or an `isLoggedIn`-keyed rule — hence
+ * the shape guidance on APP_LISTINGS_PUBLIC_EXTERNAL_FLAG. The whole seam — both
+ * REAL sides against one fake Flipt config — is pinned by
+ * `app-blocks-flag.external-scope.seam.test.ts`.
  */
-export async function isExternalListingsPublicEnabled(): Promise<boolean> {
-  return isFlipt(APP_LISTINGS_PUBLIC_EXTERNAL_FLAG);
+export async function isExternalListingsPublicEnabled(opts?: {
+  user?: SessionUser;
+}): Promise<boolean> {
+  // No user → preserve the ORIGINAL global eval verbatim (entityId='global', empty
+  // context). Byte-identical to the pre-segmentation behaviour: a base-enabled flag
+  // still resolves true, a segmented one still cannot match.
+  if (!opts?.user) return isFlipt(APP_LISTINGS_PUBLIC_EXTERNAL_FLAG);
+  // Per-user eval — reuse the client gate's context builder so the server data
+  // path and the `/apps` page gate share one context shape and cannot drift.
+  const user = opts.user;
+  return isFlipt(APP_LISTINGS_PUBLIC_EXTERNAL_FLAG, String(user.id), buildFliptContext(user));
 }
 
 /**
@@ -660,25 +710,37 @@ export type StoreVisibilityScope = 'full' | 'public-external' | 'none';
  * NEVER narrowed by the public flag:
  *   1. `isAppListingsEnabled({ user })` (mods + app-dev-testers, OR-falling-back to
  *      `app-blocks-enabled`) → `full` — sees every kind, byte-identical to today.
- *   2. else `isExternalListingsPublicEnabled()` (the global public flag) →
- *      `public-external` — sees only offsite listings.
+ *   2. else `isExternalListingsPublicEnabled({ user })` (the external-only flag,
+ *      segment-capable) → `public-external` — sees only offsite listings.
  *   3. else → `none` — dark.
+ *
+ * 🔴 PRIORITY ORDER IS THE "NEVER NARROW A MODERATOR" INVARIANT, not a style
+ * choice. Axis 1 short-circuits, so a mod/tester resolves `full` WITHOUT the
+ * external flag ever being evaluated. Swap the two checks and a moderator inside
+ * the external cohort would silently be NARROWED from the whole catalog down to
+ * offsite-only. Pinned by `app-blocks-flag.external-scope.test.ts`.
  *
  * 🔴 DARK-by-default invariant: with `app-listings-public-external` ABSENT in Flipt
  * (its as-merged state), a mod/tester still resolves `full` and everyone else
- * resolves `none` — ZERO observable change until the public flag is created +
- * enabled in a later phase.
+ * resolves `none` — ZERO observable change until the flag is created + enabled in a
+ * later phase.
+ *
+ * 🔴 `opts` is threaded into BOTH axes. Dropping it on axis 2 (the pre-segmentation
+ * shape) forces a global eval that no segment can ever match, so a `testers` segment
+ * would resolve `false` for every member and the whole cohort would silently stay on
+ * `none`.
  */
 export async function resolveStoreVisibilityScope(opts?: {
   user?: SessionUser;
 }): Promise<StoreVisibilityScope> {
   // Axis 1 — the existing catalog-visibility gate (mods + app-dev-testers). MUST be
   // checked FIRST so a privileged viewer always gets `full`, never `public-external`
-  // (the public flag can only ever LIFT a non-privileged viewer, never narrow a mod).
+  // (the external flag can only ever LIFT a non-privileged viewer, never narrow a mod).
   if (await isAppListingsEnabled(opts)) return 'full';
-  // Axis 2 — the global public-external flag (anon + everyone). Global eval; a
-  // non-privileged viewer sees ONLY offsite listings.
-  if (await isExternalListingsPublicEnabled()) return 'public-external';
+  // Axis 2 — the external-only flag. Per-user eval when a user is present (so a
+  // tester segment matches), global otherwise; a non-privileged viewer in the
+  // cohort sees ONLY offsite listings.
+  if (await isExternalListingsPublicEnabled(opts)) return 'public-external';
   // Fail-closed: neither flag → dark.
   return 'none';
 }
