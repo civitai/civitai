@@ -450,6 +450,31 @@ const featureFlags = createFeatureFlags({
   // to `app-blocks-enabled` — i.e. ZERO behavior change today (the currently
   // mod+app-dev-testers cohort keeps identical store access).
   appListings: { availability: ['mod'], fliptKey: 'app-listings' },
+  // App Blocks — EXTERNAL-ONLY store scope. The CLIENT/SSR half of the server's
+  // `isExternalListingsPublicEnabled()` (same Flipt key), so the `/apps` page gate
+  // can admit a viewer whose ONLY qualification is this flag — without it the store
+  // is structurally unreachable for that cohort (`hasAppsStoreAccess` would be
+  // false → `notFound`) even though the server would happily serve them the offsite
+  // catalog. Read via the shared `hasAppsStoreAccess` predicate, never open-coded.
+  //
+  // 🔴 `availability: []` (DARK + fail-closed for EVERYONE, mods included), NOT
+  // `['mod']`, and that is load-bearing for the server/client seam rather than
+  // taste: an ABSENT flag makes the SERVER's async `isFlipt` return `false`, while
+  // the CLIENT's `isEnabledSync` returns `null` and falls through to this static
+  // availability. With `['mod']` a moderator's client value would be `true` against
+  // a server `false` — the two evaluations of one flag disagreeing, which is exactly
+  // the failure this entry exists to prevent. `[]` makes the static answer `false`
+  // too, so both sides are dark until Flipt says otherwise. (Mirrors the
+  // `appBlocksAgenticReview` precedent.) A mod loses nothing: they already hold
+  // `appListings`/`appBlocks`, and the server checks the privileged axis FIRST.
+  //
+  // Grants ONLY store CATALOG reachability — the server still scopes the data to
+  // `kind='offsite'` (`resolveStoreVisibilityScope` → `public-external`). It does
+  // NOT widen any block-RUNTIME surface (those stay on `appBlocks` alone).
+  appListingsPublicExternal: {
+    availability: [],
+    fliptKey: 'app-listings-public-external',
+  },
   // App Blocks W10 — full-page apps (`/apps/run/<slug>`). A SEPARATE dark flag
   // so the page surface enables independently of the master `app-blocks-enabled`
   // gate. The page route + page-token mint require BOTH `appBlocks` AND

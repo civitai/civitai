@@ -9,10 +9,19 @@
  *     to `appBlocks`. The boolean itself is NOT written here — it lives in the
  *     shared `hasAppsStoreAccess` predicate (`~/shared/utils/app-blocks-access`)
  *     that every store surface calls, so the SSR gate and the client-side gates
- *     cannot drift apart. Access = `features.appListings || features.appBlocks`. A
- *     logged-out / non-mod user satisfies NEITHER (both are mod-segmented today),
- *     so access is false for them → notFound. The store stays dark for real
- *     anon/non-mod users until a segment is widened at launch.
+ *     cannot drift apart. Access =
+ *     `features.appListings || features.appBlocks || features.appListingsPublicExternal`.
+ *     A logged-out / non-mod user satisfies NONE of them today (the first two are
+ *     mod-segmented, the third does not exist in Flipt), so access is false for them
+ *     → notFound. The store stays dark for real anon/non-mod users until a segment
+ *     is widened at launch.
+ *   - The THIRD term is the EXTERNAL-ONLY cohort, and it exists so that cohort can
+ *     REACH the store at all. Without it a viewer whose only qualification is
+ *     `app-listings-public-external` gets `notFound` here while the SERVER
+ *     (`resolveStoreVisibilityScope` → `public-external`) would happily serve them
+ *     the offsite catalog — the gate and the data path disagreeing about the same
+ *     flag. What they then SEE is still the server's call: offsite listings only,
+ *     onsite hidden. This gate decides reachability, never scope.
  *   - WHY the OR-fallback: `appListings` (Flipt `app-listings`) does not exist at
  *     merge time, so `features.appListings` resolves via its `availability:['mod']`
  *     Flipt-down fallback (mods only) while `appBlocks` still carries the

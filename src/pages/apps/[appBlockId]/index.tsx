@@ -49,6 +49,7 @@ import {
   SLOT_DESCRIPTIONS,
 } from '~/server/services/blocks/scope-descriptions.constants';
 import { dbRead } from '~/server/db/client';
+import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { hasInstallSlot } from '~/shared/constants/slot-registry';
 import { trpc } from '~/utils/trpc';
@@ -110,13 +111,20 @@ import { trpc } from '~/utils/trpc';
  *     approved on-site listing declares a page), but it is why the follow-up
  *     should retarget that branch, not merely delete the route.
  *
- * 🔒 GATING INVARIANT (E2 — unchanged, do not violate):
- *   - The SSR resolver runs `resolveAppsPageAccess` FIRST: the `features.appBlocks`
- *     flag gate is the ONLY access control. A real anon / non-mod viewer does not
- *     satisfy the mod-segmented Flipt `app-blocks-enabled` flag, so they get
+ * 🔒 GATING INVARIANT (E2, + the external-only store scope):
+ *   - The SSR resolver runs `resolveAppsPageAccess` FIRST. A real anon / non-mod
+ *     viewer does not satisfy the mod-segmented Flipt flags behind it, so they get
  *     `notFound`. The page is anon-CAPABLE in code (no session→login redirect)
- *     but DARK until the segment is widened at launch — there is intentionally
+ *     but DARK until a segment is widened at launch — there is intentionally
  *     NO hardcoded isModerator belt (that would break the eventual public flip).
+ *   - 🔴 THE PAGE GATE IS NO LONGER THE ONLY ACCESS CONTROL, and the old wording
+ *     saying it was is retired rather than softened. A SECOND gate — the resolved
+ *     store scope — runs immediately after it and admits ONLY `full`. It exists
+ *     because the page gate now also grants the EXTERNAL-ONLY cohort (so they can
+ *     reach `/apps`), and this route resolves on-site listings: without the scope
+ *     check they would get a 302 disclosing an on-site listing's slug. Both gates
+ *     run before the route param is read and before any query — see
+ *     `resolveLegacyAppRoute`.
  *   - `deIndex` stays ON in the page <Meta> (per-app OG/title/description are
  *     added now, but the page is not crawlable pre-launch — drop `deIndex` only
  *     at launch).
@@ -143,9 +151,18 @@ export const getServerSideProps = createServerSideProps({
   // existence of an approved listing the actual precondition of the redirect —
   // the decided behaviour — and it stays correct if a slug ever diverges from
   // its block id (off-site listings already choose their own slugs).
-  resolver: async ({ ctx, features }) =>
+  //
+  // 🔴 `storeScope` is resolved SERVER-SIDE here (`resolveStoreVisibilityScope`),
+  // not re-derived from `features`. It is a DISCLOSURE gate — it must key off the
+  // same value the DATA layer keys off (`getListingDetail`'s `scope`), and the two
+  // can disagree during a Flipt outage. Without it, once
+  // `app-listings-public-external` is enabled an external-only viewer would pass
+  // the (now-widened) page gate and get a 302 carrying an on-site listing's slug.
+  // See the block comment on `resolveLegacyAppRoute`.
+  resolver: async ({ ctx, features, session }) =>
     resolveLegacyAppRoute({
       features,
+      storeScope: await resolveStoreVisibilityScope({ user: session?.user }),
       appBlockId: ctx.params?.appBlockId,
       findApprovedListingSlug: async (appBlockId) =>
         (await dbRead.appListing.findFirst(approvedListingSlugQuery(appBlockId)))?.slug ?? null,
