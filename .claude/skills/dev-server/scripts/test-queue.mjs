@@ -12,7 +12,7 @@
  */
 
 import { EventEmitter } from 'events';
-import { spawn } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
 
 export const DEFAULT_CONCURRENCY = 1;
 const DEFAULT_ABANDON_AFTER_MS = 10 * 60 * 1000;
@@ -28,7 +28,18 @@ export function isTerminal(status) {
   return TERMINAL.has(status);
 }
 
-function defaultStartRun({ worktree, args, onLog }) {
+/**
+ * The exit code a waiter should exit with. Only a completed run that itself exited 0 is a pass:
+ * a cancelled or timed-out run can carry exitCode 0 (the child exited cleanly in the window
+ * between the kill being issued and it landing), and treating that as success would report a
+ * green suite that never finished.
+ */
+export function exitCodeFor(run) {
+  if (run.status === 'completed' && run.exitCode === 0) return 0;
+  return run.exitCode || 1;
+}
+
+function defaultStartRun({ worktree, args, onLog, onExit }) {
   const emitter = new EventEmitter();
   const isWindows = process.platform === 'win32';
   const pnpm = isWindows ? 'pnpm.cmd' : 'pnpm';
@@ -43,9 +54,13 @@ function defaultStartRun({ worktree, args, onLog }) {
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: isWindows,
+      // Its own process group, so the kill below can take the whole vitest tree. Without this,
+      // killing by negative pid names no group, fails with ESRCH, and leaves the run burning
+      // cores while its slot is handed to the next caller.
+      detached: !isWindows,
     });
   } catch (err) {
-    queueMicrotask(() => emitter.emit('exit', -1, err.message));
+    queueMicrotask(() => onExit(-1, err.message));
     emitter.kill = () => {};
     return emitter;
   }
@@ -59,16 +74,23 @@ function defaultStartRun({ worktree, args, onLog }) {
   pipe(child.stdout, 'stdout');
   pipe(child.stderr, 'stderr');
 
-  child.on('exit', (code) => emitter.emit('exit', code ?? -1));
-  child.on('error', (err) => emitter.emit('exit', -1, err.message));
+  child.on('exit', (code) => onExit(code ?? -1));
+  child.on('error', (err) => onExit(-1, err.message));
 
   emitter.pid = child.pid;
-  emitter.kill = () => {
+  // `sync` is for daemon shutdown, where an asynchronously spawned taskkill would never get to
+  // run before the daemon exits, leaving vitest orphaned and still holding every core.
+  emitter.kill = (sync = false) => {
     try {
-      if (isWindows) spawn('taskkill', ['/pid', String(child.pid), '/f', '/t'], { shell: true });
-      else process.kill(-child.pid, 'SIGKILL');
+      if (isWindows) {
+        const argv = ['/pid', String(child.pid), '/f', '/t'];
+        if (sync) execFileSync('taskkill', argv, { stdio: 'ignore' });
+        else spawn('taskkill', argv, { shell: true });
+      } else {
+        process.kill(-child.pid, 'SIGKILL');
+      }
     } catch {
-      /* already gone */
+      /* already gone, or refused — the sweep releases the slot either way */
     }
   };
   return emitter;
@@ -229,7 +251,7 @@ export class TestQueue {
       const run = this.runs.get(id);
       run.cancelReason = 'daemon-shutdown';
       run.killRequestedAt = this.now();
-      run.handle?.kill();
+      run.handle?.kill(true);
     }
   }
 
@@ -251,26 +273,35 @@ export class TestQueue {
     this.running.add(id);
 
     const onLog = (level, message) => this.addLog(run, level, message);
-    let handle;
+
+    // The exit path is built BEFORE the runner is called. A runner that reports its exit
+    // synchronously would otherwise report into a listener that does not exist yet, leaving a
+    // finished run holding the only slot until the run ceiling expires.
+    let settled = false;
+    let handle = null;
+    const onExit = (code, errorMessage) => {
+      // A run only settles once, and only from the handle it currently owns: a late exit from a
+      // replaced handle must neither settle it nor release a slot it no longer holds.
+      if (settled || (handle !== null && run.handle !== handle)) return;
+      settled = true;
+      run.handle = null;
+      this.release(id);
+      this.settle(run, this.outcomeFor(run, code), code, errorMessage ?? run.cancelReason ?? null);
+      this.pump();
+    };
+
     try {
-      handle = this.startRun({ worktree: run.worktree, args: run.args, onLog });
+      handle = this.startRun({ worktree: run.worktree, args: run.args, onLog, onExit });
     } catch (err) {
       this.release(id);
       this.settle(run, 'error', null, err.message);
       this.pump();
       return;
     }
-    run.handle = handle;
 
-    handle.on('exit', (code, errorMessage) => {
-      // Identity guard: an exit from a handle this run no longer owns must not settle it, and
-      // must not release a slot it no longer holds.
-      if (run.handle !== handle) return;
-      run.handle = null;
-      this.release(id);
-      this.settle(run, this.outcomeFor(run, code), code, errorMessage ?? run.cancelReason ?? null);
-      this.pump();
-    });
+    if (settled) return; // the runner reported an exit before it returned a handle
+    run.handle = handle;
+    handle.on?.('exit', onExit);
   }
 
   outcomeFor(run, code) {

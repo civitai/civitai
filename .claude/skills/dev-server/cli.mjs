@@ -8,6 +8,7 @@ import { spawn, execSync } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { exitCodeFor, isTerminal as isTerminalStatus } from './scripts/test-queue.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -398,7 +399,7 @@ async function cmdTestWait(id) {
       );
       lastStatus = run.status;
     }
-    if (run.paused && !announcedPause) {
+    if (run.paused && !announcedPause && !isTerminalStatus(run.status)) {
       console.log('queue is PAUSED (concurrency 0) — nothing will start until it is raised');
       announcedPause = true;
     }
@@ -413,15 +414,11 @@ async function cmdTestWait(id) {
 
     if (isTerminalStatus(run.status)) {
       console.log(`Run ${id} ${run.status}${run.error ? ` (${run.error})` : ''}`);
-      process.exit(run.status === 'completed' ? 0 : run.exitCode ?? 1);
+      process.exit(exitCodeFor(run));
     }
 
     await new Promise((r) => setTimeout(r, WAIT_POLL_MS));
   }
-}
-
-function isTerminalStatus(status) {
-  return ['completed', 'failed', 'cancelled', 'timeout', 'abandoned', 'error'].includes(status);
 }
 
 async function cmdTest(sub, rest) {

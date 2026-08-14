@@ -125,9 +125,16 @@ function loadSkillConfig() {
         case 'PREWARM_TIMEOUT':
           if (value) config.prewarmTimeout = parseInt(value, 10);
           break;
-        case 'TEST_CONCURRENCY':
-          if (value) config.testConcurrency = parseInt(value, 10);
+        case 'TEST_CONCURRENCY': {
+          // Every other setting here degrades to its default on a bad value. This one feeds a
+          // constructor that throws, and the queue is built at module scope — so a typo in an
+          // optional test setting would stop the daemon binding at all, taking every agent's dev
+          // server with it.
+          const parsed = parseInt(value, 10);
+          if (Number.isInteger(parsed) && parsed >= 0) config.testConcurrency = parsed;
+          else if (value) console.error(`Ignoring TEST_CONCURRENCY=${value} (want an integer >= 0)`);
           break;
+        }
       }
     }
   }
