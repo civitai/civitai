@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
+// Type-only namespace import for the `importOriginal` mock below. Erased at compile time, so it
+// does not participate in mock hoisting. `@typescript-eslint/consistent-type-imports` rejects
+// the `typeof import('...')` form, which is why this is a named namespace.
+import type * as TrpcUtils from '~/utils/trpc';
 
 // =============================================================================
 // Gallery lazy per-post carousel (`galleryLazyPostImages`).
@@ -78,7 +82,15 @@ const mocks = vi.hoisted(() => {
 });
 
 // --- tail fetch ---------------------------------------------------------------
-vi.mock('~/utils/trpc', () => ({
+// `importOriginal`-spread, not a hand-written factory. This mock applies to the WHOLE module
+// graph, so every module the test transitively reaches must find the names it imports here.
+// `~/utils/trpc` has 12 exports and a factory listing only the two this file uses breaks the
+// moment the graph reaches a third: browser mode serves native ESM, so a missing named export
+// is a LINK-time error that kills the entire FILE — 0 tests collected, no failing assertion,
+// and the suite total silently drops. That is exactly how this file lost all 9 of its tests
+// (#3859 routed it through Remix/remix.utils, which needs `trpcVanilla` among others).
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcUtils>()),
   trpc: {
     image: { getInfinite: { useQuery: mocks.getInfiniteUseQuery } },
     useUtils: () => ({}),
@@ -169,7 +181,6 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 vi.mock('~/components/TrackView/track.utils', () => ({
   useTrackEvent: () => ({ trackAction: vi.fn().mockResolvedValue(undefined) }),
 }));
-vi.mock('~/store/generation-graph.store', () => ({ generationGraphPanel: { open: vi.fn() } }));
 
 // Import AFTER the mocks are registered.
 import { renderWithProviders } from '../../../../test/component-setup';

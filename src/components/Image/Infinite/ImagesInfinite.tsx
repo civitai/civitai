@@ -11,6 +11,7 @@ import { Flags } from '~/shared/utils/flags';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { SearchRetryBanner } from '~/components/EndOfFeed/SearchRetryBanner';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
+import { FeedbackPrompt } from '~/components/Feedback/FeedbackPrompt';
 import type { ImagesQueryParamSchema } from '~/components/Image/image.utils';
 import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
 import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
@@ -42,6 +43,12 @@ type ImagesInfiniteProps = {
   showAds?: boolean;
   showEmptyCta?: boolean;
   disableStoreFilters?: boolean;
+  /**
+   * Opt-in, because this component also backs image PICKERS (the collection
+   * add-content modal, challenge submission). Those are BitDex-served too, but a
+   * "tell us if the feed looks off" box does not belong above a picker.
+   */
+  showFeedbackPrompt?: boolean;
 } & Pick<ImagesContextState, 'collectionId' | 'judgeInfo' | 'judgingCategories'>;
 
 export default function ImagesInfinite(props: ImagesInfiniteProps) {
@@ -61,6 +68,7 @@ export function ImagesInfiniteContent({
   showAds,
   showEmptyCta,
   disableStoreFilters = false,
+  showFeedbackPrompt = false,
   ...imageProviderProps
 }: ImagesInfiniteProps) {
   const imageFilters = useImageFilters(filterType);
@@ -97,6 +105,7 @@ export function ImagesInfiniteContent({
     isError,
     debugRetryActive,
     debugDelayMs,
+    feedSnapshot,
   } = useQueryImages(
     { ...filters, browsingLevel, include: ['cosmetics'] },
     { keepPreviousData: true }
@@ -211,6 +220,28 @@ export function ImagesInfiniteContent({
 
   return (
     <>
+      {showFeedbackPrompt && (
+        <FeedbackPrompt
+          area="bitdex-image-feed"
+          // Excluded while the index path ignores `hidden`: a BitDex-served hidden
+          // view is the ordinary feed under the wrong title, so reports about it
+          // would be misattributed.
+          active={feedSnapshot.source === 'bitdex' && !filters.hidden}
+          notice="We're testing a new system behind this feed. If anything looks off, tell us."
+          placeholder="What looked wrong? Missing images, odd ordering, repeats, anything."
+          context={{
+            path: typeof window !== 'undefined' ? window.location.pathname : undefined,
+            reportedSource: feedSnapshot.source,
+            reportedPageSources: feedSnapshot.sources,
+            pagesLoaded: feedSnapshot.pagesLoaded,
+            filters: {
+              sort: feedSnapshot.sort,
+              period: feedSnapshot.period,
+              browsingLevel: feedSnapshot.browsingLevel,
+            },
+          }}
+        />
+      )}
       {!images.length && isFetching && !isRetrying ? (
         <Center p="xl">
           <Loader />

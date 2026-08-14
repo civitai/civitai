@@ -63,6 +63,7 @@ const transactionFindMany = vi.fn(async () => [] as unknown[]);
 const placementFindFirst = vi.fn(async () => null as unknown);
 const cosmeticFindUnique = vi.fn(async () => null as unknown);
 
+const imageFindMany = vi.fn(async () => [] as unknown[]);
 const placementFindUnique = vi.fn(async () => null as unknown);
 const placementUpdate = vi.fn(async () => ({}));
 const placementUpdateMany = vi.fn(async () => ({ count: 1 }));
@@ -84,6 +85,7 @@ vi.mock('~/server/db/client', () => ({
       groupBy: placementGroupBy,
       findFirst: placementFindFirst,
     },
+    image: { findMany: imageFindMany },
     placementTransaction: { findMany: transactionFindMany },
     cosmetic: { findUnique: cosmeticFindUnique },
   },
@@ -102,6 +104,7 @@ const {
   getStickerPlacements,
   getPlacementSettlementStates,
   getStickerPlacementDetail,
+  getPendingStickerPlacements,
 } = await import('~/server/services/sticker-placement.service');
 
 const OPEN_SPACE = { ownerId: OWNER, mode: 'review', setPrice: ASKED, price: PRICE, cap: CAP };
@@ -720,52 +723,30 @@ describe("a placement counts toward the image's Buzz counter", () => {
       resolvedAt: null,
     });
 
-  it('counts what the placer paid when an auto space approves on placement', async () => {
-    resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE, mode: 'auto' });
-    givenStickerAndBalance();
-
-    await createStickerPlacement(placeInput);
-
-    expect(updateEntityMetricDetached).toHaveBeenCalledWith({
-      entityType: 'Image',
-      entityId: IMAGE,
-      metricType: 'Buzz',
-      // `price`, not `setPrice`: the cap is what was actually charged.
-      amount: PRICE,
-      // Attributed to the placer, the way a tip is attributed to its tipper —
-      // and load-bearing, because `userId` is part of the pipeline's dedupe key.
-      userId: PLACER,
-    });
-  });
-
   /**
-   * The guard that stops one payment being counted twice. `settlePlacement`
-   * returns `settled: false` when something else claimed the transition first —
-   * a double-submitted approve, a retried call — so counting on the action asked
-   * for rather than on the transition won would add the Buzz again with no
-   * second payment behind it.
+   * The settlement paths emit NOTHING. The counter is moved by
+   * `placement-sweep-uncounted` reading `metricCountedAt`, and these paths
+   * exist here so that stays true: an emit put back on any of them is one the
+   * sweep will emit again, and the counter never comes back down.
    */
-  it('does not count a settle that lost the race', async () => {
+  it('emits nothing when an auto space approves on placement', async () => {
     resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE, mode: 'auto' });
     givenStickerAndBalance();
-    settlePlacement.mockImplementation(async () => ({ settled: false }));
 
     await createStickerPlacement(placeInput);
 
     expect(updateEntityMetricDetached).not.toHaveBeenCalled();
   });
 
-  it('counts when the owner approves from the queue', async () => {
+  it('emits nothing when the owner approves from the queue', async () => {
     givenApprovable();
 
     await actOnStickerPlacement({ placementId: PLACEMENT, action: 'approve', userId: OWNER });
 
-    expect(updateEntityMetricDetached).toHaveBeenCalledWith(
-      expect.objectContaining({ entityId: IMAGE, amount: PRICE, userId: PLACER })
-    );
+    expect(updateEntityMetricDetached).not.toHaveBeenCalled();
   });
 
-  it('counts nothing when the owner declines', async () => {
+  it('emits nothing when the owner declines', async () => {
     givenApprovable();
 
     await actOnStickerPlacement({ placementId: PLACEMENT, action: 'decline', userId: OWNER });
@@ -1150,5 +1131,88 @@ describe('the note on a placement', () => {
     });
 
     expect(placementUpdate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The sticker copy of the queue paging. Its own tests rather than trusting the
+ * remix twin: the two are hand-duplicated, and the failure mode is a placement
+ * nobody ever reviews while its escrow expires.
+ */
+describe('getPendingStickerPlacements paging', () => {
+  const good = { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 };
+
+  const queueRow = (id: number, data: unknown, createdAt: string) => ({
+    id,
+    targetId: IMAGE,
+    placerId: PLACER,
+    amount: PRICE,
+    data,
+    createdAt: new Date(createdAt),
+    expiresAt: null,
+    placer: { id: PLACER, username: 'someone', image: null },
+  });
+
+  it('takes the cursor from the last row of the page, not the last row it returns', async () => {
+    // Row 2 is dropped below for an unreadable payload; row 3 is the probe.
+    placementFindMany.mockResolvedValue([
+      queueRow(1, good, '2026-01-01T00:00:00.000Z'),
+      queueRow(2, { nonsense: true }, '2026-01-02T00:00:00.000Z'),
+      queueRow(3, good, '2026-01-03T00:00:00.000Z'),
+    ]);
+
+    const result = await getPendingStickerPlacements({ ownerId: OWNER, limit: 2 });
+
+    expect(result.items.map((item) => item.id)).toEqual([1]);
+    // Row 2's key. Built from what was returned it would say row 1, and row 2
+    // would be served again on the next page.
+    expect(result.nextCursor).toBe(`${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`);
+  });
+
+  it('still hands back a cursor when EVERY row on the page was filtered out', async () => {
+    // Same contract the remix twin pins, and the one the empty-state guard in
+    // the page reads: no items is not the same as no more.
+    placementFindMany.mockResolvedValue([
+      queueRow(1, { nonsense: true }, '2026-01-01T00:00:00.000Z'),
+      queueRow(2, { nonsense: true }, '2026-01-02T00:00:00.000Z'),
+      queueRow(3, good, '2026-01-03T00:00:00.000Z'),
+    ]);
+
+    const result = await getPendingStickerPlacements({ ownerId: OWNER, limit: 2 });
+
+    expect(result.items).toEqual([]);
+    expect(result.nextCursor).toBe(`${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`);
+  });
+
+  it('reports no next page when the queue ends exactly on the page boundary', async () => {
+    placementFindMany.mockResolvedValue([
+      queueRow(1, good, '2026-01-01T00:00:00.000Z'),
+      queueRow(2, good, '2026-01-02T00:00:00.000Z'),
+    ]);
+
+    const result = await getPendingStickerPlacements({ ownerId: OWNER, limit: 2 });
+
+    expect(result.items).toHaveLength(2);
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it('resumes strictly after the cursor row, including its same-millisecond twin', async () => {
+    placementFindMany.mockResolvedValue([]);
+    const createdAt = new Date('2026-01-02T00:00:00.000Z');
+
+    await getPendingStickerPlacements({
+      ownerId: OWNER,
+      limit: 2,
+      cursor: `${createdAt.getTime()}:2`,
+    });
+
+    const { where, orderBy, take } = placementFindMany.mock.calls.at(-1)?.[0] as {
+      where: { OR?: unknown[] };
+      orderBy: unknown;
+      take: number;
+    };
+    expect(where.OR).toEqual([{ createdAt: { gt: createdAt } }, { createdAt, id: { gt: 2 } }]);
+    expect(orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
+    expect(take).toBe(3);
   });
 });

@@ -44,6 +44,10 @@ const {
     appBlockPublishRequest: { findFirst: vi.fn() },
     blockUserSubscription: { findFirst: vi.fn() },
     blockBuzzAttribution: { groupBy: vi.fn() },
+    // The two COLLABORATOR-aware probes (`resolveAppsNavAccess`): an owned-or-seated
+    // listing drives "My apps", a pending invite drives "Invites".
+    appListing: { findFirst: vi.fn() },
+    appCollaborator: { findFirst: vi.fn() },
   },
 }));
 
@@ -149,6 +153,8 @@ const ALL_FALSE = {
   hasSubmissions: false,
   hasApprovedApps: false,
   isReviewer: false,
+  hasEditableApps: false,
+  hasPendingInvites: false,
 };
 
 beforeEach(() => {
@@ -157,10 +163,14 @@ beforeEach(() => {
   mockDbRead.blockUserSubscription.findFirst.mockReset();
   mockDbRead.appBlockPublishRequest.findFirst.mockReset();
   mockDbRead.appBlock.findFirst.mockReset();
+  mockDbRead.appListing.findFirst.mockReset();
+  mockDbRead.appCollaborator.findFirst.mockReset();
   // Default: nothing exists for anyone.
   mockDbRead.blockUserSubscription.findFirst.mockResolvedValue(null);
   mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
   mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+  mockDbRead.appListing.findFirst.mockResolvedValue(null);
+  mockDbRead.appCollaborator.findFirst.mockResolvedValue(null);
 });
 
 describe('getNavSummary — gate', () => {
@@ -170,6 +180,8 @@ describe('getNavSummary — gate', () => {
     expect(mockDbRead.blockUserSubscription.findFirst).not.toHaveBeenCalled();
     expect(mockDbRead.appBlockPublishRequest.findFirst).not.toHaveBeenCalled();
     expect(mockDbRead.appBlock.findFirst).not.toHaveBeenCalled();
+    expect(mockDbRead.appListing.findFirst).not.toHaveBeenCalled();
+    expect(mockDbRead.appCollaborator.findFirst).not.toHaveBeenCalled();
   });
 
   it('flag OFF: returns the all-false shape and runs NO existence query', async () => {
@@ -182,6 +194,8 @@ describe('getNavSummary — gate', () => {
     expect(mockDbRead.blockUserSubscription.findFirst).not.toHaveBeenCalled();
     expect(mockDbRead.appBlockPublishRequest.findFirst).not.toHaveBeenCalled();
     expect(mockDbRead.appBlock.findFirst).not.toHaveBeenCalled();
+    expect(mockDbRead.appListing.findFirst).not.toHaveBeenCalled();
+    expect(mockDbRead.appCollaborator.findFirst).not.toHaveBeenCalled();
   });
 });
 
@@ -194,6 +208,8 @@ describe('getNavSummary — booleans reflect existence', () => {
       hasSubmissions: false,
       hasApprovedApps: false,
       isReviewer: true, // flag-on user is a mod pre-GA
+      hasEditableApps: false,
+      hasPendingInvites: false,
     });
   });
 
@@ -235,6 +251,8 @@ describe('getNavSummary — booleans reflect existence', () => {
       hasSubmissions: true,
       hasApprovedApps: true,
       isReviewer: true,
+      hasEditableApps: false,
+      hasPendingInvites: false,
     });
   });
 });
@@ -272,5 +290,84 @@ describe('getNavSummary — own-data scoping (no cross-user)', () => {
     expect(mockDbRead.blockUserSubscription.findFirst).toHaveBeenCalledTimes(1);
     expect(mockDbRead.appBlockPublishRequest.findFirst).toHaveBeenCalledTimes(1);
     expect(mockDbRead.appBlock.findFirst).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * 🔴 THE TWO COLLABORATOR-AWARE FLAGS. Both are OWNER-INDEPENDENT: a collaborator who
+ * owns nothing has `hasInstalls`/`hasSubmissions`/`hasApprovedApps` all false, so without
+ * these there is NO nav route to an app they can genuinely edit, and no route to the
+ * invitation that got them there.
+ */
+describe('getNavSummary — the collaborator-aware flags', () => {
+  it('hasEditableApps is TRUE from an OWNED listing alone (no seat)', async () => {
+    mockDbRead.appListing.findFirst.mockResolvedValue({ id: 'apl_1' });
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const result = await caller.getNavSummary();
+    expect(result.hasEditableApps).toBe(true);
+    expect(result.hasPendingInvites).toBe(false);
+  });
+
+  it('🔴 hasEditableApps is TRUE from an ACCEPTED SEAT alone — owning nothing', async () => {
+    // The whole point: `hasSubmissions` and `hasApprovedApps` stay false here.
+    mockDbRead.appCollaborator.findFirst.mockImplementation(
+      async (args: { where: { status: string } }) =>
+        args.where.status === 'accepted' ? { appListingId: 'apl_1' } : null
+    );
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const result = await caller.getNavSummary();
+    expect(result.hasEditableApps).toBe(true);
+    expect(result.hasSubmissions).toBe(false);
+    expect(result.hasApprovedApps).toBe(false);
+  });
+
+  it('a PENDING seat does NOT light "My apps" — only "Invites"', async () => {
+    // An unaccepted invite confers ZERO capability; offering an editor route for it
+    // would be offering a page every child query refuses.
+    mockDbRead.appCollaborator.findFirst.mockImplementation(
+      async (args: { where: { status: string } }) =>
+        args.where.status === 'pending' ? { appListingId: 'apl_1' } : null
+    );
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const result = await caller.getNavSummary();
+    expect(result.hasPendingInvites).toBe(true);
+    expect(result.hasEditableApps).toBe(false);
+  });
+
+  it('the seat probes are scoped to ctx.user.id and split by status', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(otherModUser) as never);
+    await caller.getNavSummary();
+    const statuses = mockDbRead.appCollaborator.findFirst.mock.calls.map(
+      (c: unknown[]) => (c[0] as { where: { userId: number; status: string } }).where
+    );
+    expect(statuses).toEqual([
+      { userId: otherModUser.id, status: 'accepted' },
+      { userId: otherModUser.id, status: 'pending' },
+    ]);
+  });
+
+  it('ownership is resolved BLOCK-FIRST, shadows excluded — same predicate as listMine', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(otherModUser) as never);
+    await caller.getNavSummary();
+    const where = mockDbRead.appListing.findFirst.mock.calls[0][0].where;
+    expect(where.revisionOfId).toBeNull();
+    expect(where.OR).toEqual([
+      { appBlock: { app: { userId: otherModUser.id } } },
+      { appBlock: { is: null }, userId: otherModUser.id },
+    ]);
+  });
+
+  it('🔴 the seat probes DEGRADE to false when the manual-apply table is absent', async () => {
+    // An un-degraded read here would 500 the sub-nav — every /apps page's chrome — for
+    // the whole window between the code deploy and a human applying the migration.
+    mockDbRead.appCollaborator.findFirst.mockRejectedValue(
+      Object.assign(new Error('relation "app_collaborators" does not exist'), { code: '42P01' })
+    );
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const result = await caller.getNavSummary();
+    expect(result.hasEditableApps).toBe(false);
+    expect(result.hasPendingInvites).toBe(false);
+    // …and the non-collaborator flags still answer.
+    expect(result.isReviewer).toBe(true);
   });
 });

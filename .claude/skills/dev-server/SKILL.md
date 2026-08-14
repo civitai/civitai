@@ -319,6 +319,11 @@ What's already handled:
   **The two are not merged.** Whichever file is chosen supplies every key; nothing is inherited from the other. A worktree `.env` that is a partial copy will therefore be missing whatever it doesn't restate, and different files can point a session at a different database — check the `Env:` line if a session behaves unlike its neighbours.
 - **Auth on secondary ports.** `NEXTAUTH_URL`, `NEXTAUTH_URL_INTERNAL`, and `NEXT_PUBLIC_BASE_URL` are rewritten to `http://localhost:<port>`, so logins work on non-3000 sessions instead of bouncing to the primary.
 - **Independent branch watching + prewarming** per session.
+- **Port allocation sees listeners the daemon does not own.** The picker connects to both loopback
+  addresses before it tries to bind, so a port held by a process the daemon has lost track of — a
+  session it marked `crashed`, or any other local server on loopback — is skipped rather than handed
+  out. Passing an explicit port is no longer a workaround for that. It still cannot see a listener
+  bound only to a non-loopback address (`next dev -H <lan-ip>`), which on Windows nothing detects.
 
 Fresh worktrees still need `pnpm install` (or a `node_modules` junction) and `git submodule update --init event-engine-common`.
 

@@ -466,6 +466,7 @@ model User {
   engagedModelVersions ModelVersionEngagement[]
   metrics              UserMetric[]
   reports              Report[]
+  feedback             Feedback[]
   questions            Question[]
   answers              Answer[]
   commentsv2           CommentV2[]
@@ -2299,6 +2300,22 @@ model Partner {
 model KeyValue {
   key   String @id
   value Json
+}
+
+/// Free-text feedback captured from in-product prompts. `area` is a plain
+/// string, not an enum, so adding a feedback surface needs no migration.
+model Feedback {
+  id        Int      @id @default(autoincrement())
+  area      String
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message   String
+  context   Json     @default("{}")
+  status    String   @default("new")
+  createdAt DateTime @default(now())
+
+  @@index([area, status, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
 }
 
 enum ApiKeyType {
@@ -5831,6 +5848,7 @@ model Challenge {
   judgingCategories Json? // User challenges: [{name, criteria}]; drives dynamic score schema + public display
   reviewPercentage  Int     @default(100) // % of entries to score
   maxReviews        Int? // Hard cap on reviews (cost control)
+  judgingEngine     String  @default("legacy-absolute") @db.VarChar(50) // which engine ranks the field
 
   // Entries - stored in a Contest Collection (auto-created if not provided)
   collectionId      Int? // Optional - auto-created on challenge creation
@@ -5884,6 +5902,8 @@ model Challenge {
   threads     Thread[]
   reports     ChallengeReport[]
   engagements ChallengeEngagement[]
+  standings   ChallengeEntryStanding[]
+  comparisons ChallengeEntryComparison[]
 
   // Event grouping
   eventId Int?
@@ -5897,6 +5917,60 @@ model Challenge {
   @@index([createdById, status]) // User's challenges by status
   @@index([judgeId])
   @@index([eventId])
+}
+
+// Pairwise judging (Challenge.judgingEngine = "pairwise-ladder"). Owned entirely by that engine:
+// the legacy absolute engine neither reads nor writes these tables, and nothing is migrated into
+// them from CollectionItem.note.
+//
+// imageId / userId are deliberately PLAIN COLUMNS with no relation — do not add one. Image is huge
+// and delete-heavy (moderation, ban removals); an FK would need indexes on imageId, imageIdA and
+// imageIdB to keep those deletes off a sequential scan, and cascading would destroy the record of
+// what the judge decided. Users are soft-deleted, so a userId FK enforces nothing. Orphans are
+// inert — nothing outside the store reads standings, and the challenge cascade cleans both tables.
+// Full reasoning in migrations/20260811090000_challenge_judging_engines/migration.sql.
+model ChallengeEntryStanding {
+  challengeId Int
+  challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  imageId     Int
+  userId      Int
+
+  rank        Int // 1 = leader
+  comparisons Int    @default(0) // bouts this entry has been in
+  winRate     Float? // podium round-robin only; null outside the shortlist
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@id([challengeId, imageId])
+  @@index([challengeId, rank])
+}
+
+model ChallengeEntryComparison {
+  id          Int       @id @default(autoincrement())
+  challengeId Int
+  challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+
+  phase String @db.VarChar(20) // arrive | rerun | podium
+
+  // Pair columns are stored low-id first so one pair is one row whichever image was the
+  // challenger; firstSeatImageId is the seating that produced this verdict.
+  imageIdA         Int
+  imageIdB         Int
+  firstSeatImageId Int
+  winnerImageId    Int? // null = tie
+
+  margin      String? @db.VarChar(20)
+  model       String  @db.VarChar(200)
+  rerouted    Boolean @default(false) // routed judge refused; answered by the permissive one
+  perCategory Json?
+  reason      String? @db.Text
+  buzzCost    Int     @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@unique([challengeId, phase, imageIdA, imageIdB, firstSeatImageId], map: "ChallengeEntryComparison_pair_key")
+  @@index([challengeId, phase])
 }
 
 model ChallengeReport {
@@ -5925,6 +5999,7 @@ model ChallengeJudge {
   winnerSelectionPrompt String? @db.Text
   active                Boolean @default(true)
   userSelectable        Boolean @default(false) // offer this judge to users in the create form
+  judgingEngine         String  @default("legacy-absolute") @db.VarChar(50) // copied onto Challenge.judgingEngine at creation
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -7818,12 +7893,45 @@ model Placement {
   /// one path whose purpose is a moderation record would destroy the approval trail.
   takenDownAt           DateTime?
   takenDownById         Int?
+  /// When this placement's Buzz reached the target's counter. The counter lives in
+  /// ClickHouse, which has no per-placement key to ask, so the fact that it was
+  /// counted is recorded here or nowhere. NULL on a placement that reached
+  /// `approved` is the reconcile sweep's work queue.
+  metricCountedAt       DateTime?
+  /// When a sweep took this row to count it. Two columns rather than one because
+  /// the claim has to be atomic and the confirmation cannot be: two sweeps can
+  /// overlap (the job lock fails open when Redis is down), and without a claim
+  /// both read the same unstamped rows and both emit before either stamps. The
+  /// counter never reverses, so that over-count is permanent. A claim older than
+  /// the recovery window is retried, which is what stops a crash between the two
+  /// writes turning into the loss this whole feature exists to end.
+  metricClaimedAt       DateTime?
+  /// How many times a sweep has taken this row. A row the tracker rejects fails
+  /// identically on every retry, and the claim orders by `resolvedAt`, so
+  /// without a ceiling one poisoned row sits at the head of the queue being
+  /// re-claimed forever and starves everything behind it.
+  metricAttempts        Int       @default(0)
   transactions          PlacementTransaction[]
 
   @@index([surface, targetType, targetId, status])
   @@index([ownerId, status])
+  /// The owner review queue's paging order. Without it each page rescans and
+  /// re-sorts every pending row the owner has, and a refetch of a walk N pages
+  /// deep pays that N+1 times.
+  ///
+  /// `surface` is in it because both queues filter on it, and left out it cannot
+  /// be an index condition — an owner with 900 pending stickers would touch all
+  /// 900 heap tuples to fill one 50-row page of remix submissions. It sits after
+  /// `ownerId` rather than first so this does not become a strict prefix of
+  /// `[ownerId, status]` above, which the moderation lookups still want.
+  @@index([ownerId, surface, status, createdAt, id])
   @@index([placerId, status])
   @@index([status, expiresAt])
+  /// Applied as a PARTIAL index (`WHERE "metricCountedAt" IS NULL`) — see the
+  /// migration. Prisma can express neither the predicate nor the reason the key
+  /// is `resolvedAt` alone, so the declaration here is the shape and the
+  /// migration is the truth.
+  @@index([resolvedAt])
 }
 
 /// One row per movement of money for a placement. `UNIQUE (placementId, kind)` is the

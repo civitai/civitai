@@ -405,3 +405,44 @@ describe('ExternalSubmitForm — edit mode auto-trigger + re-pull', () => {
       .toBeInTheDocument();
   });
 });
+
+/**
+ * 🔴 KIND-AWARE EDIT SURFACE, pinned in BOTH directions.
+ *
+ * The canonical authoring page (`/apps/listing/<id>/edit`) defaults to its DETAILS tab,
+ * so an ON-SITE owner clicking "Edit" now lands in this form — a population it never saw
+ * while the block-keyed editor opened on the manifest tab. The form itself is the
+ * OFF-SITE submit wizard in edit mode, so without a kind branch it offers an on-site app
+ * an "App URL" step and an OAuth-scope disclosure that describe nothing it has.
+ *
+ * Asserting only the on-site absence would pass on a form that shows the URL step to
+ * NOBODY, which would break the off-site listings the step exists for — so each case
+ * asserts the presence AND the absence.
+ */
+describe('ExternalSubmitForm (edit) — kind-aware wizard shape', () => {
+  test('🔴 an ON-SITE listing gets NO App URL step and NO scope disclosure', async () => {
+    renderWithProviders(
+      <ExternalSubmitForm edit={makeCtx({ kind: 'onsite', connectClientId: 'oc_1' })} />
+    );
+    // The DETAILS step is the commit proof — it must render, and it is where an on-site
+    // edit now opens (there is no earlier step to sit on).
+    await expect
+      .element(page.getByTestId('apps-offsite-wizard-step-details'))
+      .toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-wizard-step-url').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-offsite-scope-disclosure').elements()).toHaveLength(0);
+  });
+
+  test('an OFF-SITE listing STILL gets the App URL step (the control)', async () => {
+    renderWithProviders(
+      <ExternalSubmitForm edit={makeCtx({ kind: 'offsite', connectClientId: 'oc_1' })} />
+    );
+    await expect.element(page.getByTestId('apps-offsite-wizard-step-url')).toBeInTheDocument();
+  });
+
+  test('a context with NO kind still gets the URL step — unchanged behaviour', async () => {
+    // Every pre-existing caller and fixture predates the field; absent must mean off-site.
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx()} />);
+    await expect.element(page.getByTestId('apps-offsite-wizard-step-url')).toBeInTheDocument();
+  });
+});

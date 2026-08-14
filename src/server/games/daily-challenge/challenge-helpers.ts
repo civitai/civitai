@@ -14,6 +14,7 @@ import {
   challengeJudgingCategoriesSchema,
   type ChallengeJudgingCategory,
 } from '~/server/schema/challenge.schema';
+import { challengeJudgingEngineForCreate } from '~/server/services/challenge-judge.service';
 import {
   getIsSafeBrowsingLevel,
   sfwBrowsingLevelsFlag,
@@ -92,6 +93,7 @@ export type ChallengeDetails = {
   collectionId: number | null; // Collection for entries (null if not yet created)
   judgeId: number | null; // ChallengeJudge ID (null if no judge assigned)
   judgingPrompt: string | null;
+  judgingEngine: string;
   reviewPercentage: number;
   maxReviews: number | null;
   maxEntriesPerUser: number;
@@ -169,6 +171,7 @@ const challengeSelectFragment = Prisma.sql`
   c."collectionId",
   c."judgeId",
   c."judgingPrompt",
+  c."judgingEngine",
   c."reviewPercentage",
   c."maxReviews",
   c."maxEntriesPerUser",
@@ -296,7 +299,9 @@ export async function getEndedActiveChallengesFromDb(): Promise<ChallengeDetails
  * Returns challenges whose endsAt is within the last windowHours hours, ordered by endsAt ASC
  * (id tiebreak), bounded to CHALLENGE_JOB_BATCH_SIZE per run.
  */
-export async function getChallengesToReconcileFromDb(windowHours = 48): Promise<ChallengeDetails[]> {
+export async function getChallengesToReconcileFromDb(
+  windowHours = 48
+): Promise<ChallengeDetails[]> {
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT c.id
     FROM "Challenge" c
@@ -477,6 +482,9 @@ export async function createChallengeCollection(input: {
 }
 
 export async function createChallengeRecord(input: CreateChallengeInput): Promise<number> {
+  // Copied from the judge, not referenced: editing a judge must not re-point a live challenge.
+  const judgingEngine = await challengeJudgingEngineForCreate(input.judgeId);
+
   const challenge = await dbWrite.challenge.create({
     data: {
       startsAt: input.startsAt,
@@ -520,6 +528,7 @@ export async function createChallengeRecord(input: CreateChallengeInput): Promis
       // can't fail the nightly creation cron.
       judgingCategories: (input.judgingCategories ??
         DEFAULT_CATEGORY_ROWS) as unknown as Prisma.InputJsonValue,
+      ...judgingEngine,
     },
     select: { id: true },
   });
@@ -865,6 +874,32 @@ export async function updateChallengeField<K extends keyof CreateChallengeInput>
   });
 }
 
+/**
+ * Buzz this challenge may still spend on judging, or `null` when it is unbounded.
+ *
+ * 🔴 `operationBudget = 0` means UNBOUNDED, not "spend nothing". The column is `Int @default(0)` and
+ * is 0 on every challenge in production, so reading 0 as a zero ceiling would stop judging on all of
+ * them the moment this shipped. Enforcement therefore only bites once somebody sets a budget, and
+ * until they do this returns null and nothing is capped — which is a real limitation, not a fix
+ * hiding behind a helper.
+ *
+ * The number is also a floor rather than a true remaining balance: `operationSpent` under-reports,
+ * partly because the permissive route bills reasoning tokens it does not declare (#3815). A budget
+ * set here will be overshot by roughly that margin.
+ */
+export async function operationBudgetRemaining(
+  challengeId: number
+): Promise<{ remaining: number | null; spent: number }> {
+  const challenge = await dbRead.challenge.findUnique({
+    where: { id: challengeId },
+    select: { operationBudget: true, operationSpent: true },
+  });
+  const budget = challenge?.operationBudget ?? 0;
+  const spent = challenge?.operationSpent ?? 0;
+  if (budget <= 0) return { remaining: null, spent };
+  return { remaining: Math.max(0, budget - spent), spent };
+}
+
 export async function incrementOperationSpent(challengeId: number, amount: number): Promise<void> {
   // Use atomic increment to avoid race conditions
   await dbWrite.$executeRaw`
@@ -907,9 +942,8 @@ export async function incrementOperationSpent(challengeId: number, amount: numbe
  * the run. `resetStuckCompletingChallenges` below revokes a `Completing` claim purely on elapsed
  * time — no liveness check, no ownership token — so a slow-but-alive run can have its claim taken
  * over by a second run while it is still executing. A re-claim overwrites the stamp, so a run that
- * re-reads the row and finds a DIFFERENT stamp knows it no longer owns the completion. That signal
- * is used to suppress duplicate TELEMETRY only (see `claimStillHeld` in daily-challenge-processing);
- * it does not gate any write, and the status writes remain unconditional as before.
+ * re-reads the row and finds a DIFFERENT stamp knows it no longer owns the completion — see
+ * `challengeClaimStillHeld` and `completeChallengeIfClaimHeld` below.
  */
 export async function claimChallengeForCompletion(challengeId: number): Promise<string | null> {
   const claimedAt = new Date().toISOString();
@@ -921,6 +955,55 @@ export async function claimChallengeForCompletion(challengeId: number): Promise<
     AND status = ${ChallengeStatus.Active}::"ChallengeStatus"
   `;
   return result > 0 ? claimedAt : null;
+}
+
+/**
+ * A stamp that is present AND different is the only proof of a takeover: an absent stamp reads the
+ * same whether nothing has claimed the row or the claim write is simply not visible yet, so it is
+ * treated as still held. Consequence: this can only ever stop a run that has demonstrably lost the
+ * challenge, never one that still owns it.
+ */
+export async function challengeClaimStillHeld(
+  challengeId: number,
+  claimedAt: string
+): Promise<boolean> {
+  const [row] = await dbWrite.$queryRaw<[{ held: boolean }?]>`
+    SELECT COALESCE(metadata->>'completingClaimedAt', '') IN ('', ${claimedAt}) AS held
+    FROM "Challenge"
+    WHERE id = ${challengeId}
+    LIMIT 1
+  `;
+  return row?.held ?? true;
+}
+
+/**
+ * Mark a challenge Completed only while this run still holds the claim it took, so a run that was
+ * evicted mid-flight cannot write an outcome over the run that replaced it. Same fail-open reading
+ * of a missing stamp as `challengeClaimStillHeld`.
+ *
+ * Returns whether the write landed; a `false` means some other run owns the completion, and the
+ * caller's completion side effects (telemetry, notifications) belong to that run instead.
+ */
+export async function completeChallengeIfClaimHeld({
+  challengeId,
+  claimedAt,
+  metadata,
+}: {
+  challengeId: number;
+  claimedAt: string;
+  metadata?: Prisma.InputJsonValue;
+}): Promise<boolean> {
+  const metadataUpdate =
+    metadata === undefined
+      ? Prisma.empty
+      : Prisma.sql`, metadata = ${JSON.stringify(metadata)}::jsonb`;
+  const result = await dbWrite.$executeRaw`
+    UPDATE "Challenge"
+    SET status = ${ChallengeStatus.Completed}::"ChallengeStatus"${metadataUpdate}
+    WHERE id = ${challengeId}
+    AND COALESCE(metadata->>'completingClaimedAt', '') IN ('', ${claimedAt})
+  `;
+  return result > 0;
 }
 
 /**
@@ -960,6 +1043,7 @@ export type RecentEntry = {
   userId: number;
   username: string;
   url: string;
+  nsfwLevel: number;
 };
 
 /** Row shape for resource selection queries (used by processing and testing). */

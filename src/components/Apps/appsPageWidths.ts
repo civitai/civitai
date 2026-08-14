@@ -126,8 +126,20 @@ export const APPS_PAGE_WIDTHS = {
   '/apps/submit': APPS_READABLE_PAGE_WIDTH,
   /** The listing detail page. */
   '/apps/store-preview/[slug]': APPS_READABLE_PAGE_WIDTH,
-  /** The owner's tabbed manifest/media editor. */
+  /**
+   * The LEGACY block-keyed tabbed editor. Still RENDERING, not redirect-only: its
+   * `getServerSideProps` 302s to `/apps/listing/<appListingId>/edit` only when the block
+   * HAS a listing, and falls through to this page when it does not (a first-version app
+   * pending approval has no `AppListing` row). Classified by reading that resolver — see
+   * the 🔴 note above about `/apps/[appBlockId]` having been mis-listed once.
+   */
   '/apps/[appBlockId]/edit': APPS_READABLE_PAGE_WIDTH,
+  /** The CANONICAL listing-keyed authoring editor — serves both store kinds. */
+  '/apps/listing/[appListingId]/edit': APPS_READABLE_PAGE_WIDTH,
+  /** The invitee's pending-invitation inbox — a short card list. */
+  '/apps/invites': APPS_READABLE_PAGE_WIDTH,
+  /** "My apps" — listings owned or held via an accepted seat. A single-column list. */
+  '/apps/mine': APPS_READABLE_PAGE_WIDTH,
   /** Per-app revenue detail. */
   '/apps/[appBlockId]/revenue': APPS_READABLE_PAGE_WIDTH,
   /** The developer get-started explainer — prose. */

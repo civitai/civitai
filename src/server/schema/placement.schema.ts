@@ -202,7 +202,15 @@ export const setRemixGalleryPinsSchema = z.object({
   placementIds: z.array(z.number().int().positive()).max(REMIX_GALLERY_MAX_PINNED),
 });
 
+/** Where the last page stopped. Opaque to the client; see `placementQueueKeyset`. */
+const placementQueueCursorSchema = z.string().max(100).nullish();
+
 export const getPendingRemixGallerySubmissionsSchema = z.object({
   /** Omitted for the account-wide queue; set to scope to one gallery. */
   hostImageId: z.number().int().positive().optional(),
+  cursor: placementQueueCursorSchema,
+});
+
+export const getPendingStickerPlacementsSchema = z.object({
+  cursor: placementQueueCursorSchema,
 });

@@ -7,7 +7,6 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getAllImages } from '~/server/services/image.service';
 import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
-import { recordPlacementTip } from '~/server/services/placement-metrics.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
@@ -16,7 +15,11 @@ import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/er
 import { onlySelectableLevels } from '~/shared/constants/browsingLevel.constants';
 import {
   declineFeeAmount,
+  encodePlacementQueueCursor,
+  parsePlacementQueueCursor,
+  PLACEMENT_QUEUE_PAGE_SIZE,
   PLACEMENT_SURFACES,
+  placementQueueKeyset,
   splitPlacementPayment,
 } from '~/shared/utils/placement';
 import type { RemixGalleryPlacementData } from '~/shared/utils/remix-gallery';
@@ -438,25 +441,6 @@ export async function actOnRemixGallerySubmission({
   // appeared to work and did not is what this cost us on chunk D.
   if (!result.settled)
     throw throwBadRequestError('remix gallery: that submission was already resolved elsewhere');
-
-  // A gallery entry is a paid placement on this image, so it counts toward the
-  // same Buzz counter a sticker does (Justin, 2026-08-12). A decline counts
-  // nothing even though its fee reaches the owner — see `recordPlacementTip`.
-  //
-  // `result.settled` is re-checked even though the throw above already covers
-  // it, and not as belt and braces: it is the gate the sticker twin actually
-  // uses, so writing it here keeps the two surfaces the same shape. The throw
-  // is the kind of thing that gets softened into a returned value — the
-  // moderator removal path already made exactly that change — and whoever does
-  // that would otherwise be introducing a double count with nothing beside it
-  // to say so.
-  if (action === 'approve' && result.settled)
-    await recordPlacementTip({
-      surface: SURFACE,
-      imageId: placement.targetId,
-      amount: placement.amount,
-      placerId: placement.placerId,
-    });
 
   return result;
 }
@@ -1171,7 +1155,8 @@ export async function getRemixGalleryVisibility({
 export async function getPendingRemixGallerySubmissions({
   ownerId,
   hostImageId,
-  limit = REMIX_GALLERY_QUEUE_LIMIT,
+  limit = PLACEMENT_QUEUE_PAGE_SIZE,
+  cursor,
 }: {
   ownerId: number;
   /**
@@ -1181,6 +1166,7 @@ export async function getPendingRemixGallerySubmissions({
    */
   hostImageId?: number;
   limit?: number;
+  cursor?: string | null;
 }) {
   const rows = await dbRead.placement.findMany({
     where: {
@@ -1188,6 +1174,7 @@ export async function getPendingRemixGallerySubmissions({
       ownerId,
       status: 'pending',
       ...(hostImageId ? { targetType: TARGET_TYPE, targetId: hostImageId } : {}),
+      ...placementQueueKeyset(parsePlacementQueueCursor(cursor)),
     },
     select: {
       id: true,
@@ -1199,19 +1186,21 @@ export async function getPendingRemixGallerySubmissions({
       expiresAt: true,
       placer: { select: { id: true, username: true, image: true } },
     },
-    orderBy: { createdAt: 'asc' },
-    take: limit,
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    take: limit + 1,
   });
 
-  // Measured before the image filter below, not after. A queue that hit the cap
-  // and then dropped rows whose image was deleted returns fewer than `limit`, so
-  // a caller counting the returned rows concludes it saw everything — precisely
-  // when it did not, and the escrow behind the rest sits until it expires.
-  const truncated = rows.length >= limit;
+  // Read off the row the page ends on, before the rows below are dropped for an
+  // unreadable payload or a deleted image. Taking it from what is returned would
+  // point the next page at an earlier row and serve everything between twice —
+  // and the earlier `truncated` flag had the mirror-image bug, reporting a full
+  // queue as complete once the filter took it under the cap.
+  const page = rows.slice(0, limit);
+  const nextCursor = rows.length > limit ? encodePlacementQueueCursor(page[page.length - 1]) : null;
 
-  const entries = rows.filter((row) => isRemixGalleryPlacementData(row.data));
+  const entries = page.filter((row) => isRemixGalleryPlacementData(row.data));
   const imageIds = entries.map((row) => (row.data as RemixGalleryPlacementData).imageId);
-  if (!imageIds.length) return { items: [], truncated };
+  if (!imageIds.length) return { items: [], nextCursor };
 
   const images = await dbRead.$queryRaw<
     {
@@ -1264,7 +1253,7 @@ export async function getPendingRemixGallerySubmissions({
         },
       }))
       .filter((row) => row.image),
-    truncated,
+    nextCursor,
   };
 }
 

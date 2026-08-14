@@ -1,15 +1,22 @@
 import {
   Button,
+  Group,
   JsonInput,
   Loader,
   ScrollArea,
+  Select,
   Stack,
   Switch,
   Text,
   TextInput,
   Textarea,
 } from '@mantine/core';
-import { IconDeviceFloppy } from '@tabler/icons-react';
+import { IconCopy, IconDeviceFloppy } from '@tabler/icons-react';
+import {
+  DEFAULT_JUDGING_ENGINE,
+  isJudgingEngineKey,
+  JUDGING_ENGINE_OPTIONS,
+} from '~/server/games/daily-challenge/challenge-judging-engine';
 import { JUDGE_USER_SELECTABLE_FIELD } from '~/shared/constants/challenge.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -28,6 +35,8 @@ export function JudgeSettingsPanel() {
     { enabled: selectedJudgeId != null && selectedJudgeId > 0 }
   );
 
+  const setSelectedJudgeId = usePlaygroundStore((s) => s.setSelectedJudgeId);
+
   const queryUtils = trpc.useUtils();
   const upsertMutation = trpc.challenge.upsertJudge.useMutation({
     onSuccess: () => {
@@ -36,6 +45,17 @@ export function JudgeSettingsPanel() {
       queryUtils.challenge.getJudges.invalidate();
       if (selectedJudgeId != null)
         queryUtils.challenge.getJudgeById.invalidate({ id: selectedJudgeId });
+    },
+    onError: (error) => {
+      showErrorNotification({ error: new Error(error.message) });
+    },
+  });
+
+  const duplicateMutation = trpc.challenge.upsertJudge.useMutation({
+    onSuccess: (created) => {
+      showSuccessNotification({ message: 'Judge duplicated' });
+      queryUtils.challenge.getJudges.invalidate();
+      setSelectedJudgeId(created.id);
     },
     onError: (error) => {
       showErrorNotification({ error: new Error(error.message) });
@@ -54,6 +74,11 @@ export function JudgeSettingsPanel() {
   const currentReviewTemplate = draft?.reviewTemplate ?? judge?.reviewTemplate ?? '';
   const currentWinnerPrompt = draft?.winnerSelectionPrompt ?? judge?.winnerSelectionPrompt ?? '';
   const currentUserSelectable = draft?.userSelectable ?? judge?.userSelectable ?? false;
+  // An unrecognised stored value shows as the default rather than emptying the select — the same
+  // fallback the judging path applies, so the picker never disagrees with what will actually run.
+  const currentJudgingEngine =
+    draft?.judgingEngine ??
+    (isJudgingEngineKey(judge?.judgingEngine) ? judge.judgingEngine : DEFAULT_JUDGING_ENGINE);
 
   const handleSave = () => {
     if (!judge || selectedJudgeId == null) return;
@@ -68,6 +93,29 @@ export function JudgeSettingsPanel() {
       reviewTemplate: currentReviewTemplate || null,
       winnerSelectionPrompt: currentWinnerPrompt || null,
       userSelectable: currentUserSelectable,
+      judgingEngine: currentJudgingEngine,
+    });
+  };
+
+  // Duplicates what is on screen, unsaved edits included, and never userSelectable: a new judge is
+  // for trying an engine out, and inheriting the original's visibility would put it in front of
+  // creators before anyone has looked at it.
+  const handleDuplicate = () => {
+    if (!judge) return;
+
+    duplicateMutation.mutate({
+      userId: judge.userId,
+      name: `${currentName} (copy)`,
+      bio: currentBio || null,
+      sourceCollectionId: judge.sourceCollectionId,
+      systemPrompt: currentSystemPrompt || null,
+      contentPrompt: currentContentPrompt || null,
+      reviewPrompt: currentReviewPrompt || null,
+      reviewTemplate: currentReviewTemplate || null,
+      winnerSelectionPrompt: currentWinnerPrompt || null,
+      active: judge.active,
+      userSelectable: false,
+      judgingEngine: currentJudgingEngine,
     });
   };
 
@@ -179,6 +227,17 @@ export function JudgeSettingsPanel() {
                 });
             }}
           />
+          <Select
+            label="Judging Engine"
+            description="Copied onto each new challenge assigned this judge; live challenges keep theirs"
+            data={JUDGING_ENGINE_OPTIONS}
+            value={currentJudgingEngine}
+            allowDeselect={false}
+            onChange={(value) => {
+              if (selectedJudgeId != null && isJudgingEngineKey(value))
+                updateDraft(selectedJudgeId, { judgingEngine: value });
+            }}
+          />
           <Switch
             label={JUDGE_USER_SELECTABLE_FIELD.label}
             description={JUDGE_USER_SELECTABLE_FIELD.description}
@@ -191,15 +250,26 @@ export function JudgeSettingsPanel() {
           <ModelSelector />
         </Stack>
       </ScrollArea>
-      <Button
-        leftSection={<IconDeviceFloppy size={16} />}
-        m="sm"
-        onClick={handleSave}
-        loading={upsertMutation.isPending}
-        disabled={!currentName}
-      >
-        Save Judge
-      </Button>
+      <Group m="sm" gap="xs" wrap="nowrap">
+        <Button
+          leftSection={<IconDeviceFloppy size={16} />}
+          flex={1}
+          onClick={handleSave}
+          loading={upsertMutation.isPending}
+          disabled={!currentName}
+        >
+          Save Judge
+        </Button>
+        <Button
+          variant="default"
+          leftSection={<IconCopy size={16} />}
+          onClick={handleDuplicate}
+          loading={duplicateMutation.isPending}
+          disabled={!currentName}
+        >
+          Duplicate
+        </Button>
+      </Group>
     </Stack>
   );
 }

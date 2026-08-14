@@ -40,6 +40,14 @@ export type EditScreenshot = {
 export type ListingEditContext = {
   parentId: string;
   slug: string;
+  /**
+   * The listing's KIND.
+   *
+   * 🔴 OPTIONAL, and absent means OFF-SITE — this form began life as the off-site submit
+   * wizard's edit mode, so every pre-existing context and fixture predates the field and
+   * must keep its exact behaviour. See {@link isOnsiteEdit}.
+   */
+  kind?: 'onsite' | 'offsite';
   status: string;
   hasPendingRevision: boolean;
   shadowId: string | null;
@@ -112,6 +120,25 @@ export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormVal
   };
 }
 
+/**
+ * Is this edit context an ON-SITE listing? PURE.
+ *
+ * 🔴 WHY THIS PREDICATE EXISTS AT ALL. This form is the off-site submit wizard in edit
+ * mode, and until the canonical authoring page defaulted to its DETAILS tab, an on-site
+ * owner never reached it — the block-keyed editor opened on the manifest tab. Changing
+ * the default changed the POPULATION, not the form, and the form is not kind-aware: it
+ * offers an "App URL" step and an OAuth-scope disclosure that mean nothing for a listing
+ * whose CTA is its own hosted page.
+ *
+ * 🔴 FAIL-SAFE DEFAULT: anything that is not the literal `'onsite'` — including an absent
+ * kind — reads as off-site, i.e. as today's behaviour. The narrowing only ever applies to
+ * a context that positively declares itself on-site, so it cannot silently strip the URL
+ * field from the listings that need it.
+ */
+export function isOnsiteEdit(ctx: Pick<ListingEditContext, 'kind'>): boolean {
+  return ctx.kind === 'onsite';
+}
+
 /** True iff two string→string maps have identical keys + values. PURE. */
 function shallowEqualStringMap(
   a: Record<string, string>,
@@ -139,8 +166,13 @@ export function buildScalarPatch(
   const name = current.name.trim();
   if (name !== original.name.trim()) patch.name = name;
 
-  const url = current.externalUrl.trim();
-  if (url !== original.externalUrl.trim()) patch.externalUrl = url;
+  // 🔴 NEVER patch `externalUrl` on an ON-SITE listing. Its CTA is its hosted page; an
+  // external URL is not a field it has, and the edit form must not be able to write one
+  // through a step it should not even be showing.
+  if (!isOnsiteEdit(ctx)) {
+    const url = current.externalUrl.trim();
+    if (url !== original.externalUrl.trim()) patch.externalUrl = url;
+  }
 
   const tagline = current.tagline.trim();
   const originalTagline = original.tagline.trim();

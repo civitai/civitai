@@ -22,6 +22,7 @@ export const UPDATED_AT_TABLES = new Set<keyof DB>([
   'CashWithdrawal',
   'Challenge',
   'ChallengeCategory',
+  'ChallengeEntryStanding',
   'ChallengeEvent',
   'ChallengeJudge',
   'Changelog',

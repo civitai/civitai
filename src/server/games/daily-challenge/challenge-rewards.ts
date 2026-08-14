@@ -42,7 +42,7 @@ export async function promoteChallengeEntries(args: {
         (i."nsfwLevel" & ${allowedNsfwLevel}) > 0 as "isSafe",
         ${
           hasModelVersionRestriction
-            ? Prisma.sql`EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" = ANY(${modelVersionIds}) AND ir."imageId" = i.id)`
+            ? Prisma.sql`EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" = ANY(${modelVersionIds}) AND ir."imageId" = i.id AND ir.detected IS TRUE)`
             : Prisma.sql`true`
         } as "hasResource",
         i."createdAt" >= ${challengeDate} as "isRecent"

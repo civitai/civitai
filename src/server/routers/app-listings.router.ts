@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 
 import {
   addListingScreenshotSchema,
+  appListingAuthoringContextSchema,
   assetScanStatusesSchema,
   backfillListingAssetsSchema,
   listingAssetsQuerySchema,
@@ -789,6 +790,49 @@ export const appListingsRouter = router({
         '~/server/services/blocks/offsite-listing.service'
       );
       return listMySubmissions({ userId: ctx.user.id, limit: input.limit, cursor: input.cursor });
+    }),
+
+  /**
+   * AUTHOR: every APP LISTING the caller owns or holds an ACCEPTED editor seat on.
+   *
+   * 🔴 NOT a variant of `listMySubmissions`, and the two must not be conflated. That one
+   * is scoped to a publish request's `submittedByUserId` — "what did I submit" — so a
+   * listing acquired by ownership TRANSFER or by a moderator `claimListing` is invisible
+   * there to the person who now owns it, and a COLLABORATOR (who submitted nothing) sees
+   * nothing at all. This is the ownership-and-seats read the authoring entry points need.
+   *
+   * Each row carries its `role` and its KIND-DERIVED `capabilities`, so the client
+   * renders only surfaces that will not 403.
+   *
+   * `appDeveloperProcedure` = the App Blocks author FLAG (`protectedProcedure.use(
+   * hasAppBlocksAuthor)`), NOT an ownership check — which is what makes it correct for a
+   * seat-only caller who owns nothing. Same gate the collaborator router composes.
+   */
+  listMine: appDeveloperProcedure.query(async ({ ctx }) => {
+    if (!ctx.user) return [];
+    const { listMyAppListings } = await import('~/server/services/blocks/app-access.service');
+    return listMyAppListings({ userId: ctx.user.id });
+  }),
+
+  /**
+   * AUTHOR: the authoring context for ONE listing — the read behind the canonical
+   * `/apps/listing/<appListingId>/edit` page.
+   *
+   * Refuses (FORBIDDEN) a caller with no role rather than returning a role-less row, so
+   * the page can never render a tab set for someone every child query would refuse. A
+   * SHADOW revision id resolves to its PARENT.
+   */
+  getAuthoringContext: appDeveloperProcedure
+    .input(appListingAuthoringContextSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { getAppListingAuthoringContext } = await import(
+        '~/server/services/blocks/app-access.service'
+      );
+      return getAppListingAuthoringContext({
+        appListingId: input.appListingId,
+        userId: ctx.user.id,
+      });
     }),
 
   /** MOD: pending off-site review queue (read-only in PR-a; approve/reject in PR-b). */

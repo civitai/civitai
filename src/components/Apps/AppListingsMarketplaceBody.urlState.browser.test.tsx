@@ -120,6 +120,18 @@ const ROUTER_LATENCY_MS = 500;
 let forceRerender: (() => void) | null = null;
 
 /**
+ * Every `router.replace` the component issues, counted.
+ *
+ * 🔴 THE ONLY ASSERTION THAT CAN SEE THE PING-PONG. Every other check in this
+ * file is a RETRYING matcher (`vi.waitFor`, `expect.element(...).toHaveValue`),
+ * and a retrying matcher passes the moment the oscillation happens to swing
+ * through the expected value. The whole suite was green on the unfixed code
+ * while `/apps` burned ~1.8 route writes/sec forever in production. A COUNT that
+ * must stop growing is the shape of assertion the defect cannot satisfy.
+ */
+let replaceCalls = 0;
+
+/**
  * A router that behaves like the real one: `replace` applies the new query AFTER
  * a delay and then re-renders the subscribers, and it returns a promise.
  *
@@ -133,6 +145,7 @@ function StatefulRouterHarness({ latencyMs }: { latencyMs: number }) {
     forceRerender = force;
     const original = router.replace;
     router.replace = ((url: unknown) => {
+      replaceCalls += 1;
       const nextQuery = { ...((url as { query?: Record<string, unknown> })?.query ?? {}) };
       return new Promise<boolean>((resolve) => {
         setTimeout(() => {
@@ -166,7 +179,10 @@ beforeEach(() => {
   mocks.lastArgs = null;
   router.query = {};
   forceRerender = null;
+  replaceCalls = 0;
 });
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function openFilters() {
   await userEvent.click(page.getByTestId('apps-store-filters-dropdown'));
@@ -276,5 +292,82 @@ describe('(b) two fast filter clicks must not drop one', () => {
       expect(currentQuery()).not.toHaveProperty('kind');
       expect(currentQuery()).not.toHaveProperty('category');
     });
+  });
+});
+
+/**
+ * (c) THE PING-PONG. Reproduced on production 2026-08-13: typing into the store
+ * search box started an UNBOUNDED `history.replaceState` oscillation —
+ * `/apps?query=X` → `/apps` → `/apps?query=X` → … at ~1.8 writes/sec, never
+ * settling, ending with the term stripped from the URL.
+ *
+ * 🔴 WHY THE SUITE ABOVE COULD NOT SEE IT. Every assertion in (a) and (b) is a
+ * RETRYING matcher, and an oscillation swings through the expected value on
+ * every cycle — so "typing is NOT clobbered by the re-sync" was GREEN on the
+ * broken code. The defect is not a wrong value, it is a value that will not stop
+ * changing, and only a COUNT that must stop growing can express that.
+ *
+ * The mechanism is written up at the adopt effect in
+ * `AppListingsMarketplaceBody.tsx`: the debounced echo and the URL→box adopt
+ * both run in the SAME commit, and the adopt's `isWritePending` guard used to be
+ * a render-time boolean, sampled before the echo had incremented it.
+ */
+describe('(c) typing must SETTLE — no unbounded route-write ping-pong', () => {
+  test('🔴 one search term → route writes STOP, and `?query=` sticks', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toBeInTheDocument();
+
+    await search.fill('Alpha');
+    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ query: 'Alpha' }));
+
+    // 1.8s ≈ 3 full periods of the production loop (2 × the 300ms debounce), so
+    // on the unfixed code this window CANNOT be quiet. Sampling — rather than
+    // one reading at the end — is deliberate: a single final read of the URL is
+    // a coin flip against an oscillation, and would make this test flaky-green
+    // instead of reliably red.
+    const settledAt = replaceCalls;
+    const writes: number[] = [];
+    const urlQueries: unknown[] = [];
+    const boxValues: string[] = [];
+    for (let i = 0; i < 18; i++) {
+      await sleep(100);
+      writes.push(replaceCalls);
+      urlQueries.push(currentQuery().query);
+      boxValues.push((search.element() as HTMLInputElement).value);
+    }
+
+    // BOUNDED: not one further route write after the term landed.
+    expect(writes).toEqual(writes.map(() => settledAt));
+    // STICKS: `?query=Alpha` is present at EVERY instant — it never reverts to a
+    // bare `/apps`, which is the end state the production repro landed on.
+    expect(urlQueries).toEqual(urlQueries.map(() => 'Alpha'));
+    // …and the box is not wiped out from under the viewer on the way there.
+    expect(boxValues).toEqual(boxValues.map(() => 'Alpha'));
+  });
+
+  test('🔴 …and with a SLOW router too (the in-flight window is real)', async () => {
+    // Same claim at the other end of the dimension the hook's counter exists
+    // for: a `router.replace` that takes 500ms to land. One measurement at
+    // latency 0 would say nothing about the window where the counter is doing
+    // the work.
+    renderWithProviders(<StatefulRouterHarness latencyMs={ROUTER_LATENCY_MS} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toBeInTheDocument();
+
+    await search.fill('Alpha');
+    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ query: 'Alpha' }));
+
+    const settledAt = replaceCalls;
+    const writes: number[] = [];
+    const urlQueries: unknown[] = [];
+    for (let i = 0; i < 18; i++) {
+      await sleep(100);
+      writes.push(replaceCalls);
+      urlQueries.push(currentQuery().query);
+    }
+    expect(writes).toEqual(writes.map(() => settledAt));
+    expect(urlQueries).toEqual(urlQueries.map(() => 'Alpha'));
+    await expect.element(search).toHaveValue('Alpha');
   });
 });

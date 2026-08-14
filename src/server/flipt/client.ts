@@ -34,6 +34,9 @@ export enum FLIPT_FEATURE_FLAGS {
   WAN22_TRAINING = 'wan22-training',
   IMAGE_TRAINING_RESULTS = 'image-training-results',
   CHALLENGE_PLATFORM_ENABLED = 'challenge-platform-enabled',
+  // Gates every non-legacy judging engine. Default-off, so a challenge whose `judgingEngine`
+  // column points at the pairwise ladder still runs the legacy absolute path until this is on.
+  CHALLENGE_PAIRWISE_JUDGING = 'challenge-pairwise-judging',
   COMIC_CREATOR = 'comic-creator',
   GENERATION_PRESETS = 'generation-presets',
   GENERATION_TESTING = 'generation-testing',
@@ -83,6 +86,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // collections pool. Default-off, and the job's config carries its own `dryRun` on top,
   // so the homepage cannot change until both are deliberately turned on.
   AUTO_FEATURE_IMAGES = 'auto-feature-images',
+  // Arms the placement Buzz reconcile sweep. Default-off, and it must STAY off
+  // until the migration's backfill has been re-run against the deployed code —
+  // everything approved between the ALTER and that re-run carries no
+  // `metricCountedAt` while already having been counted, so a sweep running
+  // first re-emits all of it and roughly doubles those counters permanently.
+  PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a
@@ -113,6 +122,11 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   // config poll alone. Evaluated once per model-file scan and once per nightly
   // job run — nowhere near hot enough for the cache to be worth the extra lag.
   FLIPT_FEATURE_FLAGS.MINOR_HASH_AUTO_FLAG,
+  // The stop button for a sweep that can permanently double production counters
+  // — nothing takes a counter back down. Evaluated about ten times per
+  // five-minute tick, so the cache saves nothing measurable and the staleness is
+  // all cost at the moment someone is trying to turn it off.
+  FLIPT_FEATURE_FLAGS.PLACEMENT_METRIC_SWEEP,
 ]);
 
 const flipt = createFliptClient({

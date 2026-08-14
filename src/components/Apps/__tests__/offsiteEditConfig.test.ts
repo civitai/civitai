@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildScalarPatch,
+  isOnsiteEdit,
   editContextToForm,
   hasScalarChanges,
   isApprovedEdit,
@@ -54,6 +55,65 @@ describe('editContextToForm', () => {
     expect(form.contentRating).toBe('g');
     expect(form.externalUrl).toBe('');
     expect(form.changelog).toBe('');
+  });
+});
+
+/**
+ * 🔴 KIND-AWARE EDITING. The canonical authoring page now defaults to the DETAILS tab,
+ * which means an ON-SITE owner clicking "Edit" lands in this form — a population it never
+ * saw while the default was the manifest tab. It is the off-site submit wizard's edit
+ * mode, so without a kind branch it offers an on-site app an "App URL" step and an
+ * OAuth-scope disclosure that mean nothing for it, and `buildScalarPatch` can emit an
+ * `externalUrl` onto a listing whose CTA is its hosted page.
+ *
+ * `kind` is OPTIONAL on the context and absent ⇒ off-site, so every pre-existing fixture
+ * and caller keeps its exact behaviour — the branch only narrows the new population.
+ */
+describe('kind-aware editing (isOnsiteEdit)', () => {
+  it('an explicit onsite kind is on-site; offsite and ABSENT are not', () => {
+    expect(isOnsiteEdit(makeCtx({ kind: 'onsite' }))).toBe(true);
+    expect(isOnsiteEdit(makeCtx({ kind: 'offsite' }))).toBe(false);
+    // 🔴 Back-compat: an older context with no kind must behave exactly as before.
+    expect(isOnsiteEdit(makeCtx())).toBe(false);
+  });
+
+  it('🔴 an ON-SITE patch NEVER carries externalUrl, however the field changed', () => {
+    const ctx = makeCtx({ kind: 'onsite' });
+    const form = { ...editContextToForm(ctx), externalUrl: 'https://evil.example.com/' };
+    const patch = buildScalarPatch(ctx, form);
+    expect(patch.externalUrl).toBeUndefined();
+    expect('externalUrl' in patch).toBe(false);
+  });
+
+  it('an ON-SITE patch still carries every OTHER changed scalar', () => {
+    // The narrowing must be surgical: this is what stops "drop externalUrl" turning into
+    // "the on-site details form saves nothing".
+    const ctx = makeCtx({ kind: 'onsite' });
+    const patch = buildScalarPatch(ctx, {
+      ...editContextToForm(ctx),
+      name: 'Renamed',
+      externalUrl: 'https://evil.example.com/',
+    });
+    expect(patch.name).toBe('Renamed');
+    expect(patch.externalUrl).toBeUndefined();
+  });
+
+  it('an OFF-SITE patch DOES carry externalUrl — the control that stops over-reach', () => {
+    const ctx = makeCtx({ kind: 'offsite' });
+    const patch = buildScalarPatch(ctx, {
+      ...editContextToForm(ctx),
+      externalUrl: 'https://moved.example.com/',
+    });
+    expect(patch.externalUrl).toBe('https://moved.example.com/');
+  });
+
+  it('a context with NO kind still carries externalUrl (unchanged behaviour)', () => {
+    const ctx = makeCtx();
+    const patch = buildScalarPatch(ctx, {
+      ...editContextToForm(ctx),
+      externalUrl: 'https://moved.example.com/',
+    });
+    expect(patch.externalUrl).toBe('https://moved.example.com/');
   });
 });
 

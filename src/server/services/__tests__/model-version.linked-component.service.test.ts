@@ -53,7 +53,7 @@ vi.mock('~/server/services/model.service', () => ({
   updateModelLastVersionAt: vi.fn(),
 }));
 vi.mock('~/server/services/model-file.service', () => ({
-  filesForModelVersionCache: {},
+  deleteFilesForModelVersionCache: vi.fn(),
   markFileReplaced: mockMarkReplaced,
 }));
 // Keep the real paid-access module (which reads REDIS_KEYS.CACHES.PAID_ACCESS at import) out of the graph.

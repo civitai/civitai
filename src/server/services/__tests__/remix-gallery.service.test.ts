@@ -44,7 +44,12 @@ vi.mock('~/server/services/placement-space.service', () => ({ resolvePlacementSp
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
 
 vi.mock('~/server/services/placement.service', () => ({
-  getPlacementConfig: async () => ({ declineFeeRate: () => 0.3 }),
+  getPlacementConfig: async () => ({
+    declineFeeRate: () => 0.3,
+    // Not the real defaults — no test here asserts an owner payout. Anything
+    // that starts to must set these, or it will read 100% to the owner.
+    approvalShares: () => ({ seller: 0, platform: 0 }),
+  }),
 }));
 
 /**
@@ -99,6 +104,7 @@ const {
   parseGalleryCursor,
   getRemixGallery,
   getRemixGalleryVisibility,
+  getPendingRemixGallerySubmissions,
 } = await import('~/server/services/remix-gallery.service');
 
 const {
@@ -1007,34 +1013,20 @@ describe('an approved submission counts toward the host image buzz counter', () 
     createdAt: new Date(0),
   };
 
-  it('counts what the submitter paid, against the host image', async () => {
+  /**
+   * The settlement paths emit NOTHING. The counter is moved by
+   * `placement-sweep-uncounted` reading `metricCountedAt`; an emit put back here
+   * is one the sweep will emit a second time, and the counter never falls.
+   */
+  it('emits nothing when the owner approves', async () => {
     placementFindUnique.mockResolvedValue(pending);
 
     await actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER });
 
-    expect(updateEntityMetricDetached).toHaveBeenCalledWith({
-      entityType: 'Image',
-      // The HOST, not the submitted image. The submitter's own image gained
-      // nothing; the creator was paid to have it shown on theirs.
-      entityId: HOST_IMAGE,
-      metricType: 'Buzz',
-      amount: PRICE,
-      // The submitter, not the host's owner: attribution follows who paid.
-      userId: PLACER,
-    });
-    // Exactly once, which the payload assertion above cannot see. The two
-    // negative tests in this block would both pass against a full revert, so
-    // without this the whole commit rests on an assertion that a second,
-    // duplicate emission would satisfy just as happily.
-    expect(updateEntityMetricDetached).toHaveBeenCalledTimes(1);
+    expect(updateEntityMetricDetached).not.toHaveBeenCalled();
   });
 
-  /**
-   * A decline still moves 30% of the fee to the owner and still counts nothing
-   * (Justin, 2026-08-12). Counting it would grow the counter fastest for a
-   * creator who refuses everything.
-   */
-  it('counts nothing when the owner declines, though the fee is kept', async () => {
+  it('emits nothing when the owner declines, though the fee is kept', async () => {
     placementFindUnique.mockResolvedValue(pending);
 
     await actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'decline', userId: OWNER });
@@ -1050,5 +1042,150 @@ describe('an approved submission counts toward the host image buzz counter', () 
       actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
     ).rejects.toThrow(/already resolved/i);
     expect(updateEntityMetricDetached).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The review queue pages, and the escrow behind an entry it skips expires
+ * without the owner ever being offered the choice — so "did we skip one" is the
+ * only question these ask.
+ */
+describe('getPendingRemixGallerySubmissions paging', () => {
+  const queueRow = (id: number, imageId: number, createdAt: string) => ({
+    id,
+    targetId: HOST_IMAGE,
+    placerId: PLACER,
+    amount: PRICE,
+    data: { imageId },
+    createdAt: new Date(createdAt),
+    expiresAt: null,
+    placer: { id: PLACER, username: 'someone', image: null },
+  });
+
+  /** Only the first image resolves, so the rest of the page is filtered out. */
+  const onlyFirstImageVisible = (imageId: number) =>
+    queryRaw.mockResolvedValue([
+      { id: imageId, url: 'x', width: 1, height: 1, type: 'image', metadata: null, nsfwLevel: 1 },
+    ]);
+
+  beforeEach(() => {
+    queryRaw.mockResolvedValue([]);
+  });
+
+  it('takes the cursor from the last row of the page, not the last row it returns', async () => {
+    // Three rows for a page of two: the third is the "is there more" probe, and
+    // the second is dropped below because its image no longer resolves.
+    placementFindMany.mockResolvedValue([
+      queueRow(1, 101, '2026-01-01T00:00:00.000Z'),
+      queueRow(2, 102, '2026-01-02T00:00:00.000Z'),
+      queueRow(3, 103, '2026-01-03T00:00:00.000Z'),
+    ]);
+    onlyFirstImageVisible(101);
+
+    const result = await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2 });
+
+    expect(result.items.map((item) => item.id)).toEqual([1]);
+    // Row 2's key. A cursor built from what was returned would say row 1, and
+    // the next page would serve row 2 a second time.
+    expect(result.nextCursor).toBe(`${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`);
+  });
+
+  it('still hands back a cursor when EVERY row on the page was filtered out', async () => {
+    // The state the UI now depends on. Return `nextCursor: null` here and the
+    // owner is told "nothing is waiting" over a queue with entries behind it —
+    // the original bug, one layer up, with every other test still green.
+    placementFindMany.mockResolvedValue([
+      queueRow(1, 101, '2026-01-01T00:00:00.000Z'),
+      queueRow(2, 102, '2026-01-02T00:00:00.000Z'),
+      queueRow(3, 103, '2026-01-03T00:00:00.000Z'),
+    ]);
+    queryRaw.mockResolvedValue([]);
+
+    const result = await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2 });
+
+    expect(result.items).toEqual([]);
+    expect(result.nextCursor).toBe(`${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`);
+  });
+
+  it('hands back a cursor on the early return too, when no row even names an image', async () => {
+    // The `!imageIds.length` short-circuit is a second exit from this function
+    // and it has to carry the cursor for the same reason the main one does. The
+    // test above cannot reach it — those rows name images that simply are not
+    // visible, so it leaves by the filter at the end instead.
+    placementFindMany.mockResolvedValue([
+      { ...queueRow(1, 0, '2026-01-01T00:00:00.000Z'), data: { nonsense: true } },
+      { ...queueRow(2, 0, '2026-01-02T00:00:00.000Z'), data: { nonsense: true } },
+      { ...queueRow(3, 0, '2026-01-03T00:00:00.000Z'), data: { nonsense: true } },
+    ]);
+
+    const result = await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2 });
+
+    expect(result.items).toEqual([]);
+    expect(result.nextCursor).toBe(`${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`);
+  });
+
+  it('reports no next page when the queue ends inside the page', async () => {
+    placementFindMany.mockResolvedValue([queueRow(1, 101, '2026-01-01T00:00:00.000Z')]);
+    onlyFirstImageVisible(101);
+
+    const result = await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2 });
+
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it('resumes strictly after the cursor row, including its same-millisecond twin', async () => {
+    placementFindMany.mockResolvedValue([]);
+    const createdAt = new Date('2026-01-02T00:00:00.000Z');
+
+    await getPendingRemixGallerySubmissions({
+      ownerId: OWNER,
+      limit: 2,
+      cursor: `${createdAt.getTime()}:2`,
+    });
+
+    const { where, orderBy, take } = placementFindMany.mock.calls.at(-1)?.[0] as {
+      where: { OR?: unknown[] };
+      orderBy: unknown;
+      take: number;
+    };
+    // Two placements can share a millisecond. Without the id tie-break one of
+    // them is stepped over and its escrow expires unreviewed.
+    expect(where.OR).toEqual([{ createdAt: { gt: createdAt } }, { createdAt, id: { gt: 2 } }]);
+    expect(orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
+    // limit + 1: the extra row is what says whether another page exists.
+    expect(take).toBe(3);
+  });
+
+  it('reports no next page when the queue ends exactly on the page boundary', async () => {
+    // The case the old `truncated = rows.length >= limit` got wrong. `take` is
+    // limit + 1, so a queue of exactly `limit` returns `limit` rows and there is
+    // nothing behind it — a cursor here sends the owner to an empty page.
+    placementFindMany.mockResolvedValue([
+      queueRow(1, 101, '2026-01-01T00:00:00.000Z'),
+      queueRow(2, 102, '2026-01-02T00:00:00.000Z'),
+    ]);
+    onlyFirstImageVisible(101);
+
+    const result = await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2 });
+
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it('starts a fresh page rather than a bad value in a query when the cursor is malformed', async () => {
+    placementFindMany.mockResolvedValue([]);
+    const wellFormed = `${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`;
+
+    // The positive control. Without it this test passes with the keyset removed
+    // entirely, because then no cursor ever produces an `OR`.
+    await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2, cursor: wellFormed });
+    const accepted = placementFindMany.mock.calls.at(-1)?.[0] as { where: { OR?: unknown[] } };
+    expect(accepted.where.OR).toHaveLength(2);
+
+    for (const cursor of ['nonsense', '1e21:1', '1700000000000:1.5', '1:2:3', '-1:2', ':']) {
+      await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2, cursor });
+
+      const { where } = placementFindMany.mock.calls.at(-1)?.[0] as { where: { OR?: unknown[] } };
+      expect(where.OR, `cursor ${cursor} reached the query`).toBeUndefined();
+    }
   });
 });

@@ -70,12 +70,22 @@ export default function RemixSubmissions() {
 
   // Both run on mount rather than per-tab: the received count is shown on the
   // tab itself, so it has to be known while `sent` is the one on screen.
-  const { data: received, isLoading: receivedLoading } =
-    trpc.placement.getPendingRemixGallerySubmissions.useQuery({});
+  const {
+    data: received,
+    isLoading: receivedLoading,
+    isError: receivedFailed,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = trpc.placement.getPendingRemixGallerySubmissions.useInfiniteQuery(
+    {},
+    { getNextPageParam: (lastPage) => lastPage.nextCursor }
+  );
   const { data: sent, isLoading: sentLoading } =
     trpc.placement.getMyRemixGallerySubmissions.useQuery();
 
-  const waiting = received?.items.length ?? 0;
+  const receivedRows = received?.pages.flatMap((page) => page.items) ?? [];
+  const waiting = receivedRows.length;
 
   return (
     <>
@@ -94,9 +104,17 @@ export default function RemixSubmissions() {
               <Tabs.Tab
                 value="received"
                 rightSection={
-                  waiting ? (
-                    <Badge size="sm" variant="filled" circle>
-                      {waiting}
+                  waiting || hasNextPage ? (
+                    // `circle` fixes the width to a one- or two-character disc,
+                    // so the "+" of a truncated count clips to "5…". A pill for
+                    // the wider label, the disc for the plain count.
+                    <Badge
+                      size="sm"
+                      variant="filled"
+                      circle={!hasNextPage}
+                      px={hasNextPage ? 6 : undefined}
+                    >
+                      {hasNextPage ? `${waiting}+` : waiting}
                     </Badge>
                   ) : null
                 }
@@ -108,9 +126,12 @@ export default function RemixSubmissions() {
 
             <Tabs.Panel value="received" pt="md">
               <ReceivedTab
-                rows={received?.items ?? []}
-                truncated={!!received?.truncated}
+                rows={receivedRows}
                 isLoading={receivedLoading}
+                isError={receivedFailed}
+                hasMore={!!hasNextPage}
+                isFetchingMore={isFetchingNextPage}
+                onLoadMore={() => fetchNextPage()}
               />
             </Tabs.Panel>
 
@@ -128,12 +149,18 @@ type ReceivedRow = RouterOutput['placement']['getPendingRemixGallerySubmissions'
 
 function ReceivedTab({
   rows,
-  truncated,
   isLoading,
+  isError,
+  hasMore,
+  isFetchingMore,
+  onLoadMore,
 }: {
   rows: ReceivedRow[];
-  truncated: boolean;
   isLoading: boolean;
+  isError: boolean;
+  hasMore: boolean;
+  isFetchingMore: boolean;
+  onLoadMore: () => void;
 }) {
   const utils = trpc.useUtils();
 
@@ -166,7 +193,22 @@ function ReceivedTab({
       </Group>
     );
 
-  if (!rows.length)
+  // A failed read has no pages, so `hasMore` is false and the empty state below
+  // would say "nothing is waiting" over a queue nobody could load. Said out loud
+  // instead — the owner can retry; escrow they never hear about expires.
+  if (isError)
+    return (
+      <Alert color="red">
+        <Text size="sm">Couldn&rsquo;t load your review queue. Refresh to try again.</Text>
+      </Alert>
+    );
+
+  // `&& !hasMore` is the whole point. A page whose rows were all dropped —
+  // submissions whose image was deleted, unpublished or is still ingesting —
+  // returns no items and a cursor. Returning the empty state here would put
+  // "nothing is waiting" over a queue with entries behind it, which is the
+  // failure this paging exists to end, moved one layer up.
+  if (!rows.length && !hasMore)
     return (
       <Alert color="gray">
         <Text size="sm">Nothing is waiting for your review.</Text>
@@ -183,11 +225,10 @@ function ReceivedTab({
 
   return (
     <Stack gap="md">
-      {/* Neither queue pages. A list that stops at the cap and says nothing
-          reads as complete. */}
-      {truncated && (
-        <Text size="xs" c="dimmed">
-          Showing the first {REMIX_GALLERY_QUEUE_LIMIT}.
+      {!rows.length && (
+        <Text size="sm" c="dimmed">
+          Nothing on this page can be shown — the images behind these submissions are gone or still
+          processing. There are more waiting.
         </Text>
       )}
 
@@ -254,6 +295,12 @@ function ReceivedTab({
           </Group>
         </Card>
       ))}
+
+      {hasMore && (
+        <Button variant="default" loading={isFetchingMore} onClick={onLoadMore}>
+          Load more
+        </Button>
+      )}
     </Stack>
   );
 }

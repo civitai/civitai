@@ -95,7 +95,7 @@ vi.mock('~/server/services/model.service', () => ({
   updateModelLastVersionAt: vi.fn(),
 }));
 vi.mock('~/server/services/model-file.service', () => ({
-  filesForModelVersionCache: {},
+  deleteFilesForModelVersionCache: vi.fn(),
   findOfficialFileByHash: vi.fn(),
   markFileReplaced: vi.fn(),
 }));

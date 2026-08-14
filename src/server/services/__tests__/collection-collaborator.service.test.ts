@@ -22,6 +22,7 @@ const { mockDbRead, mockDbWrite, mockGetPermissions, mockCreateNotification, moc
         collectionContributor: { findMany: vi.fn().mockResolvedValue([]) },
         collectionInvite: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
         collectionItem: { groupBy: vi.fn().mockResolvedValue([]) },
+        userEngagement: { findFirst: vi.fn().mockResolvedValue(null) },
       },
       mockDbWrite: {
         collection: { findUnique: vi.fn() },
@@ -124,6 +125,7 @@ describe('inviteCollaborator', () => {
     arrangeCounts();
     mockGetSessionUser.mockResolvedValue({ id: OWNER_ID, tier: 'gold' });
     mockDbWrite.collectionInvite.upsert.mockResolvedValue({ id: 1 });
+    mockDbRead.userEngagement.findFirst.mockResolvedValue(null);
   });
 
   it('lets the owner invite a Manager', async () => {
@@ -202,6 +204,48 @@ describe('inviteCollaborator', () => {
         role: 'Contributor',
       })
     ).rejects.toThrow();
+  });
+
+  it('refuses to invite a user on either side of a block, and sends no notification', async () => {
+    asOwner();
+    mockDbRead.userEngagement.findFirst.mockResolvedValue({ userId: OWNER_ID });
+
+    await expect(
+      inviteCollaborator({
+        collectionId: COLLECTION_ID,
+        userId: OWNER_ID,
+        targetUserId: TARGET_ID,
+        role: 'Contributor',
+        isMember: true,
+      })
+    ).rejects.toThrow(/cannot invite this user/i);
+
+    expect(mockDbWrite.collectionInvite.upsert).not.toHaveBeenCalled();
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+
+  // Asserts the query, not just the refusal: a guard written in one direction
+  // still passes the test above, because the mock answers regardless of `where`.
+  it('looks for a block in both directions', async () => {
+    asOwner();
+
+    await inviteCollaborator({
+      collectionId: COLLECTION_ID,
+      userId: OWNER_ID,
+      targetUserId: TARGET_ID,
+      role: 'Contributor',
+      isMember: true,
+    });
+
+    expect(mockDbRead.userEngagement.findFirst).toHaveBeenCalledTimes(1);
+    const { where } = mockDbRead.userEngagement.findFirst.mock.calls[0][0];
+    expect(where.type).toBe('Block');
+    expect(where.OR).toEqual(
+      expect.arrayContaining([
+        { userId: OWNER_ID, targetUserId: TARGET_ID },
+        { userId: TARGET_ID, targetUserId: OWNER_ID },
+      ])
+    );
   });
 
   it('refuses when collaboration is disabled', async () => {

@@ -167,6 +167,49 @@ describe('getMyListingForEdit', () => {
     expect(mockWrite.appListing.create).not.toHaveBeenCalled();
   });
 
+  /**
+   * 🔴 THE RETURNED `kind` IS THE LISTING'S REAL KIND.
+   *
+   * Nothing pinned this, and the omission was not cosmetic: hardcoding
+   * `kind: 'offsite'` in `getMyListingForEdit` is type-valid and survived the ENTIRE
+   * suite — 15,829 unit tests and 1,476 component tests — while silently making the
+   * whole on-site narrowing downstream INERT. `isOnsiteEdit` would answer `false` for
+   * every listing, so the edit wizard would go back to offering an on-site app an
+   * "App URL" step and an OAuth-scope disclosure, and `buildScalarPatch` would go back
+   * to being able to emit `externalUrl` for it. The fix would still be sitting in the
+   * diff, and dead.
+   *
+   * BOTH kinds are pinned, because a hardcode of EITHER literal is the mutant: asserting
+   * only the off-site row would survive `kind: 'offsite'`, and asserting only the on-site
+   * row would survive `kind: 'onsite'`.
+   */
+  it('🔴 returns the listing\'s REAL kind — off-site', async () => {
+    wireFindUnique(ownedRow({ status: 'draft', kind: 'offsite' }), {
+      apl_parent: editViewRow('ss_parent'),
+    });
+    const res = await getMyListingForEdit({ listingId: 'apl_parent', userId: 7 });
+    expect(res.kind).toBe('offsite');
+  });
+
+  it('🔴 returns the listing\'s REAL kind — on-site', async () => {
+    wireFindUnique(ownedRow({ status: 'draft', kind: 'onsite' }), {
+      apl_parent: editViewRow('ss_parent'),
+    });
+    const res = await getMyListingForEdit({ listingId: 'apl_parent', userId: 7 });
+    expect(res.kind).toBe('onsite');
+  });
+
+  it('the kind is READ FROM THE ROW, not inferred from any other field', async () => {
+    // An on-site row that still carries an `externalUrl` (the shape `mapAppBlockToListing`
+    // can mint) must NOT be re-derived as off-site by a well-meaning heuristic.
+    wireFindUnique(
+      ownedRow({ status: 'draft', kind: 'onsite', externalUrl: 'https://example.com/' }),
+      { apl_parent: editViewRow('ss_parent') }
+    );
+    const res = await getMyListingForEdit({ listingId: 'apl_parent', userId: 7 });
+    expect(res.kind).toBe('onsite');
+  });
+
   it('returns the connect scope disclosure: CURRENT client allowedScopes (derived set) + STORED snapshot/justifications', async () => {
     wireFindUnique(ownedRow({ status: 'draft', connectClientId: 'oauth-1' }), {
       apl_parent: editViewRow('ss_parent', {
