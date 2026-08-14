@@ -12,7 +12,7 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { getTrustedClientIp, parseIpBlocklist, parseUserBlocklist } from '~/server/utils/client-ip';
 import { fetchDownloadCount } from '~/server/utils/download-count';
-import { isRequestFromBrowser } from '~/server/utils/request-helpers';
+import { isRequestFromBrowser, repairSplitQueryString } from '~/server/utils/request-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 
@@ -44,6 +44,11 @@ export default PublicEndpoint(
     // cache window after the origin already returns 404 — defeating DMCA
     // takedowns. Override with no-store so deletes take effect immediately.
     res.setHeader('Cache-Control', 'no-store, max-age=0');
+
+    // Must run before `getServerAuthSession` below, which reads `?token=` off
+    // `req.url` — a stray `?` swallows that param into the one before it, so an
+    // API-key caller would otherwise be treated as anonymous.
+    repairSplitQueryString(req);
 
     const isBrowser = isRequestFromBrowser(req);
     function errorResponse(status: number, message: string) {
