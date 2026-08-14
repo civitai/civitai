@@ -69,6 +69,18 @@ export const NAVIGATION: NavLink[] = [
       { path: '/images/ingestion-errors', label: 'Ingestion Errors' },
     ],
   },
+  // Models gets its own group beside Images and Articles rather than a single top-level entry — the
+  // model-side queues are a section, not a page, and the next one added should have somewhere to go.
+  {
+    label: 'Models',
+    path: '/models',
+    children: [
+      // No `countKey`: the Pending count costs ~10s, and `sidebar-counts.service.ts` is one Promise.all
+      // that every navigation in the app waits on. The counts live on the page's own tabs instead,
+      // fetched separately. A countKey nothing produces renders as a silently missing badge.
+      { path: '/models/minor-hash-matches', label: 'Minor Hash Matches' },
+    ],
+  },
   {
     label: 'Articles',
     path: '/articles',
@@ -110,18 +122,6 @@ export const NAVIGATION: NavLink[] = [
     ],
   },
   { path: '/comics-review', label: 'Comics Review' },
-  // Models gets its own group beside Images and Articles rather than a single top-level entry — the
-  // model-side queues are a section, not a page, and the next one added should have somewhere to go.
-  {
-    label: 'Models',
-    path: '/models',
-    children: [
-      // No `countKey`: the Pending count costs ~10s, and `sidebar-counts.service.ts` is one Promise.all
-      // that every navigation in the app waits on. The counts live on the page's own tabs instead,
-      // fetched separately. A countKey nothing produces renders as a silently missing badge.
-      { path: '/models/minor-hash-matches', label: 'Minor Hash Matches' },
-    ],
-  },
   { path: '/blocklists', label: 'Blocklists' },
   // One grant covers the whole lab. Its sub-pages (labels, runs, docs) resolve here by prefix rather than
   // being listed: they are steps of one loop, and granting a reviewer the queue but not the run history

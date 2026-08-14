@@ -305,12 +305,20 @@
                 <div>
                   <h4 class="mb-1 text-xs tracking-wide text-dark-2 uppercase">This model</h4>
                   {#if d.modelCoverUrl}
-                    <EdgeMedia
-                      src={d.modelCoverUrl}
-                      type={(d.modelCoverType ?? 'image') as 'image' | 'video'}
-                      width={300}
-                      class="mb-2 max-h-48 rounded-md"
-                    />
+                    <!-- Fixed box, `object-contain`: the two covers are here to be COMPARED, so they
+                         need the same frame, and cropping to fill it can hide the thing being judged.
+                         Without an object-fit the `width` attribute and the height clamp fight and the
+                         image renders stretched. -->
+                    <div
+                      class="mb-2 flex h-48 w-fit max-w-full items-center justify-center overflow-hidden rounded-md border border-dark-4 bg-dark-7"
+                    >
+                      <EdgeMedia
+                        src={d.modelCoverUrl}
+                        type={(d.modelCoverType ?? 'image') as 'image' | 'video'}
+                        width={450}
+                        class="h-full w-auto max-w-full object-contain"
+                      />
+                    </div>
                   {/if}
                   <p class="text-xs text-dark-2">
                     Uploaded {dateTime(d.modelCreatedAt)} · {s(row.status) ?? 'unknown'}
@@ -335,12 +343,16 @@
                   <div>
                     <h4 class="mb-1 text-xs tracking-wide text-dark-2 uppercase">The flagged source</h4>
                     {#if d.minorModelCoverUrl}
-                      <EdgeMedia
-                        src={d.minorModelCoverUrl}
-                        type={(d.minorModelCoverType ?? 'image') as 'image' | 'video'}
-                        width={300}
-                        class="mb-2 max-h-48 rounded-md"
-                      />
+                      <div
+                        class="mb-2 flex h-48 w-fit max-w-full items-center justify-center overflow-hidden rounded-md border border-dark-4 bg-dark-7"
+                      >
+                        <EdgeMedia
+                          src={d.minorModelCoverUrl}
+                          type={(d.minorModelCoverType ?? 'image') as 'image' | 'video'}
+                          width={450}
+                          class="h-full w-auto max-w-full object-contain"
+                        />
+                      </div>
                     {/if}
                     <p class="text-xs text-dark-2">
                       {d.minorUsername ?? 'unknown'} · {d.minorModelStatus ?? 'unknown'}
