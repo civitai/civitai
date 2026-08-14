@@ -98,6 +98,7 @@ import {
   paidAccessCharges,
   paidGenerationGrant,
 } from '@civitai/buzz';
+import { applyModelMonetizationPolicy } from '~/server/services/model-monetization-policy';
 import { resolveRightsAffirmation } from '~/server/services/monetization-rights.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { findOfficialFileByHash } from '~/server/services/model-file.service';
@@ -515,6 +516,9 @@ export const upsertModelVersion = async ({
   // `undefined` means the caller didn't send a fee at all — requestReviewHandler / declineReviewHandler
   // pass a partial version — so only an explicitly supplied fee may rewrite fee state below. Treating
   // absent as cleared would wipe a creator's fee when a moderator declines a review.
+  // Note the model-level strip below bypasses this: on a POI model the fee columns are cleared even when
+  // the caller sent no fee at all, which is how a partial write (a moderator review action) stops
+  // carrying one forward.
   const feeProvided = data.licensingFee !== undefined;
   const hasLicensingFee = data.licensingFee != null && data.licensingFee > 0;
 
@@ -529,8 +533,29 @@ export const upsertModelVersion = async ({
   // Get model information to check NSFW + restricted base model combination
   const model = await dbWrite.model.findUniqueOrThrow({
     where: { id: data.modelId },
-    select: { nsfw: true, meta: true, userId: true },
+    select: { nsfw: true, meta: true, userId: true, poi: true, availability: true },
   });
+
+  // Model-level monetization policy, enforced here because the editors are only the explanation. A POI
+  // model earns nothing; a private model can't be sold. STRIPPED rather than rejected: every edit
+  // resubmits the whole version, and 207 POI versions already carry a stored fee — rejecting would make
+  // each of them unsavable until someone cleared it by hand, which is the "blocked version saves
+  // entirely" shape hot-fixed in 82f64846ba. Callers that explicitly ASK to create a charge (the REST
+  // endpoint, Creator Studio) refuse instead, where there is nothing to strand.
+  const policy = applyModelMonetizationPolicy(model, {
+    paidAccess,
+    donationGoal,
+    monetization,
+    licensingFee: data.licensingFee,
+  });
+  paidAccess = policy.paidAccess;
+  donationGoal = policy.donationGoal;
+  monetization = policy.monetization;
+  if (policy.clearFee) {
+    data.licensingFee = null;
+    data.licensingFeeType = null;
+    data.licensingFeeSettlementCurrency = null;
+  }
 
   // Validate NSFW + restricted base model combination
   if (
@@ -596,7 +621,10 @@ export const upsertModelVersion = async ({
     userId: actorUserId ?? model.userId,
     ownerId: model.userId,
     versionId: createsNewVersion ? undefined : id,
-    monetizes: hasLicensingFee || paidAccessCharges(paidAccess),
+    // Post-policy, not `hasLicensingFee` above it: a POI version whose stored fee was just stripped
+    // monetizes nothing, and asking it to affirm rights it no longer exercises makes the save impossible
+    // — for a fee field the editor no longer shows.
+    monetizes: policy.feeMonetizes || paidAccessCharges(paidAccess),
     rightsAffirmed,
     isModerator,
   });

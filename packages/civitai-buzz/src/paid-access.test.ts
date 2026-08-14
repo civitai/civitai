@@ -12,6 +12,8 @@ import {
   isPaidAccessActive,
   isTimedGateActive,
   paidGenerationGrant,
+  paidAccessBlockedFor,
+  licensingFeeBlockedFor,
   separateGenerationPriceMissing,
   CAP_TIERS,
   nextCapTier,
@@ -105,6 +107,28 @@ describe('generationPrice — effective generation-only purchase price', () => {
   it('undefined when there is no paid generation tier (free or bundled)', () => {
     expect(generationPrice({ generation: { free: true } })).toBeUndefined();
     expect(generationPrice({ download: { price: 500 } })).toBeUndefined();
+  });
+});
+
+describe('model-level monetization policy', () => {
+  it('refuses a gate on a POI model, and on a private one', () => {
+    expect(paidAccessBlockedFor({ poi: true, availability: 'Public' })).toBe(true);
+    expect(paidAccessBlockedFor({ poi: false, availability: 'Private' })).toBe(true);
+  });
+  it('allows a gate on an ordinary public model', () => {
+    expect(paidAccessBlockedFor({ poi: false, availability: 'Public' })).toBe(false);
+  });
+  // The asymmetry is deliberate: a private model has no audience to sell access to, but its fee is for
+  // when it is published. A POI model earns nothing either way.
+  it('refuses a licensing fee on a POI model but keeps it on a private one', () => {
+    expect(licensingFeeBlockedFor({ poi: true, availability: 'Public' })).toBe(true);
+    expect(licensingFeeBlockedFor({ poi: false, availability: 'Private' })).toBe(false);
+  });
+  // Rows arrive from two apps and two ORMs; an absent column must not read as permission granted by
+  // accident, nor as a block that strands every save.
+  it('treats missing fields as unblocked rather than guessing', () => {
+    expect(paidAccessBlockedFor({})).toBe(false);
+    expect(licensingFeeBlockedFor({ poi: null })).toBe(false);
   });
 });
 
