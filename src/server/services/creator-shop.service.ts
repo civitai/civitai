@@ -75,6 +75,14 @@ const creatorStorefrontItemSelect = Prisma.validator<Prisma.CosmeticShopItemSele
     },
   },
 });
+
+// A pack's card art and size live in meta rather than on a cosmetic, so every
+// meta whitelist has to carry them or the card renders empty and "Pack of 0".
+const packDisplayMeta = (meta: CosmeticShopItemMeta | null) => ({
+  ...(meta?.coverUrl ? { coverUrl: meta.coverUrl } : {}),
+  ...(meta?.coverTiles?.length ? { coverTiles: meta.coverTiles } : {}),
+  ...(meta?.packMemberCount ? { packMemberCount: meta.packMemberCount } : {}),
+});
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import {
   STICKER_DEFAULT_USES,
@@ -1087,13 +1095,7 @@ export const getCreatorShop = async ({
   ]);
 
   // Sanitize meta to what the card/checkout needs — never the creator
-  // payout/fee internals. A pack's card art lives in meta rather than on a
-  // cosmetic, so the whitelist has to carry it or the card renders empty.
-  const packDisplayMeta = (meta: CosmeticShopItemMeta | null) => ({
-    ...(meta?.coverUrl ? { coverUrl: meta.coverUrl } : {}),
-    ...(meta?.coverTiles?.length ? { coverTiles: meta.coverTiles } : {}),
-    ...(meta?.packMemberCount ? { packMemberCount: meta.packMemberCount } : {}),
-  });
+  // payout/fee internals.
   const sanitize = (item: (typeof items)[number]) => ({
     ...item,
     meta: {
@@ -1293,6 +1295,7 @@ export const getCommunityCosmetics = async ({
     meta: {
       purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
       acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
+      ...packDisplayMeta(item.meta as CosmeticShopItemMeta | null),
     },
   }));
   return getPagingData({ items, count }, limit, page);
