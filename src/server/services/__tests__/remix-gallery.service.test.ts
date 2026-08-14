@@ -69,7 +69,11 @@ const placementCreate = vi.fn(async () => {
 });
 const placementCount = vi.fn(async () => 0);
 const placementFindFirst = vi.fn(async () => null as unknown);
-const placementFindUnique = vi.fn(async () => null as unknown);
+// Typed with its argument because `declineOutOfBand` re-reads each row by id, so
+// one of its fakes has to answer per-placement rather than with a fixed row.
+const placementFindUnique = vi.fn<(args: { where: { id: number } }) => Promise<unknown>>(
+  async () => null
+);
 const placementFindMany = vi.fn(async () => [] as unknown[]);
 const imageFindMany = vi.fn(async () => [] as unknown[]);
 const placementUpdate = vi.fn(async () => ({}));

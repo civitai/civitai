@@ -1,5 +1,6 @@
 import {
   actOnRemixGallerySubmissionSchema,
+  declineOutOfBandRemixGallerySubmissionsSchema,
   actOnStickerPlacementsSchema,
   createStickerPlacementSchema,
   getPlacementSpaceRowSchema,
@@ -51,6 +52,7 @@ import {
 } from '~/server/services/sticker-placement.service';
 import {
   actOnRemixGallerySubmission,
+  declineOutOfBandRemixGallerySubmissions,
   createRemixGallerySubmission,
   getMyRemixGallerySubmissions,
   getPendingRemixGallerySubmissions,
@@ -300,7 +302,12 @@ export const placementRouter = router({
   getPending: protectedProcedure
     .input(getPendingStickerPlacementsSchema)
     .query(({ input, ctx }) =>
-      getPendingStickerPlacements({ ownerId: ctx.user.id, cursor: input.cursor })
+      getPendingStickerPlacements({
+        ownerId: ctx.user.id,
+        cursor: input.cursor,
+        domainLevels: domainServableLevels(ctx),
+        viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
+      })
     ),
 
   // How many pending placements blocking someone would decline, so the confirm
@@ -370,6 +377,21 @@ export const placementRouter = router({
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
       })
+    ),
+
+  /**
+   * Ungated for the same reason as the single action above: an owner must be
+   * able to clear submissions their own rule should never have taken, whatever
+   * the flag says.
+   *
+   * `isModerator` is deliberately not passed. This resolves a set from a
+   * gallery's own rule and settles every row in it — a moderator running it on
+   * someone else's gallery would be a bulk action attributed to the owner.
+   */
+  declineOutOfBandRemixGallerySubmissions: protectedProcedure
+    .input(declineOutOfBandRemixGallerySubmissionsSchema)
+    .mutation(({ input, ctx }) =>
+      declineOutOfBandRemixGallerySubmissions({ ...input, userId: ctx.user.id })
     ),
 
   // Also ungated: a submitter must be able to get their Buzz back out of escrow

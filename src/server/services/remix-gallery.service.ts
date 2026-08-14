@@ -445,6 +445,104 @@ export async function actOnRemixGallerySubmission({
 }
 
 /**
+ * Decline every pending submission rated above what this gallery accepts.
+ *
+ * The set is resolved here from (hostImageId, the owner's own rule) rather than
+ * taken as a list of ids: an id list on a money path is forgeable, and a caller
+ * who could name the rows could decline ones that are perfectly in band.
+ *
+ * Loops the single-placement path rather than growing a bulk settlement, for the
+ * reason `actOnStickerPlacements` gives — a second route to a state that already
+ * has rules is where this feature's defects have come from. Failures are counted,
+ * not thrown: one row whose payout leg is having a bad day must not strand the
+ * other nine, and `settlePlacement` claims with `WHERE status = 'pending'`, so a
+ * partial run is safe to repeat.
+ */
+export async function declineOutOfBandRemixGallerySubmissions({
+  hostImageId,
+  userId,
+}: {
+  hostImageId: number;
+  userId: number;
+}) {
+  const space = await resolvePlacementSpaceFor({
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetId: hostImageId,
+  });
+  // Not a permission check with a friendlier error — `actOnRemixGallerySubmission`
+  // authorises every row it touches. This only avoids doing the work to build a
+  // set that every settle would then refuse.
+  if (space.ownerId !== userId)
+    throw throwAuthorizationError('remix gallery: that gallery is not yours');
+
+  const host = await loadHostImage(hostImageId);
+  const band = remixGalleryMaxSubmissionLevel({
+    rule: remixGalleryContentRule(space.settings),
+    hostLevel: host.nsfwLevel,
+    // Same fail-closed as the read path: an unresolvable host must not widen the
+    // band, which here would mean declining fewer rows rather than more.
+    hostMinor: host.minor,
+  });
+
+  const rows = await dbRead.placement.findMany({
+    where: {
+      surface: SURFACE,
+      targetType: TARGET_TYPE,
+      targetId: hostImageId,
+      ownerId: userId,
+      status: 'pending',
+    },
+    select: { id: true, data: true },
+  });
+
+  const entries = rows.filter((row) => isRemixGalleryPlacementData(row.data));
+  const imageIds = entries.map((row) => (row.data as RemixGalleryPlacementData).imageId);
+  if (!imageIds.length) return { considered: 0, settled: 0 };
+
+  // Read straight from `Image` rather than through the queue's listability
+  // filter: a submission whose image was since unpublished no longer appears in
+  // the queue but is still pending, still holding escrow, and still out of band.
+  // Leaving those behind would make the button quietly disagree with its label.
+  const levels = await dbRead.image.findMany({
+    where: { id: { in: imageIds } },
+    select: { id: true, nsfwLevel: true },
+  });
+  const levelById = new Map(levels.map((image) => [image.id, image.nsfwLevel]));
+
+  const outOfBand = entries.filter((row) => {
+    const level = levelById.get((row.data as RemixGalleryPlacementData).imageId);
+    // `band` is a ceiling compared with `<=`, not a bitmask — see
+    // `remixGalleryLevelAllowed`, which is defined in terms of it.
+    //
+    // Strictly above, so an unrated row (level 0) is left alone rather than
+    // swept up. `remixGalleryLevelAllowed` would call 0 inadmissible, which is
+    // right for approval and wrong here: charging a decline fee for an image
+    // that has no rating yet answers a question nobody asked. Its escrow is the
+    // expiry sweep's to return in full.
+    return !!level && level > band;
+  });
+
+  let settled = 0;
+  for (const row of outOfBand) {
+    try {
+      await actOnRemixGallerySubmission({ placementId: row.id, action: 'decline', userId });
+      settled++;
+    } catch (error) {
+      await logToAxiom({
+        name: 'remix-gallery',
+        type: 'error',
+        message: 'decline-out-of-band: one row failed to settle',
+        placementId: row.id,
+        error: error instanceof Error ? error.message : String(error),
+      }).catch(() => undefined);
+    }
+  }
+
+  return { considered: outOfBand.length, settled };
+}
+
+/**
  * Everything the submission had to satisfy to be sent, checked again at the
  * moment it becomes public.
  *

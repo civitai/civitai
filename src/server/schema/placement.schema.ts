@@ -193,6 +193,15 @@ export const retractRemixGallerySubmissionSchema = z.object({
 });
 
 /**
+ * The gallery, not the rows. The set is resolved server-side from the owner's
+ * own content rule — accepting placement ids here would let a caller decline
+ * submissions that are perfectly in band.
+ */
+export const declineOutOfBandRemixGallerySubmissionsSchema = z.object({
+  hostImageId: z.number().int().positive(),
+});
+
+/**
  * The whole pinned set, in order, rather than a per-entry toggle — the cap is a
  * property of the set, and enforcing it one toggle at a time lets two concurrent
  * pins both see room for one more.
@@ -226,4 +235,5 @@ export const getMyRemixGallerySubmissionsSchema = z.object({
 
 export const getPendingStickerPlacementsSchema = z.object({
   cursor: placementQueueCursorSchema,
+  browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
 });
