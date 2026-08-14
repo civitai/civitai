@@ -11,7 +11,10 @@ import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { imageReviewedSql } from '~/server/common/image-visibility';
+import type { QueueImage as SharedQueueImage } from '~/server/utils/queue-image';
+import { toQueueImage } from '~/server/utils/queue-image';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { onlySelectableLevels } from '~/shared/constants/browsingLevel.constants';
 import {
   declineFeeAmount,
@@ -19,7 +22,6 @@ import {
   parsePlacementQueueCursor,
   PLACEMENT_QUEUE_PAGE_SIZE,
   PLACEMENT_SURFACES,
-  placementQueueKeyset,
   splitPlacementPayment,
 } from '~/shared/utils/placement';
 import type { RemixGalleryPlacementData } from '~/shared/utils/remix-gallery';
@@ -119,6 +121,12 @@ export type CreateRemixGallerySubmission = {
   imageId: number;
   /** What the submitter was shown. Refused if the owner has moved it since. */
   expectedPrice?: number;
+  /**
+   * The domain's currency, decided at the router from the request's own feature
+   * flags rather than anything the client sends — a client-supplied currency
+   * would let a request on one domain spend the other's Buzz.
+   */
+  spendType: BuzzSpendType;
 };
 
 /**
@@ -139,6 +147,7 @@ export async function createRemixGallerySubmission({
   hostImageId,
   imageId,
   expectedPrice,
+  spendType,
 }: CreateRemixGallerySubmission) {
   if (hostImageId === imageId)
     throw throwBadRequestError('remix gallery: an image cannot be submitted to its own gallery');
@@ -259,6 +268,7 @@ export async function createRemixGallerySubmission({
       placerId,
       surface: SURFACE,
       amount: space.price,
+      spendType,
     });
   } catch (error) {
     await settlePlacement({ placementId: placement.id, action: 'expire' }).catch((settleError) =>
@@ -443,6 +453,104 @@ export async function actOnRemixGallerySubmission({
     throw throwBadRequestError('remix gallery: that submission was already resolved elsewhere');
 
   return result;
+}
+
+/**
+ * Decline every pending submission rated above what this gallery accepts.
+ *
+ * The set is resolved here from (hostImageId, the owner's own rule) rather than
+ * taken as a list of ids: an id list on a money path is forgeable, and a caller
+ * who could name the rows could decline ones that are perfectly in band.
+ *
+ * Loops the single-placement path rather than growing a bulk settlement, for the
+ * reason `actOnStickerPlacements` gives — a second route to a state that already
+ * has rules is where this feature's defects have come from. Failures are counted,
+ * not thrown: one row whose payout leg is having a bad day must not strand the
+ * other nine, and `settlePlacement` claims with `WHERE status = 'pending'`, so a
+ * partial run is safe to repeat.
+ */
+export async function declineOutOfBandRemixGallerySubmissions({
+  hostImageId,
+  userId,
+}: {
+  hostImageId: number;
+  userId: number;
+}) {
+  const space = await resolvePlacementSpaceFor({
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetId: hostImageId,
+  });
+  // Not a permission check with a friendlier error — `actOnRemixGallerySubmission`
+  // authorises every row it touches. This only avoids doing the work to build a
+  // set that every settle would then refuse.
+  if (space.ownerId !== userId)
+    throw throwAuthorizationError('remix gallery: that gallery is not yours');
+
+  const host = await loadHostImage(hostImageId);
+  const band = remixGalleryMaxSubmissionLevel({
+    rule: remixGalleryContentRule(space.settings),
+    hostLevel: host.nsfwLevel,
+    // Same fail-closed as the read path: an unresolvable host must not widen the
+    // band, which here would mean declining fewer rows rather than more.
+    hostMinor: host.minor,
+  });
+
+  const rows = await dbRead.placement.findMany({
+    where: {
+      surface: SURFACE,
+      targetType: TARGET_TYPE,
+      targetId: hostImageId,
+      ownerId: userId,
+      status: 'pending',
+    },
+    select: { id: true, data: true },
+  });
+
+  const entries = rows.filter((row) => isRemixGalleryPlacementData(row.data));
+  const imageIds = entries.map((row) => (row.data as RemixGalleryPlacementData).imageId);
+  if (!imageIds.length) return { considered: 0, settled: 0 };
+
+  // Read straight from `Image` rather than through the queue's listability
+  // filter: a submission whose image was since unpublished no longer appears in
+  // the queue but is still pending, still holding escrow, and still out of band.
+  // Leaving those behind would make the button quietly disagree with its label.
+  const levels = await dbRead.image.findMany({
+    where: { id: { in: imageIds } },
+    select: { id: true, nsfwLevel: true },
+  });
+  const levelById = new Map(levels.map((image) => [image.id, image.nsfwLevel]));
+
+  const outOfBand = entries.filter((row) => {
+    const level = levelById.get((row.data as RemixGalleryPlacementData).imageId);
+    // `band` is a ceiling compared with `<=`, not a bitmask — see
+    // `remixGalleryLevelAllowed`, which is defined in terms of it.
+    //
+    // Strictly above, so an unrated row (level 0) is left alone rather than
+    // swept up. `remixGalleryLevelAllowed` would call 0 inadmissible, which is
+    // right for approval and wrong here: charging a decline fee for an image
+    // that has no rating yet answers a question nobody asked. Its escrow is the
+    // expiry sweep's to return in full.
+    return !!level && level > band;
+  });
+
+  let settled = 0;
+  for (const row of outOfBand) {
+    try {
+      await actOnRemixGallerySubmission({ placementId: row.id, action: 'decline', userId });
+      settled++;
+    } catch (error) {
+      await logToAxiom({
+        name: 'remix-gallery',
+        type: 'error',
+        message: 'decline-out-of-band: one row failed to settle',
+        placementId: row.id,
+        error: error instanceof Error ? error.message : String(error),
+      }).catch(() => undefined);
+    }
+  }
+
+  return { considered: outOfBand.length, settled };
 }
 
 /**
@@ -1001,9 +1109,15 @@ async function galleryHasEntries({
 async function getViewerPendingSubmissions({
   hostImageId,
   viewerId,
+  domainLevels,
+  viewerLevels,
 }: {
   hostImageId: number;
   viewerId: number;
+  /** Levels this domain may serve. Rows above it come back without their asset. */
+  domainLevels: number;
+  /** The viewer own band. Marked on each row, never filtered on. */
+  viewerLevels: number;
 }) {
   const rows = await dbRead.placement.findMany({
     where: {
@@ -1034,7 +1148,11 @@ async function getViewerPendingSubmissions({
     amount: row.amount,
     createdAt: row.createdAt,
     expiresAt: row.expiresAt,
-    image: byId.get((row.data as RemixGalleryPlacementData).imageId) ?? null,
+    image: toQueueImage(
+      byId.get((row.data as RemixGalleryPlacementData).imageId),
+      domainLevels,
+      viewerLevels
+    ),
   }));
 }
 
@@ -1048,15 +1166,71 @@ type GalleryThumbImage = {
   nsfwLevel: number;
 };
 
+/**
+ * Re-exported rather than redeclared. Both queues answer one question — may this
+ * domain be sent this asset — and two copies of that answer is the drift the
+ * shared listability fragment exists to prevent.
+ */
+export type QueueImage = SharedQueueImage<GalleryThumbImage>;
+
+/**
+ * Whether an image can be shown in a review queue, as one definition rather than
+ * two copies of a WHERE clause. The badge and the list that badge counts must
+ * agree, and they disagreed for as long as each carried its own.
+ */
+const queueImageIsListable = (imageId: Prisma.Sql) => Prisma.sql`
+  EXISTS (
+    SELECT 1
+    FROM "Image" i
+    JOIN "Post" p ON p.id = i."postId"
+    WHERE i.id = ${imageId}
+      AND p."publishedAt" IS NOT NULL
+      AND i.ingestion = 'Scanned'
+      AND NOT i."tosViolation"
+      AND NOT i.minor
+      AND NOT i.poi
+  )`;
+
+/**
+ * Both images are tested: a submission the owner can see, on a host that still
+ * renders. A host taken down after submissions arrived leaves rows nobody can
+ * judge — the gallery they would appear in is gone — and those refund in full on
+ * expiry rather than costing the submitter a decline fee.
+ */
+async function countListablePendingSubmissions({
+  hostImageId,
+  ownerId,
+}: {
+  hostImageId: number;
+  ownerId: number;
+}) {
+  const [row] = await dbRead.$queryRaw<{ count: number }[]>`
+    SELECT count(*)::int AS count
+    FROM "Placement" pl
+    WHERE pl.surface = ${SURFACE}
+      AND pl."targetType" = ${TARGET_TYPE}
+      AND pl."targetId" = ${hostImageId}
+      AND pl."ownerId" = ${ownerId}
+      AND pl.status = 'pending'
+      AND ${queueImageIsListable(Prisma.sql`(pl.data ->> 'imageId')::int`)}
+      AND ${queueImageIsListable(Prisma.sql`pl."targetId"`)}
+  `;
+
+  return row?.count ?? 0;
+}
+
 export async function getRemixGalleryVisibility({
   hostImageId,
   browsingLevel,
   viewerId,
+  domainLevels,
 }: {
   hostImageId: number;
   browsingLevel: number;
   /** Decides whether the pending count is computed at all. */
   viewerId?: number;
+  /** Levels this domain may serve. Rows above it come back without their asset. */
+  domainLevels: number;
 }) {
   const [space, hasEntries, host] = await Promise.all([
     resolvePlacementSpaceFor({ surface: SURFACE, targetType: TARGET_TYPE, targetId: hostImageId }),
@@ -1068,17 +1242,16 @@ export async function getRemixGalleryVisibility({
   // the owner — it is the one number that makes the panel actionable, and
   // nobody else may know how many submissions someone is sitting on. The card
   // already awaits this query, so for every other viewer this costs nothing.
+  //
+  // Counts what the queue can actually render, not every pending row. A bare
+  // count counts submissions whose image is deleted, unpublished, mid-ingestion
+  // or filtered, and the queue drops exactly those — so the badge said 2 over a
+  // list that showed none, and the owner went looking for work that was not
+  // there. The escrow behind a row that cannot be listed is released by the
+  // expiry sweep rather than by a decision nobody could make.
   const pendingCount =
     viewerId && viewerId === space.ownerId
-      ? await dbRead.placement.count({
-          where: {
-            surface: SURFACE,
-            targetType: TARGET_TYPE,
-            targetId: hostImageId,
-            ownerId: space.ownerId,
-            status: 'pending',
-          },
-        })
+      ? await countListablePendingSubmissions({ hostImageId, ownerId: space.ownerId })
       : 0;
 
   // The submitter's own pending rows. Without this, submitting shows nothing at
@@ -1086,7 +1259,12 @@ export async function getRemixGalleryVisibility({
   // unchanged. Skipped for the owner, whose pending view is the queue above.
   const viewerPending =
     viewerId && viewerId !== space.ownerId
-      ? await getViewerPendingSubmissions({ hostImageId, viewerId })
+      ? await getViewerPendingSubmissions({
+          hostImageId,
+          viewerId,
+          domainLevels,
+          viewerLevels: browsingLevel,
+        })
       : [];
 
   // The ceiling the picker filters on, so a submitter is not offered an image the
@@ -1112,6 +1290,20 @@ export async function getRemixGalleryVisibility({
         hostMinor: host?.minor ?? true,
       })
     : null;
+
+  // The same ceiling, for the owner instead of the submitter. `maxSubmissionLevel`
+  // is withheld from them by the rule above, which is right for every other
+  // caller and leaves the review UI unable to say what its own gallery accepts.
+  // Named apart so that rule keeps its contract: this is the owner's setting
+  // applied to the owner's image, and tells them nothing they did not set.
+  const acceptedMaxLevel =
+    viewerId && viewerId === space.ownerId
+      ? remixGalleryMaxSubmissionLevel({
+          rule: remixGalleryContentRule(space.settings),
+          hostLevel: host?.nsfwLevel ?? 0,
+          hostMinor: host?.minor ?? true,
+        })
+      : null;
 
   // The owner's name and cut, so the submit button can say where the money goes
   // without the copy asserting it. The shares are operator-tunable at runtime,
@@ -1142,6 +1334,7 @@ export async function getRemixGalleryVisibility({
     pendingCount,
     viewerPending,
     maxSubmissionLevel,
+    acceptedMaxLevel,
   };
 }
 
@@ -1157,8 +1350,14 @@ export async function getPendingRemixGallerySubmissions({
   hostImageId,
   limit = PLACEMENT_QUEUE_PAGE_SIZE,
   cursor,
+  domainLevels,
+  viewerLevels,
 }: {
   ownerId: number;
+  /** Levels this domain may serve. Rows above it come back without their asset. */
+  domainLevels: number;
+  /** The viewer own band. Marked on each row, never filtered on. */
+  viewerLevels: number;
   /**
    * Scopes the queue to one gallery. Filtering client-side instead meant an
    * owner with 50 submissions elsewhere saw "nothing waiting" on an image that
@@ -1168,14 +1367,43 @@ export async function getPendingRemixGallerySubmissions({
   limit?: number;
   cursor?: string | null;
 }) {
+  const keyset = parsePlacementQueueCursor(cursor);
+
+  // Selected in SQL rather than paged and then filtered in memory. Filtering
+  // after the fact pages over rows the queue cannot render: a queue of 66 whose
+  // first 50 are unlistable returned 4 items with a cursor — "4+" over a page
+  // size of 50 — and "load more" then produced 2. The page is now 50 listable
+  // rows or the end of the queue, and `hasNextPage` means what it says.
+  const listable = await dbRead.$queryRaw<{ id: number; createdAt: Date }[]>`
+    SELECT pl.id, pl."createdAt"
+    FROM "Placement" pl
+    WHERE pl.surface = ${SURFACE}
+      AND pl."ownerId" = ${ownerId}
+      AND pl.status = 'pending'
+      ${
+        hostImageId
+          ? Prisma.sql`AND pl."targetType" = ${TARGET_TYPE} AND pl."targetId" = ${hostImageId}`
+          : Prisma.empty
+      }
+      ${
+        keyset
+          ? Prisma.sql`AND (pl."createdAt" > ${keyset.createdAt}
+              OR (pl."createdAt" = ${keyset.createdAt} AND pl.id > ${keyset.id}))`
+          : Prisma.empty
+      }
+      AND ${queueImageIsListable(Prisma.sql`(pl.data ->> 'imageId')::int`)}
+      AND ${queueImageIsListable(Prisma.sql`pl."targetId"`)}
+    ORDER BY pl."createdAt" ASC, pl.id ASC
+    LIMIT ${limit + 1}
+  `;
+
+  const page = listable.slice(0, limit);
+  const nextCursor =
+    listable.length > limit ? encodePlacementQueueCursor(page[page.length - 1]) : null;
+  if (!page.length) return { items: [], nextCursor };
+
   const rows = await dbRead.placement.findMany({
-    where: {
-      surface: SURFACE,
-      ownerId,
-      status: 'pending',
-      ...(hostImageId ? { targetType: TARGET_TYPE, targetId: hostImageId } : {}),
-      ...placementQueueKeyset(parsePlacementQueueCursor(cursor)),
-    },
+    where: { id: { in: page.map((row) => row.id) } },
     select: {
       id: true,
       targetId: true,
@@ -1187,20 +1415,18 @@ export async function getPendingRemixGallerySubmissions({
       placer: { select: { id: true, username: true, image: true } },
     },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-    take: limit + 1,
   });
 
-  // Read off the row the page ends on, before the rows below are dropped for an
-  // unreadable payload or a deleted image. Taking it from what is returned would
-  // point the next page at an earlier row and serve everything between twice —
-  // and the earlier `truncated` flag had the mirror-image bug, reporting a full
-  // queue as complete once the filter took it under the cap.
-  const page = rows.slice(0, limit);
-  const nextCursor = rows.length > limit ? encodePlacementQueueCursor(page[page.length - 1]) : null;
-
-  const entries = page.filter((row) => isRemixGalleryPlacementData(row.data));
+  const entries = rows.filter((row) => isRemixGalleryPlacementData(row.data));
   const imageIds = entries.map((row) => (row.data as RemixGalleryPlacementData).imageId);
   if (!imageIds.length) return { items: [], nextCursor };
+
+  // The host image rides along in the same fetch: the reviewer is judging a
+  // remix against what it remixed, and a queue that shows only the submission
+  // asks them to decide from memory. Same visibility filter either way — an
+  // owner's own image reaching this list unpublished or unscanned renders as a
+  // placeholder rather than as content this query vouched for.
+  const lookupIds = [...new Set([...imageIds, ...entries.map((row) => row.targetId)])];
 
   const images = await dbRead.$queryRaw<
     {
@@ -1218,7 +1444,7 @@ export async function getPendingRemixGallerySubmissions({
     SELECT i.id, i.url, i.width, i.height, i.type, i.metadata, i."nsfwLevel"
     FROM "Image" i
     JOIN "Post" p ON p.id = i."postId"
-    WHERE i.id IN (${Prisma.join(imageIds)})
+    WHERE i.id IN (${Prisma.join(lookupIds)})
       AND p."publishedAt" IS NOT NULL
       AND i.ingestion = 'Scanned'
       AND NOT i."tosViolation"
@@ -1240,7 +1466,12 @@ export async function getPendingRemixGallerySubmissions({
       .map((row) => ({
         ...row,
         data: row.data as RemixGalleryPlacementData,
-        image: byId.get((row.data as RemixGalleryPlacementData).imageId) ?? null,
+        image: toQueueImage(
+          byId.get((row.data as RemixGalleryPlacementData).imageId),
+          domainLevels,
+          viewerLevels
+        ),
+        targetImage: toQueueImage(byId.get(row.targetId), domainLevels, viewerLevels),
         earnings: {
           approve: splitPlacementPayment({
             amount: row.amount,
@@ -1252,7 +1483,11 @@ export async function getPendingRemixGallerySubmissions({
           decline: declineFeeAmount(row.amount, declineFeeRate),
         },
       }))
-      .filter((row) => row.image),
+      // Both halves, for the same reason: the owner cannot judge a remix they
+      // cannot see, and cannot judge it against a host that no longer renders.
+      // `countListablePendingSubmissions` applies the identical pair, so the
+      // badge and this list cannot disagree.
+      .filter((row) => row.image && row.targetImage),
     nextCursor,
   };
 }
@@ -1268,9 +1503,15 @@ export async function getPendingRemixGallerySubmissions({
 export async function getMyRemixGallerySubmissions({
   placerId,
   limit = REMIX_GALLERY_QUEUE_LIMIT,
+  domainLevels,
+  viewerLevels,
 }: {
   placerId: number;
   limit?: number;
+  /** Levels this domain may serve. Rows above it come back without their asset. */
+  domainLevels: number;
+  /** The viewer own band. Marked on each row, never filtered on. */
+  viewerLevels: number;
 }) {
   const rows = await dbRead.placement.findMany({
     where: { surface: SURFACE, placerId, status: { in: ['pending', 'approved'] } },
@@ -1312,10 +1553,45 @@ export async function getMyRemixGallerySubmissions({
     : [];
   const byId = new Map(images.map((image) => [image.id, image]));
 
+  // The host image is someone else's, so unlike the submitter's own image above
+  // it is fetched under the same visibility filter the public feed applies. A
+  // host that fails it renders as a placeholder; the row stays either way,
+  // because the withdraw beside it is the only route back to the escrow.
+  const targetIds = [...new Set(rows.map((row) => row.targetId))];
+  const targetImages = targetIds.length
+    ? await dbRead.$queryRaw<
+        {
+          id: number;
+          url: string;
+          width: number | null;
+          height: number | null;
+          type: MediaType;
+          metadata: MixedObject | null;
+          nsfwLevel: number;
+        }[]
+      >`
+        SELECT i.id, i.url, i.width, i.height, i.type, i.metadata, i."nsfwLevel"
+        FROM "Image" i
+        JOIN "Post" p ON p.id = i."postId"
+        WHERE i.id IN (${Prisma.join(targetIds)})
+          AND p."publishedAt" IS NOT NULL
+          AND i.ingestion = 'Scanned'
+          AND NOT i."tosViolation"
+          AND NOT i.minor
+          AND NOT i.poi
+      `
+    : [];
+  const targetById = new Map(targetImages.map((image) => [image.id, image]));
+
   return rows.map((row) => ({
     ...row,
     image: isRemixGalleryPlacementData(row.data)
-      ? byId.get((row.data as RemixGalleryPlacementData).imageId) ?? null
+      ? toQueueImage(
+          byId.get((row.data as RemixGalleryPlacementData).imageId),
+          domainLevels,
+          viewerLevels
+        )
       : null,
+    targetImage: toQueueImage(targetById.get(row.targetId), domainLevels, viewerLevels),
   }));
 }

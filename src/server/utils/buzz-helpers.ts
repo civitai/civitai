@@ -88,12 +88,30 @@ export function getAllowedAccountTypes(
  * ⚠️ That makes the guard right for pre-cutover purchases and increasingly wrong for post-cutover
  * green ones, where it checks a seller's YELLOW balance against money now held in GREEN. The
  * consequences are a misleading refusal on unpublish, or a refund that takes a green balance
- * negative — accepted deliberately (Justin, 2026-08-14) rather than blocking the currency fix on a
- * schema change. The real fix is to record the payout account per purchase, the way
- * `Placement.spendType` does, at which point this function has no readers and goes.
+ * negative, since the ledger exempts refunds from its own sufficiency check — both accepted
+ * deliberately (Justin, 2026-08-14) rather than blocking the currency fix on a schema change.
+ *
+ * The real fix is to record the payout account per purchase, the way `Placement.spendType` does, at
+ * which point this function has no readers and goes. `EntityAccess.meta` already carries the
+ * transaction ids, so it needs no migration. Before writing it, confirm which account a refund
+ * DEBITS against the buzz service rather than reasoning from this comment: sampled prod refunds
+ * credit the account the payer was debited from, and the seller side is unverified here.
  */
 export function paidAccessPayoutAccount(spendType: BuzzSpendType): BuzzSpendType {
   return spendType === 'blue' ? 'blue' : 'yellow';
+}
+
+/**
+ * The single currency a request may spend, from the domain it arrived on.
+ *
+ * `getAllowedAccountTypes` with no seed returns exactly the domain currency, so
+ * this is that list's one element named rather than indexed. Surfaces that must
+ * spend one currency and no other — placements — take it from here so there is
+ * no second derivation to drift from the generator's.
+ */
+export function domainSpendType(features: FeatureAccess): BuzzSpendType {
+  const [type] = getAllowedAccountTypes(features);
+  return type;
 }
 
 /**

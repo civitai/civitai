@@ -1,6 +1,11 @@
+import { useState } from 'react';
+
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
-import type { CollaboratorRosterRow } from '~/components/Apps/AppCollaboratorsPanelView';
+import type {
+  CollaboratorRosterRow,
+  PendingTransferRow,
+} from '~/components/Apps/AppCollaboratorsPanelView';
 import {
   AppCollaboratorsPanelView,
   inviteBlockedReason,
@@ -13,8 +18,15 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 
 /**
- * Data container. Owns the four `appCollaborators.*` calls this surface wires:
- * `list`, `invite`, `remove`, `setDisplayed` and `leave`.
+ * Data container. Owns the `appCollaborators.*` calls this surface wires: `list`,
+ * `invite`, `remove`, `setDisplayed`, `leave`, plus the OWNER half of ownership transfer
+ * (`getPendingTransfer`, `initiateTransfer`, `cancelTransfer`).
+ *
+ * 🔴 THE TRANSFER READ IS OWNER-ONLY AT THE CALL SITE, not merely hidden in the View.
+ * `getPendingTransfer` returns `null` to anyone who is neither the owner nor the
+ * addressee — deliberately, so it cannot be used as an existence oracle — so an editor's
+ * query would be a guaranteed-useless round trip on every render of the tab. `enabled`
+ * keeps it from being issued at all.
  */
 export function AppCollaboratorsPanel({
   appListingId,
@@ -64,8 +76,41 @@ export function AppCollaboratorsPanel({
     onError,
   });
 
+  const isOwner = role === 'owner';
+  const transferQuery = trpc.appCollaborators.getPendingTransfer.useQuery(
+    { appListingId },
+    { retry: false, enabled: isOwner }
+  );
+  const invalidateTransfer = () => {
+    void utils.appCollaborators.getPendingTransfer.invalidate({ appListingId });
+  };
+  // 🔴 The refusal is held in STATE and rendered inline by the View, instead of being
+  // thrown at a toast. The connect-client refusal names a concrete remedy ("unlink the
+  // OAuth client first"); a transient toast is exactly where an actionable message goes
+  // to die, and the owner is left with a control that fails every time.
+  const [transferErrorMessage, setTransferErrorMessage] = useState<string | null>(null);
+  const initiateTransfer = trpc.appCollaborators.initiateTransfer.useMutation({
+    onSuccess: () => {
+      setTransferErrorMessage(null);
+      showSuccessNotification({
+        message: 'Ownership offer sent. Nothing moves until they accept it.',
+      });
+      invalidateTransfer();
+    },
+    onError: (error) => setTransferErrorMessage(error.message ?? 'Something went wrong.'),
+  });
+  const cancelTransfer = trpc.appCollaborators.cancelTransfer.useMutation({
+    onSuccess: () => {
+      setTransferErrorMessage(null);
+      showSuccessNotification({ message: 'Ownership offer withdrawn.' });
+      invalidateTransfer();
+    },
+    onError: (error) => setTransferErrorMessage(error.message ?? 'Something went wrong.'),
+  });
+
   const rows = (listQuery.data ?? []) as CollaboratorRosterRow[];
   const busy = invite.isPending || remove.isPending || setDisplayed.isPending || leave.isPending;
+  const transferBusy = initiateTransfer.isPending || cancelTransfer.isPending;
 
   return (
     <AppCollaboratorsPanelView
@@ -112,6 +157,33 @@ export function AppCollaboratorsPanel({
         setDisplayed.mutate({ appListingId, displayed, targetUserId })
       }
       onLeave={() => leave.mutate({ appListingId })}
+      pendingTransfer={(transferQuery.data ?? null) as PendingTransferRow | null}
+      transferErrorMessage={transferErrorMessage}
+      transferBusy={transferBusy}
+      onCancelTransfer={(transferId) => cancelTransfer.mutate({ transferId })}
+      transferPicker={
+        <QuickSearchDropdown
+          disableInitialSearch
+          supportedIndexes={['users']}
+          startingIndex="users"
+          showIndexSelect={false}
+          dropdownItemLimit={25}
+          disabled={transferBusy}
+          placeholder="Search for the person who should own this app"
+          onItemSelected={(_entity, item) => {
+            const selected = item as SearchIndexDataMap['users'][number];
+            setTransferErrorMessage(null);
+            initiateTransfer.mutate({ appListingId, toUserId: selected.id });
+          }}
+          // The current owner cannot be the recipient — the service refuses it with
+          // "You already own this app", and the DB carries a `from <> to` CHECK.
+          filters={[currentUser?.id]
+            .filter((id): id is number => !!id)
+            .map((id) => `AND NOT id=${id}`)
+            .join(' ')
+            .slice(4)}
+        />
+      }
     />
   );
 }

@@ -15,8 +15,29 @@ import {
   supportsTensorVramEstimate,
 } from '~/utils/model-tensor-metadata';
 
+/**
+ * 🔴 `id` is bounded to a Postgres int4, and the bound is load-bearing — this is
+ * the same defect `id-overflow-validation.test.ts` fixed for `models/[id]`.
+ *
+ * `z.number()` alone ACCEPTS `?id=1e30` and `?id=1.5`: `Number()` coerces both,
+ * and neither an out-of-range float nor a non-integer is a `.number()` failure.
+ * The value then binds to `ModelFile.id` (int4) and Postgres throws "value out of
+ * range for type integer" / an invalid-input error from
+ * `dbRead.modelFile.findUnique` — which sits BEFORE this handler's `try`, so the
+ * throw escapes every civitai handler. A blind audit measured what that produces:
+ * a bare `500 "Internal Server Error"` from Next's `apiResolver` with the driver
+ * text absent, so it is NOT a disclosure. It is worse in a different way — there
+ * is no `logToAxiom` on that path, so an anonymous caller can generate 500s that
+ * leave NO structured fault record, which is exactly the forensic guarantee the
+ * rest of civitai#3845 rests on.
+ *
+ * Bounding it here makes the bad input fail `safeParse` and take the handler's
+ * EXISTING 400 arm, with `z.prettifyError` feedback. `buildTensorMetadataUrl`
+ * only ever passes a real file id, so no legitimate caller is tightened out.
+ */
+const INT4_MAX = 2147483647;
 const schema = z.object({
-  id: z.preprocess((val) => Number(val), z.number()),
+  id: z.preprocess((val) => Number(val), z.number().int().gt(0).lte(INT4_MAX)),
   summaryOnly: z.preprocess((val) => val === 'true' || val === true, z.boolean().optional()),
 });
 const TENSOR_METADATA_CACHE_CONTROL = 'public, max-age=31536000, s-maxage=31536000, immutable';
@@ -66,6 +87,20 @@ export default MixedAuthEndpoint(async function handler(
   });
   if (!format) return res.status(400).json({ error: 'File format is not supported' });
 
+  // 🔴 The two lookups ABOVE are deliberately left outside this `try`, and that is
+  // a decision rather than an oversight. Putting them inside would make a database
+  // failure answer the 422 below, and that 422 is caller feedback ABOUT THE
+  // REQUESTED FILE ("we could not read tensor metadata out of it") — a DB outage is
+  // not that. Giving them their own `try` that delegates to `handleEndpointError`
+  // was considered and rejected: the existing catch closes over `file` and `format`
+  // for its `logToAxiom` call, so either shape requires hoisting both to `let` with
+  // hand-written types and defeating TypeScript's narrowing across the boundary.
+  // That is real bug surface on a hot public route, and the payoff is a log line on
+  // a failure mode that is already a non-leaking hard 500 (measured). The
+  // trivially-reachable instance — an out-of-range or non-integer `?id=` — is
+  // closed at the schema instead, which is the cheap, deterministic half.
+  // (`download/models` runs its identical preprocess INSIDE its try; the asymmetry
+  // is real and recorded rather than silently equalised.)
   try {
     const estimateVram = supportsTensorVramEstimate({
       modelType: file.modelVersion.model.type,
@@ -139,7 +174,24 @@ export default MixedAuthEndpoint(async function handler(
       format,
     }).catch(() => undefined);
 
-    return res.status(422).json({ error: err.message });
+    // 🔴 civitai#3845 TIER 1. This was `{ error: err.message }` on a
+    // `MixedAuthEndpoint` whose read path is public, so an anonymous caller got
+    // whatever failed inside the try verbatim — including a driver's
+    // ``Invalid `prisma.…` invocation`` from the cache-miss read path.
+    //
+    // The STATUS is kept and NOT delegated to `handleEndpointError`. 422 here is a
+    // statement about the requested FILE ("we could not read tensor metadata out of
+    // it"), which is caller feedback; delegating would reclassify it as a 500,
+    // because nothing in this try throws a TRPCError. The zod rejection of `?id=`
+    // is already a separate `safeParse` 400 at the top of the handler and never
+    // enters this catch, so no validation path changes here at all.
+    //
+    // Only the MESSAGE is replaced, and with a string LITERAL rather than an
+    // imported constant on purpose: `ModelTensorMetadata.tsx` renders `body.error`
+    // directly as the panel's error text, so it must stay a non-empty string a
+    // human can read. The un-redacted message and stack are already in the
+    // `logToAxiom` call directly above — nothing is destroyed, only moved.
+    return res.status(422).json({ error: 'Unable to read tensor metadata for this file' });
   }
 });
 

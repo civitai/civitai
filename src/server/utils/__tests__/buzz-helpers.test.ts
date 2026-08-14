@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  domainSpendType,
   getAllowedAccountTypes,
   getBlockAllowedAccountTypes,
   isPayoutEligibleBuzz,
@@ -9,6 +10,29 @@ import {
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 const features = (isGreen: boolean) => ({ isGreen } as unknown as FeatureAccess);
+
+describe('domainSpendType — the one currency a placement may be paid in', () => {
+  it('is green on the green domain and yellow otherwise', () => {
+    expect(domainSpendType(features(true))).toBe('green');
+    expect(domainSpendType(features(false))).toBe('yellow');
+  });
+
+  // Never blue. A placement that took non-transferable Buzz and paid it out
+  // would be a transfer channel for it.
+  it('never returns a currency the escrow refuses', () => {
+    for (const isGreen of [true, false])
+      expect(domainSpendType(features(isGreen))).not.toBe('blue');
+  });
+
+  // One derivation, not two. If this ever disagrees with the generator's list
+  // the button and the escrow would offer different currencies.
+  it('is the domain currency the generator would spend', () => {
+    for (const isGreen of [true, false])
+      expect([domainSpendType(features(isGreen))]).toEqual(
+        getAllowedAccountTypes(features(isGreen))
+      );
+  });
+});
 
 describe('getBlockAllowedAccountTypes — App Blocks currency parity', () => {
   it('SFW (green/blue, isGreen=true) → blue then green (blue-first)', () => {

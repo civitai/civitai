@@ -114,16 +114,33 @@ function ownershipFake(table: Row[]) {
         }
         return undefined;
       })();
-      // 🔴 The predicate the branches are SUPPOSED to encode: block-first ownership.
-      // Written independently here (not copied from the implementation) so a mutant that
-      // drops a branch produces a genuinely different answer.
+      // 🔴 The predicate the branches are SUPPOSED to encode: KIND-AWARE ownership — the
+      // block's OauthClient for an onsite listing, the column for anything else. Written
+      // independently here (not copied from the implementation) so a mutant that drops a
+      // branch produces a genuinely different answer. It read "block-first" until issue
+      // #3844; that spelling is the bug, not the spec.
+      // 🔴 THE FAKE IS KIND-AWARE BECAUSE POSTGRES IS. Each branch is recognised by BOTH
+      // halves of what it actually says — its `kind` clause AND its ownership clause — so
+      // dropping either half from the implementation changes this fake's answer. A fake
+      // that ignored `kind` would score the three-branch predicate identically to the old
+      // two-branch one, which is exactly the mutant issue #3844 is about.
+      const isOnsiteBranch = (b: Record<string, unknown>) => b.kind === 'onsite';
       const wantsBlockBranch = where.OR.some(
-        (b) => (b.appBlock as { app?: { userId?: number } } | null)?.app?.userId != null
+        (b) =>
+          isOnsiteBranch(b) &&
+          (b.appBlock as { app?: { userId?: number } } | null)?.app?.userId != null
       );
       const wantsNoBlockBranch = where.OR.some(
-        (b) => (b.appBlock as unknown as { is?: null } | null)?.is === null
+        (b) => isOnsiteBranch(b) && (b.appBlock as unknown as { is?: null } | null)?.is === null
+      );
+      // The #3844 branch: NOT onsite ⇒ the column decides, whether or not a block hangs
+      // off the row.
+      const wantsNonOnsiteColumnBranch = where.OR.some(
+        (b) =>
+          (b.kind as { not?: string } | undefined)?.not === 'onsite' && typeof b.userId === 'number'
       );
       rows = rows.filter((r) => {
+        if (r.kind !== 'onsite') return wantsNonOnsiteColumnBranch && r.columnUserId === userId;
         if (r.blockOwnerUserId != null) return wantsBlockBranch && r.blockOwnerUserId === userId;
         return wantsNoBlockBranch && r.columnUserId === userId;
       });

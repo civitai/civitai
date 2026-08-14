@@ -1,5 +1,5 @@
 import { Alert, Anchor, Button, Divider, Group, Loader, Modal, Stack, Text } from '@mantine/core';
-import { IconAlertTriangle } from '@tabler/icons-react';
+import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -9,7 +9,7 @@ import { useQueryImages } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { PLACEMENT_SPEND_TYPES } from '~/shared/constants/placement.constants';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -23,6 +23,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
   const utils = trpc.useUtils();
+  const spendTypes = useAvailableBuzz();
   const [selected, setSelected] = useState<number | null>(null);
 
   const { data: visibility, isError: visibilityFailed } =
@@ -73,58 +74,93 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
     // scroll container can run edge to edge and own its own insets.
     <Modal
       {...dialog}
-      title="Submit your remix"
+      // Spans, not a `div`/`Text` stack: Mantine renders the title inside an
+      // `h2`, and block elements there are invalid nesting that React reparses.
+      title={
+        <span className="flex flex-col gap-0.5">
+          <span>Submit your remix</span>
+          <Text span size="xs" fw={400} c="dimmed" className="block leading-snug">
+            The creator reviews every submission and decides what belongs in their gallery.
+          </Text>
+        </span>
+      }
       size="lg"
-      classNames={{ body: 'p-0', header: 'pb-2' }}
+      classNames={{ body: 'p-0', header: 'items-start pb-3' }}
     >
       {/* Three bands: the explanation and the actions stay put, only the picker
           scrolls. The fee warning is money copy, so it must not be the thing
           that scrolls out of sight while someone hunts for an image. */}
       <div className="flex max-h-[70vh] flex-col">
         <Stack gap="xs" className="shrink-0 px-4 pb-3 pt-0">
-          {/* The decline consequence used to be said here too. The footer now
-              states it with the actual number, and saying it twice made the
-              vaguer version the one people read first. */}
-          <Text size="sm" c="dimmed">
-            The creator reviews every submission and decides what belongs in their gallery.
-          </Text>
-
-          {/* The picker lists published images because that is all the mutation
-              accepts, and a freshly generated image is not one. Said here rather
-              than only in the empty state: the case that confuses people is
-              having images in the grid and not the one they just made. */}
-          <Text size="xs" c="dimmed">
-            Only images you have posted appear below.{' '}
-            <Anchor href="/posts/create" target="_blank" rel="noreferrer" size="xs">
-              Post your remix first
-            </Anchor>{' '}
-            if you don&apos;t see it.
-          </Text>
-
-          {/* Says why the grid is short. Without it a submitter whose work is
-              mostly mature sees a picker missing their best images and no
-              reason, which reads as a bug rather than a rule. The reason is not
-              named: which rule bit is the host's business, not the
-              submitter's. */}
-          {maxLevel === 0 ? (
-            <Text size="xs" c="dimmed">
-              This image has no rating yet, so nothing can be submitted to it.
-            </Text>
-          ) : (
-            overRated > 0 && (
+          {/* Footnotes on the title's sentence, not statements of equal weight —
+              icon rows in the crypto deposit card's shape, so a stack of them
+              reads as one block rather than as paragraphs. */}
+          <Stack gap={4}>
+            {/* The picker lists published images because that is all the mutation
+                accepts, and a freshly generated image is not one. Said here rather
+                than only in the empty state: the case that confuses people is
+                having images in the grid and not the one they just made. */}
+            <Group gap="xs" wrap="nowrap" align="flex-start">
+              <IconInfoCircle
+                size={14}
+                className="text-blue-5"
+                style={{ flexShrink: 0, marginTop: 2 }}
+              />
               <Text size="xs" c="dimmed">
-                {overRated === 1 ? '1 of your images is' : `${overRated} of your images are`} rated
-                above what this gallery accepts, so {overRated === 1 ? 'it is' : 'they are'} not
-                shown.
+                Only images you have posted appear below.{' '}
+                <Anchor href="/posts/create" target="_blank" rel="noreferrer" size="xs">
+                  Post your remix first
+                </Anchor>{' '}
+                if you don&apos;t see it.
               </Text>
-            )
-          )}
+            </Group>
 
-          {visibility && !visibility.open && (
-            <Alert color="yellow" icon={<IconAlertTriangle />}>
-              This creator has stopped accepting submissions.
-            </Alert>
-          )}
+            {/* Says why the grid is short. Without it a submitter whose work is
+                mostly mature sees a picker missing their best images and no
+                reason, which reads as a bug rather than a rule. The reason is not
+                named: which rule bit is the host's business, not the
+                submitter's. */}
+            {maxLevel === 0 ? (
+              <Group gap="xs" wrap="nowrap" align="flex-start">
+                <IconAlertTriangle
+                  size={14}
+                  className="text-yellow-500"
+                  style={{ flexShrink: 0, marginTop: 2 }}
+                />
+                <Text size="xs" c="dimmed">
+                  This image has no rating yet, so nothing can be submitted to it.
+                </Text>
+              </Group>
+            ) : (
+              overRated > 0 && (
+                <Group gap="xs" wrap="nowrap" align="flex-start">
+                  <IconAlertTriangle
+                    size={14}
+                    className="text-yellow-500"
+                    style={{ flexShrink: 0, marginTop: 2 }}
+                  />
+                  <Text size="xs" c="dimmed">
+                    {overRated === 1 ? '1 of your images is' : `${overRated} of your images are`}{' '}
+                    rated above what this gallery accepts, so{' '}
+                    {overRated === 1 ? 'it is' : 'they are'} not shown.
+                  </Text>
+                </Group>
+              )
+            )}
+
+            {visibility && !visibility.open && (
+              <Group gap="xs" wrap="nowrap" align="flex-start">
+                <IconAlertTriangle
+                  size={14}
+                  className="text-yellow-500"
+                  style={{ flexShrink: 0, marginTop: 2 }}
+                />
+                <Text size="xs" c="yellow">
+                  This creator has stopped accepting submissions.
+                </Text>
+              </Group>
+            )}
+          </Stack>
         </Stack>
 
         <Divider />
@@ -230,9 +266,12 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
             the operator-set rate — quoting "30%" here would be a number this
             file cannot keep true, and it is the one fact a submitter needs
             before spending. */}
-        <Group justify="space-between" gap="sm" wrap="nowrap" className="shrink-0 px-4 py-3">
+        <div className="flex shrink-0 items-center justify-between gap-3 px-4 py-3">
           {visibility?.declineFee ? (
-            <Group gap="xs" wrap="nowrap" align="flex-start">
+            // `min-w-0` is what makes the note wrap instead of pushing: a flex
+            // item's floor is its content width otherwise, so a long sentence
+            // squeezed the Submit button until its label clipped.
+            <Group gap="xs" wrap="nowrap" align="flex-start" className="min-w-0 flex-1">
               <IconAlertTriangle
                 size={14}
                 className="text-yellow-500"
@@ -244,12 +283,9 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
               </Text>
             </Group>
           ) : (
-            <span />
+            <span className="flex-1" />
           )}
-          <Group gap="sm" wrap="nowrap">
-            <Button variant="default" onClick={dialog.onClose}>
-              Cancel
-            </Button>
+          <div className="shrink-0">
             {/* The price shown here is the one the balance check runs against, and
               the owner can move it between this render and the click. The
               mutation reads the price fresh, so the button is honest about
@@ -257,10 +293,11 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
               it rather than a silent charge. */}
             <BuzzTransactionButton
               buzzAmount={price ?? 0}
-              // Yellow and Green only, matching what the escrow will actually
-              // draw. The mutation refuses Blue regardless, so offering it here
-              // would promise a payment that is then refused.
-              accountTypes={PLACEMENT_SPEND_TYPES}
+              // Says what it means. `BuzzTransactionButton` already ran the pair
+              // through `useAvailableBuzz`, which strips both and appends the
+              // domain's, so this renders identically — the pair was never the
+              // hole. That was server-side, where the escrow drew from both.
+              accountTypes={spendTypes}
               label="Submit"
               disabled={!selected || !visibility?.open || price == null}
               loading={submit.isPending}
@@ -273,8 +310,8 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                 submit.mutate({ hostImageId, imageId: selected, expectedPrice: price })
               }
             />
-          </Group>
-        </Group>
+          </div>
+        </div>
       </div>
     </Modal>
   );

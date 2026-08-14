@@ -1,3 +1,4 @@
+import { toQueueImage } from '~/server/utils/queue-image';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -14,6 +15,7 @@ import {
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { PlacementStatus } from '~/shared/utils/placement';
 import {
   PLACEMENT_QUEUE_PAGE_SIZE,
@@ -24,6 +26,7 @@ import {
 import type {
   PlacementSettlementState,
   StickerPlacementData,
+  StickerPlacementInput,
 } from '~/shared/utils/sticker-placement';
 import {
   isStickerPlacementData,
@@ -110,9 +113,15 @@ async function loadPlaceableSticker({
 export type CreateStickerPlacement = {
   placerId: number;
   imageId: number;
-  data: Omit<StickerPlacementData, 'cosmeticId'> & { cosmeticId: number };
+  data: Omit<StickerPlacementInput, 'cosmeticId'> & { cosmeticId: number };
   /** Moderators may exceed a creator's size limit. Justin's call. */
   isModerator?: boolean;
+  /**
+   * The domain's currency, decided at the router from the request's own feature
+   * flags rather than anything the client sends — a client-supplied currency
+   * would let a request on one domain spend the other's Buzz.
+   */
+  spendType: BuzzSpendType;
 };
 
 /**
@@ -158,6 +167,7 @@ export async function createStickerPlacement({
   imageId,
   data,
   isModerator = false,
+  spendType,
 }: CreateStickerPlacement) {
   const space = await resolvePlacementSpaceFor({
     surface: SURFACE,
@@ -240,6 +250,7 @@ export async function createStickerPlacement({
       placerId,
       surface: SURFACE,
       amount: space.price,
+      spendType,
     });
 
     await spendStickerUsesFor({ userId: placerId, counts: new Map([[sticker.id, 1]]) });
@@ -824,10 +835,16 @@ export async function getPendingStickerPlacements({
   ownerId,
   limit = PLACEMENT_QUEUE_PAGE_SIZE,
   cursor,
+  domainLevels,
+  viewerLevels,
 }: {
   ownerId: number;
   limit?: number;
   cursor?: string | null;
+  /** Levels this domain may serve. Rows above it come back without their asset. */
+  domainLevels: number;
+  /** The viewer own band. Marked on each row, never filtered on. */
+  viewerLevels: number;
 }) {
   const rows = await dbRead.placement.findMany({
     where: {
@@ -856,9 +873,22 @@ export async function getPendingStickerPlacements({
   const page = rows.slice(0, limit);
   const nextCursor = rows.length > limit ? encodePlacementQueueCursor(page[page.length - 1]) : null;
 
+  // `nsfwLevel` is not decoration here: without it this payload cannot express
+  // the domain ceiling at all, and the queue deliberately sends no browsing
+  // level — so it was an image listing with nothing between an above-ceiling
+  // asset and a SFW client.
   const images = await dbRead.image.findMany({
     where: { id: { in: page.map((row) => row.targetId) } },
-    select: { id: true, url: true, name: true, width: true, height: true, type: true },
+    select: {
+      id: true,
+      url: true,
+      name: true,
+      width: true,
+      height: true,
+      type: true,
+      metadata: true,
+      nsfwLevel: true,
+    },
   });
   const byId = new Map(images.map((image) => [image.id, image]));
 
@@ -866,7 +896,16 @@ export async function getPendingStickerPlacements({
     const data = parseStickerPlacementData(row.data);
     if (!data) return [];
 
-    return [{ ...row, data, image: byId.get(row.targetId) ?? null }];
+    return [
+      {
+        ...row,
+        data,
+        // The image is the owner's own upload, so nothing is filtered out here.
+        // Dropping the row would take the approve/decline with it and the escrow
+        // would expire unanswered — withheld, not hidden.
+        image: toQueueImage(byId.get(row.targetId), domainLevels, viewerLevels),
+      },
+    ];
   });
 
   return { items, nextCursor };

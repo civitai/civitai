@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
 
 const updateEntityMetricDetached = vi.fn(async () => undefined);
@@ -65,8 +69,13 @@ const placementCreate = vi.fn(async () => {
 });
 const placementCount = vi.fn(async () => 0);
 const placementFindFirst = vi.fn(async () => null as unknown);
-const placementFindUnique = vi.fn(async () => null as unknown);
+// Typed with its argument because `declineOutOfBand` re-reads each row by id, so
+// one of its fakes has to answer per-placement rather than with a fixed row.
+const placementFindUnique = vi.fn<(args: { where: { id: number } }) => Promise<unknown>>(
+  async () => null
+);
 const placementFindMany = vi.fn(async () => [] as unknown[]);
+const imageFindMany = vi.fn(async () => [] as unknown[]);
 const placementUpdate = vi.fn(async () => ({}));
 const placementUpdateMany = vi.fn(async () => ({ count: 1 }));
 const dbTransaction = vi.fn(async (ops: unknown) => (Array.isArray(ops) ? ops : []));
@@ -92,6 +101,7 @@ vi.mock('~/server/db/client', () => ({
       findUnique: placementFindUnique,
       count: placementCount,
     },
+    image: { findMany: imageFindMany },
     user: { findUnique: async () => ({ username: 'someone' }) },
   },
 }));
@@ -105,6 +115,7 @@ const {
   getRemixGallery,
   getRemixGalleryVisibility,
   getPendingRemixGallerySubmissions,
+  declineOutOfBandRemixGallerySubmissions,
 } = await import('~/server/services/remix-gallery.service');
 
 const {
@@ -114,8 +125,29 @@ const {
   REMIX_GALLERY_REMOVAL_LOCK_HOURS,
 } = await import('~/shared/utils/remix-gallery');
 
+/**
+ * Declared rather than inferred, because every test here builds its case by
+ * spreading the good one and overriding a field. Inference narrowed `null`s to
+ * `null` and the rating to a literal, so the overrides that make each test a
+ * test — `needsReview: 'reported'`, `nsfwLevel: 0`, `publishedAt: null` — were
+ * type errors against their own fixture.
+ */
+type SubmissionFixture = {
+  id: number;
+  userId: number;
+  nsfwLevel: number;
+  minor: boolean;
+  poi: boolean;
+  tosViolation: boolean;
+  ingestion: string;
+  needsReview: string | null;
+  publishedAt: Date | null;
+  remixOfId: number | null;
+  sourceImageIds: number[] | null;
+};
+
 /** A submission that passes every check, so each test breaks exactly one thing. */
-const goodSubmission = {
+const goodSubmission: SubmissionFixture = {
   id: REMIX_IMAGE,
   userId: PLACER,
   nsfwLevel: NsfwLevel.PG,
@@ -182,6 +214,7 @@ beforeEach(() => {
 
 const submit = (over: Partial<Parameters<typeof createRemixGallerySubmission>[0]> = {}) =>
   createRemixGallerySubmission({
+    spendType: 'yellow',
     placerId: PLACER,
     hostImageId: HOST_IMAGE,
     imageId: REMIX_IMAGE,
@@ -462,7 +495,11 @@ describe('the ceiling is applied on read, not only on the mutation', () => {
   // gallery query will not return.
   it('carries it in the has-entries read', async () => {
     resolvePlacementSpaceFor.mockResolvedValue(openSpace);
-    await getRemixGalleryVisibility({ hostImageId: HOST_IMAGE, browsingLevel: 1 });
+    await getRemixGalleryVisibility({
+      hostImageId: HOST_IMAGE,
+      browsingLevel: 1,
+      domainLevels: allBrowsingLevelsFlag,
+    });
     expectCeiling(sqlFrom());
   });
 });
@@ -587,6 +624,16 @@ describe('escrow ordering', () => {
   it('creates the row before taking the escrow', async () => {
     await submit();
     expect(calls).toEqual(['create', 'hold']);
+  });
+
+  // The currency is decided by the domain at the router and carried through
+  // untouched. A submission that reached the escrow without it would be held —
+  // and later paid out — in whatever the Buzz service defaults to.
+  it('carries the caller currency into the escrow', async () => {
+    await submit({ spendType: 'green' });
+    expect(holdPlacementEscrow).toHaveBeenCalledWith(
+      expect.objectContaining({ spendType: 'green' })
+    );
   });
 
   it('expires the row when the hold fails, rather than deleting it', async () => {
@@ -1062,130 +1109,476 @@ describe('getPendingRemixGallerySubmissions paging', () => {
     placer: { id: PLACER, username: 'someone', image: null },
   });
 
-  /** Only the first image resolves, so the rest of the page is filtered out. */
-  const onlyFirstImageVisible = (imageId: number) =>
-    queryRaw.mockResolvedValue([
-      { id: imageId, url: 'x', width: 1, height: 1, type: 'image', metadata: null, nsfwLevel: 1 },
-    ]);
+  const image = (id: number) => ({
+    id,
+    url: 'x',
+    width: 1,
+    height: 1,
+    type: 'image',
+    metadata: null,
+    nsfwLevel: 1,
+  });
+
+  const LEVELS = allBrowsingLevelsFlag;
+  const ask = (args: { limit: number; cursor?: string | null }) =>
+    getPendingRemixGallerySubmissions({
+      ownerId: OWNER,
+      domainLevels: LEVELS,
+      viewerLevels: LEVELS,
+      ...args,
+    });
+
+  let queueSelects: { sql: string; values: unknown[] }[] = [];
+  const lastQueueSelect = () => queueSelects.at(-1) ?? { sql: '', values: [] as unknown[] };
+
+  /**
+   * A composed statement hides its own text: an interpolated `Prisma.sql`
+   * fragment arrives as a VALUE, not as part of the outer template. Reading only
+   * the outer strings would make every assertion about the keyset pass whether
+   * or not the keyset was there.
+   */
+  const isSql = (value: unknown): value is { strings: string[]; values: unknown[] } =>
+    !!value && typeof value === 'object' && 'strings' in value;
+
+  /**
+   * Rebuilt in ORDER — each string, then the fragment interpolated after it.
+   * Concatenating all the outer strings and then all the values reads as valid
+   * SQL and is not: the `AND`/`OR` joining two fragments lives in the outer
+   * strings while the fragments live in the values, so an `AND` -> `OR` flip
+   * between them is invisible to any assertion made on the scrambled text.
+   * Measured: that exact mutation passed 91/91 before this was interleaved.
+   */
+  const sqlTextOf = (value: unknown): string => {
+    if (isSql(value))
+      return value.strings
+        .map(
+          (part, index) =>
+            part + (index < value.values.length ? sqlTextOf(value.values[index]) : '')
+        )
+        .join('');
+    if (Array.isArray(value)) return value.map(sqlTextOf).join(' ');
+    return typeof value === 'string' ? value : '';
+  };
+
+  /**
+   * A tagged-template call arrives as `(strings, ...values)`, which is the same
+   * interleaving problem one level up.
+   */
+  const renderCall = (args: unknown[]): string => {
+    const [strings, ...values] = args as [string[], ...unknown[]];
+    if (!Array.isArray(strings)) return '';
+    return strings
+      .map((part, index) => part + (index < values.length ? sqlTextOf(values[index]) : ''))
+      .join('');
+  };
+
+  const flatValues = (value: unknown): unknown[] => {
+    if (isSql(value)) return value.values.flatMap(flatValues);
+    if (Array.isArray(value)) return value.flatMap(flatValues);
+    return typeof value === 'string' && value.includes('SELECT') ? [] : [value];
+  };
+
+  /**
+   * The page is a SQL select over `Placement`; the images are a second select
+   * over `Image`. Both arrive at the same `$queryRaw` mock, so they are told
+   * apart by the statement rather than by call order — the early return changes
+   * that order, and call-order coupling would then feed one query's rows to the
+   * other while every assertion still passed.
+   */
+  const respond = ({
+    page,
+    images,
+  }: {
+    page: { id: number; createdAt: Date }[];
+    images: unknown[];
+  }) =>
+    queryRaw.mockImplementation(async (...args: unknown[]) => {
+      const sql = renderCall(args);
+      if (sql.includes('FROM "Placement"')) {
+        queueSelects.push({ sql, values: flatValues(args) });
+        return page;
+      }
+      return images;
+    });
 
   beforeEach(() => {
-    queryRaw.mockResolvedValue([]);
+    queueSelects = [];
+    respond({ page: [], images: [] });
+    placementFindMany.mockResolvedValue([]);
   });
 
   it('takes the cursor from the last row of the page, not the last row it returns', async () => {
-    // Three rows for a page of two: the third is the "is there more" probe, and
-    // the second is dropped below because its image no longer resolves.
+    // Three rows for a page of two: the third is the "is there more" probe. Row
+    // 2 is selected but dropped afterwards for an unreadable payload — exactly
+    // the case where a cursor built from what was RETURNED says row 1 and the
+    // next page serves row 2 a second time.
+    respond({
+      page: [
+        { id: 1, createdAt: new Date('2026-01-01T00:00:00.000Z') },
+        { id: 2, createdAt: new Date('2026-01-02T00:00:00.000Z') },
+        { id: 3, createdAt: new Date('2026-01-03T00:00:00.000Z') },
+      ],
+      images: [image(101), image(HOST_IMAGE)],
+    });
     placementFindMany.mockResolvedValue([
       queueRow(1, 101, '2026-01-01T00:00:00.000Z'),
-      queueRow(2, 102, '2026-01-02T00:00:00.000Z'),
-      queueRow(3, 103, '2026-01-03T00:00:00.000Z'),
+      { ...queueRow(2, 0, '2026-01-02T00:00:00.000Z'), data: { nonsense: true } },
     ]);
-    onlyFirstImageVisible(101);
 
-    const result = await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2 });
+    const result = await ask({ limit: 2 });
 
     expect(result.items.map((item) => item.id)).toEqual([1]);
-    // Row 2's key. A cursor built from what was returned would say row 1, and
-    // the next page would serve row 2 a second time.
     expect(result.nextCursor).toBe(`${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`);
   });
 
-  it('still hands back a cursor when EVERY row on the page was filtered out', async () => {
-    // The state the UI now depends on. Return `nextCursor: null` here and the
-    // owner is told "nothing is waiting" over a queue with entries behind it —
-    // the original bug, one layer up, with every other test still green.
-    placementFindMany.mockResolvedValue([
-      queueRow(1, 101, '2026-01-01T00:00:00.000Z'),
-      queueRow(2, 102, '2026-01-02T00:00:00.000Z'),
-      queueRow(3, 103, '2026-01-03T00:00:00.000Z'),
-    ]);
-    queryRaw.mockResolvedValue([]);
+  it('selects only renderable rows, so a page is full rows or the end of the queue', async () => {
+    // The bug this replaced: the page was fetched and THEN filtered, so a queue
+    // of 66 whose first 50 were unrenderable returned 4 items with a cursor —
+    // "4+" over a page size of 50, and "load more" then produced 2. Both images
+    // are tested, the submission and the host it sits on.
+    await ask({ limit: 2 });
 
-    const result = await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2 });
+    const { sql } = lastQueueSelect();
+    expect(sql).toContain(`data ->> 'imageId'`);
+    expect(sql).toContain('pl."targetId"');
+    // Named individually. `toContain('publishedAt')` alone survives deleting any
+    // of the other four, and a queue that stopped filtering `tosViolation` would
+    // read as covered.
+    for (const clause of ['publishedAt', `ingestion = 'Scanned'`, 'tosViolation', 'minor', 'poi'])
+      expect(sql, `${clause} is not in the select`).toContain(clause);
 
-    expect(result.items).toEqual([]);
-    expect(result.nextCursor).toBe(`${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`);
+    // Both images, ANDed. An `OR` here passes every assertion above while
+    // relisting exactly what the count excludes — badge and list disagree again,
+    // which is the bug this shares one fragment to prevent.
+    const [, betweenTheTwoTests] = sql.split('EXISTS');
+    expect(sql.match(/EXISTS/g)).toHaveLength(2);
+    expect(betweenTheTwoTests).toContain('AND');
+    expect(betweenTheTwoTests).not.toContain('OR');
   });
 
-  it('hands back a cursor on the early return too, when no row even names an image', async () => {
-    // The `!imageIds.length` short-circuit is a second exit from this function
-    // and it has to carry the cursor for the same reason the main one does. The
-    // test above cannot reach it — those rows name images that simply are not
-    // visible, so it leaves by the filter at the end instead.
+  it('hands back a cursor when every row it selected was dropped afterwards', async () => {
+    // The unreadable-payload filter is the one drop left after selection, and
+    // returning `null` here tells the owner "nothing is waiting" over a queue
+    // with entries behind it — the original bug, one layer up.
+    respond({
+      page: [
+        { id: 1, createdAt: new Date('2026-01-01T00:00:00.000Z') },
+        { id: 2, createdAt: new Date('2026-01-02T00:00:00.000Z') },
+        { id: 3, createdAt: new Date('2026-01-03T00:00:00.000Z') },
+      ],
+      images: [],
+    });
     placementFindMany.mockResolvedValue([
       { ...queueRow(1, 0, '2026-01-01T00:00:00.000Z'), data: { nonsense: true } },
       { ...queueRow(2, 0, '2026-01-02T00:00:00.000Z'), data: { nonsense: true } },
-      { ...queueRow(3, 0, '2026-01-03T00:00:00.000Z'), data: { nonsense: true } },
     ]);
 
-    const result = await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2 });
+    const result = await ask({ limit: 2 });
 
     expect(result.items).toEqual([]);
     expect(result.nextCursor).toBe(`${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`);
   });
 
   it('reports no next page when the queue ends inside the page', async () => {
+    respond({
+      page: [{ id: 1, createdAt: new Date('2026-01-01T00:00:00.000Z') }],
+      images: [image(101), image(HOST_IMAGE)],
+    });
     placementFindMany.mockResolvedValue([queueRow(1, 101, '2026-01-01T00:00:00.000Z')]);
-    onlyFirstImageVisible(101);
 
-    const result = await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2 });
+    const result = await ask({ limit: 2 });
 
+    expect(result.items.map((item) => item.id)).toEqual([1]);
     expect(result.nextCursor).toBeNull();
   });
 
   it('resumes strictly after the cursor row, including its same-millisecond twin', async () => {
-    placementFindMany.mockResolvedValue([]);
     const createdAt = new Date('2026-01-02T00:00:00.000Z');
 
-    await getPendingRemixGallerySubmissions({
-      ownerId: OWNER,
-      limit: 2,
-      cursor: `${createdAt.getTime()}:2`,
-    });
+    await ask({ limit: 2, cursor: `${createdAt.getTime()}:2` });
 
-    const { where, orderBy, take } = placementFindMany.mock.calls.at(-1)?.[0] as {
-      where: { OR?: unknown[] };
-      orderBy: unknown;
-      take: number;
-    };
+    const { sql, values } = lastQueueSelect();
     // Two placements can share a millisecond. Without the id tie-break one of
     // them is stepped over and its escrow expires unreviewed.
-    expect(where.OR).toEqual([{ createdAt: { gt: createdAt } }, { createdAt, id: { gt: 2 } }]);
-    expect(orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
+    expect(sql).toMatch(/createdAt"\s*>/);
+    expect(sql).toMatch(/pl\.id\s*>/);
+    expect(sql).toMatch(/ORDER BY[\s\S]*createdAt/);
+    expect(values).toContain(2);
+    expect(
+      values.some((value) => value instanceof Date && value.getTime() === createdAt.getTime())
+    ).toBe(true);
     // limit + 1: the extra row is what says whether another page exists.
-    expect(take).toBe(3);
+    expect(values).toContain(3);
   });
 
   it('reports no next page when the queue ends exactly on the page boundary', async () => {
-    // The case the old `truncated = rows.length >= limit` got wrong. `take` is
-    // limit + 1, so a queue of exactly `limit` returns `limit` rows and there is
-    // nothing behind it — a cursor here sends the owner to an empty page.
+    // The case the old `truncated = rows.length >= limit` got wrong. The select
+    // takes limit + 1, so a queue of exactly `limit` has nothing behind it — a
+    // cursor here sends the owner to an empty page.
+    respond({
+      page: [
+        { id: 1, createdAt: new Date('2026-01-01T00:00:00.000Z') },
+        { id: 2, createdAt: new Date('2026-01-02T00:00:00.000Z') },
+      ],
+      images: [image(101), image(102), image(HOST_IMAGE)],
+    });
     placementFindMany.mockResolvedValue([
       queueRow(1, 101, '2026-01-01T00:00:00.000Z'),
       queueRow(2, 102, '2026-01-02T00:00:00.000Z'),
     ]);
-    onlyFirstImageVisible(101);
 
-    const result = await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2 });
+    const result = await ask({ limit: 2 });
 
     expect(result.nextCursor).toBeNull();
   });
 
   it('starts a fresh page rather than a bad value in a query when the cursor is malformed', async () => {
-    placementFindMany.mockResolvedValue([]);
     const wellFormed = `${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`;
 
     // The positive control. Without it this test passes with the keyset removed
-    // entirely, because then no cursor ever produces an `OR`.
-    await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2, cursor: wellFormed });
-    const accepted = placementFindMany.mock.calls.at(-1)?.[0] as { where: { OR?: unknown[] } };
-    expect(accepted.where.OR).toHaveLength(2);
+    // entirely, because then no cursor ever produces the clause.
+    await ask({ limit: 2, cursor: wellFormed });
+    expect(lastQueueSelect().sql).toMatch(/pl\.id\s*>/);
 
     for (const cursor of ['nonsense', '1e21:1', '1700000000000:1.5', '1:2:3', '-1:2', ':']) {
-      await getPendingRemixGallerySubmissions({ ownerId: OWNER, limit: 2, cursor });
+      await ask({ limit: 2, cursor });
 
-      const { where } = placementFindMany.mock.calls.at(-1)?.[0] as { where: { OR?: unknown[] } };
-      expect(where.OR, `cursor ${cursor} reached the query`).toBeUndefined();
+      expect(lastQueueSelect().sql, `cursor ${cursor} reached the query`).not.toMatch(/pl\.id\s*>/);
     }
+  });
+});
+
+/**
+ * What the SFW domain is SENT, which is a different question from what it
+ * paints. Blur is built from the viewer's own settings and never reads the
+ * domain, and these queues carry no browsing level by design — so the payload is
+ * the only control, and it needs a test that fails when it is removed rather
+ * than a suite that passes either way.
+ */
+describe('getPendingRemixGallerySubmissions domain ceiling', () => {
+  const SUBMITTED = 301;
+
+  const rated = (id: number, nsfwLevel: number) => ({
+    id,
+    url: `asset-${id}`,
+    width: 1,
+    height: 1,
+    type: 'image',
+    metadata: { hash: `h-${id}` },
+    nsfwLevel,
+  });
+
+  const queueRow = (imageId: number) => ({
+    id: 1,
+    targetId: HOST_IMAGE,
+    placerId: PLACER,
+    amount: PRICE,
+    data: { imageId },
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    expiresAt: null,
+    placer: { id: PLACER, username: 'someone', image: null },
+  });
+
+  const ask = ({
+    submittedLevel,
+    hostLevel = NsfwLevel.PG,
+    domainLevels,
+    viewerLevels = allBrowsingLevelsFlag,
+  }: {
+    submittedLevel: number;
+    hostLevel?: number;
+    domainLevels: number;
+    viewerLevels?: number;
+  }) => {
+    queryRaw.mockImplementation(async (...args: unknown[]) => {
+      const [template] = args as [{ strings?: string[] }];
+      const sql = (template?.strings ?? []).join(' ');
+      if (sql.includes('FROM "Placement"'))
+        return [{ id: 1, createdAt: new Date('2026-01-01T00:00:00.000Z') }];
+      return [rated(SUBMITTED, submittedLevel), rated(HOST_IMAGE, hostLevel)];
+    });
+    placementFindMany.mockResolvedValue([queueRow(SUBMITTED)]);
+
+    return getPendingRemixGallerySubmissions({
+      ownerId: OWNER,
+      limit: 10,
+      domainLevels,
+      viewerLevels,
+    });
+  };
+
+  it('sends the asset when the image is inside the ceiling', async () => {
+    // The positive control. Without it, every assertion below passes against a
+    // query that withholds everything — including the vacuous case where
+    // `domainLevels` arrives undefined and `level & undefined` is 0.
+    const { items } = await ask({
+      submittedLevel: NsfwLevel.PG,
+      domainLevels: sfwBrowsingLevelsFlag,
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0].image).toMatchObject({ viewable: true, url: `asset-${SUBMITTED}` });
+  });
+
+  it('withholds the asset for a submission above the ceiling, keeping the row actionable', async () => {
+    const { items } = await ask({
+      submittedLevel: NsfwLevel.X,
+      domainLevels: sfwBrowsingLevelsFlag,
+    });
+
+    expect(items).toHaveLength(1);
+    const { image } = items[0];
+    expect(image).toEqual({ viewable: false, id: SUBMITTED, nsfwLevel: NsfwLevel.X });
+    // Asserted as absence of the FIELDS, not just of `viewable`. A branch that
+    // set the flag and spread the row anyway would pass an `image.viewable`
+    // check while shipping the bytes it claims to withhold.
+    for (const field of ['url', 'metadata', 'width', 'height', 'type'])
+      expect(image, `${field} was sent to a domain that may not serve it`).not.toHaveProperty(
+        field
+      );
+    // Still reviewable: the escrow behind it expires if the owner cannot act.
+    expect(items[0].earnings.approve).toBeGreaterThan(0);
+  });
+
+  it('withholds the host image by the same rule', async () => {
+    const { items } = await ask({
+      submittedLevel: NsfwLevel.PG,
+      hostLevel: NsfwLevel.XXX,
+      domainLevels: sfwBrowsingLevelsFlag,
+    });
+
+    expect(items[0].targetImage).toEqual({
+      viewable: false,
+      id: HOST_IMAGE,
+      nsfwLevel: NsfwLevel.XXX,
+    });
+    expect(items[0].targetImage).not.toHaveProperty('url');
+  });
+
+  it('sends an above-ceiling asset on a domain that may serve it', async () => {
+    // The other half of the control: withholding on green has to be the domain
+    // deciding, not the queue refusing X everywhere.
+    const { items } = await ask({
+      submittedLevel: NsfwLevel.X,
+      domainLevels: allBrowsingLevelsFlag,
+    });
+
+    expect(items[0].image).toMatchObject({ viewable: true, url: `asset-${SUBMITTED}` });
+  });
+
+  it('marks what is outside the viewer band without withholding it', async () => {
+    // The viewer's own band is a preference, not a delivery rule — an owner has
+    // to be able to widen it and act. Withholding here would be indistinguishable
+    // from the domain case, which is the distinction the UI turns on.
+    const { items } = await ask({
+      submittedLevel: NsfwLevel.R,
+      domainLevels: allBrowsingLevelsFlag,
+      viewerLevels: sfwBrowsingLevelsFlag,
+    });
+
+    expect(items[0].image).toMatchObject({
+      viewable: true,
+      withinViewerLevel: false,
+      url: `asset-${SUBMITTED}`,
+    });
+  });
+
+  it('withholds an unrated image rather than defaulting it in', async () => {
+    // `0 & mask` is 0, so this passes today by arithmetic. Pinned because the
+    // failure mode is silent: an unscanned image would ship its asset to green.
+    const { items } = await ask({ submittedLevel: 0, domainLevels: sfwBrowsingLevelsFlag });
+
+    expect(items[0].image).toMatchObject({ viewable: false });
+  });
+});
+
+describe('declining everything out of band', () => {
+  const IN_BAND = 201;
+  const OUT_OF_BAND = 202;
+  const UNRATED = 203;
+
+  /**
+   * Host at PG-13 under `atOrBelow`, so the band is PG-13 and only the R row is
+   * out of it. The unrated row is the one worth keeping in the fixture: it is
+   * inadmissible for approval and must still not be swept up here, because
+   * charging a decline fee for an image with no rating yet answers a question
+   * nobody asked.
+   */
+  const arrange = () => {
+    resolvePlacementSpaceFor.mockResolvedValue({
+      ownerId: OWNER,
+      mode: 'review',
+      price: PRICE,
+      settings: { contentRule: 'atOrBelow' },
+    });
+    queryRaw.mockImplementation(async () => [
+      { nsfwLevel: NsfwLevel.PG13, minor: false, showable: true },
+    ]);
+    placementFindMany.mockResolvedValue([
+      { id: IN_BAND, data: { imageId: 1 } },
+      { id: OUT_OF_BAND, data: { imageId: 2 } },
+      { id: UNRATED, data: { imageId: 3 } },
+    ]);
+    imageFindMany.mockResolvedValue([
+      { id: 1, nsfwLevel: NsfwLevel.PG },
+      { id: 2, nsfwLevel: NsfwLevel.R },
+      { id: 3, nsfwLevel: 0 },
+    ]);
+    // Each row re-reads itself through the single-placement path.
+    placementFindUnique.mockImplementation(async ({ where }: { where: { id: number } }) => ({
+      id: where.id,
+      ownerId: OWNER,
+      status: 'pending',
+      surface: 'remixGallery',
+      targetId: HOST_IMAGE,
+      data: { imageId: where.id === OUT_OF_BAND ? 2 : 1 },
+      resolvedAt: null,
+      createdAt: new Date('2026-01-01'),
+    }));
+  };
+
+  it('settles only the rows above the band, and reports what it did', async () => {
+    arrange();
+
+    const result = await declineOutOfBandRemixGallerySubmissions({
+      hostImageId: HOST_IMAGE,
+      userId: OWNER,
+    });
+
+    expect(result).toEqual({ considered: 1, settled: 1 });
+    // The identity matters more than the count: a guard that declined the whole
+    // queue also settles once when the queue holds one out-of-band row.
+    expect(settlePlacement).toHaveBeenCalledTimes(1);
+    expect(lastSettleArgs()?.placementId).toBe(OUT_OF_BAND);
+  });
+
+  it('counts a row that fails to settle without abandoning the rest', async () => {
+    arrange();
+    imageFindMany.mockResolvedValue([
+      { id: 1, nsfwLevel: NsfwLevel.X },
+      { id: 2, nsfwLevel: NsfwLevel.R },
+      { id: 3, nsfwLevel: 0 },
+    ]);
+    settlePlacement.mockRejectedValueOnce(new Error('payout leg is down'));
+
+    const result = await declineOutOfBandRemixGallerySubmissions({
+      hostImageId: HOST_IMAGE,
+      userId: OWNER,
+    });
+
+    // Two were out of band, one throw: the second must still have been tried,
+    // and the caller must be told the difference rather than shown a success.
+    expect(result).toEqual({ considered: 2, settled: 1 });
+    expect(settlePlacement).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses someone else’s gallery before touching anything', async () => {
+    arrange();
+
+    await expect(
+      declineOutOfBandRemixGallerySubmissions({ hostImageId: HOST_IMAGE, userId: STRANGER })
+    ).rejects.toThrow();
+
+    expect(settlePlacement).not.toHaveBeenCalled();
   });
 });

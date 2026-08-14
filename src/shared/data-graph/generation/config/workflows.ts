@@ -173,7 +173,7 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Generate an AI image from text',
     category: 'image',
     ecosystemIds: TXT2IMG_IDS,
-    // Grok image generation is version-less on the API — v1.5 is video-only.
+    // Grok v1.5 is video-only.
     excludeModelVersionIds: [grokVersionIds['v1.5']],
   },
 
@@ -290,6 +290,8 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Generate video from text',
     category: 'video',
     ecosystemIds: TXT2VID_IDS,
+    // Grok v2.0 is image-only.
+    excludeModelVersionIds: [grokVersionIds['v2.0']],
   },
 
   img2vid: {
@@ -297,6 +299,7 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Generate video from an image',
     category: 'video',
     ecosystemIds: [...TXT2VID_IDS, ...I2V_ONLY_IDS],
+    excludeModelVersionIds: [grokVersionIds['v2.0']],
   },
 
   'img2vid:first-last': {
@@ -333,7 +336,7 @@ export const workflowConfigs: WorkflowConfigs = {
       ECO.Grok,
     ],
     // Grok referenceToVideo is a v1.5-only operation.
-    excludeModelVersionIds: [viduVersionIds.q3, grokVersionIds['v1.0']],
+    excludeModelVersionIds: [viduVersionIds.q3, grokVersionIds['v1.0'], grokVersionIds['v2.0']],
   },
 
   // ===========================================================================
@@ -363,7 +366,11 @@ export const workflowConfigs: WorkflowConfigs = {
     ecosystemIds: [ECO.Grok, ECO.WanVideo27, ECO.HappyHorse],
     // HappyHorse v1.1 has no videoEdit operation — v1.0 only.
     // Grok edit-video is likewise v1.0-only.
-    excludeModelVersionIds: [happyHorseVersionIds['v1.1'], grokVersionIds['v1.5']],
+    excludeModelVersionIds: [
+      happyHorseVersionIds['v1.1'],
+      grokVersionIds['v1.5'],
+      grokVersionIds['v2.0'],
+    ],
   },
 
   // Disabled — LTXV23 extendVideo is producing poor results. Re-enable once

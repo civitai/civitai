@@ -39,6 +39,20 @@ import { describe, it, expect } from 'vitest';
  * (`preview / component-tests`) and do not block a merge. This unit-project ledger
  * does. So in CI all six sites are pinned STRUCTURALLY ONLY, by this file — which
  * is precisely why a hole in its masker (see below) is worth more than it looks.
+ *
+ * 🔴 TWO MEASURED LIMITS OF THIS FILE — issue #3932, not fixed here. Read them
+ * before treating a green run as "no site re-inlines the gate":
+ *   1. `INLINED_GATE` matches two flag names in PROXIMITY inside ONE expression.
+ *      Four re-inlining shapes evade it and were verified green: hoisted locals
+ *      (`const a = features.appListings; … a || b`), names split across a `;` (the
+ *      `[^;{}]` class stops there by design), a ternary, and
+ *      `[features.appListings, features.appBlocks].some(Boolean)`. Widening the
+ *      NAME list (as the external-only term did) does not touch the SHAPE.
+ *   2. The "EXACT" assertion below pins DIRECT importers only, so a site that
+ *      reaches the gate transitively is invisible to it — including
+ *      `pages/apps/[appBlockId]/index.tsx`, which routes through
+ *      `resolveLegacyAppRoute` → `resolveAppsPageAccess`. That is the site a real
+ *      disclosure defect appeared at, so the blindness is not academic.
  */
 
 const SRC = path.resolve(__dirname, '../../..');
@@ -68,6 +82,15 @@ const SRC = path.resolve(__dirname, '../../..');
  *    entry point — that menu item is the only route TO `/apps` (the sub-nav's
  *    Marketplace tab only appears once you are already on `/apps/*`). Reachable by
  *    direct URL only. Tracked in issue #3907; not this file's to fix.
+ *
+ *    🔴 THE EXTERNAL-ONLY COHORT INHERITS THAT GAP, AND IS THE FIRST REAL POPULATION
+ *    TO HIT IT. `{appListingsPublicExternal, NOT appBlocks, NOT appListings}` holders
+ *    now pass the six gates below but the user-menu entry still reads `appBlocks`
+ *    alone, so `/apps` is direct-URL-only for them. Until #3907 lands, an
+ *    external-only rollout needs its own entry point (a link in the announcement, a
+ *    campaign URL) — the store being reachable is NOT the same as it being findable.
+ *    Deliberately out of scope here: converting that menu item is a product decision
+ *    on a module with its own standing doc, not a mechanical alignment.
  */
 const STORE_GATE_SITES = [
   'components/Apps/AppListingsMarketplaceBody.tsx',
@@ -205,6 +228,21 @@ function stripComments(code: string): string {
 }
 
 /**
+ * The flag names the store gate is built from. The predicate is
+ * `appListings || appBlocks || appListingsPublicExternal` — the third term admits
+ * the EXTERNAL-ONLY cohort, who reach the store and are then scoped SERVER-side to
+ * `kind='offsite'` listings. Any TWO of these joined by a logical operator in live
+ * code under SCAN_ROOTS is a re-inlined gate.
+ *
+ * 🔴 Kept as data, not baked into one literal regex, because the gate GREW: a
+ * two-name regex would have gone on reporting a clean zero for a site that
+ * re-inlined `appListings || appListingsPublicExternal` — the newest and least
+ * familiar half of the rule, i.e. the one most likely to be open-coded by someone
+ * who has not read this file.
+ */
+const STORE_FLAG_NAMES = ['appListingsPublicExternal', 'appListings', 'appBlocks'] as const;
+
+/**
  * An open-coded store gate in LIVE code.
  *
  * Deliberately matched on PROXIMITY + a logical operator rather than one literal
@@ -215,11 +253,18 @@ function stripComments(code: string): string {
  * collapsed first so line wrapping is irrelevant, and `[^;{}]` keeps a match inside
  * one expression rather than spanning statements.
  *
- * `\b` after each flag name matters: it stops `appBlocksPages` / `appBlocksAuthor`
- * — different flags with their own rules — from being read as `appBlocks`.
+ * `\b` after each flag name matters twice over: it stops `appBlocksPages` /
+ * `appBlocksAuthor` — different flags with their own rules — from being read as
+ * `appBlocks`, and it stops `appListingsPublicExternal` from being read as
+ * `appListings`. Both directions are pinned by the masker controls below.
  */
-const INLINED_GATE =
-  /appListings\b[^;{}]{0,120}?(?:\|\||&&|\?\?)[^;{}]{0,120}?appBlocks\b|appBlocks\b[^;{}]{0,120}?(?:\|\||&&|\?\?)[^;{}]{0,120}?appListings\b/;
+const INLINED_GATE = new RegExp(
+  STORE_FLAG_NAMES.flatMap((a) =>
+    STORE_FLAG_NAMES.filter((b) => b !== a).map(
+      (b) => `${a}\\b[^;{}]{0,120}?(?:\\|\\||&&|\\?\\?)[^;{}]{0,120}?${b}\\b`
+    )
+  ).join('|')
+);
 
 /** Collapse whitespace so a prettier line-wrap cannot hide a gate from the regex. */
 function flatten(code: string): string {
@@ -352,6 +397,58 @@ describe('the masker (validate the instrument before reading its verdict)', () =
     // would read them as `appBlocks` and flag legitimate code.
     expect(
       flatten(maskNonCode('const x = features.appListings || features.appBlocksPages;', 'p.ts'))
+    ).not.toMatch(INLINED_GATE);
+    expect(
+      flatten(maskNonCode('const x = features.appListings || features.appBlocksAuthor;', 'p.ts'))
+    ).not.toMatch(INLINED_GATE);
+  });
+
+  /**
+   * 🔴 THE THIRD TERM. `appListingsPublicExternal` admits the EXTERNAL-ONLY cohort
+   * and is now part of the gate, so a site re-inlining a pair that includes it must
+   * be caught — while `appListingsPublicExternal` alone must NOT be mistaken for
+   * `appListings` (they are different flags with different meanings, and the prefix
+   * relationship makes that the easy mistake for a `\b`-less regex).
+   */
+  it('🔴 catches a re-inlined gate built from the EXTERNAL-only term', () => {
+    const cases: Record<string, string> = {
+      'external OR listings':
+        'const ok = features.appListings || features.appListingsPublicExternal;',
+      'external OR blocks': 'const ok = features.appListingsPublicExternal || features.appBlocks;',
+      'external first, wrapped':
+        'const ok =\n  features.appListingsPublicExternal ||\n  features.appListings;',
+      'De Morgan with external':
+        'if (!features.appBlocks && !features.appListingsPublicExternal) return null;',
+      'destructured external': 'const ok = appListingsPublicExternal || appBlocks;',
+    };
+    for (const [label, src] of Object.entries(cases)) {
+      expect(flatten(maskNonCode(src, 'probe.ts')), label).toMatch(INLINED_GATE);
+    }
+  });
+
+  it('🔴 does NOT read appListingsPublicExternal as appListings (prefix collision)', () => {
+    // A single mention of the longer name, OR-ed with an unrelated flag, is not a
+    // store gate. Without `\b` the `appListings` alternative would match its prefix
+    // and report a false offender at every external-cohort call site.
+    expect(
+      flatten(
+        maskNonCode('const x = features.appListingsPublicExternal || features.canViewNsfw;', 'p.ts')
+      )
+    ).not.toMatch(INLINED_GATE);
+    expect(
+      flatten(maskNonCode('const x = features.appListingsPublicExternal;', 'p.ts'))
+    ).not.toMatch(INLINED_GATE);
+    // The sharp case: a hypothetical SIBLING of the longest name. Only the `\b` on
+    // `appListingsPublicExternal` itself rejects this — every other guard in this
+    // file passes it either way, so this is the one assertion that dies for that
+    // specific reason.
+    expect(
+      flatten(
+        maskNonCode(
+          'const x = features.appListingsPublicExternalOverride || features.appBlocksPages;',
+          'p.ts'
+        )
+      )
     ).not.toMatch(INLINED_GATE);
   });
 

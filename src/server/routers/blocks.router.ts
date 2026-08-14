@@ -1311,6 +1311,7 @@ export const blocksRouter = router({
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: (err as Error).message,
+          cause: err,
         });
       }
       return { ok: true };
@@ -1430,7 +1431,11 @@ export const blocksRouter = router({
           declaredScopes: input.declaredScopes,
         });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1657,7 +1662,11 @@ export const blocksRouter = router({
           modUserId: ctx.user.id,
         });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1687,7 +1696,11 @@ export const blocksRouter = router({
           modUserId: ctx.user.id,
         });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1741,7 +1754,11 @@ export const blocksRouter = router({
           runForReal: input.runForReal,
         });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1782,7 +1799,11 @@ export const blocksRouter = router({
         // review is already running" — which the P2 panel keys on to fall into
         // the running state); only opaque errors collapse to BAD_REQUEST.
         if (err instanceof TRPCError) throw err;
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1848,7 +1869,11 @@ export const blocksRouter = router({
         // render the right inline message; only opaque errors collapse to
         // BAD_REQUEST. NEVER a 500 leak.
         if (err instanceof TRPCError) throw err;
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1874,7 +1899,11 @@ export const blocksRouter = router({
       try {
         return await teardownPreview({ publishRequestId: input.publishRequestId });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1897,7 +1926,11 @@ export const blocksRouter = router({
     try {
       return await listActiveReviewPreviews();
     } catch (err) {
-      throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: (err as Error).message,
+        cause: err,
+      });
     }
   }),
 
@@ -1925,6 +1958,7 @@ export const blocksRouter = router({
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: (err as Error).message,
+          cause: err,
         });
       }
     }),
@@ -1956,6 +1990,7 @@ export const blocksRouter = router({
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: (err as Error).message,
+          cause: err,
         });
       }
     }),
@@ -2069,6 +2104,7 @@ export const blocksRouter = router({
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: (err as Error).message,
+          cause: err,
         });
       }
       return { ok: true };
@@ -2118,7 +2154,7 @@ export const blocksRouter = router({
             serviceCode === 'TRIGGER_FAILED'
             ? 'INTERNAL_SERVER_ERROR'
             : 'BAD_REQUEST';
-        throw new TRPCError({ code, message: (err as Error).message });
+        throw new TRPCError({ code, message: (err as Error).message, cause: err });
       }
     }),
 

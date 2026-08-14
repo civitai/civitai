@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { NsfwLevel } from '~/server/common/enums';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
 import { STICKER_REMOVAL_LOCK_HOURS } from '~/shared/utils/sticker-placement';
 
@@ -26,7 +31,7 @@ const CAP = 700;
 const PRICE = 700;
 
 const holdPlacementEscrow = vi.fn();
-const settlePlacement = vi.fn(async () => ({ settled: true }));
+const settlePlacement = vi.fn<PrismaStub<{ settled: boolean }>>(async () => ({ settled: true }));
 vi.mock('~/server/services/placement-escrow.service', () => ({
   holdPlacementEscrow,
   settlePlacement,
@@ -51,22 +56,31 @@ vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValu
  */
 const calls: string[] = [];
 
+/**
+ * Every Prisma stub declares its argument, rather than letting `vi.fn(async () => …)`
+ * infer a zero-arg signature. That inference makes `mock.calls` the empty tuple `[]`,
+ * so the `calls[0][0]` reads below — which are how this file asserts the WHERE clauses
+ * the guards are made of — are type errors against their own mock. `unknown` is the
+ * honest parameter type: the per-site casts stay, and they are what pins each shape.
+ */
+type PrismaStub<T> = (args: unknown) => Promise<T>;
+
 const queryRaw = vi.fn();
-const placementCreate = vi.fn(async () => {
+const placementCreate = vi.fn<PrismaStub<{ id: number }>>(async () => {
   calls.push('create');
   return { id: PLACEMENT };
 });
-const placementCount = vi.fn(async () => 0);
-const placementFindMany = vi.fn(async () => [] as unknown[]);
-const placementGroupBy = vi.fn(async () => [] as unknown[]);
-const transactionFindMany = vi.fn(async () => [] as unknown[]);
-const placementFindFirst = vi.fn(async () => null as unknown);
-const cosmeticFindUnique = vi.fn(async () => null as unknown);
+const placementCount = vi.fn<PrismaStub<number>>(async () => 0);
+const placementFindMany = vi.fn<PrismaStub<unknown[]>>(async () => []);
+const placementGroupBy = vi.fn<PrismaStub<unknown[]>>(async () => []);
+const transactionFindMany = vi.fn<PrismaStub<unknown[]>>(async () => []);
+const placementFindFirst = vi.fn<PrismaStub<unknown>>(async () => null);
+const cosmeticFindUnique = vi.fn<PrismaStub<unknown>>(async () => null);
 
-const imageFindMany = vi.fn(async () => [] as unknown[]);
-const placementFindUnique = vi.fn(async () => null as unknown);
-const placementUpdate = vi.fn(async () => ({}));
-const placementUpdateMany = vi.fn(async () => ({ count: 1 }));
+const imageFindMany = vi.fn<PrismaStub<unknown[]>>(async () => []);
+const placementFindUnique = vi.fn<PrismaStub<unknown>>(async () => null);
+const placementUpdate = vi.fn<PrismaStub<object>>(async () => ({}));
+const placementUpdateMany = vi.fn<PrismaStub<{ count: number }>>(async () => ({ count: 1 }));
 
 vi.mock('~/server/db/client', () => ({
   dbWrite: {
@@ -152,7 +166,8 @@ beforeEach(() => {
   spendStickerUsesFor.mockImplementation(async () => {
     calls.push('spend');
   });
-  settlePlacement.mockImplementation(async ({ action }: { action: string }) => {
+  settlePlacement.mockImplementation(async (args) => {
+    const { action } = args as { action: string };
     calls.push(`settle:${action}`);
     return { settled: true };
   });
@@ -232,9 +247,9 @@ describe("the creator's size limit", () => {
     resolvePlacementSpaceFor.mockResolvedValue(capped);
     givenStickerAndBalance();
 
-    await expect(createStickerPlacement({ ...placeInput, data: OVERSIZE })).rejects.toThrow(
-      /up to 20%/
-    );
+    await expect(
+      createStickerPlacement({ spendType: 'yellow', ...placeInput, data: OVERSIZE })
+    ).rejects.toThrow(/up to 20%/);
     expect(placementCreate).not.toHaveBeenCalled();
   });
 
@@ -243,7 +258,12 @@ describe("the creator's size limit", () => {
     givenStickerAndBalance();
 
     await expect(
-      createStickerPlacement({ ...placeInput, data: OVERSIZE, isModerator: true })
+      createStickerPlacement({
+        spendType: 'yellow',
+        ...placeInput,
+        data: OVERSIZE,
+        isModerator: true,
+      })
     ).resolves.toMatchObject({ placementId: PLACEMENT });
   });
 
@@ -253,9 +273,9 @@ describe("the creator's size limit", () => {
 
     // 0.35 is inside the global ceiling and outside the default, so this fails
     // only if the default is being applied rather than the hard maximum.
-    await expect(createStickerPlacement({ ...placeInput, data: OVERSIZE })).rejects.toThrow(
-      /up to 25%/
-    );
+    await expect(
+      createStickerPlacement({ spendType: 'yellow', ...placeInput, data: OVERSIZE })
+    ).rejects.toThrow(/up to 25%/);
   });
 
   /**
@@ -407,10 +427,24 @@ describe('the space mode decides whether a placement is live', () => {
 });
 
 describe('what gets written to the row', () => {
+  // The currency is decided by the domain at the router and carried through
+  // untouched. A placement that reached the escrow without it would be held —
+  // and later paid out — in whatever the Buzz service defaults to.
+  it('carries the caller currency into the escrow', async () => {
+    givenStickerAndBalance();
+
+    await createStickerPlacement({ ...placeInput, spendType: 'green' });
+
+    expect(holdPlacementEscrow).toHaveBeenCalledWith(
+      expect.objectContaining({ spendType: 'green' })
+    );
+  });
+
   it('persists the seller and the normalized position', async () => {
     givenStickerAndBalance();
 
     await createStickerPlacement({
+      spendType: 'yellow',
       ...placeInput,
       // Past the edges: a drag that left the image is a normal gesture, so the
       // position clamps rather than rejecting. Size is a different matter — it
@@ -875,6 +909,7 @@ describe('the note on a placement', () => {
     givenStickerAndBalance();
 
     await createStickerPlacement({
+      spendType: 'yellow',
       ...placeInput,
       data: { ...placeInput.data, comment: '  love   this\n\none  ' },
     });
@@ -886,7 +921,11 @@ describe('the note on a placement', () => {
   it('stores no comment key at all when the field was left blank', async () => {
     givenStickerAndBalance();
 
-    await createStickerPlacement({ ...placeInput, data: { ...placeInput.data, comment: '   ' } });
+    await createStickerPlacement({
+      spendType: 'yellow',
+      ...placeInput,
+      data: { ...placeInput.data, comment: '   ' },
+    });
 
     const [write] = placementCreate.mock.calls[0] as [{ data: { data: Record<string, unknown> } }];
     expect(write.data.data).not.toHaveProperty('comment');
@@ -1140,6 +1179,7 @@ describe('the note on a placement', () => {
  * nobody ever reviews while its escrow expires.
  */
 describe('getPendingStickerPlacements paging', () => {
+  const LEVELS = { domainLevels: allBrowsingLevelsFlag, viewerLevels: allBrowsingLevelsFlag };
   const good = { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 };
 
   const queueRow = (id: number, data: unknown, createdAt: string) => ({
@@ -1161,7 +1201,7 @@ describe('getPendingStickerPlacements paging', () => {
       queueRow(3, good, '2026-01-03T00:00:00.000Z'),
     ]);
 
-    const result = await getPendingStickerPlacements({ ownerId: OWNER, limit: 2 });
+    const result = await getPendingStickerPlacements({ ownerId: OWNER, limit: 2, ...LEVELS });
 
     expect(result.items.map((item) => item.id)).toEqual([1]);
     // Row 2's key. Built from what was returned it would say row 1, and row 2
@@ -1178,7 +1218,7 @@ describe('getPendingStickerPlacements paging', () => {
       queueRow(3, good, '2026-01-03T00:00:00.000Z'),
     ]);
 
-    const result = await getPendingStickerPlacements({ ownerId: OWNER, limit: 2 });
+    const result = await getPendingStickerPlacements({ ownerId: OWNER, limit: 2, ...LEVELS });
 
     expect(result.items).toEqual([]);
     expect(result.nextCursor).toBe(`${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`);
@@ -1190,7 +1230,7 @@ describe('getPendingStickerPlacements paging', () => {
       queueRow(2, good, '2026-01-02T00:00:00.000Z'),
     ]);
 
-    const result = await getPendingStickerPlacements({ ownerId: OWNER, limit: 2 });
+    const result = await getPendingStickerPlacements({ ownerId: OWNER, limit: 2, ...LEVELS });
 
     expect(result.items).toHaveLength(2);
     expect(result.nextCursor).toBeNull();
@@ -1201,6 +1241,7 @@ describe('getPendingStickerPlacements paging', () => {
     const createdAt = new Date('2026-01-02T00:00:00.000Z');
 
     await getPendingStickerPlacements({
+      ...LEVELS,
       ownerId: OWNER,
       limit: 2,
       cursor: `${createdAt.getTime()}:2`,
@@ -1214,5 +1255,98 @@ describe('getPendingStickerPlacements paging', () => {
     expect(where.OR).toEqual([{ createdAt: { gt: createdAt } }, { createdAt, id: { gt: 2 } }]);
     expect(orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
     expect(take).toBe(3);
+  });
+});
+
+/**
+ * The queue carries no browsing level by design — an owner has to see what is
+ * waiting on them — so the payload is the only thing standing between an
+ * above-ceiling asset and a SFW client. Unlike the remix gallery the image here
+ * is the owner's OWN upload, which changes who is being protected from what but
+ * not whether the domain may be sent it.
+ */
+describe('getPendingStickerPlacements domain ceiling', () => {
+  const good = { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 };
+
+  const ask = ({
+    nsfwLevel,
+    domainLevels,
+    viewerLevels = allBrowsingLevelsFlag,
+  }: {
+    nsfwLevel: number;
+    domainLevels: number;
+    viewerLevels?: number;
+  }) => {
+    placementFindMany.mockResolvedValue([
+      {
+        id: 1,
+        targetId: IMAGE,
+        placerId: PLACER,
+        amount: PRICE,
+        data: good,
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        expiresAt: null,
+        placer: { id: PLACER, username: 'someone', image: null },
+      },
+    ]);
+    imageFindMany.mockResolvedValue([
+      {
+        id: IMAGE,
+        url: 'asset',
+        name: 'a name',
+        width: 1,
+        height: 1,
+        type: 'image',
+        metadata: null,
+        nsfwLevel,
+      },
+    ]);
+
+    return getPendingStickerPlacements({ ownerId: OWNER, limit: 10, domainLevels, viewerLevels });
+  };
+
+  it('sends the asset when the image is inside the ceiling', async () => {
+    // The positive control: without it every assertion below passes against a
+    // queue that withholds everything, which is what `domainLevels: undefined`
+    // silently produced before this parameter was required.
+    const { items } = await ask({
+      nsfwLevel: NsfwLevel.PG,
+      domainLevels: sfwBrowsingLevelsFlag,
+    });
+
+    expect(items[0].image).toMatchObject({ viewable: true, url: 'asset', name: 'a name' });
+  });
+
+  it('withholds the asset above the ceiling while keeping the row actionable', async () => {
+    const { items } = await ask({ nsfwLevel: NsfwLevel.X, domainLevels: sfwBrowsingLevelsFlag });
+
+    expect(items).toHaveLength(1);
+    expect(items[0].image).toEqual({ viewable: false, id: IMAGE, nsfwLevel: NsfwLevel.X });
+    // The fields, not just the flag: a branch that sets `viewable: false` and
+    // spreads the row anyway passes a flag check while shipping the bytes.
+    for (const field of ['url', 'name', 'metadata', 'width', 'height', 'type'])
+      expect(items[0].image, `${field} reached a domain that may not serve it`).not.toHaveProperty(
+        field
+      );
+  });
+
+  it('sends an above-ceiling asset on a domain that may serve it', async () => {
+    const { items } = await ask({ nsfwLevel: NsfwLevel.X, domainLevels: allBrowsingLevelsFlag });
+
+    expect(items[0].image).toMatchObject({ viewable: true, url: 'asset' });
+  });
+
+  it('marks what is outside the viewer band without withholding it', async () => {
+    const { items } = await ask({
+      nsfwLevel: NsfwLevel.R,
+      domainLevels: allBrowsingLevelsFlag,
+      viewerLevels: sfwBrowsingLevelsFlag,
+    });
+
+    expect(items[0].image).toMatchObject({
+      viewable: true,
+      withinViewerLevel: false,
+      url: 'asset',
+    });
   });
 });

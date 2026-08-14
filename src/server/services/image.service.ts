@@ -2442,8 +2442,9 @@ export const getAllImages = async (
         // `modelVersionIds` is auto-detected only and `modelVersionIdsManual` is uploader-asserted,
         // matching what the search-index path serves — consumers gate on the difference.
         modelVersionIds:
-          imageResources?.[i.id]?.resources?.filter((r) => r.detected).map((r) => r.modelVersionId) ??
-          [],
+          imageResources?.[i.id]?.resources
+            ?.filter((r) => r.detected)
+            .map((r) => r.modelVersionId) ?? [],
         modelVersionIdsManual:
           imageResources?.[i.id]?.resources
             ?.filter((r) => !r.detected)
@@ -2519,9 +2520,18 @@ const getThumbnailsForImages = async (imageIds: number[]) => {
 };
 
 type GetAllImagesIndexResult = AsyncReturnType<typeof getAllImages>;
+/**
+ * Only this path reports a `source`, so it is added here rather than to the shared
+ * alias — `getImagesFromFeedSearch` returns the same alias and never sets one, and
+ * widening that would let a caller test it for a value it can never hold. Optional
+ * because the blocked-browsing early return and a search reporting none both omit it.
+ */
+type GetAllImagesIndexSourcedResult = GetAllImagesIndexResult & {
+  source?: AsyncReturnType<typeof getImagesFromSearch>['source'];
+};
 export const getAllImagesIndex = async (
   input: GetAllImagesInput
-): Promise<GetAllImagesIndexResult> => {
+): Promise<GetAllImagesIndexSourcedResult> => {
   // const {
   //   user,
   //   limit,
@@ -3068,8 +3078,6 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
     if (!result.cursor) break; // no more pages
   }
 
-  if (!accumulated.length && !ownExcludedPromise) return null;
-
   let data = accumulated;
 
   // Merge user's own excluded content, re-sort by the active sort, then limit.
@@ -3127,6 +3135,15 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
       }
     }
   }
+
+  // Nothing to serve → return null so the caller falls back to Meilisearch.
+  // Checked HERE, on the merged result, and not on `accumulated` alone: the
+  // own-excluded second pass can be the only source of content on the page
+  // (and its docs are content-scoped just above), so an empty main pass is not
+  // yet an empty result. Checking earlier would either discard that content or
+  // — as it did before — make the fallback unreachable for any caller for whom
+  // the second pass was issued at all, i.e. every signed-in first-page request.
+  if (!data.length) return null;
 
   data = data.slice(0, limit);
 

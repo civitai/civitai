@@ -8,6 +8,7 @@ import {
 import { notifyAppCollaborator } from '~/server/services/blocks/app-collaborator-notify';
 import { grantAppRepoWrite, revokeAppRepoWrite } from '~/server/services/blocks/app-repo-access';
 import { newAppOwnershipTransferId } from '~/server/utils/app-block-ids';
+import { CONNECT_CLIENT_TRANSFER_REFUSAL } from '~/shared/constants/app-transfer.constants';
 
 /**
  * App Listing COLLABORATORS — OWNERSHIP TRANSFER (owner initiates → recipient accepts).
@@ -106,11 +107,16 @@ export type TransferView = {
   createdAt: Date;
 };
 
-/** The message a connect-linked off-site listing is refused with. Asserted verbatim. */
-export const CONNECT_CLIENT_TRANSFER_REFUSAL =
-  'This listing is linked to an OAuth application. Ownership transfer would either hand ' +
-  'over that application’s credentials or split ownership between the listing and the ' +
-  'client, so it is not available for connect listings. Unlink the OAuth client first.';
+/**
+ * The message a connect-linked off-site listing is refused with. Asserted verbatim on
+ * BOTH sides of the wire.
+ *
+ * 🔴 RE-EXPORTED FROM `shared/`, not defined here. The Collaborators tab renders this
+ * string and its component test asserts the rendered text against the constant — which a
+ * browser test cannot do while the only definition sits in a module whose graph reaches
+ * the database client. One definition, two importers.
+ */
+export { CONNECT_CLIENT_TRANSFER_REFUSAL };
 
 /**
  * A pending transfer that has passed `expiresAt` is treated as ABSENT everywhere.
@@ -183,7 +189,25 @@ async function loadOwnedListing(appListingId: string, actorUserId: number): Prom
       'Ownership is transferred on the live listing, not on a revision draft'
     );
   }
-  const ownerUserId = row.appBlock?.app?.userId ?? row.userId;
+  // 🔴 KIND-AWARE, through the SHARED resolver — see `app-access.service
+  // ::resolveCanonicalListingOwner`. This was written here as `row.appBlock?.app?.userId
+  // ?? row.userId` (BLOCK-FIRST), which on an OFFSITE listing that carries a block named
+  // the PREVIOUS owner after `claimListing` / an offsite `acceptTransfer`, both of which
+  // move only the column. The consequence at THIS gate is the sharpest in the feature: an
+  // impersonator a moderator had just dispossessed could still INITIATE A TRANSFER of the
+  // listing and hand it straight back out — the very outcome `claimListing`'s in-tx
+  // pending-transfer cancellation exists to prevent. Dynamic import: this module is
+  // reached from `app-access.service`'s orbit and the helper is pure, but the file's
+  // existing discipline for cross-service reach is a deferred import (see
+  // `getPendingTransfer`), so it is kept.
+  const { resolveCanonicalListingOwner } = await import(
+    '~/server/services/blocks/app-access.service'
+  );
+  const ownerUserId = resolveCanonicalListingOwner({
+    kind: row.kind,
+    blockOwnerUserId: row.appBlock?.app?.userId,
+    listingUserId: row.userId,
+  });
   if (ownerUserId !== actorUserId) {
     throw new AppCollaboratorError('NOT_OWNER', 'Only the app owner can transfer ownership');
   }
@@ -645,4 +669,104 @@ export async function getPendingTransfer(opts: {
   // initiate — so it is not theirs to watch either.
   if (access.role !== 'owner' && row.toUserId !== opts.viewerUserId) return null;
   return row;
+}
+
+/**
+ * One incoming ownership OFFER, as the recipient's inbox renders it.
+ *
+ * 🔴 The listing metadata is JOINED IN rather than left to a second round trip. The
+ * recipient has, by construction, no access to the listing yet — a pending transfer
+ * confers nothing, so `resolveListingAccess` gives them no role and every per-app read
+ * refuses them. A client that got back bare ids would have nothing it could call to turn
+ * them into a name, and would render "you were offered ownership of apl_01J…".
+ */
+export type IncomingTransferView = {
+  transferId: string;
+  appListingId: string;
+  slug: string;
+  name: string;
+  kind: ListingKind;
+  /** Null for an off-site listing — it has no backing AppBlock. */
+  appBlockId: string | null;
+  iconUrl: string | null;
+  /** The current owner, i.e. who is offering. */
+  fromUserId: number;
+  expiresAt: Date;
+  createdAt: Date;
+};
+
+/**
+ * RECIPIENT: every LIVE ownership offer addressed to `userId`.
+ *
+ * 🔴 THIS IS THE READ THAT MAKES THE FEATURE REACHABLE, and its absence is why the four
+ * transfer procs sat unwired. `getPendingTransfer` is keyed PER LISTING — it answers "is
+ * there an offer on THIS app", which the recipient cannot ask, because they do not know
+ * the app exists and hold no role on it. Discovery has to be keyed on the RECIPIENT, and
+ * nothing else in the app queried `to_user_id` at all. The
+ * `(to_user_id, status)` index exists for exactly this shape and had no reader.
+ *
+ * 🔴 EXPIRY IS A READ-TIME PREDICATE, not a `WHERE` clause and not a sweeper — the same
+ * {@link isLive} used by `getPendingTransfer` and `acceptTransfer`, so all three agree
+ * about what "live" means with no cron dependency. The `WHERE` narrows to the recipient
+ * and to `pending` (the indexed pair); expiry is applied in one place afterwards.
+ *
+ * A row whose listing relation is missing is DROPPED rather than rendered with blanks:
+ * the FK is `ON DELETE CASCADE`, so it cannot legitimately happen, and an offer you
+ * cannot name is not an offer anyone can act on.
+ */
+export async function listMyPendingTransfers(
+  userId: number,
+  now: Date = new Date()
+): Promise<IncomingTransferView[]> {
+  const rows = (await dbRead.appOwnershipTransfer.findMany({
+    where: { toUserId: userId, status: 'pending' },
+    select: {
+      id: true,
+      appListingId: true,
+      fromUserId: true,
+      toUserId: true,
+      status: true,
+      expiresAt: true,
+      createdAt: true,
+      appListing: {
+        select: {
+          slug: true,
+          name: true,
+          kind: true,
+          appBlockId: true,
+          icon: { select: { url: true } },
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  })) as Array<
+    TransferView & {
+      appListing: {
+        slug: string;
+        name: string;
+        kind: string;
+        appBlockId: string | null;
+        icon: { url: string } | null;
+      } | null;
+    }
+  >;
+
+  const out: IncomingTransferView[] = [];
+  for (const row of rows) {
+    if (!row.appListing) continue;
+    if (!isLive(row, now)) continue;
+    out.push({
+      transferId: row.id,
+      appListingId: row.appListingId,
+      slug: row.appListing.slug,
+      name: row.appListing.name,
+      kind: row.appListing.kind as ListingKind,
+      appBlockId: row.appListing.appBlockId,
+      iconUrl: row.appListing.icon?.url ?? null,
+      fromUserId: row.fromUserId,
+      expiresAt: row.expiresAt,
+      createdAt: row.createdAt,
+    });
+  }
+  return out;
 }

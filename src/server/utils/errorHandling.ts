@@ -129,13 +129,22 @@ function isDriverError(e: unknown): e is Error {
  * to a 4xx is still a legitimate 4xx — `handleEndpointError` keeps the STATUS and
  * replaces only the MESSAGE.
  *
- * 🔴 **KNOWN GAP, deliberately not closed here.** A site that re-wraps a caught
- * error's `.message` into a 4xx TRPCError *without* setting `cause` defeats this
- * predicate — the wire text is the driver's, but nothing in the chain says so.
- * There are 17 such sites (App Blocks + referral routers); the one-word fix is
- * `cause: err`. They are enumerated and pinned by
- * `rest-error-envelope-ledger.test.ts`, which fails if the set grows, so the gap
- * is bounded and visible rather than silent.
+ * 🔴 **A site that re-wraps a caught error's `.message` into a 4xx TRPCError
+ * *without* setting `cause` defeats this predicate** — the wire text is the
+ * driver's, but nothing in the chain says so. There were 17 such sites (App
+ * Blocks + referral routers); all now pass `cause`, and
+ * `rest-error-envelope-ledger.test.ts` pins the set at ZERO, failing the moment
+ * one reappears. The two bodies differ by that single word, and the difference is
+ * demonstrated as a pair in `endpoint-helpers-driver-4xx.test.ts`.
+ *
+ * 🔴 **Scope of that predicate, so nobody over-reads it:** this function is
+ * consulted by `handleEndpointError` and by nothing else, and that helper serves
+ * the REST `/api/*` surface. tRPC errors go through `trpc.ts`'s own
+ * `errorFormatter`, which neither calls this nor puts `cause` on the wire. So
+ * `cause` on a tRPC router site is latent correctness — it makes the site right
+ * if its procedure is ever reached through the REST helper (several `/api/v1/*`
+ * routes DO call procedures via `publicApiContext2`), not a change to any
+ * response body emitted today.
  */
 export function isDriverAuthoredMessage(message: string, e: unknown): boolean {
   let cur = e as { cause?: unknown } | undefined;

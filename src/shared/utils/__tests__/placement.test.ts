@@ -255,8 +255,8 @@ describe('clampDeclineFeeRate', () => {
 describe('pricing', () => {
   it('caps by score band and tier', () => {
     expect(placementPriceCap(0, 'free')).toBe(100);
-    expect(placementPriceCap(4_999, 'gold')).toBe(500);
-    expect(placementPriceCap(5_000, 'gold')).toBe(1_000);
+    expect(placementPriceCap(9_999, 'gold')).toBe(500);
+    expect(placementPriceCap(10_000, 'gold')).toBe(1_000);
     expect(placementPriceCap(1_000_000, 'free')).toBe(1_000);
   });
 

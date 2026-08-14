@@ -6,6 +6,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   ACCEPTED,
   listingKindSupports,
+  resolveCanonicalListingOwner,
   resolveListingAccess,
   type ListingKind,
 } from '~/server/services/blocks/app-access.service';
@@ -212,11 +213,19 @@ function toSeatListing(row: RawSeatListing, wasShadow: boolean): SeatListing {
     kind: row.kind as ListingKind,
     appBlockId: row.appBlockId,
     blockSlug: row.appBlock?.blockId ?? null,
-    // 🔴 ONSITE OWNERSHIP IS CANONICALLY THE OauthClient's. `AppListing.userId` is a
-    // denormalized copy there; for OFFSITE it IS the owner (a connect client is a
-    // linked credential, never the owner). Falling back to the column also covers an
-    // onsite listing whose block has a dangling `app_id`.
-    ownerUserId: row.appBlock?.app?.userId ?? row.userId,
+    // 🔴 KIND-AWARE, through the SHARED resolver — not a second spelling of it. This used
+    // to be written here as `row.appBlock?.app?.userId ?? row.userId`, i.e. BLOCK-FIRST,
+    // which is wrong on an OFFSITE listing that carries a block (issue #3844): the block
+    // names the previous owner after `claimListing`/`acceptTransfer`, so this gate —
+    // `assertOwner`, i.e. seat MANAGEMENT — would let an impersonator a moderator had
+    // just dispossessed keep inviting and removing collaborators on the rightful owner's
+    // listing. `row` is always the PARENT (loadSeatListing hops a shadow first), so the
+    // column passed here is the canonical one and not a frozen clone.
+    ownerUserId: resolveCanonicalListingOwner({
+      kind: row.kind,
+      blockOwnerUserId: row.appBlock?.app?.userId,
+      listingUserId: row.userId,
+    }),
     wasShadow,
   };
 }

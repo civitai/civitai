@@ -423,6 +423,13 @@ const featureFlags = createFeatureFlags({
   // from the img2model3d picker and rejected on submit (see ecosystem-graph.ts).
   tripoGenerator: { availability: ['mod'], fliptKey: 'tripo-generator' },
   hunyuan3dGenerator: { availability: ['mod'], fliptKey: 'hunyuan3d-generator' },
+  // Grok Imagine Image 2.0 — gates ONLY the v2.0 entry in the Grok version
+  // picker; v1.0 / v1.5 stay live regardless, so Grok image + video generation
+  // is unaffected when this is off. Mod-only until the `grok-imagine-2` Flipt
+  // flag exists (absent ⇒ this static fallback), which is also the widen and
+  // kill lever. Off ⇒ v2.0 is dropped from the picker and a submitted v2.0
+  // version id falls back to the ecosystem default (see grok-graph.ts).
+  grokImagine2: { availability: ['mod'], fliptKey: 'grok-imagine-2' },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay
@@ -443,6 +450,31 @@ const featureFlags = createFeatureFlags({
   // to `app-blocks-enabled` — i.e. ZERO behavior change today (the currently
   // mod+app-dev-testers cohort keeps identical store access).
   appListings: { availability: ['mod'], fliptKey: 'app-listings' },
+  // App Blocks — EXTERNAL-ONLY store scope. The CLIENT/SSR half of the server's
+  // `isExternalListingsPublicEnabled()` (same Flipt key), so the `/apps` page gate
+  // can admit a viewer whose ONLY qualification is this flag — without it the store
+  // is structurally unreachable for that cohort (`hasAppsStoreAccess` would be
+  // false → `notFound`) even though the server would happily serve them the offsite
+  // catalog. Read via the shared `hasAppsStoreAccess` predicate, never open-coded.
+  //
+  // 🔴 `availability: []` (DARK + fail-closed for EVERYONE, mods included), NOT
+  // `['mod']`, and that is load-bearing for the server/client seam rather than
+  // taste: an ABSENT flag makes the SERVER's async `isFlipt` return `false`, while
+  // the CLIENT's `isEnabledSync` returns `null` and falls through to this static
+  // availability. With `['mod']` a moderator's client value would be `true` against
+  // a server `false` — the two evaluations of one flag disagreeing, which is exactly
+  // the failure this entry exists to prevent. `[]` makes the static answer `false`
+  // too, so both sides are dark until Flipt says otherwise. (Mirrors the
+  // `appBlocksAgenticReview` precedent.) A mod loses nothing: they already hold
+  // `appListings`/`appBlocks`, and the server checks the privileged axis FIRST.
+  //
+  // Grants ONLY store CATALOG reachability — the server still scopes the data to
+  // `kind='offsite'` (`resolveStoreVisibilityScope` → `public-external`). It does
+  // NOT widen any block-RUNTIME surface (those stay on `appBlocks` alone).
+  appListingsPublicExternal: {
+    availability: [],
+    fliptKey: 'app-listings-public-external',
+  },
   // App Blocks W10 — full-page apps (`/apps/run/<slug>`). A SEPARATE dark flag
   // so the page surface enables independently of the master `app-blocks-enabled`
   // gate. The page route + page-token mint require BOTH `appBlocks` AND

@@ -56,6 +56,96 @@ describe('hasAppsStoreAccess — the 2×2 flag matrix', () => {
 });
 
 /**
+ * 🔴 THE THIRD TERM — `appListingsPublicExternal` (the EXTERNAL-ONLY cohort).
+ *
+ * Its holders are viewers the SERVER will serve a `kind='offsite'`-only catalog to
+ * (`resolveStoreVisibilityScope` → `public-external`). Before it was added here,
+ * a viewer whose ONLY qualification was that flag hit `notFound` at the page gate
+ * and could never reach the store the server was ready to serve them — the gate and
+ * the data path disagreeing about the same flag.
+ *
+ * The full 2×2×2 is asserted rather than the one interesting cell, because the
+ * dangerous mistakes are the boring cells: an `&&` instead of an `||` (only the
+ * both-true row would notice), or the term being dropped from one branch.
+ */
+describe('hasAppsStoreAccess — the external-only term (full 2×2×2)', () => {
+  const BOOLS = [true, false] as const;
+  for (const appListings of BOOLS)
+    for (const appBlocks of BOOLS)
+      for (const appListingsPublicExternal of BOOLS) {
+        const expected = appListings || appBlocks || appListingsPublicExternal;
+        it(`{listings:${appListings}, blocks:${appBlocks}, external:${appListingsPublicExternal}} → ${expected}`, () => {
+          expect(hasAppsStoreAccess({ appListings, appBlocks, appListingsPublicExternal })).toBe(
+            expected
+          );
+        });
+      }
+
+  it('🔴 the EXTERNAL flag ALONE grants access (the blocker this term removes)', () => {
+    expect(hasAppsStoreAccess({ appListingsPublicExternal: true })).toBe(true);
+    expect(
+      hasAppsStoreAccess({ appListings: false, appBlocks: false, appListingsPublicExternal: true })
+    ).toBe(true);
+  });
+
+  it('🔴 the external flag being FALSE cannot revoke either older flag', () => {
+    // The `&&`/de-Morgan mutant: a viewer who qualifies via `appListings` or
+    // `appBlocks` must keep access no matter what the new flag says.
+    expect(hasAppsStoreAccess({ appListings: true, appListingsPublicExternal: false })).toBe(true);
+    expect(hasAppsStoreAccess({ appBlocks: true, appListingsPublicExternal: false })).toBe(true);
+  });
+
+  it('still fails CLOSED when the new key is absent / undefined', () => {
+    expect(hasAppsStoreAccess({ appListingsPublicExternal: undefined })).toBe(false);
+    expect(hasAppsStoreAccess({ appListings: false, appBlocks: false })).toBe(false);
+  });
+});
+
+/**
+ * 🔴 THE SSR SEAM, EXTENDED TO THE NEW TERM. The block below (unchanged) pins the
+ * 2×2; this pins the cells the third flag adds — above all "external ONLY reaches
+ * /apps", which is the whole point of the change and which the original matrix
+ * cannot express.
+ */
+describe('resolveAppsPageAccess agrees with the predicate on the external-only cells', () => {
+  const MATRIX: Array<{
+    appListings?: boolean;
+    appBlocks?: boolean;
+    appListingsPublicExternal?: boolean;
+  }> = [
+    { appListingsPublicExternal: true },
+    { appListings: false, appBlocks: false, appListingsPublicExternal: true },
+    { appListings: false, appBlocks: false, appListingsPublicExternal: false },
+    { appListings: true, appBlocks: false, appListingsPublicExternal: true },
+    { appListings: false, appBlocks: true, appListingsPublicExternal: false },
+    { appListingsPublicExternal: undefined },
+  ];
+
+  for (const features of MATRIX) {
+    it(`agrees for ${JSON.stringify(features)}`, () => {
+      const granted = hasAppsStoreAccess(features);
+      const result = resolveAppsPageAccess({ features });
+      expect('props' in result).toBe(granted);
+      expect('notFound' in result).toBe(!granted);
+    });
+  }
+
+  it('🔴 external-only viewer reaches /apps — NOT notFound', () => {
+    expect(resolveAppsPageAccess({ features: { appListingsPublicExternal: true } })).toEqual({
+      props: {},
+    });
+  });
+
+  it('🔴 a viewer qualifying via NOTHING still gets notFound', () => {
+    expect(
+      resolveAppsPageAccess({
+        features: { appListings: false, appBlocks: false, appListingsPublicExternal: false },
+      })
+    ).toEqual({ notFound: true });
+  });
+});
+
+/**
  * 🔴 THE SEAM. The point of the extraction is that the SSR gate and the shared
  * predicate cannot disagree — a component tested in isolation and a resolver
  * tested in isolation can both be green while the pair is incoherent. This

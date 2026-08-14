@@ -10,7 +10,7 @@ const getStandings = vi.fn();
 const getSwissState = vi.fn();
 const incrementOperationSpent = vi.fn();
 const operationBudgetRemaining = vi.fn();
-const logToAxiom = vi.fn(() => Promise.resolve());
+const logToAxiom = vi.fn<(...args: unknown[]) => Promise<void>>(() => Promise.resolve());
 const queryRaw = vi.fn();
 
 // Spread the real modules and override only what this suite drives. Hand-listing exports couples a
@@ -66,7 +66,7 @@ function stubQueries(imageCount: number) {
         { startsAt: new Date(Date.now() - 60_000), endsAt: new Date(Date.now() + 60_000) },
       ]);
     }
-    if (sql.includes('COUNT(*)')) return Promise.resolve([{ relations: 0n }]);
+    if (sql.includes('COUNT(*)')) return Promise.resolve([{ relations: BigInt(0) }]);
     return Promise.resolve(
       Array.from({ length: imageCount }, (_, i) => ({
         id: i + 1,
