@@ -108,8 +108,22 @@ describe('buildModelFlagUpsert — structure', () => {
     const values = splitTopLevel(parenGroupAfter(text, text.indexOf('VALUES')));
 
     // Pinned literally rather than derived from `columns.length`, so a column
-    // silently dropped from BOTH lists still fails here.
-    expect(columns).toHaveLength(9);
+    // silently dropped from BOTH lists still fails here. The order is pinned
+    // too: the value-binding suite below reads `statement.values`, which is
+    // blind to a swap in the COLUMN list — reorder `"minor"` and
+    // `"triggerWords"` here with the values untouched and the minor flag is
+    // written into `triggerWords`, which only Postgres would otherwise catch.
+    expect(columns).toEqual([
+      '"modelId"',
+      '"poi"',
+      '"nsfw"',
+      '"minor"',
+      '"triggerWords"',
+      '"poiName"',
+      '"status"',
+      '"details"',
+      '"sfwOnly"',
+    ]);
     expect(values).toHaveLength(9);
     expect(values.every((value) => value.length > 0)).toBe(true);
   });
@@ -149,7 +163,7 @@ describe('buildModelFlagUpsert — structure', () => {
 
 /**
  * The assertions above constrain the statement's SHAPE. Shape cannot see a
- * wrong BIND: swap two columns in the VALUES list, or point the `sfwOnly` slot
+ * wrong BIND: swap two entries in the VALUES list, or point the `sfwOnly` slot
  * at `poi`, and every arity and assignment check above still passes. Booleans
  * cannot be told apart by value, so they are told apart by POSITION.
  *
@@ -157,6 +171,14 @@ describe('buildModelFlagUpsert — structure', () => {
  * swap, stale bind or defaulted flag lands a `true` in the wrong slot. This
  * runs with no database, which matters: CI provides no Postgres server, so the
  * execution arm below never runs there and this is the guard that does.
+ *
+ * 🔴 What this does NOT cover, so nobody reads it as closing the class: these
+ * cases read `statement.values` and are therefore blind to everything that
+ * lives only in the statement TEXT — the column list's order (pinned by the
+ * shape suite above instead), the conflict target, the table name, and
+ * `DO UPDATE` vs `DO NOTHING`. Those are caught only by the execution arm,
+ * i.e. not in CI. Do not treat a green always-on run as proof the statement is
+ * correct; run the execution arm when you change it.
  */
 describe('buildModelFlagUpsert — value binding', () => {
   // Measured against the built statement, not assumed. `Prisma.sql`NULL`` is
@@ -237,8 +259,15 @@ describe.skipIf(!testDatabaseUrl)('buildModelFlagUpsert — execution (real Post
     // This suite DROPs "ModelFlag". The env-var isolation above stops it
     // pointing at a real environment by default, but a mis-set variable would
     // still destroy the table, so refuse anything that isn't visibly scratch.
-    const databaseName = new URL(testDatabaseUrl as string).pathname.replace(/^\//, '');
-    if (!/(^|[-_])(test|modelflag|scratch|tmp)([-_]|$)/i.test(databaseName)) {
+    //
+    // 🔴 Read the name off the CLIENT, not off `new URL(...).pathname`. They
+    // disagree: `pg-connection-string` resolves `socket:/tmp?db=civitai` to
+    // database `civitai`, whose pathname is `tmp` — so a pathname check
+    // ACCEPTS a URL that connects to production, and rejects the legitimate
+    // `socket:/var/run/postgresql?db=modelflag_test`. `client.database` is
+    // populated at construction, before `connect()`, and is what pg will use.
+    const databaseName = client.database;
+    if (!databaseName || !/(^|[-_])(test|modelflag|scratch|tmp)([-_]|$)/i.test(databaseName)) {
       throw new Error(
         `MODEL_FLAG_TEST_DATABASE_URL must name a throwaway database (got "${databaseName}"). ` +
           'This suite drops and recreates "ModelFlag".'
@@ -277,12 +306,14 @@ describe.skipIf(!testDatabaseUrl)('buildModelFlagUpsert — execution (real Post
     return client.query(statement.text, statement.values as unknown[]);
   };
 
-  it('returns every column ModelFlagRow declares', async () => {
+  it('returns the whole row, so RETURNING * cannot be narrowed', async () => {
     const { rows } = await run({ modelId: 99, scanResult: SCAN_RESULT, details: { a: 1 } });
 
-    // `$queryRaw`'s generic is an unchecked cast, so `ModelFlagRow` is only a
-    // claim until something compares it to a real row. This also pins
-    // `RETURNING *`: narrowing it drops keys the type promises callers.
+    // Named for what it actually pins. This compares the returned keys against
+    // a hand-written list, so it does NOT verify `ModelFlagRow` against the
+    // live schema — adding a field to either the type or the table leaves it
+    // green. What it does catch is `RETURNING *` being narrowed, which would
+    // drop keys the type promises callers.
     expect(Object.keys(rows[0]).sort()).toEqual(
       [
         'modelId',

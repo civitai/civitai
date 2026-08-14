@@ -37,8 +37,9 @@ export type ModelFlagRow = {
   poiName: boolean;
   status: ModelFlagStatus;
   // `RETURNING *` returns these too; naming them keeps the type an honest
-  // description of the row rather than a partial one.
-  details: unknown;
+  // description of the row rather than a partial one. `details` matches the
+  // canonical `ModelFlag` interface rather than widening to `unknown`.
+  details: Prisma.JsonValue | null;
   createdAt: Date;
 };
 

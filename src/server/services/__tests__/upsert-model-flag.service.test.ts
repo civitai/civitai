@@ -18,6 +18,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { mockQueryRaw } = vi.hoisted(() => ({ mockQueryRaw: vi.fn() }));
 
 // `model-flag.service` imports only `dbRead`/`dbWrite` from this module.
+//
+// This is a partial factory for a module that also does `export * from
+// '@civitai/db/client'`, i.e. the shape that goes stale when the service
+// starts importing something else from it. 🔴 The `await import(...)` inside
+// each test below is load-bearing, not style: importing the service at module
+// scope would let that staleness surface as a collection failure (0 tests,
+// which reads as "nothing to see"). Importing inside the test body makes it
+// fail loudly instead — verified by adding an unmocked export to the service's
+// import graph and watching all four tests fail rather than vanish.
 vi.mock('~/server/db/client', () => ({
   dbRead: {},
   dbWrite: { $queryRaw: mockQueryRaw },
