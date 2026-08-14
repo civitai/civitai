@@ -446,3 +446,87 @@ describe('ExternalSubmitForm (edit) — kind-aware wizard shape', () => {
     await expect.element(page.getByTestId('apps-offsite-wizard-step-url')).toBeInTheDocument();
   });
 });
+
+/**
+ * 🔴 THE EDIT HEADER, pinned in BOTH directions — the last piece of the form that was
+ * NOT kind-aware.
+ *
+ * Observed in production on the canonical editor for an ON-SITE listing: an
+ * external-link icon over "Update your external-link app. Change the link, details, or
+ * assets across the steps below, then save." — about an app that has no link, on a
+ * wizard that (correctly) renders it no URL step. The shape was fixed; the header was
+ * not, so the page contradicted itself.
+ *
+ * 🔴 ASSERTED AS STATE, NOT AS SPELLING. The two branches render DIFFERENT elements
+ * (`apps-listing-edit-header-onsite` / `-offsite`), so the primary assertion is which
+ * element exists — a check no other feature's copy can satisfy by coincidence. The
+ * word-level assertion is SCOPED to that element rather than to the page, for the same
+ * reason: a page-wide "does the body contain 'link'" search is satisfied by the Assets
+ * step, the OG re-pull button, or any future control that happens to say it.
+ */
+describe('ExternalSubmitForm (edit) — the kind-aware header', () => {
+  test('🔴 an ON-SITE listing gets the on-site header, and it does NOT promise a link', async () => {
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx({ kind: 'onsite' })} />);
+
+    // 🔴 AWAITED PRESENT ELEMENT FIRST. `locator.elements()` is SYNCHRONOUS, so an
+    // absence asserted before React has committed passes whatever the component renders.
+    const header = page.getByTestId('apps-listing-edit-header-onsite');
+    await expect.element(header).toBeInTheDocument();
+
+    // The STATE: the off-site header is not the one that rendered.
+    expect(page.getByTestId('apps-listing-edit-header-offsite').elements()).toHaveLength(0);
+
+    // …and the sentence inside THAT element makes no claim about a link.
+    await expect.element(header).not.toHaveTextContent(/\blinks?\b/i);
+    await expect.element(header).not.toHaveTextContent(/external/i);
+    // It still says what an on-site owner CAN change, so this is not "delete the copy".
+    await expect.element(header).toHaveTextContent(/details/i);
+    await expect.element(header).toHaveTextContent(/assets/i);
+    // The slug title is untouched by the kind branch.
+    await expect.element(header).toHaveTextContent(/Editing vitrine/i);
+  });
+
+  test('🔴 the ON-SITE header carries the app icon, not the external-link icon', async () => {
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx({ kind: 'onsite' })} />);
+    const header = page.getByTestId('apps-listing-edit-header-onsite');
+    await expect.element(header).toBeInTheDocument();
+    // An external-link glyph is the same wrong claim in pictorial form. Asserted on the
+    // icon COMPONENT that rendered (its own class), scoped inside the header.
+    const el = header.element();
+    expect(el.querySelector('svg.tabler-icon-apps')).not.toBeNull();
+    expect(el.querySelector('svg.tabler-icon-external-link')).toBeNull();
+  });
+
+  test('an OFF-SITE listing STILL gets the off-site header, link and all (the control)', async () => {
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx({ kind: 'offsite' })} />);
+    const header = page.getByTestId('apps-listing-edit-header-offsite');
+    await expect.element(header).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-edit-header-onsite').elements()).toHaveLength(0);
+    await expect.element(header).toHaveTextContent(/Change the link, details, or assets/i);
+    expect(header.element().querySelector('svg.tabler-icon-external-link')).not.toBeNull();
+  });
+
+  test('a context with NO kind keeps the OFF-SITE header — unchanged behaviour', async () => {
+    // Every pre-existing caller and fixture predates the field; absent must mean off-site,
+    // exactly as it does for the URL step.
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx()} />);
+    await expect.element(page.getByTestId('apps-listing-edit-header-offsite')).toBeInTheDocument();
+  });
+
+  /**
+   * 🔴 THE SEAM, asserted on the RENDERED page rather than on two pure functions: the
+   * header may mention a link EXACTLY when the URL step exists. This is the contradiction
+   * the defect actually was — a header describing a step that is not on screen.
+   */
+  test('🔴 the header mentions the link exactly when the URL step is rendered', async () => {
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx({ kind: 'onsite' })} />);
+    await expect.element(page.getByTestId('apps-listing-edit-header-onsite')).toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-wizard-step-url').elements()).toHaveLength(0);
+
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx({ kind: 'offsite' })} />);
+    await expect.element(page.getByTestId('apps-offsite-wizard-step-url')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-listing-edit-header-offsite'))
+      .toHaveTextContent(/link/i);
+  });
+});
