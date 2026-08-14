@@ -138,7 +138,16 @@ const dbRow = () => ({
   usageControl: 'InternalGeneration',
   flags: 0,
   hasAccess: false,
-  model: { id: 99, name: 'A Model', type: 'LORA', nsfw: false, poi: false, userId: 777, minor: true, sfwOnly: true },
+  model: {
+    id: 99,
+    name: 'A Model',
+    type: 'LORA',
+    nsfw: false,
+    poi: false,
+    userId: 777,
+    minor: true,
+    sfwOnly: true,
+  },
 });
 
 /** Holds the origin query open so a second caller joins the SAME degraded single-flight. */
