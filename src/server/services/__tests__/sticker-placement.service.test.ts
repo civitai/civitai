@@ -26,9 +26,7 @@ const CAP = 700;
 const PRICE = 700;
 
 const holdPlacementEscrow = vi.fn();
-const settlePlacement = vi.fn<(args: { action: string }) => Promise<{ settled: boolean }>>(
-  async () => ({ settled: true })
-);
+const settlePlacement = vi.fn<PrismaStub<{ settled: boolean }>>(async () => ({ settled: true }));
 vi.mock('~/server/services/placement-escrow.service', () => ({
   holdPlacementEscrow,
   settlePlacement,
@@ -163,7 +161,8 @@ beforeEach(() => {
   spendStickerUsesFor.mockImplementation(async () => {
     calls.push('spend');
   });
-  settlePlacement.mockImplementation(async ({ action }: { action: string }) => {
+  settlePlacement.mockImplementation(async (args) => {
+    const { action } = args as { action: string };
     calls.push(`settle:${action}`);
     return { settled: true };
   });
