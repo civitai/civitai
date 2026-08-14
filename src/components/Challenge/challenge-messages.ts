@@ -9,7 +9,7 @@
  * A string inside a page component is also unreachable from any test we run; here it is a function
  * with a test, so reverting it fails something.
  */
-export function challengeEndedMessage(result: { queued?: boolean; winnersCount: number }): string {
+export function challengeEndedMessage(result: { queued: boolean; winnersCount: number }): string {
   if (result.queued) {
     return 'Challenge ended. Judging has been queued — winners will be posted when it completes.';
   }

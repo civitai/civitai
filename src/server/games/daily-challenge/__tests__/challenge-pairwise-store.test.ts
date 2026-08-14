@@ -227,8 +227,8 @@ describe('replaceStandings — the comparison count survives a reorder', () => {
   // compared" about an entry that had been compared nine times.
   it('recounts from the comparison rows instead of writing zero', async () => {
     queryRaw.mockResolvedValue([
-      { imageId: 10, count: 9n },
-      { imageId: 20, count: 4n },
+      { imageId: 10, count: BigInt(9) },
+      { imageId: 20, count: BigInt(4) },
     ]);
 
     await store.replaceStandings(424, [
@@ -256,7 +256,7 @@ describe('replaceStandings — the comparison count survives a reorder', () => {
   });
 
   it('writes 0 for an entry that genuinely has no comparisons', async () => {
-    queryRaw.mockResolvedValue([{ imageId: 10, count: 3n }]);
+    queryRaw.mockResolvedValue([{ imageId: 10, count: BigInt(3) }]);
 
     await store.replaceStandings(424, [
       { imageId: 10, userId: 100 },

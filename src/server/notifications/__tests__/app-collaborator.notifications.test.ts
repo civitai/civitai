@@ -22,7 +22,11 @@ const defs = appCollaboratorNotifications as Record<string, Def>;
 function msg(type: string, details: AppCollaboratorNotificationDetails) {
   const def = defs[type];
   expect(def, `${type} is not registered`).toBeTruthy();
-  return def.prepareMessage({ details } as Parameters<Def['prepareMessage']>[0]);
+  const message = def.prepareMessage({ type, details } as Parameters<Def['prepareMessage']>[0]);
+  // Thrown rather than `!`: `prepareMessage` returns `NotificationMessage | undefined`, and a
+  // caller reading `.url` off nothing is the one failure that would otherwise read as a null url.
+  if (!message) throw new Error(`${type} produced no message`);
+  return message;
 }
 
 const ONSITE: AppCollaboratorNotificationDetails = {
