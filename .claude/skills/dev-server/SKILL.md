@@ -324,6 +324,14 @@ What's already handled:
   session it marked `crashed`, or any other local server on loopback — is skipped rather than handed
   out. Passing an explicit port is no longer a workaround for that. It still cannot see a listener
   bound only to a non-loopback address (`next dev -H <lan-ip>`), which on Windows nothing detects.
+- **A session holds its port until it is stopped, whatever its status says.** Status is a report
+  about a process the daemon cannot see into: it has read `crashed` for a session that was alive and
+  serving, and it reads dead for the moment inside a restart between the kill and the rebind. So the
+  reservation follows the session, not the status, and `stop <session-id>` (which removes the
+  session) is what frees the port.
+- **`start` on a worktree that already has a session takes that session over**, restarting it on its
+  own port rather than leaving it stranded and picking a new one. `start` and `restart` are now the
+  same thing for an existing worktree; there is no longer a port to lose by picking the wrong one.
 
 Fresh worktrees still need `pnpm install` (or a `node_modules` junction) and `git submodule update --init event-engine-common`.
 

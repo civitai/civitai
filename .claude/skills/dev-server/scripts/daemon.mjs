@@ -547,13 +547,36 @@ class DevSession {
       spawnOptions.detached = true;
     }
 
-    this.process = spawn(npmCmd, ['run', 'dev'], spawnOptions);
+    const proc = spawn(npmCmd, ['run', 'dev'], spawnOptions);
+    this.process = proc;
 
     this.startedAt = new Date().toISOString();
+    this.stoppedAt = null;
+    this.exitCode = null;
     this.status = 'running';
 
-    // Handle stdout
-    this.process.stdout.on('data', (data) => {
+    this.attachProcessHandlers(proc);
+
+    // Start health check polling if configured
+    if (healthCheckConfig.healthCheckUrl) {
+      this.startHealthCheck();
+    }
+
+    this.startBranchWatch();
+
+    return {
+      id: this.id,
+      port: this.port,
+      worktree: this.worktree,
+      branch: this.branch,
+      distDir: this.distDir,
+      status: this.status,
+      ready: this.ready,
+    };
+  }
+
+  attachProcessHandlers(proc) {
+    proc.stdout.on('data', (data) => {
       const lines = data.toString().split('\n').filter(l => l.trim());
       for (const line of lines) {
         this.addLog('stdout', line);
@@ -572,8 +595,7 @@ class DevSession {
       }
     });
 
-    // Handle stderr
-    this.process.stderr.on('data', (data) => {
+    proc.stderr.on('data', (data) => {
       const lines = data.toString().split('\n').filter(l => l.trim());
       for (const line of lines) {
         // Classify error levels
@@ -588,36 +610,35 @@ class DevSession {
       }
     });
 
-    // Handle exit
-    this.process.on('exit', (code, signal) => {
+    proc.on('exit', (code, signal) => {
+      this.addLog('info', `Process exited with code ${code}, signal ${signal}`);
+      // Only the process this session is currently running may move its state. stop() and
+      // start() both detach eagerly, so a kill that lands after either one belongs to a
+      // process the session has already let go of — reporting it would mark a live session
+      // crashed and leave a stale pid that Windows is free to hand to something else.
+      if (this.process !== proc) return;
+      this.process = null;
       this.exitCode = code;
       this.status = code === 0 ? 'stopped' : 'crashed';
       this.stoppedAt = new Date().toISOString();
-      this.addLog('info', `Process exited with code ${code}, signal ${signal}`);
       this.stopHealthCheck();
     });
 
-    this.process.on('error', (err) => {
+    proc.on('error', (err) => {
+      if (this.process !== proc) return;
       this.status = 'error';
       this.addLog('error', `Process error: ${err.message}`);
     });
+  }
 
-    // Start health check polling if configured
-    if (healthCheckConfig.healthCheckUrl) {
-      this.startHealthCheck();
-    }
-
-    this.startBranchWatch();
-
-    return {
-      id: this.id,
-      port: this.port,
-      worktree: this.worktree,
-      branch: this.branch,
-      distDir: this.distDir,
-      status: this.status,
-      ready: this.ready,
-    };
+  killProcessTree(proc) {
+    try {
+      if (process.platform === 'win32') {
+        spawn('taskkill', ['/pid', String(proc.pid), '/f', '/t'], { shell: true });
+      } else {
+        process.kill(-proc.pid, 'SIGKILL');
+      }
+    } catch (e) {}
   }
 
   startBranchWatch() {
@@ -881,21 +902,25 @@ class DevSession {
     this.stopHealthCheck();
     this.stopBranchWatch();
     this.prewarming = false;
-    if (!this.process) return;
+    const proc = this.process;
+    if (!proc) {
+      this.status = 'stopped';
+      this.ready = false;
+      return;
+    }
 
     this.addLog('info', 'Stopping dev server...');
 
-    return new Promise((resolve) => {
-      this.process.once('exit', resolve);
+    // Record the outcome before killing, not from the exit code. A hard kill exits nonzero,
+    // so reading the code would file every deliberate stop as a crash.
+    this.process = null;
+    this.ready = false;
+    this.status = 'stopped';
+    this.stoppedAt = new Date().toISOString();
 
-      // Hard kill immediately
-      try {
-        if (process.platform === 'win32') {
-          spawn('taskkill', ['/pid', String(this.process.pid), '/f', '/t'], { shell: true });
-        } else {
-          process.kill(-this.process.pid, 'SIGKILL');
-        }
-      } catch (e) {}
+    return new Promise((resolve) => {
+      proc.once('exit', resolve);
+      this.killProcessTree(proc);
 
       // Resolve after a short delay if process doesn't exit
       setTimeout(resolve, 500);
@@ -1347,12 +1372,16 @@ async function stopSpokeApps() {
 // Session manager
 const sessions = new Map();
 
+// A tracked session owns its port whatever its status says. Status is a report the daemon
+// writes about a process it cannot see into — it has read `crashed` for a session whose
+// process was alive and serving 200s, and it necessarily reads dead for the window inside
+// restart() between the kill and the rebind. Handing that port to another worktree in either
+// case produces an EADDRINUSE nobody can trace back to here. Membership of this map is the
+// reservation, and DELETE /sessions/:id (what `cli stop` sends) is the release.
 function getUsedPorts() {
   const ports = new Set();
   for (const session of sessions.values()) {
-    if (session.status === 'running' || session.status === 'starting') {
-      ports.add(session.port);
-    }
+    ports.add(session.port);
   }
   return ports;
 }
@@ -1635,6 +1664,22 @@ async function main() {
           return;
         }
 
+        // A dead session still holds its port, so starting this worktree again has to take that
+        // session over rather than strand it and pick a fresh port — otherwise every crash costs
+        // a port for the life of the daemon. Only when a different port is asked for is a second
+        // session created, and the old one keeps its reservation because its process may be alive.
+        if (existing && (!requestedPort || requestedPort === existing.port)) {
+          await existing.restart();
+
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            existing: false,
+            reused: true,
+            session: existing.getStatus(),
+          }));
+          return;
+        }
+
         // Determine port
         const usedPorts = getUsedPorts();
         let port;
@@ -1734,10 +1779,18 @@ async function main() {
           await session.stop();
           sessions.delete(sessionId);
 
+          // Removing the session is what releases its port, so say plainly when something is
+          // still listening on it — a kill that missed an orphaned grandchild leaves a port the
+          // daemon no longer reserves and only the picker's probe stands between it and reuse.
+          const stillListening = !(await isPortFree(session.port));
+
           res.writeHead(200);
           res.end(JSON.stringify({
             success: true,
             id: sessionId,
+            ...(stillListening && {
+              warning: `Port ${session.port} still has a listener after stopping this session — a process outlived the kill.`,
+            }),
           }));
           return;
         }
@@ -1841,7 +1894,23 @@ async function main() {
   });
 }
 
-main().catch(err => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+// Importing this file must not start a daemon — the tests drive DevSession and the port
+// reservation directly, and a second daemon would fight the running one for its port.
+// Windows hands back whatever drive-letter case the caller typed, and a mismatch here would
+// look exactly like a daemon that starts and immediately does nothing.
+const samePath = (a, b) =>
+  process.platform === 'win32'
+    ? resolve(a).toLowerCase() === resolve(b).toLowerCase()
+    : resolve(a) === resolve(b);
+
+const invokedDirectly =
+  !!process.argv[1] && samePath(process.argv[1], fileURLToPath(import.meta.url));
+
+if (invokedDirectly) {
+  main().catch(err => {
+    console.error('Fatal error:', err);
+    process.exit(1);
+  });
+}
+
+export { DevSession, sessions, getUsedPorts };
