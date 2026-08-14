@@ -7897,6 +7897,16 @@ model Placement {
 
   @@index([surface, targetType, targetId, status])
   @@index([ownerId, status])
+  /// The owner review queue's paging order. Without it each page rescans and
+  /// re-sorts every pending row the owner has, and a refetch of a walk N pages
+  /// deep pays that N+1 times.
+  ///
+  /// `surface` is in it because both queues filter on it, and left out it cannot
+  /// be an index condition — an owner with 900 pending stickers would touch all
+  /// 900 heap tuples to fill one 50-row page of remix submissions. It sits after
+  /// `ownerId` rather than first so this does not become a strict prefix of
+  /// `[ownerId, status]` above, which the moderation lookups still want.
+  @@index([ownerId, surface, status, createdAt, id])
   @@index([placerId, status])
   @@index([status, expiresAt])
 }

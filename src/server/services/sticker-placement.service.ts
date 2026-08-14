@@ -16,6 +16,12 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import type { PlacementStatus } from '~/shared/utils/placement';
+import {
+  PLACEMENT_QUEUE_PAGE_SIZE,
+  encodePlacementQueueCursor,
+  parsePlacementQueueCursor,
+  placementQueueKeyset,
+} from '~/shared/utils/placement';
 import type {
   PlacementSettlementState,
   StickerPlacementData,
@@ -829,16 +835,26 @@ export async function setStickerCommentHidden({
  * Carries the image and the placer with it, because the queue's whole job is
  * deciding without leaving — a list of ids would send someone to eleven pages to
  * answer eleven placements.
+ *
+ * Pages, because escrow sits behind every entry: an owner who saw the first 50
+ * and nothing else had the rest expire without ever being offered the choice.
  */
 export async function getPendingStickerPlacements({
   ownerId,
-  limit = 50,
+  limit = PLACEMENT_QUEUE_PAGE_SIZE,
+  cursor,
 }: {
   ownerId: number;
   limit?: number;
+  cursor?: string | null;
 }) {
   const rows = await dbRead.placement.findMany({
-    where: { surface: SURFACE, ownerId, status: 'pending' },
+    where: {
+      surface: SURFACE,
+      ownerId,
+      status: 'pending',
+      ...placementQueueKeyset(parsePlacementQueueCursor(cursor)),
+    },
     select: {
       id: true,
       targetId: true,
@@ -849,22 +865,30 @@ export async function getPendingStickerPlacements({
       expiresAt: true,
       placer: { select: { id: true, username: true, image: true } },
     },
-    orderBy: { createdAt: 'asc' },
-    take: limit,
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    take: limit + 1,
   });
 
+  // Read off the row the page ends on, before the unparseable ones are dropped
+  // below. Taking it from what is returned would hand back a cursor pointing at
+  // an earlier row, and everything between the two would be served twice.
+  const page = rows.slice(0, limit);
+  const nextCursor = rows.length > limit ? encodePlacementQueueCursor(page[page.length - 1]) : null;
+
   const images = await dbRead.image.findMany({
-    where: { id: { in: rows.map((row) => row.targetId) } },
+    where: { id: { in: page.map((row) => row.targetId) } },
     select: { id: true, url: true, name: true, width: true, height: true, type: true },
   });
   const byId = new Map(images.map((image) => [image.id, image]));
 
-  return rows.flatMap((row) => {
+  const items = page.flatMap((row) => {
     const data = parseStickerPlacementData(row.data);
     if (!data) return [];
 
     return [{ ...row, data, image: byId.get(row.targetId) ?? null }];
   });
+
+  return { items, nextCursor };
 }
 
 /**

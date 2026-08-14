@@ -26,7 +26,12 @@ export function SubmissionThumb({ image }: { image: NonNullable<PendingSubmissio
         rel="noreferrer"
         className="group relative block w-20 shrink-0"
       >
-        <AspectRatioImageCard aspectRatio="square" image={image} />
+        {/* `explain={false}` because this is 80px wide. The default renders the
+            centered "This image is rated X" block with its own Show button on
+            top of the corner toggle — two reveal controls on one thumbnail, and
+            at this size the centered one covers the whole tile and takes the
+            click that should open the image. The corner toggle is the reveal. */}
+        <AspectRatioImageCard aspectRatio="square" image={image} explain={false} />
         {/* Hidden until hover: the affordance has to be discoverable without
             putting a permanent scrim over every thumbnail in the queue. */}
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-md bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">

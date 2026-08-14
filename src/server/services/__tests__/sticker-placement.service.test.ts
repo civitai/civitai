@@ -63,6 +63,7 @@ const transactionFindMany = vi.fn(async () => [] as unknown[]);
 const placementFindFirst = vi.fn(async () => null as unknown);
 const cosmeticFindUnique = vi.fn(async () => null as unknown);
 
+const imageFindMany = vi.fn(async () => [] as unknown[]);
 const placementFindUnique = vi.fn(async () => null as unknown);
 const placementUpdate = vi.fn(async () => ({}));
 const placementUpdateMany = vi.fn(async () => ({ count: 1 }));
@@ -84,6 +85,7 @@ vi.mock('~/server/db/client', () => ({
       groupBy: placementGroupBy,
       findFirst: placementFindFirst,
     },
+    image: { findMany: imageFindMany },
     placementTransaction: { findMany: transactionFindMany },
     cosmetic: { findUnique: cosmeticFindUnique },
   },
@@ -102,6 +104,7 @@ const {
   getStickerPlacements,
   getPlacementSettlementStates,
   getStickerPlacementDetail,
+  getPendingStickerPlacements,
 } = await import('~/server/services/sticker-placement.service');
 
 const OPEN_SPACE = { ownerId: OWNER, mode: 'review', setPrice: ASKED, price: PRICE, cap: CAP };
@@ -1150,5 +1153,88 @@ describe('the note on a placement', () => {
     });
 
     expect(placementUpdate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The sticker copy of the queue paging. Its own tests rather than trusting the
+ * remix twin: the two are hand-duplicated, and the failure mode is a placement
+ * nobody ever reviews while its escrow expires.
+ */
+describe('getPendingStickerPlacements paging', () => {
+  const good = { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 };
+
+  const queueRow = (id: number, data: unknown, createdAt: string) => ({
+    id,
+    targetId: IMAGE,
+    placerId: PLACER,
+    amount: PRICE,
+    data,
+    createdAt: new Date(createdAt),
+    expiresAt: null,
+    placer: { id: PLACER, username: 'someone', image: null },
+  });
+
+  it('takes the cursor from the last row of the page, not the last row it returns', async () => {
+    // Row 2 is dropped below for an unreadable payload; row 3 is the probe.
+    placementFindMany.mockResolvedValue([
+      queueRow(1, good, '2026-01-01T00:00:00.000Z'),
+      queueRow(2, { nonsense: true }, '2026-01-02T00:00:00.000Z'),
+      queueRow(3, good, '2026-01-03T00:00:00.000Z'),
+    ]);
+
+    const result = await getPendingStickerPlacements({ ownerId: OWNER, limit: 2 });
+
+    expect(result.items.map((item) => item.id)).toEqual([1]);
+    // Row 2's key. Built from what was returned it would say row 1, and row 2
+    // would be served again on the next page.
+    expect(result.nextCursor).toBe(`${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`);
+  });
+
+  it('still hands back a cursor when EVERY row on the page was filtered out', async () => {
+    // Same contract the remix twin pins, and the one the empty-state guard in
+    // the page reads: no items is not the same as no more.
+    placementFindMany.mockResolvedValue([
+      queueRow(1, { nonsense: true }, '2026-01-01T00:00:00.000Z'),
+      queueRow(2, { nonsense: true }, '2026-01-02T00:00:00.000Z'),
+      queueRow(3, good, '2026-01-03T00:00:00.000Z'),
+    ]);
+
+    const result = await getPendingStickerPlacements({ ownerId: OWNER, limit: 2 });
+
+    expect(result.items).toEqual([]);
+    expect(result.nextCursor).toBe(`${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`);
+  });
+
+  it('reports no next page when the queue ends exactly on the page boundary', async () => {
+    placementFindMany.mockResolvedValue([
+      queueRow(1, good, '2026-01-01T00:00:00.000Z'),
+      queueRow(2, good, '2026-01-02T00:00:00.000Z'),
+    ]);
+
+    const result = await getPendingStickerPlacements({ ownerId: OWNER, limit: 2 });
+
+    expect(result.items).toHaveLength(2);
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it('resumes strictly after the cursor row, including its same-millisecond twin', async () => {
+    placementFindMany.mockResolvedValue([]);
+    const createdAt = new Date('2026-01-02T00:00:00.000Z');
+
+    await getPendingStickerPlacements({
+      ownerId: OWNER,
+      limit: 2,
+      cursor: `${createdAt.getTime()}:2`,
+    });
+
+    const { where, orderBy, take } = placementFindMany.mock.calls.at(-1)?.[0] as {
+      where: { OR?: unknown[] };
+      orderBy: unknown;
+      take: number;
+    };
+    expect(where.OR).toEqual([{ createdAt: { gt: createdAt } }, { createdAt, id: { gt: 2 } }]);
+    expect(orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
+    expect(take).toBe(3);
   });
 });

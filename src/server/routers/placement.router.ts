@@ -7,6 +7,7 @@ import {
   countPendingPlacementsFromSchema,
   getPlacementSettlementStatesSchema,
   getPendingRemixGallerySubmissionsSchema,
+  getPendingStickerPlacementsSchema,
   getRemixGallerySchema,
   getRemixGalleryVisibilitySchema,
   getStickerPlacementDetailSchema,
@@ -281,9 +282,11 @@ export const placementRouter = router({
     .input(placerSchema)
     .mutation(({ input }) => restorePlacementPrivileges(input.userId)),
 
-  getPending: protectedProcedure.query(({ ctx }) =>
-    getPendingStickerPlacements({ ownerId: ctx.user.id })
-  ),
+  getPending: protectedProcedure
+    .input(getPendingStickerPlacementsSchema)
+    .query(({ input, ctx }) =>
+      getPendingStickerPlacements({ ownerId: ctx.user.id, cursor: input.cursor })
+    ),
 
   // How many pending placements blocking someone would decline, so the confirm
   // dialog can say. Advisory by construction — holding it accurate across a
@@ -371,7 +374,11 @@ export const placementRouter = router({
   getPendingRemixGallerySubmissions: protectedProcedure
     .input(getPendingRemixGallerySubmissionsSchema)
     .query(({ input, ctx }) =>
-      getPendingRemixGallerySubmissions({ ownerId: ctx.user.id, hostImageId: input.hostImageId })
+      getPendingRemixGallerySubmissions({
+        ownerId: ctx.user.id,
+        hostImageId: input.hostImageId,
+        cursor: input.cursor,
+      })
     ),
 
   getMyRemixGallerySubmissions: protectedProcedure.query(({ ctx }) =>

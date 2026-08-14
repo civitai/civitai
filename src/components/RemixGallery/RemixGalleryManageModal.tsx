@@ -40,11 +40,7 @@ import { VerifiedRemixBadge } from '~/components/RemixGallery/VerifiedRemixBadge
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Currency } from '~/shared/utils/prisma/enums';
-import {
-  REMIX_GALLERY_MAX_PINNED,
-  REMIX_GALLERY_QUEUE_LIMIT,
-  remixGalleryRemovableAt,
-} from '~/shared/utils/remix-gallery';
+import { REMIX_GALLERY_MAX_PINNED, remixGalleryRemovableAt } from '~/shared/utils/remix-gallery';
 import { daysFromNow, formatDateMin } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -122,8 +118,21 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
   // Scoped server-side. Filtering the account-wide list here meant its limit
   // truncated before the filter ran, so a busy owner saw "nothing waiting" on
   // an image that had submissions.
-  const { data: pending, isLoading: pendingLoading } =
-    trpc.placement.getPendingRemixGallerySubmissions.useQuery({ hostImageId: imageId });
+  const {
+    data: pendingPages,
+    isLoading: pendingLoading,
+    isError: pendingFailed,
+    fetchNextPage: fetchMorePending,
+    hasNextPage: hasMorePending,
+    isFetchingNextPage: fetchingMorePending,
+  } = trpc.placement.getPendingRemixGallerySubmissions.useInfiniteQuery(
+    { hostImageId: imageId },
+    { getNextPageParam: (lastPage) => lastPage.nextCursor }
+  );
+  const pending = useMemo(
+    () => ({ items: pendingPages?.pages.flatMap((page) => page.items) ?? [] }),
+    [pendingPages]
+  );
 
   // **Deliberately does not send the viewer's browsing level**, unlike the
   // gallery card. This is the owner managing what sits on their own image, so a
@@ -223,7 +232,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
               badge={
                 forThisImage.length ? (
                   <Badge size="sm" variant="light" color="yellow">
-                    {forThisImage.length}
+                    {hasMorePending ? `${forThisImage.length}+` : forThisImage.length}
                   </Badge>
                 ) : null
               }
@@ -232,8 +241,24 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
               <Group justify="center" py="md">
                 <Loader size="sm" />
               </Group>
-            ) : forThisImage.length ? (
+            ) : pendingFailed ? (
+              // No pages means `hasMorePending` is false too, so without this the
+              // branch below would say "nothing waiting" over a queue that failed
+              // to load.
+              <Text size="sm" c="red" mt="sm">
+                Couldn&rsquo;t load the review queue. Refresh to try again.
+              </Text>
+            ) : forThisImage.length || hasMorePending ? (
               <Stack gap="xs" mt="sm">
+                {/* A page can come back empty with a cursor still set — every
+                    submission on it had its image deleted, unpublished or still
+                    ingesting. Saying "nothing waiting" here would hide the ones
+                    behind it, which is the bug the paging exists to end. */}
+                {!forThisImage.length && (
+                  <Text size="sm" c="dimmed">
+                    Nothing on this page can be shown. There are more waiting.
+                  </Text>
+                )}
                 {forThisImage.map((row) => (
                   <Card key={row.id} withBorder p="xs" radius="md">
                     <Group justify="space-between" wrap="nowrap" align="center">
@@ -304,14 +329,15 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                     </Group>
                   </Card>
                 ))}
-                {/* The queue does not page. Without this line a busy owner
-                    sees a full list that looks complete and never learns the
-                    rest exist — and the escrow behind those sits until it
-                    expires. */}
-                {pending?.truncated && (
-                  <Text size="xs" c="dimmed">
-                    Showing the first {REMIX_GALLERY_QUEUE_LIMIT}. Answer some to see the rest.
-                  </Text>
+                {hasMorePending && (
+                  <Button
+                    variant="default"
+                    size="xs"
+                    loading={fetchingMorePending}
+                    onClick={() => fetchMorePending()}
+                  >
+                    Load more
+                  </Button>
                 )}
               </Stack>
             ) : (
@@ -376,7 +402,12 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
             <div className="mt-2 grid grid-cols-4 gap-3">
               {unpinned.map((item) => (
                 <div key={item.placementId} className="relative">
-                  <AspectRatioImageCard aspectRatio="square" image={item.image} />
+                  {/* `explain={false}` for the same reason the submission
+                      thumbnail does it: the default stacks a centered "rated X"
+                      block with its own Show button on top of the corner
+                      toggle, and in a four-across grid it covers the tile and
+                      the pin and remove controls sitting on it. */}
+                  <AspectRatioImageCard aspectRatio="square" image={item.image} explain={false} />
                   <Group gap={4} className="absolute right-1 top-1">
                     {/* Pinning is the creator's curation, and `setRemixGalleryPins`
                         scopes its lookup to the caller as owner — a moderator
@@ -572,7 +603,9 @@ function SortablePin({ item, onUnpin }: { item: RemixGalleryItem; onUnpin: () =>
       {...attributes}
       {...listeners}
     >
-      <AspectRatioImageCard aspectRatio="square" image={item.image} />
+      {/* Same as the unpinned grid above — and here the centered overlay also
+          sits on top of a drag handle. */}
+      <AspectRatioImageCard aspectRatio="square" image={item.image} explain={false} />
       <Tooltip label="Unpin">
         <ActionIcon
           size="sm"
