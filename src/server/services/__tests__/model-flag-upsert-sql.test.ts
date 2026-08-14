@@ -147,10 +147,104 @@ describe('buildModelFlagUpsert — structure', () => {
   });
 });
 
+/**
+ * The assertions above constrain the statement's SHAPE. Shape cannot see a
+ * wrong BIND: swap two columns in the VALUES list, or point the `sfwOnly` slot
+ * at `poi`, and every arity and assignment check above still passes. Booleans
+ * cannot be told apart by value, so they are told apart by POSITION.
+ *
+ * Each case sets exactly one flag and pins `statement.values` exactly, so any
+ * swap, stale bind or defaulted flag lands a `true` in the wrong slot. This
+ * runs with no database, which matters: CI provides no Postgres server, so the
+ * execution arm below never runs there and this is the guard that does.
+ */
+describe('buildModelFlagUpsert — value binding', () => {
+  // Measured against the built statement, not assumed. `Prisma.sql`NULL`` is
+  // spliced as literal text and consumes no placeholder, so with details
+  // absent there are 8 bound values and `sfwOnly` sits at index 7.
+  const VALUE_INDEX = {
+    poi: 1,
+    nsfw: 2,
+    minor: 3,
+    triggerWords: 4,
+    poiName: 5,
+    sfwOnly: 7,
+  } as const;
+  const ALL_FALSE = {
+    poi: false,
+    nsfw: false,
+    minor: false,
+    triggerWords: false,
+    poiName: false,
+    sfwOnly: false,
+  };
+
+  it.each(Object.keys(VALUE_INDEX) as (keyof typeof VALUE_INDEX)[])(
+    'binds %s to its own slot and leaves every other flag false',
+    (flag) => {
+      const { values } = buildModelFlagUpsert({
+        modelId: 4242,
+        scanResult: { ...ALL_FALSE, [flag]: true },
+      });
+
+      const expected: unknown[] = [4242, false, false, false, false, false, 'Pending', false];
+      expected[VALUE_INDEX[flag]] = true;
+      expect(values).toEqual(expected);
+    }
+  );
+
+  it('defaults a flag the caller omitted to false, never true', () => {
+    // `sfwOnly` is the optional field, so this is the `?? false` path. Without
+    // a case that OMITS a flag, none of the six defaults is ever exercised.
+    const { values } = buildModelFlagUpsert({
+      modelId: 4242,
+      scanResult: { poi: true, nsfw: false, minor: false, triggerWords: false, poiName: false },
+    });
+
+    expect(values).toEqual([4242, true, false, false, false, false, 'Pending', false]);
+  });
+
+  it('forwards details as jsonb and shifts sfwOnly, keeping status Pending', () => {
+    const { text, values } = buildModelFlagUpsert({
+      modelId: 4242,
+      scanResult: { ...ALL_FALSE, sfwOnly: true },
+      details: { verdict: 'x' },
+    });
+
+    // details occupies index 7 when present, pushing sfwOnly to 8.
+    expect(values).toEqual([
+      4242,
+      false,
+      false,
+      false,
+      false,
+      false,
+      'Pending',
+      JSON.stringify({ verdict: 'x' }),
+      true,
+    ]);
+    // A `::text` cast would store the payload as a string, not queryable jsonb.
+    expect(text).toContain('::jsonb');
+    // New flags must land Pending or they never reach the moderator queue.
+    expect(text).toContain('::"ModelFlagStatus"');
+  });
+});
+
 describe.skipIf(!testDatabaseUrl)('buildModelFlagUpsert — execution (real Postgres)', () => {
   const client = new Client({ connectionString: testDatabaseUrl });
 
   beforeAll(async () => {
+    // This suite DROPs "ModelFlag". The env-var isolation above stops it
+    // pointing at a real environment by default, but a mis-set variable would
+    // still destroy the table, so refuse anything that isn't visibly scratch.
+    const databaseName = new URL(testDatabaseUrl as string).pathname.replace(/^\//, '');
+    if (!/(^|[-_])(test|modelflag|scratch|tmp)([-_]|$)/i.test(databaseName)) {
+      throw new Error(
+        `MODEL_FLAG_TEST_DATABASE_URL must name a throwaway database (got "${databaseName}"). ` +
+          'This suite drops and recreates "ModelFlag".'
+      );
+    }
+
     await client.connect();
     // Mirrors the live `ModelFlag` table, including `sfwOnly`, whose migration
     // (20250425225502_add_model_flag_sfw_only) had never been applied — the
@@ -182,6 +276,28 @@ describe.skipIf(!testDatabaseUrl)('buildModelFlagUpsert — execution (real Post
     const statement = buildModelFlagUpsert(args);
     return client.query(statement.text, statement.values as unknown[]);
   };
+
+  it('returns every column ModelFlagRow declares', async () => {
+    const { rows } = await run({ modelId: 99, scanResult: SCAN_RESULT, details: { a: 1 } });
+
+    // `$queryRaw`'s generic is an unchecked cast, so `ModelFlagRow` is only a
+    // claim until something compares it to a real row. This also pins
+    // `RETURNING *`: narrowing it drops keys the type promises callers.
+    expect(Object.keys(rows[0]).sort()).toEqual(
+      [
+        'modelId',
+        'poi',
+        'nsfw',
+        'minor',
+        'sfwOnly',
+        'triggerWords',
+        'poiName',
+        'status',
+        'details',
+        'createdAt',
+      ].sort()
+    );
+  });
 
   it('inserts a flag and returns the row', async () => {
     const { rows } = await run({ modelId: 101, scanResult: SCAN_RESULT, details: { a: 1 } });

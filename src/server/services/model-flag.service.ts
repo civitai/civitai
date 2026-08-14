@@ -14,7 +14,6 @@ export async function upsertModelFlag({
   details,
 }: {
   modelId: number;
-  poiName?: string;
   scanResult?: ModelFlagScanResult;
   details?: MixedObject;
 }) {

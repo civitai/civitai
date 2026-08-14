@@ -36,6 +36,10 @@ export type ModelFlagRow = {
   // `string | null` was silently lying to callers about the row shape.
   poiName: boolean;
   status: ModelFlagStatus;
+  // `RETURNING *` returns these too; naming them keeps the type an honest
+  // description of the row rather than a partial one.
+  details: unknown;
+  createdAt: Date;
 };
 
 /**
