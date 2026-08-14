@@ -751,34 +751,99 @@ describe('LEDGER: download/models `errorResponse` is never called with caught-er
     __dirname,
     '../../pages/api/download/models/[modelVersionId].ts'
   );
-  // 🔴 Whole-line `//` comments are dropped first, and finding that out was not
-  // free: the comment on the fixed line QUOTES the old `errorResponse(500,
-  // err.message)` as the thing it replaced, and the scan matched the quote and
-  // reported the live code as still leaking. A guard that reads its own
-  // documentation as evidence is worse than none.
-  const source = readFileSync(ROUTE, 'utf8')
-    // 🔴 `/* … */` on ONE line is stripped too. The blind audit showed the
-    // line-comment filter alone let a `/* errorResponse(500, err.message) */`
-    // reach the scan as live code — the same "a guard reading its own
-    // documentation as evidence" failure the `//` filter was added for.
-    .replace(/\/\*[^\n]*?\*\//g, '')
-    .split('\n')
-    .filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*'))
-    .join('\n');
+  /**
+   * Drop comments before scanning — a NAMED function, because the production
+   * pipeline below and the tests must exercise the SAME code.
+   *
+   * 🔴 The `//` half was not free to find: the comment on the fixed line QUOTES
+   * the old `errorResponse(500, err.message)` as the thing it replaced, and the
+   * scan matched the quote and reported the live code as still leaking.
+   *
+   * 🔴 The `/* … *\/` half then arrived with a test that applied its OWN INLINE
+   * COPY of this regex to a local string, never touching this pipeline at all. A
+   * delta audit deleted the strip from here and got 46/46 green; replacing it with
+   * `/ZZZ_NEVER_MATCHES/` also got 46/46 green. A test asserting against a copy of
+   * the thing it tests is the purest form of the failure this whole file is about,
+   * and it was in the file that exists to catch it. Hence: one function, called by
+   * both.
+   */
+  function stripComments(raw: string): string {
+    return raw
+      .replace(/\/\*[^\n]*?\*\//g, '')
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*'))
+      .join('\n');
+  }
+
+  const source = stripComments(readFileSync(ROUTE, 'utf8'));
 
   /**
-   * `errorResponse(<status>, <arg>)` — arg captured up to the closing paren.
+   * The MESSAGE argument of every `errorResponse(...)` call — extracted by a
+   * quote-aware paren scan, NOT by a regex over the status.
    *
-   * 🔴 The status group is `[^,)]+`, not `\d{3}`. A three-digit-literal group is a
-   * SPELLED guard: `errorResponse(status, err.message)` — a variable status —
-   * matched nothing and was silently exempt. What makes a call site safe is its
-   * MESSAGE argument, so nothing about the status should decide whether the site
-   * is inspected at all.
+   * 🔴 Third version, because the first two both decided whether to inspect a call
+   * site based on the shape of its STATUS. `\d{3}` exempted
+   * `errorResponse(status, err.message)`. Widening to `[^,)]+` looked structural
+   * and was not — it cannot cross a `)`, so
+   * `errorResponse(getStatusCode(fileResult.status), err.message)` was still never
+   * extracted, and `every(...)` stayed vacuously true over it. That is not
+   * hypothetical: `tensor-metadata.ts` already has exactly that `getStatusCode`
+   * helper, and `download/models` open-codes the same mapping at six sites, so
+   * consolidating them — an obvious, desirable refactor — would have blinded this
+   * guard at every one.
+   *
+   * What makes a call site safe is its MESSAGE, so nothing about the status may
+   * decide whether the site is looked at. Scan the argument list.
    */
-  const CALL = /(?<!function\s)errorResponse\(\s*[^,)]+\s*,\s*(?<arg>[\s\S]*?)\)\s*[;,\n]/g;
+  function callArgs(src: string): string[] {
+    const out: string[] = [];
+    const open = /(?<!function\s)errorResponse\(/g;
+    for (let m = open.exec(src); m; m = open.exec(src)) {
+      const args = scanCallArgs(src, src.indexOf('(', m.index));
+      // A one-argument call has no message to check; an unterminated one yields
+      // null. Neither is a site this guard can speak about.
+      if (args && args.length >= 2) out.push(args[1]);
+    }
+    return out;
+  }
 
-  function callArgs(src: string) {
-    return [...src.matchAll(CALL)].map((m) => (m.groups?.arg ?? '').trim());
+  /**
+   * Split an argument list at its TOP-LEVEL commas, honouring nesting and quotes.
+   *
+   * Quote-aware for the same reason `scanBody` is in the ledger: a `)` or a `,`
+   * inside a message literal would otherwise cut the argument short, and a
+   * truncated argument fails `isCallerFacingText` — i.e. it goes RED on safe code,
+   * which is the failure direction that teaches the next author to edit the guard.
+   */
+  function scanCallArgs(src: string, lparen: number): string[] | null {
+    const args: string[] = [];
+    let depth = 0;
+    let quote: string | null = null;
+    let argStart = lparen + 1;
+    for (let i = lparen; i < src.length; i++) {
+      const ch = src[i];
+      if (quote) {
+        if (ch === '\\') i++;
+        else if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === "'" || ch === '"' || ch === '`') {
+        quote = ch;
+        continue;
+      }
+      if (ch === '(' || ch === '[' || ch === '{') depth++;
+      else if (ch === ')' || ch === ']' || ch === '}') {
+        depth--;
+        if (depth === 0) {
+          args.push(src.slice(argStart, i));
+          return args.map((a) => a.trim());
+        }
+      } else if (ch === ',' && depth === 1) {
+        args.push(src.slice(argStart, i));
+        argStart = i + 1;
+      }
+    }
+    return null;
   }
 
   it('sees the call sites at all (positive control — a zero here proves nothing)', () => {
@@ -795,35 +860,84 @@ describe('LEDGER: download/models `errorResponse` is never called with caught-er
     expect(args.some(isCallerFacingText), 'the detector must reject `err.message`').toBe(false);
   });
 
-  it('CAN detect the two evasions a blind audit found', () => {
-    // 🔴 Both of these walked through the previous version of this guard.
-    // (a) A VARIABLE status defeated a `\d{3}` status group — the call site was
-    //     never even extracted, so `every(...)` was vacuously true over it.
-    const variableStatus = callArgs(`return errorResponse(status, err.message);\n`);
-    expect(variableStatus, 'a variable status must not hide the call site').toEqual([
-      'err.message',
-    ]);
-    expect(variableStatus.every(isCallerFacingText)).toBe(false);
+  it('extracts the message whatever the STATUS expression looks like', () => {
+    // 🔴 Every version of this guard so far has been defeated here, one shape at a
+    // time. All three must yield the same message argument.
+    expect(callArgs(`return errorResponse(500, err.message);\n`)).toEqual(['err.message']);
+    // (a) a variable status — defeated the `\d{3}` group
+    expect(
+      callArgs(`return errorResponse(status, err.message);\n`),
+      'a variable status must not hide the call site'
+    ).toEqual(['err.message']);
+    // (b) a CALL as the status — defeated the `[^,)]+` group, which cannot cross
+    //     the `)`. `tensor-metadata.ts` already has this exact helper.
+    expect(
+      callArgs(`return errorResponse(getStatusCode(fileResult.status), err.message);\n`),
+      'a call-expression status must not hide the call site'
+    ).toEqual(['err.message']);
+    // (c) a comma INSIDE the message must not split the argument early.
+    expect(
+      callArgs(`return errorResponse(400, 'Missing id, try again');\n`),
+      'a comma inside the message must not truncate it'
+    ).toEqual([`'Missing id, try again'`]);
+    // …and the definition itself is never treated as a call site.
+    expect(callArgs(`function errorResponse(status: number, message: string) {\n`)).toEqual([]);
+  });
 
-    // (b) A CONCATENATION satisfied first/last-character anchoring while splicing
-    //     the driver's text into the middle.
+  it('accepts the literals we DID write, and rejects assembled ones', () => {
+    // 🔴 The reject half is the security property; the accept half is what keeps
+    // the guard usable. A previous version scanned the whole argument for `+`/`${`
+    // INCLUDING inside the quotes, so both of the first two went red on safe code.
+    expect(isCallerFacingText(`"You don't have access to this file"`)).toBe(true);
+    expect(isCallerFacingText(`'Try again in 5+ minutes'`)).toBe(true);
+    expect(isCallerFacingText(`'it\\'s fine'`), 'an escaped quote is one literal').toBe(true);
+    expect(isCallerFacingText('`We have noticed unusual downloading`')).toBe(true);
+    expect(isCallerFacingText(`'File not found'`)).toBe(true);
+    expect(isCallerFacingText('GENERIC_SERVER_ERROR_MESSAGE')).toBe(true);
+
     expect(
       isCallerFacingText(`'Error: ' + err.message + ''`),
       'a concatenated value is not text we wrote'
     ).toBe(false);
     expect(isCallerFacingText('`prefix ${err.message}`')).toBe(false);
-
-    // …and the counterpart: the genuinely-safe forms must still pass, or the
-    // guard just forces the next author to work around it.
-    expect(isCallerFacingText(`'File not found'`)).toBe(true);
-    expect(isCallerFacingText('GENERIC_SERVER_ERROR_MESSAGE')).toBe(true);
+    expect(isCallerFacingText('err.message')).toBe(false);
+    expect(isCallerFacingText('message')).toBe(false);
   });
 
   it('does not read a single-line /* */ comment as live code', () => {
-    // The `//` filter alone let a commented-out call reach the scan.
+    // 🔴 Drives `stripComments` — the SAME function the `source` pipeline above
+    // uses — not an inline copy of its regex. The previous version of this test
+    // asserted against a private copy, so deleting the strip from production left
+    // it green.
     const commented = `/* return errorResponse(500, err.message); */\nreturn errorResponse(500, 'ok');\n`;
-    const stripped = commented.replace(/\/\*[^\n]*?\*\//g, '');
-    expect(callArgs(stripped)).toEqual([`'ok'`]);
+    expect(callArgs(stripComments(commented))).toEqual([`'ok'`]);
+    // And the `//` half, which had the same exposure.
+    expect(callArgs(stripComments(`// return errorResponse(500, err.message);\n`))).toEqual([]);
+  });
+
+  it('the production `source` IS the stripped file — the pipeline, not a copy', () => {
+    // Two distinct failure modes, and each needs its own assertion:
+    //
+    //  (a) the strip stops working  -> the `/* */` and `//` cases above go red,
+    //      because they now drive `stripComments` itself (verified by mutation).
+    //  (b) the PIPELINE stops calling it -> nothing above would notice, because
+    //      those tests pass their own input. This identity pins that `source` is
+    //      the stripped file and not the raw one.
+    expect(source, '`source` is not the output of `stripComments` — the pipeline diverged').
+      toBe(stripComments(readFileSync(ROUTE, 'utf8')));
+
+    // And the one end-to-end statement that CAN fail on real content: the route's
+    // own comment at `:258` quotes `errorResponse(500, err.message)` verbatim, so
+    // if comment-stripping stops reaching the live scan this goes red.
+    expect(
+      callArgs(source).some((a) => a.includes('.message')),
+      'a commented-out `err.message` call reached the live scan'
+    ).toBe(false);
+
+    // 🔴 NOT asserted: that `source` contains no `/* … */`. The route file has
+    // ZERO block comments, so such an assertion cannot fail on this input and
+    // would be exactly the vacuity this suite exists to remove. The `/* */`
+    // behaviour is pinned on constructed input above instead, where it discriminates.
   });
 
   it('every call site passes a string literal or the shared generic constant', () => {
@@ -840,15 +954,28 @@ describe('LEDGER: download/models `errorResponse` is never called with caught-er
    * is what hid this route in the first place.
    */
   function isCallerFacingText(arg: string): boolean {
-    // 🔴 Reject a CONCATENATION before anything else. The audit defeated the
-    // first/last-character anchoring below with `'Error: ' + err.message + ''`,
-    // which starts and ends with a quote and so read as a literal while splicing
-    // the driver's text into the middle. Any `+` or `${` means the value is
-    // assembled, and an assembled value is not a literal we wrote.
-    if (/[+]|\$\{/.test(arg)) return false;
     if (arg === 'GENERIC_SERVER_ERROR_MESSAGE') return true;
-    const quoted = /^(['"])[^'"]*\1$/.test(arg);
-    const plainTemplate = /^`[^`]*`$/.test(arg);
-    return quoted || plainTemplate;
+    // The argument must be ONE COMPLETE literal and nothing else. That rejects
+    // concatenation and interpolation structurally, by what the value IS.
+    //
+    // 🔴 The previous version tested the WHOLE argument for `+` or `${`, including
+    // the text inside the quotes — so it went RED on messages we did write:
+    // `errorResponse(403, "You don't have access to this file")` and
+    // `errorResponse(429, 'Try again in 5+ minutes')` both failed. The live route
+    // escapes only by accident, because its apostrophe message happens to use a
+    // backtick. A guard that fails LOUD ON SAFE CODE is how a security guard gets
+    // weakened: the next author edits the guard, not the code.
+    //
+    // Matching a complete literal instead means an apostrophe or a `+` inside the
+    // text is just a character, while `'Error: ' + err.message + ''` leaves residue
+    // outside the literal and cannot match. Escapes are honoured so `'it\'s'` is
+    // one literal, not two.
+    return (
+      /^'(?:[^'\\]|\\.)*'$/.test(arg) ||
+      /^"(?:[^"\\]|\\.)*"$/.test(arg) ||
+      // Template: any char but a backtick/backslash/`$`, an escape, or a `$` that
+      // does NOT open an interpolation.
+      /^`(?:[^`\\$]|\\.|\$(?!\{))*`$/.test(arg)
+    );
   }
 });

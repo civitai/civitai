@@ -68,8 +68,32 @@ function walk(dir: string): string[] {
  * around, because they name what the value IS rather than what sits next to it.
  */
 function jsonBodies(source: string): string[] {
+  return bracedBodies(source, /\.\s*json\(\s*\{/g);
+}
+
+/**
+ * Every `new TRPCError({…})` constructor body, via the SAME scanner.
+ *
+ * 🔴 This exists as a one-liner on purpose. It was briefly a second, hand-rolled
+ * brace matcher that counted raw `{`/`}` with no quote awareness — and a delta
+ * audit broke it with a real file under `src/server`: one `}` inside a string
+ * literal truncated the body, and a genuine no-cause bypass below that point went
+ * invisible while the ledger stayed green. That is the EXACT bug `scanBody` was
+ * made quote-aware for in #3881 (`'oops }'`), regrown two hundred lines away.
+ *
+ * A truncated body is worse than no body, too: it still gets inspected, so the
+ * detector reports a confident "clean" on text it never read.
+ *
+ * One rule, one place — both extractors are now the same scan with a different
+ * opening pattern.
+ */
+function trpcErrorBodies(source: string): string[] {
+  return bracedBodies(source, /new TRPCError\(\s*\{/g);
+}
+
+/** Find each `call` site, then quote-aware brace-match its object argument. */
+function bracedBodies(source: string, call: RegExp): string[] {
   const out: string[] = [];
-  const call = /\.\s*json\(\s*\{/g;
   for (let m = call.exec(source); m; m = call.exec(source)) {
     const start = source.indexOf('{', m.index);
     const body = scanBody(source, start, true);
@@ -577,41 +601,6 @@ describe('LEDGER: GENERIC_CLIENT_ERROR_BY_STATUS covers every 4xx a driver can r
     const fromCaught = /message:\s*\(?(?:e|err|error|ex)\)?(?:\s+as\s+\w+)?\)?\.message/;
 
     /**
-     * Every `new TRPCError({…})` constructor body, BRACE-MATCHED.
-     *
-     * 🔴 This replaced `/new TRPCError\(\{(?<body>[^{}]*?)\}\)/gs`, which a blind
-     * audit showed was blind to any body containing a nested `{}` or a `${}`
-     * template — the `s` flag handles multi-line fine, but `[^{}]*?` cannot cross
-     * a nested brace, so those sites matched NOTHING and were silently exempt.
-     * Measured across `src/server`: the regex saw **401** sites, brace matching
-     * sees **485** — a 17% hole in a guard whose entire job is to be exhaustive.
-     *
-     * None of the 84 newly-visible sites is a bypass, so the baseline below is
-     * unchanged at zero — which is the point: closing this cost no churn, and
-     * leaving it would have meant a future `new TRPCError({ code, message:
-     * err.message, meta: { … } })` was exempt by punctuation.
-     */
-    function trpcErrorBodies(source: string): string[] {
-      const out: string[] = [];
-      const open = /new TRPCError\(\s*\{/g;
-      for (let m = open.exec(source); m; m = open.exec(source)) {
-        const start = source.indexOf('{', m.index);
-        let depth = 0;
-        for (let i = start; i < source.length; i++) {
-          if (source[i] === '{') depth++;
-          else if (source[i] === '}') {
-            depth--;
-            if (depth === 0) {
-              out.push(source.slice(start + 1, i));
-              break;
-            }
-          }
-        }
-      }
-      return out;
-    }
-
-    /**
      * A `cause` that CANNOT carry the driver error is no better than none.
      *
      * 🔴 Found by mutation: this was `!body.includes('cause')`, and changing a
@@ -672,6 +661,15 @@ describe('LEDGER: GENERIC_CLIENT_ERROR_BY_STATUS covers every 4xx a driver can r
     expect(
       bypassCount('new TRPCError({ code: `BAD_${x}`, message: err.message })'),
       'a template literal must not hide a bypass'
+    ).toBe(1);
+    // 🔴 The delta-audit probe. A `}` INSIDE a string truncated the body under the
+    // hand-rolled brace matcher this replaced, so any bypass after it was invisible
+    // while the ledger reported clean — and a truncated body is worse than none,
+    // because it still gets inspected. This is the same shape `scanBody` was made
+    // quote-aware for in #3881; the exemplar lives here so the fix cannot rot back.
+    expect(
+      bypassCount(`new TRPCError({ code: 'BAD_REQUEST', note: 'oops }', message: err.message })`),
+      'a `}` inside a string must not truncate the body'
     ).toBe(1);
 
     // 🔴 The one that makes a ZERO mean something: the number must MOVE.
