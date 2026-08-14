@@ -27,8 +27,14 @@ remove buzz should be a me only"*, while buzz movement and balance stay visible 
 
 ## Model
 
-Every capability is declared once in `CAPABILITIES` (`access.ts`) and stored as an `AppPageAccess` row
-keyed `capability:<id>` — `capability:user.buzz.send`.
+Every capability is declared once in `CAPABILITIES` (`$lib/capabilities.ts`) and stored as an
+`AppPageAccess` row keyed `capability:<id>` — `capability:user.buzz.send`.
+
+**The declarations are not server-only.** Components need the labels and the refusal wording too; while
+they lived under `$lib/server/` the client re-typed them and drifted — a Bulk Ban banner went on saying
+"restricted to senior moderators" after the gate became a grant any role could hold. `$lib/capabilities.ts`
+is pure data over a literal and imports nothing back, so a component can use `denied(CAPABILITIES.x)`
+without pulling in server code. `$lib/server/access.ts` re-exports it, so gates still read as one API.
 
 **No schema migration.** `AppPageAccess` is already `(app, path) → roles[]`. A route path always starts
 with `/`, so the `capability:` prefix cannot collide with one; capability grants are kept in their own
@@ -57,9 +63,8 @@ sites because when it lived at the call sites it immediately diverged: `/api/who
 that question. `viewBankBuzz` declares `requires: []` explicitly — reading a ledger is investigation,
 not enforcement — so the difference from its five siblings is visible instead of being an omission.
 
-A role that loses the page loses every feature on it, and a feature ticked for a role that cannot
-open the page grants nothing. The `/admin` tree disables a feature checkbox until its page is
-granted, so the rule is visible rather than a surprise on save.
+A role that loses any required page loses the capability. `/admin` locks the checkbox until the role
+holds all of them, so the rule is visible rather than a surprise on save.
 
 **An undeclared capability grants nothing.** Same rule as a page: what is not stored is not allowed, so
 "granted to nobody" and "never configured" both fail closed.
@@ -85,11 +90,18 @@ missing — after a deploy seeds them, it does no work. It runs on the cache-hit
 early there would leave a freshly deployed capability admin-only until the Redis entry expired, which
 is the exact window the automation was meant to close.
 
+Three properties it needs and has: it seeds from a **fresh Postgres read**, never the Redis snapshot,
+because the row it writes is permanent and a stale snapshot would freeze a pre-revoke page grant into
+it; a failed seed does **not** re-publish the unchanged map, since renewing the TTL on a stale entry
+removes the expiry that is the last backstop for recovering it; and concurrent misses share one
+in-flight promise, because the memo caches values rather than promises and every gated request would
+otherwise issue its own INSERT during the unseeded window.
+
 ## The capabilities
 
 | `id` | Shown under | What it gates | Our gate before | Retool's rule | `defaultRoles` |
 |---|---|---|---|---|---|
-| `user.identity.edit` | User Lookup | Edit email, username, display name | **none** — `/users` only | `!includes('Volunteer Mod')` | `senior` |
+| `user.identity.edit` | User Lookup | Edit email, username, display name | **none** — `/users` only | everyone (see note) | `senior` |
 | `user.buzz.send` | User Lookup | Send or deduct Buzz | `isSenior` | `Senior Mod` group | `senior` |
 | `user.buzz.bank` | User Lookup | See `type = 'bank'` rows in Buzz history | `isSenior` | admin + 2 names | `senior` |
 | `user.moderator.toggle` | User Lookup | Activate / deactivate moderator | `isSenior` | admin + 1 name | `senior` |
@@ -113,6 +125,12 @@ The defaults follow these rules, applied in this order:
 > An earlier draft of this doc filed `cosmetics.grant` under *"nobody has decided"* and seeded it to
 > every role. Retool **had** decided — the condition is on `modal2`, not in any query, which is the
 > same place the other five hid. Check the export before concluding a capability was ungoverned.
+
+> ⚠️ **Retool did not restrict identity editing**, though an earlier draft of this table said it did.
+> `formButton1`'s condition ANDs the volunteer term with a *form-unchanged* term, so it could never
+> hide the button from a Volunteer Mod — it hid it from **non**-volunteers while the form was clean.
+> Almost certainly a Retool authoring bug. `senior` here rests on Ellie's 2026-08-07 request (rule 2),
+> not on Retool, and "Retool allowed everyone but volunteers" is the wrong premise to widen from.
 
 Buzz **movement, balance and bounties stay ungated** — Ellie asked for those to remain visible to
 every moderator. Only the send/deduct action and the bank rows are restricted.
@@ -146,10 +164,11 @@ and capability boxes stay editable, and edits made under one filter survive chan
 Justin's rule — *"if it's checked, it means that everything under it is checked; if you check just a
 few things, then it's mixed"* — holds at every level:
 
-- **Feature row** — nested under its page, collapsed by default, disabled until that page is granted
-  to the same role. Shows the **effective** grant, not the stored one: unchecked whenever the role
-  lacks the page, since `canUse` requires both. Rendering the stored value would put a tick on a
-  capability nobody holds.
+- **Capability row** — nested under its page, collapsed by default, and locked until the role holds
+  **every page the capability requires**, not just the one it sits under. Reasoning from the parent
+  alone offered a tick that saved, rendered checked, and still refused, because the role was missing
+  `/users`; the box now names what is missing. Shows the **effective** grant, so it never ticks for a
+  role that cannot use it.
 - **Page row** — tri-state. Checked when the role holds the page *and* every action in it, mixed when
   it holds the page but only some. A page with no actions is simply checked or not.
 - **Group row** (`Retool`, `Images`) — tri-state over the pages under it, each of which has already
@@ -184,13 +203,22 @@ Found by clicking the page, not by review or `svelte-check` — both were clean.
 
 ### The invariant is enforced at the write, not in the tree
 
-`/admin`'s save action intersects each feature's roles with the roles holding its page, and drops the
-rest. The tree's cascade is UX; this is the rule.
+`/admin`'s save action recomputes, for **every** declared capability, the roles it may hold given who
+holds the pages it requires — and writes the difference. The tree's cascade is UX; this is the rule.
 
-Without it, a feature could sit granted under a page a role does not hold — inert, but **not stably
+Two things make it load-bearing rather than decorative:
+
+- It covers capabilities the submission never named. Narrowing a *page* has to trim the capabilities
+  under it; a caller that names only the page would otherwise leave them armed for whoever gets that
+  page next. A direct POST of `{"/retool/user-lookup": ["moderator:staff"]}` now trims three.
+- It intersects against **all** required pages, matching `canUse`.
+
+Without it a capability could sit granted under a page a role does not hold — inert, but **not stably
 inert**: granting that page later activates it with no second decision. That is how a volunteer would
 have picked up *Grant cosmetics* as a side effect of being handed User Lookup for an investigation.
-The default-seeding described above intersects for the same reason.
+`allowedCapabilityRoles` is the single definition; the seeding and the save both call it, so a third
+writer finds it rather than inventing a fourth interpretation. A save that drops a submitted role says
+so instead of reporting a plain success.
 
 ## Adding a capability
 

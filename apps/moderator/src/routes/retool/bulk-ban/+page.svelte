@@ -2,6 +2,7 @@
   import { page } from "$app/state";
   import { untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
+  import { CAPABILITIES, denied } from '$lib/capabilities';
   import { enhance } from '$app/forms';
   import { goto } from '$app/navigation';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
@@ -107,7 +108,7 @@
 
 {#if !data.canAct}
   <div class="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
-    You can investigate here but not ban. Mass banning is restricted to senior moderators.
+    You can investigate here but not ban. {denied(CAPABILITIES.massBan)}
   </div>
 {/if}
 

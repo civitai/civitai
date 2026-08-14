@@ -8,6 +8,7 @@
   import type { Account } from './user-account';
   import type { FormResult } from './form-result';
   import ListCard from './ListCard.svelte';
+  import { CAPABILITIES, denied } from '$lib/capabilities';
 
   let {
     account,
@@ -87,7 +88,7 @@
           Badges this account does not already hold ({result.availableBadges.length}).
         </p>
         {#if !canGrantCosmetics}
-          <p class="text-sm text-dark-2">Granting requires the Grant cosmetics permission.</p>
+          <p class="text-sm text-dark-2">{denied(CAPABILITIES.grantCosmetics)}</p>
         {:else if result.availableBadges.length === 0}
           <p class="text-sm text-dark-2">This account already holds every badge.</p>
         {:else}

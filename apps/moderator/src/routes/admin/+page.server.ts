@@ -3,9 +3,9 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import {
   GRANTABLE_ROLES,
-  featurePagePath,
+  capabilitySubsetEntries,
   isGrantable,
-  isGrantableFeature,
+  isGrantableCapability,
   isGrantableRole,
   pageAccessState,
   requireAccess,
@@ -35,27 +35,31 @@ export const actions: Actions = {
 
     const entries: { path: string; roles: string[] }[] = [];
     for (const [path, roles] of Object.entries(changes)) {
-      if (!isGrantable(path) && !isGrantableFeature(path))
+      if (!isGrantable(path) && !isGrantableCapability(path))
         return fail(400, { error: `${path} is not editable.` });
       if (!roles.every(isGrantableRole)) return fail(400, { error: `Unknown role for ${path}.` });
       entries.push({ path, roles: [...new Set(roles)] });
     }
 
-    // `canUse` requires the page, so a feature granted to a role that does not hold it is inert — and it
-    // does not stay inert: granting the page later activates it with no second decision, which is how a
-    // volunteer would pick up Grant cosmetics as a side effect of being given User Lookup. Enforced here
-    // rather than only in the tree, because the tree is not the only thing that writes these rows.
+    // `canUse` requires the page AND everything in `requires`, so a capability granted to a role missing
+    // any of them is inert — and not stably inert: granting the missing page later activates it with no
+    // second decision. Recomputed for EVERY capability, not just the submitted ones, because narrowing a
+    // page has to trim the capabilities under it and a caller naming only the page would leave them
+    // armed for whoever gets that page next. Enforced here rather than only in the tree, because the
+    // tree is not the only thing that writes these rows.
     const stored = await readPageAccessGrants();
-    const pageRoles = (path: string) =>
-      entries.find((e) => e.path === path)?.roles ?? stored[path] ?? [];
-    for (const entry of entries) {
-      const page = featurePagePath(entry.path);
-      if (!page) continue;
-      const allowed = pageRoles(page);
-      entry.roles = entry.roles.filter((role) => allowed.includes(role));
-    }
+    const pageEntries = entries.filter((e) => !isGrantableCapability(e.path));
+    const capabilityEntries = capabilitySubsetEntries(entries, stored);
+    const final = [...pageEntries, ...capabilityEntries];
 
-    await setPageRoles({ entries, userId: locals.user.id });
-    return { success: true, count: entries.length };
+    // A submitted role the rule refused is worth saying out loud: silently storing fewer roles than the
+    // operator ticked, under a plain success, is how they conclude a grant took effect when it did not.
+    const trimmed = entries.filter((submitted) => {
+      const kept = capabilityEntries.find((e) => e.path === submitted.path);
+      return kept && kept.roles.length < submitted.roles.length;
+    }).length;
+
+    await setPageRoles({ entries: final, userId: locals.user.id });
+    return { success: true, count: final.length, trimmed };
   },
 };

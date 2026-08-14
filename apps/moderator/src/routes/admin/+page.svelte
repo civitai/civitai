@@ -39,49 +39,53 @@
   const matches = (node: AccessNode) =>
     node.label.toLowerCase().includes(query) || node.key.toLowerCase().includes(query);
 
-  // A node survives if it matches or anything under it does, so a hit on a capability keeps the page and
-  // section that give it context rather than stranding a lone row.
-  function filterTree(nodes: AccessNode[]): AccessNode[] {
-    const out: AccessNode[] = [];
+  // The filter marks which rows to RENDER; it never rebuilds the tree. Cloning nodes with only their
+  // matching children meant every checkbox had to remember to look the real node back up — and the one
+  // place that forgot let a page revoke cascade into capabilities the search was hiding. Here the nodes
+  // are always the real ones, so that class of bug cannot be written.
+  //
+  // A node is visible if it matches, an ancestor matches (so a matched page shows all its capabilities),
+  // or a descendant matches (so a hit keeps the rows that give it context).
+  function collectVisible(
+    nodes: AccessNode[],
+    ancestorMatched: boolean,
+    into: Set<string>
+  ): boolean {
+    let anyVisible = false;
     for (const node of nodes) {
-      const children = filterTree(node.children);
-      if (children.length || matches(node)) out.push({ ...node, children });
+      const self = matches(node);
+      const descendant = collectVisible(node.children, ancestorMatched || self, into);
+      if (self || descendant || ancestorMatched) {
+        into.add(node.key);
+        anyVisible = true;
+      }
     }
-    return out;
+    return anyVisible;
   }
 
-  const tree = $derived(query ? filterTree(data.tree) : data.tree);
+  const visible = $derived.by(() => {
+    if (!query) return null;
+    const keys = new Set<string>();
+    collectVisible(data.tree, false, keys);
+    return keys;
+  });
 
-  const countRows = (nodes: AccessNode[]): number =>
-    nodes.reduce((n, node) => n + 1 + countRows(node.children), 0);
-  const shown = $derived(countRows(tree));
+  const isVisible = (node: AccessNode) => !visible || visible.has(node.key);
+  const childrenOf = (node: AccessNode) => node.children.filter(isVisible);
+  /** Rows the filter is showing. `null` while unfiltered — everything is visible then. */
+  const shown = $derived(visible?.size ?? null);
 
   // Groups open so the page still reads as the full list at a glance; a page's capabilities stay closed
   // until asked for, which is the drill-down the tree exists to provide. While searching everything is
-  // open — a filtered tree whose only hit is collapsed reads as no results at all.
+  // open — a filtered tree whose only hit is collapsed reads as no results at all. The stored value is
+  // still what gets toggled, so clearing the filter restores what the operator had open.
   const isOpen = (node: AccessNode) => (query ? true : expanded[node.key] ?? node.kind === 'group');
 
-  // Every checkbox reads its state from the UNFILTERED node. A filtered node only carries the children
-  // that matched, so deriving from it made a page read "checked" while capabilities hidden by the search
-  // were ungranted — the filter would have been quietly changing the answer, on a screen whose whole job
-  // is to state it.
-  function indexTree(nodes: AccessNode[], into = new Map<string, AccessNode>()) {
-    for (const node of nodes) {
-      into.set(node.key, node);
-      indexTree(node.children, into);
-    }
-    return into;
-  }
-  const fullByKey = $derived(indexTree(data.tree));
-  const full = (node: AccessNode) => fullByKey.get(node.key) ?? node;
-
-  const featureKeysOf = (node: AccessNode) =>
-    full(node)
-      .children.filter((c) => c.kind === 'feature')
-      .map((c) => c.key);
+  const capabilityKeysOf = (node: AccessNode) =>
+    node.children.filter((c) => c.kind === 'capability').map((c) => c.key);
 
   const pagesUnder = (node: AccessNode): AccessNode[] =>
-    node.kind === 'page' ? [node] : full(node).children.flatMap(pagesUnder);
+    node.kind === 'page' ? [node] : node.children.flatMap(pagesUnder);
 
   const has = (key: string, role: string) => (working[key] ?? []).includes(role);
 
@@ -91,23 +95,22 @@
   // its actions is mixed, not checked, and that mixedness propagates up to the section.
   function pageState(node: AccessNode, role: string): TriState {
     if (!has(node.key, role)) return 'off';
-    const features = featureKeysOf(node);
-    if (!features.length) return 'on';
-    return features.every((f) => has(f, role)) ? 'on' : 'mixed';
+    const capabilities = capabilityKeysOf(node);
+    if (!capabilities.length) return 'on';
+    return capabilities.every((key) => has(key, role)) ? 'on' : 'mixed';
   }
 
   // A group stores nothing of its own; its box reports the pages under it, each of which already folds
   // in its own actions via `pageState`.
   function groupState(node: AccessNode, role: string): TriState {
     const states = pagesUnder(node).map((p) => pageState(p, role));
+    // A section with no grantable pages is not "fully granted" — `every` on an empty array says it is.
+    if (!states.length) return 'off';
     if (states.every((s) => s === 'on')) return 'on';
     if (states.every((s) => s === 'off')) return 'off';
     return 'mixed';
   }
 
-  // Always reassigns, even when nothing changed. The Checkbox's `checked`/`indeterminate` are
-  // `$bindable` and passed unbound, so a click writes a child-local override that only this
-  // reassignment discards; skipping a no-op write would leave the box ticked while the buffer disagrees.
   function setRoles(keys: string[], role: string, on: boolean) {
     const next = { ...working };
     for (const key of keys) {
@@ -119,17 +122,10 @@
     working = next;
   }
 
-  // Both toggles ignore the event's `next`: bits-ui resolves a click on an indeterminate box to `true`,
-  // so a mixed row would always grant. The row's own state is the only correct input.
-  //
-  // Granting adds the page ONLY; revoking removes the page and its actions. That asymmetry is the point.
-  // Revoking has to cascade because `canUse` requires the page, so an action left ticked under a page the
-  // role cannot open grants nothing while reading on screen as though it did. Granting must NOT cascade,
-  // or one click on "User Lookup" hands a volunteer the ability to send Buzz — the exact widening this
-  // whole layer exists to prevent. So a mixed row completes by ticking the actions you want, not by
-  // clicking the parent.
+  // Revoking cascades into a page's capabilities; granting never does. Granting a page must not hand over
+  // the actions inside it, or one click on "User Lookup" gives a volunteer Buzz send.
   const pageKeys = (nodes: AccessNode[], on: boolean) =>
-    on ? nodes.map((p) => p.key) : nodes.flatMap((p) => [p.key, ...featureKeysOf(p)]);
+    on ? nodes.map((p) => p.key) : nodes.flatMap((p) => [p.key, ...capabilityKeysOf(p)]);
 
   function togglePage(node: AccessNode, role: string) {
     const on = pageState(node, role) === 'off';
@@ -155,53 +151,60 @@
     working = Object.fromEntries(Object.entries(data.granted).map(([k, r]) => [k, [...r]]));
   }
 
+  // Used as the checkbox's `id` and by its label association. `:` keeps page paths and capability keys
+  // from colliding after the alphanumeric squash.
   const rowId = (key: string, role: string) =>
-    `grant-${shortRole(role)}-${key.replace(/[^a-z0-9]+/gi, '-')}`;
+    `grant:${shortRole(role)}:${key.replace(/[^a-z0-9]+/gi, '-')}`;
+
+  const missingFor = (node: AccessNode, role: string) =>
+    (node.requires ?? []).filter((path) => !has(path, role));
 </script>
 
-<!-- Every box uses FUNCTION BINDINGS, not plain props. `checked`/`indeterminate` are `$bindable` and the
-     primitive writes to them on click; passed one-way, that write is a child-local override Svelte only
-     discards when the parent's expression produces a DIFFERENT value than it last pushed. Ticking an
-     ungranted page yields `mixed` — `checked` stays false throughout — so the box latched on `true` and
-     stuck there, disagreeing with the buffer and with the server, through a Revert. Binding makes this
-     component the single source of truth; the setters ignore their argument because the row's own state
-     is the only correct input (the primitive resolves a click on an indeterminate box to `true`, which
-     would always grant). -->
+<!-- Function bindings, never one-way props: `checked`/`indeterminate` are `$bindable` and the primitive
+     writes to them, so a one-way prop latches whenever a click leaves the parent's value unchanged. The
+     setters ignore their argument because the primitive resolves a click on a mixed box to `true`. -->
 {#snippet cell(node: AccessNode, role: string)}
   {#if node.kind === 'group'}
     {@const state = groupState(node, role)}
-    <!-- Locked while filtering: a section toggle moves every page under it, and under a filter most of
-         those are off screen. The state shown is still the true one. -->
+    <!-- Locked while filtering: a section toggle moves every page under it, most of them off screen. -->
     <Checkbox
       id={rowId(node.key, role)}
-      aria-label="{node.label} — {shortRole(role)}"
+      aria-label={query
+        ? `${node.label} — ${shortRole(role)} (clear the filter to change a whole section)`
+        : `${node.label} — ${shortRole(role)}`}
       disabled={!!query}
-      title={query ? 'Clear the filter to grant or revoke a whole section.' : undefined}
       bind:checked={() => state === 'on', () => toggleGroup(node, role)}
       bind:indeterminate={() => state === 'mixed', () => {}}
     />
   {:else if node.kind === 'page'}
     {@const state = pageState(node, role)}
+    {@const hidden = node.children.length !== childrenOf(node).length}
+    <!-- Locked when the filter hides any of its capabilities: revoking a page cascades into them, and a
+         page whose capability rows are all filtered out renders childless — one click would revoke rows
+         nobody can see. -->
     <Checkbox
       id={rowId(node.key, role)}
-      aria-label="{node.label} — {shortRole(role)}"
+      aria-label={hidden
+        ? `${node.label} — ${shortRole(role)} (clear the filter to change this page)`
+        : `${node.label} — ${shortRole(role)}`}
+      disabled={hidden}
       bind:checked={() => state === 'on', () => togglePage(node, role)}
       bind:indeterminate={() => state === 'mixed', () => {}}
     />
   {:else}
-    {@const pageHeld = has(node.parent ?? '', role)}
-    <!-- Shows the EFFECTIVE grant, not the stored one. `canUse` requires the page, so a stored feature
-         under an ungranted page confers nothing — and rendering it as a tick invites the reader to
-         conclude the role has a capability it does not. -->
+    {@const missing = missingFor(node, role)}
+    {@const held = missing.length === 0}
+    <!-- Gated on EVERY page `canUse` requires, not just the one it sits under. Reasoning from the parent
+         alone offered a tick that saved, rendered checked, and still refused — because the role was
+         missing `/users`. Shows the effective grant, so it never ticks for a role that cannot use it. -->
     <Checkbox
       id={rowId(node.key, role)}
-      aria-label="{node.parentLabel}: {node.label} — {shortRole(role)}"
-      title={pageHeld
-        ? undefined
-        : `Grant ${node.parentLabel} to ${shortRole(role)} first — this action needs the page.`}
-      disabled={!pageHeld}
+      aria-label={held
+        ? `${node.parentLabel}: ${node.label} — ${shortRole(role)}`
+        : `${node.parentLabel}: ${node.label} — ${shortRole(role)}, unavailable: grant ${missing.join(' and ')} to ${shortRole(role)} first`}
+      disabled={!held}
       bind:checked={
-        () => pageHeld && has(node.key, role),
+        () => held && has(node.key, role),
         () => setRoles([node.key], role, !has(node.key, role))
       }
     />
@@ -210,14 +213,9 @@
 
 {#snippet row(node: AccessNode, depth: number)}
   {@const open = isOpen(node)}
-  <!-- `aria-level` is the only thing carrying the hierarchy to a screen reader: depth is an inline
-       padding, which is exactly the information the tree was built to add and the one a table row
-       otherwise flattens away. -->
-  <tr
-    class="border-t border-dark-4/60"
-    class:bg-dark-6={node.kind === 'group'}
-    aria-level={depth + 1}
-  >
+  <!-- Depth reaches assistive tech through the row header's text, not `aria-level`: that attribute is
+       only honoured on rows inside a `treegrid`, so here it announced nothing at all. -->
+  <tr class="border-t border-dark-4/60" class:bg-dark-7={node.kind === 'group'}>
     <th
       scope="row"
       class="py-1.5 pr-4 text-left font-normal"
@@ -226,8 +224,9 @@
       {#if node.children.length}
         <button
           type="button"
-          class="flex items-center gap-1 text-left"
+          class="flex items-center gap-1 text-left disabled:cursor-default"
           aria-expanded={open}
+          disabled={!!query}
           onclick={() => (expanded = { ...expanded, [node.key]: !open })}
         >
           {#if open}
@@ -243,11 +242,11 @@
             {node.label}
           </span>
           {#if node.kind === 'page'}
-            <span class="text-xs text-dark-2">({full(node).children.length})</span>
+            <span class="text-xs text-dark-2">({node.children.length})</span>
           {/if}
         </button>
       {:else}
-        <span class="flex items-center gap-1 pl-[1.125rem] text-dark-0">{node.label}</span>
+        <span class="flex items-center gap-1 pl-4.5 text-dark-0">{node.label}</span>
       {/if}
     </th>
     {#each data.roles as role (role)}
@@ -255,7 +254,7 @@
     {/each}
   </tr>
   {#if open}
-    {#each node.children as child (child.key)}
+    {#each childrenOf(node) as child (child.key)}
       {@render row(child, depth + 1)}
     {/each}
   {/if}
@@ -264,20 +263,20 @@
 {#snippet matrix()}
   <table class="w-full min-w-xl text-sm">
     <caption class="sr-only">Pages and actions each moderator role is granted</caption>
-    <thead class="sticky top-0 z-[9] bg-dark-6">
+    <thead class="sticky top-0 z-10 bg-dark-6">
       <tr class="border-b border-dark-4">
         <th scope="col" class="py-2 pl-4 text-left text-xs tracking-wide text-dark-2 uppercase">
           Page
         </th>
         {#each data.roles as role (role)}
-          <th scope="col" class="w-24 py-2 text-center text-xs tracking-wide text-blue-4 uppercase">
+          <th scope="col" class="w-24 py-2 text-center text-xs tracking-wide text-dark-2 uppercase">
             {shortRole(role)}
           </th>
         {/each}
       </tr>
     </thead>
     <tbody>
-      {#each tree as node (node.key)}
+      {#each data.tree.filter(isVisible) as node (node.key)}
         {@render row(node, 0)}
       {/each}
     </tbody>
@@ -302,20 +301,26 @@
   </p>
 </header>
 
-<!-- The outcome sits in the sticky bar beside the button that caused it. At the top of the document it
-     scrolls away, and the tree is taller than the viewport — so a refused save looked identical to no
-     click at all: the bar still read "N grants changed", with the reason offscreen. -->
+<!-- The outcome sits beside the button that caused it: the tree is taller than the viewport, so at the
+     top of the document a refused save scrolled out of sight and read as no click at all. `dirty` wins
+     over a stale `form.error`, or the first edit after a refusal would show no feedback. -->
 <div
   class="sticky top-0 z-10 mb-4 flex items-center gap-3 border-b border-dark-4 bg-background py-3 text-sm"
 >
-  <span class="flex-1" class:text-red-300={form?.error} class:text-dark-2={!form?.error}>
-    {#if form?.error}
-      {form.error}
-    {:else if dirty}
+  <span
+    role="status"
+    class="flex-1"
+    class:text-red-300={form?.error && !dirty}
+    class:text-dark-2={!form?.error || dirty}
+  >
+    {#if dirty}
       {dirty} grant{dirty === 1 ? '' : 's'} changed — not saved yet.
+    {:else if form?.error}
+      {form.error}
     {:else if form?.count}
-      Saved {form.count} grant{form.count === 1 ? '' : 's'}. Applies within 30 seconds across all
-      servers.
+      Saved {form.count} grant{form.count === 1 ? '' : 's'}.{form.trimmed
+        ? ` ${form.trimmed} dropped a role that lacked the required page.`
+        : ''} Applies within 30 seconds across all servers.
     {:else}
       No unsaved changes. Saved changes apply within 30 seconds across all servers.
     {/if}
@@ -335,8 +340,8 @@
     aria-label="Filter pages and actions"
     class="w-full sm:w-96"
   />
-  {#if query}
-    <span class="text-sm text-dark-2">
+  {#if query && shown !== null}
+    <span class="text-sm text-dark-2" aria-live="polite">
       {shown} row{shown === 1 ? '' : 's'}
     </span>
     <Button variant="outline" size="sm" onclick={() => (search = '')}>Clear</Button>

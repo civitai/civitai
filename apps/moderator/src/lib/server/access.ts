@@ -37,109 +37,28 @@ export type NavLink = {
   children?: NavLink[];
 };
 
-// Splits a feature's grant key from the page it belongs to. `#` is the one character a pathname can
-// never contain — a URL fragment is not sent to the server — so a feature row cannot be reached by
-// `canAccess`'s prefix walk even if it were mixed into the page map.
-// A capability's grant key is its own stable `id`, never the page's URL. Keying on the route meant
-// renaming a page silently switched off every capability under it — a routing cleanup nobody would
-// connect to moderators losing permissions, and `/retool/*` exists only until Retool is retired.
-// Route paths always start with `/`, so this prefix cannot collide with one.
-const CAPABILITY_PREFIX = 'capability:';
-export const capabilityKey = (id: string) => `${CAPABILITY_PREFIX}${id}`;
-export const isCapabilityKey = (key: string) => key.startsWith(CAPABILITY_PREFIX);
+// Capability declarations live in `$lib/capabilities.ts` — components need the labels and refusal
+// wording too, and a server-only home is what let the client re-type them and drift. Re-exported so the
+// gate and the declarations still read as one API at the call sites.
+import {
+  ALL_CAPABILITIES,
+  capabilitiesOn,
+  capabilityByKey,
+  capabilityKey,
+  isCapabilityKey,
+  requiredPaths,
+  type Capability,
+} from '$lib/capabilities';
 
-type CapabilityDef = {
-  /** Stable storage id. Renaming it orphans existing grants — treat it like a column name. */
-  id: string;
-  /** The page it is shown under, and the first thing it requires. */
-  path: string;
-  label: string;
-  /** Other pages the capability also needs. Every term of the gate lives here — see `canUse`. */
-  requires: readonly string[];
-  /**
-   * Who holds it on an environment that has never been told about it. Applied once, by the reconcile in
-   * `page-access.ts`, and intersected with the roles actually holding `path` so it cannot pre-arm anyone.
-   * Once a row exists this is ignored forever — `/admin` is the authority from then on.
-   */
-  defaultRoles: readonly string[];
-};
-
-/**
- * A capability inside a page, granted separately from the page itself. Retool expressed these as a
- * pane-level `only visible when` condition rather than as anything a query could show, which is how
- * three were ported as a hardcoded senior check and a fourth as no check at all.
- *
- * Declared once, here, and read by everything: the `/admin` tree, the gate, and the `whoami`
- * diagnostic all derive from this object rather than repeating it. Call sites take a whole entry
- * rather than a `(path, key)` pair — an unstored feature denies silently, so a mistyped key would be a
- * permission that reads as "nobody has it" with nothing to catch it.
- */
-export const CAPABILITIES = {
-  editIdentity: {
-    id: 'user.identity.edit',
-    path: '/retool/user-lookup',
-    label: 'Edit email, username & display name',
-    requires: ['/users'],
-    // Ungated in our code before this layer existed; Retool allowed everyone but Volunteer Mod. Senior
-    // is the narrowing Ellie asked for on 2026-08-07 ("other moderators do not have this ability").
-    defaultRoles: ['moderator:senior'],
-  },
-  sendBuzz: {
-    id: 'user.buzz.send',
-    path: '/retool/user-lookup',
-    label: 'Send or deduct Buzz',
-    requires: ['/users'],
-    defaultRoles: ['moderator:senior'],
-  },
-  viewBankBuzz: {
-    id: 'user.buzz.bank',
-    path: '/retool/user-lookup',
-    label: 'See bank transactions in Buzz history',
-    // Deliberately empty: reading the ledger is an investigation, and `/users` is the grant to ACT on
-    // an account. Stated rather than omitted so the difference from its five siblings is legible.
-    requires: [],
-    defaultRoles: ['moderator:senior'],
-  },
-  toggleModerator: {
-    id: 'user.moderator.toggle',
-    path: '/retool/user-lookup',
-    label: 'Activate or deactivate moderator',
-    requires: ['/users'],
-    defaultRoles: ['moderator:senior'],
-  },
-  grantCosmetics: {
-    id: 'user.cosmetics.grant',
-    path: '/retool/user-lookup',
-    label: 'Grant cosmetics',
-    requires: ['/users'],
-    // Admin-only, and admins bypass grants entirely. Retool hid the badge-grant modal unless
-    // `groups.some(i => i.name === 'admin')` — the narrowest condition of the six.
-    defaultRoles: [],
-  },
-  massBan: {
-    id: 'bulk-ban.execute',
-    path: '/retool/bulk-ban',
-    label: 'Run a mass ban',
-    requires: ['/users'],
-    defaultRoles: ['moderator:senior'],
-  },
-} as const satisfies Record<string, CapabilityDef>;
-
-export type Capability = (typeof CAPABILITIES)[keyof typeof CAPABILITIES];
-
-export const ALL_CAPABILITIES: Capability[] = Object.values(CAPABILITIES);
-
-/** The capabilities shown under one page, in declaration order. */
-export const capabilitiesOn = (path: string): Capability[] =>
-  ALL_CAPABILITIES.filter((c) => c.path === path);
-
-/**
- * Refusal text, in the exact words `/admin` puts on the checkbox. Hand-written refusals drifted from
- * the labels immediately — three of five named a permission that appears nowhere on the grant screen,
- * so the moderator reading the message could not find the box to ask for.
- */
-export const denied = (name: keyof typeof CAPABILITIES): string =>
-  `This action requires the “${CAPABILITIES[name].label}” permission.`;
+export {
+  CAPABILITIES,
+  capabilityKey,
+  capabilitySubsetEntries,
+  denied,
+  missingCapabilityRows,
+  requiredPaths,
+  type Capability,
+} from '$lib/capabilities';
 
 export const NAVIGATION: NavLink[] = [
   { path: '/', label: 'Dashboard' },
@@ -247,24 +166,24 @@ export const NAVIGATION: NavLink[] = [
   { path: '/page-visits', label: 'Page Usage' },
 ];
 
-// App-global, not per-user, so sharing module state across concurrent requests is safe. Features are held
+// App-global, not per-user, so sharing module state across concurrent requests is safe. Capabilities are held
 // apart from pages rather than filtered out at every read: `grants` drives route gating, and a key that
 // can never be a route has no business in it.
 let stored: Partial<Record<string, Role[]>> = {};
-let storedFeatures: Partial<Record<string, Role[]>> = {};
+let storedCapabilities: Partial<Record<string, Role[]>> = {};
 
 export function applyGrants(map: Record<string, string[]>): void {
   const nextPages: Partial<Record<string, Role[]>> = {};
-  const nextFeatures: Partial<Record<string, Role[]>> = {};
+  const nextCapabilities: Partial<Record<string, Role[]>> = {};
   for (const [key, roles] of Object.entries(map)) {
     const allowed = roles.filter(isGrantableRole);
     if (isCapabilityKey(key)) {
-      if (isGrantableFeature(key)) nextFeatures[key] = allowed;
+      if (isGrantableCapability(key)) nextCapabilities[key] = allowed;
     } else if (isGrantable(key)) nextPages[key] = allowed;
   }
-  if (sameGrants(nextPages, stored) && sameGrants(nextFeatures, storedFeatures)) return;
+  if (sameGrants(nextPages, stored) && sameGrants(nextCapabilities, storedCapabilities)) return;
   stored = nextPages;
-  storedFeatures = nextFeatures;
+  storedCapabilities = nextCapabilities;
   grants = collectGrants(NAVIGATION);
 }
 
@@ -357,14 +276,14 @@ export function canUse(user: RoleUser, capability: Capability): boolean {
   // call sites instead, `whoami` reported a capability the action then refused — on the endpoint whose
   // whole job is settling that question.
   if (capability.requires.some((path) => !canAccess(user, path))) return false;
-  const roles = storedFeatures[capabilityKey(capability.id)] ?? [];
+  const roles = storedCapabilities[capabilityKey(capability.id)] ?? [];
   return (user?.roles ?? []).some((r) => roles.includes(r as Role));
 }
 
 /** The effective feature→roles map, for diagnostics. Pair with `grantsSnapshot`. */
-export function featureGrantsSnapshot(): Record<string, Role[]> {
+export function capabilityGrantsSnapshot(): Record<string, Role[]> {
   return Object.fromEntries(
-    allFeatureKeys().map((key) => [key, [...(storedFeatures[key] ?? [])]])
+    ALL_CAPABILITIES.map((c) => capabilityKey(c.id)).map((key) => [key, [...(storedCapabilities[key] ?? [])]])
   );
 }
 
@@ -409,9 +328,12 @@ export function childLinks(groupPath: string, user: RoleUser): NavLink[] {
 export type AccessNode = {
   key: string;
   label: string;
-  kind: 'group' | 'page' | 'feature';
+  kind: 'group' | 'page' | 'capability';
+  // Every page a capability row needs, not just the one it sits under. `canUse` requires all of them, so
+  // a UI reasoning about the parent alone offers a tick that saves, renders checked, and still refuses.
+  requires?: string[];
   parent?: string;
-  // A feature's label is only unique within its page — "Grant cosmetics" the capability and "Grant
+  // A capability's label is only unique within its page — "Grant cosmetics" the capability and "Grant
   // Cosmetics" the page are one string to a screen reader, on a screen where ticking the wrong box is
   // the failure mode.
   parentLabel?: string;
@@ -430,7 +352,7 @@ export function pageAccessState(source?: Record<string, string[]>): {
 } {
   const from = source
     ? Object.fromEntries(Object.entries(source).map(([p, r]) => [p, r.filter(isGrantableRole)]))
-    : { ...stored, ...storedFeatures };
+    : { ...stored, ...storedCapabilities };
   const granted: Record<string, Role[]> = {};
   const paths: string[] = [];
 
@@ -454,19 +376,20 @@ export function pageAccessState(source?: Record<string, string[]>): {
       paths.push(path);
       if (!isGrantable(path)) continue;
       granted[path] = from[path] ?? [];
-      const features = capabilitiesOn(path).map((capability): AccessNode => {
+      const capabilities = capabilitiesOn(path).map((capability): AccessNode => {
         const key = capabilityKey(capability.id);
         granted[key] = from[key] ?? [];
         return {
           key,
           label: capability.label,
-          kind: 'feature',
+          kind: 'capability',
+          requires: requiredPaths(capability),
           parent: path,
           parentLabel: link.label,
           children: [],
         };
       });
-      out.push({ key: path, label: link.label, kind: 'page', children: features });
+      out.push({ key: path, label: link.label, kind: 'page', children: capabilities });
     }
     return out;
   };
@@ -474,40 +397,10 @@ export function pageAccessState(source?: Record<string, string[]>): {
   return { tree: walk([...NAVIGATION].sort(byNavOrder)), granted, paths };
 }
 
-/** Every declared capability key, whether or not it has ever been granted. */
-export function allFeatureKeys(): string[] {
-  return ALL_CAPABILITIES.map((c) => capabilityKey(c.id));
-}
-
-const capabilityByKey = (key: string) =>
-  ALL_CAPABILITIES.find((c) => capabilityKey(c.id) === key);
-
 /** A capability is grantable exactly when it is declared and the page it sits under is itself grantable. */
-export function isGrantableFeature(key: string): boolean {
+export function isGrantableCapability(key: string): boolean {
   const capability = capabilityByKey(key);
   return !!capability && isGrantable(capability.path);
-}
-
-/** The page a capability key sits under — the grant it is meaningless without. */
-export function featurePagePath(key: string): string | undefined {
-  return capabilityByKey(key)?.path;
-}
-
-/**
- * What a never-configured environment should start with: one entry per capability that has no row yet,
- * with its defaults narrowed to the roles that actually hold the owning page. Applied by the reconcile in
- * `page-access.ts`; a capability whose page is ungranted seeds empty rather than pre-arming anyone.
- */
-export function missingCapabilityRows(
-  grants: Record<string, string[]>
-): { path: string; roles: string[] }[] {
-  return ALL_CAPABILITIES.filter((c) => !(capabilityKey(c.id) in grants)).map((c) => {
-    const pageRoles = grants[c.path] ?? [];
-    return {
-      path: capabilityKey(c.id),
-      roles: c.defaultRoles.filter((role) => pageRoles.includes(role)),
-    };
-  });
 }
 
 // A link with children is a section, and a section is reachable exactly when one of its pages is — there
@@ -516,10 +409,6 @@ export function isGrantable(path: string): boolean {
   if (UNRESTRICTED_PATHS.has(path) || SUPER_ONLY_PATHS.has(path)) return false;
   const item = findNavItem(path);
   return !!item && (!item.children || !!item.sharedAccess);
-}
-
-export function isNavPath(path: string): boolean {
-  return findNavItem(path) !== undefined;
 }
 
 export function isGrantableRole(value: string): value is Role {

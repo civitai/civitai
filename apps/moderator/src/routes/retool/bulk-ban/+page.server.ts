@@ -118,7 +118,7 @@ export const actions: Actions = {
    * retries every account in the list rather than stopping after the first few.
    */
   banAll: async ({ request, locals }) => {
-    if (!canUse(locals.user, CAPABILITIES.massBan)) return actionFail(denied('massBan'));
+    if (!canUse(locals.user, CAPABILITIES.massBan)) return actionFail(denied(CAPABILITIES.massBan));
 
     const input = parseForm(
       z.object({
