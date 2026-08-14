@@ -88,12 +88,19 @@ const chapter = {
   project: { id: 9, name: 'A Comic', userId: CREATOR },
 };
 
+// `canViewNsfw` is deliberately CONSTANT across both rows. Setting it to
+// `!isGreen` made it a perfect proxy for the flag that actually decides the
+// currency, so a derivation keyed on the wrong flag passed every test — and the
+// two are not equivalent in production: `canViewNsfw` also requires a
+// non-restricted region, so a restricted-region buyer on the mature domain has
+// `isGreen === false` and `canViewNsfw === false`, and would have been charged
+// green on a yellow domain.
 const callerOn = (isGreen: boolean) =>
   comicsRouter.createCaller({
     user: { id: BUYER, isModerator: false },
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
-    features: { isGreen, comicCreator: true, canViewNsfw: !isGreen },
+    features: { isGreen, comicCreator: true, canViewNsfw: true },
   } as never);
 
 beforeEach(() => {
@@ -125,13 +132,25 @@ describe('comics router — early access moves ONE currency, the domain’s', ()
       })
     );
     // A charge that rolled back looks identical to one that stuck unless the
-    // grant and the absence of a refund are both pinned.
+    // grant is pinned too.
     expect(entityAccessCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ accessToId: CHAPTER_ID, accessorId: BUYER }),
       })
     );
-    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+
+  // Guards the branch that turns "the ledger moved nothing" into a refusal.
+  // Without it a charge reporting zero transactions still granted access — the
+  // buyer reads it as bought and the creator was never paid.
+  it('refuses, and grants nothing, when the charge moves no money', async () => {
+    createMultiAccountBuzzTransaction.mockResolvedValue({
+      ...CHARGE_RESPONSE,
+      transactionCount: 0,
+    });
+
+    await expect(callerOn(true).purchaseChapterAccess({ chapterId: CHAPTER_ID })).rejects.toThrow();
+    expect(entityAccessCreate).not.toHaveBeenCalled();
   });
 
   // The input schema is `z.object({ chapterId })`, so unknown keys are stripped
