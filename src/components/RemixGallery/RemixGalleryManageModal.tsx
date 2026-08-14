@@ -402,7 +402,12 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
             <div className="mt-2 grid grid-cols-4 gap-3">
               {unpinned.map((item) => (
                 <div key={item.placementId} className="relative">
-                  <AspectRatioImageCard aspectRatio="square" image={item.image} />
+                  {/* `explain={false}` for the same reason the submission
+                      thumbnail does it: the default stacks a centered "rated X"
+                      block with its own Show button on top of the corner
+                      toggle, and in a four-across grid it covers the tile and
+                      the pin and remove controls sitting on it. */}
+                  <AspectRatioImageCard aspectRatio="square" image={item.image} explain={false} />
                   <Group gap={4} className="absolute right-1 top-1">
                     {/* Pinning is the creator's curation, and `setRemixGalleryPins`
                         scopes its lookup to the caller as owner — a moderator
@@ -598,7 +603,9 @@ function SortablePin({ item, onUnpin }: { item: RemixGalleryItem; onUnpin: () =>
       {...attributes}
       {...listeners}
     >
-      <AspectRatioImageCard aspectRatio="square" image={item.image} />
+      {/* Same as the unpinned grid above — and here the centered overlay also
+          sits on top of a drag handle. */}
+      <AspectRatioImageCard aspectRatio="square" image={item.image} explain={false} />
       <Tooltip label="Unpin">
         <ActionIcon
           size="sm"

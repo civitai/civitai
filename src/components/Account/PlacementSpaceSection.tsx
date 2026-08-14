@@ -251,7 +251,14 @@ export function PlacementSpaceSection() {
           size="sm"
           rightSection={
             waiting > 0 ? (
-              <Badge size="sm" color="yellow" variant="filled" circle>
+              <Badge
+                size="sm"
+                color="yellow"
+                variant="filled"
+                // See the remix tab badge: a disc clips the "+" off "50+".
+                circle={!pending?.nextCursor}
+                px={pending?.nextCursor ? 6 : undefined}
+              >
                 {waitingLabel}
               </Badge>
             ) : undefined

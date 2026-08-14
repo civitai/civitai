@@ -105,7 +105,15 @@ export default function RemixSubmissions() {
                 value="received"
                 rightSection={
                   waiting || hasNextPage ? (
-                    <Badge size="sm" variant="filled" circle>
+                    // `circle` fixes the width to a one- or two-character disc,
+                    // so the "+" of a truncated count clips to "5…". A pill for
+                    // the wider label, the disc for the plain count.
+                    <Badge
+                      size="sm"
+                      variant="filled"
+                      circle={!hasNextPage}
+                      px={hasNextPage ? 6 : undefined}
+                    >
                       {hasNextPage ? `${waiting}+` : waiting}
                     </Badge>
                   ) : null
