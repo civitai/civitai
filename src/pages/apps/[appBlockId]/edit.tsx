@@ -5,7 +5,8 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
 import { ListingMediaEditor } from '~/components/Apps/ListingMediaEditor';
 import { ManifestEditForm } from '~/components/Apps/ManifestEditForm';
-import { goBackOrFallback } from '~/components/Apps/listingEditNav';
+import { ALL_EDITOR_TABS } from '~/components/Apps/appListingEditorTabs';
+import { canonicalEditRedirect, goBackOrFallback } from '~/components/Apps/listingEditNav';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -35,7 +36,23 @@ export const getServerSideProps = createServerSideProps({
         redirect: { destination: getLoginLink({ returnUrl: ctx.resolvedUrl }), permanent: false },
       };
     }
-    return { props: {} };
+    // 🔴 302 TO THE CANONICAL LISTING-KEYED PAGE when this block HAS a listing,
+    // preserving `?tab=`. `/apps/listing/<appListingId>/edit` serves BOTH store kinds;
+    // this block-keyed route structurally cannot address an off-site listing, so it
+    // stops being the canonical authoring URL here.
+    //
+    // 🔴 IT MUST NOT REDIRECT UNCONDITIONALLY — a block whose first version is still
+    // pending approval has no `AppListing` row, hence no canonical URL, and an
+    // unconditional 302 would loop it onto itself. `canonicalEditRedirect` returns
+    // `{ props: {} }` for that case and the legacy page below renders as it always did.
+    const raw = ctx.params?.appBlockId;
+    const appBlockId = Array.isArray(raw) ? raw[0] : raw;
+    const appListingId = appBlockId
+      ? await (
+          await import('~/server/services/blocks/app-access.service')
+        ).listingIdForAppBlock(appBlockId)
+      : null;
+    return canonicalEditRedirect(raw, ctx.query?.tab, appListingId, ALL_EDITOR_TABS);
   },
 });
 

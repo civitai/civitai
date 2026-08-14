@@ -17,7 +17,13 @@ vi.mock('~/server/createContext', () => ({
 }));
 
 // Mock PublicEndpoint to be a simple passthrough wrapper (same as the images test).
-vi.mock('~/server/utils/endpoint-helpers', () => ({
+// 🔴 Spread the ORIGINAL. This handler's catch now delegates to
+// `handleEndpointError` (civitai#3845/4 — the hand-rolled envelope it used to
+// carry leaked driver text), so replacing the module wholesale with a one-key
+// object makes the route call `undefined` and fail for a reason unrelated to
+// what this suite tests.
+vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   PublicEndpoint: (handler: any) => handler,
 }));
 
@@ -190,9 +196,16 @@ describe('/api/v1/users transient-upstream 503 reclassification', () => {
     // INTERNAL_SERVER_ERROR whose `message` is a bare string, NOT JSON. Against
     // the UN-hardened handler this hits `JSON.parse('Database connection lost')`
     // → SyntaxError → the throw escapes the catch → a raw unhandled Next 500 (the
-    // original failure mode, still live for the non-transient subset). The
-    // hardened handler falls back to the { error, code } shape with the correct
-    // HTTP status — a clean 500, never a throw, never a 503.
+    // original failure mode, still live for the non-transient subset). No input
+    // shape may produce that throw; that is still what this test is for.
+    //
+    // 🔴 The BODY assertion changed with civitai#3845/4. It used to read
+    // `{ error: 'Database connection lost', code: 'INTERNAL_SERVER_ERROR' }` — i.e.
+    // it PINNED the driver text reaching an unauthenticated caller through the
+    // field the Go CLI renders in PREFERENCE to `message`. The route now delegates
+    // to `handleEndpointError`, which genericizes every 5xx and logs the
+    // un-redacted text instead. `code` survives unchanged, so a client branching
+    // on it is unaffected.
     const dbError = new TRPCError({
       code: 'INTERNAL_SERVER_ERROR',
       message: 'Database connection lost',
@@ -205,7 +218,8 @@ describe('/api/v1/users transient-upstream 503 reclassification', () => {
 
     expect(res._getStatusCode()).toBe(500);
     expect(res._getJSONData()).toEqual({
-      error: 'Database connection lost',
+      error: 'An unexpected error occurred',
+      message: 'An unexpected error occurred',
       code: 'INTERNAL_SERVER_ERROR',
     });
     expect(res._getHeader('Retry-After')).toBeUndefined();
@@ -220,9 +234,14 @@ describe('/api/v1/users transient-upstream 503 reclassification', () => {
     await handler(req, res);
 
     expect(res._getStatusCode()).toBe(500);
+    // 🔴 civitai#3845/4: `error` used to carry `'cannot read properties of
+    // undefined'` verbatim. A null-deref message is not itself sensitive, but the
+    // SAME field carried raw Prisma invocation text on the driver-error path — the
+    // leak is the field, not the value, so it is genericized unconditionally.
     expect(res._getJSONData()).toEqual({
       message: 'An unexpected error occurred',
-      error: 'cannot read properties of undefined',
+      error: 'An unexpected error occurred',
+      code: 'INTERNAL_SERVER_ERROR',
     });
     expect(res._getHeader('Retry-After')).toBeUndefined();
   });

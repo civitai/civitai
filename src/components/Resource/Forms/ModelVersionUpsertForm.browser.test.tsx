@@ -422,6 +422,169 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     expect(page.getByText(/A private model can't have paid access/).elements()).toHaveLength(1);
   });
 
+  // A POI model can't earn at all. The editors used to render (and, on the standalone edit route, the
+  // endpoint didn't even send `poi`), so a stored gate and fee resubmitted from controls the creator was
+  // never meant to see. The PAYLOAD is the assertion that matters: the alert alone would read green while
+  // the charges shipped.
+  test('a POI model hides every monetization control, and submits no charge', async () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={{ ...model, poi: true } as typeof model}
+        version={chargingVersion}
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    // The whole section collapses to one explanation: no charge switch, no gate editor, no fee editor.
+    await expect
+      .element(page.getByText(/Models depicting a real person can't be monetized/))
+      .toBeInTheDocument();
+    expect(
+      page.getByText(/Saving now removes this version's license fee and paid access/).elements()
+    ).toHaveLength(1);
+    expect(chargeSwitch().elements()).toHaveLength(0);
+    expect(accessSwitch().elements()).toHaveLength(0);
+    expect(feeSwitch().elements()).toHaveLength(0);
+
+    // An edit elsewhere: the stored charges are unchanged, so without this the save short-circuits as
+    // pristine and the payload assertions below would never run.
+    await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    // Null/zero because of POI, not because this form never sends them: the blank-price test below
+    // submits a gate from the same model and version with POI off, and `chargingVersion` stores a fee.
+    const payload = mutateAsync.mock.calls[0][0] as { paidAccess?: unknown; licensingFee?: number };
+    expect(payload.paidAccess).toBeNull();
+    expect(payload.licensingFee).toBe(0);
+  });
+
+  // Surfacing the POI notice meant rendering the Monetization card whenever a stored charge is going away.
+  // That also made this case reachable for the first time — a non-commercial base model clears the gate
+  // through an effect rather than at submit — and a removal with no arm of its own falls through to the
+  // reversible early-access wording, offering a Restore that puts back a config the server rejects.
+  test('a non-commercial base model blocks monetization on load, and un-blocks on switching back', async () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={model}
+        // Loaded already on the non-commercial base model: the clearing effect is keyed to the value
+        // CHANGING, so on-load it never fires and the stored charges used to ride through to a save the
+        // server then rejected, with nothing on screen having predicted it.
+        version={
+          { ...(chargingVersion as object), baseModel: 'Ideogram 4.0' } as React.ComponentProps<
+            typeof ModelVersionUpsertForm
+          >['version']
+        }
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    // Anchor on the card, then read the alert synchronously: both are in the same render, and a revert
+    // still renders the card — so this fails in about a second naming the missing alert, instead of
+    // spending the full matcher timeout on text that is never coming.
+    await expect.element(page.getByText('Monetization')).toBeInTheDocument();
+    expect(
+      page.getByText(/This base model is licensed for non-commercial use/).elements()
+    ).toHaveLength(1);
+    expect(
+      page.getByText(/Saving now removes this version's license fee and paid access/).elements()
+    ).toHaveLength(1);
+    expect(chargeSwitch().elements()).toHaveLength(0);
+    expect(accessSwitch().elements()).toHaveLength(0);
+
+    await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const payload = mutateAsync.mock.calls[0][0] as { paidAccess?: unknown; licensingFee?: number };
+    expect(payload.paidAccess).toBeNull();
+    expect(payload.licensingFee).toBe(0);
+  });
+
+  // Unlike POI, this block is the creator's to undo — the copy says so, and the controls have to actually
+  // come back or that sentence is a lie.
+  test('switching off a non-commercial base model brings the charge controls back', async () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={model}
+        version={
+          { ...(chargingVersion as object), baseModel: 'Ideogram 4.0' } as React.ComponentProps<
+            typeof ModelVersionUpsertForm
+          >['version']
+        }
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    // Anchor on the card, then read the alert synchronously: both are in the same render, and a revert
+    // still renders the card — so this fails in about a second naming the missing alert, instead of
+    // spending the full matcher timeout on text that is never coming.
+    await expect.element(page.getByText('Monetization')).toBeInTheDocument();
+    expect(
+      page.getByText(/This base model is licensed for non-commercial use/).elements()
+    ).toHaveLength(1);
+
+    await userEvent.click(page.getByRole('textbox', { name: 'Base Model' }));
+    await userEvent.click(page.getByRole('option', { name: 'SDXL 1.0' }));
+
+    await expect.element(chargeSwitch()).toBeInTheDocument();
+    expect(
+      page.getByText(/This base model is licensed for non-commercial use/).elements()
+    ).toHaveLength(0);
+  });
+
+  // "A cheaper generation-only price" with an empty box used to save a generation grant carrying no price
+  // of its own — which `generationPrice` charges at the DOWNLOAD price. The stored terms are identical to a
+  // deliberate "same as the access price", so nothing after this form can tell the two apart.
+  test('refuses a blank generation-only price, and saves the one that is typed', async () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm model={model} version={chargingVersion} onSubmit={vi.fn()}>
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    await userEvent.click(page.getByRole('radio', { name: 'A cheaper generation-only price' }));
+    // By placeholder: the label text also matches the radio that reveals this input.
+    const genPrice = page.getByPlaceholder('Generation-only price');
+    await expect.element(genPrice).toBeInTheDocument();
+
+    // An edit elsewhere, so the save is not short-circuited as pristine: without it the unfixed build
+    // writes nothing either, and the test would pass against the bug it exists to catch.
+    await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    // Both outcomes in one poll, on a short budget. `expect.element` alone would spend the full 15 s
+    // matcher timeout on a revert and then report only that some text never appeared; this names the thing
+    // that actually went wrong — the blank price was saved — in about a second.
+    // Both outcomes in one poll, on the suite's default budget: a revert throws the named error on every
+    // attempt, so that is what the timeout reports — rather than fifteen seconds of `expect.element`
+    // waiting for text that never comes and then blaming the text.
+    await vi.waitFor(() => {
+      if (mutateAsync.mock.calls.length)
+        throw new Error('saved a blank generation-only price instead of refusing it');
+      expect(page.getByText(/Enter a generation-only price/).elements()).toHaveLength(1);
+    });
+
+    // The positive control: the same save goes through once the price exists, so the refusal above is the
+    // missing price and not the form being unsavable for some unrelated reason.
+    // 400, not a round 1000: the free tier's paid-access cap bounds this input at 500, and a value above
+    // it is clamped rather than rejected — which would make the payload assertion below read as a bug.
+    await userEvent.fill(genPrice, '400');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const terms = (mutateAsync.mock.calls[0][0] as { paidAccess?: { terms?: ModelVersionTerms } })
+      .paidAccess?.terms;
+    expect(terms?.generation).toMatchObject({ price: 400 });
+    expect(terms?.download?.price).toBe(5000);
+  });
+
   // A grandfathered version — priced before the affirmation existed — has to tick the box to save at all.
   // Clearing that tick on a switch round-trip that changed nothing puts the creator back in front of
   // "Confirmation required", which is the error this ticket was filed about.

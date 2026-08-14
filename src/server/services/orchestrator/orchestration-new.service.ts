@@ -100,6 +100,7 @@ import { parsePromptSnippetReferences } from '~/utils/prompt-helpers';
 import { createEcosystemStepInput } from './ecosystems';
 import { createComfyInput, resourcesToImageMetadataResources } from './ecosystems/comfy-input';
 import { extractStepErrors, sanitizeProviderError } from './provider-errors';
+import { resolveSourceImageIds, signProvenance } from './remix-provenance';
 import { removeEmpty } from '~/utils/object-helpers';
 
 // =============================================================================
@@ -777,6 +778,7 @@ type StepMetadataCtx = {
   stepMetadata: { params?: Record<string, unknown>; resources?: Array<Record<string, unknown>> };
   isWhatIf: boolean;
   sourceCtx?: SourceCtx;
+  provenance?: string;
 };
 
 /**
@@ -882,7 +884,7 @@ async function createStepInputs(
       input: withImageMetadata(
         rest.input as object,
         rest.$type,
-        buildImageMetadata(mergedMeta.params, mergedMeta.resources)
+        buildImageMetadata(mergedMeta.params, mergedMeta.resources, metadataCtx.provenance)
       ),
       metadata: handlerMeta,
     };
@@ -904,19 +906,27 @@ type SourceCtx = {
   sourceMetadata?: SourceMetadataInput;
   sourceMetadataMap?: Record<string, SourceMetadataInput>;
   workflow: string;
+  provenance?: string;
 };
 
 /**
  * Build the imageMetadata JSON string from params and resources.
  * This is used by all step types to embed generation metadata in the step input.
+ *
+ * `provenance` is a signed statement of which on-site images were inputs to this
+ * job. The orchestrator bakes this blob into the output file, so it comes back
+ * on upload and can be verified without trusting the client — see
+ * remix-provenance.ts.
  */
 function buildImageMetadata(
   params?: Record<string, unknown>,
-  resources?: Array<Record<string, unknown>>
+  resources?: Array<Record<string, unknown>>,
+  provenance?: string
 ): string {
   return JSON.stringify(
     removeEmpty({
       ...params,
+      provenance,
       resources: resourcesToImageMetadataResources(resources),
     })
   );
@@ -950,7 +960,7 @@ function buildResolvedSource(
       resources: resourcesToImageMetadataResources(resources),
       workflow: ctx.workflow,
     },
-    imageMetadata: buildImageMetadata(params, resources),
+    imageMetadata: buildImageMetadata(params, resources, ctx.provenance),
   };
 }
 
@@ -972,6 +982,7 @@ export async function createWorkflowStepsFromGraph({
   sourceMetadata,
   sourceMetadataMap,
   remixOfId,
+  sourceImageIds,
   isGreen,
 }: {
   data: GenerationGraphOutput;
@@ -986,6 +997,13 @@ export async function createWorkflowStepsFromGraph({
   sourceMetadata?: SourceMetadataInput;
   sourceMetadataMap?: Record<string, SourceMetadataInput>;
   remixOfId?: number;
+  /**
+   * On-site images the server resolved from this submission's input images.
+   * Unlike `remixOfId` — which the client asserts — this is derived from what
+   * the job actually consumes, and is what a verified derivation link is built
+   * from. See remix-provenance.ts.
+   */
+  sourceImageIds?: number[];
   /**
    * Site context — `.com` (SFW) vs `.red` (NSFW). Passed into the snippet
    * resolver so it can filter category rows by `nsfwLevel` and never surface
@@ -1069,10 +1087,15 @@ export async function createWorkflowStepsFromGraph({
 
   const needsSourceMetadata = workflowConfigByKey.get(data.workflow)?.enhancement === true;
 
+  const provenance =
+    !isWhatIf && user?.id && sourceImageIds?.length
+      ? signProvenance({ userId: user.id, sourceImageIds })
+      : undefined;
+
   // Build source context for workflows with source lineage (not needed for what-if)
   const sourceCtx: SourceCtx | undefined =
     !isWhatIf && needsSourceMetadata
-      ? { sourceMetadata, sourceMetadataMap, workflow: data.workflow }
+      ? { sourceMetadata, sourceMetadataMap, workflow: data.workflow, provenance }
       : undefined;
 
   // Snippet fan-out unifies into a single step-build loop by always producing
@@ -1117,6 +1140,7 @@ export async function createWorkflowStepsFromGraph({
           stepMetadata: variantStepMetadata,
           isWhatIf,
           sourceCtx,
+          provenance,
         }
       );
 
@@ -1200,6 +1224,11 @@ export async function createWorkflowStepsFromGraph({
           params: persistedParams,
           resources: stepMetadata.resources,
           remixOfId,
+          // The read path for outputs whose file carries no embedded metadata —
+          // every video today. The SIGNED token, never the ids themselves:
+          // `orchestrator.updateWorkflow`/`patch` let a user write whatever they
+          // like here, so a plain field would be their claim wearing our name.
+          provenance,
           isPrivateGeneration,
         });
 
@@ -1246,6 +1275,11 @@ export async function createWorkflowStepsFromGraphInput({
   isGreen?: boolean;
 }): Promise<{ steps: WorkflowStepTemplate[]; workflowMetadata?: Record<string, unknown> }> {
   const { data, computedKeys } = validateInput(input, externalCtx);
+  const sourceImageIds = isWhatIf
+    ? undefined
+    : await resolveSourceImageIds(
+        extractInputImageUrls(data as unknown as Record<string, unknown>)
+      );
   // `workflowMetadata` carries `{ params, resources, remixOfId, isPrivateGeneration }`
   // (built by `createWorkflowStepsFromGraph`, run through `removeEmpty`) and is
   // what the queue/remix view reads via `WorkflowData.params/resources/remixOfId`.
@@ -1257,6 +1291,7 @@ export async function createWorkflowStepsFromGraphInput({
     computedKeys,
     user,
     isWhatIf,
+    sourceImageIds,
     isGreen,
   });
   return { steps, workflowMetadata };
@@ -1459,10 +1494,12 @@ export async function generateFromGraph({
 }: GenerateOptions) {
   const { data, computedKeys } = validateInput(input, externalCtx);
 
+  const inputImages = extractInputImageUrls(data as unknown as Record<string, unknown>);
+  const sourceImageIds = await resolveSourceImageIds(inputImages);
+
   // Audit prompt before generation
   if ('prompt' in data && typeof data.prompt === 'string' && data.prompt.trim()) {
     const negativePrompt = 'negativePrompt' in data ? (data.negativePrompt as string) : undefined;
-    const inputImages = extractInputImageUrls(data as unknown as Record<string, unknown>);
     const inputVideo = (
       'video' in data ? (data.video as { url?: string } | null | undefined) : undefined
     )?.url;
@@ -1532,6 +1569,7 @@ export async function generateFromGraph({
     sourceMetadata,
     sourceMetadataMap,
     remixOfId,
+    sourceImageIds,
     isGreen,
   });
 

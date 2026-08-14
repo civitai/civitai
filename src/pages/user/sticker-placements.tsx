@@ -1,4 +1,15 @@
-import { Alert, Anchor, Card, Checkbox, Container, Group, Stack, Text, Title } from '@mantine/core';
+import {
+  Alert,
+  Anchor,
+  Button,
+  Card,
+  Checkbox,
+  Container,
+  Group,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
@@ -21,10 +32,14 @@ import { trpc } from '~/utils/trpc';
  * and to clear a backlog in one pass.
  */
 export default function StickerPlacements() {
-  const { data: pending, isLoading } = trpc.placement.getPending.useQuery();
+  const { data, isLoading, isError, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    trpc.placement.getPending.useInfiniteQuery(
+      {},
+      { getNextPageParam: (lastPage) => lastPage.nextCursor }
+    );
   const [selected, setSelected] = useState<number[]>([]);
 
-  const rows = pending ?? [];
+  const rows = data?.pages.flatMap((page) => page.items) ?? [];
   const cosmeticIds = rows.map((row) => row.data.cosmeticId);
   const { sticker } = useStickerCosmetics(cosmeticIds);
 
@@ -49,7 +64,10 @@ export default function StickerPlacements() {
             </div>
             {rows.length > 0 && (
               <Checkbox
-                label="Select all"
+                // Names what it selects. With the queue paged it reaches the
+                // rows on screen, and an owner who bulk-declined believing they
+                // had cleared 200 would find 150 still waiting.
+                label={hasNextPage ? 'Select all loaded' : 'Select all'}
                 checked={allSelected}
                 indeterminate={selected.length > 0 && !allSelected}
                 onChange={() => setSelected(allSelected ? [] : rows.map((row) => row.id))}
@@ -68,10 +86,26 @@ export default function StickerPlacements() {
           )}
 
           {isLoading && <Text size="sm">Loading…</Text>}
-          {!isLoading && !rows.length && (
+          {/* A failed read has no pages, so `hasNextPage` is false and the
+              empty state below would claim the queue is clear. */}
+          {isError && (
+            <Alert color="red">
+              <Text size="sm">Couldn&rsquo;t load your queue. Refresh to try again.</Text>
+            </Alert>
+          )}
+          {/* `&& !hasNextPage`: a page whose rows were all dropped returns
+              nothing with a cursor still set, and "nothing waiting" over a
+              queue that has more is the failure paging exists to end. */}
+          {!isLoading && !isError && !rows.length && !hasNextPage && (
             <Alert>
               <Text size="sm">Nothing waiting. Placements you approve show up on your images.</Text>
             </Alert>
+          )}
+
+          {!rows.length && hasNextPage && (
+            <Text size="sm" c="dimmed">
+              Nothing on this page can be shown. There are more waiting.
+            </Text>
           )}
 
           {rows.map((row) => {
@@ -177,6 +211,12 @@ export default function StickerPlacements() {
               </Card>
             );
           })}
+
+          {hasNextPage && (
+            <Button variant="default" loading={isFetchingNextPage} onClick={() => fetchNextPage()}>
+              Load more
+            </Button>
+          )}
         </Stack>
       </Container>
     </>

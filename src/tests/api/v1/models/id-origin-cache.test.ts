@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { pack, unpack } from 'msgpackr';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import type * as ModelHelpers from '~/server/common/model-helpers';
 
 import {
   allBrowsingLevelsFlag,
@@ -112,8 +113,14 @@ vi.mock('~/env/server', () => ({
 // Trim the serialization helper graph so the handler body is deterministic and
 // no Prisma client loads through them.
 vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (url: string) => url }));
-vi.mock('~/server/common/model-helpers', () => ({
+// Keep the REAL module and override only the URL builders. A wholesale factory
+// here silently drops any export the handler later starts using — which is
+// exactly what happened when `createSerializedFileDownloadUrl` was added: the
+// handler called `undefined` and every case in this file 500'd.
+vi.mock('~/server/common/model-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelHelpers>()),
   createModelFileDownloadUrl: () => '/download',
+  createSerializedFileDownloadUrl: () => '/download',
 }));
 vi.mock('~/server/services/file.service', () => ({
   getDownloadFilename: () => 'file.safetensors',

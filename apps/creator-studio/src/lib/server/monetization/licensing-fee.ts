@@ -8,6 +8,7 @@ import {
   maxLicensingFee,
   maxLicensingFeeCeiling,
   raisesOverCap,
+  licensingFeeBlockedFor,
 } from '@civitai/buzz';
 import { cappedTier, type Membership } from '$lib/server/membership';
 import { FEE_IMAGE_OPTIONS } from '$lib/monetization/fee';
@@ -77,6 +78,7 @@ type OwnedVersion = {
   modelType: string;
   currentFee: number;
   affirmed: boolean;
+  poi: boolean;
 };
 
 // The user's own (non-deleted) versions among the given ids, with the fields the fee ops need: base model for
@@ -92,6 +94,7 @@ async function ownedVersions(userId: number, versionIds: number[]): Promise<Owne
       'Model.type as modelType',
       'ModelVersion.licensingFee as currentFee',
       'ModelVersion.meta as meta',
+      'Model.poi as poi',
     ])
     .where('ModelVersion.id', 'in', versionIds)
     .where('Model.userId', '=', userId)
@@ -103,6 +106,7 @@ async function ownedVersions(userId: number, versionIds: number[]): Promise<Owne
     modelType: r.modelType,
     currentFee: r.currentFee == null ? 0 : Number(r.currentFee),
     affirmed: hasCurrentRightsAffirmation(r.meta, userId),
+    poi: !!r.poi,
   }));
 }
 
@@ -186,6 +190,14 @@ export async function setLicensingFee(
       ok: false,
       status: 400,
       error: `"${owned[0].baseModel}" is non-commercial and can't be monetized.`,
+    };
+  // This write is direct SQL and never reaches the main app, so the model-level policy has to be applied
+  // here too or Creator Studio is simply a way around it.
+  if (normalized != null && licensingFeeBlockedFor({ poi: owned[0].poi }))
+    return {
+      ok: false,
+      status: 400,
+      error: "A model depicting a real person can't be monetized.",
     };
 
   // Anyone may charge; the tier caps how much, and it varies by model type (CU 868kj4q49).
@@ -301,6 +313,14 @@ export async function bulkSetLicensingFee(
         ok: false,
         status: 400,
         error: `${nonCommercial.length} selected version(s) use a non-commercial base model and can't be monetized — deselect them and try again.`,
+      };
+
+    const poi = owned.filter((v) => licensingFeeBlockedFor({ poi: v.poi }));
+    if (poi.length > 0)
+      return {
+        ok: false,
+        status: 400,
+        error: `${poi.length} selected version(s) depict a real person and can't be monetized — deselect them and try again.`,
       };
 
     // One fee across a mixed selection, so the STRICTEST applicable cap governs — a LoRA in the batch holds

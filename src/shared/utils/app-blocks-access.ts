@@ -1,3 +1,5 @@
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
+
 /**
  * App Blocks — developer-surface access gate.
  *
@@ -48,6 +50,85 @@ export function isAppDeveloper(
   opts?: { appBlocksAuthor?: boolean }
 ): boolean {
   return !!user?.isModerator || !!opts?.appBlocksAuthor;
+}
+
+/**
+ * The store-visibility flag pair, in the shape every caller already has in hand
+ * (`ctx.features` on the SSR side, `useFeatureFlags()` on the client). Optional
+ * + nullable so a Flipt-down / not-yet-created flag and an absent `features`
+ * object both flow in without a cast.
+ *
+ * 🔴 DERIVED FROM `FeatureAccess`, NOT hand-written — this is load-bearing, and a
+ * hand-written `{ appBlocks?: boolean; appListings?: boolean }` was measurably
+ * worse. Under the structural version, dropping or renaming `appListings` in
+ * `feature-flags.service.ts` would make the OLD open-coded `features.appListings`
+ * reads fail with `TS2339`, but `hasAppsStoreAccess(features)` would keep
+ * compiling — silently degrading every store surface to `appBlocks`-only. That
+ * rename is not hypothetical: it is exactly the documented "drop the OR-fallback
+ * once `app-listings` is the sole source of truth" step at GA. Keying off
+ * `FeatureAccess` turns that silent degradation into a compile error here.
+ *
+ * The import is TYPE-ONLY, so nothing from the server module reaches a runtime
+ * bundle (the established pattern — see `src/shared/data-graph/generation/context.ts`).
+ */
+export type AppsStoreFeatureFlags =
+  | Partial<Pick<FeatureAccess, 'appBlocks' | 'appListings'>>
+  | null
+  | undefined;
+
+/**
+ * App Blocks — App STORE-VISIBILITY gate (`appListings || appBlocks`).
+ *
+ * 🔒 THE SINGLE SOURCE OF TRUTH for "may this viewer see the /apps store", for
+ * the six surfaces under `components/Apps` and `pages/apps`: the `/apps` SSR
+ * resolver (`resolveAppsPageAccess`), the `/apps` page body, the store-preview
+ * route, the marketplace grid query, the related-listings rail, and the `/apps/*`
+ * sub-nav. All six route through THIS predicate.
+ *
+ * ⚠️ "Every store surface" would be TOO STRONG, so it is not claimed. One
+ * store-visibility decision is deliberately NOT converted:
+ * `components/AppLayout/AppHeader/appsNavVisibility.ts` gates the user-menu
+ * "Apps" → `/apps` entry on `appBlocks` alone, and its own doc says it "stays
+ * gated on `appBlocks`" — a standing decision, not drift. Consequence worth
+ * knowing before the launch: for a `{appListings, NOT appBlocks}` cohort the
+ * store renders but has no in-product entry point, since that menu item is the
+ * only route TO `/apps`. Tracked in issue #3907 — settle it BEFORE widening
+ * `app-listings`, not after.
+ *
+ * Do NOT re-inline `features.appListings || features.appBlocks`; the
+ * gates drifting apart is exactly what this function exists to prevent, and it
+ * had already happened once: of the SIX store-visibility sites, five spelled the
+ * OR out and the sixth — `AppsSubNav` — spelled only half of it (`appBlocks`
+ * alone), so an `app-listings`-only cohort would have loaded `/apps` with no
+ * sub-navigation at all.
+ *
+ * ENFORCED, not merely requested: `components/Apps/__tests__/appsStoreAccessCallSites.test.ts`
+ * pins the exact ledger of the six sites and fails if one is added, reverted, or
+ * re-inlines the boolean. Adding a store surface means adding it to that ledger.
+ *
+ * ## Why an OR, and which flag is which
+ *
+ * `appListings` (Flipt `app-listings`) is the DEDICATED catalog-visibility flag;
+ * `appBlocks` (Flipt `app-blocks-enabled`) doubles as the block-RUNTIME
+ * kill-switch. W13 split them so the store catalog can widen to public
+ * INDEPENDENTLY of the deliberately-held block-runtime GA — a public launch
+ * widens ONLY `app-listings`. The OR-fallback to `appBlocks` keeps the CURRENT
+ * mods + `app-dev-testers` cohort's store access verbatim through the transition
+ * window (both flags resolve true for them today, so this is zero behaviour
+ * change). Drop the fallback only once `app-listings` is the sole, wider source
+ * of truth. Server-side mirror: `isAppListingsEnabled` in
+ * `~/server/services/app-blocks-flag`.
+ *
+ * 🔴 This is NOT the gate for the block-RUNTIME surfaces. `/apps/installed`,
+ * `/apps/review`, `/apps/my-submissions`, `/apps/revenue`, `/apps/run/<slug>`
+ * and the `blocks.*` tRPC procedures gate on `appBlocks` alone, on purpose —
+ * they need the runtime, not just the catalog. Widening them is a product
+ * decision, not a mechanical alignment; do not sweep them into this predicate.
+ *
+ * Fails CLOSED: absent / null features, or an empty object, → `false`.
+ */
+export function hasAppsStoreAccess(features: AppsStoreFeatureFlags): boolean {
+  return !!features?.appListings || !!features?.appBlocks;
 }
 
 /**

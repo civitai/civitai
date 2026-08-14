@@ -29,14 +29,27 @@ export const updateEntityMetric = async ({
   entityId,
   metricType,
   amount = 1,
+  awaitDelivery = false,
 }: {
   ctx: EntityMetricContext;
   entityType?: EntityMetric_EntityType_Type;
   entityId: number;
   metricType: EntityMetric_MetricType_Type;
   amount?: number;
-}) => {
-  if (await isFlipt('disable-app-entity-metrics')) return;
+  /**
+   * Wait for the tracker to accept the row, and raise if it does not.
+   *
+   * For a caller that records afterwards that this counter moved. The default
+   * dispatches and returns, so `await` on this function otherwise says the
+   * event was *sent*, not that it arrived — a caller that wrote "counted" off
+   * that would bury a dropped event under a record saying it was fine.
+   */
+  awaitDelivery?: boolean;
+}): Promise<boolean> => {
+  // Reported rather than swallowed: with the flag on nothing is counted, and a
+  // caller that stamped the row anyway would lose the whole window's placements
+  // instead of counting them when it comes back off.
+  if (await isFlipt('disable-app-entity-metrics')) return false;
 
   const logData = JSON.stringify({
     userId: ctx.user?.id,
@@ -61,7 +74,10 @@ export const updateEntityMetric = async ({
 
   // Queue with clickhouse tracker
   try {
-    await ctx.track.entityMetric({ entityType, entityId, metricType, metricValue: amount });
+    return await ctx.track.entityMetric(
+      { entityType, entityId, metricType, metricValue: amount },
+      { awaitDelivery }
+    );
   } catch (e) {
     const error = e as Error;
     logError('Failed to queue metric into CH', {
@@ -70,6 +86,10 @@ export const updateEntityMetric = async ({
       cause: error.cause,
       stack: error.stack,
     });
+    // Swallowed for the fire-and-forget callers, who have nothing to do with
+    // it. A caller that asked to wait is deciding something on the answer.
+    if (awaitDelivery) throw error;
+    return false;
   }
 };
 
@@ -90,8 +110,9 @@ export const updateEntityMetricDetached = async ({
    * Who caused it. Worth threading through rather than letting a request-less
    * `Tracker` default to 0: `userId` is part of the dedupe key the metric
    * pipeline replaces rows on, so several events attributed to the same
-   * non-user, on the same entity and metric, within the same millisecond
-   * collapse into one and silently undercount. A real id makes them distinct
+   * non-user, on the same entity and metric, within the same SECOND
+   * collapse into one and silently undercount — the pipeline's `createdAt` is
+   * `DateTime`, not `DateTime64`. A real id makes them distinct
    * for the same reason a tip's does.
    */
   userId?: number;
@@ -102,7 +123,7 @@ export const updateEntityMetricDetached = async ({
     undefined,
     userId ? ({ user: { id: userId } } as ConstructorParameters<typeof Tracker>[2]) : undefined
   );
-  await updateEntityMetric({ ...input, ctx: { track } });
+  return updateEntityMetric({ ...input, ctx: { track } });
 };
 
 export const incrementEntityMetric = async ({

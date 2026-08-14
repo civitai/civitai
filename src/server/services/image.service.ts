@@ -225,7 +225,6 @@ import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
 import { removeEmpty } from '~/utils/object-helpers';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
-import { getImageS3Client } from '~/utils/s3-client';
 import { serverUploadImage, getB2ImageS3Client } from '~/utils/s3-utils';
 import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
@@ -273,6 +272,7 @@ import type { FeedQueryInput } from '../../../event-engine-common/feeds/types';
 import type { ImageQueryInput } from '../../../event-engine-common/types/image-feed-types';
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { getGenerationDisplayKeys } from '~/server/services/orchestrator/legacy-metadata-mapper';
+import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
 
 const {
   cacheHitRequestsTotal,
@@ -287,16 +287,36 @@ const {
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
-export async function purgeResizeCache({ url }: { url: string }) {
+/**
+ * How much of an image's cached variants the invalidation may remove.
+ *
+ * - `all` — every cached variant. For a DELETE, where the image must stop serving entirely.
+ * - `hidden-meta-orphans` — only the variants produced BEFORE a `hideMeta` flip.
+ *
+ * The second scope exists because a `hideMeta` false→true flip re-keys the image: the cache key
+ * includes the hideMeta flag, so after the flip every request derives a fresh, metadata-stripped
+ * variant under a NEW key and the pre-flip ones become orphans. The image is still LIVE, so
+ * removing the whole set would evict variants the page is currently serving; removing only the
+ * orphans clears the metadata-bearing copies without touching anything in use.
+ */
+export type PurgeResizeCacheScope = 'all' | 'hidden-meta-orphans';
+
+export async function purgeResizeCache({
+  url,
+  scope = 'all',
+}: {
+  url: string;
+  scope?: PurgeResizeCacheScope;
+}) {
   // Invalidate the resized/converted variants for this image. Cache
   // invalidation only — a stale variant is self-healing (re-derived on next
   // request) and must never fail the caller's mutation.
   //
   // NOTE: this used to also do a direct S3 listObjects+deleteManyObjects against
-  // env.S3_IMAGE_CACHE_BUCKET ("civitai-media-cache") via getImageS3Client().
+  // env.S3_IMAGE_CACHE_BUCKET ("civitai-media-cache") via the legacy image S3 client.
   // That path was DEAD in prod and has been removed: the cache bucket now lives
   // on Backblaze B2 (us-west-004) and is owned by the image-cacher service,
-  // while getImageS3Client() points at the DigitalOcean-Spaces object-read proxy
+  // while that client pointed at the DigitalOcean-Spaces object-read proxy
   // (S3_IMAGE_UPLOAD_ENDPOINT). That proxy does not implement ListObjectsV2 — a
   // path-style list request returns a plain-text "404 page not found", which the
   // AWS SDK's XML error deserializer chokes on (`char '4' is not expected.:1:1`).
@@ -311,21 +331,78 @@ export async function purgeResizeCache({ url }: { url: string }) {
   // stale L2 entries — no worse than today's behavior. Never block or throw
   // the delete flow.
   if (env.IMAGE_CACHER_URL && url) {
-    fetch(`${env.IMAGE_CACHER_URL}/admin/invalidate?imageKey=${encodeURIComponent(url)}`, {
+    // `keep=hm` asks the service to retain the post-flip (hideMeta) variants. Omitted entirely for
+    // the `all` scope so this call is byte-identical to the one that has always been sent.
+    // Exhaustive on purpose. A ternary here fails OPEN: any value that is not the exact literal
+    // degrades to the WIDEST blast radius, so adding a third scope later would silently mean
+    // "delete everything" instead of failing to compile. The counterpart service rejects an
+    // unrecognised value outright; this is the client-side half of the same stance.
+    const keepParam = ((): string => {
+      switch (scope) {
+        case 'all':
+          return '';
+        case 'hidden-meta-orphans':
+          return '&keep=hm';
+        default: {
+          const unreachable: never = scope;
+          throw new Error(`unhandled purgeResizeCache scope: ${String(unreachable)}`);
+        }
+      }
+    })();
+
+    const query = `imageKey=${encodeURIComponent(url)}${keepParam}`;
+
+    // The endpoint requires this header once its destructive mode is enabled, and rejects the
+    // call outright without it. Sending it whenever it is configured means enabling that mode is
+    // a change on ONE side, not a synchronised deploy across two services.
+    const headers: Record<string, string> = {};
+    if (env.IMAGE_CACHER_ADMIN_SECRET) {
+      headers['X-Admin-Secret'] = env.IMAGE_CACHER_ADMIN_SECRET;
+    }
+
+    fetch(`${env.IMAGE_CACHER_URL}/admin/invalidate?${query}`, {
       method: 'POST',
+      headers,
+      // Never follow a redirect while carrying the shared secret. `fetch` strips Authorization and
+      // Cookie on a cross-origin hop but forwards CUSTOM headers verbatim, so a 30x from this
+      // endpoint would hand X-Admin-Secret to wherever it pointed. It only ever answers
+      // 202/400/401, so a redirect here is already anomalous — fail instead of chasing it.
+      redirect: 'error',
       // Invalidation must not slow down the delete flow.
       signal: AbortSignal.timeout(2000),
-    }).catch((err) => {
-      logToAxiom({
-        type: 'warning',
-        name: 'image-cacher-invalidate',
-        message: 'image-cacher invalidate failed',
-        imageKey: url,
-        error: safeError(err),
-      }).catch(() => {
-        // swallow — best effort logging
+    })
+      .then((res) => {
+        // 🔴 `fetch` DOES NOT REJECT ON A NON-2xx. Without this branch a 401 (missing/most likely
+        // stale shared secret), a 409 refusal or a 503 partial failure all land in the success
+        // path and vanish — so invalidation could stop working COMPLETELY and produce not one log
+        // line. That is the failure mode this check exists for, not a hypothetical one: the
+        // service's auth gate switches on when its delete mode is enabled, and the first symptom
+        // of a secret mismatch would otherwise be stale images with no signal anywhere.
+        if (!res.ok) {
+          return logToAxiom({
+            type: 'warning',
+            name: 'image-cacher-invalidate',
+            message: 'image-cacher invalidate returned a non-success status',
+            imageKey: url,
+            scope,
+            status: res.status,
+          }).catch(() => {
+            // swallow — best effort logging
+          });
+        }
+      })
+      .catch((err) => {
+        logToAxiom({
+          type: 'warning',
+          name: 'image-cacher-invalidate',
+          message: 'image-cacher invalidate failed',
+          imageKey: url,
+          scope,
+          error: safeError(err),
+        }).catch(() => {
+          // swallow — best effort logging
+        });
       });
-    });
   }
 }
 
@@ -359,23 +436,54 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
 
     if (!!otherImagesWithSameUrl) return;
 
-    // Check storage-resolver for backend location (during media migration)
-    const location = await resolveMediaLocation(url);
-    if (location?.backend === 'backblaze' && env.S3_IMAGE_B2_ACCESS_KEY) {
-      const b2Client = getB2ImageS3Client();
-      await withRetries(() =>
-        b2Client.send(
-          new DeleteObjectCommand({
-            Bucket: env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads',
-            Key: url,
-          })
-        )
-      );
-    } else if (env.S3_IMAGE_UPLOAD_BUCKET) {
-      await withRetries(() =>
-        getImageS3Client().deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET!, key: url })
-      );
+    // B2 is the only backend an image can be on, so the registry is consulted for observability
+    // rather than to choose a destination — a miss means "unregistered", never "somewhere else".
+    // This used to branch to a second backend on a miss, and that branch could not succeed, so
+    // every miss left the object behind a row that was already deleted.
+    //
+    // The `.catch` is belt and braces with the `await` fix inside resolveMediaLocation: no failure
+    // of the lookup may stop the delete, and inlining the guard keeps that true even if the
+    // resolver later grows a throwing path again.
+    //
+    // The reason is sanitised INSIDE that `.catch`, under its own try, which is what keeps it total.
+    // `safeError` ends in `String(e)` for a non-Error, and that throws on a value with no primitive
+    // conversion — `Object.create(null)`, or anything with a throwing `toString`. Calling it in the
+    // log payload below instead would put that throw inside the OUTER try, skipping the B2 delete:
+    // the exact failure this `.catch` exists to prevent, reintroduced by the code reporting it.
+    let resolverError: MixedObject | undefined;
+    const location = await resolveMediaLocation(url).catch((error: unknown) => {
+      try {
+        resolverError = safeError(error);
+      } catch {
+        resolverError = { message: 'resolver rejected with a value that could not be serialised' };
+      }
+      return null;
+    });
+    if (!location) {
+      // Not a failure — the delete proceeds against B2 below. But an unregistered image is a
+      // registry gap (or a storage-resolver outage), and silently treating it as B2 is exactly
+      // what made the gap invisible. Rate of this line is the health signal, so it carries the
+      // reason too: routing a rejection here instead of to the catch below would otherwise discard
+      // the only record of WHY the resolver failed.
+      await logToAxiom({
+        type: 'warning',
+        name: 'delete-image-from-s3-unresolved-location',
+        message: 'storage-resolver returned no location; deleting from B2 anyway',
+        imageId: id,
+        url,
+        ...(resolverError !== undefined && { error: resolverError }),
+      }).catch(() => undefined);
     }
+
+    const b2Client = getB2ImageS3Client();
+    await withRetries(() =>
+      b2Client.send(
+        new DeleteObjectCommand({
+          Bucket: env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads',
+          Key: url,
+        })
+      )
+    );
   } catch (error) {
     // Nothing retries this: deleteImages drops the DB row first, so a lost object stays
     // publicly reachable (CDN urls are unsigned) with only this line to find it by.
@@ -2331,8 +2439,15 @@ export const getAllImages = async (
         model3dId: i.model3dId != null && visibleModel3DIds?.has(i.model3dId) ? i.model3dId : null,
         meta: imageMeta?.[i.id] ?? null,
         nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, i.nsfwLevel),
-        modelVersionIds: imageResources?.[i.id]?.resources?.map((r) => r.modelVersionId) ?? [],
-        modelVersionIdsManual: [],
+        // `modelVersionIds` is auto-detected only and `modelVersionIdsManual` is uploader-asserted,
+        // matching what the search-index path serves — consumers gate on the difference.
+        modelVersionIds:
+          imageResources?.[i.id]?.resources?.filter((r) => r.detected).map((r) => r.modelVersionId) ??
+          [],
+        modelVersionIdsManual:
+          imageResources?.[i.id]?.resources
+            ?.filter((r) => !r.detected)
+            .map((r) => r.modelVersionId) ?? [],
         publishedAt: i.publishedAt ? i.sortAt : undefined,
         baseModel: imageResources
           ? getBaseModelFromResources(imageResources[i.id]?.resources)
@@ -6052,13 +6167,27 @@ export async function createImage({
   toolIds,
   techniqueIds,
   skipIngestion,
+  verifiedSourceImageIds,
   ...image
-}: ImageSchema & { userId: number; skipIngestion?: boolean }) {
+}: ImageSchema & {
+  userId: number;
+  skipIngestion?: boolean;
+  /**
+   * Derivation the caller proved (see remix-provenance.ts). Nothing else can put
+   * `meta.extra.sourceImageIds` on a row — every other caller's claim is stripped
+   * here, so a new image path can't grant itself provenance by accident.
+   */
+  verifiedSourceImageIds?: number[] | null;
+}) {
+  const meta = sanitizeProvenance(
+    image.meta as Record<string, unknown> | null | undefined,
+    verifiedSourceImageIds
+  );
   const result = await dbWrite.image.create({
     data: {
       ...image,
-      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-      generationProcess: image.meta ? getImageGenerationProcess(image.meta) : null,
+      meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      generationProcess: meta ? getImageGenerationProcess(meta as ImageMetaProps) : null,
       tools: !!toolIds?.length
         ? { createMany: { data: toolIds.map((toolId) => ({ toolId })) } }
         : undefined,
@@ -6115,7 +6244,14 @@ export const createEntityImages = async ({
   await dbClient.image.createMany({
     data: images.map((image) => ({
       ...image,
-      meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      // Same strip as `createImage`: nothing that reaches an Image row keeps a
+      // provenance claim it didn't prove. These rows have no post, so they can't
+      // reach a remix gallery today — but the invariant is "no unproven claim on
+      // any row", not "on the rows that currently matter".
+      meta:
+        (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
+          | Prisma.JsonObject
+          | undefined) ?? Prisma.JsonNull,
       userId,
       resources: undefined,
     })),
@@ -6423,7 +6559,10 @@ export const updateEntityImages = async ({
     await dbClient.image.createMany({
       data: newImages.map((image) => ({
         ...image,
-        meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+        meta:
+          (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
+            | Prisma.JsonObject
+            | undefined) ?? Prisma.JsonNull,
         userId,
         resources: undefined,
       })),

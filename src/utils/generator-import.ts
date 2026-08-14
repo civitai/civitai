@@ -14,7 +14,7 @@ const importLimit = pLimit(5);
  */
 export async function downloadGeneratorImages(
   assets: SelectedImage[]
-): Promise<{ file: File; meta?: Record<string, unknown> }[]> {
+): Promise<{ file: File; meta?: Record<string, unknown>; generationWorkflowId?: string }[]> {
   const files = await Promise.all(
     assets.map((asset, idx) =>
       importLimit(async () => {
@@ -36,6 +36,7 @@ export async function downloadGeneratorImages(
               }
             ),
             meta: asset.meta ?? { prompt: asset.label },
+            generationWorkflowId: asset.generationWorkflowId,
           };
         } catch (e) {
           return;

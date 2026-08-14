@@ -80,8 +80,16 @@ The `detected` flag records *how the resource was associated with the image*, no
 - **`detected: false`** — inherited from the post's linked model version (`Post.modelVersionId`),
   via the one remaining branch.
 
-There is no per-image "tag a resource" mutation, so `detected: false` never means hand-tagged by a
-user. The only production writer is `createImageResources()`, fed entirely by the SQL function.
+`createImageResources()` is not the only writer, and `detected: false` does **not** imply the post
+link. `addResourceToPostImage()` (`post.service.ts`, exposed as a tRPC mutation) lets an image's
+owner credit a resource by hand and writes `detected: false` explicitly; it refuses on-site
+generations, so hand-crediting only ever applies to uploaded/external images. Treat `detected: false`
+as "asserted by the uploader" — through the post link or the credit mutation — and `detected: true`
+as "read out of the image's own metadata". Anything gating on provenance wants `detected: true`.
+
+Nothing deletes a `detected: false` row on its own: `refreshImageResources()` deletes
+`WHERE ... AND detected` only, so a row survives its post being re-linked. About half of recent
+manual rows no longer match their image's current `Post.modelVersionId`.
 
 Note `strength` is stored as `round(weight * 100)` — a weight of `1.0` is `100`, not `1`.
 

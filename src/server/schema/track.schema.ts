@@ -374,13 +374,15 @@ const imageRemixClickSchema = z.object({
 //     for "capacity-bounded click" and ignore `isValid` on those rows.
 //
 //   hasRemixOfId semantics:
-//      'legacy' and 'new' (v2): both gate on prompt similarity >= 0.75.
-//                v2 uses the `useRemixOfId()` hook (FormFooter.tsx:803),
-//                which returns `undefined` when below threshold; legacy
-//                applies the equivalent gate before mutate(). The hook
-//                feeds `!!remixOfId` into the emit at FormFooter.tsx:913,
-//                so an unsimilar remix correctly produces hasRemixOfId:false.
-//                The thresholds are identical — legacy ≡ v2 here.
+//      'new' (v2): true whenever the generator was opened from the remix
+//                entry point. It no longer gates on prompt similarity — an
+//                image edit or an image-to-video shares no prompt with its
+//                source, so the old >=0.75 threshold dropped the link exactly
+//                where the derivation was most literal. Historical 'legacy'
+//                and pre-2026-08 'new' rows DO carry that gate, so a roll-up
+//                across that boundary compares two different definitions.
+//                Whether a derivation was actually verified is a separate
+//                field on the image (meta.extra.sourceImageIds), not this one.
 //      'video':  hasRemixOfId is NOT emitted (field absent in the details
 //                payload — see VideoGenerationForm.tsx:153-165, 241-252).
 //                Video form has no prompt-similarity hook yet; add when
@@ -506,9 +508,9 @@ const generatorSubmitSchema = z.object({
     // 'replay' — re-run from the queue / previous output
     // 'direct' — opened from /generate or with no input (panel default)
     fromAction: z.enum(['create', 'remix', 'replay', 'direct']),
-    // True when remixOfId is being sent on the request — gated by the
-    // 0.75 prompt-similarity threshold via the `useRemixOfId()` hook in the
-    // v2 form. See the doc-block above for the hasRemixOfId roll-up caveat.
+    // True when remixOfId is being sent on the request — i.e. the generator was
+    // opened from the remix entry point. See the doc-block above: the meaning
+    // changed when the prompt-similarity gate was removed.
     hasRemixOfId: z.boolean().optional(),
     // 'new' (generation_v2/FormFooter) is emitted by the current form.
     // 'legacy'/'video' are retained for backward-compatibility with

@@ -357,7 +357,10 @@ function ReportDrawer({
           )}
           <ReportDetails report={report} />
           {reportedPlacementId !== null && (
-            <RemoveReportedPlacement placementId={reportedPlacementId} />
+            <RemoveReportedPlacement
+              placementId={reportedPlacementId}
+              target={getReportedPlacementTarget(report)}
+            />
           )}
           <Input.Wrapper
             label="Status"
@@ -467,6 +470,19 @@ const getReportedPlacementId = (report: ReportDetail) => {
   const raw = (details as Record<string, unknown>).placementId;
   const id = typeof raw === 'string' ? Number(raw) : raw;
   return typeof id === 'number' && Number.isInteger(id) && id > 0 ? id : null;
+};
+
+/**
+ * Which half the report is about, for the one action that can show it.
+ *
+ * Anything but the note reads as the sticker, including a report filed before
+ * the field existed — that matches the schema's own default, so the queue and
+ * the form cannot disagree about what an absent value meant.
+ */
+const getReportedPlacementTarget = (report: ReportDetail): 'sticker' | 'comment' => {
+  const { details } = report;
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return 'sticker';
+  return (details as Record<string, unknown>).target === 'comment' ? 'comment' : 'sticker';
 };
 
 const getReportLink = (report: ReportDetail) => {

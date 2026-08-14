@@ -4,13 +4,16 @@
  * Controls for Grok ecosystem (xAI Grok Imagine).
  * Supports both image and video generation workflows.
  *
- * Version-selectable (v1.0 / v1.5) via the model picker. Image generation is
- * version-less on the API, so the image workflows are v1.0-only and excluded for
- * v1.5 in config/workflows.ts.
+ * Version-selectable (v1.0 / v1.5 / v2.0) via the model picker. v1.5 is
+ * video-only and v2.0 is image-only, so each is excluded from the workflows it
+ * can't serve in config/workflows.ts.
  *
- * Image workflows (v1.0 only):
- * - txt2img: Create image from text (GrokCreateImageGenInput)
- * - img2img:edit: Edit image with AI (GrokEditImageGenInput)
+ * Image workflows (v1.0 and v2.0):
+ * - txt2img: Create image from text (GrokCreateImageGenInput / GrokV2CreateImageGenInput)
+ * - img2img:edit: Edit image with AI (GrokEditImageGenInput / GrokV2EditImageGenInput)
+ *
+ * v2.0 additionally exposes resolution (1k/2k) and quality (low/medium), and
+ * accepts at most 3 source images to edit against v1.0's 7.
  *
  * Video workflows:
  * - txt2vid          → 'text-to-video' (v1.0) / 'textToVideo' (v1.5)
@@ -41,6 +44,7 @@ import {
   type GenerationAspectRatio,
 } from '~/shared/constants/generation.constants';
 import { grokVersionIds } from './version-ids';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 // =============================================================================
 // Constants
@@ -85,14 +89,37 @@ const grokResolutions = [
 /** v1.5 text-to-video and image-to-video additionally accept 1080p */
 const grokV15Resolutions = [...grokResolutions, { label: '1080p', value: '1080p' }] as const;
 
-/** Options for the Grok version selector (using version IDs as values) */
-const grokVersionOptions = [
+/** Grok Imagine Image 2.0 output resolutions */
+const grokV2Resolutions = [
+  { label: '1K', value: '1k' },
+  { label: '2K', value: '2k' },
+] as const;
+
+/** Grok Imagine Image 2.0 quality tiers */
+const grokV2Qualities = [
+  { label: 'Low', value: 'low' },
+  { label: 'Medium', value: 'medium' },
+] as const;
+
+/**
+ * Options for the Grok version selector (using version IDs as values).
+ *
+ * v2.0 is behind the `grokImagine2` flag. Dropping it from the options both
+ * hides it client-side and makes the model node reject it: Grok is
+ * `modelLocked`, so a submitted id outside the version options is clamped back
+ * to the ecosystem default. Fail-closed — an absent `ext.flags` hides v2.0.
+ */
+const getGrokVersionOptions = (flags?: Partial<FeatureAccess>) => [
   { label: 'v1.0', value: grokVersionIds['v1.0'] },
   { label: 'v1.5', value: grokVersionIds['v1.5'] },
+  ...(flags?.grokImagine2 === true ? [{ label: 'v2.0', value: grokVersionIds['v2.0'] }] : []),
 ];
 
 /** True when the selected model version is Grok Imagine v1.5 */
 const isGrokV15 = (modelId?: number) => modelId === grokVersionIds['v1.5'];
+
+/** True when the selected model version is Grok Imagine Image 2.0 */
+const isGrokV2 = (modelId?: number) => modelId === grokVersionIds['v2.0'];
 
 // =============================================================================
 // Image Subgraph
@@ -104,6 +131,7 @@ type GrokImageCtx = {
   ecosystem: string;
   workflow: string;
   output: 'image';
+  model?: { id: number };
   images?: ImageEntry[];
 };
 
@@ -111,10 +139,10 @@ const grokImageGraph = new DataGraph<GrokImageCtx, GenerationCtx>()
   .node(
     'images',
     (ctx) => ({
-      ...imagesNode({ max: 7 }),
+      ...imagesNode({ max: isGrokV2(ctx.model?.id) ? 3 : 7 }),
       when: ctx.workflow === 'img2img:edit',
     }),
-    ['workflow']
+    ['workflow', 'model']
   )
   .node(
     'aspectRatio',
@@ -123,6 +151,22 @@ const grokImageGraph = new DataGraph<GrokImageCtx, GenerationCtx>()
       when: ctx.workflow !== 'img2img:edit',
     }),
     ['workflow']
+  )
+  .node(
+    'resolution',
+    (ctx) => ({
+      ...enumNode({ options: grokV2Resolutions, defaultValue: '2k' }),
+      when: isGrokV2(ctx.model?.id),
+    }),
+    ['model']
+  )
+  .node(
+    'quality',
+    (ctx) => ({
+      ...enumNode({ options: grokV2Qualities, defaultValue: 'medium' }),
+      when: isGrokV2(ctx.model?.id),
+    }),
+    ['model']
   );
 
 // =============================================================================
@@ -215,9 +259,14 @@ type GrokCtx = {
  * Uses a discriminator on the parent's `output` node to split into image/video subgraphs.
  */
 export const grokGraph = new DataGraph<GrokCtx, GenerationCtx>()
-  // Version-locked model (v1.0 / v1.5) — swap button hidden via modelLocked in
-  // ecosystemSettings; the default model id comes from ecosystemSettings.
-  .merge(() => createCheckpointGraph({ versions: { options: grokVersionOptions } }), [])
+  // Version-locked model (v1.0 / v1.5, plus v2.0 when its flag is on) — swap
+  // button hidden via modelLocked in ecosystemSettings; the default model id
+  // comes from ecosystemSettings.
+  .merge(
+    (_ctx, ext) =>
+      createCheckpointGraph({ versions: { options: getGrokVersionOptions(ext.flags) } }),
+    ['ext:flags']
+  )
 
   // Seed node
   .node('seed', seedNode())
@@ -240,5 +289,9 @@ export {
   grokVideoAspectRatiosByResolution,
   grokResolutions,
   grokV15Resolutions,
+  grokV2Resolutions,
+  grokV2Qualities,
+  getGrokVersionOptions,
   isGrokV15,
+  isGrokV2,
 };

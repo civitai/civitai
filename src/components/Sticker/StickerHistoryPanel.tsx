@@ -375,7 +375,11 @@ function StickerHistoryList({
                 {/* The same hover card the sticker itself has: who placed it,
                     when, and their creator card. One component, so the answer
                     cannot differ depending on which one you hovered. */}
-                <StickerPlacementHoverCard placementId={placement.id} pending={placement.isPending}>
+                <StickerPlacementHoverCard
+                  placementId={placement.id}
+                  imageId={placement.imageId}
+                  pending={placement.isPending}
+                >
                   <button
                     type="button"
                     onClick={() => stepTo(index)}

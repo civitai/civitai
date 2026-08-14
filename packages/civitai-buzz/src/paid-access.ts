@@ -69,6 +69,30 @@ export const generationPrice = (terms: ModelVersionTerms): number | undefined =>
   return paid.price ?? (terms.download?.price as number | undefined);
 };
 /**
+ * Model-level monetization policy, shared so the main app, its REST endpoint and Creator Studio can't
+ * disagree about who may charge. A model depicting a real person may not be sold at all; a private model
+ * has no audience to sell to, but may still carry a per-generation fee for when it is published.
+ *
+ * `availability` is the Prisma enum as a string, so a caller can pass a row straight from either app.
+ */
+export type MonetizationSubject = { poi?: boolean | null; availability?: string | null };
+
+/** A paid-access gate is refused for a POI model and for a private one. */
+export const paidAccessBlockedFor = (model: MonetizationSubject): boolean =>
+  !!model.poi || model.availability === 'Private';
+
+/** A per-generation licensing fee is refused for a POI model. Private models keep theirs. */
+export const licensingFeeBlockedFor = (model: MonetizationSubject): boolean => !!model.poi;
+
+/**
+ * Whether a chosen "cheaper generation-only price" is missing the price it promises. Such a grant is
+ * indistinguishable in `terms` from generation bundled with the download, and `generationPrice` prices
+ * both at the download price — so an editor must refuse the write rather than store the choice.
+ */
+export const separateGenerationPriceMissing = (price: number | null | undefined): boolean =>
+  price == null || !Number.isFinite(price) || price <= 0;
+
+/**
  * Build a ModelVersion's `terms` from an editor's pricing. "Price for access" (accessPrice) is the one
  * required charge; for a `genOnly` version (no download tier) it IS the generation price, otherwise it's
  * the download bundle price and `generationPrice` is an optional cheaper generation-only tier. The

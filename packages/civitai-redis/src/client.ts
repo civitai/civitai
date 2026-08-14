@@ -1612,6 +1612,10 @@ export const REDIS_SYS_KEYS = {
     // Single-use marker for redeemed cross-domain swap tokens — `swap:used:${jti}` (TTL = swap max age).
     USED: 'swap:used',
   },
+  FEEDBACK: {
+    // Fixed-window submission counter for in-product feedback — `system:feedback:rate-limit:${userId}`.
+    RATE_LIMIT: 'system:feedback:rate-limit',
+  },
   BLOCKS: {
     // Emergency kill list — Redis SET of `block_id` strings BlockRegistry excludes from every
     // listForModel response (disable a runaway block without a deploy).

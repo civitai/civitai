@@ -1,4 +1,4 @@
-import type { TRPCError } from '@trpc/server';
+import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import dayjs from '~/shared/utils/dayjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -10,7 +10,7 @@ import client from 'prom-client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '~/server/metrics/feed-image-existence-check.metrics';
 import { isTransientMeiliError } from '~/server/meilisearch/client';
 import { runImageSearch } from '~/server/services/image-search.service';
-import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import {
@@ -211,32 +211,47 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     // layer can't cache the error; Retry-After so clients/CF retry the
     // (typically seconds-long) flap. 4xx-other (malformed filter / auth) is NOT
     // transient and still bubbles to the generic mapping below.
-    if (isTransientMeiliError(error)) {
+    //
+    // 🔴 BOTH transient shapes — the raw SDK error and the service layer's
+    // `TRPCError SERVICE_UNAVAILABLE` wrap of it — are answered HERE, in place,
+    // with ONE body. An earlier draft of this change set the headers for the
+    // TRPCError case and then fell through to `handleEndpointError`, which
+    // answers a 503 as `{ message }`. That left the SAME ROUTE emitting the retry
+    // hint under `error` on this path and under `message` on that one, so no
+    // client could read a single key to get it at 503 — strictly worse than
+    // either choice alone. This is the shape `/api/v1/users` uses, and the two
+    // 503 paths on this route are now byte-identical.
+    //
+    // Answering in place also keeps the hint OUT of the helper's 503 pass-through,
+    // which is deliberately NOT genericized (it is the only copy of a retry hint).
+    // A literal here means a `TRPCError` whose message happens to be
+    // driver-authored cannot reach the wire through this branch at all.
+    const trpcStatus = error instanceof TRPCError ? getHTTPStatusCodeFromError(error) : undefined;
+    if (isTransientMeiliError(error) || trpcStatus === 503) {
       if (!res.headersSent) {
         res.setHeader('Cache-Control', 'no-store');
         res.setHeader('Retry-After', '2');
-        res
-          .status(503)
-          .json({ error: 'Image search is temporarily overloaded — please retry.' });
+        res.status(503).json({ error: 'Image search is temporarily overloaded — please retry.' });
       }
       return;
     }
-    const trpcError = error as TRPCError;
-    const statusCode = getHTTPStatusCodeFromError(trpcError);
 
-    // A TRPCError SERVICE_UNAVAILABLE wrapped by the service layer (the normal
-    // path for a transient Meili failure now) maps to 503 here — attach the
-    // same no-store + Retry-After so the retryable contract is identical to the
-    // raw-error branch above.
-    if (statusCode === 503 && !res.headersSent) {
-      res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('Retry-After', '2');
-    }
-
-    return res.status(statusCode).json({
-      error: trpcError.message,
-      code: trpcError.code,
-    });
+    // 🔴 civitai#3845 TIER 1. This was `{ error: trpcError.message, code: trpcError.code }`
+    // on a `PublicEndpoint` — i.e. served to ANONYMOUS callers. `trpcError` is
+    // whatever escaped `runImageSearch`, and a `throwDbError`-wrapped driver error
+    // puts a raw ``Invalid `prisma.image.findMany()` invocation`` — table and column
+    // names — straight on the wire. Nothing above this line is a validation
+    // rejection: the zod `safeParse` 400 and the paging 429 both `return` from the
+    // try body and never enter this catch, so delegating here cannot turn a client's
+    // malformed `?limit=` into a 500. A 4xx TRPCError from the search layer keeps
+    // its status; only a 5xx (and a driver-authored 4xx) is genericized, and the
+    // un-redacted text goes to the fault log instead of to the caller.
+    //
+    // The 4xx body shape changes from `{ error, code }` to `{ message }` — the same
+    // trade `/api/v1/users` made in the parent change, and the shared shape is the
+    // point of consolidating. 503 does NOT reach here: it is answered above, in its
+    // original shape.
+    return handleEndpointError(res, error);
   } finally {
     endTimer?.();
     // Release the heavy slot as soon as the handler resolves (synchronous

@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { paidAccessBlockedFor } from '@civitai/buzz';
 import { updateModelVersionPaidAccessSchema } from '~/server/schema/model-version.schema';
 import {
   assertUserEarlyAccessLimits,
@@ -37,14 +38,28 @@ export default AuthedEndpoint(
     });
     if (!version) return res.status(404).json({ error: 'Model version not found' });
 
-    if (!user.isModerator) {
-      const model = await getModel({ id: version.modelId, select: { userId: true } });
-      if (model?.userId !== user.id) {
-        return res.status(403).json({ error: 'You do not own this model version' });
-      }
+    const model = await getModel({
+      id: version.modelId,
+      select: { userId: true, poi: true, availability: true },
+    });
+
+    if (!user.isModerator && model?.userId !== user.id) {
+      return res.status(403).json({ error: 'You do not own this model version' });
     }
 
     const { paidAccess } = input;
+
+    // Refused rather than stripped: this caller is explicitly asking to CREATE a gate, so silently
+    // writing nothing would report success for something that did not happen. Moderators included —
+    // the rule is about the model, not about who is asking. The tRPC upsert strips instead, because
+    // there an unrelated edit must not be blocked by a charge the creator can no longer see.
+    if (paidAccess && model && paidAccessBlockedFor(model)) {
+      return res.status(400).json({
+        error: model.poi
+          ? "A model depicting a real person can't have paid access."
+          : "A private model can't have paid access.",
+      });
+    }
 
     // Permanent access is reachable only from the Creator Studio — require the shared token. The tier caps
     // themselves are enforced below (assertPaidAccessCaps), not by whoever is calling.

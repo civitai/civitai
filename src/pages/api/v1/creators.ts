@@ -1,10 +1,7 @@
-import { TRPCError } from '@trpc/server';
-import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { publicApiContext2 } from '~/server/createContext';
-import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
-import { isClientAbortError } from '~/server/utils/errorHandling';
+import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPaginationLinks } from '~/server/utils/pagination-helpers';
 
 type CreatorItem = {
@@ -45,28 +42,14 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       },
     });
   } catch (error) {
-    if (isClientAbortError(error)) {
-      // Client disconnected mid-request — not a server fault. 499, not 500.
-      if (!res.headersSent) res.status(499).end();
-      return;
-    }
-    if (error instanceof TRPCError) {
-      const status = getHTTPStatusCodeFromError(error);
-      // Some TRPCErrors carry a JSON-stringified body (zod/validation); others
-      // (throwDbError-wrapped INTERNAL_SERVER_ERRORs) carry a plain string. A
-      // blind JSON.parse on the plain-string case throws, escapes this catch,
-      // and surfaces a raw unhandled 500 — so guard it with a fallback.
-      const parsedError = (() => {
-        try {
-          return JSON.parse(error.message);
-        } catch {
-          return { message: error.message };
-        }
-      })();
-
-      res.status(status).json(parsedError);
-    } else {
-      res.status(500).json({ message: 'An unexpected error occurred', error });
-    }
+    // civitai#3845 (population B): this catch used to be a hand-rolled copy of
+    // `handleEndpointError` that had drifted — it kept the abort/TRPCError/parse
+    // logic but NOT the genericization, so a `throwDbError`-wrapped driver error
+    // still put raw invocation text on the wire at a 500, and the else-branch
+    // serialized the whole error OBJECT (a Prisma error's enumerable own props
+    // carry the table + column). Delegating removes the copy rather than patching
+    // it; see `endpoint-helpers.ts` and `rest-envelope-ledger.test.ts`.
+    handleEndpointError(res, error);
+    return;
   }
 });

@@ -74,7 +74,7 @@ vi.mock('@civitai/db', () => ({
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: {} }));
-vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {},  pgDbRead: {}, pgDbWrite: {} }));
+vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, pgDbRead: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
   preventReplicationLag: vi.fn(),
@@ -112,28 +112,30 @@ const { validateContestCollectionEntry } = await import('~/server/services/colle
 // Dispatch dbRead.challenge.findFirst by the distinguishing field in its `where` clause —
 // the function makes several distinct challenge lookups in sequence.
 function wireChallengeFindFirst(opts: { hasResourceChallenge: boolean; hasFeeChallenge: boolean }) {
-  mockChallengeFindFirst.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
-    if ('createdById' in where) return null; // own-challenge self-entry check
-    if ('modelVersionIds' in where) {
-      return opts.hasResourceChallenge ? { modelVersionIds: [REQUIRED_VERSION_ID] } : null;
-    }
-    if ('maxParticipants' in where) return null; // no participant cap configured
-    if (where.source === 'User') {
-      // The fee-challenge lookup (collection.service.ts chargeContestEntryFeesForCollection) is the
-      // only source=User lookup that also filters `status: 'Active'` in its where;
-      // select: { id, entryFee, buzzType }.
-      if ('status' in where) {
-        return opts.hasFeeChallenge ? { id: 1, entryFee: 100, buzzType: 'yellow' } : null;
+  mockChallengeFindFirst.mockImplementation(
+    async ({ where }: { where: Record<string, unknown> }) => {
+      if ('createdById' in where) return null; // own-challenge self-entry check
+      if ('modelVersionIds' in where) {
+        return opts.hasResourceChallenge ? { modelVersionIds: [REQUIRED_VERSION_ID] } : null;
       }
-      // Otherwise this is the assertUserChallengeAcceptingEntries timing gate
-      // (challenge-entry-gate.ts), which runs BEFORE the resource gate and rejects
-      // unless the user challenge is Active. Return an Active challenge so execution
-      // reaches the resource gate under test. ('Active' is ChallengeStatus.Active —
-      // the same literal collection.service uses.)
-      return { status: 'Active', createdById: CREATOR_ID };
+      if ('maxParticipants' in where) return null; // no participant cap configured
+      if (where.source === 'User') {
+        // The fee-challenge lookup (collection.service.ts chargeContestEntryFeesForCollection) is the
+        // only source=User lookup that also filters `status: 'Active'` in its where;
+        // select: { id, entryFee, buzzType }.
+        if ('status' in where) {
+          return opts.hasFeeChallenge ? { id: 1, entryFee: 100, buzzType: 'yellow' } : null;
+        }
+        // Otherwise this is the assertUserChallengeAcceptingEntries timing gate
+        // (challenge-entry-gate.ts), which runs BEFORE the resource gate and rejects
+        // unless the user challenge is Active. Return an Active challenge so execution
+        // reaches the resource gate under test. ('Active' is ChallengeStatus.Active —
+        // the same literal collection.service uses.)
+        return { status: 'Active', createdById: CREATOR_ID };
+      }
+      return null;
     }
-    return null;
-  });
+  );
 }
 
 beforeEach(() => {
@@ -158,13 +160,41 @@ describe('contest entry resource gate (Task 11)', () => {
         imageIds: [IMAGE_ID],
         metadata: {},
       })
-    ).rejects.toThrow('This image does not use a required model for this challenge.');
+    ).rejects.toThrow("This image doesn't use a required model for this challenge");
 
     expect(mockImageResourceNewFindMany).toHaveBeenCalledWith({
-      where: { imageId: { in: [IMAGE_ID] }, modelVersionId: { in: [REQUIRED_VERSION_ID] } },
+      where: {
+        imageId: { in: [IMAGE_ID] },
+        modelVersionId: { in: [REQUIRED_VERSION_ID] },
+        detected: true,
+      },
       select: { imageId: true },
       distinct: ['imageId'],
     });
+    expect(mockChargeEntryFees).not.toHaveBeenCalled();
+  });
+
+  it('does not accept a manually-attached resource as satisfying the requirement', async () => {
+    wireChallengeFindFirst({ hasResourceChallenge: true, hasFeeChallenge: true });
+    // The query is what enforces this: `detected: true` means an uploader-asserted row never comes
+    // back, so an image carrying the required model ONLY on such a row returns empty here. Without
+    // the filter the requirement is self-certified — link a post to the required version, or credit
+    // it by hand via addResourceToPostImage, and enter.
+    mockImageResourceNewFindMany.mockResolvedValue([]);
+
+    await expect(
+      validateContestCollectionEntry({
+        collectionId: COLLECTION_ID,
+        userId: USER_ID,
+        canAccessUserChallenges: true,
+        imageIds: [IMAGE_ID],
+        metadata: {},
+      })
+    ).rejects.toThrow("readable from the image's own generation metadata");
+
+    expect(mockImageResourceNewFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ detected: true }) })
+    );
     expect(mockChargeEntryFees).not.toHaveBeenCalled();
   });
 
@@ -266,7 +296,10 @@ describe('validateContestCollectionEntry — creator block gate', () => {
       })
     ).rejects.toThrow('not available');
 
-    expect(mockAmIBlockedByUser).toHaveBeenCalledWith({ userId: USER_ID, targetUserId: CREATOR_ID });
+    expect(mockAmIBlockedByUser).toHaveBeenCalledWith({
+      userId: USER_ID,
+      targetUserId: CREATOR_ID,
+    });
     expect(mockChargeEntryFees).not.toHaveBeenCalled();
   });
 

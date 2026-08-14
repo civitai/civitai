@@ -7,14 +7,21 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getAllImages } from '~/server/services/image.service';
 import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
-import { recordPlacementTip } from '~/server/services/placement-metrics.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { imageReviewedSql } from '~/server/common/image-visibility';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { onlySelectableLevels } from '~/shared/constants/browsingLevel.constants';
-import { declineFeeAmount, PLACEMENT_SURFACES } from '~/shared/utils/placement';
+import {
+  declineFeeAmount,
+  encodePlacementQueueCursor,
+  parsePlacementQueueCursor,
+  PLACEMENT_QUEUE_PAGE_SIZE,
+  PLACEMENT_SURFACES,
+  placementQueueKeyset,
+  splitPlacementPayment,
+} from '~/shared/utils/placement';
 import type { RemixGalleryPlacementData } from '~/shared/utils/remix-gallery';
 import {
   isRemixGalleryPlacementData,
@@ -45,6 +52,7 @@ type SubmissionImage = {
   needsReview: string | null;
   publishedAt: Date | null;
   remixOfId: number | null;
+  sourceImageIds: number[] | null;
 };
 
 /**
@@ -59,7 +67,17 @@ async function loadSubmissionImage(imageId: number): Promise<SubmissionImage> {
     SELECT i.id, i."userId", i."nsfwLevel", i.minor, i.poi, i."tosViolation",
            i.ingestion::text AS ingestion, i."needsReview",
            p."publishedAt",
-           (i.meta -> 'extra' ->> 'remixOfId')::int AS "remixOfId"
+           (i.meta -> 'extra' ->> 'remixOfId')::int AS "remixOfId",
+           ARRAY(
+             SELECT (value #>> '{}')::int
+             FROM jsonb_array_elements(
+               CASE
+                 WHEN jsonb_typeof(i.meta -> 'extra' -> 'sourceImageIds') = 'array'
+                 THEN i.meta -> 'extra' -> 'sourceImageIds'
+                 ELSE '[]'::jsonb
+               END
+             )
+           ) AS "sourceImageIds"
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE i.id = ${imageId}
@@ -225,6 +243,11 @@ export async function createRemixGallerySubmission({
       data: {
         imageId,
         remixOfId: submission.remixOfId,
+        // Present only when the server itself resolved this host image as an
+        // input to the generation. Left off rather than set false: "made
+        // elsewhere" and "no signal" are the same state, and the owner-review
+        // UI must keep saying nothing about either.
+        ...(submission.sourceImageIds?.includes(hostImageId) ? { derivedFromHost: true } : {}),
       } satisfies RemixGalleryPlacementData,
     },
     select: { id: true },
@@ -418,25 +441,6 @@ export async function actOnRemixGallerySubmission({
   // appeared to work and did not is what this cost us on chunk D.
   if (!result.settled)
     throw throwBadRequestError('remix gallery: that submission was already resolved elsewhere');
-
-  // A gallery entry is a paid placement on this image, so it counts toward the
-  // same Buzz counter a sticker does (Justin, 2026-08-12). A decline counts
-  // nothing even though its fee reaches the owner — see `recordPlacementTip`.
-  //
-  // `result.settled` is re-checked even though the throw above already covers
-  // it, and not as belt and braces: it is the gate the sticker twin actually
-  // uses, so writing it here keeps the two surfaces the same shape. The throw
-  // is the kind of thing that gets softened into a returned value — the
-  // moderator removal path already made exactly that change — and whoever does
-  // that would otherwise be introducing a double count with nothing beside it
-  // to say so.
-  if (action === 'approve' && result.settled)
-    await recordPlacementTip({
-      surface: SURFACE,
-      imageId: placement.targetId,
-      amount: placement.amount,
-      placerId: placement.placerId,
-    });
 
   return result;
 }
@@ -1151,7 +1155,8 @@ export async function getRemixGalleryVisibility({
 export async function getPendingRemixGallerySubmissions({
   ownerId,
   hostImageId,
-  limit = REMIX_GALLERY_QUEUE_LIMIT,
+  limit = PLACEMENT_QUEUE_PAGE_SIZE,
+  cursor,
 }: {
   ownerId: number;
   /**
@@ -1161,6 +1166,7 @@ export async function getPendingRemixGallerySubmissions({
    */
   hostImageId?: number;
   limit?: number;
+  cursor?: string | null;
 }) {
   const rows = await dbRead.placement.findMany({
     where: {
@@ -1168,6 +1174,7 @@ export async function getPendingRemixGallerySubmissions({
       ownerId,
       status: 'pending',
       ...(hostImageId ? { targetType: TARGET_TYPE, targetId: hostImageId } : {}),
+      ...placementQueueKeyset(parsePlacementQueueCursor(cursor)),
     },
     select: {
       id: true,
@@ -1179,19 +1186,21 @@ export async function getPendingRemixGallerySubmissions({
       expiresAt: true,
       placer: { select: { id: true, username: true, image: true } },
     },
-    orderBy: { createdAt: 'asc' },
-    take: limit,
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    take: limit + 1,
   });
 
-  // Measured before the image filter below, not after. A queue that hit the cap
-  // and then dropped rows whose image was deleted returns fewer than `limit`, so
-  // a caller counting the returned rows concludes it saw everything — precisely
-  // when it did not, and the escrow behind the rest sits until it expires.
-  const truncated = rows.length >= limit;
+  // Read off the row the page ends on, before the rows below are dropped for an
+  // unreadable payload or a deleted image. Taking it from what is returned would
+  // point the next page at an earlier row and serve everything between twice —
+  // and the earlier `truncated` flag had the mirror-image bug, reporting a full
+  // queue as complete once the filter took it under the cap.
+  const page = rows.slice(0, limit);
+  const nextCursor = rows.length > limit ? encodePlacementQueueCursor(page[page.length - 1]) : null;
 
-  const entries = rows.filter((row) => isRemixGalleryPlacementData(row.data));
+  const entries = page.filter((row) => isRemixGalleryPlacementData(row.data));
   const imageIds = entries.map((row) => (row.data as RemixGalleryPlacementData).imageId);
-  if (!imageIds.length) return { items: [], truncated };
+  if (!imageIds.length) return { items: [], nextCursor };
 
   const images = await dbRead.$queryRaw<
     {
@@ -1218,15 +1227,33 @@ export async function getPendingRemixGallerySubmissions({
   `;
   const byId = new Map(images.map((image) => [image.id, image]));
 
+  // What each answer actually pays the owner, computed per row with the same
+  // helpers the settlement uses. The row's own `amount` rather than the space's
+  // current price — the price can move after a submission — and the live rates
+  // rather than the defaults, so the number on the button is the number paid.
+  const config = await getPlacementConfig();
+  const shares = config.approvalShares(SURFACE);
+  const declineFeeRate = config.declineFeeRate(SURFACE);
+
   return {
     items: entries
       .map((row) => ({
         ...row,
         data: row.data as RemixGalleryPlacementData,
         image: byId.get((row.data as RemixGalleryPlacementData).imageId) ?? null,
+        earnings: {
+          approve: splitPlacementPayment({
+            amount: row.amount,
+            outcome: 'approved',
+            declineFeeRate,
+            sellerShare: shares.seller,
+            platformShare: shares.platform,
+          }).toOwner,
+          decline: declineFeeAmount(row.amount, declineFeeRate),
+        },
       }))
       .filter((row) => row.image),
-    truncated,
+    nextCursor,
   };
 }
 

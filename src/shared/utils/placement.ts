@@ -186,6 +186,68 @@ export const placementSurfaceLabel = (surface: PlacementSurface) =>
   PLACEMENT_SURFACES[surface].label;
 
 // ---------------------------------------------------------------------------
+// Review queues
+// ---------------------------------------------------------------------------
+
+/** How many pending placements one page of a review queue carries. */
+export const PLACEMENT_QUEUE_PAGE_SIZE = 50;
+
+export type PlacementQueueCursor = { createdAt: Date; id: number };
+
+export const encodePlacementQueueCursor = (row: PlacementQueueCursor) =>
+  `${row.createdAt.getTime()}:${row.id}`;
+
+/**
+ * A malformed cursor becomes a fresh first page rather than reaching a query.
+ *
+ * `Number.isSafeInteger`, not `isFinite`: `1e21` is finite and makes an Invalid
+ * Date (the max time value is 8.64e15), and `1.5` is finite and goes to an `INT`
+ * column as a fraction. Both are hand-crafted-cursor-only, and both are a 500
+ * rather than anything worse — but the guard is here to say a cursor never
+ * reaches the database unparsed, so it has to actually do that.
+ */
+export function parsePlacementQueueCursor(cursor?: string | null): PlacementQueueCursor | null {
+  if (!cursor) return null;
+
+  const parts = cursor.split(':');
+  // Length AND emptiness: `''.split(':')` is `['', '']` and `Number('')` is 0,
+  // so `':'` would otherwise pass every check below and reach the query as a
+  // keyset from 1970 — harmless, and a counterexample to what this says it does.
+  if (parts.length !== 2 || parts.some((part) => !part.length)) return null;
+
+  const [createdAt, id] = parts.map(Number);
+  if (![createdAt, id].every((value) => Number.isSafeInteger(value) && value >= 0)) return null;
+  if (createdAt > MAX_CURSOR_TIME) return null;
+
+  return { createdAt: new Date(createdAt), id };
+}
+
+/** ECMAScript's max time value. Past it, `new Date` is an Invalid Date. */
+const MAX_CURSOR_TIME = 8.64e15;
+
+/**
+ * Where the last page stopped, as a keyset rather than an offset.
+ *
+ * Both columns the queues order on, in the same order and direction. `createdAt`
+ * alone is not unique — two placements made in the same millisecond would either
+ * repeat across pages or be stepped over, and an entry stepped over is escrow
+ * nobody ever reviews, which is the failure this paging exists to end.
+ *
+ * An offset would have the same hole for a different reason: acting on a
+ * placement takes it out of the queue, so page two of an offset walk skips as
+ * many entries as the owner just approved.
+ */
+export const placementQueueKeyset = (cursor: PlacementQueueCursor | null) =>
+  cursor
+    ? {
+        OR: [
+          { createdAt: { gt: cursor.createdAt } },
+          { createdAt: cursor.createdAt, id: { gt: cursor.id } },
+        ],
+      }
+    : {};
+
+// ---------------------------------------------------------------------------
 // Space resolution
 // ---------------------------------------------------------------------------
 

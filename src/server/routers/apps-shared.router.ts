@@ -1143,7 +1143,7 @@ async function assertSharedValueSafeAndSerialize(params: {
           'block-audit'
         ).catch(() => {});
       }
-      throw new TRPCError({ code: 'BAD_REQUEST', message: e.message });
+      throw new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: e });
     }
     throw e;
   }

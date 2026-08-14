@@ -85,6 +85,11 @@ import {
 import { isValidAIGeneration } from '~/utils/image-utils';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import {
+  resolveVerifiedSourceImageIds,
+  sanitizeProvenance,
+  storedSourceImageIds,
+} from '~/server/services/orchestrator/remix-provenance';
 import { getMetadata } from '~/utils/metadata';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -1146,7 +1151,7 @@ export const addPostImage = async ({
   user,
   externalDetailsUrl,
   ...props
-}: ImageSchema & { user: SessionUser; postId: number }) => {
+}: ImageSchema & { user: SessionUser; postId: number; generationWorkflowId?: string }) => {
   const externalData = await parseExternalMetadata(externalDetailsUrl, user.id);
   if (externalData) {
     meta = { ...meta, external: externalData };
@@ -1233,9 +1238,17 @@ export const addPostImage = async ({
     }
   }
 
+  const { generationWorkflowId, ...imageProps } = props;
+  const verifiedSourceImageIds = await resolveVerifiedSourceImageIds({
+    userId: user.id,
+    provenance: (meta?.extra as { provenance?: unknown } | undefined)?.provenance,
+    workflowId: generationWorkflowId,
+  });
+
   const partialResult = await createImage({
-    ...props,
+    ...imageProps,
     meta,
+    verifiedSourceImageIds,
     userId: user.id,
     toolIds: toolId ? [toolId] : undefined,
     techniqueIds: techniqueId ? [techniqueId] : undefined,
@@ -1343,8 +1356,31 @@ export async function bustCachesForPosts(postIds: number | number[]) {
 export const updatePostImage = async (image: UpdatePostImageInput) => {
   const currentImage = await dbWrite.image.findUniqueOrThrow({
     where: { id: image.id },
-    select: { hideMeta: true, ingestion: true, blockedFor: true, metadata: true, nsfwLevel: true },
+    select: {
+      hideMeta: true,
+      ingestion: true,
+      blockedFor: true,
+      metadata: true,
+      nsfwLevel: true,
+      meta: true,
+    },
   });
+
+  // `meta` is optional on this input, and the difference matters: absent means "leave the
+  // stored metadata alone" (the hide/show-prompt toggle sends only `hideMeta`), while an
+  // explicit `null` means "clear it". Collapsing the two writes SQL NULL over metadata the
+  // caller never touched, so the write below is skipped entirely unless the key was sent.
+  const metaProvided = image.meta !== undefined;
+
+  // This edit replaces meta wholesale from client input, so provenance has to be
+  // re-derived from the row rather than accepted: otherwise editing an image you
+  // already own is a way to assert a derivation you never made.
+  const meta = metaProvided
+    ? sanitizeProvenance(
+        image.meta as Record<string, unknown> | null | undefined,
+        storedSourceImageIds(currentImage.meta)
+      )
+    : undefined;
 
   const blockedForVerification = currentImage.blockedFor === BlockedReason.AiNotVerified;
   const updatedIsVerifiable = isValidAIGeneration({
@@ -1361,7 +1397,12 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
       ...image,
       id: undefined, // prevent updating the id!
       updatedAt: new Date(),
-      meta: image.meta !== null ? (image.meta as Prisma.JsonObject) : Prisma.JsonNull,
+      // undefined = omit the column from the UPDATE; Prisma.JsonNull = write SQL NULL.
+      meta: metaProvided
+        ? meta != null
+          ? (meta as Prisma.JsonObject)
+          : Prisma.JsonNull
+        : undefined,
       // If this image was blocked due to missing metadata, we need to set it back to pending
       ingestion: shouldIngest ? 'Pending' : undefined,
       blockedFor: shouldIngest ? null : undefined,
@@ -1380,7 +1421,15 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     userPostCountCache.refresh(result.userId),
   ];
   if (image.hideMeta && currentImage && currentImage.hideMeta !== image.hideMeta) {
-    cacheRefreshPromises.push(purgeResizeCache({ url: result.url }));
+    // 🔴 SCOPED — this image STAYS LIVE. The flip re-keys it (the cache key includes hideMeta), so
+    // what needs clearing is only the variants derived BEFORE the flip, which still carry the
+    // metadata the user just asked to hide and remain publicly fetchable at stable URLs until the
+    // cache bucket ages them out. The post-flip variants are what the page is serving right now;
+    // removing those too would blank a live image until each cache tier caught up.
+    //
+    // The delete path (deleteImageFromS3 below) deliberately does NOT pass a scope — there the row
+    // is already gone and the image must stop serving entirely.
+    cacheRefreshPromises.push(purgeResizeCache({ url: result.url, scope: 'hidden-meta-orphans' }));
   }
   // Bust the image-delivery metadata cache on ANY hideMeta change (both directions): that
   // cache serves { hideMeta } to the delivery/resize path, and a stale value would keep

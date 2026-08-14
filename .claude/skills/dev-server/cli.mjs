@@ -69,7 +69,7 @@ async function startDaemon() {
 
   // Wait for daemon to be ready
   for (let i = 0; i < 50; i++) {
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 100));
     if (await isDaemonRunning()) {
       return true;
     }
@@ -135,7 +135,7 @@ async function cmdLogs(sessionId, since) {
       console.error('No sessions found');
       process.exit(1);
     }
-    const running = listResult.data.sessions.find(s => s.status === 'running');
+    const running = listResult.data.sessions.find((s) => s.status === 'running');
     sessionId = running ? running.id : listResult.data.sessions[0].id;
   }
 
@@ -158,7 +158,7 @@ async function cmdTail(sessionId) {
       console.error('No sessions found');
       process.exit(1);
     }
-    const running = listResult.data.sessions.find(s => s.status === 'running');
+    const running = listResult.data.sessions.find((s) => s.status === 'running');
     sessionId = running ? running.id : listResult.data.sessions[0].id;
   }
 
@@ -306,7 +306,10 @@ async function cmdApp(name, subcmd) {
   }
 
   const [suffix, method] = route;
-  const result = await daemonRequest(`/app/${name}${suffix}`, method === 'POST' ? { method } : undefined);
+  const result = await daemonRequest(
+    `/app/${name}${suffix}`,
+    method === 'POST' ? { method } : undefined
+  );
   if (!result.ok) {
     console.error('Error:', result.error || result.data?.error || JSON.stringify(result.data));
     if (result.data?.available) console.error('Available apps:', result.data.available.join(', '));
@@ -325,6 +328,32 @@ async function cmdShutdown() {
   if (existsSync(pidFile)) {
     unlinkSync(pidFile);
   }
+}
+
+async function cmdWorktree(rest) {
+  const [action, ...tail] = rest;
+  const { cmdStale, cmdRemove } = await import('./scripts/worktree.mjs');
+
+  if (action === 'stale') {
+    await cmdStale(projectRoot, daemonRequest);
+    return;
+  }
+  if (action === 'rm') {
+    const target = tail.find((a) => !a.startsWith('--'));
+    if (!target) {
+      console.error('Usage: wt rm <worktree-path> [--stop-server] [--force]');
+      process.exit(1);
+    }
+    await cmdRemove(
+      projectRoot,
+      target,
+      { stopServer: tail.includes('--stop-server'), force: tail.includes('--force') },
+      daemonRequest
+    );
+    return;
+  }
+  console.error('Usage: wt <stale|rm>');
+  process.exit(1);
 }
 
 // Parse arguments
@@ -367,6 +396,9 @@ switch (command) {
   case 'shutdown':
     cmdShutdown();
     break;
+  case 'wt':
+    cmdWorktree(args.slice(1));
+    break;
   default:
     console.log(`Dev Server CLI
 
@@ -383,6 +415,9 @@ Commands:
   app                 List spoke apps (moderator, creator-studio, storage, notifications)
   app <name> [subcmd] Spoke app control (status|start|stop|restart|logs)
   shutdown            Shutdown the daemon
+  wt stale            List worktrees whose PR merged (read-only)
+  wt rm <path>        Remove a worktree safely (unlinks junctions first)
+                      [--stop-server] [--force]
 `);
     if (command) {
       console.error(`Unknown command: ${command}`);

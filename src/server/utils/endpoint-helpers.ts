@@ -15,10 +15,11 @@ import { generateSecretHash } from '~/server/utils/key-generator';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import type { Partner } from '~/shared/utils/prisma/models';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
-import { isClientAbortError } from '~/server/utils/errorHandling';
+import { isClientAbortError, isDriverAuthoredMessage } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
 import {
+  GENERIC_CLIENT_ERROR_BY_STATUS,
   GENERIC_SERVER_ERROR_MESSAGE,
   REST_ERROR_CODE,
   restErrorBody,
@@ -40,6 +41,36 @@ function logRestServerFault(e: unknown) {
 }
 
 /**
+ * Same log, forced to INFO severity — for a 4xx whose message we genericized.
+ *
+ * The entry must still be emitted: genericizing is only defensible because it
+ * RELOCATES the driver text rather than destroying it. But it must not land on
+ * the error board, and one status makes that concrete rather than theoretical.
+ *
+ * 🔴 The only Prisma codes that reach **408** are `P1008` / `P2024` — connection
+ * pool exhaustion. That is wave-shaped: during an incident every affected public
+ * request would add an error-severity line, on routes that previously logged
+ * nothing at all. It is the same "fires in high-volume waves" property for which
+ * `isRestServerFault` excludes 503 from the error stream.
+ *
+ * `classifyErrorFault` treats `TIMEOUT` as a SERVER fault, and that is correct
+ * for the repo at large (a timeout usually IS ours), so this does NOT change the
+ * global classification — it overrides `type`/`level` for this arm only. `type`
+ * is the load-bearing field: Alloy extracts it into Loki's `detected_level`.
+ *
+ * 400/404/409 already classify as client faults, so for those this is a no-op and
+ * the uniform treatment is the point — "a genericized 4xx is logged for forensics,
+ * never as an incident" is one rule rather than three.
+ */
+function logRestGenericizedClientFault(e: unknown) {
+  if (wasServerFaultLogged(e)) return;
+  logToAxiom(
+    { ...buildCentralErrorLog(e), type: 'info', level: 'info', source: 'handleEndpointError' },
+    'civitai-prod'
+  ).catch(() => undefined);
+}
+
+/**
  * Is this REST status a SERVER FAULT — i.e. one whose error text is OURS, never a
  * message written for the caller?
  *
@@ -53,8 +84,21 @@ function logRestServerFault(e: unknown) {
  *   the log — so genericizing can never destroy the only copy of a message.
  *
  * Two exclusions, both load-bearing:
- *   - **4xx** is client feedback the caller is meant to read (zod issues, "not
- *     found", rate-limit hints). Never logged as a fault, never genericized.
+ *   - **4xx** is *usually* client feedback the caller is meant to read (zod
+ *     issues, "not found", rate-limit hints), so it is not a server fault and is
+ *     not genericized HERE.
+ *
+ *     🔴 That used to be stated without the "usually", and as written it was
+ *     FALSE — civitai#3845 investigation 3. `throwDbError` maps a large slice of
+ *     Prisma codes to 4xx (P2000→400, P2025→404, P2003→409, P2024→408) while
+ *     copying the driver's own `message` verbatim, so a 4xx body could be a raw
+ *     `Invalid \`prisma.<model>.<method>()\` invocation` dump disclosing the table,
+ *     the column or the constraint name. Those are now caught by a SECOND
+ *     predicate, `isDriverAuthoredMessage`, applied inside the 4xx arm below: it
+ *     asks who WROTE the text rather than how severe the status is, keeps the
+ *     status, and — crucially — logs the un-redacted text on the way out, so the
+ *     "genericized exactly when logged" invariant holds for it too. A 4xx whose
+ *     message is ours is still passed through byte-identically.
  *   - **503** is the retryable transient-upstream mapping
  *     (`throwServiceUnavailableError`, the Meili/ClickHouse/orchestrator brownout
  *     guards). It fires in high-volume waves, so it is excluded from the error
@@ -73,6 +117,84 @@ function logRestServerFault(e: unknown) {
  */
 function isRestServerFault(status: number): boolean {
   return status >= 500 && status !== 503;
+}
+
+/**
+ * Mark an error response uncacheable. Applied to EVERY response this helper
+ * writes — there is no such thing as an error worth serving from a shared cache.
+ *
+ * 🔴 `PublicEndpoint` sets `Cache-Control: public, s-maxage=300,
+ * stale-while-revalidate=150` on EVERY response, unconditionally, BEFORE the
+ * handler runs — errors included. That was survivable while every failure on
+ * those routes was a 5xx, because shared caches do not cache 5xx by default. It
+ * stops being survivable the moment an error answers **404**: 404 IS in the
+ * default cacheable set, so a `NOT_FOUND` from a transient condition (replica
+ * lag, a `throwDbError`-mapped P2001/P2025) would be pinned at the edge for 300s
+ * + 150s SWR — serving "no such thing" for five minutes after the thing exists.
+ *
+ * 🔴 **An earlier version of this scoped the opt-out to the GENERICIZED arms, and
+ * that missed the case it was written for.** Measured, per arm, against a `res`
+ * pre-stamped with `PublicEndpoint`'s header:
+ *
+ *   pass-through 404 (`throwNotFoundError`)  →  public, s-maxage=300   ← the hazard
+ *   non-TRPCError 500 (else-branch)          →  public, s-maxage=300
+ *   genericized 5xx                          →  no-store
+ *
+ * The routes this change touches answer 404 mostly via `throwNotFoundError`,
+ * whose message is OURS — so it takes the pass-through arm and never reached the
+ * genericized one. Scoping by "did we rewrite the body" was the wrong axis; the
+ * right axis is "is this a response a cache should keep", and for an error the
+ * answer is always no.
+ *
+ * **Accepted trade.** 🔴 **Do not trust a list here — three successive attempts to
+ * enumerate the affected routes were each wrong, in the same way.** v1 asserted
+ * without checking ("these routes are not under that kind of load"); v2 gave a
+ * "measured" count of ONE, having surveyed only `PublicEndpoint`; v3 added the
+ * `MixedAuthEndpoint` by-id routes but missed `v1/models/index.ts` and then made a
+ * false blanket claim about rate limiters. Each version was more precise and more
+ * quotable than the last, and wrong.
+ *
+ * So: the RULE, and how to re-derive the set yourself.
+ *
+ * **Rule** — a route loses 404 edge absorption iff (a) its wrapper stamps the
+ * public cache header, and (b) its 404 reaches THIS helper.
+ *   (a) `PublicEndpoint` stamps it unconditionally; `MixedAuthEndpoint` stamps it
+ *       on every ANONYMOUS request (`if (!session) addPublicCacheHeaders(...)`
+ *       below) — that second one is what keeps getting missed.
+ *   (b) a route that answers 404 itself (`res.status(404).json(...)`) is
+ *       unaffected. `v1/models/[id]` — the highest-traffic caller — does exactly
+ *       that at `:197`, so it keeps its edge cache.
+ *
+ * **Re-derive:** grep `handleEndpointError` under `src/pages/api`, keep the
+ * `PublicEndpoint`/`MixedAuthEndpoint` ones, and check which can reach a
+ * `throwNotFoundError` (directly or through a service).
+ *
+ * Known examples at time of writing, NOT a complete set: `v1/content/[[...slug]]`
+ * (PublicEndpoint), `v1/articles/[id]`, `v1/collections/[id]`, and
+ * `v1/models/index.ts` — the last via `?username=<nonexistent>`, which reaches
+ * `throwNotFoundError('User not found')` in `model.service.ts`.
+ *
+ * **Rate limiting is NOT a blanket reassurance.** Measured: the six
+ * `PublicEndpoint` callers have none, so edge absorption was the only thing in
+ * front of them. Of the seven `MixedAuthEndpoint` callers, six are limited
+ * (`checkPublicApiRateLimit`, `enforceAppsCatalogRateLimit`) and
+ * **`v1/models/index.ts` is not** — which makes it the sharp case: unlimited,
+ * anonymous, and its miss costs two user lookups, the second against the PRIMARY
+ * (`model.service.ts` falls back to `dbWrite` when the read misses, and a
+ * nonexistent username always misses).
+ *
+ * Uniform application also removes a **fault-classification oracle**: with the
+ * narrower version, `no-store` vs `s-maxage=300` on the same status told a caller
+ * whether the message had been rewritten — one bit of exactly the kind the 5xx
+ * arm's own comment says genericizing exists to remove.
+ *
+ * `v1/users/index.ts` and `v1/images/index.ts` already do this at their 503 arms.
+ * They emit bare `no-store` where this emits `no-store, max-age=0`; both are
+ * correct, and their tests pin the exact string, so they are left alone.
+ */
+function noStore(res: NextApiResponse) {
+  if (!res.headersSent) res.setHeader('Cache-Control', 'no-store, max-age=0');
+  return res;
 }
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
@@ -281,7 +403,7 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     // navigated away), cancelling the request signal. Not a server fault: respond
     // 499 (client closed request) so it stays out of the 5xx SLO + the
     // civitai_app_http_errors_total counter and isn't logged as a spurious 500.
-    if (!res.headersSent) res.status(499).end();
+    if (!res.headersSent) noStore(res).status(499).end();
     return;
   }
   if (e instanceof TRPCError) {
@@ -313,9 +435,38 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     // this genericizes the RESPONSE only, never the LOG.
     if (isRestServerFault(status)) {
       logRestServerFault(apiError);
-      return res
+      return noStore(res)
         .status(status)
         .json(restErrorBody(REST_ERROR_CODE.INTERNAL_SERVER_ERROR, GENERIC_SERVER_ERROR_MESSAGE));
+    }
+    // ── DRIVER-AUTHORED 4xx — status kept, MESSAGE genericized ────────────────
+    // 🔴 civitai#3845 investigation 3. The arm below this one is correct for a
+    // message we wrote and wrong for one Postgres wrote. `throwDbError` forwards
+    // the driver's `message` verbatim and `prismaErrorToTrpcCode` sends a large
+    // slice of codes to 4xx, so `P2000 → 400` shipped the offending COLUMN,
+    // `P2003 → 409` the CONSTRAINT name and `P2025 → 404` the model + method.
+    //
+    // The discriminator is message IDENTITY against a driver error in the cause
+    // chain — NOT "is a driver error present". The chain test has a real false
+    // positive: `throwBadRequestError('That slug is already taken', dbError)`
+    // attaches the driver as `cause` while writing a message FOR the caller, and
+    // genericizing that would destroy good client feedback to redact nothing.
+    //
+    // Logged BEFORE genericizing, on purpose: this arm buys into exactly the same
+    // invariant as the 5xx arm — the un-redacted text leaves the wire precisely
+    // when it enters the log, so no message is ever destroyed outright.
+    //
+    // 503 needs no explicit exclusion here: `GENERIC_CLIENT_ERROR_BY_STATUS` has
+    // no 503 key, so `generic` is already undefined for it, and
+    // `rest-error-envelope-ledger.test.ts` FAILS if a 503 key is ever added
+    // (its key set must equal the 4xx statuses `prismaErrorToTrpcCode` reaches).
+    // An earlier draft carried a `status !== 503` clause; it was dead — removing
+    // it left the whole suite green — and a test comment claimed it was what
+    // enforced the exclusion, which was false. The map's key set is.
+    const generic = GENERIC_CLIENT_ERROR_BY_STATUS[status];
+    if (generic && isDriverAuthoredMessage(apiError.message, apiError)) {
+      logRestGenericizedClientFault(apiError);
+      return noStore(res).status(status).json(restErrorBody(generic.code, generic.message));
     }
     // ── CLIENT FEEDBACK (4xx) + 503 — passed through BYTE-IDENTICALLY ──────────
     // Older Zod-validation TRPCErrors stuff a JSON-encoded issue array into
@@ -331,7 +482,7 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     } catch {
       body = { message: apiError.message };
     }
-    return res.status(status).json(body);
+    return noStore(res).status(status).json(body);
   } else {
     const error = e as Error;
     // This branch increments the http-errors counter (via the wrapper's
@@ -356,7 +507,7 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     // above (structured, cause-walked, queryable in `_axiom`) — this genericizes
     // the RESPONSE only, never the LOG. Pinned by
     // `src/server/utils/__tests__/endpoint-helpers-error-envelope.test.ts`.
-    return res
+    return noStore(res)
       .status(500)
       .json(restErrorBody(REST_ERROR_CODE.INTERNAL_SERVER_ERROR, GENERIC_SERVER_ERROR_MESSAGE));
   }

@@ -258,7 +258,13 @@ export async function runModelSearch(
           files: includeDownloadUrl
             ? castedFiles
                 .filter((file) => file.visibility === ModelFileVisibility.Public)
-                .map(({ hashes, ...file }) => ({
+                // `modelVersionId` is stripped, not used: getModelsWithVersions
+                // now preserves it (a spliced VAE file belongs to the LINKED
+                // version, not this one), and the `...file` spread would
+                // otherwise put it on the public wire body. This endpoint does
+                // not pin `fileId` at all, so it needs the value only to keep
+                // it out of the response.
+                .map(({ hashes, modelVersionId: _ownerVersionId, ...file }) => ({
                   ...file,
                   name: safeDecodeURIComponent(
                     getDownloadFilename({ model, modelVersion: version, file })

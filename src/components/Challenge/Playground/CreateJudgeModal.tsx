@@ -3,7 +3,19 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconPlus } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import * as z from 'zod';
-import { Form, InputJson, InputSwitch, InputText, InputTextArea, useForm } from '~/libs/form';
+import {
+  Form,
+  InputJson,
+  InputSelect,
+  InputSwitch,
+  InputText,
+  InputTextArea,
+  useForm,
+} from '~/libs/form';
+import {
+  DEFAULT_JUDGING_ENGINE,
+  JUDGING_ENGINE_OPTIONS,
+} from '~/server/games/daily-challenge/challenge-judging-engine';
 import { upsertJudgeSchema } from '~/server/schema/challenge.schema';
 import { JUDGE_USER_SELECTABLE_FIELD } from '~/shared/constants/challenge.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -28,6 +40,7 @@ const defaultValues: z.infer<typeof schema> = {
   reviewTemplate: null,
   winnerSelectionPrompt: null,
   userSelectable: false,
+  judgingEngine: DEFAULT_JUDGING_ENGINE,
 };
 
 export function CreateJudgeModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
@@ -83,6 +96,7 @@ export function CreateJudgeModal({ opened, onClose }: { opened: boolean; onClose
       reviewTemplate: data.reviewTemplate,
       winnerSelectionPrompt: data.winnerSelectionPrompt,
       userSelectable: data.userSelectable,
+      judgingEngine: data.judgingEngine,
     });
   };
 
@@ -153,6 +167,13 @@ export function CreateJudgeModal({ opened, onClose }: { opened: boolean; onClose
             autosize
             minRows={3}
             maxRows={8}
+          />
+          <InputSelect
+            name="judgingEngine"
+            label="Judging Engine"
+            description="Copied onto each new challenge assigned this judge; live challenges keep theirs"
+            data={JUDGING_ENGINE_OPTIONS}
+            allowDeselect={false}
           />
           <InputSwitch
             name="userSelectable"

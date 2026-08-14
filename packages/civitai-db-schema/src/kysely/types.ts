@@ -1452,6 +1452,7 @@ export type Challenge = {
   judgingCategories: unknown | null;
   reviewPercentage: Generated<number>;
   maxReviews: number | null;
+  judgingEngine: Generated<string>;
   collectionId: number | null;
   maxEntriesPerUser: Generated<number>;
   maxParticipants: number | null;
@@ -1500,6 +1501,32 @@ export type ChallengeEngagement = {
   type: ChallengeEngagementType;
   createdAt: Generated<Timestamp>;
 };
+export type ChallengeEntryComparison = {
+  id: Generated<number>;
+  challengeId: number;
+  phase: string;
+  imageIdA: number;
+  imageIdB: number;
+  firstSeatImageId: number;
+  winnerImageId: number | null;
+  margin: string | null;
+  model: string;
+  rerouted: Generated<boolean>;
+  perCategory: unknown | null;
+  reason: string | null;
+  buzzCost: Generated<number>;
+  createdAt: Generated<Timestamp>;
+};
+export type ChallengeEntryStanding = {
+  challengeId: number;
+  imageId: number;
+  userId: number;
+  rank: number;
+  comparisons: Generated<number>;
+  winRate: number | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
 export type ChallengeEvent = {
   id: Generated<number>;
   title: string;
@@ -1528,6 +1555,7 @@ export type ChallengeJudge = {
   winnerSelectionPrompt: string | null;
   active: Generated<boolean>;
   userSelectable: Generated<boolean>;
+  judgingEngine: Generated<string>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
@@ -2219,6 +2247,15 @@ export type FeaturedModelVersion = {
   validFrom: Timestamp;
   validTo: Timestamp;
   position: number;
+};
+export type Feedback = {
+  id: Generated<number>;
+  area: string;
+  userId: number;
+  message: string;
+  context: Generated<unknown>;
+  status: Generated<string>;
+  createdAt: Generated<Timestamp>;
 };
 export type File = {
   id: Generated<number>;
@@ -3022,6 +3059,30 @@ export type Placement = {
    */
   takenDownAt: Timestamp | null;
   takenDownById: number | null;
+  /**
+   * When this placement's Buzz reached the target's counter. The counter lives in
+   * ClickHouse, which has no per-placement key to ask, so the fact that it was
+   * counted is recorded here or nowhere. NULL on a placement that reached
+   * `approved` is the reconcile sweep's work queue.
+   */
+  metricCountedAt: Timestamp | null;
+  /**
+   * When a sweep took this row to count it. Two columns rather than one because
+   * the claim has to be atomic and the confirmation cannot be: two sweeps can
+   * overlap (the job lock fails open when Redis is down), and without a claim
+   * both read the same unstamped rows and both emit before either stamps. The
+   * counter never reverses, so that over-count is permanent. A claim older than
+   * the recovery window is retried, which is what stops a crash between the two
+   * writes turning into the loss this whole feature exists to end.
+   */
+  metricClaimedAt: Timestamp | null;
+  /**
+   * How many times a sweep has taken this row. A row the tracker rejects fails
+   * identically on every retry, and the claim orders by `resolvedAt`, so
+   * without a ceiling one poisoned row sits at the head of the queue being
+   * re-claimed forever and starves everything behind it.
+   */
+  metricAttempts: Generated<number>;
 };
 export type PlacementSpace = {
   id: Generated<number>;
@@ -4205,6 +4266,8 @@ export type DB = {
   Challenge: Challenge;
   ChallengeCategory: ChallengeCategory;
   ChallengeEngagement: ChallengeEngagement;
+  ChallengeEntryComparison: ChallengeEntryComparison;
+  ChallengeEntryStanding: ChallengeEntryStanding;
   ChallengeEvent: ChallengeEvent;
   ChallengeJudge: ChallengeJudge;
   ChallengeReport: ChallengeReport;
@@ -4273,6 +4336,7 @@ export type DB = {
   EntityMetricImage: EntityMetricImage;
   EntityModeration: EntityModeration;
   FeaturedModelVersion: FeaturedModelVersion;
+  Feedback: Feedback;
   File: File;
   GenerationBaseModel: GenerationBaseModel;
   GenerationCoverage: GenerationCoverage;

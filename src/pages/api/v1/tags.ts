@@ -1,12 +1,8 @@
 import { TagTarget } from '~/shared/utils/prisma/enums';
-import { TRPCError } from '@trpc/server';
-import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { publicApiContext2 } from '~/server/createContext';
 
-import { appRouter } from '~/server/routers';
-import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
-import { isClientAbortError } from '~/server/utils/errorHandling';
+import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPaginationLinks } from '~/server/utils/pagination-helpers';
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -35,28 +31,9 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       },
     });
   } catch (error) {
-    if (isClientAbortError(error)) {
-      // Client disconnected mid-request — not a server fault. 499, not 500.
-      if (!res.headersSent) res.status(499).end();
-      return;
-    }
-    if (error instanceof TRPCError) {
-      const status = getHTTPStatusCodeFromError(error);
-      // Some TRPCErrors carry a JSON-stringified body (zod/validation); others
-      // (throwDbError-wrapped INTERNAL_SERVER_ERRORs) carry a plain string. A
-      // blind JSON.parse on the plain-string case throws, escapes this catch,
-      // and surfaces a raw unhandled 500 — so guard it with a fallback.
-      const parsedError = (() => {
-        try {
-          return JSON.parse(error.message);
-        } catch {
-          return { message: error.message };
-        }
-      })();
-
-      res.status(status).json(parsedError);
-    } else {
-      res.status(500).json({ message: 'An unexpected error occurred', error });
-    }
+    // civitai#3845 (population B) — see the note on `v1/creators.ts`. Same
+    // hand-rolled copy, same drift, same delegation.
+    handleEndpointError(res, error);
+    return;
   }
 });

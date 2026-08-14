@@ -12,6 +12,13 @@ import { NsfwLevel } from '~/server/common/enums';
 export type RemixGalleryPlacementData = {
   imageId: number;
   remixOfId?: number | null;
+  /**
+   * The host image was verifiably an input to the generation that produced this
+   * submission — resolved server-side, not asserted by the submitter. Absent
+   * means unknown: an off-site remix can never carry it, so its absence says
+   * nothing about the submission and must never read as a demerit.
+   */
+  derivedFromHost?: boolean;
   /** Set by the owner. Pinned entries render before the rotation. */
   pinnedAt?: string | null;
   /** Order among pinned entries only. The rest are shuffled. */
