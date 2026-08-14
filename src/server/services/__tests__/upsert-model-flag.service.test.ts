@@ -77,6 +77,20 @@ describe('upsertModelFlag', () => {
     expect(result).toBeNull();
   });
 
+  it('lets a database error propagate instead of swallowing it', async () => {
+    const { upsertModelFlag } = await import('~/server/services/model-flag.service');
+    mockQueryRaw.mockRejectedValue(new Error('relation "ModelFlag" does not exist'));
+
+    // This whole incident was a statement that threw on every call while the
+    // caller's `.catch(...)` hid it, so nothing recorded anything for 15.5
+    // months and nobody saw an error. A `.catch(() => [null])` added here
+    // would recreate that silence one layer lower — and it is the one mutant
+    // that survives both the statement suite and the rest of this file.
+    await expect(upsertModelFlag({ modelId: 7, scanResult: FLAGGED })).rejects.toThrow(
+      'relation "ModelFlag" does not exist'
+    );
+  });
+
   it('forwards modelId, every flag and details through to the statement', async () => {
     const { upsertModelFlag } = await import('~/server/services/model-flag.service');
 

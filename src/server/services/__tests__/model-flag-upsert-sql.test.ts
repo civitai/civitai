@@ -173,11 +173,19 @@ describe('buildModelFlagUpsert — structure', () => {
  * execution arm below never runs there and this is the guard that does.
  *
  * 🔴 What this does NOT cover, so nobody reads it as closing the class: these
- * cases read `statement.values` and are therefore blind to everything that
- * lives only in the statement TEXT — the column list's order (pinned by the
- * shape suite above instead), the conflict target, the table name, and
- * `DO UPDATE` vs `DO NOTHING`. Those are caught only by the execution arm,
- * i.e. not in CI. Do not treat a green always-on run as proof the statement is
+ * cases read `statement.values`, so anything living only in the statement TEXT
+ * has to be caught elsewhere. Measured over a 25-mutant battery, exactly three
+ * corruptions survive the whole always-on suite and are caught only by the
+ * execution arm — i.e. never in CI:
+ *
+ *   - the table name
+ *   - the ON CONFLICT target
+ *   - narrowing `RETURNING *`
+ *
+ * Everything else text-only IS covered without a database: the column list's
+ * order and contents (pinned by the shape suite above), `DO UPDATE` vs
+ * `DO NOTHING`, a commented-out SET clause, and all three original punctuation
+ * defects. Do not treat a green always-on run as proof the statement is
  * correct; run the execution arm when you change it.
  */
 describe('buildModelFlagUpsert — value binding', () => {
@@ -311,9 +319,10 @@ describe.skipIf(!testDatabaseUrl)('buildModelFlagUpsert — execution (real Post
 
     // Named for what it actually pins. This compares the returned keys against
     // a hand-written list, so it does NOT verify `ModelFlagRow` against the
-    // live schema — adding a field to either the type or the table leaves it
-    // green. What it does catch is `RETURNING *` being narrowed, which would
-    // drop keys the type promises callers.
+    // live schema — adding a field to the type, or to the live table without
+    // updating the fixture DDL above, leaves it green. (Adding one to that
+    // fixture DDL does turn it red.) What it does catch is `RETURNING *` being
+    // narrowed, which would drop keys the type promises callers.
     expect(Object.keys(rows[0]).sort()).toEqual(
       [
         'modelId',
