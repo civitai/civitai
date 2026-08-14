@@ -110,7 +110,13 @@ const AddUserContentModal = dynamic(() =>
   import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
 );
 
-const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
+const ModelCollection = ({
+  collection,
+  permissions,
+}: {
+  collection: NonNullable<CollectionByIdModel>;
+  permissions?: CollectionContributorPermissionFlags;
+}) => {
   const { set, ...query } = useModelQueryParams();
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const sort = isContestCollection
@@ -151,12 +157,15 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
     <ModelContextMenuProvider
       setMenuItems={(data, menuItems) => {
         const items = menuItems.filter((m) => m.key !== 'add-to-collection');
-        const isOwnerOrMod =
+        // Same rule the image collection uses, and the same one the server enforces — a Manager
+        // could not remove anything here while being able to on an image collection.
+        const canRemove =
+          permissions?.manage ||
           currentUser?.id === collection.user.id ||
           currentUser?.id === data.user.id ||
           currentUser?.isModerator;
 
-        if (isOwnerOrMod) {
+        if (canRemove) {
           items.push({
             key: 'remove-from-collection',
             component: (
@@ -288,11 +297,17 @@ const ImageCollection = ({
         );
       }}
       additionalMenuItemsAfter={(image) => {
-        const isOwnerOrMod =
-          permissions?.manage || currentUser?.id === collection.user.id || currentUser?.isModerator;
+        // Mirrors `removeCollectionItem`: a manage holder, the collection owner, a moderator, or
+        // the image's author. The server also allows whoever added the row, but the card payload
+        // carries no addedById, so that case only surfaces in the save picker.
+        const canRemove =
+          permissions?.manage ||
+          currentUser?.id === collection.user.id ||
+          currentUser?.isModerator ||
+          currentUser?.id === (image.userId ?? image.user?.id);
         return (
           <>
-            {isOwnerOrMod && (
+            {canRemove && (
               <RemoveFromCollectionMenuItem collectionId={collection.id} itemId={image.id} />
             )}
           </>
@@ -987,7 +1002,7 @@ export function Collection({
                       </AlertWithIcon>
                     )}
                     {collection && collectionType === CollectionType.Model && (
-                      <ModelCollection collection={collection} />
+                      <ModelCollection collection={collection} permissions={permissions} />
                     )}
                     {collection && collectionType === CollectionType.Image && (
                       <ImageCollection collection={collection} permissions={permissions} />
