@@ -1366,13 +1366,21 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     },
   });
 
+  // `meta` is optional on this input, and the difference matters: absent means "leave the
+  // stored metadata alone" (the hide/show-prompt toggle sends only `hideMeta`), while an
+  // explicit `null` means "clear it". Collapsing the two writes SQL NULL over metadata the
+  // caller never touched, so the write below is skipped entirely unless the key was sent.
+  const metaProvided = image.meta !== undefined;
+
   // This edit replaces meta wholesale from client input, so provenance has to be
   // re-derived from the row rather than accepted: otherwise editing an image you
   // already own is a way to assert a derivation you never made.
-  const meta = sanitizeProvenance(
-    image.meta as Record<string, unknown> | null | undefined,
-    storedSourceImageIds(currentImage.meta)
-  );
+  const meta = metaProvided
+    ? sanitizeProvenance(
+        image.meta as Record<string, unknown> | null | undefined,
+        storedSourceImageIds(currentImage.meta)
+      )
+    : undefined;
 
   const blockedForVerification = currentImage.blockedFor === BlockedReason.AiNotVerified;
   const updatedIsVerifiable = isValidAIGeneration({
@@ -1389,7 +1397,12 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
       ...image,
       id: undefined, // prevent updating the id!
       updatedAt: new Date(),
-      meta: meta != null ? (meta as Prisma.JsonObject) : Prisma.JsonNull,
+      // undefined = omit the column from the UPDATE; Prisma.JsonNull = write SQL NULL.
+      meta: metaProvided
+        ? meta != null
+          ? (meta as Prisma.JsonObject)
+          : Prisma.JsonNull
+        : undefined,
       // If this image was blocked due to missing metadata, we need to set it back to pending
       ingestion: shouldIngest ? 'Pending' : undefined,
       blockedFor: shouldIngest ? null : undefined,
@@ -1416,9 +1429,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     //
     // The delete path (deleteImageFromS3 below) deliberately does NOT pass a scope — there the row
     // is already gone and the image must stop serving entirely.
-    cacheRefreshPromises.push(
-      purgeResizeCache({ url: result.url, scope: 'hidden-meta-orphans' })
-    );
+    cacheRefreshPromises.push(purgeResizeCache({ url: result.url, scope: 'hidden-meta-orphans' }));
   }
   // Bust the image-delivery metadata cache on ANY hideMeta change (both directions): that
   // cache serves { hideMeta } to the delivery/resize path, and a stale value would keep
