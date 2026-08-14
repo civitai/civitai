@@ -205,10 +205,23 @@ export const setRemixGalleryPinsSchema = z.object({
 /** Where the last page stopped. Opaque to the client; see `placementQueueKeyset`. */
 const placementQueueCursorSchema = z.string().max(100).nullish();
 
+/**
+ * The review queues take a browsing level like every image listing, but they do
+ * not filter on it: an owner has to be shown everything waiting on them, or the
+ * escrow behind what they cannot see expires unreviewed. It marks rows instead,
+ * so the surface can say what is outside the viewer's band and offer to widen it.
+ * The domain ceiling is the separate, non-negotiable one, applied in the router.
+ */
 export const getPendingRemixGallerySubmissionsSchema = z.object({
   /** Omitted for the account-wide queue; set to scope to one gallery. */
   hostImageId: z.number().int().positive().optional(),
+  browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
   cursor: placementQueueCursorSchema,
+});
+
+/** Same marking rule as the owner queue: the submitter's own band, not a filter. */
+export const getMyRemixGallerySubmissionsSchema = z.object({
+  browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
 });
 
 export const getPendingStickerPlacementsSchema = z.object({

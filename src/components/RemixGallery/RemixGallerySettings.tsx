@@ -48,9 +48,7 @@ export function RemixGallerySettings() {
     {},
     { enabled }
   );
-  const { data: sent } = trpc.placement.getMyRemixGallerySubmissions.useQuery(undefined, {
-    enabled,
-  });
+  const { data: sent } = trpc.placement.getMyRemixGallerySubmissions.useQuery({}, { enabled });
 
   const stored = spaces?.[0];
   // Seeded from the surface default, not from `'off'`. A creator with no row is

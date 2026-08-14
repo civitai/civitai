@@ -6,6 +6,7 @@ import {
   getPlacementSpaceSchema,
   countPendingPlacementsFromSchema,
   getPlacementSettlementStatesSchema,
+  getMyRemixGallerySubmissionsSchema,
   getPendingRemixGallerySubmissionsSchema,
   getPendingStickerPlacementsSchema,
   getRemixGallerySchema,
@@ -60,7 +61,10 @@ import {
 } from '~/server/services/remix-gallery.service';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import type { PlacementSurface } from '~/shared/utils/placement';
 import type { Context } from '~/server/createContext';
 
@@ -119,6 +123,17 @@ function assertSurfaceEnabled(ctx: Context, surface: PlacementSurface) {
  */
 const viewerBrowsingLevel = (ctx: Context, requested: number) =>
   ctx.features.isGreen ? requested & sfwBrowsingLevelsFlag : requested;
+
+/**
+ * What this domain may be SENT, as opposed to what the viewer asked for.
+ *
+ * The review queues carry no browsing level by design — an owner has to see what
+ * is waiting on them whatever their own settings say — which makes them the one
+ * path that hands an above-ceiling asset to a SFW client. Blur is not that
+ * control: it is built from the viewer's own level and never reads the domain's.
+ */
+const domainServableLevels = (ctx: Context) =>
+  ctx.features.isGreen ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
 
 export const placementRouter = router({
   getSpace: publicProcedure
@@ -327,6 +342,7 @@ export const placementRouter = router({
       getRemixGalleryVisibility({
         hostImageId: input.imageId,
         browsingLevel: viewerBrowsingLevel(ctx, input.browsingLevel),
+        domainLevels: domainServableLevels(ctx),
         // The service only counts pending submissions when this matches the
         // space owner, so a signed-out or unrelated viewer never learns how
         // many someone has waiting.
@@ -378,10 +394,18 @@ export const placementRouter = router({
         ownerId: ctx.user.id,
         hostImageId: input.hostImageId,
         cursor: input.cursor,
+        domainLevels: domainServableLevels(ctx),
+        viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
       })
     ),
 
-  getMyRemixGallerySubmissions: protectedProcedure.query(({ ctx }) =>
-    getMyRemixGallerySubmissions({ placerId: ctx.user.id })
-  ),
+  getMyRemixGallerySubmissions: protectedProcedure
+    .input(getMyRemixGallerySubmissionsSchema)
+    .query(({ input, ctx }) =>
+      getMyRemixGallerySubmissions({
+        placerId: ctx.user.id,
+        domainLevels: domainServableLevels(ctx),
+        viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
+      })
+    ),
 });
