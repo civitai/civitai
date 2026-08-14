@@ -534,10 +534,17 @@ describe('AppCollaboratorsPanelView — ownership transfer (owner half)', () => 
    * 🔴 THE CONNECT-CLIENT REFUSAL, RENDERED WITH ITS REASON.
    *
    * A connect-linked off-site listing is refused at initiate AND again in-transaction at
-   * accept, with a message that names a concrete remedy: unlink the OAuth client first.
-   * Collapsing that into a generic "something went wrong" leaves the owner with a control
-   * that fails forever and no way to learn why — so the message is asserted VERBATIM
-   * against the server's own exported constant rather than against a paraphrase.
+   * accept, with a message that names the REASON (the credentials/split-ownership
+   * consequence) rather than a remedy — there is no unlink path in the product, so the
+   * string deliberately instructs nothing. Collapsing it into a generic "something went
+   * wrong" would leave the owner with a control that fails forever and no way to learn
+   * why, so the message is asserted VERBATIM against the server's own exported constant
+   * rather than against a paraphrase.
+   *
+   * NOTE: this test drives the MUTATION-ERROR route (the prop), which still exists for
+   * every other refusal reason. The connect-client case is now caught BEFORE submission —
+   * see `src/tests/pages/apps/listing-collaborators-transfer.browser.test.tsx`, which
+   * drives it from listing data with no prop at all.
    */
   test('🔴 a refusal renders inline, with the server’s reason intact', async () => {
     renderWithProviders(
@@ -553,7 +560,9 @@ describe('AppCollaboratorsPanelView — ownership transfer (owner half)', () => 
     const error = page.getByTestId('apps-transfer-owner-error');
     await expect.element(error).toBeInTheDocument();
     await expect.element(error).toHaveTextContent(/linked to an OAuth application/i);
-    await expect.element(error).toHaveTextContent(/Unlink the OAuth client first/i);
+    // NOT `/cannot be transferred/i` — this Alert's `title` prop already spells that, so
+    // the regex would match the chrome rather than the message. Assert on the body.
+    await expect.element(error).toHaveTextContent(/split ownership/i);
     // 🔴 The message the SERVER will send, character for character — a paraphrase here
     // would let the copy drift out from under the assertion.
     await expect.element(error).toHaveTextContent(CONNECT_CLIENT_TRANSFER_REFUSAL);

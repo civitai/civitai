@@ -780,11 +780,37 @@ export type MyAppListing = {
   kind: ListingKind;
   /** `null` for an off-site listing — legitimately absent, not missing. */
   appBlockId: string | null;
+  role: AppRole;
+  /**
+   * 🔴 DERIVED FROM THE KIND, at the same seam every gate derives it — never stored, and
+   * never widened per row. A surface that renders an action for a `false` capability is
+   * rendering a guaranteed 403.
+   */
+  capabilities: Readonly<Record<ListingCapability, boolean>>;
+};
+
+/**
+ * The SINGLE-LISTING authoring read's row — {@link MyAppListing} plus the one extra fact
+ * the authoring page needs. Returned by {@link getAppListingAuthoringContext}.
+ *
+ * 🔴 A SEPARATE TYPE RATHER THAN A WIDER `MyAppListing`, and the distinction is a
+ * disclosure boundary rather than tidiness. `connectClientId` was first added to
+ * `MyAppListing` itself, which silently widened `listMine` — a LIST read over every
+ * listing the caller can touch — for no consumer at all. Both reads are reachable by an
+ * accepted EDITOR, not just the owner, so that would have handed a seated collaborator the
+ * client_id of every listing they hold a seat on, including `draft` ones the public read
+ * does not expose yet. Harmless in itself (it is the public client_id, never the secret)
+ * and bought nothing, which is precisely why it should not be paid.
+ *
+ * So the field is carried ONLY on the read that has a consumer. If a list surface ever
+ * needs it, widen `MyAppListing` then — with the consumer, and a test that pins it.
+ */
+export type AppListingAuthoringContext = MyAppListing & {
   /**
    * The listing's linked OAuth `client_id`, or `null`. PUBLIC, not a secret — the same
    * column the public listing-detail read already exposes (`ListingDetailKindData`).
    *
-   * 🔴 CARRIED SO AN AUTHORING SURFACE CAN REACH THE TRANSFER VERDICT UP FRONT. A
+   * 🔴 CARRIED SO THE AUTHORING SURFACE CAN REACH THE TRANSFER VERDICT UP FRONT. A
    * connect-linked off-site listing can never be transferred
    * ({@link refusesTransferForConnectClient}), and without this field the Collaborators
    * tab could not know that until the mutation came back refused — so it rendered an
@@ -793,13 +819,6 @@ export type MyAppListing = {
    * `AppCollaboratorsPanelView`, and the server gate is unchanged and still authoritative.
    */
   connectClientId: string | null;
-  role: AppRole;
-  /**
-   * 🔴 DERIVED FROM THE KIND, at the same seam every gate derives it — never stored, and
-   * never widened per row. A surface that renders an action for a `false` capability is
-   * rendering a guaranteed 403.
-   */
-  capabilities: Readonly<Record<ListingCapability, boolean>>;
 };
 
 /** Hydrate {@link resolveAccessibleListingIds} into rows, newest listing first. */
@@ -810,15 +829,10 @@ async function hydrateMyAppListings(
   if (ids.allIds.length === 0) return [];
   const rows = await dbRead.appListing.findMany({
     where: { id: { in: ids.allIds } },
-    select: {
-      id: true,
-      slug: true,
-      name: true,
-      status: true,
-      kind: true,
-      appBlockId: true,
-      connectClientId: true,
-    },
+    // 🔴 NO `connectClientId` HERE, deliberately — see {@link AppListingAuthoringContext}.
+    // This is a LIST read reachable by an accepted editor; only the single-listing
+    // authoring read has a consumer for that column.
+    select: { id: true, slug: true, name: true, status: true, kind: true, appBlockId: true },
     orderBy: { serialId: 'desc' },
     take: limit,
   });
@@ -831,7 +845,6 @@ async function hydrateMyAppListings(
       status: string;
       kind: string;
       appBlockId: string | null;
-      connectClientId: string | null;
     }) => {
       const kind = r.kind as ListingKind;
       return {
@@ -841,7 +854,6 @@ async function hydrateMyAppListings(
         status: r.status,
         kind,
         appBlockId: r.appBlockId,
-        connectClientId: r.connectClientId,
         role: (ownedSet.has(r.id) ? 'owner' : 'editor') as AppRole,
         capabilities: capabilitiesForKind(kind),
       };
@@ -998,7 +1010,7 @@ export async function listMyAppListings(opts: {
 export async function getAppListingAuthoringContext(opts: {
   appListingId: string;
   userId: number;
-}): Promise<MyAppListing> {
+}): Promise<AppListingAuthoringContext> {
   const access = await resolveListingAccess(opts.appListingId, opts.userId);
   if (!access) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'App listing not found' });

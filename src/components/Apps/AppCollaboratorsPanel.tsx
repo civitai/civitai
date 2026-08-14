@@ -11,6 +11,7 @@ import {
   AppCollaboratorsPanelView,
   inviteBlockedReason,
   pickerExcludedUserIds,
+  TRANSFER_PICKER_PLACEHOLDER,
 } from '~/components/Apps/AppCollaboratorsPanelView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -95,9 +96,9 @@ export function AppCollaboratorsPanel({
     void utils.appCollaborators.getPendingTransfer.invalidate({ appListingId });
   };
   // 🔴 The refusal is held in STATE and rendered inline by the View, instead of being
-  // thrown at a toast. The connect-client refusal names a concrete remedy ("unlink the
-  // OAuth client first"); a transient toast is exactly where an actionable message goes
-  // to die, and the owner is left with a control that fails every time.
+  // thrown at a toast. A refusal names WHY the transfer cannot happen, and a transient
+  // toast is exactly where a reason goes to die — leaving the owner with a control that
+  // fails every time and nothing on screen explaining it.
   const [transferErrorMessage, setTransferErrorMessage] = useState<string | null>(null);
   const initiateTransfer = trpc.appCollaborators.initiateTransfer.useMutation({
     onSuccess: () => {
@@ -182,7 +183,7 @@ export function AppCollaboratorsPanel({
           showIndexSelect={false}
           dropdownItemLimit={25}
           disabled={transferBusy}
-          placeholder="Search for the person who should own this app"
+          placeholder={TRANSFER_PICKER_PLACEHOLDER}
           onItemSelected={(_entity, item) => {
             const selected = item as SearchIndexDataMap['users'][number];
             setTransferErrorMessage(null);

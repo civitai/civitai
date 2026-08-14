@@ -572,11 +572,21 @@ describe('🔴 an OFF-SITE listing with a connectClientId is REFUSED', () => {
     expect(mockDb.appOwnershipEvent.create).not.toHaveBeenCalled();
   });
 
-  it('🔴 the message NAMES the reason — "unlink the OAuth client first" is actionable', async () => {
-    // A bare FORBIDDEN would leave the owner with no idea what to do, and the whole
-    // point of refusing rather than guessing is that the human makes the call.
+  it('🔴 the message NAMES THE REASON, and instructs NO action the owner cannot take', async () => {
+    // A bare FORBIDDEN would leave the owner with no idea why, and the whole point of
+    // refusing explicitly is that the reason survives to the surface.
     expect(CONNECT_CLIENT_TRANSFER_REFUSAL).toMatch(/OAuth application/i);
-    expect(CONNECT_CLIENT_TRANSFER_REFUSAL).toMatch(/Unlink the OAuth client first/i);
+    expect(CONNECT_CLIENT_TRANSFER_REFUSAL).toMatch(/cannot be transferred/i);
+    // …and it names the CONSEQUENCE, which is the part that makes the refusal legible.
+    expect(CONNECT_CLIENT_TRANSFER_REFUSAL).toMatch(/credentials|split ownership/i);
+
+    // 🔴 NO REMEDY, DELIBERATELY — pinned as a NEGATIVE assertion because this string
+    // used to end "Unlink the OAuth client first" and there is no unlink path in the
+    // product: `connectClientId` is required at submit and immutable on edit. Once the
+    // tab began rendering this permanently rather than only after a failed mutation, a
+    // false instruction became an always-on one. Re-adding a remedy here must fail until
+    // the flow it names actually exists.
+    expect(CONNECT_CLIENT_TRANSFER_REFUSAL).not.toMatch(/unlink/i);
   });
 
   it('🔴 ACCEPT re-asserts it: a client LINKED after the offer was made blocks the accept', async () => {

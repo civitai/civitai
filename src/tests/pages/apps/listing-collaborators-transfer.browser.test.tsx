@@ -24,11 +24,20 @@ import type * as TrpcModule from '~/utils/trpc';
  *
  * 🔴 SO NOTHING HERE PASSES A TRANSFER PROP. Every arm sets ONE thing — the
  * `connectClientId` on the authoring-context payload — and then asserts what the owner
- * sees. The whole chain is real: the page reads the payload, hands the two listing facts
- * to the container, the container forwards them, and the View asks
- * `refusesTransferForConnectClient` — the SAME predicate the service gates on. Break any
- * link of that chain and these tests go red, which is exactly what the props-only suite
- * could not do.
+ * sees. The chain from that payload down is real: the page reads it, hands the two listing
+ * facts to the container, the container forwards them, and the View asks
+ * `refusesTransferForConnectClient`, the SAME predicate the service gates on.
+ *
+ * 🔴 WHAT THIS SUITE DOES **NOT** COVER, stated exactly, because an earlier version of this
+ * comment claimed "break any link of that chain and these tests go red" and that was
+ * measurably false. The payload comes from the local `contextFor()` fixture below, NOT from
+ * the server — so the `tRPC proc → payload` hop is OUT of frame here, and deleting
+ * `connectClientId` from `getAppListingAuthoringContext` leaves this file at 10 passed.
+ * That hop is covered by its own suite
+ * (`src/server/services/blocks/__tests__/app-access.authoring-context-connect-client.test.ts`,
+ * whose Prisma fake projects through the `select`) and, since the page's `AuthoringContext`
+ * is now an alias of the service's own return type rather than a hand-written duplicate,
+ * by `tsc`. Three instruments, three hops; no one of them sees all of it.
  *
  * 🔴 AND THE CONTROL ARM IS NOT OPTIONAL. "Disable the transfer section" satisfies the
  * positive arm on its own, and would ship a panel where nobody can ever transfer
@@ -277,7 +286,19 @@ describe('🔴 an OFF-SITE listing WITH a connect client — refused UP FRONT', 
     // Verbatim against the SERVER's own constant — a paraphrase here would let the two
     // sides drift, which is the whole reason the string lives in `shared/`.
     await expect.element(blocked).toHaveTextContent(CONNECT_CLIENT_TRANSFER_REFUSAL);
-    await expect.element(blocked).toHaveTextContent(/Unlink the OAuth client first/i);
+    // 🔴 `/split ownership/i` and NOT `/cannot be transferred/i`, which would be a
+    // TAUTOLOGY: this Alert's own `title` prop reads "Ownership cannot be transferred for
+    // this app", so that regex matches the chrome whatever the message says. Caught by
+    // running this file against the previous branch tip, where the assertion passed
+    // against the OLD constant. Match on the message BODY, which the title cannot supply.
+    await expect.element(blocked).toHaveTextContent(/split ownership/i);
+    // 🔴 AND IT INSTRUCTS NOTHING THE OWNER CANNOT DO. This banner is now PERMANENT on a
+    // connect-linked listing, so a false remedy would be a permanent false remedy — there
+    // is no unlink path in the product (`connectClientId` is required at submit and
+    // immutable on edit). Pinned on the RENDERED text, not just the constant, because this
+    // surface is what made the difference between "a wrong sentence in an error" and "a
+    // wrong sentence on every visit".
+    await expect.element(blocked).not.toHaveTextContent(/unlink/i);
   });
 
   /**
@@ -317,6 +338,21 @@ describe('🔴 an OFF-SITE listing WITH a connect client — refused UP FRONT', 
   });
 
   /**
+   * …but the section does NOT keep reciting the mechanics of a transfer that can never
+   * start. "One transfer offer at a time. It expires after N days if it is not accepted"
+   * is reassuring, specific and irrelevant here — the combination most easily read as
+   * "so a transfer IS possible, I just have to find the button".
+   */
+  test('the one-offer-at-a-time expiry copy is suppressed', async () => {
+    state.context = contextFor({ kind: 'offsite', connectClientId: 'oc_linked' });
+    renderWithProviders(<AppListingEditPage />);
+
+    const section = page.getByTestId('apps-transfer-owner-section');
+    await expect.element(section).toBeInTheDocument();
+    await expect.element(section).not.toHaveTextContent(/One transfer offer at a time/i);
+  });
+
+  /**
    * 🔴 THE REFUSAL ARRIVES WITHOUT A MUTATION ERROR — which is the entire fix. The
    * mutation-error panel (`apps-transfer-owner-error`) is the OLD route to this message,
    * and it must still be empty: nothing has been submitted, and nothing can be.
@@ -328,6 +364,54 @@ describe('🔴 an OFF-SITE listing WITH a connect client — refused UP FRONT', 
     await expect.element(page.getByTestId('apps-transfer-blocked')).toBeInTheDocument();
     expect(page.getByTestId('apps-transfer-owner-error').elements()).toHaveLength(0);
     expect(state.initiateCalls).toEqual([]);
+  });
+});
+
+describe('🔴 a LIVE OFFER on a connect-linked listing — dead on accept, and said so', () => {
+  /**
+   * 🔴 A REAL CO-EXISTING STATE, NOT A HYPOTHETICAL. `app-ownership-transfer.service`
+   * re-asserts the connect-client refusal IN-TRANSACTION at accept precisely because "a
+   * revision approve can link a client while the offer sits open" — so a listing can carry
+   * a live `pending` offer AND be un-transferable at the same time.
+   *
+   * Before this arm existed the tab rendered "ownership cannot be transferred" directly
+   * above a "Transfer pending → Cancel transfer" card, with nothing saying which one won.
+   * The offer is dead on accept, and the recipient will hit the refusal with no warning.
+   *
+   * 🔴 THIS IS ALSO THE ARM THAT KILLS A MUTANT THAT PREVIOUSLY SURVIVED THE WHOLE SUITE:
+   * gating the verdict on `pendingTransfer == null` passed all 40 tests, because every
+   * other arm here has no pending offer. A guard nothing exercises in this state is a
+   * guard that can be silently removed in this state.
+   */
+  test('the refusal, a dead-offer notice, and a still-usable Cancel all render together', async () => {
+    state.context = contextFor({ kind: 'offsite', connectClientId: 'oc_linked' });
+    state.pendingTransfer = { id: 'aot_live', toUserId: 42, expiresAt: new Date() };
+    renderWithProviders(<AppListingEditPage />);
+
+    // The verdict still applies while an offer is open…
+    await expect.element(page.getByTestId('apps-transfer-blocked')).toBeInTheDocument();
+    // …the owner is told the open offer is now dead…
+    const dead = page.getByTestId('apps-transfer-pending-dead');
+    await expect.element(dead).toBeInTheDocument();
+    await expect.element(dead).toHaveTextContent(/can no longer be accepted/i);
+    // …and Cancel — the only way out of a stale offer — is present and NOT disabled.
+    await expect.element(page.getByTestId('apps-transfer-cancel')).toBeEnabled();
+  });
+
+  /**
+   * The control for the arm above: with an offer open and NO client, the pending card is
+   * ordinary. Without this, "always render the dead-offer notice" would satisfy the test
+   * above — the same over-reach the enabled-picker control arm guards against.
+   */
+  test('CONTROL — an offer on a listing with no client shows no dead-offer notice', async () => {
+    state.context = contextFor({ kind: 'offsite', connectClientId: null });
+    state.pendingTransfer = { id: 'aot_live', toUserId: 42, expiresAt: new Date() };
+    renderWithProviders(<AppListingEditPage />);
+
+    await expect.element(page.getByTestId('apps-transfer-pending')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-transfer-cancel')).toBeEnabled();
+    expect(page.getByTestId('apps-transfer-pending-dead').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-transfer-blocked').elements()).toHaveLength(0);
   });
 });
 

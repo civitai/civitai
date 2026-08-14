@@ -14,18 +14,32 @@
 
 /**
  * The message a connect-linked off-site listing is refused with, at initiate AND again
- * in-transaction at accept. Asserted verbatim on both sides.
+ * in-transaction at accept — and, since the tab learned to refuse up front, the banner an
+ * owner reads on every visit to the Collaborators tab of such a listing.
  *
- * 🔴 IT NAMES A REMEDY. Moving an off-site listing that carries an `OauthClient` would
- * either hand over live credentials the recipient never asked for, or split ownership
- * between the listing and the client. Both are refused; "unlink the OAuth client first"
- * is the one thing the owner can actually do about it, so the UI must not swallow this
- * into a generic error.
+ * 🔴 IT STATES A CONSTRAINT AND DOES NOT INSTRUCT. It used to end "Unlink the OAuth client
+ * first", and that sentence was WRONG about this product: there is no unlink path.
+ * `connectClientId` is REQUIRED at submit (`submitExternalListingSchema`, `z.string()
+ * .min(1).max(64)`), it is immutable on edit (`offsite-listing.service::…` says so in as
+ * many words), and the only writer of `connectClientId: null` anywhere in `src/server` is
+ * `app-listing-mapper.ts`, which MINTS a listing from an AppBlock rather than unlinking an
+ * existing one. So the remedy named an action the owner could not take.
+ *
+ * 🔴 THAT WAS SURVIVABLE WHILE THE STRING ONLY APPEARED AFTER A FAILED MUTATION, AND IS
+ * NOT NOW. Promoting the refusal to an always-on banner promotes a false instruction to an
+ * always-on instruction — a permanent dead end, on a surface whose whole purpose is to
+ * stop the owner wasting effort. Nothing points at support or docs either: inventing a
+ * "contact support" route would swap one unverified promise for another.
+ *
+ * 🔴 IT IS READ IN TWO PLACES AND MUST PARSE IN BOTH — as a tRPC error message at the API,
+ * and as banner prose in the tab. Keep it a single self-contained sentence for that reason.
+ * Adding a remedy later is a PRODUCT change (an unlink flow) and belongs with the code that
+ * implements it, not here.
  */
 export const CONNECT_CLIENT_TRANSFER_REFUSAL =
-  'This listing is linked to an OAuth application. Ownership transfer would either hand ' +
-  'over that application’s credentials or split ownership between the listing and the ' +
-  'client, so it is not available for connect listings. Unlink the OAuth client first.';
+  'This listing is linked to an OAuth application, so its ownership cannot be transferred: ' +
+  'moving it would either hand over that application’s credentials or split ownership ' +
+  'between the listing and the client.';
 
 /**
  * 🔴 THE ONE PREDICATE for "may this listing's ownership move?", written once so the
