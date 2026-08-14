@@ -829,14 +829,15 @@ that reporter to that build.
       `open={!!selected}`, so it is a pure function of whether there is a report to show and the two
       cannot diverge again. Verified in a browser — Unaction on a Pending report closes the sheet,
       leaves 0 dialog nodes in the DOM and the page interactive.
-- [~] 🔴 **Comics review → Block → 500.** (`1537245043146883082`) Filed 19:42, twelve minutes before
-      v0.0.20. That release carries `2002b4bfc7`, which fixes exactly this shape: `blockImage` ran five
-      side effects in a `Promise.all` and three of them could reject *after* the row was already
-      updated, so the moderator got a 500 for work that had succeeded. **But its own commit body
-      refuses the credit** — the comics queue is empty on the dev clone (21,384 panels, none matching
-      the review predicate), so the page could not be exercised outside prod. Shipped as a class fix,
-      with `9b71561707`'s `handleError` hook added alongside it to name the actual failing step next
-      time. **Status: plausibly closed, instrumented, unconfirmed — ask for a re-test.**
+- [x] 🔴 **Comics review → Block → 500.** (`1537245043146883082`, confirmed fixed 2026-08-13.) Filed
+      19:42, twelve minutes before v0.0.20, which carries `2002b4bfc7`: `blockImage` ran five side
+      effects in a `Promise.all` and three could reject *after* the row was already updated, so the
+      moderator got a 500 for work that had succeeded.
+      That commit deliberately refused the credit — the comics queue looked empty on the dev clone, so
+      the page could not be exercised outside prod, and it shipped as a class fix with
+      `9b71561707`'s `handleError` hook to name the failing step next time. **The mod team has since
+      confirmed the queue is populated and blocking works**, so the fix is verified and the caveat in
+      that commit message is stale.
       The second half of that message is a separate question worth answering: **why do a banned user's
       comics appear in the review queue at all.**
 
