@@ -21,6 +21,7 @@ import {
   CollectionInviteStatus,
   CollectionItemStatus,
   CollectionMode,
+  UserEngagementType,
 } from '~/shared/utils/prisma/enums';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 
@@ -178,6 +179,24 @@ export async function inviteCollaborator({
   });
   if (collection?.userId === targetUserId) {
     throw throwBadRequestError('The collection owner is already a collaborator.');
+  }
+
+  // Both directions, and one message for both: telling the inviter which way the
+  // block runs discloses that the target blocked them, which they are not
+  // otherwise told. Moderators are not exempt — the dropdown hides blocked users
+  // from everyone else, so a moderator reaching this is the case worth refusing.
+  const block = await dbRead.userEngagement.findFirst({
+    where: {
+      type: UserEngagementType.Block,
+      OR: [
+        { userId, targetUserId },
+        { userId: targetUserId, targetUserId: userId },
+      ],
+    },
+    select: { userId: true },
+  });
+  if (block) {
+    throw throwBadRequestError('You cannot invite this user.');
   }
 
   if (!isModerator) {
