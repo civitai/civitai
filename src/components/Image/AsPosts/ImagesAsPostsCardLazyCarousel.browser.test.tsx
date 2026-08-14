@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
-// Type-only namespace import for the `importOriginal` mock below. Erased at compile time, so
-// it does not participate in the mock hoisting. `@typescript-eslint/consistent-type-imports`
-// rejects the `typeof import('...')` form, which is why this is a named namespace.
-import type * as GenerationGraphStore from '~/store/generation-graph.store';
+// Type-only namespace import for the `importOriginal` mock below. Erased at compile time, so it
+// does not participate in mock hoisting. `@typescript-eslint/consistent-type-imports` rejects
+// the `typeof import('...')` form, which is why this is a named namespace.
+import type * as TrpcUtils from '~/utils/trpc';
 
 // =============================================================================
 // Gallery lazy per-post carousel (`galleryLazyPostImages`).
@@ -82,15 +82,19 @@ const mocks = vi.hoisted(() => {
 });
 
 // --- tail fetch ---------------------------------------------------------------
-// `trpcVanilla` is required by the generation-graph store, which the mock below now loads for
-// real via `importOriginal`. Without this key that load throws
-// "[vitest] There was an error when mocking a module" — the two mocks are coupled.
-vi.mock('~/utils/trpc', () => ({
+// `importOriginal`-spread, not a hand-written factory. This mock applies to the WHOLE module
+// graph, so every module the test transitively reaches must find the names it imports here.
+// `~/utils/trpc` has 12 exports and a factory listing only the two this file uses breaks the
+// moment the graph reaches a third: browser mode serves native ESM, so a missing named export
+// is a LINK-time error that kills the entire FILE — 0 tests collected, no failing assertion,
+// and the suite total silently drops. That is exactly how this file lost all 9 of its tests
+// (#3859 routed it through Remix/remix.utils, which needs `trpcVanilla` among others).
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcUtils>()),
   trpc: {
     image: { getInfinite: { useQuery: mocks.getInfiniteUseQuery } },
     useUtils: () => ({}),
   },
-  trpcVanilla: {},
 }));
 
 // --- gallery context (filters + browsing level + hidden-pref inputs) ----------
@@ -176,17 +180,6 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 }));
 vi.mock('~/components/TrackView/track.utils', () => ({
   useTrackEvent: () => ({ trackAction: vi.fn().mockResolvedValue(undefined) }),
-}));
-// `importOriginal`-spread, NOT a wholesale factory. This module is reached two hops away
-// (ImagesAsPostsCard -> Remix/RemixMenu -> Remix/remix.utils), and remix.utils imports FOUR
-// names from it. A factory listing only the names this file happens to know about breaks the
-// moment the graph reaches a fifth: browser mode serves native ESM, so a missing named export
-// is a LINK-time error that kills the whole file — 0 tests collected, no failing assertion,
-// and the suite total silently drops. That is what happened here (#3859 replaced this file's
-// direct one-name import with the RemixMenu edge; see the linked issue).
-vi.mock('~/store/generation-graph.store', async (importOriginal) => ({
-  ...(await importOriginal<typeof GenerationGraphStore>()),
-  generationGraphPanel: { open: vi.fn() },
 }));
 
 // Import AFTER the mocks are registered.
