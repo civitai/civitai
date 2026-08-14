@@ -77,6 +77,11 @@ const KNOWN_REACHABLE: { file: string; reason: string }[] = [
       'via logging/client.ts; a leaf (its only import is `import type`), so it adds itself and no further edges. Drops with logging/client.',
   },
   {
+    file: 'src/server/logging/server-fault-override.ts',
+    reason:
+      'via logging/client.ts, which consults it in classifyErrorFault. A leaf with ZERO imports (not even a type-only one), so it adds itself and no further edges; it ships a WeakSet and two pure predicates, no server infrastructure. Deliberately NOT declared inside logging/client.ts: throwers import it directly, and the unit setup mocks ~/server/logging/client WHOLESALE, so a thrower reaching through that module would get undefined under test. Drops with logging/client.',
+  },
+  {
     file: 'packages/civitai-axiom/src/client.ts',
     reason: 'via logging/client.ts:7; drops only when logging/client does.',
   },
