@@ -68,8 +68,32 @@ function walk(dir: string): string[] {
  * around, because they name what the value IS rather than what sits next to it.
  */
 function jsonBodies(source: string): string[] {
+  return bracedBodies(source, /\.\s*json\(\s*\{/g);
+}
+
+/**
+ * Every `new TRPCError({…})` constructor body, via the SAME scanner.
+ *
+ * 🔴 This exists as a one-liner on purpose. It was briefly a second, hand-rolled
+ * brace matcher that counted raw `{`/`}` with no quote awareness — and a delta
+ * audit broke it with a real file under `src/server`: one `}` inside a string
+ * literal truncated the body, and a genuine no-cause bypass below that point went
+ * invisible while the ledger stayed green. That is the EXACT bug `scanBody` was
+ * made quote-aware for in #3881 (`'oops }'`), regrown two hundred lines away.
+ *
+ * A truncated body is worse than no body, too: it still gets inspected, so the
+ * detector reports a confident "clean" on text it never read.
+ *
+ * One rule, one place — both extractors are now the same scan with a different
+ * opening pattern.
+ */
+function trpcErrorBodies(source: string): string[] {
+  return bracedBodies(source, /new TRPCError\(\s*\{/g);
+}
+
+/** Find each `call` site, then quote-aware brace-match its object argument. */
+function bracedBodies(source: string, call: RegExp): string[] {
   const out: string[] = [];
-  const call = /\.\s*json\(\s*\{/g;
   for (let m = call.exec(source); m; m = call.exec(source)) {
     const start = source.indexOf('{', m.index);
     const body = scanBody(source, start, true);
@@ -225,15 +249,17 @@ function bodyLeaks(body: string): boolean {
  * GROWS (a new site) or SHRINKS (one was fixed — delete its line). Ordered by
  * exposure, which is the order to fix in:
  *
- * 🔴 TIER 1 — UNAUTHENTICATED. Same severity as the routes this change fixes.
- *   v1/images/index.ts                    PublicEndpoint; `{ error: trpcError.message }`
- *   download/models/[modelVersionId].ts   PublicEndpoint; `errorResponse(500, err.message)`
- *   generation/{data,resources}.ts        PublicEndpoint; catch-all → 400 + e.message
- *   v1/model-files/[id]/tensor-metadata   MixedAuthEndpoint (public read) → 422 + err.message
- * NOT fixed here because the fix is not a delegation: each answers 4xx for EVERY
- * failure including zod-parse rejections, so routing them through the helper turns
- * a legitimate client 400 into a 500. That needs its own red/green and review.
- * `v1/images/index.ts` is pre-existing and unrelated to this change's diff.
+ * 🔴 TIER 1 — UNAUTHENTICATED. **All five are now FIXED** (civitai#3845 follow-up)
+ * and have left this list; they are asserted from the other side in
+ * `FIXED_BY_THIS_CHANGE` below and behaviourally in
+ * `src/tests/api/tier1-public-route-disclosure.test.ts`. The fix was NOT a
+ * delegation: each answered a 4xx for EVERY failure including zod-parse
+ * rejections, so routing them blindly through the helper would have turned a
+ * legitimate client 400 into a 500. Each route now separates the validation
+ * rejection (kept, with its detail) from the server-side failure (delegated).
+ *
+ * `download/models/[modelVersionId].ts` is the one that stayed on this list, and
+ * it is an OVER-REPORT, not a leak — see that block.
  *
  * 🟡 TIER 2 — session-authed: a logged-in user can trigger it, the public cannot.
  * `blocks/submit-version.ts` is `ModEndpoint` and so belongs in TIER 3, where it
@@ -250,18 +276,22 @@ function bodyLeaks(body: string): boolean {
  * fixing them is optional and may be undesirable.
  */
 const KNOWN_UNFIXED_SAME_CLASS: string[] = [
-  // ── TIER 1 — UNAUTHENTICATED ────────────────────────────────────────────────
-  'download/models/[modelVersionId].ts', // PublicEndpoint; errorResponse(500, err.message)
-  'generation/data.ts',
-  'generation/resources.ts',
-  'v1/images/index.ts', // PublicEndpoint; { error: trpcError.message }
-  'v1/model-files/[id]/tensor-metadata.ts',
   // ── OVER-REPORTS — flagged by shape, NOT leaks. Kept so the count is honest ──
-  // Both build `{ error: message }` from a local helper whose every call site
-  // passes a STRING LITERAL ('File not found', 'Not Found'). The guard cannot
-  // see that without types; the previous round's answer was a name allowlist,
-  // which is what buried `download/models` above. Recorded instead.
+  // All three build `{ error: message }` inside a local helper, so the guard sees
+  // an IDENT value and flags the file. It cannot see, without types, that every
+  // call site passes text WE wrote. The previous round's answer to that was a name
+  // allowlist, which is what buried `download/models` for a whole round. Recorded
+  // instead — and for `download/models` the "every call site" claim is not left as
+  // a comment: `download-model-error-response.test.ts` asserts it structurally, so
+  // re-introducing `errorResponse(500, err.message)` fails a test even though this
+  // ledger would stay green (`src/tests/api/tier1-public-route-disclosure.test.ts`).
+  //
+  // 🔴 `download/models` was TIER 1 and IS fixed — its 500 arm no longer forwards
+  // `err.message`. It could only leave this list by restructuring the response
+  // helper purely to dodge a regex, which is the wrong direction; it stays here,
+  // reclassified, with a real guard behind it.
   'download/attachments/[fileId].ts',
+  'download/models/[modelVersionId].ts',
   'download/vault/[vaultItemId].ts',
   // ── TIER 2 — session-authed ─────────────────────────────────────────────────
   'download/user-transactions.ts',
@@ -324,8 +354,22 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   'webhooks/text-moderation-result.ts',
 ];
 
-/** Routes this change fixed — must never appear in the exception list above. */
+/**
+ * Routes fixed for civitai#3845 — must never appear in the exception list above.
+ *
+ * Two groups, both asserted identically. The TIER-1 group is the follow-up: those
+ * routes were enumerated as unfixed in the list above and are now closed. Adding
+ * them here is the SHRINK direction of the ledger — the entry had to be deleted
+ * above AND the route re-checked shape-by-shape here, so a half-fix (message
+ * genericized on one arm only) cannot pass by editing one list.
+ */
 const FIXED_BY_THIS_CHANGE = [
+  // ── civitai#3845 follow-up — the TIER-1 unauthenticated routes ──────────────
+  'generation/data.ts',
+  'generation/resources.ts',
+  'v1/images/index.ts',
+  'v1/model-files/[id]/tensor-metadata.ts',
+  // ── the 11 hand-rolled envelopes consolidated in the parent change ──────────
   'notification/getDetails.ts',
   'run/[modelVersionId].ts',
   'v1/content/[[...slug]].ts',
@@ -522,7 +566,7 @@ describe('LEDGER: GENERIC_CLIENT_ERROR_BY_STATUS covers every 4xx a driver can r
   });
 
   /**
-   * 🔴 A KNOWN, BOUNDED GAP — recorded so it cannot grow silently.
+   * 🔴 A KNOWN GAP, now CLOSED — and the ledger stays, at zero.
    *
    * `isDriverAuthoredMessage` matches on message identity against a driver error
    * in the `cause` chain. A site that re-wraps a caught error's `.message` into a
@@ -530,54 +574,137 @@ describe('LEDGER: GENERIC_CLIENT_ERROR_BY_STATUS covers every 4xx a driver can r
    * wire is the driver's, but nothing in the chain proves that. If the underlying
    * error is a Prisma or pg error, its text still reaches a 4xx body.
    *
-   * There are 17 such sites today, all on the App Blocks / referral tRPC surface.
-   * They are NOT fixed here: the one-word fix (`cause: err`) touches four router
-   * files on a different surface, with its own review and test considerations,
-   * and a mechanical sweep over them is exactly the sort of edit that should not
-   * ride along inside a security fix. Tracked as follow-up.
+   * There were 17 such sites, all on the App Blocks / referral tRPC surface. All
+   * 17 now pass `cause`, so the expected set is EMPTY — which is precisely the
+   * reading a broken detector also produces. Three things separate the two, and
+   * all three run below before the empty-set assertion:
+   *   1. the walk finds files at all;
+   *   2. `TRPC_CTOR` extracts constructor bodies at all;
+   *   3. the whole detector, run on a synthetic no-cause site, returns 1 — and on
+   *      the with-cause version of the SAME site, returns 0.
+   * Without (3) a regex typo reads as "gap closed". A zero is only evidence
+   * alongside a positive control that made the number move.
    *
-   * This test pins the CURRENT set. It fails if a fifth file joins (the gap is
-   * spreading — fix it there) and equally if the counts drop (someone fixed some;
-   * update the ledger and delete the entry when it reaches zero). Either way the
-   * gap stays visible instead of decaying into folklore.
+   * 🔴 The caught-name alternation `(?:e|err|error|ex)` is DELIBERATE and
+   * MEASURED, not an oversight. Widening it to any identifier — the fix that was
+   * right for the `.json()` body sweep above — adds four sites in
+   * `routers/orchestrator.router.ts`, and all four are FALSE POSITIVES:
+   * `message: status.message ?? generationStatusDefaultMessage`, where `status`
+   * is the operator-configured generation status, not a caught error. `x.message`
+   * is far too common a benign shape to anchor on here. The blind spot that
+   * remains, stated: a catch that binds something other than those four names is
+   * invisible to this ledger.
    */
-  it('LEDGER: the known `no-cause` bypass sites are exactly these — grow or shrink and this fails', () => {
+  it("LEDGER: no TRPCError forwards a caught error's `.message` at a 4xx without `cause`", () => {
     const SERVER_ROOT = path.resolve(__dirname, '../..');
-    const KNOWN_BYPASS: [string, number][] = [
-      ['routers/app-listings.router.ts', 2],
-      ['routers/apps-shared.router.ts', 1],
-      ['routers/blocks.router.ts', 13],
-      ['routers/referral.router.ts', 1],
-    ];
+    // All 17 sites are fixed. An entry reappearing here means the gap re-opened.
+    const KNOWN_BYPASS: [string, number][] = [];
 
-    const ctor = /new TRPCError\(\{(?<body>[^{}]*?)\}\)/gs;
     const fromCaught = /message:\s*\(?(?:e|err|error|ex)\)?(?:\s+as\s+\w+)?\)?\.message/;
 
-    const found: Record<string, number> = {};
-    for (const file of walk(SERVER_ROOT)) {
-      if (file.includes('__tests__')) continue;
-      const source = stripLineComments(readFileSync(file, 'utf8'));
+    /**
+     * A `cause` that CANNOT carry the driver error is no better than none.
+     *
+     * 🔴 Found by mutation: this was `!body.includes('cause')`, and changing a
+     * real `cause: e` to `cause: undefined` left the ledger fully GREEN — the
+     * substring was still there, the bypass fully re-opened. The same
+     * spelled-vs-structural failure as the `.json()` body sweep above, in
+     * miniature.
+     *
+     * 🔴 And the FIRST fix for it was also wrong, which is why the value is
+     * EXTRACTED here rather than excluded by a lookahead. A
+     * `cause\s*:\s*(?!undefined)` reads as correct and is not: `\s*` is
+     * variable-length, so the engine backtracks it to zero width and tests the
+     * lookahead against " undefined", which does not begin with "undefined" —
+     * the negative lookahead passes and the inert cause reads as fixed again.
+     * Pull the value out, trim it, compare it.
+     */
+    function hasUsefulCause(body: string): boolean {
+      // `{ ..., cause }` shorthand — a binding, so it carries something.
+      if (/(?:^|[{,])\s*cause\s*(?:[,}]|$)/.test(body)) return true;
+      const m = /(?:^|[{,])\s*cause\s*:\s*([^,}]+)/.exec(body);
+      if (!m) return false;
+      const value = m[1].trim();
+      return value !== '' && value !== 'undefined' && value !== 'null';
+    }
+
+    /** The WHOLE detector, over one source string — so a control can drive it. */
+    function bypassCount(source: string): number {
       let n = 0;
-      for (const m of source.matchAll(ctor)) {
-        const body = m.groups?.body ?? '';
-        if (fromCaught.test(body) && !body.includes('cause')) n++;
+      for (const body of trpcErrorBodies(stripLineComments(source))) {
+        if (fromCaught.test(body) && !hasUsefulCause(body)) n++;
       }
+      return n;
+    }
+
+    const files = walk(SERVER_ROOT).filter((f) => !f.includes('__tests__'));
+    const found: Record<string, number> = {};
+    for (const file of files) {
+      const n = bypassCount(readFileSync(file, 'utf8'));
       if (n) found[path.relative(SERVER_ROOT, file).split(path.sep).join('/')] = n;
     }
 
-    // Positive control: the detector must be able to see a site at all, or the
-    // "exactly these" assertion below is satisfied by a regex that matches nothing.
+    // ── Controls. All three must pass or the empty result below means nothing. ──
     expect(
-      fromCaught.test(`code: 'BAD_REQUEST', message: (err as Error).message`),
-      'the bypass detector cannot match its own exemplar — this ledger would be vacuous'
-    ).toBe(true);
+      files.length,
+      'the src/server walk returned nothing — the ledger is inert'
+    ).toBeGreaterThan(200);
+    expect(
+      files.reduce((acc, f) => acc + trpcErrorBodies(readFileSync(f, 'utf8')).length, 0),
+      'no `new TRPCError({…})` bodies extracted — the detector is wired to nothing'
+    ).toBeGreaterThan(400);
+
+    // 🔴 The nesting control. The regex this replaced (`[^{}]*?`) matched NEITHER
+    // of these — a nested object literal and a `${}` template both contain braces
+    // — so both sites were silently exempt from the ledger. Pinned by exemplar so
+    // a revert to any brace-naive matcher fails here rather than going quiet.
+    expect(
+      bypassCount(`new TRPCError({ code: 'BAD_REQUEST', message: err.message, meta: { id: 1 } })`),
+      'a nested object literal must not hide a bypass'
+    ).toBe(1);
+    expect(
+      bypassCount('new TRPCError({ code: `BAD_${x}`, message: err.message })'),
+      'a template literal must not hide a bypass'
+    ).toBe(1);
+    // 🔴 The delta-audit probe. A `}` INSIDE a string truncated the body under the
+    // hand-rolled brace matcher this replaced, so any bypass after it was invisible
+    // while the ledger reported clean — and a truncated body is worse than none,
+    // because it still gets inspected. This is the same shape `scanBody` was made
+    // quote-aware for in #3881; the exemplar lives here so the fix cannot rot back.
+    expect(
+      bypassCount(`new TRPCError({ code: 'BAD_REQUEST', note: 'oops }', message: err.message })`),
+      'a `}` inside a string must not truncate the body'
+    ).toBe(1);
+
+    // 🔴 The one that makes a ZERO mean something: the number must MOVE.
+    const bypassSample = `throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });`;
+    const fixedSample = `throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message, cause: err });`;
+    expect(bypassCount(bypassSample), 'the detector cannot see a no-cause site at all').toBe(1);
+    expect(bypassCount(fixedSample), 'the detector cannot see that `cause` fixes it').toBe(0);
+    // …and with the OTHER binding the fix uses. `apps-shared.router.ts` binds `e`,
+    // and a mechanical sweep on the `err` spelling got that site wrong.
+    expect(bypassCount(`new TRPCError({ code: 'BAD_REQUEST', message: e.message })`)).toBe(1);
+    expect(
+      bypassCount(`new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: e })`)
+    ).toBe(0);
+    // 🔴 And an INERT `cause` must NOT count as fixed — the mutant that survived
+    // the first version of this ledger.
+    expect(
+      bypassCount(`new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: undefined })`),
+      '`cause: undefined` carries no driver error — it must not read as fixed'
+    ).toBe(1);
+    expect(
+      bypassCount(`new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: null })`)
+    ).toBe(1);
 
     expect(
       Object.entries(found).sort(),
-      "the set of TRPCError sites that forward a caught error's `.message` at a 4xx WITHOUT " +
-        '`cause` has changed. Adding one re-opens the civitai#3845/3 leak at that site, because ' +
-        '`isDriverAuthoredMessage` cannot see a driver error that is not in the cause chain. ' +
-        'Fix: pass `cause: err` alongside the message.'
+      "a TRPCError site forwards a caught error's `.message` at a 4xx WITHOUT `cause`. That " +
+        're-opens the civitai#3845/3 leak at that site, because `isDriverAuthoredMessage` ' +
+        'cannot see a driver error that is not in the cause chain, so a genuine ' +
+        '`Invalid `prisma.…` invocation` reaches the client verbatim at a 4xx. Fix: pass ' +
+        '`cause: <the caught binding>` alongside the message — and CHECK THE BINDING NAME, ' +
+        'which is `e` in apps-shared.router.ts and `err` everywhere else.'
     ).toEqual(KNOWN_BYPASS.sort());
   });
 

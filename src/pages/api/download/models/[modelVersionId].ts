@@ -14,6 +14,7 @@ import { getTrustedClientIp, parseIpBlocklist, parseUserBlocklist } from '~/serv
 import { fetchDownloadCount } from '~/server/utils/download-count';
 import { isRequestFromBrowser } from '~/server/utils/request-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
+import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -254,7 +255,25 @@ export default PublicEndpoint(
         // swallow logging failure
       });
       if (res.headersSent) return;
-      return errorResponse(500, err.message);
+      // 🔴 civitai#3845 TIER 1. This was `errorResponse(500, err.message)` on a
+      // `PublicEndpoint`, so an anonymous caller got the driver's own prose —
+      // ``Invalid `prisma.modelFile.findFirst()` invocation``, table and column
+      // names — through BOTH arms of `errorResponse`: `{ error: <text> }` as JSON
+      // and, for a browser UA, `res.send(<text>)` as bare text/plain. The ledger
+      // sweep only inspects `.json({…})` bodies, so the text/plain arm was never
+      // even visible to it.
+      //
+      // Not delegated to `handleEndpointError`: that would force JSON on the
+      // browser arm and drop the content negotiation this route exists to do. The
+      // genericization is the same one the helper applies, sharing its constant so
+      // the two cannot drift. Nothing is lost — `logToAxiom` directly above still
+      // records the un-redacted message and stack.
+      //
+      // Every OTHER exit from this handler already answers with a string literal,
+      // so after this line `errorResponse` can no longer be reached with
+      // caught-error text. `src/tests/api/tier1-public-route-disclosure.test.ts`
+      // pins that structurally, per call site.
+      return errorResponse(500, GENERIC_SERVER_ERROR_MESSAGE);
     }
   },
   ['GET']
