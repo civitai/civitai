@@ -1160,14 +1160,23 @@ export async function getResourceData(
       hiddenGates,
     });
 
+    // Drop these props so the client doesn't notify the user about them — they are irrelevant if
+    // the resource cannot be used for generation.
+    //
+    // 🔴 Build a NEW model object rather than `delete`-ing on `item.model`. `{ settings, ...item }`
+    // above clones only the TOP level, so `item.model` is still the object the resource cache
+    // handed us — and on the cache's fail-open path one origin lookup is single-flighted and its
+    // record shared by every caller that joined that window. `canGenerate` is a PER-USER decision,
+    // so mutating in place applies this user's gate outcome to a concurrent user's payload.
+    let model = item.model;
     if (!canGenerate) {
-      // Delete these items so that the client doesn't have to notify users about these props. They are irrelevant if the resource cannot be used for generation.
-      delete item.model.sfwOnly;
-      delete item.model.minor;
+      const { sfwOnly: _sfwOnly, minor: _minor, ...rest } = item.model;
+      model = rest;
     }
 
     return {
       ...item,
+      model,
       // Merged in after the cache read (see mergePaidAccess) from PaidAccess — NOT stored in the 1h
       // resourceDataCache, whose TTL would serve stale gating terms after a config change.
       paidAccess: null as { endsAt: Date | null; terms: ModelVersionTerms } | null,
