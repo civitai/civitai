@@ -311,13 +311,14 @@ type PriceCapTier = 'free' | MembershipTier;
  * What a creator may charge, capped by creator score and membership tier. The
  * creator sets the price; this only ceilings it.
  *
- * ⚠️ The numbers are placeholders pending a product decision. The shape is the
+ * ⚠️ The cap values are placeholders pending a product decision; the 10k
+ * threshold on band 2 is decided and published. The shape is the
  * commitment: read at request time, overridable through `KeyValue` without a
  * deploy, and never written to a placement row.
  */
 export const PLACEMENT_PRICE_CAP_TIERS: PlacementPriceTier[] = [
   { minScore: 0, caps: { free: 100, bronze: 200, silver: 300, gold: 500 } },
-  { minScore: 5_000, caps: { free: 250, bronze: 500, silver: 750, gold: 1_000 } },
+  { minScore: 10_000, caps: { free: 250, bronze: 500, silver: 750, gold: 1_000 } },
   { minScore: 25_000, caps: { free: 500, bronze: 1_000, silver: 1_500, gold: 2_500 } },
   { minScore: 100_000, caps: { free: 1_000, bronze: 2_000, silver: 3_000, gold: 5_000 } },
 ];
