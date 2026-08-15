@@ -91,17 +91,38 @@ Full isolated run on this branch: **1,065 files, 16,784 tests, 16 failed / 6 fil
 the baseline, and the 16 are the known Windows path-separator failures that are green on Linux CI.
 `blocks.router.workflow.test.ts` collected, so nothing silently vanished.
 
-Timing is best read as a within-run control, because the two baseline runs available disagree with
-each other by more than the effect size. Comparing the 412 test files whose closure these commits
-changed against the 653 they did not, in the same two runs:
+Paired full runs on `main` and this branch, same reporter, same window:
+
+```
+  main (control)   collect 6232s   wall 279.4s   16 failed
+  this branch      collect 4498s   wall 210.9s   16 failed
+                   collect -27.8%  wall -24.5%
+```
+
+The 306 files this branch does not touch are flat at +0.4% across that pair, which is what licenses
+the aggregate — both runs saw the same box.
+
+A second, independent method agrees. Splitting an earlier pair by whether a file's static closure
+changed rather than by whether its time moved, comparing the 412 test files whose closure these
+commits changed against the 653 they did not, in the same two runs:
 
 ```
   CHANGED-graph files   n=412   collect 4843s -> 3778s   -22.0%
   UNCHANGED files       n=653   collect  633s ->  720s   +13.7%  (slower)
 ```
 
-The untouched files got 13.7% slower — this run was on a busier box, which is also why whole-suite
-wall clock is flat at ~210s. Against that headwind the touched files dropped 22%.
+That pair was taken on a busier box: the untouched files got 13.7% slower, which is why its
+whole-suite wall clock looked flat. Against that headwind the touched files still dropped 22%.
+
+### Do not read a null from the 90-file yardstick as a null
+
+`bench.mjs` runs a fixed 90-file subset so an edit->measure loop does not need the whole box. Two
+batches of the work above measured flat on it and were real in the full run — the subset simply did
+not contain the files they moved. A subset can also destroy the condition that produces the cost
+outright rather than merely diluting it: the component project's ~21s startup charge scales with how
+many files the run matches, because `@vitest/browser` seeds `optimizeDeps.entries` from every matched
+file, so a 13-file probe measured no charge at all. The subset's job is to be stable, not to be
+representative of every change; a null on it means "not visible here", not "not there".
 
 Individual movers map onto the edges: `app-settings-bootstrap` 24.7s -> 0.9s, `og-image-helpers`
 12.9s -> 0.4s, `contest-entry-base-model-gate` 17.1s -> 3.8s.
@@ -114,6 +135,32 @@ same time.
 Sum of static first-party closures across the suite went 462,497 -> 272,224 modules and files with a
 closure over 1,000 modules went 371 -> 10, but read those as an upper bound on the runtime effect
 for the three reasons above: a static edge that never executed costs the suite nothing.
+
+## Measured and rejected: hoisting the `block-registry` in-body imports
+
+Twelve test files `await import('../block-registry.service')` inside their test bodies, and they were
+3.6-4.5s each in a full run. An in-body import bills the module graph to `duration` rather than
+`collect`, so a collect-ranked instrument cannot see them at all — a real blind spot in every ranking
+used here.
+
+Hoisting them is safe: none of the thirteen files calls `vi.resetModules` or `vi.doMock` or mutates
+env, `vi.mock` factories are hoisted above imports either way, and the service's only module-scope
+state is a `null` cache initialiser. But it does not pay. Hoisting the worst of them
+(`block-registry.resolve-instance`, 27 in-body imports), single file on a quiet box:
+
+```
+                collect     duration    collect+duration    wall
+  in-body          52ms       2296ms             2348ms     2.7s
+  hoisted        2225ms          9ms             2234ms     2.7s
+  hoisted (2)    2408ms         14ms             2422ms     3.1s
+```
+
+The load moves wholesale from `duration` to `collect` and the total does not, with the two hoisted
+totals straddling the in-body one. An in-body import does the same work at a different time.
+
+The cost that is real is one 3,805-line module with a 99-module closure, loaded once per file in
+thirteen separate processes — and `isolate: false` removes it for nothing, since a worker builds one
+registry for all its files. The 3.6-4.5s figures were a saturated box; quiet, the whole file is 2.7s.
 
 ## Not done
 
