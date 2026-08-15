@@ -6,7 +6,8 @@ recoverable from the diff.
 
 ## Where it stands
 
-**112 of 129 files migrated** once batch 5 lands. Allowlist for this slice went 169 → 17 remaining.
+**111 of 129 files migrated, 18 remaining.** (An earlier draft said 112 "once batch 5 lands"; the
+verified count after it landed is 111.) The slice's allowlist entries went 169 → 18.
 Every landed batch was verified in a single tenancy: per-file collected counts against a control
 taken on this branch, zero-collect checked from a `--no-isolate` half, no failure totals compared
 across tenancies.
@@ -47,30 +48,43 @@ Per-case routing is written up in `services-a-m-parameterised-client-analysis.md
 negative assertions and the `:2032` call site whose default is **inverted** relative to the other
 four.
 
-### Bucket 3 — blocked on the `withSysReadDeadline` seam (3 files, NOT mine)
+### Bucket 3 — the `withSysReadDeadline` seam: UNBLOCKED, and the first three to pick up (3 files)
 
 `collection.service.sysredis-soft`, `content-markdown.sysredis-soft`,
 `daily-challenge-service.sysredis-soft`.
 
 Each declares `withSysReadDeadline` in its factory as the seam that drives the timeout
-(`mockImplementation((p) => p)` by default, `mockRejectedValue(...)` for the timeout case).
-`src/__tests__/setup.ts` currently spreads the **real** implementation into the canonical factory, so
-converting them today deletes the only lever they have and leaves three green files asserting
-nothing — the shape the migration doc records as having shipped once already.
+(`mockImplementation((p) => p)` by default, `mockRejectedValue(...)` for the timeout case). Until
+`17f994221e` on `perf/test-mock-system`, `setup.ts` spread the **real** implementation into the
+canonical factory, so converting them would have deleted the only lever they have.
 
-⚠️ **They will look convertible the moment the seam lands, and the check afterwards is not "do they
-pass".** After the seam ships, confirm for each file: the injected implementation is actually
-reached (assert the spy was called, not just that the test is green), and a rejection injected
-per-file still produces the timeout branch. **A seam that silently resolves everything passes both a
-conversion and a run.**
+**That seam is now landed: `redisMock.withSysReadDeadline` is a hybrid node whose default lazily
+imports the real implementation.** Both spellings these files already use keep working, and
+`resetHybridNodes` restores the real one per file. **Rebase onto that commit or later, and these are
+the three easiest remaining files.**
 
-### Bucket 4 — ordinary hand work (3 files)
+⚠️ **The check afterwards is NOT "do they pass".** Confirm for each: the injected implementation is
+actually **reached** (assert the spy was called, not merely that the file is green), and a per-file
+rejection still produces the timeout branch. **A seam that silently resolves everything passes both
+a conversion and a run.**
 
-`coinbase.service`, `commentsv2.appListing.service`, `commentsv2.blockCheck.service`.
+🔴 **And do not migrate `src/tests/api/health.runHealthChecks.test.ts` as part of this.** It advances
+a fake clock 2,500 ms against a never-settling `sysRedis.ping`, and it is safe only while the health
+check's own 1,000 ms per-check timeout stays **below** `REDIS_SYS_READ_TIMEOUT_MS` (2,000). Two
+numbers with nothing connecting them; raise the first for an unrelated reason and the hazard goes
+live in a file nowhere near the change.
 
-**These are the only files a successor can pick up cold.** `coinbase` has a `$transaction` with a
-multi-statement body; the two `commentsv2` files alias one local across both clients and thread a
-`tx` object, so resolve them by entry point the way `engagement-toggle` was resolved.
+### Bucket 4 — ordinary hand work (7 files)
+
+`coinbase.service`, `commentsv2.appListing.service`, `commentsv2.blockCheck.service`,
+`model-early-access-refund.service`, `model-version.deregister.service`, `model-file.service`,
+`model-file-scan.service`.
+
+**These plus bucket 3 are what a successor can pick up cold.** `coinbase` has a `$transaction` with
+a multi-statement body; the two `commentsv2` files alias one local across both clients and thread a
+`tx` object; `model-early-access-refund` has a `$transaction` handing the callback its own `tx`.
+Resolve each by entry point the way `engagement-toggle` was resolved — that one turned out to hide a
+genuine read/write split, so do not assume an alias is a renaming.
 
 ### Bucket 5 — migrated but permanently isolated (1 file, already counted as done)
 
@@ -93,6 +107,25 @@ wrong on a real file:
 | one local bound to **both** clients | binding it twice picks whichever came last, silently choosing a client — the collision the split exists to surface |
 | **ES6 shorthand** (`{ groupBy }`) | parsed as no entries, so a spy declared elsewhere was silently orphaned |
 | factory with a **block body** | `() => { … return { … } }` opened on the block's brace, read an empty object, found no exports to object to, and **deleted the whole factory with every local it named**. Caught by reading a diff, not by any check |
+
+## Two constraints on the mock system itself
+
+**Neither is about this slice, and neither is documented anywhere else.**
+
+🔴 **A canonical mock cannot statically import anything that reads mocked env at module scope.**
+`redis.mock.ts` is loaded from `setup.ts`, which is *earlier* than every hoisted `vi.mock` factory
+setup registers — so a static `import` of a module whose own top level reads `env` evaluates before
+the env mock's factory has initialised. The failure is
+`ReferenceError: Cannot access '__vi_import_N__' before initialization`, and it presents as
+**zero tests collected reported as one failed suite** — the shape that has cost this project the
+most. Use a lazy `await import(…)` inside the default implementation, cached. (Found by sky adding
+the `withSysReadDeadline` seam; the import was entirely reasonable.)
+
+⚠️ **`pnpm run typecheck` on this base returns ~25 errors that are not yours.** They sit in
+`placement-*`, `cosmetic-*`, `feedback-*` and `grok.config.ts` — a worktree predating a dependency
+bump and `db:generate` (`Placement.spendType`, `Cosmetic.pHashHex`). **The tell is errors in files
+you did not touch.** Read the file list before believing any of them are yours; running
+`db:generate` fixes it and is box work nobody needs for a test-file change.
 
 ## Recipes that worked, in the order they come up
 
