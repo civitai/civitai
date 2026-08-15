@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 
@@ -20,11 +21,19 @@ const {
   return {
     mockDbRead: {
       cryptoWallet: { findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
-      cryptoDeposit: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), count: vi.fn().mockResolvedValue(0) },
+      cryptoDeposit: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([]),
+        count: vi.fn().mockResolvedValue(0),
+      },
     },
     mockDbWrite: {
       cryptoWallet: mockCryptoWallet,
-      cryptoDeposit: { upsert: vi.fn().mockResolvedValue({}), update: vi.fn().mockResolvedValue({}), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      cryptoDeposit: {
+        upsert: vi.fn().mockResolvedValue({}),
+        update: vi.fn().mockResolvedValue({}),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
     },
     mockNowpaymentsCaller: {
       createPayment: vi.fn(),
@@ -45,9 +54,11 @@ const {
 });
 
 // Mock modules
-vi.mock('~/env/server', () => ({
-  env: { NEXTAUTH_URL: 'https://civitai.com', LOGGING: '' },
-}));
+beforeEach(() => {
+  setEnv({
+    LOGGING: '',
+  });
+});
 
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: vi.fn().mockResolvedValue(undefined),
@@ -185,9 +196,7 @@ describe('processDeposit', () => {
     const result = await processDeposit(12345, 'partially_paid', event);
 
     expect(result).toEqual({ userId: 42, buzzAmount: 3000, transactionId: 'tx_123' });
-    expect(mockGrantBuzzPurchase).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 3000 })
-    );
+    expect(mockGrantBuzzPurchase).toHaveBeenCalledWith(expect.objectContaining({ amount: 3000 }));
   });
 
   it('does not grant buzz on confirming status', async () => {
@@ -366,7 +375,10 @@ describe('processDeposit', () => {
 
   it('does not overwrite finished status with confirming', async () => {
     mockDbRead.cryptoWallet.findUnique.mockResolvedValueOnce({ chain: 'evm' });
-    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({ status: 'finished', buzzCredited: 5000 });
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({
+      status: 'finished',
+      buzzCredited: 5000,
+    });
 
     const event = makeWebhookEvent({ payment_status: 'confirming' });
     await processDeposit(12345, 'confirming', event);
@@ -377,7 +389,10 @@ describe('processDeposit', () => {
 
   it('does not overwrite finished status with buzz_failed', async () => {
     mockDbRead.cryptoWallet.findUnique.mockResolvedValueOnce({ chain: 'evm' });
-    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({ status: 'finished', buzzCredited: 5000 });
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({
+      status: 'finished',
+      buzzCredited: 5000,
+    });
     mockGrantBuzzPurchase.mockRejectedValueOnce(new Error('Buzz API down'));
 
     const event = makeWebhookEvent({ outcome_amount: 5.0 });
@@ -389,7 +404,10 @@ describe('processDeposit', () => {
 
   it('allows buzz_failed to be overwritten by finished on successful retry', async () => {
     mockDbRead.cryptoWallet.findUnique.mockResolvedValueOnce({ chain: 'evm' });
-    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({ status: 'buzz_failed', buzzCredited: null });
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({
+      status: 'buzz_failed',
+      buzzCredited: null,
+    });
 
     const event = makeWebhookEvent({ outcome_amount: 5.0 });
     await processDeposit(12345, 'finished', event);
@@ -666,7 +684,9 @@ describe('reconcileDeposits', () => {
 
   it('handles partially_paid status', async () => {
     mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({
-      data: [makePayment({ payment_id: 555, payment_status: 'partially_paid', outcome_amount: 3.0 })],
+      data: [
+        makePayment({ payment_id: 555, payment_status: 'partially_paid', outcome_amount: 3.0 }),
+      ],
     });
 
     const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });

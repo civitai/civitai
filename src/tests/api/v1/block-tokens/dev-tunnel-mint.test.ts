@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
@@ -91,14 +92,12 @@ const {
   };
 });
 
-vi.mock('~/env/server', () => ({
-  env: {
-    NEXTAUTH_URL: 'https://civitai.com',
-    TRPC_ORIGINS: [],
+beforeEach(() => {
+  setEnv({
     BLOCK_TOKEN_PRIVATE_KEY: 'fake-private',
     BLOCK_TOKEN_PUBLIC_KEY: 'fake-public',
-  },
-}));
+  });
+});
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
 vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({

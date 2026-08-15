@@ -123,7 +123,14 @@ export const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   REDIS_SYS_SOCKET_TIMEOUT_MS: 0,
   REDIS_SYS_READ_TIMEOUT_MS: 2000,
   REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH: 10000,
-  NEXTAUTH_URL: 'http://localhost:3000',
+  // `endpoint-helpers.ts:247` builds `allowedOrigins` from this at MODULE scope, so it has to
+  // be a worker-level default and no per-file override can reach it. Six of the fourteen tests
+  // that declared it already chose `https://civitai.com`, including the two that assert on the
+  // host 38 and 32 times — so this is the value costing the fewest assertion edits, not an
+  // arbitrary pick. Nothing depended on the previous `http://localhost:3000`: of the ten test
+  // files mentioning that string, none reads it from here (argument position,
+  // NEXT_PUBLIC_BASE_URL, or the literal hardcoded at pagination-helpers.ts:56).
+  NEXTAUTH_URL: 'https://civitai.com',
   NEXTAUTH_SECRET: 'test-secret',
   // endpoint-helpers spreads TRPC_ORIGINS at module load, so an undefined value makes
   // importing ANY api page throw "is not iterable". Non-empty tokens below so a request that
