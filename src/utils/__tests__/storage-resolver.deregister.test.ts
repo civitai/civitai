@@ -1,26 +1,8 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Concrete internal URL + token so the configured branch is reachable. Any field
-// we don't set falls back to the global env Proxy in src/__tests__/setup.ts.
-// vi.hoisted so the object exists before the hoisted vi.mock factory runs.
-const { envValues } = vi.hoisted(() => ({
-  envValues: {
-    STORAGE_RESOLVER_INTERNAL_URL: 'http://storage-resolver.internal',
-    STORAGE_RESOLVER_INTERNAL_TOKEN: 'test-token',
-  } as Record<string, unknown>,
-}));
-
-vi.mock('~/env/server', () => ({
-  env: new Proxy(envValues, {
-    get(target, prop: string) {
-      if (prop in target) return target[prop];
-      return undefined;
-    },
-  }),
-}));
-
-const { logToAxiom } = vi.hoisted(() => ({ logToAxiom: vi.fn(() => Promise.resolve()) }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom }));
+const { logToAxiom } = loggingMock;
 
 import { deregisterFileLocations } from '~/utils/storage-resolver';
 
@@ -39,8 +21,10 @@ describe('deregisterFileLocations', () => {
     logToAxiom.mockClear();
     vi.stubGlobal('fetch', fetchMock);
     // Restore the configured env for each test; individual tests may clear it.
-    envValues.STORAGE_RESOLVER_INTERNAL_URL = 'http://storage-resolver.internal';
-    envValues.STORAGE_RESOLVER_INTERNAL_TOKEN = 'test-token';
+    setEnv({
+      STORAGE_RESOLVER_INTERNAL_URL: 'http://storage-resolver.internal',
+      STORAGE_RESOLVER_INTERNAL_TOKEN: 'test-token',
+    });
   });
 
   afterEach(() => {
@@ -64,8 +48,10 @@ describe('deregisterFileLocations', () => {
   });
 
   it('is a no-op returning null (and warns) when storage-resolver is not configured', async () => {
-    envValues.STORAGE_RESOLVER_INTERNAL_URL = undefined;
-    envValues.STORAGE_RESOLVER_INTERNAL_TOKEN = undefined;
+    setEnv({
+      STORAGE_RESOLVER_INTERNAL_URL: undefined,
+      STORAGE_RESOLVER_INTERNAL_TOKEN: undefined,
+    });
 
     const result = await deregisterFileLocations(1);
 

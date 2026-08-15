@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { createHmac } from 'crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -9,21 +10,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * `mode:'review'` + publishRequestId + modUserId and POST to the review endpoint.
  */
 
-const { TRIGGER_SECRET, mockEnv } = vi.hoisted(() => {
-  const TRIGGER_SECRET = 'trigger-secret';
-  return {
-    TRIGGER_SECRET,
-    mockEnv: {
-      APPS_TEKTON_TRIGGER_URL: 'http://trigger.example/trigger-build',
-      APPS_TEKTON_TRIGGER_SECRET: TRIGGER_SECRET,
-      APPS_TEKTON_REVIEW_TRIGGER_URL: undefined,
-      APPS_DOMAIN: 'civit.ai',
-      APPS_KUBE_NAMESPACE: 'civitai-apps',
-    } as Record<string, unknown>,
-  };
-});
-vi.mock('~/env/server', () => ({ env: mockEnv }));
-
 import {
   triggerReviewBuild,
   reviewHost,
@@ -31,6 +17,18 @@ import {
   reviewImageRef,
   resolveReviewTriggerUrl,
 } from '~/server/services/blocks/apps-pipeline.service';
+
+const TRIGGER_SECRET = 'trigger-secret';
+
+beforeEach(() => {
+  setEnv({
+    APPS_TEKTON_TRIGGER_URL: 'http://trigger.example/trigger-build',
+    APPS_TEKTON_TRIGGER_SECRET: TRIGGER_SECRET,
+    APPS_TEKTON_REVIEW_TRIGGER_URL: undefined,
+    APPS_DOMAIN: 'civit.ai',
+    APPS_KUBE_NAMESPACE: 'civitai-apps',
+  });
+});
 
 describe('review pure helpers', () => {
   it('reviewHostSha truncates to 16 chars', () => {
@@ -76,7 +74,6 @@ describe('triggerReviewBuild', () => {
 
   beforeEach(() => {
     captured = null;
-    mockEnv.APPS_TEKTON_REVIEW_TRIGGER_URL = undefined;
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string, init: RequestInit) => {
@@ -112,7 +109,7 @@ describe('triggerReviewBuild', () => {
   });
 
   it('uses the explicit review URL override when set', async () => {
-    mockEnv.APPS_TEKTON_REVIEW_TRIGGER_URL = 'http://override.example/trigger-review-build';
+    setEnv({ APPS_TEKTON_REVIEW_TRIGGER_URL: 'http://override.example/trigger-review-build' });
     await triggerReviewBuild(baseArgs);
     expect(captured!.url).toBe('http://override.example/trigger-review-build');
   });
