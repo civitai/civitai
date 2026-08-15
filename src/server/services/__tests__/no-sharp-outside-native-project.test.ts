@@ -34,9 +34,13 @@ describe('native-addon pool split', () => {
     expect(missing).toEqual([]);
   });
 
-  it('excludes every routed file from the threads project', () => {
+  it('pins the native project to a process-based pool whatever unit does', () => {
+    // `unit-native` must not inherit a thread pool if `unit` is ever pointed at one.
+    expect(projectNamed('unit-native').test.pool).toBe('forks');
+  });
+
+  it('excludes every routed file from the main project', () => {
     const unit = projectNamed('unit');
-    expect(unit.test.pool).toBe('threads');
     const native = projectNamed('unit-native');
     const notExcluded = native.test.include.filter(
       (file: string) => !unit.test.exclude.includes(file)
