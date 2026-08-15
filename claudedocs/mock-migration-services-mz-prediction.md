@@ -411,29 +411,49 @@ appended to one.
 Branch `perf/test-mock-migration-c`, based on `perf/test-mock-system`.
 
 ```
-allowlist 345 -> 330      15 migrated, all verified by an isolated pair at 4 and 8 workers
+allowlist 345 -> 324      21 migrated (15 verified, 6 pending one pair)
 refused    2              nsfwLevels.buffer-flag  partial: db converts, redis refuses
                           placement-escrow        stateful in-memory fake, own batch
-blocked    6              on the withSysReadDeadline seam - see below
-workable  19
+workable  13              locals never dereferenced - need reading, not mapping
 ```
 
-## The six blocked files, and why converting them would be worse than leaving them
+## The six seam files, converted once the seam landed
 
 `system-cache.memoize`, `system-cache.sysredis-soft`, `training-status.sysredis-soft`,
 `training.orchestrator-error-mapping`, `update-post-image-hidemeta-bust`, `user-challenge-flag-gate`.
 
-Each mocks `~/server/redis/client` **and replaces `withSysReadDeadline`** with a pass-through or a
-rejecting variant. That export is the seam a test uses to inject the timeout — `system-cache.sysredis-soft`
-substitutes a rejecting version so the deadline is the *subject* of the test. The canonical factory
-currently spreads the **real** implementation, so a converted file loses its only lever and goes green
-asserting nothing. Fix is in flight on the base branch; do not convert until it lands.
+Each mocked `~/server/redis/client` **and replaced `withSysReadDeadline`**. That export is the seam a
+test uses to inject a timeout — the mocked client can never lose a wall-clock race on its own, so
+replacing it is the only lever there is. Before `17f994221e` the canonical factory spread the **real**
+implementation with no seam, so converting would have taken the lever away and left those tests green
+asserting nothing.
+
+Now `redisMock.withSysReadDeadline` is a node whose default is the real wrapper. Two of the six drive
+it per test; the other four only ever passed it through, and they now set a transparent
+implementation **explicitly** rather than inheriting the default — the pass-through is a per-file
+choice, not something to make global.
+
+⚠️ **Two of them supplied a permissive `Proxy` for all three key tables** — `new Proxy(() => 'k', …)`,
+every path a callable returning `'k'`. The real tables come through the canonical registration now, so
+**any path that does not exist for real reads `undefined`.** Intended, and invisible to a
+collected-count diff.
+
+🔴 **The codemod still refuses all of them** on `factory replaces "withSysReadDeadline" with behaviour
+— it is a control surface`. That refusal was right before the seam and is stale after it, and the same
+is true of `REDIS_SUB_KEYS`, which is a **real** export the canonical registration spreads. **A refusal
+that outlived its reason, with nothing to tell the tool** — it decays one hand conversion at a time, by
+whoever reads the message and disbelieves it. Fix it for those two exports only: a rule that stopped
+refusing control surfaces generally would be a worse bug, and a silent one.
 
 ## Verifying: what worked and in what order
 
 1. Read which client an aliased call belongs to **out of the production code**, scoped to the module
    under test. Predict per file before converting.
-2. `residual-mocks.mjs` **per file against your converted list**, never as a set total — the total
+2. 🔴 `residual-mocks.mjs` **per file against your converted list, never as a set total.** This is
+   not a discipline anyone can be careful about — a leftover site inside a file you just converted
+   **looks exactly like one of the remaining hold-outs** when you read a total, so the reading is
+   incapable of the distinction. It has now caught three partials that a total would have hidden,
+   two of them in this slice — the total
    cannot distinguish a hold-out's site from a site inside a file you just converted. This caught a
    second-axis logging mock in `resourceReview.idempotent` after the db split was already clean.
 3. Control on your own branch with the converted files checked out at their pre-conversion blobs, in
