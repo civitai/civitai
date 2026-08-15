@@ -61,10 +61,7 @@ const {
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
   mockSign,
-  mockSysRedis,
   mockMultiIncr,
-  mockWithSysReadDeadline,
-  sysDeadline,
 } = vi.hoisted(() => {
   const mockMultiIncr = {
     value: 1,
@@ -74,44 +71,12 @@ const {
     // handler). withSysReadDeadline must reject it within the deadline → 503.
     hangExec: false,
   };
-  const multiFactory = () => ({
-    set: vi.fn().mockReturnThis(),
-    incr: vi.fn().mockReturnThis(),
-    exec: vi.fn().mockImplementation(async () => {
-      if (mockMultiIncr.hangExec) return new Promise(() => {}); // never settles
-      if (mockMultiIncr.throwExec) throw new Error('redis down');
-      return mockMultiIncr.malformedExec !== false
-        ? mockMultiIncr.malformedExec
-        : ['OK', mockMultiIncr.value];
-    }),
-  });
-  // Faithful stand-in for the real withSysReadDeadline (sys-read-deadline.ts): race
-  // the wrapped promise against a rejecting timer; `<= 0` disables (no-op). A tiny
-  // default ms keeps the never-settles tests fast without fake timers.
-  const sysDeadline = { ms: 50 };
-  const mockWithSysReadDeadline = <T>(p: Promise<T>, ms = sysDeadline.ms): Promise<T> => {
-    if (!ms || ms <= 0) return p;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`sysRedis read timed out after ${ms}ms`)), ms);
-    });
-    return Promise.race([p, deadline]).finally(() => {
-      if (timer) clearTimeout(timer);
-    });
-  };
   return {
     mockGetSession: vi.fn(),
     mockIsAppBlocksEnabled: vi.fn(),
     mockIsAppBlocksAuthorEnabled: vi.fn(),
     mockSign: vi.fn(),
-    mockSysRedis: {
-      multi: vi.fn(multiFactory),
-      ttl: vi.fn().mockResolvedValue(60),
-      expire: vi.fn().mockResolvedValue(1),
-    },
     mockMultiIncr,
-    mockWithSysReadDeadline,
-    sysDeadline,
   };
 });
 
@@ -124,14 +89,23 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 vi.mock('~/server/services/block-token.service', () => ({
   BlockTokenService: { sign: mockSign },
 }));
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: mockSysRedis,
-  REDIS_SYS_KEYS: { BLOCKS: { DEV_TOKEN_RATE_LIMIT: 'system:blocks:dev-token-rate-limit' } },
-  withSysReadDeadline: mockWithSysReadDeadline,
-}));
-vi.mock('~/env/server', () => ({
-  env: { BLOCK_TOKEN_PRIVATE_KEY: 'priv', BLOCK_TOKEN_PUBLIC_KEY: 'pub' },
-}));
+
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { setEnv } from '~/__tests__/mocks';
+
+const multiFactory = () => ({
+  set: vi.fn().mockReturnThis(),
+  incr: vi.fn().mockReturnThis(),
+  exec: vi.fn().mockImplementation(async () => {
+    if (mockMultiIncr.hangExec) return new Promise(() => {}); // never settles
+    if (mockMultiIncr.throwExec) throw new Error('redis down');
+    return mockMultiIncr.malformedExec !== false
+      ? mockMultiIncr.malformedExec
+      : ['OK', mockMultiIncr.value];
+  }),
+});
+
+const mockSysRedis = redisMock.sysRedis;
 
 import handler from '~/pages/api/v1/blocks/dev-token';
 import { domainBrowsingCeiling } from '~/shared/constants/browsingLevel.constants';
@@ -235,7 +209,10 @@ beforeEach(() => {
   mockMultiIncr.malformedExec = false;
   mockMultiIncr.throwExec = false;
   mockMultiIncr.hangExec = false;
-  sysDeadline.ms = 50;
+  // Call-time value, so it belongs in the per-file bucket: keeps the never-settles case fast
+  // against the REAL withSysReadDeadline instead of waiting out the 2000ms default.
+  setEnv({ REDIS_SYS_READ_TIMEOUT_MS: 50 });
+  mockSysRedis.multi.mockImplementation(multiFactory);
   mockSysRedis.ttl.mockResolvedValue(60);
   mockSysRedis.expire.mockResolvedValue(1);
   mockIsAppBlocksEnabled.mockResolvedValue(true);

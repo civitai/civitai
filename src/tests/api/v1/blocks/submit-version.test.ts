@@ -47,10 +47,7 @@ const {
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
   mockSubmitVersion,
-  mockRedis,
   mockMultiIncr,
-  mockWithSysReadDeadline,
-  sysDeadline,
 } = vi.hoisted(() => {
   // `exec()` normally returns ['OK', <count>]. `malformedExec` simulates a Redis
   // hiccup / aborted MULTI where the result is null or short (F3 fail-closed).
@@ -61,39 +58,15 @@ const {
     malformedExec: null as unknown[] | null | false,
     hangExec: false,
   };
-  const multiFactory = () => ({
-    set: vi.fn().mockReturnThis(),
-    incr: vi.fn().mockReturnThis(),
-    exec: vi.fn().mockImplementation(async () => {
-      if (mockMultiIncr.hangExec) return new Promise(() => {}); // never settles
-      return mockMultiIncr.malformedExec !== false
-        ? mockMultiIncr.malformedExec
-        : ['OK', mockMultiIncr.value];
-    }),
-  });
   // Faithful stand-in for the real withSysReadDeadline (sys-read-deadline.ts): race
   // the wrapped promise against a rejecting timer; `<= 0` disables (no-op). A tiny
   // default ms keeps the never-settles tests fast without fake timers.
-  const sysDeadline = { ms: 50 };
-  const mockWithSysReadDeadline = <T>(p: Promise<T>, ms = sysDeadline.ms): Promise<T> => {
-    if (!ms || ms <= 0) return p;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`sysRedis read timed out after ${ms}ms`)), ms);
-    });
-    return Promise.race([p, deadline]).finally(() => {
-      if (timer) clearTimeout(timer);
-    });
-  };
   return {
     mockGetSession: vi.fn(),
     mockIsAppBlocksEnabled: vi.fn(),
     mockIsAppBlocksAuthorEnabled: vi.fn(),
     mockSubmitVersion: vi.fn(),
-    mockRedis: { multi: vi.fn(multiFactory), ttl: vi.fn().mockResolvedValue(60) },
     mockMultiIncr,
-    mockWithSysReadDeadline,
-    sysDeadline,
   };
 });
 
@@ -105,21 +78,32 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
   isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
 }));
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: mockRedis,
-  REDIS_SYS_KEYS: { BLOCKS: { SUBMIT_RATE_LIMIT: 'blocks:submit-rate-limit' } },
-  withSysReadDeadline: mockWithSysReadDeadline,
-}));
+// The hand-written SUBMIT_RATE_LIMIT was 'blocks:submit-rate-limit'; the real key is
+// 'system:blocks:submit-rate-limit'. Nothing asserted on it. The canonical registration
+// supplies the real constant and the real withSysReadDeadline.
 // The route dynamically imports env + the service; mock both so the heavy
 // dependency tree never loads in the unit test.
-vi.mock('~/env/server', () => ({
-  env: { BUNDLE_S3_ENDPOINT: 'https://s3.example', BUNDLE_S3_BUCKET: 'bundles' },
-}));
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   submitVersion: mockSubmitVersion,
 }));
 // The schema module is real (we want its actual validation), but it pulls only
 // zod — safe to load.
+
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { setEnv } from '~/__tests__/mocks';
+
+const multiFactory = () => ({
+  set: vi.fn().mockReturnThis(),
+  incr: vi.fn().mockReturnThis(),
+  exec: vi.fn().mockImplementation(async () => {
+    if (mockMultiIncr.hangExec) return new Promise(() => {}); // never settles
+    return mockMultiIncr.malformedExec !== false
+      ? mockMultiIncr.malformedExec
+      : ['OK', mockMultiIncr.value];
+  }),
+});
+
+const mockRedis = redisMock.sysRedis;
 
 import handler from '~/pages/api/v1/blocks/submit-version';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -172,13 +156,17 @@ beforeEach(() => {
   mockMultiIncr.value = 1;
   mockMultiIncr.malformedExec = false;
   mockMultiIncr.hangExec = false;
-  sysDeadline.ms = 50;
+  // Both call-time reads, so per-file rather than worker defaults.
+  setEnv({
+    REDIS_SYS_READ_TIMEOUT_MS: 50,
+    BUNDLE_S3_ENDPOINT: 'https://s3.example',
+    BUNDLE_S3_BUCKET: 'bundles',
+  });
+  mockRedis.multi.mockImplementation(multiFactory);
   mockRedis.ttl.mockResolvedValue(60);
   mockIsAppBlocksEnabled.mockResolvedValue(true);
   // Author gate mirrors the mod floor by default; the widening test overrides it.
-  mockIsAppBlocksAuthorEnabled.mockImplementation(
-    async (opts) => !!opts?.user?.isModerator
-  );
+  mockIsAppBlocksAuthorEnabled.mockImplementation(async (opts) => !!opts?.user?.isModerator);
   mockSubmitVersion.mockResolvedValue({
     publishRequestId: 'pubreq_abc',
     slug: 'my-block',
