@@ -214,20 +214,21 @@ the divergence is invisible precisely because the copy is what the test compares
 
 ### Where `~/env/server` stands, and what is left
 
-60 of 106 sites converted. The codemod is **exhausted** — it nominates nothing further, so
-every remaining file needs a person. The three labels matter more than the counts, because
-they need different work and different amounts of nerve:
+73 of 106 sites converted; `bySpecifier['~/env/server']` in the allowlist is the live number.
+The codemod is **exhausted** — it nominates nothing further, so every remaining file needs a
+person. The three labels matter more than the counts, because they need different work and
+different amounts of nerve:
 
 | n | class | kind | what it needs |
 |---|---|---|---|
 | 20 | key read at module scope in production | **correct-but-inapplicable**, mostly | read the file: is the key one *this test's assertions* depend on? |
-| 13 | the env table is mutated at runtime | **hand-convertible** | move each mutation into a `setEnv` inside the case that needs it |
+| ~~13~~ 0 | the env table is mutated at runtime | **done** | see below — the method is worth more than the result |
 | 5 | no keys the scan can find | **hand** | read it; the shape is not one the extractor knows |
 | 4 | env table local is not a self-contained literal | **hand** | the table references something; inline it or leave it |
 | 2 | a run proved it unsafe (`KNOWN_UNSAFE`) | **tool-fixable** | retire the entry when one-hop reachability lands |
 | 2 | value not statically evaluable | **hand** | the value is computed |
 
-**The 13 mutation-class files are the largest tractable block.** The shape is always the same:
+**The mutation class is finished, and what it taught is below.** The shape was always:
 
 ```ts
 const mockEnv = { DATABASE_IS_PROD: true, … };
@@ -243,6 +244,55 @@ and deleting the `vi.mock` leaves the local alive but disconnected — a rewrite
 🔴 **Do not batch these on a green run alone.** Of four mutation-affected files in one batch,
 the pair caught two; the other two went green because nothing downstream of the mutated key
 was asserted, and they would have shipped as tests that no longer test their own names.
+
+### What the mutation class taught, which is not specific to env
+
+**A per-file override does not reset between TESTS.** `resetSharedMocks()` runs once per
+file, so anything a case varies survives into the next case in that file. Every converted
+file therefore needs its table re-stated in a `beforeEach`, never once at module scope. This
+is not a deduction: removing the mask from `upload-backend`'s `beforeEach` produced
+`expected 'b2' to be 'default'` — the endpoint set by the *previous* test reached the case
+that asserts the key is unset.
+
+**Write the branch table before touching a file with more than one or two mutations.** For
+each case: which keys it sets, and which branch the test's *name* claims. The collected count
+and the failure count are both blind to a case silently running the other branch, and the
+table is the only artefact that catches it. It also catches you: on `dev-tunnel.service` the
+table said token-set/zone-unset was a disabled state, and the file disproved it — the
+Cloudflare gate is the **API token alone**, while the zone id only selects lookup-versus-direct.
+A wrong prediction written down is a correction; a wrong prediction held in your head is a
+conversion that ships.
+
+**Prefer a case that discriminates over one that merely passes.** `workflow-completed`'s
+fail-closed test set `JOB_TOKEN` to `undefined` and sent an *empty* token header — which 401s
+whether the secret is unset or merely wrong. That was survivable until `JOB_TOKEN` gained a
+canonical default equal to the value the file uses, at which point a fall-through would have
+left the server configured and the test green. Sending the token the server *would* have
+accepted makes the case fail when the override does not take effect (`expected 200 to be 401`).
+**When a canonical default exists for a key a test clears, the clearing is load-bearing and
+the test must be able to see it.**
+
+**`''` and `undefined` are both present overrides.** Reads take `overrides.has(prop)` as the
+discriminator, not the value, so a stored `undefined` masks a default rather than falling
+through to it, and `''` stays a distinct falsy value. Note where this is *observable*: only on
+keys that have a canonical default to fall through to. The `git-push` rotation suite passes
+under either semantics and would not have told us if the proxy were wrong.
+
+**The shielding rule, in the form that predicts rather than explains.** A per-file `vi.mock`
+on **anything in a module's import graph** forces that module to be re-instantiated for that
+file — which incidentally re-binds *all* of its other imports to that file's mocks. So a file
+partial across two axes can be green because the axis you have not fixed is being shielded by
+the one you are about to remove. Both `storage-resolver` files held a direct
+`~/server/logging/client` mock that only broke once their env mock was correctly removed:
+`deregisterBatch` loaded the module first and passed 8/8, `deregister` failed 4 of 5, every
+one `Number of calls: 0`. **The danger point is a file whose env mock is its only mock** — and
+the fix is the canonical mock for the other axis, never restoring the shield.
+
+**Read `bySpecifier`, not `pendingFiles`.** A file blocked on two pending specifiers stays in
+`pendingFiles` after you migrate one of them, so the file count can sit still while real sites
+move — it stayed at 349 across three migrations in one batch, then moved by 2 for three in the
+next. The site count under `bySpecifier` is the instrument; the file count is a lower bound on
+work, not a measure of it.
 
 **The `KNOWN_UNSAFE` entries and when they can go.** `cloudflare/__tests__/client.purgeCache`
 and `services/__tests__/image-cacher-invalidate-scope` are both the one-hop shape:
@@ -344,6 +394,10 @@ Before declaring a set migrated, confirm nothing in it still mocks a canonical s
 ```bash
 node scripts/test-perf/residual-mocks.mjs <list>
 ```
+
+⚠️ **`residual-mocks.mjs` reports the three infra clients only — it does not scan
+`~/env/server`.** A set can come back clean on it while every file still mocks env. Grep for
+`vi.mock('~/env/server'` over the same list separately, and say which set you ran each over.
 
 A single hold-out freezes its mock shape into every consumer module in its worker, so a
 partially-migrated set measures the hold-outs rather than the system. Measured: the same 174
