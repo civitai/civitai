@@ -43,17 +43,6 @@ vi.mock('~/env/server', () => ({
 }));
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-vi.mock('~/server/redis/client', () => {
-  type KeyProxy = (() => string) & { [key: string]: KeyProxy };
-  const make = (): KeyProxy => new Proxy((() => 'k') as KeyProxy, { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { packed: { get: vi.fn(), set: vi.fn() } },
-    sysRedis: {},
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-  };
-});
 
 // The mapping sits directly after this call in both entry points — a non-empty result lets
 // execution reach it.
