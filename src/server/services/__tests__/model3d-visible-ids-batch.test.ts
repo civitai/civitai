@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Model3DStatus } from '~/shared/utils/prisma/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbRead.model3D.findMany.mockImplementation((...args: unknown[]) =>
+  (h.findMany as (...a: unknown[]) => unknown)(...args)
+);
 
 // getVisibleModel3DIds is the BATCHED authZ used by the image FEED path
 // (getAllImages / getAllImagesIndex). The feed payload carries a RAW
@@ -12,11 +16,6 @@ import { Model3DStatus } from '~/shared/utils/prisma/enums';
 
 const h = vi.hoisted(() => ({
   findMany: vi.fn(),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { model3D: { findMany: h.findMany } },
-  dbWrite: {},
 }));
 
 // model3d.service transitively imports many `Prisma.validator<...>()(...)`
@@ -60,9 +59,7 @@ describe('getVisibleModel3DIds — batched feed authZ for the model3dId field', 
   });
 
   it('nulls a deleted (Published-but-deletedAt) model for a non-owner non-mod', async () => {
-    setRows([
-      { id: 12, userId: OWNER, status: Model3DStatus.Published, deletedAt: new Date() },
-    ]);
+    setRows([{ id: 12, userId: OWNER, status: Model3DStatus.Published, deletedAt: new Date() }]);
     const visible = await getVisibleModel3DIds({ model3dIds: [12], userId: OTHER });
     expect(visible.has(12)).toBe(false);
   });
@@ -74,9 +71,7 @@ describe('getVisibleModel3DIds — batched feed authZ for the model3dId field', 
   });
 
   it('keeps a deleted model for a moderator', async () => {
-    setRows([
-      { id: 14, userId: OWNER, status: Model3DStatus.Published, deletedAt: new Date() },
-    ]);
+    setRows([{ id: 14, userId: OWNER, status: Model3DStatus.Published, deletedAt: new Date() }]);
     const visible = await getVisibleModel3DIds({
       model3dIds: [14],
       userId: OTHER,

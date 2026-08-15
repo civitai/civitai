@@ -19,15 +19,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as LoggingClient from '~/server/logging/client';
 import type * as MeilisearchClient from '~/server/meilisearch/client';
 
-const { logToAxiomMock, fetchDocumentsAbortableMock } = vi.hoisted(() => ({
-  logToAxiomMock: vi.fn(() => Promise.resolve()),
+const { fetchDocumentsAbortableMock } = vi.hoisted(() => ({
   fetchDocumentsAbortableMock: vi.fn(),
 }));
-
-vi.mock('~/server/logging/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof LoggingClient>();
-  return { ...actual, logToAxiom: logToAxiomMock };
-});
 
 // metricsSearchClient must be TRUTHY or both functions early-return before the
 // try/catch we are testing. fetchDocumentsAbortable is the throw seam.
@@ -58,16 +52,6 @@ vi.mock('~/env/server', () => ({
 }));
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { packed: { get: vi.fn(), set: vi.fn() } },
-    sysRedis: {},
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-  };
-});
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
     fetch = vi.fn();
@@ -82,6 +66,9 @@ import {
   getImagesFromSearchPostFilter,
 } from '../image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const logToAxiomMock = loggingMock.logToAxiom;
 
 /** The real shape observed in production logs, values substituted. */
 const sessionUser = {

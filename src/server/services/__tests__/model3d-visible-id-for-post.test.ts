@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Model3DStatus } from '~/shared/utils/prisma/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbRead.post.findUnique.mockImplementation((...args: unknown[]) =>
+  (h.findUnique as (...a: unknown[]) => unknown)(...args)
+);
 
 // getVisibleModel3DIdForPost backs the new `image.get` -> `model3dId`
 // enrichment. It must (a) return the linked Model3D id when the viewer can see
@@ -9,11 +13,6 @@ import { Model3DStatus } from '~/shared/utils/prisma/enums';
 
 const h = vi.hoisted(() => ({
   findUnique: vi.fn(),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { post: { findUnique: h.findUnique } },
-  dbWrite: {},
 }));
 
 // model3d.service transitively imports many `Prisma.validator<...>()(...)`

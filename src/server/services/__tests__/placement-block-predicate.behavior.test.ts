@@ -2,6 +2,18 @@ import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { UserEngagementType } from '~/shared/utils/prisma/enums';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbWrite.$queryRaw.mockImplementation(
+  (strings: TemplateStringsArray, ...values: unknown[]) => {
+    let sql = '';
+    for (let i = 0; i < strings.length; i++) {
+      sql += strings[i];
+      if (i < values.length) sql += `$${i + 1}`;
+    }
+    return holder.db.query(sql, values as unknown[]).then((r) => r.rows);
+  }
+);
+dbMock.dbWrite.placementSuspension.findUnique.mockImplementation(async () => null);
 
 // Booting PGlite (WASM Postgres) can exceed the default 10s hook timeout on a
 // contended runner. Relaxing it can only help a slow box, never mask a failure.
@@ -27,22 +39,6 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 // holder rather than over an instance that does not exist yet.
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 
-vi.mock('~/server/db/client', () => ({
-  dbWrite: {
-    // Prisma's `$queryRaw` is a tagged template. Stitch the fragments back into
-    // a parameterized statement and run it, so the service's SQL reaches
-    // Postgres exactly as written.
-    $queryRaw: (strings: TemplateStringsArray, ...values: unknown[]) => {
-      let sql = '';
-      for (let i = 0; i < strings.length; i++) {
-        sql += strings[i];
-        if (i < values.length) sql += `$${i + 1}`;
-      }
-      return holder.db.query(sql, values as unknown[]).then((r) => r.rows);
-    },
-    placementSuspension: { findUnique: async () => null },
-  },
-}));
 vi.mock('~/server/services/placement-escrow.service', () => ({ settlePlacement: vi.fn() }));
 
 const { isPlacementBlocked } = await import('~/server/services/placement-moderation.service');

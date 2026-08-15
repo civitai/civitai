@@ -1,29 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { increaseDate } from '~/utils/date-helpers';
 
-const { mockDbWrite, mockBust, mockCacheFetch } = vi.hoisted(() => ({
+const { mockBust, mockCacheFetch } = vi.hoisted(() => ({
   // Keyed by the cache's redis key so one stub can drive both the PaidAccess and cap-tier caches.
   mockCacheFetch: vi.fn(async (_key: string, _ids: number[]) => ({} as Record<string, unknown>)),
-  mockDbWrite: {
-    paidAccess: {
-      deleteMany: vi.fn(),
-      upsert: vi.fn(),
-      findUnique: vi.fn(),
-      update: vi.fn(),
-    },
-    modelVersion: { findUnique: vi.fn() },
-    $executeRaw: vi.fn(),
-  },
   mockBust: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: mockDbWrite }));
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, xs: 60 } }));
-vi.mock('~/server/redis/client', () => ({
-  REDIS_KEYS: {
-    CACHES: { PAID_ACCESS: 'test:paid-access', PAID_ACCESS_CAP_TIER: 'test:cap-tier' },
-  },
-}));
 vi.mock('~/server/utils/cache-helpers', () => ({
   createCachedObject: ({ key }: { key: string }) => ({
     fetch: (ids: number[]) => mockCacheFetch(key, ids),
@@ -40,6 +25,9 @@ import {
   toPublicPaidAccessDto,
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockDbWrite = dbMock.dbWrite;
 
 const TERMS = { download: { price: 500 }, generation: { trialLimit: 5 } };
 const PUBLISHED = new Date('2026-07-01T00:00:00.000Z');
@@ -247,7 +235,7 @@ describe('getViewerMonetization — gate price and licensing fee capped as one',
     tiers: Record<number, string | null> = { [OWNER]: null }
   ) =>
     mockCacheFetch.mockImplementation(async (key: string) =>
-      key === 'test:cap-tier'
+      key === REDIS_KEYS.CACHES.PAID_ACCESS_CAP_TIER
         ? Object.fromEntries(
             Object.entries(tiers).map(([id, tier]) => [id, { userId: Number(id), tier }])
           )
@@ -370,6 +358,10 @@ describe('getViewerMonetization — gate price and licensing fee capped as one',
     expect(out[1].licensingFee).toBe(1);
   });
 
+  it('addresses the cap-tier cache at its deployed key', () => {
+    expect(REDIS_KEYS.CACHES.PAID_ACCESS_CAP_TIER).toBe('packed:caches:paid-access-cap-tier');
+  });
+
   it('resolves cap tiers in ONE batched fetch across distinct owners', async () => {
     drive(
       {
@@ -385,7 +377,9 @@ describe('getViewerMonetization — gate price and licensing fee capped as one',
       viewer: { id: 2 },
     });
 
-    const tierCalls = mockCacheFetch.mock.calls.filter(([key]) => key === 'test:cap-tier');
+    const tierCalls = mockCacheFetch.mock.calls.filter(
+      ([key]) => key === REDIS_KEYS.CACHES.PAID_ACCESS_CAP_TIER
+    );
     expect(tierCalls).toHaveLength(1);
     expect(tierCalls[0][1]).toEqual([8, 9]);
   });
@@ -395,14 +389,16 @@ describe('getViewerMonetization — gate price and licensing fee capped as one',
 
     await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
 
-    expect(mockCacheFetch.mock.calls.filter(([key]) => key === 'test:cap-tier')).toHaveLength(0);
+    expect(
+      mockCacheFetch.mock.calls.filter(([key]) => key === REDIS_KEYS.CACHES.PAID_ACCESS_CAP_TIER)
+    ).toHaveLength(0);
   });
 });
 
 describe('getViewerMonetization — an unset gate/fee is never invented', () => {
   const drive = () =>
     mockCacheFetch.mockImplementation(async (key: string) =>
-      key === 'test:cap-tier' ? { 7: { userId: 7, tier: null } } : {}
+      key === REDIS_KEYS.CACHES.PAID_ACCESS_CAP_TIER ? { 7: { userId: 7, tier: null } } : {}
     );
 
   it('no gate and no fee: nothing charged, and no cap tier is even resolved', async () => {
@@ -418,7 +414,9 @@ describe('getViewerMonetization — an unset gate/fee is never invented', () => 
       licensingFee: null,
       effectiveLicensingFee: null,
     });
-    expect(mockCacheFetch.mock.calls.filter(([key]) => key === 'test:cap-tier')).toHaveLength(0);
+    expect(
+      mockCacheFetch.mock.calls.filter(([key]) => key === REDIS_KEYS.CACHES.PAID_ACCESS_CAP_TIER)
+    ).toHaveLength(0);
   });
 
   it('a null fee stays null rather than falling back to the free-tier cap', async () => {
@@ -437,7 +435,9 @@ describe('getViewerMonetization — the price ceiling is permanent-only', () => 
   const OWNER = 7;
   const drive = (gates: Record<string, unknown>) =>
     mockCacheFetch.mockImplementation(async (key: string) =>
-      key === 'test:cap-tier' ? { [OWNER]: { userId: OWNER, tier: null } } : gates
+      key === REDIS_KEYS.CACHES.PAID_ACCESS_CAP_TIER
+        ? { [OWNER]: { userId: OWNER, tier: null } }
+        : gates
     );
   const row = (over: Record<string, unknown>) => ({
     entityId: 1,

@@ -7,6 +7,9 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { getVaeFiles } from '~/server/services/model.service';
 import type * as RedisClient from '~/server/redis/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+redisMock.redis.packed.get.mockImplementation(async () => null);
+redisMock.redis.packed.set.mockImplementation(async () => undefined);
 const modelFileFindMany = dbMock.dbRead.modelFile.findMany;
 
 /**
@@ -34,15 +37,6 @@ vi.mock('~/server/services/image.service', () => ({
   queueImageSearchIndexUpdate: vi.fn(),
 }));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn().mockResolvedValue(false) }));
-vi.mock('~/server/redis/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof RedisClient>();
-  return {
-    ...actual,
-    redis: { packed: { get: async () => null, set: async () => undefined } },
-    sysRedis: {},
-  };
-});
-
 const HOST_VERSION_ID = 4242;
 const LINKED_VAE_VERSION_ID = 9999;
 

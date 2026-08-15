@@ -6,25 +6,16 @@ import { pack, unpack } from 'msgpackr';
 // get -> unpack(buffer)) — so the byte-identical claim is exercised through the real
 // serializer end-to-end, not a pass-through fake. Cache hit/miss semantics stay real (a
 // Map), letting us assert exactly when the origin DB query is re-run.
-const { store, redisPackedGet, redisPackedSet, redisDel } = vi.hoisted(() => ({
+const { store } = vi.hoisted(() => ({
   store: new Map<string, Buffer>(),
-  redisPackedGet: vi.fn(),
-  redisPackedSet: vi.fn(),
-  redisDel: vi.fn(),
 }));
-
-// Keep the real REDIS_KEYS (so the key we build matches the production constant) and only
-// swap the live client for the in-memory fake.
-vi.mock('~/server/redis/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/redis/client')>();
-  return {
-    ...actual,
-    redis: { del: redisDel, packed: { get: redisPackedGet, set: redisPackedSet } },
-  };
-});
 
 import { getTagWithModelCount } from '~/server/services/tag.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const redisDel = redisMock.redis.del;
+const redisPackedGet = redisMock.redis.packed.get;
+const redisPackedSet = redisMock.redis.packed.set;
 const dbReadQueryRaw = dbMock.dbRead.$queryRaw;
 
 const KEY_PREFIX = 'packed:caches:tag-with-model-count';
@@ -78,7 +69,7 @@ describe('getTagWithModelCount — read-through cache', () => {
     // `unfeatured` boolean, single-element array shape.
     const storedBuffer = store.get(`${KEY_PREFIX}:anime`);
     expect(Buffer.isBuffer(storedBuffer)).toBe(true);
-    const roundTripped = unpack(storedBuffer!) as typeof ANIME_ROW[];
+    const roundTripped = unpack(storedBuffer!) as (typeof ANIME_ROW)[];
     expect(roundTripped).toEqual([ANIME_ROW]);
     expect(roundTripped).toHaveLength(1);
     expect(roundTripped[0].name).toBe('Anime');

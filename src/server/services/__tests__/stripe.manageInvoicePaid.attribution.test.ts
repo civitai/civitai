@@ -26,8 +26,6 @@ import type { Stripe } from 'stripe';
  */
 
 const {
-  mockDbRead,
-  mockDbWrite,
   mockLog,
   mockCreateBuzzTransaction,
   mockGetServerStripe,
@@ -36,13 +34,6 @@ const {
   mockBindReferralCodeForUser,
   mockInvalidateSubscriptionCaches,
 } = vi.hoisted(() => ({
-  mockDbRead: {
-    product: { findMany: vi.fn() },
-  },
-  mockDbWrite: {
-    user: { findUniqueOrThrow: vi.fn(), update: vi.fn() },
-    purchase: { createMany: vi.fn() },
-  },
   mockLog: vi.fn(),
   mockCreateBuzzTransaction: vi.fn(),
   mockGetServerStripe: vi.fn(),
@@ -52,16 +43,6 @@ const {
   mockInvalidateSubscriptionCaches: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: mockDbWrite,
-}));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...args: unknown[]) => {
-    mockLog(...args);
-    return Promise.resolve(null);
-  },
-}));
 vi.mock('~/server/utils/errorHandling', async (importOriginal) => {
   const actual = await importOriginal<typeof import('~/server/utils/errorHandling')>();
   return {
@@ -88,16 +69,13 @@ vi.mock('~/server/services/vault.service', () => ({
 }));
 vi.mock('~/server/services/referral.service', () => ({
   bindReferralCodeForUser: (...args: unknown[]) => mockBindReferralCodeForUser(...args),
-  recordMembershipPaymentReward: (...args: unknown[]) =>
-    mockRecordMembershipPaymentReward(...args),
+  recordMembershipPaymentReward: (...args: unknown[]) => mockRecordMembershipPaymentReward(...args),
 }));
 vi.mock('~/server/services/blocks/buzz-attribution.service', () => ({
-  recordSubscriptionAttribution: (...args: unknown[]) =>
-    mockRecordSubscriptionAttribution(...args),
+  recordSubscriptionAttribution: (...args: unknown[]) => mockRecordSubscriptionAttribution(...args),
 }));
 vi.mock('~/server/utils/subscription.utils', () => ({
-  invalidateSubscriptionCaches: (...args: unknown[]) =>
-    mockInvalidateSubscriptionCaches(...args),
+  invalidateSubscriptionCaches: (...args: unknown[]) => mockInvalidateSubscriptionCaches(...args),
 }));
 vi.mock('~/server/prom/client', () => ({
   userUpdateCounter: { inc: vi.fn() },
@@ -105,6 +83,14 @@ vi.mock('~/server/prom/client', () => ({
 
 import { manageInvoicePaid } from '../stripe.service';
 import { encodeAttributionMetadata } from '~/server/schema/blocks/attribution.schema';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+loggingMock.logToAxiom.mockImplementation((...args: unknown[]) => {
+  mockLog(...args);
+  return Promise.resolve(null);
+});
 
 const USER_ID = 100;
 const CUSTOMER_ID = 'cus_test';
@@ -244,7 +230,9 @@ describe('manageInvoicePaid — Checkout-Session race fallback is scoped to subs
   // Returns a stripe-client mock whose checkout.sessions.list is a tracked spy
   // resolving to `sessionMeta`, so a test can assert whether the fallback ran.
   function stripeClientWithSession(sessionMeta: Record<string, string> | undefined) {
-    const list = vi.fn().mockResolvedValue({ data: sessionMeta ? [{ metadata: sessionMeta }] : [] });
+    const list = vi
+      .fn()
+      .mockResolvedValue({ data: sessionMeta ? [{ metadata: sessionMeta }] : [] });
     mockGetServerStripe.mockResolvedValue({
       checkout: { sessions: { list } },
       charges: { retrieve: vi.fn() },

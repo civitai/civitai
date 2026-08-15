@@ -63,10 +63,15 @@ drops the literal, printing any divergence under `CONSTANTS THAT DRIFTED FROM TH
 
 🔴 **A drifted constant is REPORTED, not refused — the conversion still happens and the real
 value is swapped in.** An earlier version of this paragraph said the codemod refuses on
-divergence. It does not, and the difference matters: the drift report is the only place a
-swapped constant is ever named, so a run whose report you did not read has silently changed
-what the test addresses. Read that section every time, and keep what it lists — see the
-following two warnings for why it will usually not go red.
+divergence. It does not. Read that section every time and keep what it lists.
+
+🔴 **And the drift report is NOT the complete list of swapped constants.** Converting
+`paid-access.service.test.ts` replaced an invented `'test:cap-tier'` with the real
+`'packed:caches:paid-access-cap-tier'` and named nothing; the report for that run listed one
+unrelated file. So a clean drift section does not mean no constant moved. **The check that
+actually finds them is a grep of the converted file for string literals that look like keys** —
+`git diff` on the conversion shows every literal the factory used to supply, and any of them the
+file still mentions by hand is now addressing something else.
 
 42 files diverge, across 73 leaves. Some are placeholders (`"rl"`, `"kill"`); others read as
 real and are wrong — `CACHE_LOCKS` as `"caches:lock"` against a real `"cache-lock"`,
@@ -360,6 +365,34 @@ on residuals.
 What caught them was **a control pair at assertion level, on a small set, run by someone who
 did not write the tool**. Keep doing that alongside the gate; it is the half the gate cannot
 do.
+
+**A worked instance, because the red half is the half that does not matter.** Converting
+`paid-access.service.test.ts` swapped an invented `'test:cap-tier'` for the real key. That
+literal appeared six times: once in an assertion, which went red, and five times as the driver
+`key === 'test:cap-tier' ? tiers : gates`. Those five silently fell to the else branch — the
+tests kept passing while feeding the wrong fixture, and one (`expect(…).toHaveLength(0)`) became
+vacuously true, since filtering on a key nothing uses always yields zero. **One test failed and
+five stopped testing what they name.** Neither collected counts nor `residual-mocks.mjs` can see
+the five. When a conversion swaps a constant, grep the whole file for the old literal rather than
+fixing the assertion that failed.
+
+### A test can certify its own non-vacuity, and then it needs no mutation
+
+`search-error-log-pii.test.ts` asserts redaction with `expect(serialized).not.toContain(v)` — the
+vacuity-prone direction, since a redactor that returned `{}` would pass. It also asserts that the
+**un-redacted** input DOES contain every one of those values:
+
+```ts
+for (const v of PII_VALUES) expect(serialized).not.toContain(v);
+// positive control: the un-redacted input DOES contain every one of them,
+// so the assertions above are capable of failing.
+for (const v of PII_VALUES) expect(JSON.stringify(searchInput)).toContain(v);
+```
+
+That is a positive control living inside the test, and it makes the negative assertions provably
+capable of failing. Prefer it to an external mutation wherever the negative form is unavoidable:
+a mutation proves the property once, for whoever ran it; a positive control proves it on every
+run, for everyone.
 
 ### And the general form, which outlives this migration
 
