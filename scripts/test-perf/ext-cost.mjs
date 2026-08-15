@@ -6,6 +6,15 @@
  * test file is a fresh process, so each file that reaches a package pays its cold import again.
  * Cost is measured the same way the suite pays it: one `import()` in a brand-new node process.
  *
+ * "Every test file is a fresh process" is the load-bearing claim, so it is measured, not assumed:
+ * four probe files at `--max-workers=1` report four distinct `process.pid`s. Node's module cache
+ * is per process, so it does NOT survive between files and the cost really is per file, not per
+ * worker. Do not talk yourself out of this from an absent whole-suite delta, as I did once.
+ *
+ * What the numbers do NOT support is adding the rows up. The per-package cold times overlap on
+ * shared transitive deps — the three `@aws-sdk` rows share core — so cutting one package off a
+ * file that still reaches its dependencies through another edge refunds only part of its column.
+ *
  * Reads the fan-in counts from `externals.mjs --top 200` (path in argv[2]).
  */
 import { readFileSync } from 'fs';
