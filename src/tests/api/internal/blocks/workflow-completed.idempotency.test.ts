@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -37,26 +38,10 @@ const BLOCK_INSTANCE_ID = 'bki_0123456789ABCDEFGHJKMNPQRS';
 const WORKFLOW_ID = 'wf_test_123';
 const DEDUP_TTL_SECONDS = 7 * 24 * 60 * 60;
 
-const { mockEnvStore,   } = vi.hoisted(() => ({
-  // Inlined literal: vi.hoisted() runs before the top-level `const JOB_TOKEN`,
-  // so it can't reference that binding (keep this in sync with JOB_TOKEN below).
-  mockEnvStore: { JOB_TOKEN: 'test-job-token' } as Record<string, unknown>,
-  
-  
-}));
 const mockFindUnique = dbMock.dbRead.blockUserSubscription.findUnique;
 const mockExecuteRaw = dbMock.dbWrite.$executeRaw;
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/env/server', () => ({
-  env: new Proxy(mockEnvStore, {
-    get(t, p: string) {
-      if (p in t) return t[p];
-      if (p === 'LOGGING') return '';
-      return undefined;
-    },
-  }),
-}));
 // Pipeline flag is hard-ON here — this file is about the post-gate contract.
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: vi.fn(async (flag: string) => flag === 'app-blocks-pipeline-enabled'),
@@ -96,7 +81,7 @@ async function invoke(req: NextApiRequest, res: NextApiResponse) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockEnvStore.JOB_TOKEN = JOB_TOKEN;
+  setEnv({ JOB_TOKEN });
   // Default: valid install + first-time dedup so the happy path reaches 200.
   mockFindUnique.mockResolvedValue({ id: 'sub_1', targetModelIds: [7], appBlockId: 'apb_1' });
   mockIncrBy.mockResolvedValue(1);
@@ -131,9 +116,14 @@ describe('workflow-completed — JOB_TOKEN auth', () => {
 
   it('401s (fail-closed) when JOB_TOKEN is not configured on the server', async () => {
     // A missing server secret must NOT degrade into accept-anything.
-    mockEnvStore.JOB_TOKEN = undefined;
+    setEnv({ JOB_TOKEN: undefined });
     const res = makeRes();
-    await invoke(makeReq({ headers: { 'x-civitai-internal-token': '' } }), res);
+    // The header is the token the server WOULD have accepted if the secret were
+    // still configured. An empty header cannot tell "unset" from "wrong", so it
+    // would pass either way — and `JOB_TOKEN` here equals the canonical env
+    // default, so this is also what proves the `undefined` override MASKS that
+    // default rather than falling through to it.
+    await invoke(makeReq({ headers: { 'x-civitai-internal-token': JOB_TOKEN } }), res);
     expect(res._status).toBe(401);
   });
 
@@ -153,7 +143,10 @@ describe('workflow-completed — method + body validation', () => {
 
   it('400s a blockInstanceId that does not match the bki_<crockford26> shape', async () => {
     const res = makeRes();
-    await invoke(makeReq({ body: { workflowId: WORKFLOW_ID, blockInstanceId: 'nope', buzzSpent: 0 } }), res);
+    await invoke(
+      makeReq({ body: { workflowId: WORKFLOW_ID, blockInstanceId: 'nope', buzzSpent: 0 } }),
+      res
+    );
     expect(res._status).toBe(400);
     expect(mockIncrBy).not.toHaveBeenCalled();
   });
@@ -161,7 +154,9 @@ describe('workflow-completed — method + body validation', () => {
   it('400s a negative buzzSpent', async () => {
     const res = makeRes();
     await invoke(
-      makeReq({ body: { workflowId: WORKFLOW_ID, blockInstanceId: BLOCK_INSTANCE_ID, buzzSpent: -1 } }),
+      makeReq({
+        body: { workflowId: WORKFLOW_ID, blockInstanceId: BLOCK_INSTANCE_ID, buzzSpent: -1 },
+      }),
       res
     );
     expect(res._status).toBe(400);

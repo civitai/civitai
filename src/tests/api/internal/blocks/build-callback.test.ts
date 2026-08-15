@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { createHmac } from 'crypto';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -16,7 +17,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 
 const {
   SECRET,
-  mockEnvStore,
   mockFlag,
   mockRedis,
   mockSetNx,
@@ -32,10 +32,6 @@ const {
   const SECRET = 'test-build-callback-secret';
   return {
     SECRET,
-    // Mutable env backing store so dual-secret (F6) tests can set/clear
-    // BLOCK_BUILD_CALLBACK_SECRET[_NEXT] per case. Defaults to the single
-    // current secret so the existing handler tests are unchanged.
-    mockEnvStore: { BLOCK_BUILD_CALLBACK_SECRET: SECRET } as Record<string, unknown>,
     mockFlag: { enabled: true },
     mockRedis,
     // mirrors redis.setNxKeepTtlWithEx(key, value, ttl): Promise<boolean>
@@ -44,7 +40,9 @@ const {
       return mockRedis.nxResult;
     }),
     mockRedisDel: vi.fn(async () => 1),
-    mockTriggerApply: vi.fn<(...a: any[]) => Promise<{ name: string }>>(async () => ({ name: 'apply-job-1' })),
+    mockTriggerApply: vi.fn<(...a: any[]) => Promise<{ name: string }>>(async () => ({
+      name: 'apply-job-1',
+    })),
     mockWaitApply: vi.fn<(...a: any[]) => Promise<string>>(async () => 'succeeded'),
     mockSetCommitStatus: vi.fn(async () => undefined),
     mockAppBlockUpdate: vi.fn(async () => undefined),
@@ -53,15 +51,6 @@ const {
 });
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/env/server', () => ({
-  env: new Proxy(mockEnvStore, {
-    get(t, p: string) {
-      if (p in t) return t[p];
-      if (p === 'LOGGING') return '';
-      return undefined;
-    },
-  }),
-}));
 vi.mock('~/server/db/client', () => ({
   dbRead: {},
   dbWrite: { appBlock: { update: mockAppBlockUpdate } },
@@ -106,6 +95,13 @@ import {
 } from '~/pages/api/internal/blocks/build-callback';
 import { isFlipt } from '~/server/flipt/client';
 
+// The handler suites below sign with the single current secret. Per-file env
+// overrides are cleared between FILES, not between tests, so the default is
+// re-stated per test rather than once at module scope.
+beforeEach(() => {
+  setEnv({ BLOCK_BUILD_CALLBACK_SECRET: SECRET, BLOCK_BUILD_CALLBACK_SECRET_NEXT: undefined });
+});
+
 const mockedIsFlipt = vi.mocked(isFlipt);
 
 /**
@@ -121,16 +117,24 @@ describe('build-callback imageRef binding', () => {
     expect(expectedImageRef(slug, SHA)).toBe(`ghcr.io/civitai/app-block-${slug}:${SHA}`);
   });
   it('rejects another slug under the same prefix', () => {
-    expect(`ghcr.io/civitai/app-block-slug-b:${SHA}` === expectedImageRef('slug-a', SHA)).toBe(false);
+    expect(`ghcr.io/civitai/app-block-slug-b:${SHA}` === expectedImageRef('slug-a', SHA)).toBe(
+      false
+    );
   });
   it('rejects a mutable :latest tag for our own slug', () => {
-    expect(`ghcr.io/civitai/app-block-slug-a:latest` === expectedImageRef('slug-a', SHA)).toBe(false);
+    expect(`ghcr.io/civitai/app-block-slug-a:latest` === expectedImageRef('slug-a', SHA)).toBe(
+      false
+    );
   });
   it('rejects a different sha for our own slug', () => {
-    expect(expectedImageRef('slug-a', 'b'.repeat(40)) === expectedImageRef('slug-a', SHA)).toBe(false);
+    expect(expectedImageRef('slug-a', 'b'.repeat(40)) === expectedImageRef('slug-a', SHA)).toBe(
+      false
+    );
   });
   it('rejects a prefix-matching but unrelated repo', () => {
-    expect(`ghcr.io/civitai/app-block-slug-a-evil:${SHA}` === expectedImageRef('slug-a', SHA)).toBe(false);
+    expect(`ghcr.io/civitai/app-block-slug-a-evil:${SHA}` === expectedImageRef('slug-a', SHA)).toBe(
+      false
+    );
   });
 });
 
@@ -146,36 +150,34 @@ describe('build-callback verifySignature dual-secret window (F6)', () => {
   const sign = (secret: string) => createHmac('sha256', secret).update(body).digest('hex');
 
   beforeEach(() => {
-    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET = undefined;
-    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET_NEXT = undefined;
-  });
-  afterEach(() => {
-    // Restore the default single-secret env for the handler tests below.
-    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET = SECRET;
-    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET_NEXT = undefined;
+    setEnv({ BLOCK_BUILD_CALLBACK_SECRET: undefined, BLOCK_BUILD_CALLBACK_SECRET_NEXT: undefined });
   });
 
   it('accepts a signature valid under the current secret', () => {
-    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET = 'current-secret';
+    setEnv({ BLOCK_BUILD_CALLBACK_SECRET: 'current-secret' });
     expect(verifySignature(body, sign('current-secret'))).toBe(true);
     expect(verifySignature(body, `sha256=${sign('current-secret')}`)).toBe(true);
   });
 
   it('accepts BOTH old and NEXT during rotation', () => {
-    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET = 'old-secret';
-    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET_NEXT = 'new-secret';
+    setEnv({
+      BLOCK_BUILD_CALLBACK_SECRET: 'old-secret',
+      BLOCK_BUILD_CALLBACK_SECRET_NEXT: 'new-secret',
+    });
     expect(verifySignature(body, sign('new-secret'))).toBe(true);
     expect(verifySignature(body, sign('old-secret'))).toBe(true);
   });
 
   it('rejects a signature under neither secret', () => {
-    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET = 'old-secret';
-    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET_NEXT = 'new-secret';
+    setEnv({
+      BLOCK_BUILD_CALLBACK_SECRET: 'old-secret',
+      BLOCK_BUILD_CALLBACK_SECRET_NEXT: 'new-secret',
+    });
     expect(verifySignature(body, sign('attacker'))).toBe(false);
   });
 
   it('NEXT unset → identical single-secret behaviour', () => {
-    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET = 'only';
+    setEnv({ BLOCK_BUILD_CALLBACK_SECRET: 'only' });
     expect(verifySignature(body, sign('only'))).toBe(true);
     expect(verifySignature(body, sign('other'))).toBe(false);
   });
@@ -186,8 +188,7 @@ describe('build-callback verifySignature dual-secret window (F6)', () => {
   });
 
   it('ignores an empty-string secret (does not compute an empty-key HMAC)', () => {
-    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET = '';
-    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET_NEXT = 'real-next';
+    setEnv({ BLOCK_BUILD_CALLBACK_SECRET: '', BLOCK_BUILD_CALLBACK_SECRET_NEXT: 'real-next' });
     expect(verifySignature(body, sign(''))).toBe(false);
     expect(verifySignature(body, sign('real-next'))).toBe(true);
   });
@@ -348,7 +349,11 @@ describe('build-callback handler — flag gate + replay guard', () => {
       expect.objectContaining({ slug: SLUG, sha: SHA, appBlockId: APB })
     );
     // Lock the dedup contract: atomic NX-set on the (appBlockId, sha) key with the TTL.
-    expect(mockSetNx).toHaveBeenCalledWith(expect.stringContaining(`apply:${APB}:${SHA}`), '1', 600);
+    expect(mockSetNx).toHaveBeenCalledWith(
+      expect.stringContaining(`apply:${APB}:${SHA}`),
+      '1',
+      600
+    );
   });
 
   it('short-circuits a replayed success callback without re-triggering apply', async () => {
@@ -356,7 +361,10 @@ describe('build-callback handler — flag gate + replay guard', () => {
     const res = makeRes();
     await invoke(signedReq(validSuccessBody()), res);
     expect(res._status).toBe(200);
-    expect(res._body).toMatchObject({ applied: false, reason: 'duplicate callback (replay-guarded)' });
+    expect(res._body).toMatchObject({
+      applied: false,
+      reason: 'duplicate callback (replay-guarded)',
+    });
     expect(mockTriggerApply).not.toHaveBeenCalled();
   });
 
@@ -377,7 +385,12 @@ describe('build-callback handler — flag gate + replay guard', () => {
     expect(mockTriggerApply).not.toHaveBeenCalled();
     expect(mockSetNx).not.toHaveBeenCalled(); // dedup slot untouched by a failure callback
     // Phase 2: a build failure marks the request 'failed' so the dev sees it.
-    expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', expect.stringMatching(/Build/));
+    expect(mockMarkDeploy).toHaveBeenCalledWith(
+      SLUG,
+      SHA,
+      'failed',
+      expect.stringMatching(/Build/)
+    );
   });
 
   it('clears the replay slot on a DEFINITIVE apply failure so a same-sha retry is not blocked', async () => {
@@ -406,7 +419,9 @@ describe('build-callback handler — flag gate + replay guard', () => {
     const res = makeRes();
     await invoke(signedReq(validSuccessBody()), res);
     await flush();
-    expect(mockAppBlockUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: APB } }));
+    expect(mockAppBlockUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: APB } })
+    );
     expect(mockRedisDel).not.toHaveBeenCalled();
     // Phase 2: the request transitions 'deploying' (apply trigger) → 'live' (watcher).
     expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'deploying');
@@ -534,7 +549,9 @@ describe('build-callback handler — failureReason excerpt (A1/A2)', () => {
     const NUL = String.fromCharCode(0x00);
     const res = makeRes();
     await invoke(
-      signedReq(failBody({ failureReason: `${ESC}[1;31mERROR${ESC}[0m${NUL}: bad lockfile\r\nline2` })),
+      signedReq(
+        failBody({ failureReason: `${ESC}[1;31mERROR${ESC}[0m${NUL}: bad lockfile\r\nline2` })
+      ),
       res
     );
     const detail = mockMarkDeploy.mock.calls.at(-1)?.[3] as string;

@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { createHmac } from 'crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -26,12 +27,6 @@ vi.mock('~/server/services/block-manifest-validator.service', () => ({
     validateSubmission: vi.fn(() => ({ valid: true, errors: [] })),
   },
 }));
-
-// Mutable env mock so each test can set / clear FORGEJO_WEBHOOK_SECRET[_NEXT]
-// before exercising the dual-secret rotation window. vi.hoisted so the object
-// exists before the hoisted vi.mock factory runs.
-const mockEnv = vi.hoisted(() => ({}) as Record<string, unknown>);
-vi.mock('~/env/server', () => ({ env: mockEnv }));
 
 import { parseExpectedRepo, verifyForgejoSignature } from '~/pages/api/internal/blocks/git-push';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -91,28 +86,26 @@ describe('verifyForgejoSignature dual-secret window (F6)', () => {
   const body = Buffer.from('{"ref":"refs/heads/main","after":"abc"}', 'utf8');
   const sign = (secret: string) => createHmac('sha256', secret).update(body).digest('hex');
 
-  beforeEach(() => {
-    mockEnv.FORGEJO_WEBHOOK_SECRET = undefined;
-    mockEnv.FORGEJO_WEBHOOK_SECRET_NEXT = undefined;
-  });
-  afterEach(() => {
-    mockEnv.FORGEJO_WEBHOOK_SECRET = undefined;
-    mockEnv.FORGEJO_WEBHOOK_SECRET_NEXT = undefined;
-  });
+  // `undefined` here is a stored override, not a fall-through: the proxy keys on
+  // `overrides.has()`, so it masks any default rather than revealing one.
+  const clearSecrets = () =>
+    setEnv({ FORGEJO_WEBHOOK_SECRET: undefined, FORGEJO_WEBHOOK_SECRET_NEXT: undefined });
+
+  beforeEach(clearSecrets);
+  afterEach(clearSecrets);
 
   it('accepts a signature valid under the current secret', () => {
-    mockEnv.FORGEJO_WEBHOOK_SECRET = 'current-secret';
+    setEnv({ FORGEJO_WEBHOOK_SECRET: 'current-secret' });
     expect(verifyForgejoSignature(body, sign('current-secret'))).toBe(true);
   });
 
   it('accepts the `sha256=` prefixed header form too', () => {
-    mockEnv.FORGEJO_WEBHOOK_SECRET = 'current-secret';
+    setEnv({ FORGEJO_WEBHOOK_SECRET: 'current-secret' });
     expect(verifyForgejoSignature(body, `sha256=${sign('current-secret')}`)).toBe(true);
   });
 
   it('accepts a signature valid under the NEXT secret (new signer) during rotation', () => {
-    mockEnv.FORGEJO_WEBHOOK_SECRET = 'old-secret';
-    mockEnv.FORGEJO_WEBHOOK_SECRET_NEXT = 'new-secret';
+    setEnv({ FORGEJO_WEBHOOK_SECRET: 'old-secret', FORGEJO_WEBHOOK_SECRET_NEXT: 'new-secret' });
     // New signer (NEXT) is accepted...
     expect(verifyForgejoSignature(body, sign('new-secret'))).toBe(true);
     // ...AND the old signer is still accepted in the same window.
@@ -120,13 +113,12 @@ describe('verifyForgejoSignature dual-secret window (F6)', () => {
   });
 
   it('rejects a signature under neither secret', () => {
-    mockEnv.FORGEJO_WEBHOOK_SECRET = 'old-secret';
-    mockEnv.FORGEJO_WEBHOOK_SECRET_NEXT = 'new-secret';
+    setEnv({ FORGEJO_WEBHOOK_SECRET: 'old-secret', FORGEJO_WEBHOOK_SECRET_NEXT: 'new-secret' });
     expect(verifyForgejoSignature(body, sign('attacker-secret'))).toBe(false);
   });
 
   it('NEXT unset → identical single-secret behaviour (current accepted, others rejected)', () => {
-    mockEnv.FORGEJO_WEBHOOK_SECRET = 'only-secret';
+    setEnv({ FORGEJO_WEBHOOK_SECRET: 'only-secret' });
     expect(verifyForgejoSignature(body, sign('only-secret'))).toBe(true);
     expect(verifyForgejoSignature(body, sign('other'))).toBe(false);
   });
@@ -141,15 +133,14 @@ describe('verifyForgejoSignature dual-secret window (F6)', () => {
   it('ignores an empty-string secret (does not compute an empty-key HMAC)', () => {
     // An empty-string FORGEJO_WEBHOOK_SECRET must be filtered out, so a
     // signature computed with the empty key must NOT validate.
-    mockEnv.FORGEJO_WEBHOOK_SECRET = '';
-    mockEnv.FORGEJO_WEBHOOK_SECRET_NEXT = 'real-next';
+    setEnv({ FORGEJO_WEBHOOK_SECRET: '', FORGEJO_WEBHOOK_SECRET_NEXT: 'real-next' });
     expect(verifyForgejoSignature(body, sign(''))).toBe(false);
     // The real NEXT secret still works.
     expect(verifyForgejoSignature(body, sign('real-next'))).toBe(true);
   });
 
   it('rejects a missing / empty / non-string header', () => {
-    mockEnv.FORGEJO_WEBHOOK_SECRET = 'current-secret';
+    setEnv({ FORGEJO_WEBHOOK_SECRET: 'current-secret' });
     expect(verifyForgejoSignature(body, undefined)).toBe(false);
     expect(verifyForgejoSignature(body, '')).toBe(false);
     expect(verifyForgejoSignature(body, 42 as unknown)).toBe(false);

@@ -23,13 +23,13 @@
     "pendingFiles": 349,
     "allFiles": 504,
     "canonicalSites": 491,
-    "pendingSites": 787
+    "pendingSites": 784
   },
   "bySpecifier": {
     "~/server/db/client": 244,
     "~/server/redis/client": 144,
     "~/server/logging/client": 103,
-    "~/env/server": 40,
+    "~/env/server": 37,
     "~/server/services/buzz.service": 98,
     "~/server/services/image.service": 88,
     "~/server/clickhouse/client": 77,
