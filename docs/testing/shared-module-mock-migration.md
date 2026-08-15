@@ -509,6 +509,19 @@ Two more rules, both learned the hard way on this box:
 
 - **Verify at two worker counts.** The failing set is order-dependent — 1574 failures at 8
   workers against 1161 at 31, same code, same flag. A green run at one width is not evidence.
+- 🔴 **"Failure counts are tight within a tenancy" has a named exception: a CLIQUE.** Two
+  control runs, identical tree, same tenancy, nothing changed between them, over the six test
+  files importing `~/server/jobs/image-ingestion`: **8 failures then 12**, with
+  `remove-blocked-images-retention` going **0 → 9** on no diff at all. Inside a clique the
+  failures reassign between members run to run, so *every* failure-based reading there measures
+  reassignment rather than your change. Collected counts held at 171 throughout — they are
+  contention-independent, and on this axis they were the only surviving instrument.
+
+  **Two consequences.** A per-file "fixed / worse" story is not attribution: a candidate read
+  `8 → 5, one file fixed, one file worse`, and then **reverting the file under test produced the
+  identical `8 → 5`** while a full revert produced 12. And **a change inside a clique cannot be
+  licensed by a run at all** — not "failed verification", *unmeasurable*. Convert the clique
+  together, or leave it. The reading that points the way you want is the one to distrust.
 - **Never read a suite result through `| tail` or `| grep`.** You get the pipe's exit code.
   Redirect to a file, then read the file.
 
