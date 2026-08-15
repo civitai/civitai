@@ -266,6 +266,14 @@ function classify(file, src, defaults, moduleScopeKeys) {
 
   let { keys } = declaredKeys(st.text);
   if (!keys.size) {
+    // 🔴 Both patterns below need `env:` written out, so a SHORTHAND property is
+    // invisible to them — `({ env })` and `new Proxy({ JOB_TOKEN }, …)` both fall
+    // through to "no keys found", which reads as "this file declares nothing" when
+    // it means "the scan cannot see what it declares". Three of the five files that
+    // reason produced were shorthand, and one of them (`moderation`) mutated six
+    // keys at runtime, so it was a mutation-class file filed under the wrong label.
+    // Treat "no keys found" as UNKNOWN, never as empty. Fixing this means matching a
+    // shorthand identifier and resolving it the same way the `ident` branch does.
     const ident = (/env:\s*new Proxy\(\s*([A-Za-z_$][\w$]*)/.exec(st.text) ??
       /env:\s*([A-Za-z_$][\w$]*)\s*[,}]/.exec(st.text))?.[1];
     if (!ident) return { file, action: 'refuse', reason: 'no keys found — read by hand' };
