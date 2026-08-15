@@ -37,7 +37,9 @@ function grepFiles(dir: string, re: RegExp): string[] {
         if (entry.name !== 'node_modules' && entry.name !== '__tests__') walk(child);
       } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) {
         if (re.test(readFileSync(child, 'utf8'))) {
-          out.push(path.relative(REPO_ROOT, child));
+          // Compared against the `/`-separated literals in WRITER_FILES, so posix
+          // separators on every platform.
+          out.push(path.relative(REPO_ROOT, child).replace(/\\/g, '/'));
         }
       }
     }

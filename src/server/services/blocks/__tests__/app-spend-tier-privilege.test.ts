@@ -178,8 +178,13 @@ type Scan = {
 const SCANNED_TOKENS = [...SPEND_FIELDS, RAW_COLUMN] as const;
 
 async function scanSourceTree(): Promise<Scan> {
+  // Repo-relative paths are IDENTIFIERS here — matched against the `/`-separated
+  // literals in PUBLISHER_REACHABLE and by `/`-anchored regexes — so they carry
+  // posix separators on every platform. Without this `alwaysDecode` never hits on
+  // Windows, and the ENOENT that is supposed to announce a renamed publisher path
+  // silently becomes an empty `raw` map instead.
   const files = (await walk(join(ROOT, 'src'), []))
-    .map((f) => relative(ROOT, f))
+    .map((f) => relative(ROOT, f).replace(/\\/g, '/'))
     .filter((f) => !/__tests__|\.test\.tsx?$|(^|\/)src\/tests\//.test(f));
 
   const code = new Map<string, string>();
