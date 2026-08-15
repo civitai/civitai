@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DEPLOY_PENDING_GRACE_MS,
@@ -70,9 +71,12 @@ vi.mock('~/server/db/client', () => ({
   },
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
-vi.mock('~/env/server', () => ({
-  env: { FORGEJO_BASE_URL: 'https://forge.example', FORGEJO_ADMIN_TOKEN: 'tok' },
-}));
+beforeEach(() => {
+  setEnv({
+    FORGEJO_BASE_URL: 'https://forge.example',
+    FORGEJO_ADMIN_TOKEN: 'tok',
+  });
+});
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerBuild: mockTriggerBuild,
 }));

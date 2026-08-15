@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
@@ -41,11 +42,11 @@ const { mockFlipt, mockGetJwks, isFliptMock } = vi.hoisted(() => {
 });
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/env/server', () => ({
-  env: {
+beforeEach(() => {
+  setEnv({
     BLOCK_TOKEN_PUBLIC_KEY: 'fake-public',
-  },
-}));
+  });
+});
 
 vi.mock('~/server/flipt/client', () => ({ isFlipt: isFliptMock }));
 

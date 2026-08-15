@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /**
@@ -129,9 +130,12 @@ vi.mock('~/server/redis/client', () => ({
   REDIS_SYS_KEYS: { BLOCKS: { DEV_TOKEN_RATE_LIMIT: 'system:blocks:dev-token-rate-limit' } },
   withSysReadDeadline: mockWithSysReadDeadline,
 }));
-vi.mock('~/env/server', () => ({
-  env: { BLOCK_TOKEN_PRIVATE_KEY: 'priv', BLOCK_TOKEN_PUBLIC_KEY: 'pub' },
-}));
+beforeEach(() => {
+  setEnv({
+    BLOCK_TOKEN_PRIVATE_KEY: 'priv',
+    BLOCK_TOKEN_PUBLIC_KEY: 'pub',
+  });
+});
 
 import handler from '~/pages/api/v1/blocks/dev-token';
 import { domainBrowsingCeiling } from '~/shared/constants/browsingLevel.constants';

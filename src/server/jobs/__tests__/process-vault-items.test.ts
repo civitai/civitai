@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const {
@@ -22,7 +23,11 @@ vi.mock('@prisma/client', () => ({ Prisma: { AnyNull: Symbol('AnyNull') } }));
 vi.mock('~/shared/utils/prisma/enums', () => ({
   VaultItemStatus: { Pending: 'Pending', Failed: 'Failed', Stored: 'Stored' },
 }));
-vi.mock('~/env/server', () => ({ env: { S3_VAULT_BUCKET: 'vault-bucket' } }));
+beforeEach(() => {
+  setEnv({
+    S3_VAULT_BUCKET: 'vault-bucket',
+  });
+});
 vi.mock('~/server/jobs/job', () => ({
   createJob: (_n: string, _c: string, fn: unknown) => fn,
   getJobDate: async () => [new Date(0), async () => {}],

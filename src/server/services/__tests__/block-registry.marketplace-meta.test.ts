@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
@@ -26,7 +27,9 @@ const { mockDb } = vi.hoisted(() => ({
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       update: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
     },
-    blockUserSubscription: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
+    blockUserSubscription: {
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+    },
     modelVersion: { findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) },
   },
 }));
@@ -42,11 +45,19 @@ vi.mock('~/server/redis/client', () => ({
   },
   sysRedis: { sMembers: vi.fn(async () => []) },
   REDIS_KEYS: {
-    BLOCKS: { REGISTRY: 'packed:caches:block-registry', TOKEN_RATE_LIMIT: 'rl', REVOKED_INSTANCE: 'rev' },
+    BLOCKS: {
+      REGISTRY: 'packed:caches:block-registry',
+      TOKEN_RATE_LIMIT: 'rl',
+      REVOKED_INSTANCE: 'rev',
+    },
   },
   REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
 }));
-vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai', LOGGING: '' } }));
+beforeEach(() => {
+  setEnv({
+    LOGGING: '',
+  });
+});
 
 function capturedSql(): string {
   expect(mockDb.$queryRaw).toHaveBeenCalled();

@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
@@ -29,7 +30,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const { mockDbRead } = vi.hoisted(() => ({
   mockDbRead: {
     $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    blockUserSubscription: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
+    blockUserSubscription: {
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+    },
     appBlock: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
     modelVersion: { findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) },
   },
@@ -46,7 +49,11 @@ vi.mock('~/server/redis/client', () => ({
   },
   sysRedis: { sMembers: vi.fn(async () => []) },
   REDIS_KEYS: {
-    BLOCKS: { REGISTRY: 'packed:caches:block-registry', TOKEN_RATE_LIMIT: 'rl', REVOKED_INSTANCE: 'rev' },
+    BLOCKS: {
+      REGISTRY: 'packed:caches:block-registry',
+      TOKEN_RATE_LIMIT: 'rl',
+      REVOKED_INSTANCE: 'rev',
+    },
   },
   REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
 }));
@@ -55,7 +62,11 @@ vi.mock('~/server/redis/client', () => ({
 // LOGGING is read by cache-helpers' createLogger at module-eval (the service
 // now imports cache-helpers for the review-aggregate queryCache); '' = no-op
 // logger.
-vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai', LOGGING: '' } }));
+beforeEach(() => {
+  setEnv({
+    LOGGING: '',
+  });
+});
 
 /** Reconstructs the SQL string from the tagged-template args Prisma received. */
 function capturedSql(): string {
@@ -427,9 +438,7 @@ describe('BlockRegistry.getAppDetail — anon-exposure protections (F-E E2)', ()
   });
 
   it('a malformed/missing manifest yields an empty public manifest (no crash, no leak)', async () => {
-    mockDbRead.$queryRaw.mockResolvedValueOnce([
-      rawRow({ manifest: null }),
-    ]);
+    mockDbRead.$queryRaw.mockResolvedValueOnce([rawRow({ manifest: null })]);
     const { BlockRegistry } = await import('../block-registry.service');
     const detail = await BlockRegistry.getAppDetail('ab_1');
     expect(detail!.manifest).not.toHaveProperty('trustTier');

@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // A scan verdict returns via the fire-and-forget /image-scan-result webhook, which
@@ -105,14 +106,14 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 vi.mock('~/server/utils/concurrency-helpers', () => ({ limitConcurrency: mockLimitConcurrency }));
 vi.mock('~/env/other', () => ({ isProd: true }));
-vi.mock('~/env/server', () => ({
-  env: {
+beforeEach(() => {
+  setEnv({
     IMAGE_SCANNING_MAX_PER_RUN: 100,
     IMAGE_SCANNING_RETRY_DELAY: 5,
-    IMAGE_SCANNING_PENDING_TIMEOUT: 30, // must equal PENDING_TIMEOUT_MIN above
+    IMAGE_SCANNING_PENDING_TIMEOUT: 30,
     DATABASE_IS_PROD: true,
-  },
-}));
+  });
+});
 
 import { ingestImages } from '~/server/jobs/image-ingestion';
 import { dbMock } from '~/__tests__/mocks/db.mock';

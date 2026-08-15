@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -23,9 +24,13 @@ const { mockValidator } = vi.hoisted(() => {
   return { mockValidator: validator };
 });
 
-vi.mock('~/env/server', () => ({
-  env: { JOB_TOKEN: 'job-secret', BLOCK_TOKEN_PRIVATE_KEY: 'x', BLOCK_TOKEN_PUBLIC_KEY: 'x' },
-}));
+beforeEach(() => {
+  setEnv({
+    JOB_TOKEN: 'job-secret',
+    BLOCK_TOKEN_PRIVATE_KEY: 'x',
+    BLOCK_TOKEN_PUBLIC_KEY: 'x',
+  });
+});
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: vi.fn(async () => true),

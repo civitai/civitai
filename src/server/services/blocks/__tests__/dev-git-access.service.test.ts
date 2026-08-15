@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -37,7 +38,11 @@ const { mockDbRead, mockDbWrite, mockForgejo } = vi.hoisted(() => ({
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
-vi.mock('~/env/server', () => ({ env: { NEXTAUTH_SECRET: 'unit-test-secret-key' } }));
+beforeEach(() => {
+  setEnv({
+    NEXTAUTH_SECRET: 'unit-test-secret-key',
+  });
+});
 vi.mock('../forgejo.service', () => mockForgejo);
 
 beforeEach(() => {
@@ -114,7 +119,11 @@ describe('ensureForgejoIdentity — owner (provisioning) path', () => {
     // CLAIM: placeholder row with an EMPTY token, on the dev-<id> handle.
     expect(mockDbWrite.appDevForgejoIdentity.create).toHaveBeenCalledTimes(1);
     const claim = mockDbWrite.appDevForgejoIdentity.create.mock.calls[0][0].data;
-    expect(claim).toMatchObject({ userId: 42, forgejoUsername: 'dev-42', forgejoTokenEncrypted: '' });
+    expect(claim).toMatchObject({
+      userId: 42,
+      forgejoUsername: 'dev-42',
+      forgejoTokenEncrypted: '',
+    });
 
     expect(mockForgejo.createForgejoUser).toHaveBeenCalledWith({
       username: 'dev-42',
@@ -135,9 +144,9 @@ describe('ensureForgejoIdentity — owner (provisioning) path', () => {
     const fill = mockDbWrite.appDevForgejoIdentity.updateMany.mock.calls[0][0];
     expect(fill.where).toEqual({ userId: 42, forgejoTokenEncrypted: '' });
     expect(fill.data.forgejoTokenEncrypted).not.toContain('minted-token-sha1');
-    expect(mod.__testing.decryptToken(fill.data.forgejoTokenEncrypted, 'unit-test-secret-key')).toBe(
-      'minted-token-sha1'
-    );
+    expect(
+      mod.__testing.decryptToken(fill.data.forgejoTokenEncrypted, 'unit-test-secret-key')
+    ).toBe('minted-token-sha1');
 
     expect(mockForgejo.deleteForgejoUser).not.toHaveBeenCalled();
     expect(mockDbWrite.appDevForgejoIdentity.deleteMany).not.toHaveBeenCalled();

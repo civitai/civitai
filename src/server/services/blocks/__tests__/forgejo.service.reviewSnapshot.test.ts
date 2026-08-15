@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -9,16 +10,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * URLs + bodies the service sends. No real HTTP, no real Forgejo.
  */
 
-vi.mock('~/env/server', () => ({
-  env: {
+beforeEach(() => {
+  setEnv({
     FORGEJO_BASE_URL: 'https://forgejo.example',
     FORGEJO_ADMIN_TOKEN: 'tok-test',
     FORGEJO_WEBHOOK_SECRET: 'sec-test',
-    APPS_DOMAIN: 'civit.ai',
     FORGEJO_API_TIMEOUT_MS: 15000,
     FORGEJO_COMMIT_TIMEOUT_MS: 120000,
-  },
-}));
+  });
+});
 
 type FetchCall = { url: string; init?: RequestInit };
 
@@ -37,7 +37,9 @@ function makeFetchMock() {
     calls,
     enqueue(body: unknown, status = 200) {
       const text = body == null ? '' : JSON.stringify(body);
-      responses.push(new Response(text, { status, headers: { 'Content-Type': 'application/json' } }));
+      responses.push(
+        new Response(text, { status, headers: { 'Content-Type': 'application/json' } })
+      );
     },
     enqueueRaw(response: Response) {
       responses.push(response);
@@ -106,7 +108,9 @@ describe('deleteReviewRepo', () => {
 
     await expect(deleteReviewRepo('gen-matrix')).resolves.toBe('deleted');
 
-    expect(fm.calls[0].url).toBe('https://forgejo.example/api/v1/repos/civitai-apps-review/gen-matrix');
+    expect(fm.calls[0].url).toBe(
+      'https://forgejo.example/api/v1/repos/civitai-apps-review/gen-matrix'
+    );
     expect(fm.calls[0].init?.method).toBe('DELETE');
   });
 
@@ -162,7 +166,9 @@ describe('setReviewRepoPrivate', () => {
 
     await expect(setReviewRepoPrivate('gen-matrix')).resolves.toBe('updated');
 
-    expect(fm.calls[0].url).toBe('https://forgejo.example/api/v1/repos/civitai-apps-review/gen-matrix');
+    expect(fm.calls[0].url).toBe(
+      'https://forgejo.example/api/v1/repos/civitai-apps-review/gen-matrix'
+    );
     expect(fm.calls[0].init?.method).toBe('PATCH');
     expect(bodyOf(fm.calls[0])).toEqual({ private: true });
   });

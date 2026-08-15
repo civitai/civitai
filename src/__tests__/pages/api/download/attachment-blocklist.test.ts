@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
@@ -34,7 +35,11 @@ vi.mock('~/server/clickhouse/client', () => ({
   },
 }));
 
-vi.mock('~/env/server', () => ({ env: { UNAUTHENTICATED_DOWNLOAD: true } }));
+beforeEach(() => {
+  setEnv({
+    UNAUTHENTICATED_DOWNLOAD: true,
+  });
+});
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   PublicEndpoint: (handler: (req: NextApiRequest, res: NextApiResponse) => unknown) => handler,

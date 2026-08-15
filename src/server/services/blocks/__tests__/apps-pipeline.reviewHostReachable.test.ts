@@ -1,6 +1,7 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 
 /**
  * MOD REVIEW SANDBOX (#2831) — waitForReviewHostReachable.
@@ -28,7 +29,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // (180s in the real schema). No origin-IP env keys are provided, so the DEFAULT
 // path (used by the existing tests below) resolves originIp=null → FALLBACK
 // mode. Origin-direct tests inject `originIp` explicitly.
-vi.mock('~/env/server', () => ({ env: { REVIEW_HOST_REACHABLE_TIMEOUT_MS: 180_000 } }));
+beforeEach(() => {
+  setEnv({
+    REVIEW_HOST_REACHABLE_TIMEOUT_MS: 180000,
+  });
+});
 
 import { waitForReviewHostReachable } from '~/server/services/blocks/apps-pipeline.service';
 
@@ -393,9 +398,7 @@ describe('waitForReviewHostReachable — ORIGIN-DIRECT real probe (defaultOrigin
       res.end();
     });
     const port = await new Promise<number>((resolve) => {
-      server!.listen(0, '127.0.0.1', () =>
-        resolve((server!.address() as AddressInfo).port)
-      );
+      server!.listen(0, '127.0.0.1', () => resolve((server!.address() as AddressInfo).port));
     });
 
     const clock = fakeClock();

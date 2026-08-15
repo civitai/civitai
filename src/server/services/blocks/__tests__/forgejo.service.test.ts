@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -10,18 +11,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * sends to Forgejo. No real HTTP; no real Forgejo.
  */
 
-vi.mock('~/env/server', () => ({
-  env: {
+beforeEach(() => {
+  setEnv({
     FORGEJO_BASE_URL: 'https://forgejo.example',
     FORGEJO_ADMIN_TOKEN: 'tok-test',
     FORGEJO_WEBHOOK_SECRET: 'sec-test',
-    APPS_DOMAIN: 'civit.ai',
-    // Distinct values so the timeout-routing assertions are unambiguous about
-    // which ceiling a given call used.
     FORGEJO_API_TIMEOUT_MS: 15000,
     FORGEJO_COMMIT_TIMEOUT_MS: 120000,
-  },
-}));
+  });
+});
 
 type FetchCall = { url: string; init?: RequestInit };
 

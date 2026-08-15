@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // getImageMetricsObject is the metric leg of the getAllImages 12-way Promise.all
@@ -42,32 +43,11 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 // vars and throws in test). Only the short metrics timeout matters; a Proxy
 // returns undefined for any other var image.service reads at import time. LOGGING
 // must be an array (db/client filters it).
-vi.mock('~/env/server', () => ({
-  env: new Proxy(
-    { CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS: 20, LOGGING: [] as string[] } as Record<
-      string,
-      unknown
-    >,
-    {
-      get: (target, prop) => {
-        if (prop in target) return target[prop as string];
-        // Several db/redis modules build `new URL(env.*_URL)` at module load; hand
-        // any *_URL a valid connection string so import doesn't throw (nothing in
-        // this test ever connects).
-        if (typeof prop === 'string' && (prop.endsWith('_URL') || prop.endsWith('_ENDPOINT')))
-          return 'https://test:test@localhost:5432/test';
-        // Numeric-looking config (e.g. *_CONCURRENCY) is fed into helpers like
-        // pLimit at module load; hand it a safe positive number.
-        if (
-          typeof prop === 'string' &&
-          /(_CONCURRENCY|_LIMIT|_MS|_PORT|_TIMEOUT|_MAX|_SIZE|_COUNT)$/.test(prop)
-        )
-          return 1;
-        return undefined;
-      },
-    }
-  ),
-}));
+beforeEach(() => {
+  setEnv({
+    CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS: 20,
+  });
+});
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 // REDIS_KEYS / REDIS_SYS_KEYS are deeply path-accessed at module load; a Proxy

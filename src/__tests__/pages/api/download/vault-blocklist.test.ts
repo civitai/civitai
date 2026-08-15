@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
@@ -25,7 +26,11 @@ vi.mock('~/utils/delivery-worker', () => ({ resolveDownloadUrl: mockResolveDownl
 
 vi.mock('~/utils/s3-utils', () => ({ getGetUrlByKey: vi.fn() }));
 
-vi.mock('~/env/server', () => ({ env: { S3_VAULT_BUCKET: 'vault-bucket' } }));
+beforeEach(() => {
+  setEnv({
+    S3_VAULT_BUCKET: 'vault-bucket',
+  });
+});
 
 const TEST_USER = { id: 4242, isModerator: false };
 

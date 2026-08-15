@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // A single ingestImage whose orchestrator submit never resolves must NOT stall the
@@ -57,14 +58,14 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 vi.mock('~/server/utils/concurrency-helpers', () => ({ limitConcurrency: mockLimitConcurrency }));
 vi.mock('~/env/other', () => ({ isProd: true }));
-vi.mock('~/env/server', () => ({
-  env: {
+beforeEach(() => {
+  setEnv({
     IMAGE_SCANNING_MAX_PER_RUN: 3,
     IMAGE_SCANNING_RETRY_DELAY: 5,
-    IMAGE_SCANNING_PENDING_TIMEOUT: 60 * 24,
+    IMAGE_SCANNING_PENDING_TIMEOUT: 1440,
     DATABASE_IS_PROD: true,
-  },
-}));
+  });
+});
 
 import { ingestImages } from '~/server/jobs/image-ingestion';
 

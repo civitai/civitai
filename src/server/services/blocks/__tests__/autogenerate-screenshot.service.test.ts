@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -31,9 +32,11 @@ const { mockDbRead, mockDbWrite, mockStore, mockDetect } = vi.hoisted(() => ({
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 
-vi.mock('~/env/server', () => ({
-  env: { APPS_DOMAIN: 'civit.ai', BLOCK_SCREENSHOT_RUNNER_URL: 'http://verify-runner:8080' },
-}));
+beforeEach(() => {
+  setEnv({
+    BLOCK_SCREENSHOT_RUNNER_URL: 'http://verify-runner:8080',
+  });
+});
 
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   storeScreenshots: mockStore,

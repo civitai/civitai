@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // The `ingest-images` cron was killed at its ~5-min job lock before it ever reached
@@ -19,14 +20,14 @@ vi.mock('~/server/services/image.service', () => ({
   deleteImages: mockDeleteImages,
 }));
 vi.mock('~/env/other', () => ({ isProd: true }));
-vi.mock('~/env/server', () => ({
-  env: {
+beforeEach(() => {
+  setEnv({
     IMAGE_SCANNING_MAX_PER_RUN: 1000,
     IMAGE_SCANNING_RETRY_DELAY: 5,
-    IMAGE_SCANNING_PENDING_TIMEOUT: 60 * 24,
+    IMAGE_SCANNING_PENDING_TIMEOUT: 1440,
     DATABASE_IS_PROD: true,
-  },
-}));
+  });
+});
 
 // NOTE: concurrency-helpers is intentionally NOT mocked — these tests rely on the real
 // limitConcurrency to observe genuine parallelism and early-exit behavior.

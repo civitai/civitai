@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Minimal NextApiRequest/Response stand-in (avoids node-mocks-http), mirroring
@@ -112,9 +113,12 @@ vi.mock('~/server/redis/client', () => ({
 }));
 // The route dynamically imports env + the service; mock both so the heavy
 // dependency tree never loads in the unit test.
-vi.mock('~/env/server', () => ({
-  env: { BUNDLE_S3_ENDPOINT: 'https://s3.example', BUNDLE_S3_BUCKET: 'bundles' },
-}));
+beforeEach(() => {
+  setEnv({
+    BUNDLE_S3_ENDPOINT: 'https://s3.example',
+    BUNDLE_S3_BUCKET: 'bundles',
+  });
+});
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   submitVersion: mockSubmitVersion,
 }));
@@ -176,9 +180,7 @@ beforeEach(() => {
   mockRedis.ttl.mockResolvedValue(60);
   mockIsAppBlocksEnabled.mockResolvedValue(true);
   // Author gate mirrors the mod floor by default; the widening test overrides it.
-  mockIsAppBlocksAuthorEnabled.mockImplementation(
-    async (opts) => !!opts?.user?.isModerator
-  );
+  mockIsAppBlocksAuthorEnabled.mockImplementation(async (opts) => !!opts?.user?.isModerator);
   mockSubmitVersion.mockResolvedValue({
     publishRequestId: 'pubreq_abc',
     slug: 'my-block',

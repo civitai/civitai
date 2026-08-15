@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -60,7 +61,11 @@ vi.mock('~/server/redis/client', () => ({
   },
   REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
 }));
-vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai', LOGGING: '' } }));
+beforeEach(() => {
+  setEnv({
+    LOGGING: '',
+  });
+});
 vi.mock('~/server/services/blocks/app-cap-limits.service', async () => {
   // Keep the REAL normalisation (it is the contract under test); only the cache
   // side-effect is observed.
