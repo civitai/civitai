@@ -7,8 +7,8 @@ import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/er
 import { getYoutubeRefreshToken } from '~/server/youtube/client';
 
 // Split out of `collection.service` because it is the only thing in that file that needs the
-// youtube client, and `googleapis` costs ~2.6s to import — paid by every test whose graph
-// reaches collection.service, which is most of the server.
+// youtube client, which pulls `googleapis` into the graph of everything reaching
+// collection.service. (An earlier note put that at ~2.6s to import; nobody has measured it.)
 export const enableCollectionYoutubeSupport = async ({
   collectionId,
   userId,
