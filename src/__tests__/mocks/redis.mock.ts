@@ -1,4 +1,7 @@
 import { hybridNode, registerDefaults, type HybridNode } from './hybrid';
+// Type-only, so it is erased and does NOT evaluate the module — the hazard the seam below
+// documents is a value import. Keep it `import type`; a plain import reintroduces it.
+import type * as SysReadDeadline from '~/server/redis/sys-read-deadline';
 
 /**
  * Canonical mock for `~/server/redis/client` — `redis` and `sysRedis`.
@@ -68,7 +71,7 @@ const DEFAULTS: Record<string, () => Promise<unknown>> = {
  * `import { env }`) before the env mock's factory has initialised, and the whole file collects
  * ZERO tests with `Cannot access '__vi_import_4__' before initialization`.
  */
-let realModule: typeof import('~/server/redis/sys-read-deadline') | undefined;
+let realModule: typeof SysReadDeadline | undefined;
 
 const SEAMS: Record<string, (...args: any[]) => any> = {
   withSysReadDeadline: async (...args: any[]) => {
