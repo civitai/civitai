@@ -48,6 +48,7 @@ import {
   getTransactionsReportResultSchema,
 } from '~/server/schema/buzz.schema';
 import {
+  buzzBankTypes,
   BuzzTypes,
   buzzSpendTypes,
   CASH_SETTLED_ALIASES,
@@ -71,7 +72,7 @@ import { toCsv, toCsvRows } from '~/utils/csv';
 import { isDefined } from '~/utils/type-guards';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { grantCosmetics } from '~/server/services/cosmetic.service';
-import { getBuzzBulkMultiplier, PAYOUT_ELIGIBLE_BUZZ_TYPES } from '~/server/utils/buzz-helpers';
+import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 import { isDev } from '~/env/other';
 import { toPascalCase } from '~/utils/string-helpers';
 // import type { BuzzAccountType as PrismaBuzzAccountType } from '~/shared/utils/prisma/enums';
@@ -1418,9 +1419,7 @@ export async function getEarnPotential({ userId, username }: GetEarnPotentialSch
   return potential;
 }
 
-const PAYOUT_ELIGIBLE_ACCOUNT_TYPES_SQL = [...PAYOUT_ELIGIBLE_BUZZ_TYPES]
-  .map((type) => `'${type}'`)
-  .join(', ');
+const BANKABLE_ACCOUNT_TYPES_SQL = buzzBankTypes.map((type) => `'${type}'`).join(', ');
 
 const earnedCache = createCachedObject<{ id: number; earned: number }>({
   key: REDIS_KEYS.BUZZ.EARNED,
@@ -1437,7 +1436,7 @@ const earnedCache = createCachedObject<{ id: number; earned: number }>({
         (type IN ('compensation')) -- Generation
         OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
       )
-      AND toAccountType IN (${PAYOUT_ELIGIBLE_ACCOUNT_TYPES_SQL})
+      AND toAccountType IN (${BANKABLE_ACCOUNT_TYPES_SQL})
       AND toAccountId IN (${ids})
       AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(now(), 1))
       GROUP BY toAccountId;
