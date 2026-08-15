@@ -1,8 +1,8 @@
 {
   "_comment": "Type errors inside src/**/__tests__/** that pnpm typecheck cannot see. Entries may shrink or disappear freely; adding one, or raising a count, is a deliberate act visible in review. Regenerate with: node scripts/ci/typecheck-tests-gate.mjs --write-baseline",
   "config": "tsconfig.tests.json",
-  "testFilesInProgram": 938,
-  "totalErrors": 801,
+  "testFilesInProgram": 1018,
+  "totalErrors": 784,
   "files": {
     "src/__tests__/pages/api/download/attachment-blocklist.test.ts": 1,
     "src/components/AppBlocks/__tests__/iframeInitController.test.ts": 4,
@@ -92,9 +92,8 @@
     "src/server/services/__tests__/nsfwLevels.buffer-flag.test.ts": 2,
     "src/server/services/__tests__/placement-escrow.service.test.ts": 27,
     "src/server/services/__tests__/reaction-stale-replica-delete.test.ts": 2,
-    "src/server/services/__tests__/remix-gallery.service.test.ts": 29,
+    "src/server/services/__tests__/remix-gallery.service.test.ts": 28,
     "src/server/services/__tests__/set-user-setting.sql.service.test.ts": 1,
-    "src/server/services/__tests__/sticker-placement.service.test.ts": 16,
     "src/server/services/__tests__/sticker-usage-database-target.test.ts": 2,
     "src/server/services/__tests__/unblock-image-nsfwlevel-reset.test.ts": 1,
     "src/server/services/__tests__/update-user-profile.sql.service.test.ts": 1,
