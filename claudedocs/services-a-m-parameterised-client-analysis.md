@@ -75,9 +75,25 @@ takes**, and lands on whichever client a redis read decides. 73 zod-defaulted ke
 absent from `TEST_ENV_DEFAULTS`, and 40 of those have numeric or boolean defaults where `undefined`
 is not equivalent. Fixing that is a shared-mock change, not a slice change.
 
-**Affected here, and NOT to be split by inspection:** `model-version.blue-buzz-purchase`,
-`model-version.deregister`, `model-version.purge-by-hash`, `model-file.service`,
-`model-file-scan.service`.
+**Affected here, and NOT to be split by inspection — TWO files, not the five first claimed:**
+
+| file | entry point | why |
+|---|---|---|
+| `model-version.blue-buzz-purchase` | `earlyAccessPurchase` (`:2003`) | reads through `getVersionById`, which is `forceWriteDb ? dbWrite : await getDbWithoutLag(…)` |
+| `model-version.purge-by-hash` | `publishModelVersionById` (`:1420`) | calls `getDbWithoutLag` directly |
+
+🔴 **The other three RESOLVE by entry point and are ordinary conversions.** I filed them here on a
+whole-module scan, which is the mistake this section is about:
+
+- `model-version.deregister` → `deleteVersionById` (`:1047`) uses **`dbWrite` only**. The `dbRead`
+  spellings elsewhere in `model-version.service` belong to functions this test never calls.
+- `model-file.service` and `model-file-scan.service` → **neither service mentions
+  `getDbWithoutLag` at all.**
+
+**`BOTH` from a whole-module scan is not a verdict, it is an unanswered question.** What resolves it
+is the entry point the *test* imports. A file belongs in this section only when that entry point
+itself defers the choice to runtime — a caller's `db` option, or replication lag — never because a
+large module happens to contain both spellings.
 
 ⚠️ **Why the already-converted files in this slice were safe is a coincidence, not a judgement.**
 `contest-entry-base-model-gate`, `contest-entry-resource-gate`, `article-locked-properties`,
