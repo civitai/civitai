@@ -1,0 +1,127 @@
+/**
+ * Opt-in DOM capture for the feedback prompt.
+ *
+ * 🔴 PRIVACY POSTURE — OPT-IN WITH PREVIEW. This is a deliberate product decision,
+ * not an implementation detail, and the guard below is the thing that enforces it.
+ * A rendered capture of this site can contain NSFW imagery, another user's private
+ * message content, or moderator-only UI. So:
+ *   1. capture NEVER runs unless the caller passes an explicit consent flag,
+ *   2. the caller shows the result to the user before anything is uploaded, and
+ *   3. only the VIEWPORT is captured — what the reporter can actually see — not
+ *      the whole scrollable document.
+ * Do not "optimise" step 1 away by inferring consent from the presence of a
+ * callback or from the prompt being open. Consent is a value the user set.
+ *
+ * 🔴 `html2canvas` (~200 kB) is reached ONLY through a dynamic `import()`, so it is
+ * code-split out of the main bundle and costs nothing on the ~100% of page loads
+ * that never open the prompt. That property is pinned by the source gate in
+ * `src/server/services/__tests__/no-static-html2canvas-import.test.ts` — a static
+ * `import html2canvas from 'html2canvas'` anywhere under `src/` fails that test.
+ */
+
+/**
+ * The subset of html2canvas's real signature this module uses.
+ *
+ * Written against the published types (`html2canvas(element, options?) =>
+ * Promise<HTMLCanvasElement>`), not against a convenient shape — a loader fake in a
+ * test has to satisfy this, so a fake cannot encode a different contract from the
+ * real dependency without a type error.
+ */
+export type Html2CanvasFn = (
+  element: HTMLElement,
+  options?: Record<string, unknown>
+) => Promise<HTMLCanvasElement>;
+
+export type Html2CanvasLoader = () => Promise<Html2CanvasFn>;
+
+/** JPEG rather than PNG: a full-viewport PNG of an image feed is routinely 10x larger. */
+export const SCREENSHOT_MIME_TYPE = 'image/jpeg';
+export const SCREENSHOT_QUALITY = 0.8;
+export const SCREENSHOT_FILENAME = 'page-capture.jpg';
+
+/**
+ * Hard ceiling on a capture the user did not choose the size of. A viewport JPEG at
+ * quality 0.8 lands far below this; the cap exists so an unusually large viewport
+ * cannot push a multi-megabyte upload through a control the user thinks of as "attach
+ * a screenshot".
+ */
+export const SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024;
+
+const defaultLoader: Html2CanvasLoader = async () =>
+  (await import('html2canvas')).default as unknown as Html2CanvasFn;
+
+export type CaptureScreenshotArgs = {
+  /**
+   * 🔴 THE CONSENT GATE. `true` means the user turned the control on themselves.
+   * Anything else — `false`, `undefined`, a truthy non-boolean — is treated as no
+   * consent and short-circuits before the dependency is even loaded.
+   */
+  consented: boolean;
+  /** Defaults to `document.body`. Only the visible viewport region of it is drawn. */
+  target?: HTMLElement | null;
+  /** Seam for tests; production callers use the dynamic-import default. */
+  loader?: Html2CanvasLoader;
+};
+
+export class ScreenshotTooLargeError extends Error {
+  constructor(public readonly bytes: number) {
+    super(`Screenshot is too large to attach (${bytes} bytes).`);
+    this.name = 'ScreenshotTooLargeError';
+  }
+}
+
+/**
+ * Returns a JPEG `File` of the current viewport, or `null` when there is no consent
+ * or nothing to capture.
+ *
+ * Returns `null` — rather than throwing — for the no-consent case specifically,
+ * because "the user did not ask for a screenshot" is not an error condition. Real
+ * capture failures (a rejected html2canvas, a canvas that will not encode, a
+ * capture over the byte ceiling) DO throw, so the caller can tell "declined" from
+ * "tried and failed" and say so.
+ */
+export async function captureConsentedScreenshot({
+  consented,
+  target,
+  loader = defaultLoader,
+}: CaptureScreenshotArgs): Promise<File | null> {
+  // 🔴 The consent gate. Deliberately `!== true`, not falsy-check: this must not be
+  // satisfiable by any value other than a real boolean true.
+  if (consented !== true) return null;
+
+  if (typeof window === 'undefined' || typeof document === 'undefined') return null;
+  const element = target ?? document.body;
+  if (!element) return null;
+
+  const html2canvas = await loader();
+
+  // Viewport only. `x`/`y` are document coordinates of the current scroll position
+  // and `width`/`height` the visible box, so nothing the reporter has scrolled past
+  // is drawn. `allowTaint` stays false so a cross-origin image without CORS headers
+  // is dropped from the capture rather than tainting the canvas and making
+  // `toBlob` throw.
+  const canvas = await html2canvas(element, {
+    logging: false,
+    useCORS: true,
+    allowTaint: false,
+    // html2canvas's default opaque white is deliberate here: the output is JPEG,
+    // which has no alpha channel, so a transparent canvas would encode as black.
+    scale: 1,
+    x: window.scrollX,
+    y: window.scrollY,
+    width: window.innerWidth,
+    height: window.innerHeight,
+    scrollX: 0,
+    scrollY: 0,
+    windowWidth: window.innerWidth,
+    windowHeight: window.innerHeight,
+  });
+
+  const blob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob((result) => resolve(result), SCREENSHOT_MIME_TYPE, SCREENSHOT_QUALITY);
+  });
+  if (!blob) throw new Error('Could not encode the page capture.');
+  if (blob.size > SCREENSHOT_MAX_BYTES) throw new ScreenshotTooLargeError(blob.size);
+
+  return new File([blob], SCREENSHOT_FILENAME, { type: SCREENSHOT_MIME_TYPE });
+}
