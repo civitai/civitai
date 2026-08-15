@@ -41,10 +41,6 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   // never touches this, but it must resolve at import time.
   fetchThroughCache: vi.fn(),
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: { packed: { get: vi.fn(), set: vi.fn() }, del: vi.fn() },
-  REDIS_KEYS: { CACHES: { PUBLIC_MODEL_RESPONSE: 'packed:caches:public-model-response' } },
-}));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   withBlockScope: (handler: any) => (req: any, res: any) => {
     req.blockClaims = undefined; // pure-public path
@@ -83,6 +79,7 @@ vi.mock('~/env/server', () => ({
 import { schema as modelsSchema } from '~/pages/api/v1/models/[id]';
 import { schema as miniSchema } from '~/pages/api/v1/model-versions/mini/[id]';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 // Out-of-range / invalid ids that a bare z.coerce.number() would WRONGLY accept.
 const OUT_OF_RANGE = ['853267723675816615', '999999999999', '308615308615', String(INT4_MAX + 1)];

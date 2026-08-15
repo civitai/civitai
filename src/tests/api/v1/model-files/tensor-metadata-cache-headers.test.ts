@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * Regression test for CU 868khnkuc: the 1-year `immutable` Cache-Control was set BEFORE the
@@ -37,15 +38,6 @@ vi.mock('~/server/services/tensor-metadata.service', () => ({
 // (that contract lives in tensor-metadata-cache-split.test.ts).
 vi.mock('~/server/utils/cache-helpers', () => ({
   fetchThroughCache: (_key: string, fetcher: () => Promise<unknown>) => fetcher(),
-}));
-
-vi.mock('~/server/redis/client', () => ({
-  REDIS_KEYS: {
-    CACHES: {
-      TENSOR_METADATA: 'packed:caches:tensor-metadata',
-      TENSOR_METADATA_SUMMARY: 'packed:caches:tensor-metadata-summary',
-    },
-  },
 }));
 
 const analysis = {

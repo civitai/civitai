@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-
-vi.mock('~/server/redis/client', () => ({ redis: {}, REDIS_KEYS: {} }));
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const { resolveChallengeReviewInputs } = await import('./challenge-helpers');
 const { ChallengeSource } = await import('~/shared/utils/prisma/enums');

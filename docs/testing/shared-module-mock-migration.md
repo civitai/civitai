@@ -43,11 +43,21 @@ vi.mock('~/server/redis/client', () => ({
 ```
 
 The canonical registration spreads the original, so deleting the hand-written copy gives the
-test the REAL constant. Check the literal matches the real one before you delete it — if it
-does not, the test was asserting against a key production never uses, and that is a finding.
+test the REAL constant. The codemod does this comparison for you: it static-parses
+`REDIS_KEYS_UNPREFIXED` / `REDIS_SYS_KEYS` out of `packages/civitai-redis/src/client.ts`,
+drops the literal when every leaf matches, and refuses when one does not — printing the
+divergence under `CONSTANTS THAT DRIFTED FROM THE REAL VALUE`.
 
-**This is the single biggest blocker: 86 files.** Teaching the codemod to load the real
-constant and deep-compare would clear most of them mechanically.
+42 files diverge, across 73 leaves. Some are placeholders (`"rl"`, `"kill"`); others read as
+real and are wrong — `CACHE_LOCKS` as `"caches:lock"` against a real `"cache-lock"`,
+`TRPC.LIMIT.BASE` as `"trpc:rate-limit"` against `"packed:trpc:limit"`, a
+`system:`-prefixed sys key written without the prefix. None are live bugs, because a test
+asserting against its own copy uses the same wrong string on both sides — which is exactly
+why nothing in the repo would ever surface them.
+
+🔴 **Expect redness when the real constant is swapped in, and do not "fix" it by restoring
+the hand-written copy.** A test that goes red was hardcoding an expectation string against
+its own fixture instead of asserting behaviour. That redness is the finding.
 
 ### `local "mockDb" aliases dbMock.dbRead and dbMock.dbWrite`
 

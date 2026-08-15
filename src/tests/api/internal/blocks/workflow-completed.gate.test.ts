@@ -23,10 +23,9 @@ const JOB_TOKEN = 'test-job-token';
 const BLOCK_INSTANCE_ID = 'bki_0123456789ABCDEFGHJKMNPQRS';
 const WORKFLOW_ID = 'wf_test_123';
 
-const { mockFlag, mockIncrBy, mockExpire,  } = vi.hoisted(() => ({
+const { mockFlag,   } = vi.hoisted(() => ({
   mockFlag: { enabled: true },
-  mockIncrBy: vi.fn(),
-  mockExpire: vi.fn(),
+  
   
 }));
 
@@ -46,13 +45,11 @@ vi.mock('~/server/flipt/client', () => ({
     flag === 'app-blocks-pipeline-enabled' ? mockFlag.enabled : false
   ),
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: { incrBy: mockIncrBy, expire: mockExpire },
-  REDIS_KEYS: { BLOCKS: { TOKEN_RATE_LIMIT: 'blocks:token-rate-limit' } },
-}));
-
 import { isFlipt } from '~/server/flipt/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockIncrBy = redisMock.redis.incrBy;
+const mockExpire = redisMock.redis.expire;
 const mockFindUnique = dbMock.dbRead.blockUserSubscription.findUnique;
 const mockExecuteRaw = dbMock.dbWrite.$executeRaw;
 

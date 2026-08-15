@@ -2,12 +2,11 @@ import client from 'prom-client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as RedisClient from '~/server/redis/client';
 
-const { mockAuditHour, mockAuditExactness, mockRedisGet, mockRedisSet,  } =
+const { mockAuditHour, mockAuditExactness,   } =
   vi.hoisted(() => ({
     mockAuditHour: vi.fn(),
     mockAuditExactness: vi.fn(),
-    mockRedisGet: vi.fn(),
-    mockRedisSet: vi.fn(),
+    
     
   }));
 
@@ -24,13 +23,6 @@ vi.mock('~/server/flipt/client', () => ({
   isFlipt: vi.fn().mockResolvedValue(false),
   FLIPT_FEATURE_FLAGS: { METRIC_REACTION_REPAIR: 'metric-reaction-repair' },
 }));
-// Spread the real module so REDIS_SYS_KEYS stays authoritative — a hand-written
-// key here would let the job and the test agree on a key production never uses.
-vi.mock('~/server/redis/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof RedisClient>()),
-  sysRedis: { get: mockRedisGet, set: mockRedisSet },
-}));
-
 vi.mock('../job', () => ({
   createJob: (_name: string, _cron: string, fn: (ctx: unknown) => Promise<unknown>) => ({
     run: fn,
@@ -39,6 +31,9 @@ vi.mock('../job', () => ({
 
 import { reactionExactnessAuditJob, reactionVolumeAuditJob } from '../metric-reconciliation-audit';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockRedisGet = redisMock.sysRedis.get;
+const mockRedisSet = redisMock.sysRedis.set;
 const mockLogToAxiom = loggingMock.logToAxiom;
 
 type Runnable = { run: (ctx: unknown) => Promise<unknown> };
