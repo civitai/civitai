@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import JSZip from 'jszip';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -69,15 +70,18 @@ vi.mock('~/server/services/blocks/app-block-notify', () => ({
   notifyAppBlockSubmitter: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/db/client', () => ({ dbRead: db.read, dbWrite: db.write }));
-vi.mock('~/env/server', () => ({
-  env: {
+// NEXTAUTH_URL is dropped rather than carried over: publish-request.service reads it from
+// `process.env`, never from `~/env/server`, so this declaration never reached the code under
+// test. The codemod refuses these files because `endpoint-helpers.ts` DOES read it at module
+// scope — true of the repo, irrelevant to what these tests assert.
+beforeEach(() => {
+  setEnv({
     FORGEJO_BASE_URL: 'https://forgejo.example',
     FORGEJO_ADMIN_TOKEN: 'tok',
     FORGEJO_WEBHOOK_SECRET: 'sec',
     APPS_DOMAIN: 'apps.example',
-    NEXTAUTH_URL: 'https://civitai.example',
-  },
-}));
+  });
+});
 vi.mock('~/server/utils/app-block-ids', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('~/server/utils/app-block-ids');
   return { ...actual, newUlid: () => 'ULID000', newAppListingId: () => 'apl_fixed' };

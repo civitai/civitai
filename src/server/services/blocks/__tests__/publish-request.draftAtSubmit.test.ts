@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -41,9 +42,13 @@ const { db } = vi.hoisted(() => {
 });
 
 vi.mock('~/server/db/client', () => ({ dbRead: db.read, dbWrite: db.write }));
-vi.mock('~/env/server', () => ({
-  env: { APPS_DOMAIN: 'apps.example', NEXTAUTH_URL: 'https://civitai.example' },
-}));
+// NEXTAUTH_URL is dropped rather than carried over: publish-request.service reads it from
+// `process.env`, never from `~/env/server`, so this declaration never reached the code under
+// test. The codemod refuses these files because `endpoint-helpers.ts` DOES read it at module
+// scope — true of the repo, irrelevant to what these tests assert.
+beforeEach(() => {
+  setEnv({ APPS_DOMAIN: 'apps.example' });
+});
 vi.mock('~/utils/bundle-s3', () => ({
   getBundleBucket: () => 'bundles',
   getBundleS3Client: () => ({ send: vi.fn(async () => ({})) }),

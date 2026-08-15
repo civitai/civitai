@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import JSZip from 'jszip';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -58,15 +59,18 @@ vi.mock('~/server/services/blocks/app-block-notify', () => ({
   notifyAppBlockSubmitter: mockNotify,
 }));
 vi.mock('~/server/db/client', () => ({ dbRead: db.read, dbWrite: db.write }));
-vi.mock('~/env/server', () => ({
-  env: {
+// NEXTAUTH_URL is dropped rather than carried over: publish-request.service reads it from
+// `process.env`, never from `~/env/server`, so this declaration never reached the code under
+// test. The codemod refuses these files because `endpoint-helpers.ts` DOES read it at module
+// scope — true of the repo, irrelevant to what these tests assert.
+beforeEach(() => {
+  setEnv({
     FORGEJO_BASE_URL: 'https://forgejo.example',
     FORGEJO_ADMIN_TOKEN: 'tok',
     FORGEJO_WEBHOOK_SECRET: 'sec',
     APPS_DOMAIN: 'apps.example',
-    NEXTAUTH_URL: 'https://civitai.example',
-  },
-}));
+  });
+});
 vi.mock('~/server/utils/app-block-ids', () => ({ newUlid: () => 'ULID000' }));
 vi.mock('~/server/services/block-manifest-validator.service', () => ({
   BlockManifestValidator: {
@@ -262,7 +266,10 @@ describe('rejectRequest — submitter notification (post-commit, best-effort)', 
     // The rejection row committed before the notify.
     expect(db.write.appBlockPublishRequest.update).toHaveBeenCalledWith({
       where: { id: 'req_rej_1' },
-      data: expect.objectContaining({ status: 'rejected', rejectionReason: 'Uses a disallowed scope' }),
+      data: expect.objectContaining({
+        status: 'rejected',
+        rejectionReason: 'Uses a disallowed scope',
+      }),
     });
   });
 
