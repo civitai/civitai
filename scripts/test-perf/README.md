@@ -55,9 +55,22 @@ charge at all. The subset's job is to be stable, not to be representative of eve
 result as "not visible here", and do not re-tune the subset to fit the change you are working on.
 
 The stronger measurement, when you have a full-run pair, is a **within-run control**: split both runs'
-per-file `collect` by whether a file was touched by the change, and report the untouched group's own
-drift alongside the result. If the untouched group is flat, the aggregate is real; if it moved 13%,
-your headline number is mostly box load.
+per-file `collect` by whether a file was touched by the change, and report the control group's own
+drift alongside the result.
+
+🔴 **The control's membership must be computed from the CHANGE, never from the measurement.** "Files
+whose static import closure this diff alters" is a control. "Files whose time did not move" is a
+restatement of the result — and that second one licensed a headline in this repo for several hours
+before a review caught it.
+
+The corollary is the unintuitive part: **a control that moves AGAINST the result is stronger evidence
+than a flat one.** −22.0% on 412 changed files against **+13.7%** on 653 unchanged is harder to explain
+away than −22% against 0%, because a shared tailwind cannot be the explanation. Do not read a drifting
+control as "the headline is mostly box load" — read which way it drifted.
+
+This replaces "distrust anything under 20%" rather than sitting beside it. A threshold tells you when
+to doubt a number; a control tells you whether it is real. And no variance rule catches the failure
+above, where the subset measured flat because it was unrepresentative rather than noisy.
 
 ## Rank an import edge by what cutting it removes
 
