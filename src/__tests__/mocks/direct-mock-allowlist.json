@@ -20,16 +20,16 @@
   ],
   "totals": {
     "canonicalFiles": 343,
-    "pendingFiles": 349,
-    "allFiles": 504,
+    "pendingFiles": 347,
+    "allFiles": 502,
     "canonicalSites": 491,
-    "pendingSites": 784
+    "pendingSites": 781
   },
   "bySpecifier": {
     "~/server/db/client": 244,
     "~/server/redis/client": 144,
     "~/server/logging/client": 103,
-    "~/env/server": 37,
+    "~/env/server": 34,
     "~/server/services/buzz.service": 98,
     "~/server/services/image.service": 88,
     "~/server/clickhouse/client": 77,
@@ -419,7 +419,6 @@
     "src/server/__tests__/pack-detail-agreement.test.ts",
     "src/server/__tests__/pending-review-mute.test.ts",
     "src/server/__tests__/sticker-topup.test.ts",
-    "src/server/__tests__/upload-backend.test.ts",
     "src/server/__tests__/warmup.test.ts",
     "src/server/auth/__tests__/ban-session-revocation.test.ts",
     "src/server/auth/__tests__/session-invalidation.test.ts",
@@ -690,7 +689,6 @@
     "src/server/utils/__tests__/subscription.utils.test.ts",
     "src/server/utils/__tests__/tensor-metadata-cache-split.test.ts",
     "src/test-utils/__tests__/pgDbMock.parity.test.ts",
-    "src/tests/api/apps/dev-tunnel-authz.test.ts",
     "src/tests/api/blocks/screenshot.test.ts",
     "src/tests/api/blocks/submit-version.test.ts",
     "src/tests/api/health.runHealthChecks.test.ts",

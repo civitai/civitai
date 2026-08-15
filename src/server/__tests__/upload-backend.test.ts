@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 // Setup-order import: installs the shared ~/env/server / logging / prom mocks
 // before the upload handler evaluates env at module load.
@@ -15,7 +16,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * These drive the REAL handler. We mock only the I/O collaborators:
  *   - getServerAuthSession → a logged-in, non-banned user (auth isn't under test)
  *   - the s3-utils put-URL/client/bucket helpers → so no real S3 call is made
- *   - ~/env/server → per-test, to toggle S3_UPLOAD_B2_ENDPOINT
+ *   - the env table → per-test setEnv, to toggle S3_UPLOAD_B2_ENDPOINT
  *
  * The handler echoes the chosen `backend` in its JSON response, so we assert on
  * that (non-vacuous: it reflects the actual branch the real code took).
@@ -23,19 +24,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * If the retirement regressed (a Flipt call reappeared), this would surface as
  * an unmocked-Flipt error or a wrong backend — the test would fail.
  */
-
-const { mockEnv } = vi.hoisted(() => ({
-  mockEnv: {} as Record<string, unknown>,
-}));
-
-vi.mock('~/env/server', () => ({
-  env: new Proxy(mockEnv, {
-    get(target, prop: string) {
-      if (prop in target) return target[prop];
-      return undefined;
-    },
-  }),
-}));
 
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => ({ user: { id: 42, bannedAt: null } })),
@@ -111,7 +99,10 @@ function makeReq(type: UploadType) {
 }
 
 beforeEach(() => {
-  for (const k of Object.keys(mockEnv)) delete mockEnv[k];
+  // The table this replaced started empty and only ever held S3_UPLOAD_B2_ENDPOINT,
+  // so clearing it is masking that one key. Everything else now reads the canonical
+  // defaults instead of undefined.
+  setEnv({ S3_UPLOAD_B2_ENDPOINT: undefined });
   getUploadS3Client.mockClear();
   getUploadBucket.mockClear();
   getMultipartPutUrl.mockClear();
@@ -119,7 +110,7 @@ beforeEach(() => {
 
 describe('upload handler — model backend selection (b2-upload-default retired)', () => {
   it('Model upload with S3_UPLOAD_B2_ENDPOINT set → backend: b2', async () => {
-    mockEnv.S3_UPLOAD_B2_ENDPOINT = 'https://b2.example.com';
+    setEnv({ S3_UPLOAD_B2_ENDPOINT: 'https://b2.example.com' });
 
     const res = makeRes();
     await handler(makeReq(UploadType.Model), res);
@@ -168,7 +159,7 @@ describe('upload handler — model backend selection (b2-upload-default retired)
   it.each([UploadType.TrainingImages, UploadType.TrainingImagesTemp])(
     'Training upload (%s) with S3_UPLOAD_B2_ENDPOINT set → backend: b2',
     async (type) => {
-      mockEnv.S3_UPLOAD_B2_ENDPOINT = 'https://b2.example.com';
+      setEnv({ S3_UPLOAD_B2_ENDPOINT: 'https://b2.example.com' });
 
       const res = makeRes();
       await handler(makeReq(type), res);
@@ -181,7 +172,7 @@ describe('upload handler — model backend selection (b2-upload-default retired)
   );
 
   it('Non-model/non-training upload (Default) never routes to B2 even with endpoint set', async () => {
-    mockEnv.S3_UPLOAD_B2_ENDPOINT = 'https://b2.example.com';
+    setEnv({ S3_UPLOAD_B2_ENDPOINT: 'https://b2.example.com' });
 
     const res = makeRes();
     await handler(makeReq(UploadType.Default), res);

@@ -1,6 +1,10 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { fingerprintSshPublicKey, normalizeSshPublicKey } from '~/server/services/blocks/dev-tunnel-session';
+import {
+  fingerprintSshPublicKey,
+  normalizeSshPublicKey,
+} from '~/server/services/blocks/dev-tunnel-session';
 
 /**
  * APP DEV TUNNEL — coverage for the sish authz callback
@@ -11,13 +15,11 @@ import { fingerprintSshPublicKey, normalizeSshPublicKey } from '~/server/service
  * (constant-time), gated by the path secret. Single-use → replay denied.
  */
 
-const { mockLookup, mockConsume, mockEnv } = vi.hoisted(() => ({
+const { mockLookup, mockConsume } = vi.hoisted(() => ({
   mockLookup: vi.fn(),
   mockConsume: vi.fn(async (..._a: unknown[]) => undefined),
-  mockEnv: { APPS_DEV_TUNNEL_SISH_SECRET: 'sish-shared-secret' as string | undefined },
 }));
 
-vi.mock('~/env/server', () => ({ env: mockEnv }));
 vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   lookupCredentialByFingerprint: (...a: unknown[]) => mockLookup(...a),
   consumeDevTunnelCredential: (...a: unknown[]) => mockConsume(...a),
@@ -83,14 +85,17 @@ describe('POST /api/apps/dev-tunnel/authz/<secret>', () => {
   beforeEach(() => {
     mockLookup.mockReset();
     mockConsume.mockClear();
-    mockEnv.APPS_DEV_TUNNEL_SISH_SECRET = 'sish-shared-secret';
+    setEnv({ APPS_DEV_TUNNEL_SISH_SECRET: 'sish-shared-secret' });
   });
   afterEach(() => vi.clearAllMocks());
 
   it('valid PATH secret + matching pubkey → 200 (and consumes the credential)', async () => {
     mockLookup.mockResolvedValue(validCred);
     const res = makeRes();
-    await handler(makeReq({ secret: 'sish-shared-secret', authKey: PUBKEY, user: 'anything' }), res);
+    await handler(
+      makeReq({ secret: 'sish-shared-secret', authKey: PUBKEY, user: 'anything' }),
+      res
+    );
     expect(res.statusCode).toBe(200);
     expect(res.body.auth).toBe(true);
     expect(mockConsume).toHaveBeenCalledWith(FP);
@@ -159,7 +164,7 @@ describe('POST /api/apps/dev-tunnel/authz/<secret>', () => {
   });
 
   it('UNCONFIGURED sish secret (env unset) → 503 (inert until provisioned), even with a path secret', async () => {
-    mockEnv.APPS_DEV_TUNNEL_SISH_SECRET = undefined;
+    setEnv({ APPS_DEV_TUNNEL_SISH_SECRET: undefined });
     const res = makeRes();
     await handler(makeReq({ secret: 'anything', authKey: PUBKEY }), res);
     expect(res.statusCode).toBe(503);

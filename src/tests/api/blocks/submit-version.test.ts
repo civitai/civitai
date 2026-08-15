@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
@@ -18,29 +19,18 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * handler body.
  */
 
-const {
-  mockSession,
-  mockEnv,
-  mockOther,
-  mockIsAllowedOrigin,
-  mockIsAppBlocksEnabled,
-  mockSubmitVersion,
-} = vi.hoisted(() => ({
-  mockSession: {
-    value: null as { user: { id: number; isModerator?: boolean; bannedAt: Date | null } } | null,
-  },
-  mockEnv: { BUNDLE_S3_ENDPOINT: 'https://s3.example', BUNDLE_S3_BUCKET: 'bundles' } as {
-    BUNDLE_S3_ENDPOINT?: string;
-    BUNDLE_S3_BUCKET?: string;
-  },
-  // Toggle the isProd branch of the CSRF guard per-test.
-  mockOther: { isProd: false },
-  mockIsAllowedOrigin: vi.fn<(req: unknown) => boolean>(() => true),
-  mockIsAppBlocksEnabled: vi.fn<() => Promise<boolean>>(async () => true),
-  mockSubmitVersion: vi.fn<(...args: any[]) => Promise<any>>(),
-}));
+const { mockSession, mockOther, mockIsAllowedOrigin, mockIsAppBlocksEnabled, mockSubmitVersion } =
+  vi.hoisted(() => ({
+    mockSession: {
+      value: null as { user: { id: number; isModerator?: boolean; bannedAt: Date | null } } | null,
+    },
+    // Toggle the isProd branch of the CSRF guard per-test.
+    mockOther: { isProd: false },
+    mockIsAllowedOrigin: vi.fn<(req: unknown) => boolean>(() => true),
+    mockIsAppBlocksEnabled: vi.fn<() => Promise<boolean>>(async () => true),
+    mockSubmitVersion: vi.fn<(...args: any[]) => Promise<any>>(),
+  }));
 
-vi.mock('~/env/server', () => ({ env: mockEnv }));
 vi.mock('~/env/other', () => ({
   get isProd() {
     return mockOther.isProd;
@@ -124,8 +114,7 @@ describe('POST /api/blocks/submit-version', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSession.value = MOD;
-    mockEnv.BUNDLE_S3_ENDPOINT = 'https://s3.example';
-    mockEnv.BUNDLE_S3_BUCKET = 'bundles';
+    setEnv({ BUNDLE_S3_ENDPOINT: 'https://s3.example', BUNDLE_S3_BUCKET: 'bundles' });
     mockOther.isProd = false;
     mockIsAllowedOrigin.mockReturnValue(true);
     mockIsAppBlocksEnabled.mockResolvedValue(true);
@@ -192,7 +181,7 @@ describe('POST /api/blocks/submit-version', () => {
   });
 
   it('412s when bundle storage is not configured', async () => {
-    mockEnv.BUNDLE_S3_ENDPOINT = undefined;
+    setEnv({ BUNDLE_S3_ENDPOINT: undefined });
     const res = makeRes();
     await invoke(makeReq({ body: { bundleBase64 } }), res);
     expect(res._status).toBe(412);
