@@ -1,10 +1,9 @@
-import { execFile } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { runTsxCli, type CliRun } from './support/tsx-cli';
 import { compareSchemaToCatalog } from '../compare';
 import {
   absorbedEscalations,
@@ -22,11 +21,8 @@ import {
 import { parsePrismaSchema } from '../parse-prisma-schema';
 import type { DbCatalog, DriftFinding } from '../types';
 
-const run = promisify(execFile);
-
 const here = fileURLToPath(new URL('.', import.meta.url));
 const packageRoot = join(here, '../../..');
-const tsx = join(packageRoot, 'node_modules/.bin/tsx');
 const gateCli = join(packageRoot, 'src/schema-drift/gate-cli.ts');
 const realSchema = join(packageRoot, 'prisma/schema.full.prisma');
 const snapshotRelative = 'src/schema-drift/__tests__/fixtures/catalog-production-2026-08-03.json';
@@ -570,30 +566,18 @@ describe('assertMeasuredSomething', () => {
   });
 });
 
-interface Run {
-  code: number;
-  stdout: string;
-  stderr: string;
-}
-
 /**
  * Drive the real entry point as a process. The functions above are the gate's logic; this is
  * what CI actually invokes, exit code and all — and an exit code is the only part of it CI
  * reads.
  */
-async function gate(args: string[]): Promise<Run> {
-  try {
-    const { stdout, stderr } = await run(tsx, [gateCli, ...args], {
-      cwd: packageRoot,
-      // The gate has no database code path; this asserts it does not grow one by accident.
-      env: { ...process.env, DATABASE_URL: '' },
-      maxBuffer: 32 * 1024 * 1024,
-    });
-    return { code: 0, stdout, stderr };
-  } catch (error) {
-    const e = error as { code?: number; stdout?: string; stderr?: string };
-    return { code: e.code ?? -1, stdout: e.stdout ?? '', stderr: e.stderr ?? '' };
-  }
+async function gate(args: string[]): Promise<CliRun> {
+  return runTsxCli(gateCli, args, {
+    cwd: packageRoot,
+    // The gate has no database code path; this asserts it does not grow one by accident.
+    env: { ...process.env, DATABASE_URL: '' },
+    maxBuffer: 32 * 1024 * 1024,
+  });
 }
 
 // Every case below spawns the real entry point as a PROCESS, so each pays a cold tsx
