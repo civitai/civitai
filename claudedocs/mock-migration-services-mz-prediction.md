@@ -226,3 +226,106 @@ model3d-visible-ids-batch.test.ts
 The brief put this slice at "roughly 84 files". On disk the m–z range holds 61 `.test.ts` files;
 40 of them carry a direct mock of a canonical specifier and appear in the allowlist. 84 matches
 neither. The burn-down is the allowlist, so the work is 40.
+
+---
+
+# What actually shipped, and the four things the runs taught that the prediction could not
+
+Written after two tenancies. The sections above are the record as it stood before either.
+
+## State
+
+```
+allowlist 345 -> 334 across this slice   11 files migrated
+converted and verified:   9   (one of which shipped PARTIAL and was fixed - below)
+converted, unverified:    2   (the alias batch; its pair is pending)
+refused deliberately:     2   nsfwLevels.buffer-flag (partial), placement-escrow (runtime write)
+blocked on someone else:  1   sticker-placement, on the spendType fixture
+```
+
+## 1. A partial can ship with the codemod reporting zero refusals
+
+`nowpayments.currencies.memoize.test.ts` converted for redis with an empty `refusals` array while a
+direct `vi.mock('~/server/logging/client', …)` sat three lines above. Neither the codemod nor the
+allowlist generator counted it, so it shipped converted-for-one-axis and still poisoning its worker
+for the other.
+
+**Do not read the codemod's silence as coverage.** An empty refusals list means "nothing I could see
+stopped me", and before `92f1728652` it could not see every canonical mock in a file.
+
+**And run `residual-mocks.mjs` per file against your converted list, never as a set total.** The total
+cannot distinguish "these sites belong to hold-outs" from "a file I converted is still mocking". I ran
+the right command and read the wrong number.
+
+## 2. Drift: the noise belongs to the isolation mode, not the box
+
+Twelve runs in one uncontested tenancy — four on the pre-conversion tree, four on the shipped tree,
+four repeating the shipped tree with **not one byte changed**. The last pair is the drift measurement.
+
+```
+config       collect s        setup s      test s          wall s
+iso-4        207.0 -> 190.2    7.9 -> 7.8   6.3 -> 6.8     61.3 -> 59.5   -2.9%
+iso-8        246.2 -> 221.3   10.8 -> 8.8   7.6 -> 7.5     41.6 -> 35.7  -14.2%
+noiso-4       82.9 ->  51.7    9.2 -> 9.3   9.8 -> 6.9     26.4 -> 18.0  -31.8%
+noiso-8      122.6 -> 120.8   10.0 ->10.8  168.8 -> 3.5   180.8 -> 17.9  -90.1%
+```
+
+**For a 40-file set of 18-61s, wall drift with nothing changed was 2.9-14.2% isolated and 31.8-90.1%
+under `--no-isolate`** — and that bound is for 40 files, not for a 1,069-file suite where fixed startup
+is a far smaller fraction and there is more opportunity to collide. It is a floor on how much variance
+exists, not an error bar to staple onto other people's numbers.
+
+`collect` is the noisy phase, which is the phase this project's headline numbers are quoted in. A
+wall-only spread hides that.
+
+**The -90.1% is one file** — `stripe.manageInvoicePaid.attribution` at 165.4s then 0.0s back to back.
+Not a conversion artifact: across all eight `--no-isolate` runs that file swings 0-9 failures *before*
+conversion too. One stall in twelve runs, reported rather than explained.
+
+**And the number that matters more than the drift table:** the same pre-conversion tree at the same
+width gave **49 failures in one tenancy and 122 in another**, both uncontested. Within a tenancy it
+was tight (108 vs 106). So a `--no-isolate` failure count is reproducible within a tenancy and not
+across one. Per-file collected counts were identical throughout, which is the only reason any of these
+pairs are readable.
+
+## 3. The conversion does not introduce the bug, it removes the accident hiding one
+
+`paid-access.service.test.ts` invented `'test:cap-tier'`; the real key is
+`packed:caches:paid-access-cap-tier`. Swapping it in turned **one** assertion red — and left **five**
+uses of the same literal silently taking the else branch of `key === 'test:cap-tier' ? tiers : gates`,
+passing while feeding the wrong fixture, one of them vacuously (`toHaveLength(0)` against a filter that
+can no longer match). One test failed; five stopped testing what they name.
+
+Neither collected counts nor `residual-mocks.mjs` can see the five. **When a conversion swaps a
+constant, grep the whole file for the old literal** rather than fixing the assertion that failed.
+
+## 4. Which client an aliased call belongs to is a fact in the production code
+
+The recipe's "split them and expect red" is a way of finding out by breaking things. Read it instead:
+take every `<local>.<table>.<method>` the test drives, grep `src/server` for `dbRead.<path>` and
+`dbWrite.<path>`, and resolve each to `dbRead`, `dbWrite`, or **`BOTH - read the call site`**.
+
+`toggleBookmarked` reaches for `dbWrite` on every path **including its reads**, which no method name
+would tell you. Both files in the alias batch bind entirely to `dbMock.dbWrite`, so the prediction is
+that neither goes red — and a red means the mapping is wrong rather than the test being interesting.
+
+⚠️ **If a db-axis conversion reds in a way the mapping does not explain, look for a second direct mock
+in the same file before doubting the mapping.** A file partial across two axes goes red when you fix
+the axis you were working on, and the fix is the other axis's canonical mock — never restoring the
+shielding mock. Doubting the mapping first sends you to re-read production code that was right.
+
+## Two inference mistakes I made, both the same shape
+
+**"The gate moved while my change was in the tree" is not "my change moved the gate."** I reverted
+`sticker-placement`'s conversion because the tests gate went 16 -> 17 and I could not attribute the
+extra error. The pre-conversion state was one `git checkout` away and I never ran the gate against it;
+another agent later measured 17 on the base with the file unconverted. The rule that a file whose gate
+count moves without an attributable line does not ship is right. Checking whether it moved *because of
+you* is the step before it, and it is free.
+
+**A negative from the wrong test is worse than no test, because it closes the question.** I proposed
+that tonight's `Placement.spendType` column caused that +1, then killed the idea because `db:generate`
+dirtied nothing tracked in my worktree. That only rules out my own regen — the generated client can
+move by someone else's commit on the base, and it did.
+
+Both are the same shape as reading two coincident timestamps as cause and effect.
