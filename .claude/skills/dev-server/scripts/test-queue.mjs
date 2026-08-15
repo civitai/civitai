@@ -42,7 +42,7 @@ export function exitCodeFor(run) {
   return Number.isInteger(run.exitCode) && run.exitCode > 0 ? run.exitCode : 1;
 }
 
-function defaultStartRun({ worktree, args, onLog, onExit }) {
+export function defaultStartRun({ worktree, args, onLog, onExit }) {
   const emitter = new EventEmitter();
   const isWindows = process.platform === 'win32';
   const pnpm = isWindows ? 'pnpm.cmd' : 'pnpm';
@@ -54,7 +54,15 @@ function defaultStartRun({ worktree, args, onLog, onExit }) {
   try {
     child = spawn(pnpm, argv, {
       cwd: worktree,
-      env: process.env,
+      // The command above is the script that routes to this queue. Inheriting the flag makes it
+      // enqueue a second run and wait for it, while this one holds the slot that run needs — a
+      // deadlock on every full-suite run, not a race. Concurrency is not the fix: each logical run
+      // would need two slots, so N agents starting together still fill them all with waiters.
+      // The command above is the script that routes to this queue. Inheriting the flag makes it
+      // enqueue a second run and wait for it, while this one holds the slot that run needs — a
+      // deadlock on every full-suite run, not a race. Concurrency is not the fix: each logical run
+      // would need two slots, so N agents starting together still fill them all with waiters.
+      env: { ...process.env, CIVITAI_TEST_QUEUE: '0' },
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: isWindows,
       // Its own process group, so the kill below can take the whole vitest tree. Without this,
