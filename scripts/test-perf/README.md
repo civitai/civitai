@@ -1,7 +1,12 @@
 # Unit-suite performance tooling
 
 Measurement for the unit suite, and the dashboard that tracks the isolation migration. Everything
-here writes to `.test-perf/` (gitignored); nothing is hand-maintained.
+here writes to `.test-perf/`; nothing is hand-maintained.
+
+⚠️ `.test-perf/` is gitignored **by this change** — the entry is added in the same commit as these
+scripts. Until it lands, run output sits untracked in `git status`, one broad `git add` away from
+being committed by someone else. That has happened in this repo before, so if you are cherry-picking
+these scripts rather than merging, take the `.gitignore` line with them.
 
 ## Rebuild the dashboard
 
@@ -42,6 +47,15 @@ node scripts/test-perf/bench.mjs --label after-noiso --workers 4 --no-isolate
 
 The subset is stratified across closure sizes (`--make-subset` regenerates it from the inventory), so
 slimming one fat chain shows up rather than being averaged away.
+
+🔴 **The subset's job is to be STABLE, not to make measurements comparable across time.** It fixes
+*what* is measured; it does nothing about *when*. Two yardstick runs hours apart are not comparable —
+see the noise floor below — so always pair a before and an after inside one window, and never quote a
+yardstick number against one from an earlier session.
+
+⚠️ And a null from the yardstick is not evidence of no effect: it is 90 of 1,065 files, so a change
+concentrated outside the sample reads as flat. Two changes measured flat here were later shown by a
+full paired run to be real.
 
 ⚠️ Wall clock on a busy box swings up to ~68%. Always pair a measurement with a control run taken in
 the same window; never compare against a number from a different session. With several agents sharing
@@ -113,17 +127,30 @@ Two other things measured and found not to help, recorded so nobody spends the h
 
 ## What the numbers meant on 2026-08-15
 
-Full run, uncapped (31 workers), quiet 32-core box, at `3863adcbb0`:
+🔴 **There is no single "main baseline", and quoting one as a constant is a mistake.** The same tree at
+`3863adcbb0` was measured three times on 2026-08-15 and the results are **36% apart on import**:
 
-```
-wall 206.6s | transform 150.7s | setup 354.4s | import 4565.5s | tests 541.1s
-1065 files, 16784 tests, 16 failed across 6 files
-```
+| run | wall | import | tests | files / tests / failed |
+|---|---|---|---|---|
+| clean box, no reporter attached | 206.6s | 4565.5s | 541.1s | 1065 / 16784 / 16 |
+| `baseline-full-uncapped.perf.json` (shipped artifact) | 243.1s | 5476.3s | 563.7s | 1065 / 16784 / 16 |
+| paired control for the integration run | 204.4s | 4491s | 541s | 1065 / 16784 / 16 |
 
-- **Import is 81% of worker time**, and it is not module evaluation: traced at 1 worker, the module
-  bodies of two of the heaviest files totalled ~0.4s against a 25.4s import phase. The rest is
-  vite-node's per-module fetch — a child-process IPC round trip per module per file under the `forks`
-  pool, roughly 20ms each. **Cost is linear in module count, not module weight.**
+Identical file, test and failure counts in all three — the tree did not change, the box did. That
+spread is the same size as several of the effects measured against it, which is exactly why **every
+main-relative figure must name the run it was measured against, by label**, and why a change is only
+credible when its control was taken in the same window.
+
+Derived shares move with the row you pick: import is **81%** of worker time on the first row and
+**84.3%** on the second.
+
+- **Import is not module evaluation**: traced at 1 worker, the module bodies of two of the heaviest
+  files totalled ~0.4s against a 25.4s import phase. **Cost is linear in module count, not module
+  weight.** ⚠️ The mechanism behind the remaining ~98% is *inferred, not instrumented*: an early
+  reading blamed vite-node's per-module IPC, and the pool sweep refutes it — `threads` beat
+  `vmThreads` while paying a cold fetch, which shipping module source cannot explain. The
+  better-supported reading is compile-and-evaluate into a fresh registry, once per file. V8 compile
+  time was never measured.
 - The closure distribution is **bimodal**: p50 66 modules, p75 1088. 411 files carry 96% of all
   module executions.
 - 16 failures across 6 files is the known-good Windows baseline (`path.relative()` backslashes
