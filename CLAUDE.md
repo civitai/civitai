@@ -118,13 +118,19 @@ pnpm test                 # Playwright e2e
 pnpm run test:ui          # Playwright with UI
 ```
 
-Both vitest suites are projects in `vitest.config.mts` (`--project unit` / `--project component`).
+The vitest suites are projects in `vitest.config.mts`. The unit suite is **two** projects —
+`unit` and `unit-native` — so select it as **`--project 'unit*'`**, never `--project unit`.
+
+🔴 **`--project unit` silently runs 1059 of 1065 files and exits 0.** The six `unit-native` files are
+`exclude`d from `unit` rather than merely routed elsewhere, so naming one of them explicitly reports
+`No test files found`. A selector matching one project and not the other is a green run over a
+suite you did not run — the scripts above already use `'unit*'` for this reason.
 
 #### Worker count: uncapped by default, `VITEST_MAX_WORKERS` / `--max-workers` to size it
 A suite uses Vitest's own worker count (`cpus - 1` in run mode, `floor(cpus / 2)` in watch; the browser pool `min(12, cpus - 1)`).
 
 ```bash
-VITEST_MAX_WORKERS=8 pnpm exec vitest run --project unit   # direct run
+VITEST_MAX_WORKERS=8 pnpm exec vitest run --project 'unit*'   # direct run (BOTH unit projects)
 pnpm run test:unit:run --max-workers=8                     # through the dev-server queue
 ```
 

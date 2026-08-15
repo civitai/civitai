@@ -59,6 +59,20 @@ const componentGroupOrderPlugin = {
   },
 };
 
+// Same both-belts reasoning one project down, for the setting whose failure is a SIGSEGV rather than
+// an empty run. `unit-native`'s static `pool: 'forks'` loses to a CLI `--pool=threads`, which is the
+// one flag someone experimenting on `unit` will reach for — and the six sharp files would follow it
+// onto a thread pool and crash AFTER printing a green summary. `configureVitest` runs after
+// `resolveProjects(cliOptions)`, and `getFilePoolName` reads `project.config.pool` when each
+// specification is created, so re-asserting here outranks the flag.
+const NATIVE_POOL = 'forks' as const;
+const nativePoolPlugin = {
+  name: 'civitai:unit-native-pool',
+  configureVitest({ project }: { project: any }) {
+    project.config.pool = NATIVE_POOL;
+  },
+};
+
 // Mirror the workspace `@civitai/*` package mappings from tsconfig.json `paths` so Vitest
 // (which doesn't read tsconfig paths, and these packages aren't symlinked into the root
 // node_modules) resolves them the same way the app build does. `@civitai/auth` is omitted —
@@ -291,6 +305,7 @@ export default defineConfig({
       },
       {
         resolve: { alias },
+        plugins: [nativePoolPlugin],
         test: {
           ...unitTestConfig,
           name: 'unit-native',
@@ -298,7 +313,10 @@ export default defineConfig({
           // Pinned, not inherited: `unit` may be pointed at `threads` for an experiment, and these
           // six must not follow it there. Every process-based pool survives the sharp teardown
           // (`forks` and `vmForks` both measured clean); every thread-based one races and loses.
-          pool: 'forks' as const,
+          // Declared here AND re-asserted by `nativePoolPlugin`, for the reason given at its
+          // definition: a static value alone loses to a CLI `--pool`, and a plugin alone is
+          // unchecked by anything (this file is outside tsconfig's `include`).
+          pool: NATIVE_POOL,
         },
       },
       {
