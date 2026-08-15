@@ -37,7 +37,7 @@
 
 .messageRow {
   position: relative;
-  padding: 4px 8px 3px;
+  padding: 6px 8px 3px;
   border-radius: var(--mantine-radius-sm);
 
   &:hover,
@@ -59,6 +59,7 @@
   font-size: 10px;
   color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* Aligns a grouped message under its header's username rather than the avatar. */
@@ -67,11 +68,22 @@
   min-width: 0;
 }
 
+/* The mockup's density: a chat pane is narrow, and body-size text in it reads
+   as a document rather than a conversation. */
 .messageText {
   white-space: pre-line;
   overflow-wrap: break-word;
   width: fit-content;
   max-width: 100%;
+  font-size: 13.5px;
+  line-height: 1.5;
+
+  /* ChatMessageContent wraps every run in a Mantine <Text>, which writes its own
+     font-size onto the span — so sizing this container alone changes nothing. */
+  :global(.mantine-Text-root) {
+    font-size: inherit;
+    line-height: inherit;
+  }
 }
 
 .replyQuote {
@@ -99,6 +111,13 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+
+  /* Same as .messageText: the quoted content is rendered by ChatMessageContent,
+     whose Mantine <Text> writes its own font-size onto the span. */
+  :global(.mantine-Text-root) {
+    font-size: inherit;
+    line-height: inherit;
+  }
 }
 
 .messageActions {

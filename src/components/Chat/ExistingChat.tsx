@@ -489,7 +489,9 @@ export function ExistingChat() {
                 <Text color="red">Error: {error?.message}</Text>
               </Center>
             ) : messagesChronological.length > 0 ? (
-              <Stack style={{ overflowWrap: 'break-word' }} gap={12}>
+              // gap 0: row spacing is each row's own padding, so a grouped message sits
+              // tight under its header instead of being spaced like a new sender.
+              <Stack style={{ overflowWrap: 'break-word' }} gap={0}>
                 {hasNextPage && (
                   <InViewLoader
                     loadFn={loadOlderMessages}
