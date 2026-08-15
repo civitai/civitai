@@ -14,10 +14,7 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 // reset propagates NULL and so never selects such a row: the challenge wedges permanently.
 // `?force=true` widens the exposure to every themed Active/Scheduled challenge at once.
 
-const {
-  mockGenerateThemeElements,
-  mockGetChallengeConfig,
-} = vi.hoisted(() => ({
+const { mockGenerateThemeElements, mockGetChallengeConfig } = vi.hoisted(() => ({
   mockGenerateThemeElements: vi.fn(),
   mockGetChallengeConfig: vi.fn(),
 }));
@@ -52,20 +49,6 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 }));
 
 vi.mock('~/utils/logging', () => ({ createLogger: vi.fn(() => vi.fn()) }));
-
-vi.mock('~/env/server', () => ({
-  env: new Proxy(
-    {},
-    {
-      get(_t, prop: string) {
-        if (prop === 'WEBHOOK_TOKEN') return 'mock-webhook-token';
-        if (prop === 'IS_BUILD') return false;
-        if (prop === 'LOGGING') return [];
-        return 'mock-value';
-      },
-    }
-  ),
-}));
 
 const handler = (await import('~/pages/api/mod/daily-challenge/backfill-theme-elements')).default;
 

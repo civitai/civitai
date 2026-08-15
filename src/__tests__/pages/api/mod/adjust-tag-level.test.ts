@@ -32,28 +32,6 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: (req: NextApiRequest, res: NextApiResponse) => unknown) => handler,
 }));
 
-vi.mock('~/env/server', () => ({
-  env: new Proxy(
-    {},
-    {
-      get(_target, prop: string) {
-        if (prop === 'WEBHOOK_TOKEN') return 'mock-webhook-token';
-        if (prop === 'IS_BUILD') return false;
-        if (prop === 'LOGGING') return [];
-        if (prop.endsWith('URL') || prop.endsWith('_URL') || prop.endsWith('ENDPOINT'))
-          return 'http://localhost:3000';
-        // Numeric-config env vars (e.g. MEILI_CALL_CONCURRENCY) are consumed at
-        // module-eval time by pLimit()/limiter setup in the transitively-imported
-        // service graph and MUST be positive numbers — a string 'mock-value' throws
-        // ("Expected concurrency to be a number from 1 and up").
-        if (prop.endsWith('CONCURRENCY') || prop.endsWith('LIMIT') || prop.endsWith('TIMEOUT'))
-          return 4;
-        return 'mock-value';
-      },
-    }
-  ),
-}));
-
 import handler from '~/pages/api/mod/adjust-tag-level';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 

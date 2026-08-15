@@ -27,12 +27,6 @@ vi.mock('@civitai/next-axiom', () => ({
 }));
 // `allowedOrigins` at module load spreads `env.TRPC_ORIGINS` (must be iterable)
 // and reads `env.NEXTAUTH_URL`; default everything else to undefined.
-vi.mock('~/env/server', () => ({
-  env: new Proxy({ TRPC_ORIGINS: [] as string[], NEXTAUTH_URL: undefined } as Record<
-    string,
-    unknown
-  >, { get: (t, p: string) => (p in t ? t[p] : undefined) }),
-}));
 vi.mock('~/server/db/db-helpers', () => ({ checkNotUpToDate: vi.fn() }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(),
@@ -75,19 +69,20 @@ describe('PublicEndpoint Cache-Control override (PR #2664 resolve-failed 404)', 
 
     // This is the default a deterministic by-id `not-found` 404 keeps — stable,
     // safe to edge-cache.
-    expect(headers['Cache-Control']).toBe(
-      'public, s-maxage=300, stale-while-revalidate=150'
-    );
+    expect(headers['Cache-Control']).toBe('public, s-maxage=300, stale-while-revalidate=150');
   });
 
   it('lets a handler override the default with no-store (the transient resolve-failed 404 path)', async () => {
     const { req, res, headers } = makeReqRes();
-    const handler = PublicEndpoint(async (_req, response) => {
-      // Mirrors the endpoint's `resolve-failed` branch: override the
-      // PublicEndpoint default so a transient resolve failure is NOT edge-cached.
-      response.setHeader('Cache-Control', 'private, no-store');
-      response.status(404).send('File not found');
-    }, ['GET']);
+    const handler = PublicEndpoint(
+      async (_req, response) => {
+        // Mirrors the endpoint's `resolve-failed` branch: override the
+        // PublicEndpoint default so a transient resolve failure is NOT edge-cached.
+        response.setHeader('Cache-Control', 'private, no-store');
+        response.status(404).send('File not found');
+      },
+      ['GET']
+    );
 
     await handler(req, res);
 

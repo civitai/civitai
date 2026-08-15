@@ -19,15 +19,6 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * stubbed to identity so the raw handler runs.
  */
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/env/server', () => ({
-  env: {
-    JOB_TOKEN: 'x',
-    WEBHOOK_TOKEN: 'x',
-    NEXTAUTH_URL: undefined,
-    TRPC_ORIGINS: [],
-    LOGGING: [],
-  },
-}));
 // Cut the heavy subtrees endpoint-helpers pulls at module load (redis/logging via
 // the orchestrator token, and the server-host list) — none are exercised by the
 // PublicEndpoint GET path under test.

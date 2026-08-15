@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { createHmac } from 'crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,19 +12,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *   - covered by the X-AppBlocks-Trigger-Sig HMAC (signed body, not a header)
  */
 
-const { TRIGGER_SECRET, mockEnv } = vi.hoisted(() => {
-  const TRIGGER_SECRET = 'trigger-secret';
-  return {
-    TRIGGER_SECRET,
-    mockEnv: {
-      APPS_TEKTON_TRIGGER_URL: 'http://trigger.example/trigger-build',
-      APPS_TEKTON_TRIGGER_SECRET: TRIGGER_SECRET,
-    } as Record<string, unknown>,
-  };
-});
-vi.mock('~/env/server', () => ({ env: mockEnv }));
-
 import { triggerBuild } from '~/server/services/blocks/apps-pipeline.service';
+
+const TRIGGER_SECRET = 'trigger-secret';
+
+beforeEach(() => {
+  setEnv({
+    APPS_TEKTON_TRIGGER_URL: 'http://trigger.example/trigger-build',
+    APPS_TEKTON_TRIGGER_SECRET: TRIGGER_SECRET,
+  });
+});
 
 describe('triggerBuild ts replay leg (F5)', () => {
   let captured: { url: string; body: string; sig: string } | null = null;

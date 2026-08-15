@@ -6,16 +6,14 @@ const { mockLogToAxiom, mockWithSignals } = vi.hoisted(() => ({
   mockWithSignals: vi.fn(),
 }));
 
-vi.mock('~/env/server', () => ({
-  env: {
-    SIGNALS_ENDPOINT: 'http://signals.test',
-  },
-}));
-
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: mockLogToAxiom,
   safeError: (e: unknown) =>
-    e instanceof Error ? { name: e.name, message: e.message } : e == null ? undefined : { message: String(e) },
+    e instanceof Error
+      ? { name: e.name, message: e.message }
+      : e == null
+      ? undefined
+      : { message: String(e) },
 }));
 
 // SignalsCallTimeoutError must be the REAL class so `instanceof` in the service

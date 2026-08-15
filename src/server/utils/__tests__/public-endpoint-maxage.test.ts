@@ -19,12 +19,6 @@ vi.mock('@civitai/next-axiom', () => ({
 }));
 // `allowedOrigins` at module load spreads `env.TRPC_ORIGINS` (must be iterable)
 // and reads `env.NEXTAUTH_URL`; default everything else to undefined.
-vi.mock('~/env/server', () => ({
-  env: new Proxy(
-    { TRPC_ORIGINS: [] as string[], NEXTAUTH_URL: undefined } as Record<string, unknown>,
-    { get: (t, p: string) => (p in t ? t[p] : undefined) }
-  ),
-}));
 vi.mock('~/server/db/db-helpers', () => ({ checkNotUpToDate: vi.fn() }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(),

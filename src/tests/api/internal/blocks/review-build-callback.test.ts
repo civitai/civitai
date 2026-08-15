@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { createHmac } from 'crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -16,7 +17,6 @@ import { Readable } from 'node:stream';
 
 const {
   SECRET,
-  mockEnvStore,
   mockFlag,
   mockTriggerApplyReview,
   mockWaitApply,
@@ -29,7 +29,6 @@ const {
   const SECRET = 'test-build-callback-secret';
   return {
     SECRET,
-    mockEnvStore: { BLOCK_BUILD_CALLBACK_SECRET: SECRET } as Record<string, unknown>,
     mockFlag: { enabled: true },
     mockTriggerApplyReview: vi.fn(async () => ({ name: 'review-apply-1' })),
     mockWaitApply: vi.fn(async () => 'succeeded'),
@@ -57,14 +56,6 @@ const {
 });
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/env/server', () => ({
-  env: new Proxy(mockEnvStore, {
-    get(t, p: string) {
-      if (p in t) return t[p];
-      return undefined;
-    },
-  }),
-}));
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: vi.fn(async (flag: string) =>
     flag === 'app-blocks-pipeline-enabled' ? mockFlag.enabled : false
@@ -127,12 +118,19 @@ function makeReqRes(body: string, sig?: string) {
       return this;
     },
   };
-  return { req: stream, res: res as unknown as NextApiResponse & { statusCode: number; body: any } };
+  return {
+    req: stream,
+    res: res as unknown as NextApiResponse & { statusCode: number; body: any },
+  };
 }
+
+beforeEach(() => setEnv({ BLOCK_BUILD_CALLBACK_SECRET: SECRET }));
 
 describe('expectedReviewImageRef (pure)', () => {
   it('binds to the review-prefixed image', () => {
-    expect(expectedReviewImageRef(SLUG, SHA)).toBe(`ghcr.io/civitai/app-block-review-${SLUG}:${SHA}`);
+    expect(expectedReviewImageRef(SLUG, SHA)).toBe(
+      `ghcr.io/civitai/app-block-review-${SLUG}:${SHA}`
+    );
   });
 });
 
@@ -226,12 +224,9 @@ describe('POST /api/internal/blocks/review-build-callback', () => {
     expect(mockTriggerApplyReview).toHaveBeenCalledWith(
       expect.objectContaining({ slug: SLUG, sha: SHA, publishRequestId: PUBREQ })
     );
-    expect(mockMarkPreview).toHaveBeenCalledWith(
-      PUBREQ,
-      'preview-deploying',
-      expect.anything(),
-      { requireActivePreview: true }
-    );
+    expect(mockMarkPreview).toHaveBeenCalledWith(PUBREQ, 'preview-deploying', expect.anything(), {
+      requireActivePreview: true,
+    });
   });
 
   it('replay guard: a duplicate success callback short-circuits before the apply', async () => {
@@ -240,7 +235,10 @@ describe('POST /api/internal/blocks/review-build-callback', () => {
     const { req, res } = makeReqRes(goodBody());
     await handler(req, res);
     expect(res.statusCode).toBe(200);
-    expect(res.body).toMatchObject({ applied: false, reason: 'duplicate callback (replay-guarded)' });
+    expect(res.body).toMatchObject({
+      applied: false,
+      reason: 'duplicate callback (replay-guarded)',
+    });
     expect(mockTriggerApplyReview).not.toHaveBeenCalled();
   });
 
@@ -258,12 +256,9 @@ describe('POST /api/internal/blocks/review-build-callback', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toMatchObject({ applied: false });
     expect(mockTriggerApplyReview).not.toHaveBeenCalled();
-    expect(mockMarkPreview).toHaveBeenCalledWith(
-      PUBREQ,
-      'preview-failed',
-      expect.anything(),
-      { requireActivePreview: true }
-    );
+    expect(mockMarkPreview).toHaveBeenCalledWith(PUBREQ, 'preview-failed', expect.anything(), {
+      requireActivePreview: true,
+    });
   });
 
   it('torn-down mid-build → aborts: no apply, no state write, no resurrection', async () => {
@@ -333,12 +328,10 @@ describe('watchReviewApplyJob (reachability gate)', () => {
       baseDetail,
     });
     expect(mockWaitReachable).toHaveBeenCalledWith(HOST);
-    expect(mockMarkPreview).toHaveBeenCalledWith(
-      PUBREQ,
-      'preview-live',
-      baseDetail,
-      { requireActivePreview: true, expectedSha: SHA }
-    );
+    expect(mockMarkPreview).toHaveBeenCalledWith(PUBREQ, 'preview-live', baseDetail, {
+      requireActivePreview: true,
+      expectedSha: SHA,
+    });
     // Not marked failed, and the dedup slot is NOT freed on the happy path.
     expect(mockMarkPreview).toHaveBeenCalledTimes(1);
     expect(mockRedisDel).not.toHaveBeenCalled();
