@@ -72,7 +72,8 @@ describe('createMultiAccountBuzzTransaction destination', () => {
   it('refuses a user destination at COMPILE time', () => {
     // The `charge` helper casts, which erases the union — this is the only assertion covering the
     // type half. Widening the destination back to an always-optional `toAccountType` makes the
-    // directive unused and fails the build with TS2578.
+    // directive unused, which only `scripts/ci/typecheck-tests-gate.mjs` reports: `pnpm typecheck`
+    // runs the root tsconfig, and that excludes `src/**/__tests__/**`.
     const payUserWithNoDestinationType = () =>
       // @ts-expect-error - toAccountType is required whenever toAccountId is not the bank
       createMultiAccountBuzzTransaction({
