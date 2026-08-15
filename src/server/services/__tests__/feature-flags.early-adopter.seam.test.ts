@@ -14,17 +14,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * does not project, or a context property the segment does not match, both look perfectly
  * healthy from inside their own file. So this drives REAL code at every hop and stubs only
  * the Flipt EDGE (`~/server/flipt/client`), whose stub doubles as the assertion point: it
- * captures the exact context the chain produced and applies a matcher written to mirror
- * the LIVE `early-adopters` segment (`property: isEarlyAdopter`, `operator: eq`,
- * `value: "true"` — a STRING equality, exactly as Flipt evaluates it).
+ * captures the exact context the chain produced and evaluates it against a transcription of
+ * the LIVE flag — BOTH its `early-adopters` segment rollout and its flag-level `enabled`.
  *
  * Modelled on `src/server/routers/__tests__/blocks.router.flag-gate-hydrate.test.ts`.
  *
+ * 🔴 THE FIRST VERSION OF THIS FILE MODELLED ONLY THE SEGMENT, and that omission is exactly
+ * how a deploy-blocking defect got through a green seam test. The stub returned `false` for
+ * a non-matching user; real Flipt returns the flag's `enabled`. The flag shipped as
+ * `enabled: true`, so in production every non-opted-in user and every anonymous request
+ * would have evaluated to `true` — while this test happily asserted "OFF end-to-end". A
+ * fake that disagrees with production in the direction you were hoping for is worse than no
+ * fake. See `EARLY_ADOPTER_FLAG` below and the `flag-level default` describe block.
+ *
  * The surface this fixture does NOT load, stated plainly: the Flipt server itself, and the
- * flipt-state YAML (a different repo). `segmentMatcher` below is a hand-written mirror of
- * that YAML, so a change to the real segment's property/value can still diverge from this
- * test. That divergence is guarded on the YAML side by the assertions in the flipt-state
- * PR, not here.
+ * flipt-state YAML (a different repo). `EARLY_ADOPTER_FLAG` is a hand-written transcription
+ * of that YAML, so a change to the real flag can still diverge from this test. That
+ * divergence is guarded on the YAML side by `scripts/validate-flag-shape.py` in flipt-state,
+ * not here.
  */
 
 const { mockIsFliptSync } = vi.hoisted(() => ({ mockIsFliptSync: vi.fn() }));
@@ -97,20 +104,73 @@ function sessionUserFromSettings(settings: unknown, id = 42): SessionUser {
 }
 
 /**
- * A faithful stand-in for the live `early-adopters` Flipt segment. Written from the YAML
- * (STRING_COMPARISON_TYPE / isEarlyAdopter / eq / "true"), NOT from buildFliptContext — so
- * if the context ever stopped emitting the exact string the segment wants, this goes red.
+ * A stand-in for how Flipt actually evaluates a BOOLEAN flag. It models BOTH halves of the
+ * flag definition, because the earlier version of this stub modelled only the segment and
+ * was therefore structurally unable to see the defect that shipped in flipt-state#62:
+ *
+ *   1. the segment rollout — match ⇒ the rollout's `value`
+ *   2. `enabled` — the value returned when NO rollout matches
+ *
+ * 🔴 `enabled` is NOT a master switch. Measured on prod Flipt v2.10.0 (2026-08-15):
+ *      oauth-apps / comic-creator / api-key-buzz-limit (enabled:true + segment rollout)
+ *        → non-matching entity gets `true`, DEFAULT_EVALUATION_REASON, segmentKeys=[]
+ *      app-blocks-enabled / buzz-memberships (enabled:false + segment rollout)
+ *        → non-matching gets `false`; a MATCHING entity still gets `true` / MATCH
+ * A stub that returns `false` for a non-match hard-codes the answer we hoped for and
+ * agrees with production only by luck of the flag being written correctly.
  */
-const segmentMatcher = (ctx?: Record<string, string>) => ctx?.isEarlyAdopter === 'true';
+type BooleanFlagShape = {
+  /** The no-match DEFAULT. Mirrors `enabled:` in flipt-state features.yaml. */
+  enabled: boolean;
+  rollout: { matches: (ctx?: Record<string, string>) => boolean; value: boolean };
+};
+
+/**
+ * Mirrors the `early-adopter` flag as defined in
+ * flipt-state `civitai-app/default/features.yaml`. Both fields are transcribed from the
+ * YAML, not from `buildFliptContext` — so if the context stopped emitting the exact string
+ * the segment wants, or if the flag's `enabled` were flipped, this goes red.
+ */
+const EARLY_ADOPTER_FLAG: BooleanFlagShape = {
+  enabled: false,
+  rollout: {
+    // constraint: STRING_COMPARISON_TYPE / property isEarlyAdopter / eq / "true"
+    matches: (ctx) => ctx?.isEarlyAdopter === 'true',
+    value: true,
+  },
+};
+
+/** Flipt's boolean evaluation: first matching rollout wins, else the flag's `enabled`. */
+function evaluateBoolean(shape: BooleanFlagShape, ctx?: Record<string, string>): boolean {
+  return shape.rollout.matches(ctx) ? shape.rollout.value : shape.enabled;
+}
 
 const req = { headers: {} } as never;
 
-beforeEach(() => {
-  mockIsFliptSync.mockReset();
+/**
+ * A request with a UNIQUE host, and therefore a unique `featureAccessKey`.
+ *
+ * Needed for anonymous cases: with no user the key degenerates to `anon|h:<host>|r:`, so
+ * every anonymous test in this file would otherwise share ONE memo entry and read whichever
+ * test ran first. (That sharing is correct in production — all anonymous callers really are
+ * interchangeable for flag purposes — which is exactly why the tests have to vary the host
+ * rather than the code being "fixed".) Host is safe to vary here: the flag declares no
+ * server availability, so `serverMatch` is true for any host.
+ */
+let nextHost = 0;
+const freshReq = () => ({ headers: { host: `t${++nextHost}.test.invalid` } } as never);
+
+/** Install the Flipt stub, optionally overriding the flag's shape for a single test. */
+function stubFlipt(shape: BooleanFlagShape = EARLY_ADOPTER_FLAG) {
   mockIsFliptSync.mockImplementation(
     (flag: string, _entityId: string, ctx?: Record<string, string>) =>
-      flag === 'early-adopter' ? segmentMatcher(ctx) : null
+      flag === 'early-adopter' ? evaluateBoolean(shape, ctx) : null
   );
+}
+
+beforeEach(() => {
+  mockIsFliptSync.mockReset();
+  stubFlipt();
 });
 
 describe('early-adopter seam: User.settings → hub session → Flipt context', () => {
@@ -131,7 +191,7 @@ describe('early-adopter seam: User.settings → hub session → Flipt context', 
   it('an unrelated settings blob does not accidentally enrol anyone', () => {
     const user = sessionUserFromSettings({ allowAds: false, dismissedAlerts: ['x'] });
     expect(buildFliptContext(user).isEarlyAdopter).toBe('false');
-    expect(segmentMatcher(buildFliptContext(user))).toBe(false);
+    expect(EARLY_ADOPTER_FLAG.rollout.matches(buildFliptContext(user))).toBe(false);
   });
 });
 
@@ -174,7 +234,7 @@ describe('early-adopter seam: the full chain decides the flag', () => {
   });
 
   it('an anonymous request is never in the cohort', async () => {
-    const features = await getFeatureFlagsAsync({ user: undefined, req });
+    const features = await getFeatureFlagsAsync({ user: undefined, req: freshReq() });
     expect(features.earlyAdopter).toBeFalsy();
   });
 
@@ -185,6 +245,65 @@ describe('early-adopter seam: the full chain decides the flag', () => {
     const features = await getFeatureFlagsAsync({ user, req });
     expect(features.earlyAdopter).toBe(true);
     expect(features.oauthApps).toBeFalsy();
+  });
+});
+
+describe("early-adopter seam: the flag's `enabled` is the NO-MATCH DEFAULT", () => {
+  // These are the tests the original stub could not express, and their absence is what let
+  // an inverted flag definition pass a green seam suite.
+
+  it('the transcribed flag is `enabled: false` — the only shape that scopes the cohort', () => {
+    // Pinned as a literal against the flipt-state YAML. If someone "turns the flag on" by
+    // setting enabled:true, this is the first thing that goes red.
+    expect(EARLY_ADOPTER_FLAG.enabled).toBe(false);
+    expect(EARLY_ADOPTER_FLAG.rollout.value).toBe(true);
+  });
+
+  it('a non-matching entity receives the flag-level default, not a hard-coded false', () => {
+    // Direct assertion on the evaluator, so the stub's own semantics are under test rather
+    // than merely assumed by the tests that consume it.
+    expect(evaluateBoolean(EARLY_ADOPTER_FLAG, { isEarlyAdopter: 'false' })).toBe(false);
+    expect(evaluateBoolean(EARLY_ADOPTER_FLAG, undefined)).toBe(false);
+    expect(evaluateBoolean(EARLY_ADOPTER_FLAG, { isEarlyAdopter: 'true' })).toBe(true);
+  });
+
+  it('an `enabled: true` flag puts EVERY non-opted-in user in the cohort (the shipped defect)', async () => {
+    // The regression case, driven end-to-end. This is the production behaviour measured on
+    // Flipt v2.10.0 for oauth-apps / comic-creator / api-key-buzz-limit, and it is what the
+    // first version of flipt-state#62 would have done: the segment selects nobody, and the
+    // flag is on for the whole internet.
+    stubFlipt({ ...EARLY_ADOPTER_FLAG, enabled: true });
+
+    const optedOut = sessionUserFromSettings({}, freshId());
+    const features = await getFeatureFlagsAsync({ user: optedOut, req });
+
+    // NOT falsy — a user who never opted in is in the cohort.
+    expect(features.earlyAdopter).toBe(true);
+  });
+
+  it('an `enabled: true` flag also enrols ANONYMOUS requests', async () => {
+    // buildFliptContext omits isEarlyAdopter entirely with no user, so the segment cannot
+    // match and the default is all that is left. A cohort gate that fires for logged-out
+    // traffic is the worst version of this bug.
+    stubFlipt({ ...EARLY_ADOPTER_FLAG, enabled: true });
+
+    const features = await getFeatureFlagsAsync({ user: undefined, req: freshReq() });
+    expect(features.earlyAdopter).toBe(true);
+  });
+
+  it('app-side `availability: []` does NOT rescue an inverted flag', async () => {
+    // The tempting mental model — "availability is [] so we fail closed" — is false
+    // whenever Flipt ANSWERS. hasFeature returns the Flipt result and never reaches static
+    // evaluation; availability only applies when Flipt is unreachable (returns null).
+    stubFlipt({ ...EARLY_ADOPTER_FLAG, enabled: true });
+
+    const optedOut = sessionUserFromSettings({}, freshId());
+    expect((await getFeatureFlagsAsync({ user: optedOut, req })).earlyAdopter).toBe(true);
+
+    // Same user, Flipt unreachable → NOW availability: [] fails closed.
+    mockIsFliptSync.mockImplementation(() => null);
+    const offline = sessionUserFromSettings({}, freshId());
+    expect((await getFeatureFlagsAsync({ user: offline, req })).earlyAdopter).toBeFalsy();
   });
 });
 

@@ -94,8 +94,16 @@ export enum FLIPT_FEATURE_FLAGS {
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
   // Early-adopter cohort gate. Segments on the `isEarlyAdopter` Flipt context property
   // that `buildFliptContext` emits from the user's opt-in setting, so background paths
-  // (no request context) can gate on the same flag the request path does. Default-off —
-  // isFlipt returns false for an unknown flag.
+  // (no request context) can gate on the same flag the request path does.
+  //
+  // 🔴 NOT default-off in the usual sense. `isFlipt` returns false for an UNKNOWN flag, but
+  // once this flag exists its answer for a non-matching entity is the flag's own `enabled`
+  // value, which Flipt returns when no rollout matches. So a caller that evaluates this
+  // WITHOUT the `isEarlyAdopter` context — which is every background path, since there is
+  // no request user to build a context from — gets that default, not false. It is false
+  // only because flipt-state pins the flag `enabled: false`. Pass a real context, or treat
+  // a bare `isFlipt(EARLY_ADOPTER)` as "is the programme switched on at all", never as
+  // "is this user an early adopter".
   EARLY_ADOPTER = 'early-adopter',
 }
 

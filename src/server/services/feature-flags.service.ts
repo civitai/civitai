@@ -535,12 +535,26 @@ const featureFlags = createFeatureFlags({
   // the route SSR resolver reads the same resolved flag) but staged `['mod']`
   // rather than `[]` because it's a re-host, not a brand-new dark capability.
   appReviewPage: { availability: ['mod'], fliptKey: 'app-review-page' },
-  // Early-adopter opt-in cohort. `availability: []` = DARK by default and FAILS CLOSED
-  // (empty availability → static eval false when Flipt is absent/down), so the Flipt
-  // `early-adopter` flag is the ONLY on-switch. NOT `['user']`/`['public']`: those would
-  // fail OPEN and hand the cohort to everyone the moment Flipt is unreachable, which
-  // defeats the point of an opt-in. The flag's `early-adopters` segment matches on the
-  // `isEarlyAdopter` context property emitted by `buildFliptContext`.
+  // Early-adopter opt-in cohort. `availability: []` means static evaluation is false, so
+  // when Flipt is UNREACHABLE (isFliptSync → null) nobody is in the cohort. NOT
+  // `['user']`/`['public']`: those would fail OPEN during a Flipt outage, which defeats the
+  // point of an opt-in.
+  //
+  // 🔴 SCOPE OF THAT PROTECTION — it covers the Flipt-DOWN case ONLY, and nothing else.
+  // Once Flipt ANSWERS, `hasFeature` returns the Flipt result and never reaches static
+  // evaluation (see the `if (fliptResult !== null) return fliptResult` branch below), so
+  // `availability: []` cannot defend against a MIS-DEFINED flag. The correctness of this
+  // cohort therefore rests on a precondition held in ANOTHER REPO:
+  //
+  //   flipt-state `civitai-app/default/features.yaml` → flag `early-adopter` MUST be
+  //   `enabled: false` with the `early-adopters` segment rollout.
+  //
+  // For a boolean flag, Flipt's `enabled` is the value returned when NO rollout matches —
+  // it is not a master switch. `enabled: true` there would hand this flag to every
+  // non-opted-in user and every anonymous request, and nothing on this side would stop it.
+  // That exact defect was caught pre-merge in flipt-state#62; the shape is now gated by
+  // `scripts/validate-flag-shape.py` in that repo, and modelled in
+  // `feature-flags.early-adopter.seam.test.ts`.
   earlyAdopter: { availability: [], fliptKey: 'early-adopter' },
 });
 
