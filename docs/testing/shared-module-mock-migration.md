@@ -58,9 +58,15 @@ vi.mock('~/server/redis/client', () => ({
 
 The canonical registration spreads the original, so deleting the hand-written copy gives the
 test the REAL constant. The codemod does this comparison for you: it static-parses
-`REDIS_KEYS_UNPREFIXED` / `REDIS_SYS_KEYS` out of `packages/civitai-redis/src/client.ts`,
-drops the literal when every leaf matches, and refuses when one does not — printing the
-divergence under `CONSTANTS THAT DRIFTED FROM THE REAL VALUE`.
+`REDIS_KEYS_UNPREFIXED` / `REDIS_SYS_KEYS` out of `packages/civitai-redis/src/client.ts` and
+drops the literal, printing any divergence under `CONSTANTS THAT DRIFTED FROM THE REAL VALUE`.
+
+🔴 **A drifted constant is REPORTED, not refused — the conversion still happens and the real
+value is swapped in.** An earlier version of this paragraph said the codemod refuses on
+divergence. It does not, and the difference matters: the drift report is the only place a
+swapped constant is ever named, so a run whose report you did not read has silently changed
+what the test addresses. Read that section every time, and keep what it lists — see the
+following two warnings for why it will usually not go red.
 
 42 files diverge, across 73 leaves. Some are placeholders (`"rl"`, `"kill"`); others read as
 real and are wrong — `CACHE_LOCKS` as `"caches:lock"` against a real `"cache-lock"`,

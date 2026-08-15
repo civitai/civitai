@@ -61,6 +61,54 @@ recipe and josh's observation rather than confirming a number I already moved. W
 lands, the three drifted constants get logged whether or not the suite goes red — a drifted
 constant nothing asserts on can neither fail nor be reviewed.
 
+## Outcome — the stopping rule fired
+
+```
+codemod --dry, 40 candidate files: 11 convertible | 30 with refusals
+  fully converted (every canonical specifier):  10
+  partial (converted one, refused another):      1   <- counts as NOT migrated
+  fully refused:                                29
+predicted convert: 5        stopping range: 3-10        actual: 11
+PER-FILE AGREEMENT: 27/40 (68%)  — 9 I called refuse converted, 4 I called convert refused
+```
+
+Both the net and the per-file rule fire. The two error populations partly cancel, which is the
+shape sky flagged from josh's slice: a net closer to 5 would have licensed a classifier wrong in
+both directions at a 33% rate. Two distinct bugs in mine, both found by diffing per file:
+
+**Bug 1 — ES6 shorthand properties are invisible to it (4 false converts).** `dbRead: { keyValue:
+{ findUnique }, $queryRaw: queryRaw }` has one leaf my `key:` regex can see. The codemod refuses
+the shorthand as a `non-literal property inside a model object`; I saw an empty model and passed
+it. `placement.service`, `placement-metrics.service`, `redeemableCode.service`, `strike.service`.
+
+**Bug 2 — it scans into nested literals that are not the client (contributed to the 9 false
+refusals).** In `search-error-log-pii` the redis factory builds a permissive key stand-in,
+`new Proxy(() => 'k', { get: () => make() })`, and I read that handler's `get` as a client method
+carrying behaviour. The client itself is `{ packed: { get: vi.fn(), set: vi.fn() } }` and converts
+cleanly. The codemod was right and I was wrong.
+
+## Two claims that did not survive contact
+
+**Drifted `REDIS_KEYS` constants are converted, not refused.** josh reported this from a–l and it
+reproduces here: `nowpayments.currencies.memoize.test.ts` converted while the report named
+`REDIS_KEYS.CACHES.SUPPORTED_CRYPTO_CURRENCIES` as real
+`"packed:caches:supported-crypto-currencies"` vs test `"packed:caches:supported-crypto"`. The
+recipe said it refuses on divergence; that sentence is now corrected in
+`docs/testing/shared-module-mock-migration.md`. One drifted constant in this slice, logged here
+because a drifted constant nothing asserts on can neither fail nor be reviewed.
+
+**`importOriginal` shapes are not uniformly refused.** `vae-files-cross-version.test.ts` mocks
+`~/server/redis/client` through `importOriginal` and the codemod converted it. Worth knowing
+before treating "it is an importOriginal, so it is hand work" as a triage rule.
+
+## One conversion to watch in the control
+
+`search-error-log-pii.test.ts` replaces a permissive `REDIS_KEYS`/`REDIS_SYS_KEYS` proxy — every
+path resolves to a callable returning `'k'` — with the real key tables. Any key path the test
+walks that does not exist for real goes from `'k'` to `undefined`. That is the intended direction,
+but it is a behavioural change the collected-count diff cannot see, so it needs reading at
+assertion level rather than colour.
+
 ## Slice boundary
 
 josh took the flat allowlist files under `src/server/services/__tests__/` through
