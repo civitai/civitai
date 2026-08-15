@@ -120,6 +120,17 @@ pnpm run test:ui          # Playwright with UI
 
 Both vitest suites are projects in `vitest.config.mts` (`--project unit` / `--project component`).
 
+#### Worker count: uncapped by default, `VITEST_MAX_WORKERS` to cap
+A suite uses Vitest's own worker count (`cpus - 1` in run mode, `floor(cpus / 2)` in watch; the browser pool `min(12, cpus - 1)`). Set `VITEST_MAX_WORKERS=<n>` for a smaller pool — it applies to every project, including the browser one:
+
+```bash
+VITEST_MAX_WORKERS=8 pnpm run test:unit:run
+```
+
+**Why uncapped is the default.** A flat cap of 8 lived in `vitest.config.mts` (#3900) because several agents each running a full suite at once saturated the box. The dev-server test queue now serialises full-suite runs at concurrency 1 (#3947), so one suite has the machine to itself. Measured on a 32-core Windows box, alternating runs through that queue: **8 workers 507.3s / 526.9s, uncapped (31 workers) 281.4s / 295.8s** — 1.79x on the means. Nothing changes on CI, which runs on 4-vCPU `ubuntu-latest`, where the old cap's `cpus > 9` guard already made it inert.
+
+⚠️ More workers is not monotonically better once other pool settings move: with `--no-isolate` the same box measured 119s at 8 workers and 1025s at 31. Measure both ends before changing one.
+
 #### Never put unit tests under `src/pages`
 Next.js 16 treats **every** `.ts`/`.tsx` file under `src/pages` (incl. nested `__tests__/`) as a route, and `next build` runs a route-type validator over it. A Vitest test file there fails the build with `Type '...test' does not satisfy the constraint 'ApiRouteConfig'. Property 'default' is missing` — and **only `next build` catches it**: `pnpm typecheck`, `pnpm test`/vitest, and the CI typecheck/unit/component tasks all pass, so it sneaks through to the preview `build-image` step. Keep handler tests in a `__tests__/` dir **outside** `src/pages` (e.g. `src/server/__tests__/`) and import the handler via the `~/pages/...` alias. (Bit us on PR #2653.)
 

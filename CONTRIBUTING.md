@@ -81,6 +81,9 @@ pnpm exec eslint <files you added>
 Use `pnpm exec prettier --write <file>`, **not** `pnpm prettier:write -- <file>`.
 The latter ignores the argument and reformats the entire repository.
 
+Both suites use Vitest's own worker count. To leave the machine usable while one
+runs, cap it for that run: `VITEST_MAX_WORKERS=8 pnpm test:unit:run`.
+
 ### Compare against a baseline, not against zero
 
 `pnpm test:component` can report two extra failing files on a cold

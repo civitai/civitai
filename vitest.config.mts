@@ -1,40 +1,26 @@
 import { defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
-import os from 'os';
 import path from 'path';
 
-// Vitest defaults to `cpus - 1` workers, so two concurrent suites saturate a 32-core dev box.
-// Measured here on the unit suite: 31 workers 235.9s, 8 workers 410.2s — 1.74x slower, for a
-// machine that stays usable while several agents run suites at once.
+// Worker count is UNCAPPED by default — Vitest's own resolution applies untouched (`cpus - 1` in
+// run mode, `floor(cpus / 2)` in watch; the browser pool sizes itself at `min(12, cpus - 1)`).
 //
-// The cap must only ever REDUCE. Vitest's default depends on the resolved mode (`cpus - 1` in run,
-// `floor(cpus / 2)` in watch) and that mode is NOT knowable from this file: `vitest run --watch` is
-// explicitly supported and resolves to watch while `process.argv` still says "run", so sniffing argv
-// raises the count on exactly the small machines this is meant to protect.
+// The flat cap of 8 that lived here (#3900) existed because several agents each running a full
+// suite at once saturated the box. The dev-server test queue now serialises full-suite runs at
+// concurrency 1 (#3947), so one suite has the machine to itself and may use all of it.
 //
-// So don't try to know the mode. Take the watch-mode default as the ceiling — it is the smaller of
-// the two at every core count — and apply nothing at all below 10 cores. That is mode-blind and
-// provably never exceeds either default, while leaving small boxes and CI (4 vCPU) untouched.
+// Set `VITEST_MAX_WORKERS=<n>` to cap a run. That is the name Vitest itself honours, so the number
+// is the same whichever layer reads it; it is read here as well because `getThreadsCount` consults
+// ONLY the project's own `maxWorkers`, never the root, so the browser (`component`) project has to
+// be handed it individually or it is not capped at all.
 //
-// `VITEST_MAX_WORKERS` still overrides everything below, per run.
+// `undefined` is genuinely identical to omitting the key — every consumer is a truthiness / `??`
+// check, and `configDefaults` has no `maxWorkers`.
 // (Unrelated but adjacent: `test.poolOptions` was removed in Vitest 4, so `poolOptions.forks.maxForks`
 // does nothing apart from logging a deprecation.)
-const WORKER_CAP = 8;
-// Below this the run-mode default (`cpus - 1`) is already <= WORKER_CAP, so there is nothing to cap.
-const CAP_ABOVE_CORES = WORKER_CAP + 1;
-const cpuCount = os.availableParallelism?.() ?? os.cpus().length;
-const capped = (ceiling: number) => Math.max(1, Math.min(WORKER_CAP, Math.floor(ceiling / 2)));
-
-// `undefined` leaves Vitest's own resolution completely alone.
-const maxWorkers = cpuCount > CAP_ABOVE_CORES ? capped(cpuCount) : undefined;
-
-// The browser pool sizes itself separately — `min(12, cpus - 1)`, because its main thread chokes
-// past ~12 — and `getThreadsCount` reads ONLY the project's own `maxWorkers`, never the root. So
-// the browser project has to be capped individually or it is not capped at all. Scope, stated
-// honestly: this equals the browser watch-mode default at every core count, so it bites only in
-// run mode (12 -> 6 at >= 13 cores) and is a deliberate no-op in watch.
-const componentMaxWorkers =
-  cpuCount > CAP_ABOVE_CORES ? capped(Math.min(12, cpuCount - 1)) : undefined;
+const envMaxWorkers = Number.parseInt(process.env.VITEST_MAX_WORKERS ?? '', 10);
+const maxWorkers = Number.isFinite(envMaxWorkers) && envMaxWorkers > 0 ? envMaxWorkers : undefined;
+const componentMaxWorkers = maxWorkers;
 
 // `component` resolves to a different worker count than the other projects, so it needs its own
 // group or `groupSpecs` throws — and that throw reports as `Test Files: no tests`, i.e. a run that
