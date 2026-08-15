@@ -339,6 +339,13 @@ worker-global, which is a change to every other file in the worker rather than t
 `src/server/services/storage-resolver.ts:6` reads them at module scope, and the two tests import
 different ones. The codemod got that pair right; a per-key generalisation would not have.
 
+⚠️ **And "no direct mocks" is not "eligible for `isolate: false`".** A file can be fully
+migrated on every canonical axis — allowlist clean, nothing left to convert — and still be
+permanently isolated, because what blocks it is a module-scope flag its neighbours disagree
+about rather than a mock it owns. `bust-public-model-response-cache` is the worked example:
+db, redis and logging are all migrated, and it can never join. So neither the allowlist nor
+`bySpecifier` measures the population that can actually flip; they measure the mocks removed.
+
 **Read `bySpecifier`, not `pendingFiles`.** A file blocked on two pending specifiers stays in
 `pendingFiles` after you migrate one of them, so the file count can sit still while real sites
 move — it stayed at 349 across three migrations in one batch, then moved by 2 for three in the
