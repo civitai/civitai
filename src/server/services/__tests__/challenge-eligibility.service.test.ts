@@ -1,21 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
 
 // Real exercise of the standing/score branches — no wholesale mock of
 // assertUserInGoodStanding/assertUserAccountInGoodStanding. Only the DB layer they read from
 // (dbRead.user, dbRead.userStrike) is mocked, so the actual gating logic runs.
-const { mockDbRead } = vi.hoisted(() => ({
-  mockDbRead: {
-    user: { findUnique: vi.fn() },
-    userStrike: { count: vi.fn() },
-    challenge: { count: vi.fn() },
-  },
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: {},
-}));
-
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: vi.fn(),
 }));
@@ -142,8 +131,10 @@ describe('getUserChallengeCreateEligibility (non-throwing requirements evaluator
     );
   }
 
-  const req = (result: Awaited<ReturnType<typeof getUserChallengeCreateEligibility>>, key: string) =>
-    result.requirements.find((r) => r.key === key)!;
+  const req = (
+    result: Awaited<ReturnType<typeof getUserChallengeCreateEligibility>>,
+    key: string
+  ) => result.requirements.find((r) => r.key === key)!;
 
   it('canCreate=true with every requirement met for an eligible user', async () => {
     setup({ tier: 'gold' });

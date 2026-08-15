@@ -8,12 +8,6 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    cosmeticShopItem: { findMany: mocks.shopItemFindMany, count: mocks.shopItemCount },
-  },
-  dbWrite: {},
-}));
 vi.mock('sharp', () => ({ default: vi.fn() }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn(),
@@ -29,6 +23,13 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 
 import { CosmeticShopSort } from '~/server/common/enums';
 import { getCommunityCosmetics } from '../creator-shop.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbRead.cosmeticShopItem.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.cosmeticShopItem.count.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemCount as (...a: unknown[]) => unknown)(...args)
+);
 
 const cosmeticBranch = (where: { OR: { cosmetic?: Record<string, never> }[] }) =>
   where.OR.find((b) => b.cosmetic)?.cosmetic as Record<string, never>;

@@ -9,28 +9,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * (#3917) and placements (#3911), and the third place it was found.
  */
 
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
-  mockDbRead: { $queryRaw: vi.fn() },
-  mockDbWrite: {
-    donationGoal: { findUniqueOrThrow: vi.fn() },
-    donation: { create: vi.fn() },
-    $queryRaw: vi.fn(),
-  },
-}));
-
 const { createMultiAccountBuzzTransaction, refundMultiAccountTransaction } = vi.hoisted(() => ({
   createMultiAccountBuzzTransaction: vi.fn(),
   refundMultiAccountTransaction: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/buzz.service', () => ({
   createMultiAccountBuzzTransaction,
   refundMultiAccountTransaction,
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
-
 import { donateToGoal } from '~/server/services/donation-goal.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 const DONOR = 20;
 const CREATOR = 10;

@@ -6,6 +6,17 @@ import {
   creatorCosmeticTypes,
 } from '~/server/schema/creator-shop.schema';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+dbMock.dbWrite.keyValue.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.keyValueFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.$executeRawUnsafe.mockImplementation((...args: unknown[]) =>
+  (mocks.executeRawUnsafe as (...a: unknown[]) => unknown)(...args)
+);
+loggingMock.logToAxiom.mockImplementation((...args: unknown[]) =>
+  (mocks.logToAxiom as (...a: unknown[]) => unknown)(...args)
+);
 
 const { mocks } = vi.hoisted(() => ({
   mocks: {
@@ -13,19 +24,6 @@ const { mocks } = vi.hoisted(() => ({
     executeRawUnsafe: vi.fn(),
     logToAxiom: vi.fn(),
   },
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: {},
-  dbWrite: {
-    keyValue: { findUnique: mocks.keyValueFindUnique },
-    $executeRawUnsafe: mocks.executeRawUnsafe,
-  },
-}));
-
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof LoggingClient>()),
-  logToAxiom: mocks.logToAxiom,
 }));
 
 const { assertQuotedFee, getCreatorShopFees, getCreatorShopSubmissionFee, setCreatorShopFees } =

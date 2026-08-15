@@ -1,4 +1,31 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockRedis = redisMock.redis;
+const mockSysRedis = redisMock.sysRedis;
+dbMock.dbWrite.blockUserSubscription.create.mockImplementation(
+  async (..._a: unknown[]): Promise<unknown> => ({})
+);
+dbMock.dbWrite.blockUserSubscription.update.mockImplementation(
+  async (..._a: unknown[]): Promise<unknown> => ({ blockInstanceId: 'bki_test' })
+);
+dbMock.dbWrite.blockUserSubscription.updateMany.mockImplementation(async (..._a: unknown[]) => ({
+  count: 1,
+}));
+dbMock.dbWrite.blockUserSubscription.deleteMany.mockImplementation(async (..._a: unknown[]) => ({
+  count: 0,
+}));
+dbMock.dbWrite.appUserScopeGrant.create.mockImplementation(
+  async (..._a: unknown[]): Promise<unknown> => ({})
+);
+dbMock.dbWrite.appUserScopeGrant.update.mockImplementation(
+  async (..._a: unknown[]): Promise<unknown> => ({})
+);
+redisMock.redis.packed.set.mockImplementation(async () => undefined);
+redisMock.redis.set.mockImplementation(async () => undefined);
+redisMock.redis.scanIterator.mockImplementation(async function* () {});
 
 /**
  * Pins the listForModel SQL invariants that no static-analysis test could
@@ -15,62 +42,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *     slot_id IS NULL and cardinality(target_model_ids) = 0 so it can't
  *     collide with the pinned branch
  */
-
-const { mockDbRead, mockDbWrite, mockRedis, mockSysRedis } = vi.hoisted(() => {
-  // Annotate Promise<any[] | any> on the impl so `.mockResolvedValue({...})`
-  // / `.mockResolvedValue([{...}, ...])` at call sites isn't narrowed to
-  // `Promise<never>` by vi.fn's overload inference.
-  // Type the impl so vi.fn captures both args AND return type — needed so
-  // `.mock.calls.at(-1)?.[0]` doesn't narrow to `never` and
-  // `.mockResolvedValue({...})` accepts arbitrary objects.
-  const dbRead = {
-    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    blockUserSubscription: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    appBlock: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    modelVersion: { findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) },
-  };
-  const dbWrite = {
-    appBlock: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    blockUserSubscription: {
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-      create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-      update: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ blockInstanceId: 'bki_test' })),
-      updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
-      deleteMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
-    },
-    // A6: installOnModel now writes an implicit-consent grant via
-    // recordInstallConsent → recordScopeGrant.
-    appUserScopeGrant: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-      update: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-    },
-  };
-  const redis = {
-    packed: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-    get: vi.fn(async () => null),
-    set: vi.fn(async () => undefined),
-    del: vi.fn(async () => 0),
-    scanIterator: async function* () {},
-  };
-  const sysRedis = { sMembers: vi.fn(async () => []) };
-  return { mockDbRead: dbRead, mockDbWrite: dbWrite, mockRedis: redis, mockSysRedis: sysRedis };
-});
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  sysRedis: mockSysRedis,
-  REDIS_KEYS: {
-    BLOCKS: {
-      REGISTRY: 'packed:caches:block-registry',
-      TOKEN_RATE_LIMIT: 'rl',
-      REVOKED_INSTANCE: 'rev',
-    },
-  },
-  REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
-}));
 
 describe('BlockRegistry.listForModel SQL invariants', () => {
   beforeEach(() => {

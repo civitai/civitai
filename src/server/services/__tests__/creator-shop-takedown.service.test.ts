@@ -25,31 +25,6 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    // findFirst + cosmeticShopItemCosmetic are the pack delist cascade's reads.
-    // Takedown reaches them through delistPacksContaining.
-    cosmeticShopItem: { findUnique: mocks.shopItemFindUnique, findFirst: mocks.shopItemFindFirst },
-    cosmeticShopItemCosmetic: { findMany: mocks.packMemberFindMany },
-    userCosmeticShopPurchases: { findMany: mocks.purchaseFindMany },
-    userCosmetic: { findMany: mocks.userCosmeticFindMany },
-    userCosmeticShopItemResale: { findMany: mocks.resaleFindMany },
-    user: { findUnique: mocks.userFindUnique },
-  },
-  dbWrite: {
-    cosmeticShopItem: {
-      findUnique: mocks.shopItemFindUnique,
-      update: mocks.shopItemUpdate,
-      updateMany: mocks.shopItemUpdateMany,
-    },
-    cosmeticShopSectionItem: { deleteMany: mocks.sectionItemDeleteMany },
-    userCosmeticShopItemResale: { deleteMany: mocks.resaleDeleteMany },
-    // Sales and ownership are read off the primary during a takedown — replica
-    // lag would mean refunding fewer buyers than we strip the cosmetic from.
-    userCosmeticShopPurchases: { findMany: mocks.purchaseFindMany, update: mocks.purchaseUpdate },
-    userCosmetic: { findMany: mocks.userCosmeticFindMany },
-  },
-}));
 vi.mock('sharp', () => ({ default: vi.fn() }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mocks.createBuzzTransaction,
@@ -69,7 +44,6 @@ vi.mock('~/server/services/creator-program.service', () => ({
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mocks.createNotification,
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mocks.logToAxiom }));
 // Real retry semantics, no wall-clock wait — the service's 1s backoff would make
 // the failure cases take seconds each.
 vi.mock('~/server/utils/errorHandling', async (importOriginal) => {
@@ -81,6 +55,56 @@ vi.mock('~/server/utils/errorHandling', async (importOriginal) => {
 });
 
 import { takedownCosmeticShopItem, unarchiveCreatorShopItem } from '../creator-shop.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.cosmeticShopItem.findFirst.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindFirst as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.cosmeticShopItemCosmetic.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.packMemberFindMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.userCosmeticShopPurchases.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.purchaseFindMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.userCosmetic.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.userCosmeticFindMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.userCosmeticShopItemResale.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.resaleFindMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.user.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.userFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopItem.update.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemUpdate as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopItem.updateMany.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemUpdateMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopSectionItem.deleteMany.mockImplementation((...args: unknown[]) =>
+  (mocks.sectionItemDeleteMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmeticShopItemResale.deleteMany.mockImplementation((...args: unknown[]) =>
+  (mocks.resaleDeleteMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.purchaseFindMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmeticShopPurchases.update.mockImplementation((...args: unknown[]) =>
+  (mocks.purchaseUpdate as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmetic.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.userCosmeticFindMany as (...a: unknown[]) => unknown)(...args)
+);
+loggingMock.logToAxiom.mockImplementation((...args: unknown[]) =>
+  (mocks.logToAxiom as (...a: unknown[]) => unknown)(...args)
+);
 
 const shopItemRow = {
   id: 42,

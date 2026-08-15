@@ -22,6 +22,9 @@ import { MeiliCallTimeoutError } from '~/server/meilisearch/client';
 import type * as MeiliClient from '~/server/meilisearch/client';
 import type * as RedisClient from '~/server/redis/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+redisMock.redis.packed.get.mockImplementation(async () => null);
+redisMock.redis.packed.set.mockImplementation(async () => undefined);
 
 /**
  * DIRECT test of the transient-error widening in getModelsRaw — the Meili search
@@ -87,19 +90,6 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 // All three pools: kyselyDb builds a client per tier at module load, so a
 // missing one fails the import rather than the code under test.
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
-// Keep the REAL REDIS_KEYS (the ~/server/redis/caches module reads nested keys
-// like REDIS_KEYS.*.RESOURCE_DATA at module load), but stub the redis/sysRedis
-// CLIENTS so no real connection opens. importOriginal here does not connect
-// (the client factory is guarded); it only gives us the key definitions.
-vi.mock('~/server/redis/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof RedisClient>();
-  return {
-    ...actual,
-    redis: { packed: { get: async () => null, set: async () => undefined } },
-    sysRedis: {},
-  };
-});
-
 const makeCommunicationError = (statusCode: number) => {
   const e = new Error(statusCode === 408 ? 'Request Timeout' : 'Service Unavailable') as Error & {
     name: string;

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // The window predicate the announcement media health check reads. The read path and the
 // monitor MUST agree about which announcements are showing, so both are built from one
@@ -7,17 +8,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //
 // Mock surface mirrors `announcement.memoize.test.ts` — the service's module-scope redis
 // key construction is what forces the redis mock, nothing here touches the cache.
-const { findMany } = vi.hoisted(() => ({ findMany: vi.fn() }));
+const findMany = dbMock.dbRead.announcement.findMany;
 
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { day: 86400 } }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { announcement: { findMany, count: vi.fn() }, $transaction: vi.fn() },
-  dbWrite: { announcement: { findMany: vi.fn() } },
-}));
-vi.mock('~/server/redis/client', () => ({
-  redis: { get: vi.fn(), set: vi.fn(), del: vi.fn() },
-  REDIS_KEYS: { CACHES: { ANNOUNCEMENTS: 'packed:caches:announcements' } },
-}));
 vi.mock('~/server/utils/pagination-helpers', () => ({
   DEFAULT_PAGE_SIZE: 20,
   getPagination: vi.fn(),
@@ -33,6 +26,7 @@ import {
   announcementWindowOverlapsWhere,
   getMonitoredAnnouncementImageRefs,
 } from '../announcement.service';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const NOW = new Date('2026-07-27T12:00:00.000Z');
 
