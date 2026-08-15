@@ -1454,6 +1454,23 @@ export const setUserSettingHandler = async ({
     );
     if (metricPrivacyChanged) await queueModelMetricPrivacyReindex(id);
 
+    // `isEarlyAdopter` is the one settings key PROJECTED ONTO THE SESSION (auth hub
+    // `shapeSessionUser` → `SessionUser.isEarlyAdopter` → `buildFliptContext`), and the
+    // hub caches that projection in `session:data2:{id}` for 4h. Without this the toggle
+    // reads as instantly applied client-side (the `getSettings` cache is patched
+    // optimistically) while every Flipt evaluation keeps the OLD value until the cache
+    // expires — the toggle appears to do nothing. `refreshSession` busts that cache and
+    // signals the browser to re-pull. Awaited so the bust lands before the mutation
+    // returns; same reason `updateContentSettings` awaits its own call.
+    //
+    // Gated on a CHANGE, not on key presence: `newSettings` is a read-modify-write of the
+    // whole blob, so once a user has opted in the key is present on EVERY subsequent
+    // settings write, and a presence check would refresh the session on unrelated
+    // toggles. Mirrors the `metricPrivacyChanged` comparison directly above.
+    const earlyAdopterChanged =
+      'isEarlyAdopter' in restInput && restSettings.isEarlyAdopter !== restInput.isEarlyAdopter;
+    if (earlyAdopterChanged) await refreshSession(id, { caller: 'profile' });
+
     return newSettings;
   } catch (error) {
     throw throwDbError(error);

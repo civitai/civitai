@@ -190,11 +190,10 @@ export function SettingsCard() {
           </>
         )}
 
+        <Divider label="Features" />
+        <EarlyAdopterToggle />
         {normalizedToggleableFeatures.length > 0 && (
-          <>
-            <Divider label="Features" />
-            <ToggleableFeatures data={normalizedToggleableFeatures} />
-          </>
+          <ToggleableFeatures data={normalizedToggleableFeatures} />
         )}
       </Stack>
     </Card>
@@ -252,6 +251,33 @@ function StickerMotionToggle() {
       checked={!(disableStickerMotion ?? false)}
       disabled={isPending}
       onChange={(e) => mutate({ disableStickerMotion: !e.target.checked })}
+      styles={{ track: { flex: '0 0 1em' } }}
+    />
+  );
+}
+
+function EarlyAdopterToggle() {
+  const { isEarlyAdopter } = useCurrentUserSettings();
+  const currentUser = useCurrentUser();
+  // The value is carried on the SESSION (see user.schema `isEarlyAdopter`), and the server
+  // busts the shared session cache on change. Re-pull the session here too so this tab's
+  // own `SessionUser` — and therefore its Flipt context — updates without a reload, rather
+  // than waiting on the `session:refresh` signal. Mirrors CreatorProgramV2, which does the
+  // same belt-and-braces refresh at the call site.
+  const { mutate, isPending } = useMutateUserSettings({
+    onSuccess: () => {
+      currentUser?.refresh();
+    },
+  });
+
+  return (
+    <Switch
+      name="isEarlyAdopter"
+      label="Join the early-adopter program"
+      description="Get in-progress features before they roll out to everyone. They may be rough, change without notice, or be withdrawn. Turn this off any time to go back to the standard experience."
+      checked={isEarlyAdopter ?? false}
+      disabled={isPending}
+      onChange={(e) => mutate({ isEarlyAdopter: e.target.checked })}
       styles={{ track: { flex: '0 0 1em' } }}
     />
   );
