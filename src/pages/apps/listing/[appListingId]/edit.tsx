@@ -26,8 +26,8 @@ import { ListingMediaEditor } from '~/components/Apps/ListingMediaEditor';
 import { ManifestEditForm } from '~/components/Apps/ManifestEditForm';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { AppListingAuthoringContext } from '~/server/services/blocks/app-access.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import type { AppRole, ListingCapability } from '~/shared/constants/app-capabilities.constants';
 import { getLoginLink } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -69,16 +69,18 @@ const TAB_ICONS: Record<EditorTab, typeof IconSettings> = {
   collaborators: IconUsers,
 };
 
-type AuthoringContext = {
-  appListingId: string;
-  slug: string;
-  name: string;
-  status: string;
-  kind: 'onsite' | 'offsite';
-  appBlockId: string | null;
-  role: AppRole;
-  capabilities: Readonly<Record<ListingCapability, boolean>>;
-};
+/**
+ * 🔴 DERIVED FROM THE SERVER'S OWN RETURN TYPE, not hand-written alongside it.
+ *
+ * This was a duplicated structural type, and the `data as AuthoringContext` cast below
+ * made the duplication INVISIBLE to `tsc`: dropping a field from the service — the exact
+ * shape of the original defect — left the page compiling cleanly against its own stale
+ * copy, and a later RENAME would have been applied to the service and its tests while this
+ * page silently kept reading the old key. A type-only import costs nothing at runtime (it
+ * is erased) and is the established pattern here; the cast is now checked against the
+ * thing it is casting from.
+ */
+type AuthoringContext = AppListingAuthoringContext;
 
 /** The manifest tab's body. Its own query, so it costs nothing on the other tabs. */
 function ManifestTabPanel({ appBlockId }: { appBlockId: string }) {
@@ -213,6 +215,11 @@ export default function AppListingEditPage() {
                   appListingId={context.appListingId}
                   role={context.role}
                   capabilities={context.capabilities}
+                  // 🔴 The two facts the transfer verdict is made of, straight off the
+                  // authoring context. Ownership of a connect-linked off-site listing can
+                  // never move, and the tab has to be able to say so BEFORE the owner
+                  // picks a recipient — see `refusesTransferForConnectClient`.
+                  listing={{ kind: context.kind, connectClientId: context.connectClientId }}
                 />
               </Tabs.Panel>
             ) : null}

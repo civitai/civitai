@@ -789,6 +789,38 @@ export type MyAppListing = {
   capabilities: Readonly<Record<ListingCapability, boolean>>;
 };
 
+/**
+ * The SINGLE-LISTING authoring read's row — {@link MyAppListing} plus the one extra fact
+ * the authoring page needs. Returned by {@link getAppListingAuthoringContext}.
+ *
+ * 🔴 A SEPARATE TYPE RATHER THAN A WIDER `MyAppListing`, and the distinction is a
+ * disclosure boundary rather than tidiness. `connectClientId` was first added to
+ * `MyAppListing` itself, which silently widened `listMine` — a LIST read over every
+ * listing the caller can touch — for no consumer at all. Both reads are reachable by an
+ * accepted EDITOR, not just the owner, so that would have handed a seated collaborator the
+ * client_id of every listing they hold a seat on, including `draft` ones the public read
+ * does not expose yet. Harmless in itself (it is the public client_id, never the secret)
+ * and bought nothing, which is precisely why it should not be paid.
+ *
+ * So the field is carried ONLY on the read that has a consumer. If a list surface ever
+ * needs it, widen `MyAppListing` then — with the consumer, and a test that pins it.
+ */
+export type AppListingAuthoringContext = MyAppListing & {
+  /**
+   * The listing's linked OAuth `client_id`, or `null`. PUBLIC, not a secret — the same
+   * column the public listing-detail read already exposes (`ListingDetailKindData`).
+   *
+   * 🔴 CARRIED SO THE AUTHORING SURFACE CAN REACH THE TRANSFER VERDICT UP FRONT. A
+   * connect-linked off-site listing can never be transferred
+   * ({@link refusesTransferForConnectClient}), and without this field the Collaborators
+   * tab could not know that until the mutation came back refused — so it rendered an
+   * enabled recipient picker and the owner only found out after choosing someone.
+   * A field is not a guard, though: the branch that reads it lives in
+   * `AppCollaboratorsPanelView`, and the server gate is unchanged and still authoritative.
+   */
+  connectClientId: string | null;
+};
+
 /** Hydrate {@link resolveAccessibleListingIds} into rows, newest listing first. */
 async function hydrateMyAppListings(
   ids: AccessibleListings,
@@ -797,6 +829,9 @@ async function hydrateMyAppListings(
   if (ids.allIds.length === 0) return [];
   const rows = await dbRead.appListing.findMany({
     where: { id: { in: ids.allIds } },
+    // 🔴 NO `connectClientId` HERE, deliberately — see {@link AppListingAuthoringContext}.
+    // This is a LIST read reachable by an accepted editor; only the single-listing
+    // authoring read has a consumer for that column.
     select: { id: true, slug: true, name: true, status: true, kind: true, appBlockId: true },
     orderBy: { serialId: 'desc' },
     take: limit,
@@ -975,7 +1010,7 @@ export async function listMyAppListings(opts: {
 export async function getAppListingAuthoringContext(opts: {
   appListingId: string;
   userId: number;
-}): Promise<MyAppListing> {
+}): Promise<AppListingAuthoringContext> {
   const access = await resolveListingAccess(opts.appListingId, opts.userId);
   if (!access) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'App listing not found' });
@@ -985,7 +1020,11 @@ export async function getAppListingAuthoringContext(opts: {
   }
   const row = await dbRead.appListing.findUnique({
     where: { id: access.seatListingId },
-    select: { id: true, slug: true, name: true, status: true },
+    // 🔴 `connectClientId` IS READ FROM THE SEAT (PARENT) ROW, which is the same row
+    // `app-ownership-transfer::loadOwnedListing` reads — so the tab's up-front verdict and
+    // the server's refusal are looking at one column on one row. Reading it off a SHADOW
+    // would be the `kind`/`appBlockId` trap below in a new place.
+    select: { id: true, slug: true, name: true, status: true, connectClientId: true },
   });
   if (!row) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'App listing not found' });
@@ -1009,6 +1048,7 @@ export async function getAppListingAuthoringContext(opts: {
     // make an in-flight revision look off-site and silently strip the block-only tabs.
     kind: access.kind,
     appBlockId: access.appBlockId,
+    connectClientId: row.connectClientId,
     role: access.role,
     capabilities: capabilitiesForKind(access.kind),
   };

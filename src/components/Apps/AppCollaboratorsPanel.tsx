@@ -5,11 +5,13 @@ import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import type {
   CollaboratorRosterRow,
   PendingTransferRow,
+  TransferListingFacts,
 } from '~/components/Apps/AppCollaboratorsPanelView';
 import {
   AppCollaboratorsPanelView,
   inviteBlockedReason,
   pickerExcludedUserIds,
+  TRANSFER_PICKER_PLACEHOLDER,
 } from '~/components/Apps/AppCollaboratorsPanelView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -32,10 +34,19 @@ export function AppCollaboratorsPanel({
   appListingId,
   role,
   capabilities,
+  listing,
 }: {
   appListingId: string;
   role: AppRole;
   capabilities: Readonly<Record<ListingCapability, boolean>>;
+  /**
+   * 🔴 REQUIRED, DELIBERATELY. This is the field whose absence WAS the bug: the transfer
+   * verdict is a property of the listing, so a caller that has an authoring context and
+   * does not hand it over would put the tab back to learning the refusal from a mutation
+   * error. Non-optional means `tsc` refuses the page that forgets it, rather than the page
+   * silently rendering an enabled control again.
+   */
+  listing: TransferListingFacts;
 }) {
   const currentUser = useCurrentUser();
   const utils = trpc.useUtils();
@@ -85,9 +96,9 @@ export function AppCollaboratorsPanel({
     void utils.appCollaborators.getPendingTransfer.invalidate({ appListingId });
   };
   // 🔴 The refusal is held in STATE and rendered inline by the View, instead of being
-  // thrown at a toast. The connect-client refusal names a concrete remedy ("unlink the
-  // OAuth client first"); a transient toast is exactly where an actionable message goes
-  // to die, and the owner is left with a control that fails every time.
+  // thrown at a toast. A refusal names WHY the transfer cannot happen, and a transient
+  // toast is exactly where a reason goes to die — leaving the owner with a control that
+  // fails every time and nothing on screen explaining it.
   const [transferErrorMessage, setTransferErrorMessage] = useState<string | null>(null);
   const initiateTransfer = trpc.appCollaborators.initiateTransfer.useMutation({
     onSuccess: () => {
@@ -158,6 +169,9 @@ export function AppCollaboratorsPanel({
       }
       onLeave={() => leave.mutate({ appListingId })}
       pendingTransfer={(transferQuery.data ?? null) as PendingTransferRow | null}
+      // The listing facts the View reaches the up-front transfer verdict from. Forwarded
+      // whole rather than pre-computed here, so the rule has exactly one call site.
+      listing={listing}
       transferErrorMessage={transferErrorMessage}
       transferBusy={transferBusy}
       onCancelTransfer={(transferId) => cancelTransfer.mutate({ transferId })}
@@ -169,7 +183,7 @@ export function AppCollaboratorsPanel({
           showIndexSelect={false}
           dropdownItemLimit={25}
           disabled={transferBusy}
-          placeholder="Search for the person who should own this app"
+          placeholder={TRANSFER_PICKER_PLACEHOLDER}
           onItemSelected={(_entity, item) => {
             const selected = item as SearchIndexDataMap['users'][number];
             setTransferErrorMessage(null);
