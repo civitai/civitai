@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterAll, beforeAll } from 'vitest';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { OnboardingSteps } from '~/server/common/enums';
 import { MIN_CREATOR_SCORE } from '~/shared/constants/creator-program.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -333,8 +334,10 @@ describe('bankBuzz', () => {
   it('busts banked and pool size caches after banking', async () => {
     await bankBuzz(userId, 10000, 'yellow');
 
-    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(`cp:banked:${userId}`);
-    expect(mockBustFetchThroughCache).toHaveBeenCalledWith('cp:pool-size');
+    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(
+      `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`
+    );
+    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
   });
 
   it('sends compensation pool update signal after banking', async () => {
@@ -447,8 +450,10 @@ describe('extractBuzz', () => {
 
     await extractBuzz(userId);
 
-    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(`cp:banked:${userId}`);
-    expect(mockBustFetchThroughCache).toHaveBeenCalledWith('cp:pool-size');
+    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(
+      `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`
+    );
+    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
   });
 });
 
@@ -477,12 +482,12 @@ describe('getCompensationPool', () => {
 
     // fetchThroughCache should be called for pool value and forecast (not size)
     expect(mockFetchThroughCache).toHaveBeenCalledWith(
-      'cp:pool-value',
+      REDIS_KEYS.CREATOR_PROGRAM.POOL_VALUE,
       expect.any(Function),
       expect.any(Object)
     );
     expect(mockFetchThroughCache).toHaveBeenCalledWith(
-      'cp:pool-forecast',
+      REDIS_KEYS.CREATOR_PROGRAM.POOL_FORECAST,
       expect.any(Function),
       expect.any(Object)
     );
