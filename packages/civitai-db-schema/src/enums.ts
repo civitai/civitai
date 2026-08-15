@@ -110,6 +110,8 @@ export type PaymentProvider = (typeof PaymentProvider)[keyof typeof PaymentProvi
 export const MembershipGiftStatus = {
   Pending: 'Pending',
   Fulfilled: 'Fulfilled',
+  Active: 'Active',
+  Completed: 'Completed',
   Failed: 'Failed',
   Refunded: 'Refunded',
   Revoked: 'Revoked',

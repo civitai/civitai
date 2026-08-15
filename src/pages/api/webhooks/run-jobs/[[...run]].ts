@@ -24,6 +24,7 @@ import { collectionGameProcessing } from '~/server/jobs/collection-game-processi
 import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-random-id';
 import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
+import { giftMembershipArming } from '~/server/jobs/gift-membership-arming';
 import { confirmPendingBlockAttributions } from '~/server/jobs/confirm-pending-block-attributions';
 import { bulkPayoutBlockAttributions } from '~/server/jobs/bulk-payout-block-attributions';
 import { purgeReviewSnapshotsJob } from '~/server/jobs/purge-review-snapshots';
@@ -183,6 +184,7 @@ export const jobs: Job[] = [
   imagesCreatedEvents,
   updateCreatorResourceCompensation,
   confirmMutes,
+  giftMembershipArming,
   confirmPendingBlockAttributions,
   bulkPayoutBlockAttributions,
   reapDevTunnelsJob,

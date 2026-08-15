@@ -419,6 +419,7 @@ model User {
   subscriptions           CustomerSubscription[]
   membershipGiftsGiven    MembershipGift[]       @relation("membershipGiftsGiven")
   membershipGiftsReceived MembershipGift[]       @relation("membershipGiftsReceived")
+  membershipGiftsHeld     MembershipGift[]       @relation("membershipGiftsHeld")
   mutedAt                 DateTime? /// Set on moderator mute-confirmation; cleared via trigger on unmute
   muted                   Boolean                @default(false)
   muteExpiresAt           DateTime? /// For timed mutes from strike escalation
@@ -655,6 +656,8 @@ enum PaymentProvider {
 enum MembershipGiftStatus {
   Pending
   Fulfilled
+  Active
+  Completed
   Failed
   Refunded
   Revoked
@@ -666,6 +669,10 @@ model MembershipGift {
   gifter      User                 @relation("membershipGiftsGiven", fields: [gifterId], references: [id], onDelete: Cascade)
   recipientId Int
   recipient   User                 @relation("membershipGiftsReceived", fields: [recipientId], references: [id], onDelete: Cascade)
+  // Reads ask "whose gift is this" through holderId, never recipientId, so making gifts
+  // transferable later is a mutation rather than a rewrite of every read path.
+  holderId    Int
+  holder      User                 @relation("membershipGiftsHeld", fields: [holderId], references: [id], onDelete: Cascade)
   tier        String
   months      Int
   amountCents Int
@@ -673,10 +680,20 @@ model MembershipGift {
   message     String?
   anonymous   Boolean              @default(false)
 
+  monthsRemaining Int       @default(0)
+  monthsConsumed  Int       @default(0)
+  acceptedAt      DateTime?
+  expiresAt       DateTime?
+
   stripeCheckoutSessionId String? @unique
   stripePaymentIntentId   String? @unique
   stripeCouponId          String?
   stripeSubscriptionId    String?
+
+  // The single month currently sitting on the holder's subscription. Cleared when an
+  // invoice consumes it. Never more than one month of a gift is live in Stripe.
+  armedCouponId String?
+  armedAt       DateTime?
 
   fulfilledAt DateTime?
   createdAt   DateTime  @default(now())
@@ -684,6 +701,8 @@ model MembershipGift {
 
   @@index([recipientId])
   @@index([gifterId])
+  @@index([holderId, status])
+  @@index([armedCouponId])
 }
 
 model Product {

@@ -25,10 +25,101 @@ const COMPACT_PAGE_SIZE = 3;
 
 const statusColors: Record<string, string> = {
   Fulfilled: 'green',
+  Active: 'teal',
+  Completed: 'gray',
   Failed: 'red',
   Refunded: 'orange',
   Revoked: 'orange',
 };
+
+// Stripe holds zero-decimal currencies (JPY, KRW) in whole units and the rest in minor
+// units. Intl knows which is which, so ask it rather than keeping a list in sync.
+function formatMoney(amount: number, currency: string) {
+  const format = new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: currency.toUpperCase(),
+  });
+  const digits = format.resolvedOptions().minimumFractionDigits ?? 2;
+  return format.format(amount / 10 ** digits);
+}
+
+function PendingGiftItem({
+  giftId,
+  tier,
+  months,
+}: {
+  giftId: string;
+  tier: string;
+  months: number;
+}) {
+  const queryUtils = trpc.useUtils();
+  const { data: offer, isLoading } = trpc.membershipGift.getOffer.useQuery({ giftId });
+  const accept = trpc.membershipGift.accept.useMutation({
+    onSuccess: async () => {
+      await queryUtils.membershipGift.getMyGifts.invalidate();
+      await queryUtils.subscriptions.invalidate().catch(() => undefined);
+    },
+  });
+
+  const summary = () => {
+    if (!offer) return null;
+    switch (offer.kind) {
+      case 'free-months':
+        return `Your next ${offer.months} ${
+          offer.months === 1 ? 'month' : 'months'
+        } of ${capitalize(offer.tier)} are on us.`;
+      case 'switch-and-free-months':
+        return `Moves you from ${capitalize(offer.fromTier)} up to ${capitalize(
+          offer.tier
+        )}, free for ${offer.months} ${
+          offer.months === 1 ? 'month' : 'months'
+        }. After that it renews at the ${capitalize(offer.tier)} price unless you change it.`;
+      case 'value-discount':
+        return `Takes ${formatMoney(offer.amountPerMonth, offer.currency)} off each of your next ${
+          offer.months
+        } ${offer.months === 1 ? 'bill' : 'bills'}. Your membership stays where it is.`;
+      case 'free-subscription':
+        return `Starts ${offer.months} free ${
+          offer.months === 1 ? 'month' : 'months'
+        } of ${capitalize(offer.tier)}. It ends on its own — you won't be charged.`;
+    }
+  };
+
+  return (
+    <Paper
+      p="sm"
+      radius="sm"
+      withBorder
+      className="border border-teal-200 bg-teal-50 dark:border-teal-500/30 dark:bg-teal-500/[0.06]"
+    >
+      <Group justify="space-between" wrap="nowrap" align="center">
+        <Stack gap={2} style={{ minWidth: 0 }}>
+          <Text size="sm" fw={700}>
+            {months}-mo {capitalize(tier)} Membership
+          </Text>
+          <Text size="xs" c="dimmed">
+            {isLoading ? 'Working out what this gets you…' : summary()}
+          </Text>
+        </Stack>
+        <Button
+          size="compact-sm"
+          color="teal"
+          disabled={isLoading || !offer}
+          loading={accept.isPending}
+          onClick={() => accept.mutate({ giftId })}
+          style={{ flexShrink: 0 }}
+        >
+          Accept
+        </Button>
+      </Group>
+      {accept.error && (
+        <Text size="xs" c="red" mt={6}>
+          {accept.error.message}
+        </Text>
+      )}
+    </Paper>
+  );
+}
 
 type GiftRow = {
   id: string;
@@ -39,6 +130,7 @@ type GiftRow = {
   otherParty: string | null;
   message?: string | null;
   status?: string;
+  monthsRemaining?: number;
 };
 
 function GiftRowItem({ row }: { row: GiftRow }) {
@@ -73,8 +165,12 @@ function GiftRowItem({ row }: { row: GiftRow }) {
         </Stack>
         <Stack gap={4} align="flex-end" style={{ flexShrink: 0 }}>
           {received ? (
-            <Badge variant="light" color="teal" size="sm">
-              Received
+            <Badge variant="light" color={statusColors[row.status ?? ''] ?? 'teal'} size="sm">
+              {row.status === 'Active' && row.monthsRemaining
+                ? `${row.monthsRemaining} mo left`
+                : row.status === 'Completed'
+                ? 'Used'
+                : 'Received'}
             </Badge>
           ) : (
             <Badge variant="light" color={statusColors[row.status ?? ''] ?? 'gray'} size="sm">
@@ -107,19 +203,25 @@ export function MembershipGiftsCard({
     enabled: features.giftMemberships,
   });
 
+  const pending = useMemo(() => (data?.received ?? []).filter((gift) => gift.pending), [data]);
+
   const rows = useMemo<GiftRow[]>(() => {
     if (!data) return [];
-    const received = data.received.map(
-      (gift: (typeof data)['received'][number]): GiftRow => ({
-        id: gift.id,
-        kind: 'received',
-        tier: gift.tier,
-        months: gift.months,
-        date: gift.fulfilledAt,
-        otherParty: gift.gifter?.username ?? null,
-        message: gift.message,
-      })
-    );
+    const received = data.received
+      .filter((gift) => !gift.pending)
+      .map(
+        (gift: (typeof data)['received'][number]): GiftRow => ({
+          id: gift.id,
+          kind: 'received',
+          tier: gift.tier,
+          months: gift.months,
+          date: gift.fulfilledAt,
+          otherParty: gift.gifter?.username ?? null,
+          message: gift.message,
+          status: gift.status,
+          monthsRemaining: gift.monthsRemaining,
+        })
+      );
     const sent = data.sent.map(
       (gift: (typeof data)['sent'][number]): GiftRow => ({
         id: gift.id,
@@ -136,7 +238,8 @@ export function MembershipGiftsCard({
     );
   }, [data]);
 
-  if (!features.giftMemberships || isLoading || rows.length === 0) return null;
+  if (!features.giftMemberships || isLoading || (rows.length === 0 && pending.length === 0))
+    return null;
 
   const hasBoth = rows.some((r) => r.kind === 'received') && rows.some((r) => r.kind === 'sent');
   const filtered = filter === 'all' ? rows : rows.filter((r) => r.kind === filter);
@@ -176,6 +279,16 @@ export function MembershipGiftsCard({
           )}
         </Group>
       </Group>
+      {pending.length > 0 && (
+        <Stack gap="xs" mt="md">
+          <Text size="xs" fw={600} c="dimmed" tt="uppercase">
+            Waiting for you
+          </Text>
+          {pending.map((gift) => (
+            <PendingGiftItem key={gift.id} giftId={gift.id} tier={gift.tier} months={gift.months} />
+          ))}
+        </Stack>
+      )}
       <Box mt="md">
         <Stack gap="xs">
           {paginated.map((row) => (
