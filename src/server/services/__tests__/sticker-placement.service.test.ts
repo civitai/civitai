@@ -6,6 +6,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
 import { STICKER_REMOVAL_LOCK_HOURS } from '~/shared/utils/sticker-placement';
+import type { CreateStickerPlacement } from '~/server/services/sticker-placement.service';
 
 /**
  * Fixture discipline: every quantity in scope is a distinct number, so a value
@@ -138,10 +139,14 @@ const givenStickerAndBalance = (
     .mockResolvedValueOnce([balance]);
 };
 
-const placeInput = {
+// Same discipline as the numbers above: the default currency is deliberately not
+// the one the escrow test asserts ('green'), so a placement that never carried
+// the caller's currency cannot pass by matching the fixture.
+const placeInput: CreateStickerPlacement = {
   placerId: PLACER,
   imageId: IMAGE,
   data: { cosmeticId: COSMETIC, x: 0.25, y: 0.75, scale: 0.2, rotation: 15 },
+  spendType: 'yellow',
 };
 
 beforeEach(() => {
@@ -247,9 +252,9 @@ describe("the creator's size limit", () => {
     resolvePlacementSpaceFor.mockResolvedValue(capped);
     givenStickerAndBalance();
 
-    await expect(
-      createStickerPlacement({ spendType: 'yellow', ...placeInput, data: OVERSIZE })
-    ).rejects.toThrow(/up to 20%/);
+    await expect(createStickerPlacement({ ...placeInput, data: OVERSIZE })).rejects.toThrow(
+      /up to 20%/
+    );
     expect(placementCreate).not.toHaveBeenCalled();
   });
 
@@ -259,7 +264,6 @@ describe("the creator's size limit", () => {
 
     await expect(
       createStickerPlacement({
-        spendType: 'yellow',
         ...placeInput,
         data: OVERSIZE,
         isModerator: true,
@@ -273,9 +277,9 @@ describe("the creator's size limit", () => {
 
     // 0.35 is inside the global ceiling and outside the default, so this fails
     // only if the default is being applied rather than the hard maximum.
-    await expect(
-      createStickerPlacement({ spendType: 'yellow', ...placeInput, data: OVERSIZE })
-    ).rejects.toThrow(/up to 25%/);
+    await expect(createStickerPlacement({ ...placeInput, data: OVERSIZE })).rejects.toThrow(
+      /up to 25%/
+    );
   });
 
   /**
@@ -444,7 +448,6 @@ describe('what gets written to the row', () => {
     givenStickerAndBalance();
 
     await createStickerPlacement({
-      spendType: 'yellow',
       ...placeInput,
       // Past the edges: a drag that left the image is a normal gesture, so the
       // position clamps rather than rejecting. Size is a different matter — it
@@ -909,7 +912,6 @@ describe('the note on a placement', () => {
     givenStickerAndBalance();
 
     await createStickerPlacement({
-      spendType: 'yellow',
       ...placeInput,
       data: { ...placeInput.data, comment: '  love   this\n\none  ' },
     });
@@ -922,7 +924,6 @@ describe('the note on a placement', () => {
     givenStickerAndBalance();
 
     await createStickerPlacement({
-      spendType: 'yellow',
       ...placeInput,
       data: { ...placeInput.data, comment: '   ' },
     });

@@ -77,7 +77,7 @@ describe('normalizeCosmeticHashHex', () => {
 
 describe('legacyBigIntHash', () => {
   it('writes the legacy BIGINT only for the perceptual lane', () => {
-    expect(legacyBigIntHash('a6e0c4c4cce8a4b6', 'perceptual')).toBe(-6421916719099894602n);
+    expect(legacyBigIntHash('a6e0c4c4cce8a4b6', 'perceptual')).toBe(BigInt('-6421916719099894602'));
   });
 
   // `perceptualDct` is ALSO 64 bits, so a width check passes it. `Cosmetic.pHash`
@@ -321,7 +321,7 @@ describe('getSimilarCosmetics', () => {
     mocks.queryRaw.mockResolvedValue(
       Array.from({ length: 300 }, (_, i) => ({
         id: i + 2,
-        pHashHex: (BigInt(i) + 2n).toString(16).padStart(16, '0'),
+        pHashHex: (BigInt(i) + BigInt(2)).toString(16).padStart(16, '0'),
       }))
     );
     mocks.cosmeticFindMany.mockImplementation(
