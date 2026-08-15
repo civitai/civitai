@@ -5,6 +5,19 @@ import client from 'prom-client';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ChallengeFunding from '~/server/games/daily-challenge/challenge-funding';
 import type * as ErrorHandling from '~/utils/errorHandling';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbReadQueryRaw = dbMock.dbRead.$queryRaw;
+const mockDbReadChallengeFindUnique = dbMock.dbRead.challenge.findUnique;
+const mockDbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
+const mockDbWriteExecuteRaw = dbMock.dbWrite.$executeRaw;
+const mockDbWriteChallengeUpdate = dbMock.dbWrite.challenge.update;
+const mockDbWriteChallengeFindUnique = dbMock.dbWrite.challenge.findUnique;
+dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
+dbMock.dbWrite.challenge.findUnique.mockResolvedValue({
+    prizePool: 0,
+    prizeDistribution: null,
+  });
 
 // Winner-prize payouts are deduped ONLY by their externalTransactionId, which embeds the winner's
 // PLACE (`challenge-winner-prize-{challengeId}-{userId}-place-{place}`) — `createBuzzTransactionMany`
@@ -25,12 +38,6 @@ import type * as ErrorHandling from '~/utils/errorHandling';
 // Mocking otherwise mirrors challenge-winner-mapping.test.ts.
 
 const {
-  mockDbReadQueryRaw,
-  mockDbReadChallengeFindUnique,
-  mockDbWriteQueryRaw,
-  mockDbWriteExecuteRaw,
-  mockDbWriteChallengeUpdate,
-  mockDbWriteChallengeFindUnique,
   mockGetChallengeConfig,
   mockGetJudgingConfig,
   mockEndChallenge,
@@ -46,15 +53,6 @@ const {
   mockWithRetries,
   mockBuildWinnerPayoutTransactions,
 } = vi.hoisted(() => ({
-  mockDbReadQueryRaw: vi.fn(),
-  mockDbReadChallengeFindUnique: vi.fn(),
-  mockDbWriteQueryRaw: vi.fn(),
-  mockDbWriteExecuteRaw: vi.fn().mockResolvedValue(1),
-  mockDbWriteChallengeUpdate: vi.fn().mockResolvedValue(undefined),
-  mockDbWriteChallengeFindUnique: vi.fn().mockResolvedValue({
-    prizePool: 0,
-    prizeDistribution: null,
-  }),
   mockGetChallengeConfig: vi.fn(),
   mockGetJudgingConfig: vi.fn(),
   mockEndChallenge: vi.fn().mockResolvedValue(undefined),
@@ -73,18 +71,6 @@ const {
   // A SPY that delegates to the real (pure) builder — assertions still run against genuine
   // externalTransactionId strings, but the number of times the payout is BUILT becomes observable.
   mockBuildWinnerPayoutTransactions: vi.fn(),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    $queryRaw: mockDbReadQueryRaw,
-    challenge: { findUnique: mockDbReadChallengeFindUnique },
-  },
-  dbWrite: {
-    $queryRaw: mockDbWriteQueryRaw,
-    $executeRaw: mockDbWriteExecuteRaw,
-    challenge: { update: mockDbWriteChallengeUpdate, findUnique: mockDbWriteChallengeFindUnique },
-  },
 }));
 
 vi.mock('~/server/events', () => ({

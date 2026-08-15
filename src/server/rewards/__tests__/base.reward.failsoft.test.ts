@@ -57,18 +57,6 @@ vi.mock('~/server/clickhouse/client', () => ({
   },
 }));
 
-vi.mock('~/server/redis/client', () => ({
-  redis: {
-    eval: (...args: any[]) => h.evalImpl(...args),
-    hGet: (...args: any[]) => h.hGetImpl(...args),
-  },
-  REDIS_KEYS: { BUZZ_EVENTS: 'buzz-events' },
-}));
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...args: any[]) => h.logToAxiom(...args),
-}));
-
 vi.mock('~/server/prom/client', () => ({
   rewardFailedCounter: { inc: (...a: any[]) => h.rewardFailedInc(...a) },
   rewardGivenCounter: { inc: (...a: any[]) => h.rewardGivenInc(...a) },
@@ -91,6 +79,11 @@ vi.mock('~/utils/string-helpers', () => ({
 // Import AFTER mocks are registered.
 import { createBuzzEvent } from '~/server/rewards/base.reward';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+redisMock.redis.eval.mockImplementation((...args: any[]) => h.evalImpl(...args));
+redisMock.redis.hGet.mockImplementation((...args: any[]) => h.hGetImpl(...args));
+loggingMock.logToAxiom.mockImplementation((...args: any[]) => h.logToAxiom(...args));
 
 beforeEach(() => {
   vi.clearAllMocks();

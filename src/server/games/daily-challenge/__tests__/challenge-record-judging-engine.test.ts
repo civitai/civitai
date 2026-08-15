@@ -1,14 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+dbMock.dbWrite.challenge.create.mockResolvedValue({ id: 99 });
 
 // The system/cron creation path. Same contract as the two service paths: the engine comes off the
 // judge row and is COPIED, and the column is omitted when it resolves to the default.
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
-  mockDbRead: { challengeJudge: { findUnique: vi.fn() } },
-  mockDbWrite: { challenge: { create: vi.fn().mockResolvedValue({ id: 99 }) } },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/prom/challenge.metrics', () => ({
   recordChallengeOperationSpentBuzz: vi.fn(),
   recordChallengeWinnerConflictUnresolved: vi.fn(),

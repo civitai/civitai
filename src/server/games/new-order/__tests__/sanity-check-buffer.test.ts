@@ -13,8 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // This exercises the REAL getSanityCheckImage() + the REAL decodeRedisString
 // coercion (only sysRedis + dbRead are mocked).
 
-const { mockSysRedis, mockHandleLogError, counterStub } = vi.hoisted(() => ({
-  mockSysRedis: { sMembers: vi.fn() },
+const { mockHandleLogError, counterStub } = vi.hoisted(() => ({
   mockHandleLogError: vi.fn(),
   counterStub: {
     increment: vi.fn(),
@@ -25,17 +24,6 @@ const { mockSysRedis, mockHandleLogError, counterStub } = vi.hoisted(() => ({
     getAll: vi.fn(),
     exists: vi.fn(),
     key: 'stub',
-  },
-}));
-
-vi.mock('~/server/redis/client', () => ({
-  redis: {},
-  sysRedis: mockSysRedis,
-  REDIS_KEYS: {},
-  REDIS_SYS_KEYS: {
-    NEW_ORDER: {
-      SANITY_CHECKS: { POOL: 'new-order:sanity-checks:pool' },
-    },
   },
 }));
 
@@ -86,6 +74,8 @@ vi.mock('~/utils/signal-client', () => ({ signalClient: { topicSend: vi.fn() } }
 import { getSanityCheckImage } from '~/server/services/games/new-order.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockSysRedis = redisMock.sysRedis;
 const mockFindUnique = dbMock.dbRead.image.findUnique;
 
 beforeEach(() => {

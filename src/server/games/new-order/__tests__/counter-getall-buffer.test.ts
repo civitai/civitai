@@ -8,40 +8,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // consensus → mass Inconclusive purges + KoN earnings collapse. getAll must
 // decode members to utf8 so callers get the string they're typed to receive.
 
-const { mockSysRedis } = vi.hoisted(() => ({
-  mockSysRedis: {
-    zRangeWithScores: vi.fn(),
-    zRem: vi.fn().mockResolvedValue(1),
-    hDel: vi.fn().mockResolvedValue(1),
-    del: vi.fn().mockResolvedValue(1),
-  },
-}));
-
-vi.mock('~/server/redis/client', () => ({
-  redis: {},
-  sysRedis: mockSysRedis,
-  REDIS_KEYS: {},
-  REDIS_SYS_KEYS: {
-    NEW_ORDER: {
-      FERVOR: 'new-order:fervor',
-      SANITY_CHECKS: { FAILURES: 'new-order:sanity-check-failures' },
-      JUDGEMENTS: { ACOLYTE_FAILED: 'new-order:acolyte-failed' },
-      EXP: 'new-order:exp',
-      BUZZ: 'new-order:blessed-buzz',
-      PENDING_BUZZ: 'new-order:pending-buzz',
-      RECENTLY_GRANTED_BUZZ: 'new-order:recently-granted-buzz',
-      SMITE: 'new-order:smite-progress',
-      QUEUES: 'new-order:queues',
-      RATINGS: 'new-order:ratings',
-    },
-  },
-}));
-
 vi.mock('~/server/redis/atomic', () => ({ hSetWithTTL: vi.fn(), zAddWithTTL: vi.fn() }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 import { getImageRatingsCounter } from '~/server/games/new-order/utils';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockSysRedis = redisMock.sysRedis;
+redisMock.sysRedis.zRem.mockResolvedValue(1);
+redisMock.sysRedis.hDel.mockResolvedValue(1);
+redisMock.sysRedis.del.mockResolvedValue(1);
 
 beforeEach(() => vi.clearAllMocks());
 

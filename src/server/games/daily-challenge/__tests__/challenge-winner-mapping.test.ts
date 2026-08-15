@@ -1,6 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as LoggingClient from '~/server/logging/client';
 import { freshPersistedWinner } from './persisted-winner.fixture';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbReadQueryRaw = dbMock.dbRead.$queryRaw;
+const mockDbReadChallengeFindUnique = dbMock.dbRead.challenge.findUnique;
+const mockDbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
+const mockDbWriteExecuteRaw = dbMock.dbWrite.$executeRaw;
+const mockDbWriteChallengeUpdate = dbMock.dbWrite.challenge.update;
+const mockDbWriteChallengeFindUnique = dbMock.dbWrite.challenge.findUnique;
+const mockLogToAxiom = loggingMock.logToAxiom;
+dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
+dbMock.dbWrite.challenge.findUnique.mockResolvedValue({
+    prizePool: 0,
+    prizeDistribution: null,
+  });
 
 // Task 19: hardens the LLM-winner -> judged-entry mapping in pickWinnersForChallenge against
 // creator-name spoofing. generateWinners (a TEXT-only LLM call) returns
@@ -19,12 +34,6 @@ import { freshPersistedWinner } from './persisted-winner.fixture';
 // is mocked at the module boundary.
 
 const {
-  mockDbReadQueryRaw,
-  mockDbReadChallengeFindUnique,
-  mockDbWriteQueryRaw,
-  mockDbWriteExecuteRaw,
-  mockDbWriteChallengeUpdate,
-  mockDbWriteChallengeFindUnique,
   mockGetChallengeConfig,
   mockGetJudgingConfig,
   mockEndChallenge,
@@ -38,17 +47,8 @@ const {
   mockCreateNotification,
   mockCreateChallengeWinner,
   mockGetChallengeById,
-  mockLogToAxiom,
+  
 } = vi.hoisted(() => ({
-  mockDbReadQueryRaw: vi.fn(),
-  mockDbReadChallengeFindUnique: vi.fn(),
-  mockDbWriteQueryRaw: vi.fn(),
-  mockDbWriteExecuteRaw: vi.fn().mockResolvedValue(1),
-  mockDbWriteChallengeUpdate: vi.fn().mockResolvedValue(undefined),
-  mockDbWriteChallengeFindUnique: vi.fn().mockResolvedValue({
-    prizePool: 0,
-    prizeDistribution: null,
-  }),
   mockGetChallengeConfig: vi.fn(),
   mockGetJudgingConfig: vi.fn(),
   mockEndChallenge: vi.fn().mockResolvedValue(undefined),
@@ -62,19 +62,7 @@ const {
   mockCreateNotification: vi.fn().mockResolvedValue(undefined),
   mockCreateChallengeWinner: vi.fn(),
   mockGetChallengeById: vi.fn().mockResolvedValue(null),
-  mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    $queryRaw: mockDbReadQueryRaw,
-    challenge: { findUnique: mockDbReadChallengeFindUnique },
-  },
-  dbWrite: {
-    $queryRaw: mockDbWriteQueryRaw,
-    $executeRaw: mockDbWriteExecuteRaw,
-    challenge: { update: mockDbWriteChallengeUpdate, findUnique: mockDbWriteChallengeFindUnique },
-  },
+  
 }));
 
 vi.mock('~/server/events', () => ({
@@ -157,11 +145,6 @@ vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
 
 vi.mock('~/utils/logging', () => ({
   createLogger: vi.fn(() => vi.fn()),
-}));
-
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof LoggingClient>()),
-  logToAxiom: mockLogToAxiom,
 }));
 
 const { pickWinnersForChallenge } = await import('~/server/jobs/daily-challenge-processing');
