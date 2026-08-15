@@ -109,6 +109,67 @@ walks that does not exist for real goes from `'k'` to `undefined`. That is the i
 but it is a behavioural change the collected-count diff cannot see, so it needs reading at
 assertion level rather than colour.
 
+## `blocks/` — what `app-block-ids` actually clears, and whether order is worth sequencing
+
+Bar: a file is fast-eligible when its ENTIRE mocked-specifier set is canonical. Denominator is the
+**98** files under `src/server/services/blocks/` that mock at least one module; the other 39 mock
+nothing and were never the problem. Base with the canonical three alone: **17**.
+
+**`~/server/utils/app-block-ids` is mocked by 24 files and clears 8 of them.** The other 16 still
+carry something else:
+
+```
+after app-block-ids lands, remaining non-canonical specifiers per file
+  0 left:  8 files   <- the unlock
+  1 left:  7 files
+  2 left:  2 files
+  3 left:  3 files
+  5+ left: 4 files
+```
+
+**24 is a frequency, not an unlock, and the two are not the same ranking.** The most-mocked
+specifier in the directory is `~/env/server` at 25 files, and it clears 6 — fewer than the
+second-most-mocked. Anyone ordering by "how many files mock it" starts on the wrong one.
+
+Cumulative fast-eligible files as specifiers are made canonical, three orders:
+
+```
+k       greedy   by-frequency   alphabetical
+1           25             23             17
+3           36             34             19
+5           42             36             20
+8           48             42             22
+15          60             62             32
+20          65             68             34
+40          88             85             49
+59          98             98             98
+```
+
+**Sequencing is worth doing and optimising it is not.** Any unlock-aware order beats an arbitrary
+one by a wide margin — at k=8, 48 files against 22. But greedy versus by-frequency is a wash: it
+leads by at most 6 files around k=5 and by-frequency is *ahead* at k=15–20. So take
+`app-block-ids` first because it is the best single step, then stop modelling and work the list;
+the difference between a good order and the best order is noise next to the difference between a
+good order and no order.
+
+## The two classifier bugs, fixed and re-measured
+
+Both are logged here rather than only in mail, because a predictor that quietly keeps them will
+mislead the next slice.
+
+- **ES6 shorthand read as an empty object.** `{ keyValue: { findUnique } }` has no `key:` token, so
+  a regex scan sees a model with no leaves and passes it. The codemod refuses it as a `non-literal
+  property inside a model object`. Fix: walk the object literal properly instead of regex-scanning.
+- **Regex scanning descends into literals that are not the client.** In `search-error-log-pii` the
+  redis factory builds `new Proxy(() => 'k', { get: () => make() })` as a permissive key stand-in;
+  the handler's `get` reads exactly like a client method carrying behaviour. Fix: only descend
+  through property values of the returned object.
+
+Re-measured on the same 40 files: per-file agreement **27/40 -> 30/40**, false converts 4 -> 2.
+Eight false refusals remain, so the predictor still errs conservative. That is the bias to keep —
+it flags files for a human that the codemod would convert silently, which is the direction that
+costs a read rather than a regression.
+
 ## Slice boundary
 
 josh took the flat allowlist files under `src/server/services/__tests__/` through
