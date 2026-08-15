@@ -3043,10 +3043,10 @@ export type Placement = {
    * On the row for the same reason `amount` is: settlement is resumable, and the
    * domain that decided the currency is not visible to a sweeper.
    *
-   * NULL means a placement made before this column existed. Those were held as
-   * yellow whatever was spent — the conversion happened on the way IN — so the
-   * escrow really does contain yellow for them and NULL must settle as yellow.
-   * Backfilling the true spend type would pay out Buzz the escrow never took.
+   * NULL means a placement made before this column existed. Those were booked
+   * into escrow as yellow whatever was spent, and settle as yellow to match the
+   * ledger. Deliberately not backfilled — the bank is not balance-constrained,
+   * so it is a choice about legacy rows, not a limit. See `settledSpendType`.
    */
   spendType: string | null;
   /**
