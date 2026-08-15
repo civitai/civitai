@@ -19,16 +19,16 @@
     "~/server/prom/client"
   ],
   "totals": {
-    "canonicalFiles": 246,
+    "canonicalFiles": 244,
     "pendingFiles": 395,
-    "allFiles": 494,
-    "canonicalSites": 333,
+    "allFiles": 493,
+    "canonicalSites": 330,
     "pendingSites": 864
   },
   "bySpecifier": {
-    "~/server/db/client": 158,
+    "~/server/db/client": 156,
     "~/server/redis/client": 104,
-    "~/server/logging/client": 71,
+    "~/server/logging/client": 70,
     "~/env/server": 107,
     "~/server/services/buzz.service": 99,
     "~/server/services/image.service": 89,
@@ -109,7 +109,6 @@
     "src/server/services/__tests__/content-markdown.sysredis-soft.test.ts",
     "src/server/services/__tests__/contest-entry-base-model-gate.test.ts",
     "src/server/services/__tests__/contest-entry-resource-gate.test.ts",
-    "src/server/services/__tests__/cover-image.service.logging.test.ts",
     "src/server/services/__tests__/daily-challenge-service.sysredis-soft.test.ts",
     "src/server/services/__tests__/engagement-toggle.idempotent.service.test.ts",
     "src/server/services/__tests__/file-download-lookup.test.ts",
@@ -118,7 +117,6 @@
     "src/server/services/__tests__/model-early-access-refund.service.test.ts",
     "src/server/services/__tests__/model-file-scan.service.test.ts",
     "src/server/services/__tests__/model-file.service.test.ts",
-    "src/server/services/__tests__/model-version-count.service.test.ts",
     "src/server/services/__tests__/model-version.blue-buzz-purchase.service.test.ts",
     "src/server/services/__tests__/model-version.deregister.service.test.ts",
     "src/server/services/__tests__/model-version.purge-by-hash.service.test.ts",
