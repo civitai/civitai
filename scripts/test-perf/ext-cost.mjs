@@ -14,6 +14,29 @@
  * What the numbers do NOT support is adding the rows up. The per-package cold times overlap on
  * shared transitive deps — the three `@aws-sdk` rows share core — so cutting one package off a
  * file that still reaches its dependencies through another edge refunds only part of its column.
+ * Quote a row, or quote a measured before/after; never quote the total as a saving.
+ *
+ * Three more things the `suite-s` column is not:
+ *
+ * - **Not a prediction of wall clock.** It is worker time. Divide by the worker count for a wall
+ *   estimate, and expect that to be optimistic, since the files reaching a package are not spread
+ *   evenly across workers.
+ * - **Not stable under `isolate: false`.** With isolation off a worker builds ONE registry for all
+ *   its files, so a package is imported once per worker rather than once per file and the whole
+ *   column collapses by roughly the worker count. Rank with this tool under the config you actually
+ *   ship.
+ * - **Not the whole cost of a package.** It counts import only. A dep whose cost is in what it does
+ *   at call time (a client that opens a socket, a parser run per test) does not show up here at all.
+ *
+ * The absolute milliseconds also move with the OS file cache — `lodash-es` measured 923ms cold and
+ * 547ms on a re-run minutes later, `googleapis` 2592ms then 1441ms. The RANKING held across both.
+ * Treat a single run's numbers as relative, and re-measure both sides rather than comparing today's
+ * figure against one from a previous session.
+ *
+ * Fan-in comes from `externals.mjs`, which honours `vi.mock` and treats `import()` as lazy. Both
+ * corrections matter for ranking: a wholesale mock factory stops the package being loaded at all,
+ * and a package reached only through `dynamic(() => import(...))` is never loaded either. A raw
+ * grep for the import specifier over-counts on both.
  *
  * Reads the fan-in counts from `externals.mjs --top 200` (path in argv[2]).
  */

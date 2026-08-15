@@ -46,6 +46,76 @@ slimming one fat chain shows up rather than being averaged away.
 ⚠️ Wall clock on a busy box swings up to ~68%. Always pair a measurement with a control run taken in
 the same window; never compare against a number from a different session.
 
+🔴 **A null on the yardstick is not a null.** Two batches of the import-slimming work measured flat on
+the subset and were real in the full run — the 90 files simply did not contain the files those batches
+moved. Worse, a subset can remove the condition that produces the cost rather than merely diluting it:
+the component project's ~21s startup charge scales with how many files the run _matches_, because
+`@vitest/browser` seeds `optimizeDeps.entries` from every matched file, so a 13-file probe measured no
+charge at all. The subset's job is to be stable, not to be representative of every change. Read a flat
+result as "not visible here", and do not re-tune the subset to fit the change you are working on.
+
+The stronger measurement, when you have a full-run pair, is a **within-run control**: split both runs'
+per-file `collect` by whether a file was touched by the change, and report the untouched group's own
+drift alongside the result. If the untouched group is flat, the aggregate is real; if it moved 13%,
+your headline number is mostly box load.
+
+## Rank an import edge by what cutting it removes
+
+```bash
+node scripts/test-perf/cuts.mjs cuts <test-file> --top 20   # dominator tree, one test file
+node scripts/test-perf/cuts.mjs union --top 30              # rooted at ALL 1065 unit tests
+node scripts/test-perf/cuts.mjs union-real --top 30         # same, honouring vi.mock
+node scripts/test-perf/cuts.mjs path all 'components/Modals/BuyBuzzModal'
+```
+
+A node's dominator-subtree size is exactly how many modules disappear when that node stops being
+reachable, so `union` answers "what leaves the suite-wide module set if I cut this edge" in one pass.
+A node with a single predecessor and a large subtree is one import holding up a wing of the graph.
+
+**A raw static graph over-counts runtime cost by ~2.5x suite-wide (4.3x on the one file traced), for
+three separate reasons:**
+
+1. `import()` is lazy. `const X = dynamic(() => import('...'))` at module scope never runs. Following
+   that edge is right for a bundler question — a lazily-fetched chunk is still a compiled chunk, which
+   is why `no-server-infra-in-app-graph` follows them deliberately — and wrong for a registry
+   question. `cuts.mjs` skips them; `COUNT_DYNAMIC=1` restores the bundler view.
+2. A `vi.mock` factory without `importOriginal` stops the real module and its whole subtree.
+3. Externals are invisible to any vite-side instrument, including the tracer — see below.
+
+⚠️ **An in-body `await import()` in a test bills the graph to `duration`, not `collect`.** Anything
+ranking by `collect` — this tool, the reporter, the dashboard — cannot see it. Hoisting such an import
+does not make the file faster (measured: the cost moves from `duration` to `collect` and the total
+does not change); it only makes it visible.
+
+## What the node_modules side costs
+
+```bash
+node scripts/test-perf/externals.mjs --top 200 > .test-perf/externals.txt
+node scripts/test-perf/externals.mjs --why '@tabler/icons-react'
+node scripts/test-perf/ext-cost.mjs .test-perf/externals.txt
+```
+
+Vite never transforms an externalised dep, so nothing on the vite side can see one — and they are a
+large share of the import phase. `externals.mjs` gives the fan-in (mock-aware, lazy-aware) with
+`--why` for the shortest path from a test file to a package; `ext-cost.mjs` times each package the way
+the suite pays it, with one `import()` in a brand-new node process, and ranks by count × cost.
+
+Under `isolate: true` every test file really is a fresh process — four probe files at
+`--max-workers=1` give four distinct pids — so a package is re-imported cold per file. Read
+`ext-cost.mjs`'s header before quoting any of its numbers; the rows do not add up to a saving, and the
+column collapses under `isolate: false`.
+
+## Tests that reach a real infra client
+
+```bash
+node scripts/test-perf/unmocked-db.mjs --client db      # or redis, clickhouse
+```
+
+A test whose graph reaches `~/server/db/client` unmocked does not fail — it opens a real connection
+and waits out the timeout, which reads as a slow test rather than a missing mock. On its own the list
+is nearly useless (110 files reach it, because importing costs nothing until something queries); cross
+it with per-file `duration` from a recorded run and it drops to three.
+
 ## Config sweep
 
 ```bash
@@ -80,9 +150,21 @@ wall 206.6s | transform 150.7s | setup 354.4s | import 4565.5s | tests 541.1s
 ```
 
 - **Import is 81% of worker time**, and it is not module evaluation: traced at 1 worker, the module
-  bodies of two of the heaviest files totalled ~0.4s against a 25.4s import phase. The rest is
-  vite-node's per-module fetch — a child-process IPC round trip per module per file under the `forks`
-  pool, roughly 20ms each. **Cost is linear in module count, not module weight.**
+  bodies of two of the heaviest files totalled ~0.4s against a 25.4s import phase. **Cost is linear in
+  module count, not module weight** — so rank by how many modules an edge removes, and do not spend
+  time making an individual module cheaper to evaluate.
+
+  The mechanism behind the rest was first attributed to vite-node's per-module IPC fetch under the
+  `forks` pool. That is **retracted**: a pool sweep put `threads` (which pays a cold fetch per file,
+  like forks) ahead of `vmThreads` (which keeps a warm fetch cache across files), and shipping module
+  source cannot explain that ordering. The better-supported reading is re-compiling and re-evaluating
+  each module into a fresh registry per test file, which forks, threads and vmThreads all share and
+  only `isolate: false` avoids. Labelled INFERRED FROM POOL ORDERING; V8 compile time was never
+  instrumented. The practical guidance is unchanged either way.
+
+  This accounting is also first-party only. A large share of the import phase is external packages,
+  which the tracer cannot see at all — see "What the node_modules side costs" above.
+
 - The closure distribution is **bimodal**: p50 66 modules, p75 1088. 411 files carry 96% of all
   module executions.
 - 16 failures across 6 files is the known-good Windows baseline (`path.relative()` backslashes
