@@ -288,6 +288,34 @@ the one you are about to remove. Both `storage-resolver` files held a direct
 one `Number of calls: 0`. **The danger point is a file whose env mock is its only mock** — and
 the fix is the canonical mock for the other axis, never restoring the shield.
 
+🔴 **Contention is at MODULE granularity, not SPECIFIER granularity, and this is the part that
+decides how you build a verification set.** A file is only at risk from another file that
+imports the **same consuming module** — not from one that merely mocks the same specifier. Two
+files can both `vi.mock('~/env/server')` all day and never interfere if nothing imports a module
+in common.
+
+Established by a wrong prediction, which is the only reason it is legible: `apps-pipeline.reviewBuild`
+failed 4 of 11 under `--no-isolate` in a 13-file set that contained **another importer of
+`apps-pipeline.service`**. The same class of file, `apps-pipeline.triggerBuild`, was then put in a
+10-file set with **eight** other `~/env/server` mockers, none of which imported that service — and
+came back green 3/3. The prediction of a repair was wrong because the condition written down was
+"other files that mock the specifier" when it should have been "other files that import the same
+consumer".
+
+Two consequences, both load-bearing:
+
+- **A `--no-isolate` green over any set proves nothing about a file unless the set contains
+  another importer of that file's consuming module.** Otherwise you have measured a file that had
+  nothing to contend with.
+- **`bySpecifier` and the allowlist cannot predict poisoning**, because both are keyed on the
+  specifier. They measure mocks removed, which is a different quantity — see the eligibility note
+  below for the other half of the same gap.
+
+Build the set from *who imports the consumer*. Where that contention is already resolved — every
+co-importer converted — say so and report the run as a **negative control**: a green there
+confirms the prediction was right, which is a different and stronger claim than "no failures
+observed".
+
 ### The 20 module-scope refusals, assessed file by file
 
 Read, not converted. The question for each is narrower than the label: **does the module-scope
