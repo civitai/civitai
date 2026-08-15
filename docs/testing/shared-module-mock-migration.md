@@ -583,6 +583,32 @@ Two more rules, both learned the hard way on this box:
   identical `8 → 5`** while a full revert produced 12. And **a change inside a clique cannot be
   licensed by a run at all** — not "failed verification", *unmeasurable*. Convert the clique
   together, or leave it. The reading that points the way you want is the one to distrust.
+
+  🔴 **It is not noise — it is BISTABLE, which is worse and much more tractable.** Nine runs over
+  the clique alone (`ingest-images-cap` unconverted, then converted, then restored — A-B-A, one
+  tenancy), collected 21 every time:
+
+  ```
+                                   A1   A2   A3  ISO |  B1   B2   B3  ISO |  A'
+  ingest-images-cap                 0    2    0    0 |   2    0    2    0 |   0
+  ingest-images-pending-ageout      0    0    0    0 |   0    0    0    0 |   0
+  ingest-images-prune-order         1    0    1    0 |   0    1    0    0 |   1
+  ingest-images-run-budget          0    1    0    0 |   1    0    1    0 |   0
+  ingest-images-send-resilience     1    0    1    0 |   0    1    0    0 |   1
+  remove-blocked-images-retention   0    0    0    0 |   0    0    0    0 |   0
+                            total   2    3    2    0 |   3    2    3    0 |   2
+  ```
+
+  Exactly **two disjoint states**, alternating run to run — `prune-order`+`send-resilience` (2),
+  or `cap`+`run-budget` (3). Never a mixture, never a third, isolated always clean. **A race
+  would produce mixtures and eventually a third state**, so this is not a mock winning a race; it
+  looks like worker-assignment parity — two file→worker packings, each poisoning a different
+  pair. Converting the clique's last env-mock holder changed neither the states nor the
+  alternation, so the cause is not on this axis.
+
+  **The practical consequence: a two-run comparison inside a tenancy can land on the same state
+  or on opposite states, with nothing in the output to say which.** That is why the A-B-A matters
+  — the behaviour tracked the *repeat number*, not the tree.
 - **Never read a suite result through `| tail` or `| grep`.** You get the pipe's exit code.
   Redirect to a file, then read the file.
 
