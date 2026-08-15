@@ -247,8 +247,20 @@ code. Redirect to a file and read the file.
 
 ## Not covered here
 
-`~/env/server` (114 sites), `~/server/services/buzz.service` (98) and
-`~/server/services/image.service` (88) are the next tier. The infra clients above are
-uniform enough for one auto-vivifying primitive; a service module has a hand-written
-surface where the right canonical mock is a hand-written stub, so it is a different piece
-of work.
+`~/server/services/buzz.service` (98 sites) and `~/server/services/image.service` (88) lead
+the next tier. The infra clients above are uniform enough for one auto-vivifying primitive; a
+service module has a hand-written surface where the right canonical mock is a hand-written
+stub, so it is a different piece of work. (`~/env/server` has since been done — it needed a
+value table rather than a call surface; see the two-bucket rule in the migration doc.)
+
+🔴 **The PENDING list in `guarded-specifiers.ts` is a floor, not an inventory.** It was
+assembled from the most-mocked specifiers in a static scan, and specifiers keep arriving from
+the other direction — as failures in a `--no-isolate` run of files already residual-clean for
+everything listed. `~/server/flipt/client` arrived that way. `~/server/middleware/block-scope.middleware`
+(27 files) is a live candidate found the same way, and is deliberately not added without
+someone verifying the mechanism first.
+
+So the remaining work is **discovered rather than known**, and any estimate built on the
+current count is a lower bound. The method for finding the next one is the same each time:
+migrate a set clean for everything listed, run it under `--no-isolate`, and read what still
+fails.

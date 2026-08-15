@@ -229,11 +229,19 @@ node scripts/test-perf/compare-runs.mjs flip-control flip-candidate
 Pass conditions, all of them:
 
 - **zero files collected fewer tests** than the control;
+- **every file the branch ADDS collects at least one test**;
 - **the total matches exactly** — not "no new failures", not "no regressions", an equal count;
 - run **whole-suite**, not per slice;
 - run **immediately before the flip**, not once during the migration.
 
-The last two are the point, and each has a reason.
+**The added-file condition exists because the first one has a hole**, and the hole was found by
+running the gate rather than by reasoning about it. A file the branch adds has nothing on the
+control to lose against, so it can collect **zero** tests and diff perfectly clean. That is how
+this project's own migration guard shipped inert: it threw during collection in every
+full-suite run, contributed no tests, and passed whenever it was invoked as a named file —
+which is how it was checked all day.
+
+The last two conditions are the point, and each has a reason.
 
 **Whole-suite, because per-slice verification is sound and insufficient at the same time.**
 Every slice owner diffing per-file collected counts over their own files is correct practice
