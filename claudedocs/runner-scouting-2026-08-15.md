@@ -18,15 +18,16 @@ Same first-party module graph, fresh process per measurement, warm FS cache:
 | `image.schema` | — | 68.6 ms | 514 ms |
 | `utils/metadata/audit` | — | 162.6 ms | 1755 ms |
 
-Whole-suite arithmetic from the same run (`pre-ctl`, 1065 files, `collect` 4729 s against 462,497
-static module-instances):
+🔴 **A per-module ratio published here earlier is RETRACTED.** It divided `collect` by
+`inventory.json`'s static module counts, and that artifact was later found wrong by up to 75x and
+selectively so — it followed lazy `dynamic(() => import())` edges that never execute and ignored
+`vi.mock` factories. Four files reported ~1,810 modules and actually load 13–26; the honest suite
+union is 1,321, not 3,230. Any figure of the form `ms per module` computed before that rebuild is
+unusable, mine included.
 
-```
-vitest        10.2 ms per module-instance   (static graph)
-              ~40 ms per module-instance    (real executed graph is ~4x smaller — arabella's trace)
-bun            0.04 ms per module           (84 modules in 3.3 ms)
-node + tsx     0.10 ms per module           (84 modules in 8.5 ms)
-```
+What replaces it: vitest's per-module constant against the honest graph is **~43.6 ms** (aidan's
+refit, from 15). No counterpart is quoted for bun, because its denominator came from the same broken
+artifact. The per-file wall clock above needs no denominator and is the load-bearing number.
 
 **So the cost is the module runner, not the modules.** That is consistent with the tracer result from
 this morning — 569 module *bodies* executing in ~0.4 s against a 25.4 s import phase — and it locates
@@ -91,9 +92,9 @@ mock sites plus six pieces of first-party tooling.
 **But retarget the optimisation.** The finding is that per-module cost is vite-node overhead rather
 than the graph, which says:
 
-- shrinking the graph (fewer modules per worker) attacks a term that is only ~0.04–0.1 ms/module of
-  real work — the leverage is in how many times vite-node *instantiates* a module, not in how many
-  modules exist;
+- shrinking the graph (fewer modules per worker) attacks a term whose real work is a fraction of a
+  millisecond per module — the leverage is in how many times vite-node *instantiates* a module, not in
+  how many modules exist;
 - `isolate: false` is the only lever that removes instantiations rather than reducing their count,
   which is consistent with it being the largest measured effect all day (collect 4565 s → 280 s);
 - it is worth asking upstream-shaped questions — whether vitest can cache instantiated modules across
