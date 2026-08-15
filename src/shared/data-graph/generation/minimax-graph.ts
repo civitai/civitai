@@ -130,11 +130,11 @@ export const minimaxGraph = new DataGraph<
       createCheckpointGraph({
         versions: {
           options: [
-            { label: 'H3 (API)', value: minimaxVersionIds['v1.0'] },
             { label: 'H3 (Comfy)', value: minimaxVersionIds.comfy },
+            { label: 'H3 (API)', value: minimaxVersionIds['v1.0'] },
           ],
         },
-        defaultModelId: minimaxVersionIds['v1.0'],
+        defaultModelId: minimaxVersionIds.comfy,
       }),
     []
   )

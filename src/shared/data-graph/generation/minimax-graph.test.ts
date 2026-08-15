@@ -65,3 +65,23 @@ describe('minimax prompt requirement', () => {
     expect(graph.validate().success).toBe(true);
   });
 });
+
+// The comfy variant is the one the model page publishes and the only one that
+// takes LoRAs, so an entry that names no version has to land there rather than
+// on the hosted API.
+describe('minimax default variant', () => {
+  it('defaults to the comfy variant', () => {
+    const graph = generationGraph as any;
+    graph.init({ workflow: 'txt2vid', ecosystem: 'MiniMaxH3' }, ext);
+    const snapshot = graph.getSnapshot();
+    expect(snapshot.model.id).toBe(minimaxVersionIds.comfy);
+    expect(snapshot.minimaxVariant).toBe('comfy');
+  });
+
+  it('keeps the api variant when it is the one selected', () => {
+    const graph = init('txt2vid', minimaxVersionIds['v1.0']);
+    const snapshot = graph.getSnapshot();
+    expect(snapshot.model.id).toBe(minimaxVersionIds['v1.0']);
+    expect(snapshot.minimaxVariant).toBe('api');
+  });
+});
