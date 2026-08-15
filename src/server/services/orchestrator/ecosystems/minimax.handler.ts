@@ -17,6 +17,7 @@ import type {
   VideoGenStepTemplate,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import { defineHandler } from './handler-factory';
 
@@ -34,7 +35,7 @@ export const createMiniMaxInput = defineHandler<MiniMaxCtx, [VideoGenStepTemplat
 
   // H3 rejects a text-less request on every workflow, images or not (2013).
   const prompt = data.prompt?.trim();
-  if (!prompt) throw new Error('A prompt is required for MiniMax H3');
+  if (!prompt) throw throwBadRequestError('A prompt is required for MiniMax H3');
 
   if (data.minimaxVariant === 'comfy') {
     const loras: Record<string, number> = {};

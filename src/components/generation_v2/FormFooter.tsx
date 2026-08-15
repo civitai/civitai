@@ -979,11 +979,8 @@ function BlueBuzzMatureReminder() {
 // =============================================================================
 
 /**
- * Model attribution under the submit button. Some vendor licences require the
- * model to be named in the product's own UI, not just on the model page (e.g.
- * the MiniMax H3 Community License §IV.2), and link a copy of the licence to
- * anyone receiving the work (§III.1). Driven off the licence's `poweredBy`, so
- * it covers any base model carrying one rather than naming ecosystems here.
+ * Names the selected model under the submit button, for licences that oblige us
+ * to do it in the product's own UI rather than only on the model page.
  */
 function EcosystemAttribution() {
   const graph = useGraph<GenerationGraphTypes>();
@@ -996,14 +993,14 @@ function EcosystemAttribution() {
     if (ecosystemId == null) return undefined;
     return getBaseModelsByEcosystemId(ecosystemId)
       .map((baseModel) => getBaseModelLicense(baseModel.id))
-      .find((found) => !!found?.poweredBy);
+      .find((found) => !!found?.attribution);
   }, [ecosystem]);
 
-  if (!license?.poweredBy) return null;
+  if (!license?.attribution) return null;
 
   return (
-    <Text size="xs" c="dimmed" ta="center">
-      {license.poweredBy}
+    <Text size="xs" ta="center">
+      {license.attribution}
       {license.url && (
         <>
           {' · '}
