@@ -1,5 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockDbWrite = dbMock.dbWrite;
+const mockRedis = redisMock.redis;
+dbMock.dbWrite.user.findUnique.mockImplementation(async () => ({
+  deletedAt: null,
+  bannedAt: null,
+}));
+redisMock.redis.incrBy.mockImplementation(async () => 1);
+redisMock.redis.expire.mockImplementation(async () => true);
+redisMock.redis.ttl.mockImplementation(async () => 60);
 
 /**
  * PHASE 2 — App Dev Tunnel OWNED, NON-APPROVED mint on POST /api/v1/block-tokens.
@@ -25,8 +36,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  */
 
 const {
-  mockDbWrite,
-  mockRedis,
   mockSession,
   mockTokenService,
   mockBlockRegistry,
@@ -34,20 +43,6 @@ const {
   mockAppBlocksFlag,
   mockDevTunnelService,
 } = vi.hoisted(() => {
-  const dbWrite = {
-    user: {
-      findUnique: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
-        deletedAt: null,
-        bannedAt: null,
-      })),
-    },
-    appUserScopeGrant: { findUnique: vi.fn<(...args: any[]) => Promise<any>>(async () => null) },
-  };
-  const redis = {
-    incrBy: vi.fn(async () => 1),
-    expire: vi.fn(async () => true),
-    ttl: vi.fn(async () => 60),
-  };
   const session = { value: null as any };
   const tokenService = {
     sign: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
@@ -85,8 +80,6 @@ const {
     })),
   };
   return {
-    mockDbWrite: dbWrite,
-    mockRedis: redis,
     mockSession: session,
     mockTokenService: tokenService,
     mockBlockRegistry: blockRegistry,
@@ -105,16 +98,11 @@ vi.mock('~/env/server', () => ({
   },
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => mockSession.value),
 }));
 vi.mock('~/server/services/block-token.service', () => ({ BlockTokenService: mockTokenService }));
 vi.mock('~/server/services/block-registry.service', () => ({ BlockRegistry: mockBlockRegistry }));
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  REDIS_KEYS: { BLOCKS: { TOKEN_RATE_LIMIT: 'rl' } },
-}));
 vi.mock('~/server/utils/server-domain', () => ({
   getAllServerHosts: () => ['civitai.com'],
   getRequestDomainColor: () => undefined,

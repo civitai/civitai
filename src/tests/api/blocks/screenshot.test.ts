@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockFindUnique = dbMock.dbRead.appBlock.findUnique;
+dbMock.dbRead.appBlock.findUnique.mockImplementation(async () => null);
 
 /**
  * F-E E5 — the public screenshot-serving route
@@ -11,9 +14,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * a real MinIO. Mirrors the ModEndpoint reproduction in submit-version.test.ts.
  */
 
-const { mockIsAppBlocksEnabled, mockFindUnique, mockUser, mockS3Send } = vi.hoisted(() => ({
+const { mockIsAppBlocksEnabled, mockUser, mockS3Send } = vi.hoisted(() => ({
   mockIsAppBlocksEnabled: vi.fn<() => Promise<boolean>>(async () => true),
-  mockFindUnique: vi.fn<(...a: unknown[]) => Promise<unknown>>(async () => null),
   mockUser: {
     value: { id: 1, isModerator: true } as { id: number; isModerator?: boolean } | undefined,
   },
@@ -27,7 +29,6 @@ const { mockIsAppBlocksEnabled, mockFindUnique, mockUser, mockS3Send } = vi.hois
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: { appBlock: { findUnique: mockFindUnique } } }));
 // Faithful MixedAuthEndpoint reproduction: GET-only, passes the (maybe-undefined)
 // user straight to the handler — the route's own logic does ALL the gating.
 vi.mock('~/server/utils/endpoint-helpers', () => ({

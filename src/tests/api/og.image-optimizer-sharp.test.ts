@@ -74,22 +74,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 
 const PNG_MAGIC = '89504e470d0a1a0a';
 
-// The FallbackCard path — the handler's no-entity branch. `dbRead.model.findFirst`
-// resolving null makes fetchModelData return null, which renders FallbackCard
-// inside the main `try` (NOT via the catch). Chosen deliberately: it is the only
-// /api/og render path with no database, no network and no fixtures, so this test
-// exercises the renderer and nothing else.
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    model: { findFirst: vi.fn().mockResolvedValue(null) },
-    modelMetric: { findUnique: vi.fn().mockResolvedValue(null) },
-    image: { findFirst: vi.fn().mockResolvedValue(null) },
-  },
-  dbWrite: {},
-  dbKV: {},
-}));
-
 import handler from '~/pages/api/og';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 type CapturedRes = NextApiResponse & {
   _status: number;

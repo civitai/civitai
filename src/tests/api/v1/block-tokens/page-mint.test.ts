@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockRedis = redisMock.redis;
+redisMock.redis.incrBy.mockImplementation(async () => 1);
+redisMock.redis.expire.mockImplementation(async () => true);
+redisMock.redis.ttl.mockImplementation(async () => 60);
 const mockDbWrite = dbMock.dbWrite;
 
 /**
@@ -19,45 +24,37 @@ const mockDbWrite = dbMock.dbWrite;
  *     (no entityType field) for the canonical generate-from-model manifest.
  */
 
-const { mockRedis, mockSession, mockTokenService, mockBlockRegistry, mockFlags } = vi.hoisted(
-  () => {
-    const redis = {
-      incrBy: vi.fn(async () => 1),
-      expire: vi.fn(async () => true),
-      ttl: vi.fn(async () => 60),
-    };
-    const session = { value: null as { user: { id: number; bannedAt: Date | null } } | null };
-    const tokenService = {
-      sign: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
-        token: 'jwt.signed.value',
-        expiresAt: '2099-01-01T00:00:00Z',
-        jti: 'j',
-      })),
-      checkRateLimit: vi.fn<(...args: any[]) => Promise<boolean>>(async () => true),
-    };
-    const blockRegistry = {
-      resolveBlockInstance: vi.fn<(...args: any[]) => Promise<any>>(),
-      resolvePageBlock: vi.fn<(...args: any[]) => Promise<any>>(),
-      // Phase 2 dev-tunnel author-own mint resolver — default null (not owned), so
-      // the dev branch cleanly `continue`s to the bare 404 in this suite.
-      resolveDevPageBlockForAuthor: vi.fn<(...args: any[]) => Promise<any>>(async () => null),
-    };
-    // Flag mock that both the master + pages flag default ON for a mod.
-    const flags = {
-      getFeatureFlags: vi.fn(({ user }: { user?: { isModerator?: boolean } }) => ({
-        appBlocks: !!user?.isModerator,
-        appBlocksPages: !!user?.isModerator,
-      })),
-    };
-    return {
-      mockRedis: redis,
-      mockSession: session,
-      mockTokenService: tokenService,
-      mockBlockRegistry: blockRegistry,
-      mockFlags: flags,
-    };
-  }
-);
+const { mockSession, mockTokenService, mockBlockRegistry, mockFlags } = vi.hoisted(() => {
+  const session = { value: null as { user: { id: number; bannedAt: Date | null } } | null };
+  const tokenService = {
+    sign: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
+      token: 'jwt.signed.value',
+      expiresAt: '2099-01-01T00:00:00Z',
+      jti: 'j',
+    })),
+    checkRateLimit: vi.fn<(...args: any[]) => Promise<boolean>>(async () => true),
+  };
+  const blockRegistry = {
+    resolveBlockInstance: vi.fn<(...args: any[]) => Promise<any>>(),
+    resolvePageBlock: vi.fn<(...args: any[]) => Promise<any>>(),
+    // Phase 2 dev-tunnel author-own mint resolver — default null (not owned), so
+    // the dev branch cleanly `continue`s to the bare 404 in this suite.
+    resolveDevPageBlockForAuthor: vi.fn<(...args: any[]) => Promise<any>>(async () => null),
+  };
+  // Flag mock that both the master + pages flag default ON for a mod.
+  const flags = {
+    getFeatureFlags: vi.fn(({ user }: { user?: { isModerator?: boolean } }) => ({
+      appBlocks: !!user?.isModerator,
+      appBlocksPages: !!user?.isModerator,
+    })),
+  };
+  return {
+    mockSession: session,
+    mockTokenService: tokenService,
+    mockBlockRegistry: blockRegistry,
+    mockFlags: flags,
+  };
+});
 
 vi.mock('~/env/server', () => ({
   env: {
@@ -74,10 +71,6 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
 vi.mock('~/server/services/block-token.service', () => ({ BlockTokenService: mockTokenService }));
 vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: mockBlockRegistry,
-}));
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  REDIS_KEYS: { BLOCKS: { TOKEN_RATE_LIMIT: 'rl' } },
 }));
 vi.mock('~/server/utils/server-domain', () => ({
   getAllServerHosts: () => ['civitai.com'],

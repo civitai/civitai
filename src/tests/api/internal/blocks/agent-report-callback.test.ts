@@ -12,12 +12,12 @@ import { Readable } from 'node:stream';
  *   - UPDATE guarded to status='running' — a torn-down/decided review is a no-op
  */
 
-const { mockFlag, mockVerify, mockUpdateMany, mockTs } = vi.hoisted(() => ({
+const { mockFlag, mockVerify, mockTs } = vi.hoisted(() => ({
   mockFlag: { enabled: true },
-  mockVerify: vi.fn(
-    (): { ok: boolean; publishRequestId?: string } => ({ ok: true, publishRequestId: 'x' })
-  ),
-  mockUpdateMany: vi.fn(async (_args: { where: unknown; data: any }) => ({ count: 1 })),
+  mockVerify: vi.fn((): { ok: boolean; publishRequestId?: string } => ({
+    ok: true,
+    publishRequestId: 'x',
+  })),
   // Faithful ±300s stand-in for the reused checkCallbackTimestamp.
   mockTs: vi.fn((ts: unknown) => {
     if (ts === undefined || ts === null) return { ok: true };
@@ -38,14 +38,15 @@ vi.mock('~/server/services/blocks/review-session', () => ({
 vi.mock('~/pages/api/internal/blocks/review-build-callback', () => ({
   checkCallbackTimestamp: mockTs,
 }));
-vi.mock('~/server/db/client', () => ({
-  dbWrite: { appReviewAgentReport: { updateMany: mockUpdateMany } },
-}));
-
 import handler, {
   buildReportUpdate,
   persistedStatusFor,
 } from '~/pages/api/internal/blocks/agent-report-callback';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockUpdateMany = dbMock.dbWrite.appReviewAgentReport.updateMany;
+dbMock.dbWrite.appReviewAgentReport.updateMany.mockImplementation(
+  async (_args: { where: unknown; data: any }) => ({ count: 1 })
+);
 
 const PUBREQ = 'pubreq_0123456789ABCDEFGHJKMNPQRS';
 
@@ -66,7 +67,10 @@ function makeReqRes(body: string, opts: { method?: string; auth?: string } = {})
       return this;
     },
   };
-  return { req: stream, res: res as unknown as NextApiResponse & { statusCode: number; body: any } };
+  return {
+    req: stream,
+    res: res as unknown as NextApiResponse & { statusCode: number; body: any },
+  };
 }
 
 const goodBody = (over: Record<string, unknown> = {}) =>

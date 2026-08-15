@@ -19,12 +19,9 @@ const {
   mockEnvStore,
   mockFlag,
   mockRedis,
-  mockSetNx,
-  mockRedisDel,
   mockTriggerApply,
   mockWaitApply,
   mockSetCommitStatus,
-  mockAppBlockUpdate,
   mockMarkDeploy,
 } = vi.hoisted(() => {
   // nxResult: true = newly set (first time), false = key already present (replay).
@@ -39,15 +36,11 @@ const {
     mockFlag: { enabled: true },
     mockRedis,
     // mirrors redis.setNxKeepTtlWithEx(key, value, ttl): Promise<boolean>
-    mockSetNx: vi.fn(async () => {
-      if (mockRedis.nxThrows) throw new Error('redis down');
-      return mockRedis.nxResult;
-    }),
-    mockRedisDel: vi.fn(async () => 1),
-    mockTriggerApply: vi.fn<(...a: any[]) => Promise<{ name: string }>>(async () => ({ name: 'apply-job-1' })),
+    mockTriggerApply: vi.fn<(...a: any[]) => Promise<{ name: string }>>(async () => ({
+      name: 'apply-job-1',
+    })),
     mockWaitApply: vi.fn<(...a: any[]) => Promise<string>>(async () => 'succeeded'),
     mockSetCommitStatus: vi.fn(async () => undefined),
-    mockAppBlockUpdate: vi.fn(async () => undefined),
     mockMarkDeploy: vi.fn<(...a: any[]) => Promise<void>>(async () => undefined),
   };
 });
@@ -62,10 +55,6 @@ vi.mock('~/env/server', () => ({
     },
   }),
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: {},
-  dbWrite: { appBlock: { update: mockAppBlockUpdate } },
-}));
 // Per-key Flipt mock: the build-callback gate now reads the dedicated
 // `app-blocks-pipeline-enabled` PIPELINE flag (Decision 1), NOT the user-facing
 // `app-blocks-enabled`. Only the pipeline key reflects `mockFlag.enabled`; the
@@ -75,10 +64,6 @@ vi.mock('~/server/flipt/client', () => ({
   isFlipt: vi.fn(async (flag: string) =>
     flag === 'app-blocks-pipeline-enabled' ? mockFlag.enabled : false
   ),
-}));
-vi.mock('~/server/redis/client', () => ({
-  redis: { setNxKeepTtlWithEx: mockSetNx, del: mockRedisDel },
-  REDIS_KEYS: { BLOCKS: { TOKEN_RATE_LIMIT: 'blocks:token-rate-limit' } },
 }));
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerApply: mockTriggerApply,
@@ -105,6 +90,17 @@ import {
   verifySignature,
 } from '~/pages/api/internal/blocks/build-callback';
 import { isFlipt } from '~/server/flipt/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockAppBlockUpdate = dbMock.dbWrite.appBlock.update;
+const mockSetNx = redisMock.redis.setNxKeepTtlWithEx;
+const mockRedisDel = redisMock.redis.del;
+dbMock.dbWrite.appBlock.update.mockImplementation(async () => undefined);
+redisMock.redis.setNxKeepTtlWithEx.mockImplementation(async () => {
+  if (mockRedis.nxThrows) throw new Error('redis down');
+  return mockRedis.nxResult;
+});
+redisMock.redis.del.mockImplementation(async () => 1);
 
 const mockedIsFlipt = vi.mocked(isFlipt);
 
@@ -121,16 +117,24 @@ describe('build-callback imageRef binding', () => {
     expect(expectedImageRef(slug, SHA)).toBe(`ghcr.io/civitai/app-block-${slug}:${SHA}`);
   });
   it('rejects another slug under the same prefix', () => {
-    expect(`ghcr.io/civitai/app-block-slug-b:${SHA}` === expectedImageRef('slug-a', SHA)).toBe(false);
+    expect(`ghcr.io/civitai/app-block-slug-b:${SHA}` === expectedImageRef('slug-a', SHA)).toBe(
+      false
+    );
   });
   it('rejects a mutable :latest tag for our own slug', () => {
-    expect(`ghcr.io/civitai/app-block-slug-a:latest` === expectedImageRef('slug-a', SHA)).toBe(false);
+    expect(`ghcr.io/civitai/app-block-slug-a:latest` === expectedImageRef('slug-a', SHA)).toBe(
+      false
+    );
   });
   it('rejects a different sha for our own slug', () => {
-    expect(expectedImageRef('slug-a', 'b'.repeat(40)) === expectedImageRef('slug-a', SHA)).toBe(false);
+    expect(expectedImageRef('slug-a', 'b'.repeat(40)) === expectedImageRef('slug-a', SHA)).toBe(
+      false
+    );
   });
   it('rejects a prefix-matching but unrelated repo', () => {
-    expect(`ghcr.io/civitai/app-block-slug-a-evil:${SHA}` === expectedImageRef('slug-a', SHA)).toBe(false);
+    expect(`ghcr.io/civitai/app-block-slug-a-evil:${SHA}` === expectedImageRef('slug-a', SHA)).toBe(
+      false
+    );
   });
 });
 
@@ -348,7 +352,11 @@ describe('build-callback handler — flag gate + replay guard', () => {
       expect.objectContaining({ slug: SLUG, sha: SHA, appBlockId: APB })
     );
     // Lock the dedup contract: atomic NX-set on the (appBlockId, sha) key with the TTL.
-    expect(mockSetNx).toHaveBeenCalledWith(expect.stringContaining(`apply:${APB}:${SHA}`), '1', 600);
+    expect(mockSetNx).toHaveBeenCalledWith(
+      expect.stringContaining(`apply:${APB}:${SHA}`),
+      '1',
+      600
+    );
   });
 
   it('short-circuits a replayed success callback without re-triggering apply', async () => {
@@ -356,7 +364,10 @@ describe('build-callback handler — flag gate + replay guard', () => {
     const res = makeRes();
     await invoke(signedReq(validSuccessBody()), res);
     expect(res._status).toBe(200);
-    expect(res._body).toMatchObject({ applied: false, reason: 'duplicate callback (replay-guarded)' });
+    expect(res._body).toMatchObject({
+      applied: false,
+      reason: 'duplicate callback (replay-guarded)',
+    });
     expect(mockTriggerApply).not.toHaveBeenCalled();
   });
 
@@ -377,7 +388,12 @@ describe('build-callback handler — flag gate + replay guard', () => {
     expect(mockTriggerApply).not.toHaveBeenCalled();
     expect(mockSetNx).not.toHaveBeenCalled(); // dedup slot untouched by a failure callback
     // Phase 2: a build failure marks the request 'failed' so the dev sees it.
-    expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', expect.stringMatching(/Build/));
+    expect(mockMarkDeploy).toHaveBeenCalledWith(
+      SLUG,
+      SHA,
+      'failed',
+      expect.stringMatching(/Build/)
+    );
   });
 
   it('clears the replay slot on a DEFINITIVE apply failure so a same-sha retry is not blocked', async () => {
@@ -406,7 +422,9 @@ describe('build-callback handler — flag gate + replay guard', () => {
     const res = makeRes();
     await invoke(signedReq(validSuccessBody()), res);
     await flush();
-    expect(mockAppBlockUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: APB } }));
+    expect(mockAppBlockUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: APB } })
+    );
     expect(mockRedisDel).not.toHaveBeenCalled();
     // Phase 2: the request transitions 'deploying' (apply trigger) → 'live' (watcher).
     expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'deploying');
@@ -534,7 +552,9 @@ describe('build-callback handler — failureReason excerpt (A1/A2)', () => {
     const NUL = String.fromCharCode(0x00);
     const res = makeRes();
     await invoke(
-      signedReq(failBody({ failureReason: `${ESC}[1;31mERROR${ESC}[0m${NUL}: bad lockfile\r\nline2` })),
+      signedReq(
+        failBody({ failureReason: `${ESC}[1;31mERROR${ESC}[0m${NUL}: bad lockfile\r\nline2` })
+      ),
       res
     );
     const detail = mockMarkDeploy.mock.calls.at(-1)?.[3] as string;

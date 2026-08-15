@@ -1,6 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import client from 'prom-client';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+loggingMock.logToAxiom.mockImplementation((payload: unknown, datastream?: unknown) =>
+  mockLogToAxiom(payload, datastream)
+);
 
 /**
  * Coverage for POST /api/track/block-render — the lightweight beacon that
@@ -58,11 +62,6 @@ vi.mock('~/server/clickhouse/client', () => ({
   Tracker: class {
     blockRender = mockBlockRender;
   },
-}));
-
-// Detection log for an unknown appBlockId — asserted in both directions below.
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (payload: unknown, datastream?: unknown) => mockLogToAxiom(payload, datastream),
 }));
 
 // Known-app clamp: control which appBlockIds count as "approved" so the render

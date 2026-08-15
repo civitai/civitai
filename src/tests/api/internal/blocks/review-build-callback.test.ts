@@ -22,9 +22,6 @@ const {
   mockWaitApply,
   mockWaitReachable,
   mockMarkPreview,
-  mockFindUnique,
-  mockSetNx,
-  mockRedisDel,
 } = vi.hoisted(() => {
   const SECRET = 'test-build-callback-secret';
   return {
@@ -39,20 +36,7 @@ const {
     // Default row = an ACTIVE preview (pending + a preview-* deployState) so the
     // callback's "preview no longer active" guard does NOT abort. Torn-down /
     // decided cases override this per-test (deployDetail/deployState nullable).
-    mockFindUnique: vi.fn(
-      async (): Promise<{
-        deployDetail: string | null;
-        status: string;
-        deployState: string | null;
-      }> => ({
-        deployDetail: JSON.stringify({ url: 'https://x/y' }),
-        status: 'pending',
-        deployState: 'preview-building',
-      })
-    ),
     // replay-guard primitive — true = newly set (first callback → run apply).
-    mockSetNx: vi.fn(async () => true),
-    mockRedisDel: vi.fn(async () => undefined),
   };
 });
 
@@ -69,14 +53,6 @@ vi.mock('~/server/flipt/client', () => ({
   isFlipt: vi.fn(async (flag: string) =>
     flag === 'app-blocks-pipeline-enabled' ? mockFlag.enabled : false
   ),
-}));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { appBlockPublishRequest: { findUnique: mockFindUnique } },
-  dbWrite: {},
-}));
-vi.mock('~/server/redis/client', () => ({
-  redis: { setNxKeepTtlWithEx: mockSetNx, del: mockRedisDel },
-  REDIS_KEYS: { BLOCKS: { TOKEN_RATE_LIMIT: 'blocks:token-rate-limit' } },
 }));
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerApplyReview: mockTriggerApplyReview,
@@ -101,6 +77,24 @@ import handler, {
   checkCallbackTimestamp,
   watchReviewApplyJob,
 } from '~/pages/api/internal/blocks/review-build-callback';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockFindUnique = dbMock.dbRead.appBlockPublishRequest.findUnique;
+const mockSetNx = redisMock.redis.setNxKeepTtlWithEx;
+const mockRedisDel = redisMock.redis.del;
+dbMock.dbRead.appBlockPublishRequest.findUnique.mockImplementation(
+  async (): Promise<{
+    deployDetail: string | null;
+    status: string;
+    deployState: string | null;
+  }> => ({
+    deployDetail: JSON.stringify({ url: 'https://x/y' }),
+    status: 'pending',
+    deployState: 'preview-building',
+  })
+);
+redisMock.redis.setNxKeepTtlWithEx.mockImplementation(async () => true);
+redisMock.redis.del.mockImplementation(async () => undefined);
 
 const SLUG = 'my-app';
 const SHA = 'a'.repeat(40);
@@ -127,12 +121,17 @@ function makeReqRes(body: string, sig?: string) {
       return this;
     },
   };
-  return { req: stream, res: res as unknown as NextApiResponse & { statusCode: number; body: any } };
+  return {
+    req: stream,
+    res: res as unknown as NextApiResponse & { statusCode: number; body: any },
+  };
 }
 
 describe('expectedReviewImageRef (pure)', () => {
   it('binds to the review-prefixed image', () => {
-    expect(expectedReviewImageRef(SLUG, SHA)).toBe(`ghcr.io/civitai/app-block-review-${SLUG}:${SHA}`);
+    expect(expectedReviewImageRef(SLUG, SHA)).toBe(
+      `ghcr.io/civitai/app-block-review-${SLUG}:${SHA}`
+    );
   });
 });
 
@@ -226,12 +225,9 @@ describe('POST /api/internal/blocks/review-build-callback', () => {
     expect(mockTriggerApplyReview).toHaveBeenCalledWith(
       expect.objectContaining({ slug: SLUG, sha: SHA, publishRequestId: PUBREQ })
     );
-    expect(mockMarkPreview).toHaveBeenCalledWith(
-      PUBREQ,
-      'preview-deploying',
-      expect.anything(),
-      { requireActivePreview: true }
-    );
+    expect(mockMarkPreview).toHaveBeenCalledWith(PUBREQ, 'preview-deploying', expect.anything(), {
+      requireActivePreview: true,
+    });
   });
 
   it('replay guard: a duplicate success callback short-circuits before the apply', async () => {
@@ -240,7 +236,10 @@ describe('POST /api/internal/blocks/review-build-callback', () => {
     const { req, res } = makeReqRes(goodBody());
     await handler(req, res);
     expect(res.statusCode).toBe(200);
-    expect(res.body).toMatchObject({ applied: false, reason: 'duplicate callback (replay-guarded)' });
+    expect(res.body).toMatchObject({
+      applied: false,
+      reason: 'duplicate callback (replay-guarded)',
+    });
     expect(mockTriggerApplyReview).not.toHaveBeenCalled();
   });
 
@@ -258,12 +257,9 @@ describe('POST /api/internal/blocks/review-build-callback', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toMatchObject({ applied: false });
     expect(mockTriggerApplyReview).not.toHaveBeenCalled();
-    expect(mockMarkPreview).toHaveBeenCalledWith(
-      PUBREQ,
-      'preview-failed',
-      expect.anything(),
-      { requireActivePreview: true }
-    );
+    expect(mockMarkPreview).toHaveBeenCalledWith(PUBREQ, 'preview-failed', expect.anything(), {
+      requireActivePreview: true,
+    });
   });
 
   it('torn-down mid-build → aborts: no apply, no state write, no resurrection', async () => {
@@ -333,12 +329,10 @@ describe('watchReviewApplyJob (reachability gate)', () => {
       baseDetail,
     });
     expect(mockWaitReachable).toHaveBeenCalledWith(HOST);
-    expect(mockMarkPreview).toHaveBeenCalledWith(
-      PUBREQ,
-      'preview-live',
-      baseDetail,
-      { requireActivePreview: true, expectedSha: SHA }
-    );
+    expect(mockMarkPreview).toHaveBeenCalledWith(PUBREQ, 'preview-live', baseDetail, {
+      requireActivePreview: true,
+      expectedSha: SHA,
+    });
     // Not marked failed, and the dedup slot is NOT freed on the happy path.
     expect(mockMarkPreview).toHaveBeenCalledTimes(1);
     expect(mockRedisDel).not.toHaveBeenCalled();

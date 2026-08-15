@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockRedis = redisMock.redis;
+redisMock.redis.incrBy.mockImplementation(async () => 1);
+redisMock.redis.expire.mockImplementation(async () => true);
+redisMock.redis.ttl.mockImplementation(async () => 60);
 const mockDbWrite = dbMock.dbWrite;
 
 /**
@@ -14,12 +19,7 @@ const mockDbWrite = dbMock.dbWrite;
  * block-registry.resolve-instance.test.ts.
  */
 
-const { mockRedis, mockSession, mockTokenService, mockBlockRegistry } = vi.hoisted(() => {
-  const redis = {
-    incrBy: vi.fn(async () => 1),
-    expire: vi.fn(async () => true),
-    ttl: vi.fn(async () => 60),
-  };
+const { mockSession, mockTokenService, mockBlockRegistry } = vi.hoisted(() => {
   const session = { value: null as { user: { id: number; bannedAt: Date | null } } | null };
   const tokenService = {
     sign: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
@@ -33,7 +33,6 @@ const { mockRedis, mockSession, mockTokenService, mockBlockRegistry } = vi.hoist
     resolveBlockInstance: vi.fn<(...args: any[]) => Promise<any>>(),
   };
   return {
-    mockRedis: redis,
     mockSession: session,
     mockTokenService: tokenService,
     mockBlockRegistry: blockRegistry,
@@ -55,10 +54,6 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
 vi.mock('~/server/services/block-token.service', () => ({ BlockTokenService: mockTokenService }));
 vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: mockBlockRegistry,
-}));
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  REDIS_KEYS: { BLOCKS: { TOKEN_RATE_LIMIT: 'rl' } },
 }));
 vi.mock('~/server/utils/server-domain', () => ({
   getAllServerHosts: () => ['civitai.com', 'civitai.red'],
