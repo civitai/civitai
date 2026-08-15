@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * Unit contract for the pushed-down modelVersion-count helper that replaces the
@@ -21,12 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *      count agrees with the list it just read.
  */
 
-const { groupBy } = vi.hoisted(() => ({ groupBy: vi.fn() }));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { modelVersion: { groupBy } },
-  dbWrite: {},
-}));
+const groupBy = dbMock.dbRead.modelVersion.groupBy;
 
 import { getModelVersionCountsByModelId } from '~/server/services/model-version-count.service';
 
