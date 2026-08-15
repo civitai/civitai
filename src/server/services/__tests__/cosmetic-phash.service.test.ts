@@ -26,8 +26,10 @@ import {
   COSMETIC_PHASH_LANE,
   getSimilarCosmetics,
   hammingDistanceHex,
+  legacyBigIntHash,
   markCosmeticHashFailed,
   normalizeCosmeticHashHex,
+  queueCosmeticPerceptualHash,
   storeCosmeticPerceptualHash,
 } from '../cosmetic-phash.service';
 
@@ -73,6 +75,24 @@ describe('normalizeCosmeticHashHex', () => {
   });
 });
 
+describe('legacyBigIntHash', () => {
+  it('writes the legacy BIGINT only for the perceptual lane', () => {
+    expect(legacyBigIntHash('a6e0c4c4cce8a4b6', 'perceptual')).toBe(-6421916719099894602n);
+  });
+
+  // `perceptualDct` is ALSO 64 bits, so a width check passes it. `Cosmetic.pHash`
+  // has no version column, so DCT values written there would sit beside perceptual
+  // ones with nothing able to tell them apart — the cross-lane mixing this file is
+  // built to prevent, reintroduced in the one column that cannot describe itself.
+  it('writes nothing for another 64-bit lane, which a width check would let through', () => {
+    expect(legacyBigIntHash('a6e0c4c4cce8a4b6', 'perceptualDct')).toBeNull();
+  });
+
+  it('writes nothing for a wider hash', () => {
+    expect(legacyBigIntHash('a'.repeat(64), 'perceptual')).toBeNull();
+  });
+});
+
 describe('storeCosmeticPerceptualHash', () => {
   beforeEach(() => Object.values(mocks).forEach((m) => m.mockReset()));
 
@@ -95,6 +115,20 @@ describe('storeCosmeticPerceptualHash', () => {
 
     const { data } = mocks.cosmeticUpdate.mock.calls[0][0];
     expect(data.pHashFailedAt).toBeNull();
+  });
+
+  // `getPerceptualHash` returns undefined for a real failure AND for a workflow
+  // still running when the 30s wait elapses; the write path cannot tell them
+  // apart. Stamping would put a merely-slow submission behind the sweep's 24h
+  // backoff while the panel promises the moderator ~15 minutes.
+  it('does not stamp a failure on the write path, where a miss may just be slow', async () => {
+    mocks.getPerceptualHash.mockResolvedValue(undefined);
+
+    queueCosmeticPerceptualHash({ id: 12, url: 'artwork-12' });
+    await vi.waitFor(() => expect(mocks.getPerceptualHash).toHaveBeenCalled());
+    await Promise.resolve();
+
+    expect(mocks.cosmeticUpdate).not.toHaveBeenCalled();
   });
 
   it('stamps the failure time when hashing failed, so dead artwork is suppressed', async () => {
@@ -161,16 +195,39 @@ describe('getSimilarCosmetics', () => {
     expect(mocks.queryRaw).not.toHaveBeenCalled();
   });
 
-  it('distinguishes a clean comparison from an absent one', async () => {
+  // An empty candidate set is what the corpus looks like for the whole drain
+  // after a lane bump. Reported as `ok` it is a green all-clear computed from
+  // zero comparisons — a check that cannot fail, handed to a moderator as a pass.
+  it('refuses to call an empty corpus a clean comparison', async () => {
     mocks.cosmeticFindUnique.mockResolvedValue(freshTarget('a6e0c4c4cce8a4b6'));
     mocks.queryRaw.mockResolvedValue([]);
 
     expect(await getSimilarCosmetics({ cosmeticId: 1 })).toEqual({
-      status: 'ok',
-      comparedAgainst: 0,
-      bits: 64,
-      matches: [],
+      status: 'unavailable',
+      reason: 'no-corpus',
     });
+  });
+
+  it('reports a real comparison that found nothing as ok, with its count', async () => {
+    mocks.cosmeticFindUnique.mockResolvedValue(freshTarget('0000000000000001'));
+    // Far from the target, so there is a corpus and nothing near it.
+    mocks.queryRaw.mockResolvedValue([{ id: 2, pHashHex: 'ffffffffffffffff' }]);
+    mocks.cosmeticFindMany.mockResolvedValue([
+      {
+        id: 2,
+        name: 'Far',
+        type: 'Badge',
+        data: { url: 'f' },
+        createdById: null,
+        creator: null,
+        cosmeticShopItems: [],
+      },
+    ]);
+
+    const result = await getSimilarCosmetics({ cosmeticId: 1 });
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(result.comparedAgainst).toBe(1);
   });
 
   it('orders by distance and puts an exact re-upload first', async () => {
@@ -192,6 +249,7 @@ describe('getSimilarCosmetics', () => {
         data: { url: 'u' },
         createdById: 5,
         creator: { username: 'someone' },
+        cosmeticShopItems: [{ status: 'Rejected' }],
       },
       {
         id: 322,
@@ -200,6 +258,7 @@ describe('getSimilarCosmetics', () => {
         data: { url: 'c' },
         createdById: null,
         creator: null,
+        cosmeticShopItems: [],
       },
       {
         id: 55,
@@ -208,6 +267,14 @@ describe('getSimilarCosmetics', () => {
         data: { url: 'n' },
         createdById: 7,
         creator: { username: 'other' },
+        // Three listings at once (cross-listing/resale). Ordered so that
+        // "first one wins" and "last one wins" both produce the WRONG answer —
+        // only the precedence rule gives Published.
+        cosmeticShopItems: [
+          { status: 'Archived' },
+          { status: 'Published' },
+          { status: 'PendingReview' },
+        ],
       },
     ]);
 
@@ -223,6 +290,15 @@ describe('getSimilarCosmetics', () => {
     // An official cosmetic has no creator; the panel says so rather than showing
     // a blank byline that reads like a missing username.
     expect(result.matches[0].createdByUsername).toBeNull();
+
+    // Whether the match is on sale is what makes the resemblance actionable, and
+    // it is not derivable from anything else on the row. Never-listed (official)
+    // must stay distinguishable from listed-but-not-live.
+    expect(result.matches.map((m) => [m.id, m.shopStatus])).toEqual([
+      [322, null], // official, never listed in a shop
+      [55, 'Published'], // live listing outranks its own archived one
+      [99, 'Rejected'],
+    ]);
   });
 
   it('asks the database for same-lane, non-degenerate, non-stale candidates only', async () => {
@@ -257,6 +333,7 @@ describe('getSimilarCosmetics', () => {
           data: { url: `u${id}` },
           createdById: null,
           creator: null,
+          cosmeticShopItems: [],
         }))
     );
 

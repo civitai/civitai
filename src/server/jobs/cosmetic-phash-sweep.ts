@@ -69,16 +69,23 @@ export async function sweepCosmeticPerceptualHashes({
   let failed = 0;
   await limitConcurrency(
     rows.map((row) => async () => {
+      // Counted once, at the end, from what actually happened. Incrementing
+      // inside both the try and its catch double-counts a row whose failure
+      // stamp itself throws (a cosmetic deleted mid-sweep, say), and the tally
+      // is the only thing anyone reads about this job — `scanned` must stay
+      // equal to `hashed + failed` or it reports nothing trustworthy.
+      let stored = false;
       try {
         const hex = await getPerceptualHash(row.url, COSMETIC_PHASH_LANE.hashType);
-        if (hex === undefined) {
-          failed++;
-          await markCosmeticHashFailed(row.id);
-          return;
+        if (hex !== undefined) {
+          await storeCosmeticPerceptualHash({ id: row.id, url: row.url, hex });
+          stored = true;
         }
-        await storeCosmeticPerceptualHash({ id: row.id, url: row.url, hex });
-        hashed++;
       } catch {
+        // Fall through to the failure stamp.
+      }
+      if (stored) hashed++;
+      else {
         failed++;
         // Best effort: if even the stamp fails the row simply comes back next
         // tick, which is the same outcome as before this job existed.

@@ -4,7 +4,11 @@ import { ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CREATOR_SHOP_BORDER } from '~/components/CreatorShop/creator-shop.constants';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { COSMETIC_SIMILARITY_CLOSE_RATIO } from '~/shared/constants/cosmetic-shop.constants';
-import type { CosmeticSimilarityResult } from '~/server/services/cosmetic-phash.service';
+import type {
+  CosmeticSimilarityResult,
+  SimilarCosmetic,
+} from '~/server/services/cosmetic-phash.service';
+import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
 
 // Why a mod is being shown nothing, in the mod's terms. A blank panel cannot say
 // which of these it means, and "we checked and found nothing" is a very different
@@ -16,21 +20,57 @@ const UNAVAILABLE_COPY = {
     'The artwork changed after it was fingerprinted, so the stored fingerprint describes an older image. Nothing was compared.',
   'flat-artwork':
     'This artwork is almost entirely transparent or one flat colour, which every such image fingerprints identically. Comparing it would return unrelated cosmetics, so nothing was compared.',
+  'no-corpus':
+    'No other cosmetic currently has a comparable fingerprint, so there was nothing to compare against. This is expected for a while after a fingerprint upgrade, until the sweep has re-done the library.',
 } as const;
+
+// `null` means the cosmetic was never listed in a shop — every official cosmetic
+// looks like this, and it is not the same as a listing that exists and is not live.
+function shopStatusLabel(status: SimilarCosmetic['shopStatus']) {
+  if (!status) return 'not listed';
+  return status === CosmeticShopItemStatus.PendingReview
+    ? 'pending review'
+    : status === CosmeticShopItemStatus.RequestedChanges
+    ? 'changes requested'
+    : status.toLowerCase();
+}
+
+function shopStatusColor(status: SimilarCosmetic['shopStatus']) {
+  if (status === CosmeticShopItemStatus.Published) return 'green';
+  if (!status) return 'gray';
+  return 'yellow';
+}
 
 export function SimilarArtworkCard({
   result,
   isLoading,
+  isError,
 }: {
   result: CosmeticSimilarityResult | undefined;
   isLoading: boolean;
+  isError?: boolean;
 }) {
   return (
     <ChecksCard
       icon={<IconFingerprint size={15} color="var(--mantine-color-dimmed)" />}
       title="Similar artwork"
     >
-      {isLoading || !result ? (
+      {/* A lookup that errored must not keep spinning. A permanent spinner and a
+          slow one look the same, and "still working" reads as "no problem" —
+          which is the ambiguity this whole card exists to remove. */}
+      {isError ? (
+        <Group gap={9} px="md" py={9} align="flex-start" wrap="nowrap">
+          <IconAlertTriangle
+            size={16}
+            color="var(--mantine-color-red-5)"
+            style={{ flexShrink: 0, marginTop: 2 }}
+          />
+          <Text size="sm" c="dimmed">
+            The similarity check failed to run, so this artwork was not compared against anything.
+            Reload to try again.
+          </Text>
+        </Group>
+      ) : isLoading || !result ? (
         <Group gap={9} px="md" py={9} align="center">
           <Loader size={16} />
           <Text size="sm" c="dimmed">
@@ -87,11 +127,20 @@ export function SimilarArtworkCard({
                     <Text size="sm" fw={500} lineClamp={1}>
                       {match.name}
                     </Text>
-                    <Text size="xs" c="dimmed" lineClamp={1}>
-                      {match.createdByUsername
-                        ? `@${match.createdByUsername}`
-                        : 'Official Civitai cosmetic'}
-                    </Text>
+                    <Group gap={6} wrap="nowrap">
+                      <Text size="xs" c="dimmed" lineClamp={1}>
+                        {match.createdByUsername
+                          ? `@${match.createdByUsername}`
+                          : 'Official Civitai cosmetic'}
+                      </Text>
+                      {/* Whether the match is actually on sale changes what the
+                          resemblance means — a look-alike of something already
+                          rejected is a different decision from one of a live
+                          listing, and both look identical without this. */}
+                      <Badge size="xs" variant="light" color={shopStatusColor(match.shopStatus)}>
+                        {shopStatusLabel(match.shopStatus)}
+                      </Badge>
+                    </Group>
                   </Stack>
                   <Badge
                     size="sm"

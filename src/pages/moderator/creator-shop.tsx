@@ -293,7 +293,15 @@ function CreatorShopReviewPage() {
   // no business running for the whole queue when a mod is looking at one item.
   const similarQuery = trpc.creatorShop.getSimilarCosmetics.useQuery(
     { cosmeticId: selected?.cosmetic?.id as number },
-    { enabled: features.cosmeticSimilarity && !!selected?.cosmetic?.id }
+    {
+      enabled: features.cosmeticSimilarity && !!selected?.cosmetic?.id,
+      // The repo default is `staleTime: Infinity`, which would make this answer
+      // permanent for the session — including the "not fingerprinted yet, check
+      // back in about 15 minutes" one, whose whole point is that coming back
+      // works. It also has to re-run after a mod swaps the artwork.
+      staleTime: 0,
+      refetchOnMount: 'always',
+    }
   );
 
   const queryUtils = trpc.useUtils();
@@ -863,6 +871,7 @@ function CreatorShopReviewPage() {
                       <SimilarArtworkCard
                         result={similarQuery.data}
                         isLoading={similarQuery.isLoading}
+                        isError={similarQuery.isError}
                       />
                     )}
 

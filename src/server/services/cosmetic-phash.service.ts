@@ -3,7 +3,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getPerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
 import { COSMETIC_SIMILARITY_LIMIT } from '~/shared/constants/cosmetic-shop.constants';
-import type { CosmeticType } from '~/shared/utils/prisma/enums';
+import type { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 
 // Deliberately kept out of cosmetic.service, which reaches ~/server/search-index
 // and so meilisearch/client — a module that builds pLimit and prom collectors at
@@ -63,7 +63,7 @@ export async function storeCosmeticPerceptualHash({
   hex: string;
 }) {
   const normalized = normalizeCosmeticHashHex(hex);
-  const legacy = normalized.length === 16 ? BigInt.asIntN(64, BigInt(`0x${normalized}`)) : null;
+  const legacy = legacyBigIntHash(normalized, COSMETIC_PHASH_LANE.hashType);
   await dbWrite.cosmetic.update({
     where: { id },
     data: {
@@ -89,6 +89,24 @@ export async function markCosmeticHashFailed(id: number) {
 }
 
 /**
+ * The value for the legacy `Cosmetic.pHash` BIGINT, or `null` to leave it unset.
+ *
+ * Gated on the LANE, not the width — and that distinction is the whole point.
+ * `perceptualDct` is also 64 bits, so a width test would happily write DCT values
+ * into `pHash` beside the existing `perceptual` ones. `pHash` carries no version
+ * column of its own, so nothing downstream could ever tell them apart: it is the
+ * exact cross-lane mixing the rest of this file exists to prevent.
+ *
+ * Extracted rather than inlined so it can be tested at a lane we do not currently
+ * run. Inline, both the correct and the incorrect form behave identically today,
+ * and the difference only appears after a lane bump — when nobody is looking.
+ */
+export function legacyBigIntHash(normalizedHex: string, hashType: string) {
+  if (hashType !== 'perceptual' || normalizedHex.length !== 16) return null;
+  return BigInt.asIntN(64, BigInt(`0x${normalizedHex}`));
+}
+
+/**
  * Lowercase and left-pad to the lane's width. A hash returned without its leading
  * zeros is the same number and a different string, and only the string is ever
  * compared — `hammingDistanceHex` refuses mismatched widths rather than silently
@@ -107,7 +125,12 @@ export function queueCosmeticPerceptualHash({ id, url }: { id: number; url: stri
   getPerceptualHash(url, COSMETIC_PHASH_LANE.hashType)
     .then(async (hex) => {
       if (hex === undefined) {
-        await markCosmeticHashFailed(id).catch(() => null);
+        // Deliberately NOT stamped as a failure. `getPerceptualHash` returns
+        // undefined both for a real failure and for a workflow still running when
+        // the 30s wait elapses, and the two are indistinguishable here — stamping
+        // would put a merely-slow submission behind the sweep's 24h backoff, when
+        // the panel tells the moderator it will be picked up in about 15 minutes.
+        // The sweep re-tries it on its next tick and stamps only if it fails there.
         await logToAxiom({
           type: 'warning',
           name: 'cosmetic-phash',
@@ -136,10 +159,30 @@ export type SimilarCosmetic = {
   bits: number;
   createdById: number | null;
   createdByUsername: string | null;
+  // `null` = never listed in a shop at all, which is what every official cosmetic
+  // looks like. Distinct from a listing that exists and is not live.
+  shopStatus: CosmeticShopItemStatus | null;
 };
 
+// A cosmetic can carry several listings (cross-listing, resale), so the panel
+// needs one label. What a moderator is deciding is whether the thing they are
+// looking at is already on sale, so a live listing outranks everything; below
+// that, the further through review a listing got, the more it says.
+const SHOP_STATUS_PRECEDENCE: CosmeticShopItemStatus[] = [
+  'Published',
+  'PendingReview',
+  'RequestedChanges',
+  'Rejected',
+  'Archived',
+  'Draft',
+];
+
+function summariseShopStatus(statuses: CosmeticShopItemStatus[]) {
+  return SHOP_STATUS_PRECEDENCE.find((s) => statuses.includes(s)) ?? null;
+}
+
 export type CosmeticSimilarityResult =
-  | { status: 'unavailable'; reason: 'no-hash' | 'stale-hash' | 'flat-artwork' }
+  | { status: 'unavailable'; reason: 'no-hash' | 'stale-hash' | 'flat-artwork' | 'no-corpus' }
   | { status: 'ok'; comparedAgainst: number; bits: number; matches: SimilarCosmetic[] };
 
 export function hammingDistanceHex(a: string, b: string) {
@@ -214,6 +257,13 @@ export async function getSimilarCosmetics({
     .sort((a, b) => a.distance - b.distance)
     .slice(0, limit);
 
+  // "Nothing was close" and "there was nothing to be close to" are the same empty
+  // list and completely different verdicts. Right after a lane bump the candidate
+  // set is empty by construction while the sweep drains, so an `ok` here would
+  // hand a moderator a green all-clear built on zero comparisons — a check that
+  // cannot fail, which is the failure this whole panel exists to remove.
+  if (!candidates.length) return { status: 'unavailable', reason: 'no-corpus' };
+
   if (!nearest.length)
     return { status: 'ok', comparedAgainst: candidates.length, bits, matches: [] };
 
@@ -227,6 +277,7 @@ export async function getSimilarCosmetics({
       data: true,
       createdById: true,
       creator: { select: { username: true } },
+      cosmeticShopItems: { select: { status: true } },
     },
   });
 
@@ -240,6 +291,7 @@ export async function getSimilarCosmetics({
       bits,
       createdById: cosmetic.createdById,
       createdByUsername: cosmetic.creator?.username ?? null,
+      shopStatus: summariseShopStatus(cosmetic.cosmeticShopItems.map((i) => i.status)),
     }))
     .sort((a, b) => a.distance - b.distance);
 
