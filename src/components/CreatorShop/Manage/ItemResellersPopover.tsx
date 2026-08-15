@@ -22,8 +22,9 @@ export function ItemResellersPopover({ shopItemId, count }: { shopItemId: number
   return (
     <Popover
       width={380}
-      position="bottom-start"
+      position="bottom"
       withArrow
+      arrowSize={12}
       withinPortal
       opened={opened}
       onChange={setOpened}
@@ -43,7 +44,7 @@ export function ItemResellersPopover({ shopItemId, count }: { shopItemId: number
       </Popover.Target>
       <Popover.Dropdown p={0}>
         <Text size="xs" c="dimmed" px="sm" py="xs" className="whitespace-nowrap">
-          Each keeps the share they listed under, even if you change it.
+          Each creator keeps the share listed below, even if you change it
         </Text>
         <Divider />
         {isLoading ? (

@@ -4,6 +4,7 @@ import sharp from 'sharp';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
+import { profileImageSelect } from '~/server/selectors/image.selector';
 import { queueCosmeticPerceptualHash } from '~/server/services/cosmetic-phash.service';
 import {
   revokeCosmeticsFromUsers,
@@ -1545,7 +1546,18 @@ export const getShopItemResellers = async ({
     select: {
       sellerShare: true,
       createdAt: true,
-      user: { select: { id: true, username: true, image: true, deletedAt: true } },
+      // Most creators have no `image` and only a `profilePicture` relation, and
+      // UserAvatar falls back to `image` only when that relation is absent — so
+      // selecting `image` alone renders the placeholder for nearly everyone.
+      user: {
+        select: {
+          id: true,
+          username: true,
+          image: true,
+          deletedAt: true,
+          profilePicture: { select: profileImageSelect },
+        },
+      },
     },
   });
   return rows
