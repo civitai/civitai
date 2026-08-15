@@ -316,6 +316,23 @@ co-importer converted — say so and report the run as a **negative control**: a
 confirms the prediction was right, which is a different and stronger claim than "no failures
 observed".
 
+### What licenses DELETING an env mock
+
+Not "no test mentions the value". **What licenses it is that nothing READS the value through
+`env`** — and a mocked-out auth wrapper is a common reason a declared token is inert:
+
+```ts
+vi.mock('~/server/utils/endpoint-helpers', () => ({
+  WebhookEndpoint: (handler) => handler,
+}));
+```
+
+With that in place the token is never compared to `env.WEBHOOK_TOKEN` at all, so a
+`query: { token: 'mock-webhook-token' }` in the request is request-shaping, not authentication.
+**Check the wrapper, not the literal** — grepping for the literal cannot answer this even when
+the grep works, and two files whose deletions were licensed on a literal search did in fact
+contain the literal.
+
 ### The 20 module-scope refusals, assessed file by file
 
 Read, not converted. The question for each is narrower than the label: **does the module-scope
