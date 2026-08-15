@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import JSZip from 'jszip';
 
@@ -151,7 +152,8 @@ const {
       // repoCommitUrl — used by the list payloads' pushCommitUrl (links a
       // push-originated review to the canonical repo at the pushed sha).
       repoCommitUrl: vi.fn(
-        (slug: string, ref: string) => `https://forgejo.example/civitai-apps/${slug}/src/commit/${ref}`
+        (slug: string, ref: string) =>
+          `https://forgejo.example/civitai-apps/${slug}/src/commit/${ref}`
       ),
     },
     // apps-pipeline.service.triggerBuild — approveRequest now triggers the
@@ -240,15 +242,6 @@ const _publishEnvOverrides: Record<string, unknown> = {
   BUNDLE_S3_SECRET_ACCESS_KEY: 'sec',
   LOGGING: [], // db-client.ts reads env.LOGGING.filter(); must be an array
 };
-vi.mock('~/env/server', () => ({
-  env: new Proxy(_publishEnvOverrides, {
-    get(target, prop: string) {
-      if (prop in target) return target[prop];
-      return undefined;
-    },
-  }),
-}));
-
 // ---- helpers ---------------------------------------------------------------
 
 const MANIFEST_PATH = 'block.manifest.json';
@@ -291,6 +284,7 @@ async function makeValidBundle(over: Record<string, unknown> = {}): Promise<Buff
 }
 
 beforeEach(() => {
+  setEnv(_publishEnvOverrides);
   // M-2 manifests here: publish-request.service uses raw `process.env.NEXTAUTH_URL`
   // for the review URL embedded in the Discord notify (and the git-push webhook
   // callback URL in approveRequest), not the typed `env` import. Inject it so
@@ -354,22 +348,20 @@ beforeEach(() => {
   // (externalUrl=null) row derived from the default manifest, and create() echoes
   // the generated id back.
   mockDbRead.appListing.findUnique.mockResolvedValue(null);
-  mockDbWrite.appBlock.findUnique.mockImplementation(
-    async (args: { where: { id: string } }) => ({
-      id: args.where.id,
-      blockId: 'hello',
-      manifest: manifest(),
-      contentRating: 'g',
-      category: null,
-      featured: false,
-      featuredOrder: null,
-      externalUrl: null,
-      app: { userId: 42 },
-    })
-  );
-  mockDbWrite.appListing.create.mockImplementation(
-    async (args: { data: { id: string } }) => ({ id: args.data.id })
-  );
+  mockDbWrite.appBlock.findUnique.mockImplementation(async (args: { where: { id: string } }) => ({
+    id: args.where.id,
+    blockId: 'hello',
+    manifest: manifest(),
+    contentRating: 'g',
+    category: null,
+    featured: false,
+    featuredOrder: null,
+    externalUrl: null,
+    app: { userId: 42 },
+  }));
+  mockDbWrite.appListing.create.mockImplementation(async (args: { data: { id: string } }) => ({
+    id: args.data.id,
+  }));
 
   // S3 default no-op for PUT; GET returns whatever mockBundleBuffer.current is set to.
   mockS3Send.mockImplementation(async (cmd: { input?: { Key?: string } }) => {
@@ -678,7 +670,9 @@ describe('submitVersion', () => {
 
   it('Discord notify is invoked with the right shape on submission', async () => {
     const { submitVersion } = await import('../publish-request.service');
-    const fetchSpy = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true, status: 200 } as Response));
+    const fetchSpy = vi.fn(
+      async (_url: string, _init?: RequestInit) => ({ ok: true, status: 200 } as Response)
+    );
     vi.stubGlobal('fetch', fetchSpy);
 
     const buf = await makeValidBundle();
@@ -761,8 +755,8 @@ describe('withdrawRequest', () => {
     });
     mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
     // beforeEach's mockReset strips the tx impl — re-wire it to run the callback.
-    mockDbWrite.$transaction.mockImplementation(
-      async (cb: (tx: unknown) => Promise<unknown>) => cb(mockDbWrite)
+    mockDbWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) =>
+      cb(mockDbWrite)
     );
     // The reset target: an onsite listing for this slug is currently `pending`. A pending
     // onsite listing is ALWAYS a mod reset (deterministic — NO most-recent-event probe,
@@ -1398,7 +1392,11 @@ describe('approveRequest', () => {
     // (a) listing restored pending → approved (guarded to `pending`; status-only).
     expect(mockDbWrite.appListing.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ appBlockId: 'apb_existing', kind: 'onsite', status: 'pending' }),
+        where: expect.objectContaining({
+          appBlockId: 'apb_existing',
+          kind: 'onsite',
+          status: 'pending',
+        }),
         data: { status: 'approved' },
       })
     );
@@ -1429,8 +1427,12 @@ describe('approveRequest', () => {
     // scanning (the shared wrapper re-reads icon/cover by id, then the scan gate).
     mockDbWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_reset' });
     mockDbWrite.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: 2 });
-    mockDbWrite.image.findMany.mockImplementation(async (args: { where?: { id?: { in?: number[] } } }) =>
-      (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: id === 1 ? 'Pending' : 'Scanned' }))
+    mockDbWrite.image.findMany.mockImplementation(
+      async (args: { where?: { id?: { in?: number[] } } }) =>
+        (args?.where?.id?.in ?? []).map((id) => ({
+          id,
+          ingestion: id === 1 ? 'Pending' : 'Scanned',
+        }))
     );
     mockDbWrite.appListing.updateMany.mockResolvedValue({ count: 1 });
 
@@ -1473,8 +1475,9 @@ describe('approveRequest', () => {
     mockDbWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_reset' });
     mockDbWrite.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: 2 });
     // Re-stage the clean image impl (clearAllMocks doesn't reset a prior test's impl).
-    mockDbWrite.image.findMany.mockImplementation(async (args: { where?: { id?: { in?: number[] } } }) =>
-      (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: 'Scanned' }))
+    mockDbWrite.image.findMany.mockImplementation(
+      async (args: { where?: { id?: { in?: number[] } } }) =>
+        (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: 'Scanned' }))
     );
     // The reset listing flip matches one row (listing WAS pending) → reset re-approve.
     mockDbWrite.appListing.updateMany.mockResolvedValue({ count: 1 });
@@ -1485,7 +1488,11 @@ describe('approveRequest', () => {
     // (a) The store-visibility restore (pending → approved) PROCEEDED (gate passed).
     expect(mockDbWrite.appListing.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ appBlockId: 'apb_existing', kind: 'onsite', status: 'pending' }),
+        where: expect.objectContaining({
+          appBlockId: 'apb_existing',
+          kind: 'onsite',
+          status: 'pending',
+        }),
         data: { status: 'approved' },
       })
     );
@@ -1809,7 +1816,9 @@ describe('approveRequest', () => {
         (c: any[]) => c[0]?.data?.trustTier !== undefined
       );
       expect(tierUpdate?.[0]?.data?.trustTier).toBe('verified');
-      expect((tierUpdate?.[0]?.data?.manifest as { trustTier?: string }).trustTier).toBe('verified');
+      expect((tierUpdate?.[0]?.data?.manifest as { trustTier?: string }).trustTier).toBe(
+        'verified'
+      );
     });
 
     it('EXISTING unverified app: a manifest declaring internal stays unverified', async () => {
@@ -2245,8 +2254,7 @@ describe('approveRequest', () => {
       // never appear in the payload; asserting the exact key set is what stops a
       // future edit from widening this write into a clobber.
       const syncCalls = mockDbWrite.appListing.updateMany.mock.calls.filter(
-        (c: [{ data?: Record<string, unknown> }]) =>
-          c[0]?.data != null && !('status' in c[0].data) // exclude the (3b-reset) status flip
+        (c: [{ data?: Record<string, unknown> }]) => c[0]?.data != null && !('status' in c[0].data) // exclude the (3b-reset) status flip
       );
       expect(syncCalls).toHaveLength(1);
       expect(Object.keys(syncCalls[0][0].data).sort()).toEqual([
@@ -2596,7 +2604,9 @@ describe('approveRequest', () => {
     it('provisions the appsDb schema ONCE for a storage-declaring app with slug = sanitized blockId', async () => {
       const { approveRequest } = await import('../publish-request.service');
       mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
-        pendingRequest({ manifest: manifest({ scopes: ['apps:storage:read', 'apps:storage:write'] }) })
+        pendingRequest({
+          manifest: manifest({ scopes: ['apps:storage:read', 'apps:storage:write'] }),
+        })
       );
       mockDbRead.appBlock.findFirst.mockResolvedValue(null);
       mockBundleBuffer.current = await makeValidBundle({
@@ -3023,7 +3033,9 @@ describe('recordPendingFromPush', () => {
   it('(a) existingForSha refresh path — updates the existing (slug,sha) pending row, no create', async () => {
     const { recordPendingFromPush } = await import('../publish-request.service');
     // A pending row for THIS exact (slug, sha) already exists → refresh + done.
-    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce({ id: 'pubreq_existing_sha' });
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce({
+      id: 'pubreq_existing_sha',
+    });
     mockDbWrite.appBlockPublishRequest.update.mockResolvedValue(undefined);
 
     const res = await recordPendingFromPush(pushArgs);

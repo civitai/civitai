@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { createHmac } from 'crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -85,18 +86,6 @@ const {
 });
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/env/server', () => ({
-  env: new Proxy(
-    { FORGEJO_WEBHOOK_SECRET: SECRET, APPS_DOMAIN: 'civit.ai' } as Record<string, unknown>,
-    {
-      get(t, p: string) {
-        if (p in t) return t[p];
-        if (p === 'LOGGING') return '';
-        return undefined;
-      },
-    }
-  ),
-}));
 // Per-key Flipt mock: git-push now gates on the dedicated
 // `app-blocks-pipeline-enabled` PIPELINE flag (Decision 1), NOT the user-facing
 // `app-blocks-enabled`. Only the pipeline key reflects the toggle; the user flag
@@ -203,6 +192,8 @@ async function invoke(req: NextApiRequest, res: NextApiResponse) {
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 10));
+
+beforeEach(() => setEnv({ FORGEJO_WEBHOOK_SECRET: SECRET, APPS_DOMAIN: 'civit.ai' }));
 
 describe('git-push webhook — no-trust-on-push gate', () => {
   beforeEach(() => {

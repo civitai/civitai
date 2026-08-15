@@ -20,16 +20,16 @@
   ],
   "totals": {
     "canonicalFiles": 343,
-    "pendingFiles": 339,
+    "pendingFiles": 338,
     "allFiles": 496,
     "canonicalSites": 491,
-    "pendingSites": 766
+    "pendingSites": 764
   },
   "bySpecifier": {
     "~/server/db/client": 244,
     "~/server/redis/client": 144,
     "~/server/logging/client": 103,
-    "~/env/server": 19,
+    "~/env/server": 17,
     "~/server/services/buzz.service": 98,
     "~/server/services/image.service": 88,
     "~/server/clickhouse/client": 77,
@@ -647,7 +647,6 @@
     "src/server/services/blocks/__tests__/listing-meta.datauri-raster.integration.test.ts",
     "src/server/services/blocks/__tests__/listing-meta.service.test.ts",
     "src/server/services/blocks/__tests__/offsite-listing.service.test.ts",
-    "src/server/services/blocks/__tests__/publish-request.orchestration.test.ts",
     "src/server/services/blocks/__tests__/showcase.service.test.ts",
     "src/server/services/blocks/__tests__/tip.detail.test.ts",
     "src/server/services/generation/__tests__/generation.service.client-rejections.test.ts",
