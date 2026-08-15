@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // deleteImages deletes the Image rows first (RETURNING), busts caches in a Promise.all, then
 // deletes the S3 objects. A batch whose images all have `postId IS NULL` yields an empty id list,
@@ -8,8 +9,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // post.service is the graph root; the mock scaffold mirrors the established recipe
 // (delete-image-from-s3-logging.test.ts): stub env + infra clients so importing it boots no
 // real infra. `Prisma` itself is deliberately NOT mocked — the throw under test is real.
-
-const { mockQueryRaw } = vi.hoisted(() => ({ mockQueryRaw: vi.fn(async () => []) }));
 
 function makePermissive(overrides: Record<string, unknown> = {}): any {
   const handler: ProxyHandler<any> = {
@@ -30,9 +29,7 @@ function makePermissive(overrides: Record<string, unknown> = {}): any {
   }, handler);
 }
 
-const dbWrite = makePermissive({ $queryRaw: mockQueryRaw });
-
-vi.mock('~/server/db/client', () => ({ dbRead: makePermissive(), dbWrite }));
+const mockQueryRaw = dbMock.dbWrite.$queryRaw;
 
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
@@ -61,18 +58,6 @@ vi.mock('~/env/server', () => ({
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: makePermissive({ insert: async () => undefined }),
 }));
-
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: makePermissive({ packed: makePermissive() }),
-    sysRedis: makePermissive(),
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-    REDIS_SUB_KEYS: keyProxy,
-  };
-});
 
 const { bustCachesForPosts } = await import('../post.service');
 

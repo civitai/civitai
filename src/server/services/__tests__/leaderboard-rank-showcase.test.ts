@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * Two properties that a green suite could not otherwise tell apart from the old code:
@@ -8,23 +9,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 type Statement = { sql: string; values: unknown[] };
 
-const { mockExecuteRaw, mockTransaction, statements } = vi.hoisted(() => {
-  const statements: Statement[] = [];
-  const mockExecuteRaw = vi.fn((...args: any[]): Statement => {
-    const statement: Statement = Array.isArray(args[0])
-      ? { sql: args[0].join(' ? '), values: args.slice(1) }
-      : { sql: args[0].sql, values: args[0].values };
-    statements.push(statement);
-    return statement;
-  });
-  return { mockExecuteRaw, mockTransaction: vi.fn(async () => []), statements };
-});
+const statements: Statement[] = [];
 
-vi.mock('~/server/db/client', () => ({
-  dbWrite: { $executeRaw: mockExecuteRaw, $transaction: mockTransaction },
-  dbRead: {},
-  dbKV: {},
-}));
+const mockExecuteRaw = dbMock.dbWrite.$executeRaw;
+const mockTransaction = dbMock.dbWrite.$transaction;
+
+// Recording the statement IS the fixture — every assertion here reads `statements`. The
+// canonical `$executeRaw` default returns 0 and records nothing, so this is declared rather
+// than inherited. `$transaction` likewise: the canonical default runs the callback, this file
+// only needs it to resolve.
+mockExecuteRaw.mockImplementation((...args: any[]): Statement => {
+  const statement: Statement = Array.isArray(args[0])
+    ? { sql: args[0].join(' ? '), values: args.slice(1) }
+    : { sql: args[0].sql, values: args[0].values };
+  statements.push(statement);
+  return statement;
+});
+mockTransaction.mockImplementation(async () => []);
 
 import {
   updateLeaderboardRank,
