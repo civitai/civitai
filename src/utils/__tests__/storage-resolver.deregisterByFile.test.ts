@@ -19,8 +19,21 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
-const { logToAxiom } = vi.hoisted(() => ({ logToAxiom: vi.fn(() => Promise.resolve()) }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom }));
+// 🔴 The logging mock is the CANONICAL one, and that is the whole point on this file.
+// The per-file `~/env/server` mock above forces `~/utils/storage-resolver` to be
+// re-instantiated for this file, which incidentally re-bound its `logToAxiom` import to a
+// per-file spy. That accident is what the deregisterBatch/deregister pair discovered: remove
+// the env mock and the module is cached from whichever file loaded it first, so the second
+// file asserts on a spy the cached module never calls. The canonical node is stable for the
+// life of the worker, so the binding is correct however the module happens to be cached.
+//
+// ⚠️ The `~/env/server` mock above STAYS. It is a pending specifier, not a canonical one, and
+// it is load-bearing: the tests MUTATE `envValues` per case, which is the class the codemod
+// refuses rather than verifies — lifting it would leave the local alive and disconnected, and
+// every later assignment would write to an object nothing reads.
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+
+const logToAxiom = loggingMock.logToAxiom;
 
 import { deregisterFileLocationsByFile } from '~/utils/storage-resolver';
 

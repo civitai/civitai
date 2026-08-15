@@ -20,26 +20,26 @@
   ],
   "totals": {
     "canonicalFiles": 345,
-    "pendingFiles": 393,
-    "allFiles": 519,
+    "pendingFiles": 395,
+    "allFiles": 521,
     "canonicalSites": 493,
-    "pendingSites": 856
+    "pendingSites": 864
   },
   "bySpecifier": {
     "~/server/db/client": 244,
     "~/server/redis/client": 144,
     "~/server/logging/client": 105,
-    "~/env/server": 106,
-    "~/server/services/buzz.service": 98,
-    "~/server/services/image.service": 88,
-    "~/server/clickhouse/client": 77,
+    "~/env/server": 107,
+    "~/server/services/buzz.service": 99,
+    "~/server/services/image.service": 89,
+    "~/server/clickhouse/client": 78,
     "~/server/services/notification.service": 77,
-    "~/server/services/user.service": 73,
-    "~/server/search-index": 64,
-    "~/server/flipt/client": 63,
+    "~/server/services/user.service": 74,
+    "~/server/search-index": 65,
+    "~/server/flipt/client": 64,
     "~/server/redis/fail-open-log": 55,
     "~/server/utils/endpoint-helpers": 53,
-    "~/server/redis/caches": 52,
+    "~/server/redis/caches": 53,
     "~/server/prom/client": 50
   },
   "files": [
@@ -630,6 +630,7 @@
     "src/server/services/__tests__/pinned-posts-version-filter.test.ts",
     "src/server/services/__tests__/placement-escrow.service.test.ts",
     "src/server/services/__tests__/placement-metrics.service.test.ts",
+    "src/server/services/__tests__/prisma-inconsistent-orphan-relations.test.ts",
     "src/server/services/__tests__/redeemableCode.service.test.ts",
     "src/server/services/__tests__/referral.service.test.ts",
     "src/server/services/__tests__/resourceReview.idempotent.service.test.ts",
@@ -782,6 +783,7 @@
     "src/utils/__tests__/delivery-worker.test.ts",
     "src/utils/__tests__/s3-utils.test.ts",
     "src/utils/__tests__/storage-resolver.deregister.test.ts",
-    "src/utils/__tests__/storage-resolver.deregisterBatch.test.ts"
+    "src/utils/__tests__/storage-resolver.deregisterBatch.test.ts",
+    "src/utils/__tests__/storage-resolver.deregisterByFile.test.ts"
   ]
 }
