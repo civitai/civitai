@@ -14,6 +14,7 @@
  * in the most recent `--no-isolate` run. Files nobody has run that way yet say so.
  */
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'fs';
+import { execFileSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -83,6 +84,39 @@ const files = inventory.files.map((f) => {
   };
 });
 
+/**
+ * The migration's authoritative number is the guard's allowlist, not anything derived here: it
+ * ratchets in both directions, so it cannot drift from what the suite will actually accept. Read it
+ * from the working tree if present, otherwise from the branch that carries it — a dashboard built on
+ * `main` should still show the real burn-down.
+ */
+const ALLOWLIST = 'src/__tests__/mocks/direct-mock-allowlist.json';
+function readAllowlist() {
+  const local = path.join(repoRoot, ALLOWLIST);
+  const parse = (text, source) => {
+    const data = JSON.parse(text);
+    const entries = Array.isArray(data) ? data : (data.files ?? data.allowlist ?? []);
+    return { count: entries.length, source };
+  };
+  if (existsSync(local)) {
+    try {
+      return parse(readFileSync(local, 'utf8'), 'working tree');
+    } catch {}
+  }
+  for (const ref of ['perf/test-mock-system', 'origin/perf/test-mock-system']) {
+    try {
+      const text = execFileSync('git', ['show', `${ref}:${ALLOWLIST}`], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      return parse(text, ref);
+    } catch {}
+  }
+  return null;
+}
+const allowlist = readAllowlist();
+
 const counts = files.reduce((a, f) => ((a[f.status] = (a[f.status] || 0) + 1), a), {});
 const verdictCounts = files.reduce((a, f) => ((a[f.verdict ?? 'unknown'] = (a[f.verdict ?? 'unknown'] || 0) + 1), a), {});
 
@@ -93,6 +127,7 @@ const sweep = existsSync(path.join(perfDir, 'sweep.json'))
 const payload = {
   generatedAt: new Date().toISOString(),
   sweep,
+  allowlist,
   inventoryTotals: inventory.totals,
   baseline: baseline && summarise(baseline),
   latestFull: latestFull && summarise(latestFull),
@@ -224,6 +259,12 @@ const seg = [['no-shared-mocks','#30363d',C['no-shared-mocks']||0],['spread-only
 $('#bar').innerHTML = '<div class="bar">'+seg.map(([k,c,n])=>'<div style="width:'+(n/tot*100)+'%;background:'+c+'" title="'+k+': '+n+'"></div>').join('')+'</div>';
 $('#legend').innerHTML = seg.map(([k,c,n])=>'<span><span class="dot" style="background:'+c+'"></span><b>'+n+'</b> '+k+'</span>').join('')
   + '<span><b>'+tot+'</b> files total</span>';
+if (D.allowlist) {
+  $('#bar').insertAdjacentHTML('beforebegin',
+    '<div class="kpi" style="margin-bottom:14px"><div class="v">'+D.allowlist.count+'</div>'
+    + '<div class="l">files still on the guard allowlist &mdash; the authoritative burn-down, read from '
+    + D.allowlist.source + '</div></div>');
+}
 const V = D.verdictCounts;
 $('#verdictnote').textContent = D.latestNoIso
   ? 'Latest --no-isolate run ('+D.latestNoIso.label+'): '+(V.pass||0)+' files passed, '+(V.fail||0)+' failed, '+(V.unknown||0)+' not covered by that run.'
