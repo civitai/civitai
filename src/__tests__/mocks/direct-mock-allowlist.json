@@ -19,16 +19,16 @@
     "~/server/prom/client"
   ],
   "totals": {
-    "canonicalFiles": 331,
+    "canonicalFiles": 330,
     "pendingFiles": 390,
     "allFiles": 508,
-    "canonicalSites": 474,
+    "canonicalSites": 472,
     "pendingSites": 853
   },
   "bySpecifier": {
-    "~/server/db/client": 234,
+    "~/server/db/client": 233,
     "~/server/redis/client": 139,
-    "~/server/logging/client": 101,
+    "~/server/logging/client": 100,
     "~/env/server": 106,
     "~/server/services/buzz.service": 98,
     "~/server/services/image.service": 88,
@@ -232,7 +232,6 @@
     "src/server/services/__tests__/redeemableCode.service.test.ts",
     "src/server/services/__tests__/referral.service.test.ts",
     "src/server/services/__tests__/remix-gallery.service.test.ts",
-    "src/server/services/__tests__/resourceReview.idempotent.service.test.ts",
     "src/server/services/__tests__/scanner-policies.buffer.test.ts",
     "src/server/services/__tests__/set-model-minor.service.test.ts",
     "src/server/services/__tests__/signals.service.test.ts",

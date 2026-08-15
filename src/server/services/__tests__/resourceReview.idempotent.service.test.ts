@@ -8,28 +8,23 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // the already-existing review.
 
 import { Prisma } from '@prisma/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const { mockDb } = vi.hoisted(() => ({
-  mockDb: {
-    user: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    // createResourceReviewNotification (fired best-effort after the create
-    // resolves) reads modelVersion; a null result makes it log+return cleanly.
-    modelVersion: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    // upsertResourceReview now runs a block check that resolves the model owner.
-    model: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ userId: 1 })) },
-    imageResourceNew: { count: vi.fn(async (..._a: unknown[]): Promise<number> => 0) },
-    resourceReview: {
-      create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-      update: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-      findUniqueOrThrow: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    },
-  },
-}));
+// dbWrite for the review write path (resourceReview.findUniqueOrThrow, create), dbRead for the
+// user and image reads. `getDbWithoutLag` picks between the two by replication lag; with lag
+// off it is dbRead, and the one call it feeds - resourceReview.findMany - is never asserted on.
+const mockRead = dbMock.dbRead;
+const mockWrite = dbMock.dbWrite;
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
-vi.mock('~/server/db/db-lag-helpers', () => ({ getDbWithoutLag: vi.fn(async () => mockDb) }));
+// upsertResourceReview runs a block check that resolves the model owner. Set on both clients
+// because the check and the write path reach it from different sides.
+mockRead.model.findUnique.mockResolvedValue({ userId: 1 });
+mockWrite.model.findUnique.mockResolvedValue({ userId: 1 });
+mockWrite.resourceReview.create.mockResolvedValue({});
+mockWrite.resourceReview.update.mockResolvedValue({});
+mockWrite.resourceReview.findUniqueOrThrow.mockResolvedValue({});
+
+vi.mock('~/server/db/db-lag-helpers', () => ({ getDbWithoutLag: vi.fn(async () => mockRead) }));
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: vi.fn(async () => undefined),
 }));
@@ -40,7 +35,6 @@ vi.mock('~/server/services/resourceReview.cache', () => ({
   bustRatingTotalsCache: vi.fn(async () => undefined),
   bustRatingTotalsForRows: vi.fn(async () => undefined),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 // createResourceReviewNotification reaches for modelVersion data; stub the
 // notification side-channel inputs so it no-ops cleanly.
 vi.mock('~/server/services/user-preferences.service', () => ({
@@ -77,19 +71,19 @@ const baseInput = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockDb.user.findFirst.mockResolvedValue({ username: 'tester' });
+  mockRead.user.findFirst.mockResolvedValue({ username: 'tester' });
 });
 
 describe('createResourceReview — idempotent on P2002 race', () => {
   it('returns the existing review when the unique constraint trips', async () => {
     const existing = { id: 7, modelId: 10, modelVersionId: 20, recommended: true };
-    mockDb.resourceReview.create.mockRejectedValueOnce(p2002());
-    mockDb.resourceReview.findUniqueOrThrow.mockResolvedValueOnce(existing);
+    mockWrite.resourceReview.create.mockRejectedValueOnce(p2002());
+    mockWrite.resourceReview.findUniqueOrThrow.mockResolvedValueOnce(existing);
 
     const result = await createResourceReview({ ...baseInput, userId: 42 });
 
     expect(result).toBe(existing);
-    expect(mockDb.resourceReview.findUniqueOrThrow).toHaveBeenCalledWith(
+    expect(mockWrite.resourceReview.findUniqueOrThrow).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { modelVersionId_userId: { modelVersionId: 20, userId: 42 } },
       })
@@ -97,22 +91,22 @@ describe('createResourceReview — idempotent on P2002 race', () => {
   });
 
   it('rethrows non-P2002 errors', async () => {
-    mockDb.resourceReview.create.mockRejectedValueOnce(new Error('boom'));
+    mockWrite.resourceReview.create.mockRejectedValueOnce(new Error('boom'));
     await expect(createResourceReview({ ...baseInput, userId: 42 })).rejects.toThrow('boom');
-    expect(mockDb.resourceReview.findUniqueOrThrow).not.toHaveBeenCalled();
+    expect(mockWrite.resourceReview.findUniqueOrThrow).not.toHaveBeenCalled();
   });
 });
 
 describe('upsertResourceReview (create branch) — idempotent on P2002 race', () => {
   it('returns the existing review when the unique constraint trips', async () => {
     const existing = { id: 7, modelId: 10, modelVersionId: 20, recommended: true };
-    mockDb.resourceReview.create.mockRejectedValueOnce(p2002());
-    mockDb.resourceReview.findUniqueOrThrow.mockResolvedValueOnce(existing);
+    mockWrite.resourceReview.create.mockRejectedValueOnce(p2002());
+    mockWrite.resourceReview.findUniqueOrThrow.mockResolvedValueOnce(existing);
 
     const result = await upsertResourceReview({ ...baseInput, userId: 42 });
 
     expect(result).toBe(existing);
-    expect(mockDb.resourceReview.findUniqueOrThrow).toHaveBeenCalledWith(
+    expect(mockWrite.resourceReview.findUniqueOrThrow).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { modelVersionId_userId: { modelVersionId: 20, userId: 42 } },
       })
