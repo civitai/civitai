@@ -48,15 +48,14 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   getFeatureFlagsAsync: vi.fn(async () => ({})),
 }));
 
-// Module scope on purpose: this graph is ~1200 modules and a `await import()` from a test
-// body would charge its whole transform to that one test's timeout.
-import AppWithTRPC from '~/pages/_app';
+// The logic under test lives in `~/utils/app-initial-props`, which `_app.tsx` assigns as its
+// `getInitialProps`. Importing the page instead would pull the whole provider/layout tree in
+// for no assertion.
+import { getAppInitialProps } from '~/utils/app-initial-props';
 
-const getInitialProps = (
-  AppWithTRPC as unknown as {
-    getInitialProps: (c: AppContext) => Promise<{ pageProps: Record<string, unknown> }>;
-  }
-).getInitialProps;
+const getInitialProps = getAppInitialProps as unknown as (
+  c: AppContext
+) => Promise<{ pageProps: Record<string, unknown> }>;
 
 const AUTH_COOKIE = '__Secure-civ-token';
 const SETTINGS_PATH = '/api/user/settings';
