@@ -152,6 +152,32 @@ leads by at most 6 files around k=5 and by-frequency is *ahead* at k=15–20. So
 the difference between a good order and the best order is noise next to the difference between a
 good order and no order.
 
+## `orchestrator/` and `generation/` are the opposite shape, and the ratio says so before any work
+
+Same measurement over the other two subdirectories. Distance = non-canonical specifiers a file
+still needs before its entire mock set is canonical.
+
+```
+                files  union of      distance-to-eligible
+                w/mock  specifiers   0    1    2    3   4+   heaviest file
+blocks/            98      59       17   31   22    9  19        8
+orchestrator/      18      33        0    3    2    3  10       13
+generation/         7      17        0    0    1    0   6       15
+```
+
+**Read the files-to-specifiers ratio.** `blocks/` is 98 files over 59 specifiers and half of it sits
+within one specifier of eligible — work it incrementally, as agreed. `generation/` is 7 files over
+17 specifiers with six of the seven needing 13–15 each: no single specifier completes any file, and
+a greedy sequence plateaus at zero. That is the clique shape, and incremental burn-down of it will
+read as zero progress for its entire length no matter which order it is worked.
+
+**But a clique is not automatically a big job — check the union before treating it as one.** The
+whole of `generation/` is 17 specifiers for 7 files. That is a bounded cohort someone can clear in
+one pass, and the only wrong move is to schedule it as if it were a burn-down. `orchestrator/` is
+bimodal rather than uniform: 5 files within two specifiers, then a cliff to a 9-file
+`orchestration-new.*` family needing 8–13 each. Take the 5, then treat the family as its own
+cohort.
+
 ## The two classifier bugs, fixed and re-measured
 
 Both are logged here rather than only in mail, because a predictor that quietly keeps them will
@@ -166,9 +192,19 @@ mislead the next slice.
   through property values of the returned object.
 
 Re-measured on the same 40 files: per-file agreement **27/40 -> 30/40**, false converts 4 -> 2.
-Eight false refusals remain, so the predictor still errs conservative. That is the bias to keep —
-it flags files for a human that the codemod would convert silently, which is the direction that
-costs a read rather than a regression.
+Eight false refusals remain, so the predictor still errs conservative.
+
+**Two deliberate choices about it, recorded because the reasoning outlives the artifact.**
+
+*The conservative bias is kept, not fixed.* An error pointing this way flags a file for a human to
+read that the codemod would have converted silently. The opposite error ships a silent conversion.
+One costs a read; the other costs a regression nothing observes.
+
+*It is not checked into `scripts/` beside the codemod.* At 75% per-file agreement it is a control —
+something to disagree with the codemod so a human looks — and a tool that sits in the tools
+directory gets used as an authority. Its whole value is being wrong in a legible direction, which
+is a property nobody would infer from finding it next to `codemod-shared-mocks.mjs`. It stays in the
+scratchpad; what is durable is this description of what it got wrong and why.
 
 ## Slice boundary
 
