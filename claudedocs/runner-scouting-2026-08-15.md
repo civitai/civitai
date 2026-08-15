@@ -3,20 +3,33 @@
 Recorded 2026-08-15. Measurement and a recommendation; no migration was attempted.
 
 **Recommendation: stay on vitest — but the reason overturns the cost model we had been optimising
-against.** The per-module constant is *not* inherent to our module graph. On files all three runtimes
-can load, a runner without vite-node loads the same graph ~1600x faster.
+against.** The per-module constant is *not* inherent to our module graph. On the one file all three
+runtimes can load, bun loads the same 82-module closure ~15-20x faster than vitest's `collect`.
 
 ## The measurement
 
-Same first-party module graph, fresh process per measurement, warm FS cache:
+**The like-for-like row is the test file, not the source module.** vitest's `collect` loads the
+whole test-file closure — the file, its imports, and `vitest` itself. An early version of this doc
+compared that against a probe importing only the *source* module underneath it, which is a different
+and much smaller graph. Corrected:
 
-| target (static closure) | vitest `collect` | bun | node + tsx |
-|---|---|---|---|
-| `model-substitution` (84 modules) | **5298 ms** | 3.3 ms | 8.5 ms |
-| `challenge.constants` | — | 4.0 ms | 10.4 ms |
-| `placement` | — | 3.7 ms | 122.7 ms |
-| `image.schema` | — | 68.6 ms | 514 ms |
-| `utils/metadata/audit` | — | 162.6 ms | 1755 ms |
+| target | real closure | vitest `collect` | bun | node + tsx |
+|---|---|---|---|---|
+| `model-substitution.test.ts` | 82 modules | **5298 ms** | **259 ms** (median of 5: 250–262) | ✗ cannot import `vitest` under CJS |
+
+So **~20x on the one file all three could be asked to load**, not the three orders of magnitude an
+earlier draft claimed.
+
+Source-module-only probes, which are *not* comparable to `collect` and are kept only to show the
+runtimes' floor:
+
+| source module | bun | node + tsx |
+|---|---|---|
+| `model-substitution.ts` | 3.3 ms | 8.5 ms |
+| `challenge.constants.ts` | 4.0 ms | 10.4 ms |
+| `placement.ts` | 3.7 ms | 122.7 ms |
+| `image.schema.ts` | 68.6 ms | 514 ms |
+| `utils/metadata/audit.ts` | 162.6 ms | 1755 ms |
 
 🔴 **A per-module ratio published here earlier is RETRACTED.** It divided `collect` by
 `inventory.json`'s static module counts, and that artifact was later found wrong by up to 75x and
@@ -25,9 +38,16 @@ selectively so — it followed lazy `dynamic(() => import())` edges that never e
 union is 1,321, not 3,230. Any figure of the form `ms per module` computed before that rebuild is
 unusable, mine included.
 
-What replaces it: vitest's per-module constant against the honest graph is **~43.6 ms** (aidan's
-refit, from 15). No counterpart is quoted for bun, because its denominator came from the same broken
-artifact. The per-file wall clock above needs no denominator and is the load-bearing number.
+Refit against aidan's honest `closures.json` (`mode: 'real'`), joined to the `pre-ctl` full run:
+
+```
+  1065 files, 104,797 real module-instances, collect 4729 s
+  vitest   45.1 ms per module-instance      (agrees with aidan's independent 43.6)
+  bun       3.2 ms per module-instance      (82-module closure in 259 ms)
+```
+
+~14x per module, on the one file both can load — consistent with the per-file figure above, as it
+must be.
 
 **So the cost is the module runner, not the modules.** That is consistent with the tracer result from
 this morning — 569 module *bodies* executing in ~0.4 s against a 25.4 s import phase — and it locates
@@ -39,7 +59,8 @@ pools did not distinguish them; a different runtime does.
 test framework, no mock interception, and no isolation between files. vitest's `collect` includes the
 setup file, the mock machinery, and a fresh registry per test file. The gap is real but it is not
 apples to apples, and nothing here shows bun *running our tests* faster — only loading our modules
-faster.
+faster. `node + tsx` could not even import a test file: `Vitest cannot be imported in a CommonJS
+module using require()`.
 
 ## What breaks, concretely
 
