@@ -62,7 +62,23 @@ export const PENDING_SPECIFIERS = [
 export const GUARDED_SPECIFIERS = [...CANONICAL_SPECIFIERS, ...PENDING_SPECIFIERS];
 
 /** Matches `vi.mock('<spec>'` in any quote style. Textual on purpose: this runs over ~1,000
- * files on every `test:lint-rules`, and parsing each is not worth the seconds. */
+ * files on every `test:lint-rules`, and parsing each is not worth the seconds.
+ *
+ * 🔴 Also matches the RELATIVE spelling of the same module. Every part of this system — the
+ * guard, the allowlist generator, the codemod — used to match only the literal `~/…` string,
+ * so `vi.mock('../../logging/client')` was invisible to all three at once. There is one such
+ * file in the tree today, and it is masked only because it is allowlisted for a *different*
+ * specifier: the moment that one is migrated, the file drops off the list and a live direct
+ * mock of a canonical module goes unwatched with the ratchet reporting clean.
+ *
+ * A relative path is matched on its trailing segments rather than resolved, because resolving
+ * needs the importing file's path and this is a per-specifier pattern. That is deliberately
+ * over-broad — a same-named module elsewhere in the tree would also match. For a guard, a
+ * false positive costs one allowlist line and a false negative costs the whole invariant.
+ */
 export function mockPattern(specifier: string) {
-  return new RegExp(`vi\\.mock\\(\\s*['"\`]${specifier.replace(/[/~.]/g, (c) => `\\${c}`)}['"\`]`);
+  const esc = (s: string) => s.replace(/[/~.]/g, (c) => `\\${c}`);
+  const tail = specifier.split('/').slice(-2).join('/');
+  const alt = `${esc(specifier)}|(?:\\.{1,2}/)+(?:[\\w.-]+/)*?${esc(tail)}`;
+  return new RegExp(`vi\\.mock\\(\\s*['"\`](?:${alt})['"\`]`);
 }

@@ -16,7 +16,7 @@ const { packedGet, packedSet, getMerchantCoins, getFullCurrencies, getMinimumPay
   }));
 
 vi.mock('~/env/server', () => ({ env: { NEXTAUTH_URL: 'https://example.test' } }));
-vi.mock('../../logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('../buzz.service', () => ({
   getMultipliersForUser: vi.fn(),
   getTransactionByExternalId: vi.fn(),

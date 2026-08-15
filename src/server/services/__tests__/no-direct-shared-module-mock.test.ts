@@ -69,9 +69,18 @@ function scan() {
   return { canonical, pending, scanned };
 }
 
-const allowlist = existsSync(ALLOWLIST_PATH)
-  ? JSON.parse(readFileSync(ALLOWLIST_PATH, 'utf8'))
-  : { files: [], pendingFiles: [] };
+// Parsed lazily, for the same reason `scan()` is called inside the tests rather than at module
+// scope: this file is a generated 500+ entry JSON that conflicts on every parallel branch, so a
+// bad merge resolution is the realistic path to malformed content. A throw here would collect
+// ZERO tests and report no failures — the guard would vanish from the run rather than fail it.
+// A missing file already fails closed (empty list => every direct mock is unallowlisted => red).
+let allowlistCache: { files: string[]; pendingFiles: string[] } | undefined;
+function readAllowlist() {
+  if (allowlistCache) return allowlistCache;
+  if (!existsSync(ALLOWLIST_PATH)) return (allowlistCache = { files: [], pendingFiles: [] });
+  allowlistCache = JSON.parse(readFileSync(ALLOWLIST_PATH, 'utf8'));
+  return allowlistCache!;
+}
 
 describe('no-direct-shared-module-mock', () => {
   // POSITIVE CONTROL. Everything below is a claim about a set of files; if the walk returns
@@ -86,7 +95,7 @@ describe('no-direct-shared-module-mock', () => {
 
   it('adds no new direct mock of a module that has a canonical mock', () => {
     const { canonical } = scan();
-    const added = Object.keys(canonical).filter((f) => !(allowlist.files ?? []).includes(f));
+    const added = Object.keys(canonical).filter((f) => !(readAllowlist().files ?? []).includes(f));
     expect(
       added,
       'These files mock a module that has a canonical mock. Use it instead — see ' +
@@ -100,7 +109,7 @@ describe('no-direct-shared-module-mock', () => {
     // Without this the list would stop being a progress bar: entries for files that no
     // longer mock anything would pad the count and hide the remaining work. This is the
     // direction that caught the merge resolution.
-    const stale = (allowlist.files ?? []).filter((f: string) => !canonical[f]);
+    const stale = (readAllowlist().files ?? []).filter((f: string) => !canonical[f]);
     expect(
       stale,
       'These files no longer mock a canonical module. Regenerate with ' +
@@ -112,6 +121,6 @@ describe('no-direct-shared-module-mock', () => {
     const { pending } = scan();
     // Counted, not enforced — but the recorded count has to match reality, or the dashboard
     // reports a finish line that does not exist.
-    expect(Object.keys(pending).length).toBe((allowlist.pendingFiles ?? []).length);
+    expect(Object.keys(pending).length).toBe((readAllowlist().pendingFiles ?? []).length);
   });
 });

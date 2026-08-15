@@ -63,8 +63,11 @@ for (const file of testFiles) {
 
 const previous = existsSync(OUT) ? JSON.parse(readFileSync(OUT, 'utf8')) : null;
 const previousFiles = previous?.files ?? null;
-if (previousFiles && files.length > previousFiles.length) {
-  const added = files.filter((f) => !previousFiles.includes(f));
+// Refuse on MEMBERSHIP, not on length. A change that migrates one file and adds a direct
+// mock in another leaves the count unchanged, so a length check writes the new list and the
+// guard passes with the new violation allowlisted.
+const added = previousFiles ? files.filter((f) => !previousFiles.includes(f)) : [];
+if (added.length) {
   console.error(
     `Refusing to grow the CANONICAL allowlist (${previousFiles.length} -> ${files.length}). New direct mocks:`
   );

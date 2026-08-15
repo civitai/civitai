@@ -260,7 +260,7 @@ function convert(file, text) {
         // it is unanswerable for a call expression like `completeKeys({ … })`, and it is not
         // what decides safety. What decides safety is whether the test asserts on a key
         // string, and a test that never names the constant cannot. (arabella, taxonomy §2.)
-        if (new RegExp(`\b${root}\b`).test(text.replace(prop.getText(), ''))) {
+        if (new RegExp(`\\b${root}\\b`).test(text.replace(prop.getText(), ''))) {
           refusals.push({ target, reason: `${root} is referenced outside the factory — check what it asserts` });
           ok = false;
           break;
@@ -302,7 +302,7 @@ function convert(file, text) {
           ok = false;
           break;
         }
-        if (new RegExp(`\b${root}\b`).test(text.replace(prop.getText(), ''))) {
+        if (new RegExp(`\\b${root}\\b`).test(text.replace(prop.getText(), ''))) {
           refusals.push({ target, reason: `factory declares "${root}", and the test references it — check what it asserts` });
           ok = false;
           break;
