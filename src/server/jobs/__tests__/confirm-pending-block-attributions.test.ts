@@ -8,16 +8,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * the WHERE clauses.
  */
 
-const { mockDbWrite } = vi.hoisted(() => ({
-  mockDbWrite: {
-    blockBuzzAttribution: {
-      groupBy: vi.fn(),
-      updateMany: vi.fn(),
-    },
-  },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: () => Promise.resolve(null),
 }));
@@ -32,6 +22,8 @@ import {
   HOLD_VELOCITY_CENTS,
   HOLD_VELOCITY_COUNT,
 } from '../confirm-pending-block-attributions';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbWrite = dbMock.dbWrite;
 
 beforeEach(() => {
   mockDbWrite.blockBuzzAttribution.groupBy.mockReset();
@@ -59,9 +51,7 @@ describe('confirmPendingBlockAttributions', () => {
     expect(mockDbWrite.blockBuzzAttribution.updateMany).toHaveBeenCalledTimes(3);
 
     const calls = mockDbWrite.blockBuzzAttribution.updateMany.mock.calls;
-    const byProvider = Object.fromEntries(
-      calls.map((c) => [c[0].where.paymentProvider, c[0]])
-    );
+    const byProvider = Object.fromEntries(calls.map((c) => [c[0].where.paymentProvider, c[0]]));
 
     // Stripe: 30-day window
     expect(byProvider.stripe.where.status).toBe('pending');

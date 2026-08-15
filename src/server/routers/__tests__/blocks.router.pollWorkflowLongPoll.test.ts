@@ -31,7 +31,6 @@ const {
   mockGetUserById,
   mockGetSessionUser,
   mockCheckBlockCatalogRateLimit,
-  mockDbRead,
   mockRedis,
   mockSysRedis,
   mockIsAppBlocksEnabled,
@@ -49,12 +48,6 @@ const {
   mockGetUserById: vi.fn(),
   mockGetSessionUser: vi.fn(),
   mockCheckBlockCatalogRateLimit: vi.fn(async () => ({ allowed: true })),
-  mockDbRead: {
-    modelVersion: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
-    modelBlockInstall: { findUnique: vi.fn() },
-    blockUserSettings: { findUnique: vi.fn() },
-    modelMetric: { findFirst: vi.fn() },
-  },
   mockRedis: {
     get: vi.fn(async () => null),
     set: vi.fn(async () => undefined),
@@ -109,15 +102,6 @@ vi.mock('~/server/services/user.service', () => ({ getUserById: mockGetUserById 
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: (...args: unknown[]) => mockGetSessionUser(...args) },
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: {
-    modelBlockInstall: { findUnique: vi.fn() },
-    model: { findUnique: vi.fn() },
-    user: { findUnique: vi.fn() },
-  },
-}));
-
 const { completeKeys } = vi.hoisted(() => {
   const group = (explicit: Record<string, string>, name: string): Record<string, string> =>
     new Proxy(explicit, {
@@ -161,6 +145,8 @@ import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { MAX_BLOCK_POLL_WAIT_SECONDS } from '~/server/services/blocks/workflow.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
 
 // 🔴 PAIRWISE-DISTINCT FIXTURE FIELDS. Every workflow below differs in id,
 // status AND cost, so a wiring bug that returns the wrong workflow — or a stub

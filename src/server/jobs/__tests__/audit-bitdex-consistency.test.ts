@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockDbWrite, mockIsFlipt, mockFetchDocs, mockCounters, mockHistogram } = vi.hoisted(() => ({
-  mockDbWrite: { $queryRaw: vi.fn() },
+const { mockIsFlipt, mockFetchDocs, mockCounters, mockHistogram } = vi.hoisted(() => ({
   mockIsFlipt: vi.fn(),
   mockFetchDocs: vi.fn(),
   mockCounters: {
@@ -13,13 +12,11 @@ const { mockDbWrite, mockIsFlipt, mockFetchDocs, mockCounters, mockHistogram } =
   mockHistogram: { observe: vi.fn() },
 }));
 
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 vi.mock('~/server/bitdex/client', () => ({ fetchBitdexDocuments: mockFetchDocs }));
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: mockIsFlipt,
   FLIPT_FEATURE_FLAGS: { BITDEX_CONSISTENCY_AUDIT: 'bitdex-consistency-audit' },
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(() => Promise.resolve()) }));
 vi.mock('~/server/prom/client', () => ({
   bitdexAuditCheckedCounter: mockCounters.checked,
   bitdexAuditMismatchCounter: mockCounters.mismatch,
@@ -40,6 +37,9 @@ import {
   getAuditConfig,
   readDocState,
 } from '~/server/jobs/audit-bitdex-consistency';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbWrite = dbMock.dbWrite;
 
 const runJob = auditBitdexConsistency as unknown as () => Promise<unknown>;
 
@@ -88,9 +88,7 @@ describe('buildScheduledSampleQuery', () => {
   it('asks PG for the GREATEST(publishedAt, scannedAt, createdAt) sortAt expectation', () => {
     // The expectation must be computed with the same semantics the index config
     // uses, not reimplemented in JS from a partial set of columns.
-    expect(sql()).toMatch(
-      /GREATEST\(p\."publishedAt", i\."scannedAt", i\."createdAt"\)/
-    );
+    expect(sql()).toMatch(/GREATEST\(p\."publishedAt", i\."scannedAt", i\."createdAt"\)/);
   });
 
   it('parameterizes settle and sample size (no literal injection)', () => {
@@ -285,9 +283,7 @@ describe('auditBitdexConsistency job body', () => {
 
   it('samples both strata, counts checks, and records a clean run', async () => {
     mockIsFlipt.mockResolvedValue(true);
-    mockDbWrite.$queryRaw
-      .mockResolvedValueOnce(scheduledRows)
-      .mockResolvedValueOnce(publishedRows);
+    mockDbWrite.$queryRaw.mockResolvedValueOnce(scheduledRows).mockResolvedValueOnce(publishedRows);
     mockFetchDocs
       .mockResolvedValueOnce([{ id: 1, isPublished: false }])
       .mockResolvedValueOnce([{ id: 2, isPublished: true, sortAt: NOW }]);
@@ -314,9 +310,7 @@ describe('auditBitdexConsistency job body', () => {
 
   it('counts a mismatch under its stratum and kind', async () => {
     mockIsFlipt.mockResolvedValue(true);
-    mockDbWrite.$queryRaw
-      .mockResolvedValueOnce(scheduledRows)
-      .mockResolvedValueOnce(publishedRows);
+    mockDbWrite.$queryRaw.mockResolvedValueOnce(scheduledRows).mockResolvedValueOnce(publishedRows);
     mockFetchDocs
       .mockResolvedValueOnce([{ id: 1, isPublished: true }])
       .mockResolvedValueOnce([{ id: 2, isPublished: true, sortAt: NOW }]);

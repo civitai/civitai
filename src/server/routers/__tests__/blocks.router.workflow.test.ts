@@ -32,25 +32,21 @@ const {
   mockGetDailyCompensation,
   mockCheckBlockCatalogRateLimit,
   mockGetSessionUser,
-  mockDbRead,
   mockRedis,
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
   mockDailyBoostApply,
   mockDailyBoostGetDetails,
   mockGetUserBuzzAccounts,
-  mockLogToAxiom,
   mockSysRedis,
   mockResolveCanGenerateForVersions,
   mockGetResourceData,
   mockGetHighestTierSubscription,
   mockRecordSpendAttribution,
-  mockDbWriteUserFindUnique,
 } = vi.hoisted(() => ({
   mockVerifyBlockToken: vi.fn(),
   // getMyViewer reads the viewer's ban/mute/deleted state from dbWrite.user
   // (the PRIMARY, like /blocks/me). Hoisted so tests can drive it + reset it.
-  mockDbWriteUserFindUnique: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
   mockGetOrchestratorToken: vi.fn(),
   mockSubmitWorkflow: vi.fn(),
@@ -70,16 +66,6 @@ const {
   // here, but getSessionUser must still be stubbed so the real resolver doesn't
   // hit the DB/redis.
   mockGetSessionUser: vi.fn(),
-  mockDbRead: {
-    modelVersion: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
-    // Required by resolveBlockCheckpoint (LoRA path) — published checkpoint
-    // resolution reads both tables in parallel.
-    modelBlockInstall: { findUnique: vi.fn() },
-    blockUserSettings: { findUnique: vi.fn() },
-    // Required by the platform-fallback rung (most-popular Checkpoint —
-    // queried via ModelMetric so we can orderBy thumbsUpCount).
-    modelMetric: { findFirst: vi.fn() },
-  },
   // Complete `redis` client stub. `checkBlockCatalogRateLimit` (used by the buzz
   // self-read mutations) calls incrBy/expire/ttl on this client; the buzz mutations
   // also mock the limiter itself (below), but stubbing every method the client
@@ -124,7 +110,6 @@ const {
     onDemand: true,
   })),
   mockGetUserBuzzAccounts: vi.fn(async () => ({ yellow: 0, blue: 0, green: 0 })),
-  mockLogToAxiom: vi.fn(async () => undefined),
   // W10 page branch: the canonical generation-entitlement gate. The router
   // dynamic-imports it from generation.service; we mock the module so the
   // heavy generation import graph (image.service → event-engine-common) stays
@@ -379,17 +364,6 @@ vi.mock('~/server/services/user.service', () => ({
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: (...args: unknown[]) => mockGetSessionUser(...args) },
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  // dbWrite is referenced for install-management procedures; stub the few
-  // shapes the unrelated procedures could hit so the import doesn't crash.
-  dbWrite: {
-    modelBlockInstall: { findUnique: vi.fn() },
-    model: { findUnique: vi.fn() },
-    // getMyViewer's ban/mute/deleted lookup (mirrors /blocks/me — PRIMARY read).
-    user: { findUnique: (...a: unknown[]) => mockDbWriteUserFindUnique(...a) },
-  },
-}));
 // blocks.router transitively pulls in many redis-cache modules that read
 // `REDIS_KEYS.<GROUP>.<KEY>` AT IMPORT TIME. The real keys live in redis/client
 // (which connects on import, so we can't importActual it). A hand-trimmed
@@ -453,9 +427,6 @@ vi.mock('~/server/services/generation/generation.service', () => ({
 }));
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: (...args: unknown[]) => mockGetHighestTierSubscription(...args),
-}));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...args: unknown[]) => mockLogToAxiom(...args),
 }));
 // W3 flow A — the submit path dynamic-imports recordSpendAttribution from
 // here. Mock the whole module so we drive the spend-write behavior; the
@@ -529,6 +500,11 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
 // honest about the shape it consumes.
 import { createModelSubstitutionCollector } from '~/shared/data-graph/generation/model-substitution';
 import type { ModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWriteUserFindUnique = dbMock.dbWrite.user.findUnique;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 function validClaims(over: Record<string, unknown> = {}) {
   return {
@@ -6482,7 +6458,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
     // recipe path produces (the recipe's own estimate; the recipe entitlement
     // gate + a reserve), never by the absence of an error.
     // ─────────────────────────────────────────────────────────────────────────
-    describe("🔴 recipe-arm routing — an explicit `mode` must NOT reach the inline path", () => {
+    describe('🔴 recipe-arm routing — an explicit `mode` must NOT reach the inline path', () => {
       // The three legal recipe spellings, exercised identically. `no mode` is the
       // control: it was already covered and must stay green.
       const RECIPE_SPELLINGS: Array<[string, Record<string, unknown>]> = [

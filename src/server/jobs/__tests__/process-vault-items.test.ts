@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const {
-  mockDbWrite,
   mockGetModelVersionData,
   mockGetPdf,
   mockFetchBlob,
@@ -10,9 +9,6 @@ const {
   mockProcessedInc,
   mockFailedInc,
 } = vi.hoisted(() => ({
-  mockDbWrite: {
-    vaultItem: { findMany: vi.fn(), update: vi.fn() },
-  },
   mockGetModelVersionData: vi.fn(),
   mockGetPdf: vi.fn(),
   mockFetchBlob: vi.fn(),
@@ -27,7 +23,6 @@ vi.mock('~/shared/utils/prisma/enums', () => ({
   VaultItemStatus: { Pending: 'Pending', Failed: 'Failed', Stored: 'Stored' },
 }));
 vi.mock('~/env/server', () => ({ env: { S3_VAULT_BUCKET: 'vault-bucket' } }));
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: () => ({ catch: () => {} }) }));
 vi.mock('~/server/jobs/job', () => ({
   createJob: (_n: string, _c: string, fn: unknown) => fn,
@@ -78,6 +73,8 @@ import {
   VAULT_ITEMS_BATCH_SIZE,
   LEASE_STALENESS_MS,
 } from '~/server/jobs/process-vault-items';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbWrite = dbMock.dbWrite;
 
 // The eligibility WHERE ANDs two OR-groups: [0] = retry-budget, [1] = overlap
 // lease guard. Small helpers keep the assertions robust to ordering.
@@ -99,7 +96,10 @@ const ctx = { s3: {} as never, bucket: 'vault-bucket' };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true })));
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => ({ ok: true }))
+  );
   mockGetS3Client.mockResolvedValue({});
   mockGetPdf.mockResolvedValue({ size: 512 });
   mockGetCustomPutUrl.mockResolvedValue({ url: 'https://put.example/obj' });

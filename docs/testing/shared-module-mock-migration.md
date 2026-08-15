@@ -13,6 +13,10 @@ node scripts/test-perf/codemod-shared-mocks.mjs --write <file>...
 node scripts/test-perf/codemod-shared-mocks.mjs --write --list <file-of-paths>   # Windows: avoids the 8191-char command line
 ```
 
+🔴 **Always `--write` through a `--list` of files you own.** A bare `--write` converts every
+convertible file in the repo, which is how one agent silently rewrote 53 files belonging to
+another's slice. `--dry` is safe repo-wide; it only reads.
+
 It converts only shapes it can prove equivalent, and a file is either fully converted for a
 specifier or untouched — never partly, because a leftover `vi.mock` on a canonical specifier
 re-poisons the whole worker. Every refusal is reported with a reason.
@@ -23,9 +27,19 @@ What it handles today:
 - the `importOriginal` spread, in both the concise and block-body spellings
 - `const { a, b } = vi.hoisted(() => ({ a: vi.fn(), b: vi.fn() }))` — removes just the entries
   it converts and leaves the rest of the hoisted object for other mocks
+- a whole client built as an object literal of spies, `mockDbRead: { $queryRaw: vi.fn(),
+  collection: { findFirstOrThrow: vi.fn() } }`, collapsed to `const mockDbRead =
+  dbMock.dbRead` — binding the root makes every leaf vivify at the path the literal named
+- `vi.hoisted` with a BLOCK body whose returned property names a local, resolving the
+  identifier to its literal; the local is removed too, but only when the block reads it
+  exactly once, so a `make()` helper shared by two clients is left alone
+- hand-written `REDIS_KEYS` / `REDIS_SYS_KEYS`, deep-compared against the real tables
 - inline spies that restate the canonical default (`findUnique: vi.fn(async () => null)`)
 - pure passthrough wrappers (`findMany: (...args) => localFn(...args)`), which exist only so a
   factory can reach a hoisted local and have no purpose once the factory is gone
+
+A leaf carrying real behaviour is always refused rather than dropped. That is the line the
+codemod holds everywhere: it converts what it can prove equivalent, and reports the rest.
 
 ## 2. Work through the refusals
 
@@ -157,6 +171,12 @@ came in at 11.
 ```bash
 node scripts/test-perf/gen-mock-allowlist.mjs
 ```
+
+🔴 **The allowlist is derived state. Regenerate it after any merge that touches a test
+file.** Resolving a conflict by taking both sides is usually right, but if one side deleted a
+direct mock the file is now migrated and its allowlist entry is stale — which fails the
+guard's second direction. That has already happened once, on an integration branch, and the
+guard was the only failure in a 16,806-test run.
 
 Writes `src/__tests__/mocks/direct-mock-allowlist.json`, and REFUSES to grow — a run that
 would add entries exits non-zero and names them, because a growing list means a new direct

@@ -1,62 +1,46 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const {
-  mockDbWrite,
-  mockCreateModelFileScanRequest,
-  mockModelFileScanSubmissionError,
-  mockLogToAxiom,
-  mockLimitConcurrency,
-} = vi.hoisted(() => {
-  // Test-local copy of the real error class so we can construct one in mock
-  // rejections without importing the real orchestrator module (which would
-  // pull in env validation). The shape only needs to match what scan-files.ts
-  // branches on: `instanceof ModelFileScanSubmissionError && code`.
-  class MockModelFileScanSubmissionError extends Error {
-    constructor(
-      message: string,
-      public readonly code: 'not-found' | 'transient',
-      public readonly status?: number,
-      public readonly orchestratorMessages?: string[]
-    ) {
-      super(message);
-      this.name = 'ModelFileScanSubmissionError';
+const { mockCreateModelFileScanRequest, mockModelFileScanSubmissionError, mockLimitConcurrency } =
+  vi.hoisted(() => {
+    // Test-local copy of the real error class so we can construct one in mock
+    // rejections without importing the real orchestrator module (which would
+    // pull in env validation). The shape only needs to match what scan-files.ts
+    // branches on: `instanceof ModelFileScanSubmissionError && code`.
+    class MockModelFileScanSubmissionError extends Error {
+      constructor(
+        message: string,
+        public readonly code: 'not-found' | 'transient',
+        public readonly status?: number,
+        public readonly orchestratorMessages?: string[]
+      ) {
+        super(message);
+        this.name = 'ModelFileScanSubmissionError';
+      }
     }
-  }
-  return {
-    mockDbWrite: {
-      modelFile: {
-        findMany: vi.fn(),
-        updateMany: vi.fn(),
-        update: vi.fn(),
-      },
-      modelFileHash: {
-        create: vi.fn(),
-      },
-    },
-    mockCreateModelFileScanRequest: vi.fn(),
-    mockModelFileScanSubmissionError: MockModelFileScanSubmissionError,
-    mockLogToAxiom: vi.fn(),
-    // Run all tasks sequentially so we can assert on their effects deterministically.
-    mockLimitConcurrency: vi.fn(async (tasks: Array<() => Promise<unknown>>) => {
-      for (const t of tasks) await t();
-    }),
-  };
-});
-
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
+    return {
+      mockCreateModelFileScanRequest: vi.fn(),
+      mockModelFileScanSubmissionError: MockModelFileScanSubmissionError,
+      // Run all tasks sequentially so we can assert on their effects deterministically.
+      mockLimitConcurrency: vi.fn(async (tasks: Array<() => Promise<unknown>>) => {
+        for (const t of tasks) await t();
+      }),
+    };
+  });
 
 vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
   createModelFileScanRequest: mockCreateModelFileScanRequest,
   ModelFileScanSubmissionError: mockModelFileScanSubmissionError,
 }));
 
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
-
 vi.mock('~/server/utils/concurrency-helpers', () => ({
   limitConcurrency: mockLimitConcurrency,
 }));
 
 import { scanFilesFallbackJob } from '~/server/jobs/scan-files';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbWrite = dbMock.dbWrite;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 const ctx = {} as Parameters<typeof scanFilesFallbackJob.run>[0];
 

@@ -317,7 +317,7 @@ function convert(file, text) {
       refusals.push({ target: 'multiple', reason: `no module-scope declaration found for "${name}"` });
       return { file, text, converted: [], refusals };
     }
-    if (!isPlainSpyInitializer(hoisted.property.initializer, expr)) {
+    if (!isPlainSpyInitializer(hoisted.initializer, expr)) {
       refusals.push({ target: 'multiple', reason: `hoisted entry "${name}" is not a bare vi.fn()` });
       return { file, text, converted: [], refusals };
     }
@@ -345,6 +345,15 @@ function convert(file, text) {
     for (const r of removals) {
       edits.push(dropListItem(r.element, pattern.elements, text));
       edits.push(dropListItem(r.property, object.properties, text));
+      // The local the returned property named, when nothing else in the block read it.
+      if (r.localStatement) {
+        let end = r.localStatement.getEnd();
+        while (end < text.length && (text[end] === '\r' || text[end] === '\n')) end++;
+        let start = r.localStatement.getStart(sf);
+        // Take the indentation with it, or the removal leaves a whitespace-only line.
+        while (start > 0 && (text[start - 1] === ' ' || text[start - 1] === '\t')) start--;
+        edits.push({ start, end, replacement: '' });
+      }
     }
   }
 
@@ -362,11 +371,28 @@ function convert(file, text) {
   // consts on the `vi.hoisted` statement instead put the insertion point inside a range the
   // deletion pass then removed, and the two edits overlapped — which silently ate the first
   // character of the inserted `const` and the doc comment above it.
+  // A test's own local can be named exactly what the canonical mock is imported as —
+  // `const { redisMock } = vi.hoisted(...)` is real, and lifting it produced the
+  // self-referential `const redisMock = redisMock.redis;`. Where that happens the import is
+  // aliased and every generated expression re-prefixed, so the local keeps its name and the
+  // test body still needs no edits.
+  const taken = new Set([...bindings.keys(), ...topLevelNames(sf)]);
+  const alias = {};
+  for (const target of importsNeeded) {
+    const { mock } = TARGETS[target];
+    alias[mock] = taken.has(mock) ? `canonical${mock[0].toUpperCase()}${mock.slice(1)}` : mock;
+  }
+  const reprefix = (line) =>
+    Object.entries(alias).reduce(
+      (acc, [from, to]) => (from === to ? acc : acc.replace(new RegExp(`\\b${from}\\.`, 'g'), `${to}.`)),
+      line
+    );
+
   const importLines = [...importsNeeded]
     .map((t) => TARGETS[t])
-    .map((s) => `import { ${s.mock} } from '${s.from}';`)
+    .map((s) => (alias[s.mock] === s.mock ? `import { ${s.mock} } from '${s.from}';` : `import { ${s.mock} as ${alias[s.mock]} } from '${s.from}';`))
     .filter((line) => !text.includes(line));
-  const inserted = [...importLines, ...lifted];
+  const inserted = [...importLines, ...lifted.map(reprefix)];
   if (inserted.length) {
     const lastImport = [...sf.statements].reverse().find((s) => ts.isImportDeclaration(s));
     const at = lastImport ? lastImport.getEnd() : 0;
@@ -375,7 +401,7 @@ function convert(file, text) {
 
   edits.sort((a, b) => b.start - a.start);
   let out = text;
-  for (const e of edits) out = out.slice(0, e.start) + e.replacement + out.slice(e.end);
+  for (const e of edits) out = out.slice(0, e.start) + reprefix(e.replacement) + out.slice(e.end);
 
   return { file, text: out, converted: convertedTargets, refusals };
 }
@@ -439,6 +465,29 @@ function canonicalDefaults() {
     set: "'OK'",
     setEx: "'OK'",
   };
+}
+
+/**
+ * A whole client built as an object literal of spies —
+ * `mockDbRead: { $queryRaw: vi.fn(), collection: { findFirstOrThrow: vi.fn() } }` — bound to
+ * the factory as `dbRead: mockDbRead`.
+ *
+ * Equivalent to the canonical client root when every leaf is a bare `vi.fn()` or restates
+ * that leaf's own canonical default, because binding the root makes each leaf vivify at
+ * exactly the path the literal named. A leaf carrying real behaviour is refused: it would be
+ * silently dropped.
+ */
+function isEquivalentClientLiteral(node, canonicalExpr) {
+  if (!ts.isObjectLiteralExpression(node)) return false;
+  for (const prop of node.properties) {
+    if (!ts.isPropertyAssignment(prop) || !ts.isIdentifier(prop.name)) return false;
+    const childExpr = `${canonicalExpr}.${prop.name.text}`;
+    const init = prop.initializer;
+    if (isBareViFn(init) || isDefaultEquivalent(childExpr, init)) continue;
+    if (isEquivalentClientLiteral(init, childExpr)) continue;
+    return false;
+  }
+  return node.properties.length > 0;
 }
 
 /** True when an inline spy just restates this path's canonical default. */
@@ -535,6 +584,28 @@ function dropListItem(item, list, text) {
   return { start, end, replacement: '' };
 }
 
+/** Every name declared at the top level of the file — imports, consts, functions, classes. */
+function topLevelNames(sf) {
+  const names = new Set();
+  const add = (node) => {
+    if (!node) return;
+    if (ts.isIdentifier(node)) names.add(node.text);
+    else if (ts.isObjectBindingPattern(node) || ts.isArrayBindingPattern(node))
+      for (const el of node.elements) if (ts.isBindingElement(el)) add(el.name);
+  };
+  for (const stmt of sf.statements) {
+    if (ts.isVariableStatement(stmt)) for (const d of stmt.declarationList.declarations) add(d.name);
+    else if (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) add(stmt.name);
+    else if (ts.isImportDeclaration(stmt) && stmt.importClause) {
+      add(stmt.importClause.name);
+      const b = stmt.importClause.namedBindings;
+      if (b && ts.isNamedImports(b)) for (const el of b.elements) add(el.name);
+      else if (b && ts.isNamespaceImport(b)) add(b.name);
+    }
+  }
+  return names;
+}
+
 function findHoistedBinding(sf, name) {
   for (const stmt of sf.statements) {
     if (!ts.isVariableStatement(stmt)) continue;
@@ -550,9 +621,27 @@ function findHoistedBinding(sf, name) {
       )
         continue;
       const fn = call.arguments[0];
-      if (!fn || (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) || !fn.body || ts.isBlock(fn.body))
-        continue;
+      if (!fn || (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) || !fn.body) continue;
+
+      // A block body builds its clients as locals and returns them by name:
+      //   vi.hoisted(() => { const dbRead = {...}; return { mockDbRead: dbRead }; })
+      // Track those locals so the returned identifier can be resolved to its literal.
+      const locals = new Map();
       let body = fn.body;
+      if (ts.isBlock(body)) {
+        let returned = null;
+        for (const s of body.statements) {
+          if (ts.isVariableStatement(s)) {
+            for (const local of s.declarationList.declarations)
+              if (ts.isIdentifier(local.name) && local.initializer)
+                locals.set(local.name.text, { declaration: local, statement: s });
+            continue;
+          }
+          if (ts.isReturnStatement(s) && s.expression) returned = s.expression;
+        }
+        if (!returned) continue;
+        body = returned;
+      }
       while (ts.isParenthesizedExpression(body)) body = body.expression;
       if (!ts.isObjectLiteralExpression(body)) continue;
 
@@ -562,7 +651,21 @@ function findHoistedBinding(sf, name) {
       const property = body.properties.find(
         (p) => ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === name
       );
-      if (element && property) return { statement: stmt, pattern: d.name, object: body, element, property };
+      if (!element || !property) continue;
+
+      // Resolve `mockDbRead: dbRead` to `dbRead`'s literal. The local is only removable if
+      // nothing else in the block reads it — counted textually, and conservatively: two
+      // occurrences means the declaration plus this one reference.
+      let initializer = property.initializer;
+      let localStatement = null;
+      if (ts.isIdentifier(initializer) && locals.has(initializer.text)) {
+        const local = locals.get(initializer.text);
+        const uses = (fn.getText().match(new RegExp(`\\b${initializer.text}\\b`, 'g')) ?? []).length;
+        if (uses === 2) localStatement = local.statement;
+        initializer = local.declaration.initializer;
+      }
+
+      return { statement: stmt, pattern: d.name, object: body, element, property, initializer, localStatement };
     }
   }
   return null;
@@ -571,6 +674,7 @@ function findHoistedBinding(sf, name) {
 function isPlainSpyInitializer(node, canonicalExpr = '') {
   if (!node) return false;
   if (isBareViFn(node)) return true;
+  if (canonicalExpr && isEquivalentClientLiteral(node, canonicalExpr)) return true;
   // `vi.fn().mockResolvedValue(undefined)` is exactly the canonical logToAxiom default,
   // so binding it to the canonical node loses nothing. Deliberately NOT generalised: for
   // any other node the default differs and dropping the behaviour would change the test.

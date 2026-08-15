@@ -8,6 +8,8 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
+import { redisMock as canonicalRedisMock } from '~/__tests__/mocks/redis.mock';
+const redisMock = canonicalRedisMock.redis;
 
 /**
  * Origin-side response cache tests for GET /api/v1/models/[id].
@@ -44,16 +46,6 @@ const claimsBox: { claims: BlockTokenClaims | undefined } = { claims: undefined 
 // serialization are exercised (not bypassed like a bare Map would). Stores the
 // packed Buffer keyed by redis key; cleared in beforeEach.
 const redisStore = new Map<string, Buffer>();
-const { redisMock } = vi.hoisted(() => ({
-  redisMock: {
-    packed: {
-      get: vi.fn(),
-      set: vi.fn(),
-    },
-    del: vi.fn(),
-  },
-}));
-
 // fetchThroughCache is mocked with a faithful re-implementation of the real
 // helper's relevant branches (read wrapper via redis.packed.get; on miss/expired,
 // run fetchFn + redis.packed.set the `{ data, cachedAt }` wrapper). This keeps the
@@ -77,11 +69,6 @@ vi.mock('~/server/services/model-version.service', () => ({
 
 vi.mock('~/server/utils/cache-helpers', () => ({
   fetchThroughCache: mockFetchThroughCache,
-}));
-
-vi.mock('~/server/redis/client', () => ({
-  redis: redisMock,
-  REDIS_KEYS: { CACHES: { PUBLIC_MODEL_RESPONSE: 'packed:caches:public-model-response' } },
 }));
 
 vi.mock('~/server/middleware/block-scope.middleware', () => ({

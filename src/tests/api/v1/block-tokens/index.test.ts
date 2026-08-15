@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbWrite = dbMock.dbWrite;
 
 /**
  * Handler-level coverage for POST /api/v1/block-tokens. The token-issuance
@@ -12,15 +14,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * block-registry.resolve-instance.test.ts.
  */
 
-const { mockDbWrite, mockRedis, mockSession, mockTokenService, mockBlockRegistry } = vi.hoisted(() => {
-  const dbWrite = {
-    user: { findUnique: vi.fn() },
-    // A6: the per-user scope-grant ledger. getGrantedScopes reads this at mint
-    // time to intersect the signable scopes with what the viewer has granted.
-    appUserScopeGrant: {
-      findUnique: vi.fn<(...args: any[]) => Promise<any>>(async () => null),
-    },
-  };
+const { mockRedis, mockSession, mockTokenService, mockBlockRegistry } = vi.hoisted(() => {
   const redis = {
     incrBy: vi.fn(async () => 1),
     expire: vi.fn(async () => true),
@@ -39,7 +33,6 @@ const { mockDbWrite, mockRedis, mockSession, mockTokenService, mockBlockRegistry
     resolveBlockInstance: vi.fn<(...args: any[]) => Promise<any>>(),
   };
   return {
-    mockDbWrite: dbWrite,
     mockRedis: redis,
     mockSession: session,
     mockTokenService: tokenService,
@@ -56,7 +49,6 @@ vi.mock('~/env/server', () => ({
   },
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => mockSession.value),
 }));
@@ -115,8 +107,16 @@ function makeReq(opts: {
   } as unknown as NextApiRequest;
 }
 
-function makeRes(): NextApiResponse & { _status: number; _body: unknown; _headers: Record<string, string> } {
-  const res: NextApiResponse & { _status: number; _body: unknown; _headers: Record<string, string> } = {
+function makeRes(): NextApiResponse & {
+  _status: number;
+  _body: unknown;
+  _headers: Record<string, string>;
+} {
+  const res: NextApiResponse & {
+    _status: number;
+    _body: unknown;
+    _headers: Record<string, string>;
+  } = {
     _status: 0,
     _body: null,
     _headers: {},
@@ -139,7 +139,11 @@ function makeRes(): NextApiResponse & { _status: number; _body: unknown; _header
       this._body = body;
       return this;
     }),
-  } as unknown as NextApiResponse & { _status: number; _body: unknown; _headers: Record<string, string> };
+  } as unknown as NextApiResponse & {
+    _status: number;
+    _body: unknown;
+    _headers: Record<string, string>;
+  };
   return res;
 }
 
@@ -425,7 +429,9 @@ describe('POST /api/v1/block-tokens', () => {
       res
     );
     expect(res._status).toBe(200);
-    const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { ctx: Record<string, unknown> };
+    const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as {
+      ctx: Record<string, unknown>;
+    };
     // The resolved install row has slotId='model.sidebar_top'.
     expect(signArgs.ctx.slotId).toBe('model.sidebar_top');
     expect(signArgs.ctx.modelId).toBe(12345);
@@ -447,7 +453,9 @@ describe('POST /api/v1/block-tokens', () => {
       res
     );
     expect(res._status).toBe(200);
-    const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { ctx: Record<string, unknown> };
+    const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as {
+      ctx: Record<string, unknown>;
+    };
     expect(signArgs.ctx.modelName).toBeUndefined();
     expect(signArgs.ctx.modelType).toBeUndefined();
     expect(signArgs.ctx.modelVersionId).toBeUndefined();
@@ -467,7 +475,10 @@ describe('POST /api/v1/block-tokens', () => {
     await handler(
       makeReq({
         origin: 'https://civitai.com',
-        body: { blockInstanceId: 'bus_pub_abc', slotContext: { modelId: 12345, slotId: 'model.sidebar_top' } },
+        body: {
+          blockInstanceId: 'bus_pub_abc',
+          slotContext: { modelId: 12345, slotId: 'model.sidebar_top' },
+        },
       }),
       res
     );
@@ -678,14 +689,20 @@ describe('POST /api/v1/block-tokens', () => {
       const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
       const res = makeRes();
       await handler(
-        makeReq({ origin: 'https://civitai.red', headers: { host: 'civitai.red' }, body: validBody() }),
+        makeReq({
+          origin: 'https://civitai.red',
+          headers: { host: 'civitai.red' },
+          body: validBody(),
+        }),
         res
       );
       expect(res._status).toBe(200);
       expect(mockTokenService.sign).toHaveBeenCalled();
       const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { maxBrowsingLevel: number };
       expect(signArgs.maxBrowsingLevel).toBe(allBrowsingLevelsFlag);
-      expect((res._body as { maxBrowsingLevel: number }).maxBrowsingLevel).toBe(allBrowsingLevelsFlag);
+      expect((res._body as { maxBrowsingLevel: number }).maxBrowsingLevel).toBe(
+        allBrowsingLevelsFlag
+      );
     });
 
     it('civitai.com (non-red host) keeps the SFW ceiling (not the mature flag)', async () => {
@@ -696,7 +713,11 @@ describe('POST /api/v1/block-tokens', () => {
       const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
       const res = makeRes();
       await handler(
-        makeReq({ origin: 'https://civitai.com', headers: { host: 'civitai.com' }, body: validBody() }),
+        makeReq({
+          origin: 'https://civitai.com',
+          headers: { host: 'civitai.com' },
+          body: validBody(),
+        }),
         res
       );
       expect(res._status).toBe(200);
@@ -717,7 +738,11 @@ describe('POST /api/v1/block-tokens', () => {
       const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
       const res = makeRes();
       await handler(
-        makeReq({ origin: 'https://civitai.com', headers: { host: 'civitai.com' }, body: validBody() }),
+        makeReq({
+          origin: 'https://civitai.com',
+          headers: { host: 'civitai.com' },
+          body: validBody(),
+        }),
         res
       );
       expect(res._status).toBe(403);
@@ -737,7 +762,11 @@ describe('POST /api/v1/block-tokens', () => {
       const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
       const res = makeRes();
       await handler(
-        makeReq({ origin: 'https://civitai.red', headers: { host: 'civitai.red' }, body: validBody() }),
+        makeReq({
+          origin: 'https://civitai.red',
+          headers: { host: 'civitai.red' },
+          body: validBody(),
+        }),
         res
       );
       expect(res._status).toBe(200);
@@ -757,7 +786,11 @@ describe('POST /api/v1/block-tokens', () => {
       const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
       const res = makeRes();
       await handler(
-        makeReq({ origin: 'https://civitai.com', headers: { host: 'civitai.com' }, body: validBody() }),
+        makeReq({
+          origin: 'https://civitai.com',
+          headers: { host: 'civitai.com' },
+          body: validBody(),
+        }),
         res
       );
       expect(res._status).toBe(200);

@@ -32,7 +32,6 @@ const {
   mockGetUserById,
   mockCheckBlockCatalogRateLimit,
   mockGetSessionUser,
-  mockDbRead,
   mockRedis,
   mockSysRedis,
   mockIsAppBlocksEnabled,
@@ -49,12 +48,6 @@ const {
   mockGetUserById: vi.fn(),
   mockCheckBlockCatalogRateLimit: vi.fn(async () => ({ allowed: true })),
   mockGetSessionUser: vi.fn(),
-  mockDbRead: {
-    modelVersion: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
-    modelBlockInstall: { findUnique: vi.fn() },
-    blockUserSettings: { findUnique: vi.fn() },
-    modelMetric: { findFirst: vi.fn() },
-  },
   mockRedis: {
     get: vi.fn(async () => null),
     set: vi.fn(async () => undefined),
@@ -107,15 +100,6 @@ vi.mock('~/server/services/user.service', () => ({ getUserById: mockGetUserById 
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: (...args: unknown[]) => mockGetSessionUser(...args) },
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: {
-    modelBlockInstall: { findUnique: vi.fn() },
-    model: { findUnique: vi.fn() },
-    user: { findUnique: vi.fn() },
-  },
-}));
-
 const { completeKeys } = vi.hoisted(() => {
   const group = (explicit: Record<string, string>, name: string): Record<string, string> =>
     new Proxy(explicit, {
@@ -125,7 +109,11 @@ const { completeKeys } = vi.hoisted(() => {
   const completeKeys = (explicit: Record<string, Record<string, string>>) =>
     new Proxy(explicit, {
       get: (t, g) =>
-        g in t ? group((t as any)[g], g as string) : typeof g === 'string' ? group({}, g) : (t as any)[g],
+        g in t
+          ? group((t as any)[g], g as string)
+          : typeof g === 'string'
+          ? group({}, g)
+          : (t as any)[g],
     });
   return { completeKeys };
 });
@@ -151,6 +139,8 @@ vi.mock('~/server/middleware.trpc', async () => {
 
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
 
 function validClaims(over: Record<string, unknown> = {}) {
   return {

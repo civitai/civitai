@@ -34,13 +34,11 @@ const {
   mockGetUserById,
   mockCheckBlockCatalogRateLimit,
   mockGetSessionUser,
-  mockDbRead,
   mockRedis,
   mockSysRedis,
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
   mockCreateXGuardModerationRequest,
-  mockLogToAxiom,
 } = vi.hoisted(() => ({
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
@@ -52,12 +50,6 @@ const {
   mockGetUserById: vi.fn(),
   mockCheckBlockCatalogRateLimit: vi.fn(async () => ({ allowed: true })),
   mockGetSessionUser: vi.fn(),
-  mockDbRead: {
-    modelVersion: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
-    modelBlockInstall: { findUnique: vi.fn() },
-    blockUserSettings: { findUnique: vi.fn() },
-    modelMetric: { findFirst: vi.fn() },
-  },
   mockRedis: {
     get: vi.fn(async () => null),
     set: vi.fn(async () => undefined),
@@ -81,7 +73,6 @@ const {
     async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator
   ),
   mockCreateXGuardModerationRequest: vi.fn(),
-  mockLogToAxiom: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
@@ -110,15 +101,6 @@ vi.mock('~/server/services/user.service', () => ({ getUserById: mockGetUserById 
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: (...args: unknown[]) => mockGetSessionUser(...args) },
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: {
-    modelBlockInstall: { findUnique: vi.fn() },
-    model: { findUnique: vi.fn() },
-    user: { findUnique: vi.fn() },
-  },
-}));
-
 const { completeKeys } = vi.hoisted(() => {
   const group = (explicit: Record<string, string>, name: string): Record<string, string> =>
     new Proxy(explicit, {
@@ -163,11 +145,6 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOrig
   const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, createXGuardModerationRequest: mockCreateXGuardModerationRequest };
 });
-vi.mock('~/server/logging/client', async (importOriginal) => {
-  const actual = await importOriginal<Record<string, unknown>>();
-  return { ...actual, logToAxiom: mockLogToAxiom };
-});
-
 // 🔴 A `'textOutput'` STEP IS INJECTED INTO THE REGISTRY LOOKUP so these cases
 // own their fixture instead of riding on whichever real entry happens to declare
 // the posture (`chat-completion` does today — this file predates it and asserted
@@ -199,6 +176,10 @@ import {
   TEXT_OUTPUT_WITHHELD_MESSAGE,
   __clearTextOutputVerdictCacheForTests,
 } from '~/server/services/blocks/steps/text-output-moderation';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 const CHAT_TYPE = 'fixtureChat';
 const GENERATED_TEXT = 'the model wrote this exact sentence';
