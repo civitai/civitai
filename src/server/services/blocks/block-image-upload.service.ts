@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
 
 import { dbRead } from '~/server/db/client';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import {
   classifyBlockImageUploadScan,
   isAllowedOutputHost,

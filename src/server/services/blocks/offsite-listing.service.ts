@@ -1393,7 +1393,7 @@ async function loadListingEditView(
   connectRequestedScopes: number | null;
   connectScopeJustifications: Record<string, string> | null;
 }> {
-  const { getEdgeUrl } = await import('~/client-utils/cf-images-utils');
+  const { getEdgeUrl } = await import('~/client-utils/edge-url');
   const row = (await db.appListing.findUnique({
     where: { id: listingId },
     select: {

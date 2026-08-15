@@ -1,7 +1,7 @@
 import type { OAuth2Client } from 'google-auth-library';
 import { Readable } from 'node:stream';
 import sanitize from 'sanitize-html';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { env } from '~/env/server';
 import { fetchBlob } from '~/utils/file-utils';
 import type { youtube_v3 } from 'googleapis/build/src/apis/youtube';

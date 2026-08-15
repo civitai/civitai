@@ -112,7 +112,7 @@ vi.mock('~/env/server', () => ({
 
 // Trim the serialization helper graph so the handler body is deterministic and
 // no Prisma client loads through them.
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (url: string) => url }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => url }));
 // Keep the REAL module and override only the URL builders. A wholesale factory
 // here silently drops any export the handler later starts using — which is
 // exactly what happened when `createSerializedFileDownloadUrl` was added: the

@@ -23,7 +23,7 @@ const { mockUpload, mockCreateImage } = vi.hoisted(() => ({
 // The service statically imports dbRead + getEdgeUrl; stub both so the module
 // graph never touches a real Prisma client / cf-images env.
 vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (u: string) => `edge:${u}` }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (u: string) => `edge:${u}` }));
 vi.mock('~/utils/s3-utils', () => ({ uploadImageBufferToStore: mockUpload }));
 // `createImage` is dynamically imported inside the service.
 vi.mock('~/server/services/image.service', () => ({ createImage: mockCreateImage }));

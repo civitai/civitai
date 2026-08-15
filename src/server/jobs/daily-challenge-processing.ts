@@ -1,6 +1,6 @@
 import { CollectionReadConfiguration, Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
