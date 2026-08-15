@@ -40,9 +40,7 @@ vi.mock('@civitai/client', () => ({
   }),
 }));
 vi.mock('@aws-sdk/lib-storage', () => ({ Upload: class {} }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({ preventModelVersionLag: vi.fn() }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: {} }));
 vi.mock('~/server/redis/client', () => ({
   REDIS_SYS_KEYS: { SYSTEM: { FEATURES: 'system:features' } },
@@ -64,6 +62,8 @@ vi.mock('~/utils/s3-utils', () => ({
 vi.mock('~/server/http/orchestrator/orchestrator.caller', () => ({ getOrchestratorCaller: vi.fn() }));
 
 import { toOrchestratorError } from '~/server/services/training.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // toOrchestratorError has a `never` return — capture the thrown value.
 const capture = (error: unknown): unknown => {

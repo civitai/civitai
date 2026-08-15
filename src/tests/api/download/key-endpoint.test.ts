@@ -30,12 +30,6 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: mockGetServerAuthSession,
 }));
 
-const { mockFindUnique } = vi.hoisted(() => ({ mockFindUnique: vi.fn() }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { keyValue: { findUnique: mockFindUnique } },
-  dbWrite: {},
-}));
-
 // The client IP is NOT mocked: the handler derives it via getTrustedClientIp,
 // so these tests drive the real derivation by supplying the edge headers /
 // transport peer the way a real request would. Mocking the derivation away
@@ -58,6 +52,8 @@ vi.mock('~/server/logging/client', () => ({
 // real abort classification runs.
 
 import handler from '~/pages/api/download/[...key]';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockFindUnique = dbMock.dbRead.keyValue.findUnique;
 
 function createMocks({
   key = ['images', '127209598'],

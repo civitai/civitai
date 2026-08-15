@@ -70,10 +70,6 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({ auditPromptServer: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({ getUserById: vi.fn() }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { appBlock: { findUnique: vi.fn() } },
-  dbWrite: {},
-}));
 vi.mock('~/server/redis/client', async () => {
   const actual = await vi.importActual<typeof import('@civitai/redis/client')>(
     '@civitai/redis/client'
@@ -99,7 +95,6 @@ vi.mock('~/server/services/appBlockReview.service', () => ({
 vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzAccounts: vi.fn(async () => ({ yellow: 0, blue: 0, green: 0 })),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');
   return { rateLimit: () => middleware(async ({ next }) => next()) };
@@ -108,6 +103,8 @@ vi.mock('~/server/middleware.trpc', async () => {
 import { blocksRouter } from '../blocks.router';
 import { dbRead } from '~/server/db/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 function fakeCtx(user: unknown) {
   return {

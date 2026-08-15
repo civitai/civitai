@@ -48,13 +48,12 @@ vi.mock('~/server/redis/client', () => ({
 vi.mock('~/server/redis/atomic', () => ({ hSetWithTTL: vi.fn(), zAddWithTTL: vi.fn() }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: mockClickhouse }));
-vi.mock('~/server/db/client', () => ({ dbRead: {} }));
-
 // NOTE: errorHandling is intentionally NOT mocked — we exercise the REAL
 // isClickHouseConnectionError (message-shape match) + throwServiceUnavailableError
 // (the 503 mapping) end to end.
 
 import { getImageRatingsCounter } from '~/server/games/new-order/utils';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 beforeEach(() => {
   vi.clearAllMocks();

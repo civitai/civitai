@@ -33,9 +33,6 @@ vi.mock('~/server/redis/client', () => {
 });
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
 
-// Keep the DB / infra layer inert (avoids booting Prisma / kysely / pools at
-// import — buildGenerationContext never touches them on the status path).
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {},  pgDbRead: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
@@ -69,6 +66,7 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 
 import { buildGenerationContext } from '~/server/services/orchestrator/orchestration-new.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 beforeEach(() => {
   vi.clearAllMocks();

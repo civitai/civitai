@@ -57,10 +57,9 @@ vi.mock('~/server/auth/civ-cookie', () => ({
   hasAnyLegacyCookie: vi.fn(() => false),
   cookieDomainForHost: vi.fn(() => '.civitai.test'),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
-
 import handler from '~/pages/api/auth/callback';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 function reqWith(
   headers: Record<string, string | string[]>,

@@ -57,10 +57,6 @@ vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   stopDevTunnelForUserBlock: mockStopForUserBlock,
   getActiveDevTunnel: mockGetActive,
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { appBlock: { findUnique: vi.fn() } },
-  dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
-}));
 vi.mock('~/server/redis/client', async () => {
   const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
   return {
@@ -95,6 +91,7 @@ vi.mock('~/server/middleware.trpc', async () => {
 
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 function authedCtx(userId: number, isModerator = true) {
   return {

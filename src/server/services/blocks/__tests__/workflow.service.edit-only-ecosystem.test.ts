@@ -40,10 +40,9 @@ vi.mock('~/shared/data-graph/generation/config/workflows', async (importOriginal
   };
 });
 
-vi.mock('~/server/db/client', () => ({ dbRead: { modelVersion: { findUnique: vi.fn() } } }));
-
 import { resolveBlockImageWorkflowType } from '../workflow.service';
 import { ECO } from '~/shared/constants/basemodel.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // A stand-in ecosystem id; the mock decides its capabilities.
 const FAKE_ECO = 999001;

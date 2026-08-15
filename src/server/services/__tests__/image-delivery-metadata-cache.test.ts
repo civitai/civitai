@@ -6,20 +6,14 @@ import { pack, unpack } from 'msgpackr';
 // get -> unpack(buffer)) — so the byte-identical claim is exercised through the real
 // serializer end-to-end, not a pass-through fake. Cache hit/miss semantics stay real (a Map),
 // letting us assert exactly when the origin DB query is re-run.
-const { store, dbReadQueryRaw, dbWriteQueryRaw, redisPackedGet, redisPackedSet, redisDel } =
+const { store, redisPackedGet, redisPackedSet, redisDel } =
   vi.hoisted(() => ({
     store: new Map<string, Buffer>(),
-    dbReadQueryRaw: vi.fn(),
-    dbWriteQueryRaw: vi.fn(),
     redisPackedGet: vi.fn(),
     redisPackedSet: vi.fn(),
     redisDel: vi.fn(),
   }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: dbReadQueryRaw },
-  dbWrite: { $queryRaw: dbWriteQueryRaw },
-}));
 // Keep the real REDIS_KEYS (so the key we build matches the production constant) and only
 // swap the live client for the in-memory fake.
 vi.mock('~/server/redis/client', async (importOriginal) => {
@@ -41,6 +35,9 @@ import { CacheTTL } from '~/server/common/constants';
 // that never selects it — measured: 5 of the media-type assertions below went green against
 // the pre-change service until this was introduced.
 import { respondWithRows } from '~/test-utils/queryRawProjection';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const dbReadQueryRaw = dbMock.dbRead.$queryRaw;
+const dbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
 
 // `:v2` — bumped when the cached value gained `type`/`mimeType`, so a hit on an entry packed
 // by the previous release can never serve a response missing those fields.

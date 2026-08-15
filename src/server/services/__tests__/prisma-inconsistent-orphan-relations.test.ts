@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // The modules under test (model.service, article.selector → tag.selector, etc.)
 // call `Prisma.validator<...>()(...)` and the `Prisma.sql`/`raw`/`join` tagged-
@@ -88,12 +89,7 @@ vi.mock('@prisma/client', () => {
 // so we mock the db client and the env, and stub the (heavy) transitive imports
 // of model.service that aren't exercised by this code path.
 
-const findManyMock = vi.fn();
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { imageResourceNew: { findMany: findManyMock } },
-  dbWrite: {},
-}));
+const findManyMock = dbMock.dbRead.imageResourceNew.findMany;
 
 describe('getRecentlyManuallyAdded — orphaned ImageResourceNew.modelVersion', () => {
   // `../model.service` is a ~2500-line module that transitively imports the heavy

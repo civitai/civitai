@@ -65,10 +65,6 @@ function createMocks({
   return { req, res };
 }
 
-const { mockFindUnique } = vi.hoisted(() => ({
-  mockFindUnique: vi.fn(),
-}));
-
 // The inner handler reads `req.blockClaims`; withBlockScope injects it. Point
 // claimsBox.claims at the token under test per-case.
 const claimsBox: { claims: BlockTokenClaims | undefined } = { claims: undefined };
@@ -95,13 +91,9 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (handler: any) => handler }));
 
-// The handler reads from dbWrite (M1: never the replica) for the ban/mute/deleted
-// lookup — mock ONLY that method so no Prisma engine is needed.
-vi.mock('~/server/db/client', () => ({
-  dbWrite: { user: { findUnique: mockFindUnique } },
-}));
-
 import handler from '~/pages/api/v1/blocks/me';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockFindUnique = dbMock.dbWrite.user.findUnique;
 
 function fakeClaims(over: Partial<BlockTokenClaims> = {}): BlockTokenClaims {
   return {

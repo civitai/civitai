@@ -37,7 +37,6 @@ vi.mock('~/server/redis/client', () => {
   };
 });
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, pgDbRead: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
@@ -68,6 +67,7 @@ vi.mock('~/server/services/image.service', () => ({
 
 import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
 import { WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY } from '~/shared/data-graph/generation/model-substitution';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const SUBSTITUTION = { requested: 999999999, applied: 2436219, reason: 'unrecognized' as const };
 

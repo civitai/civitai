@@ -65,11 +65,6 @@ vi.mock('~/server/redis/client', () => ({
   REDIS_KEYS: { BUZZ_EVENTS: 'buzz-events' },
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbWrite: {},
-  dbRead: {},
-}));
-
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: (...args: any[]) => h.logToAxiom(...args),
 }));
@@ -95,6 +90,7 @@ vi.mock('~/utils/string-helpers', () => ({
 
 // Import AFTER mocks are registered.
 import { createBuzzEvent } from '~/server/rewards/base.reward';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 beforeEach(() => {
   vi.clearAllMocks();

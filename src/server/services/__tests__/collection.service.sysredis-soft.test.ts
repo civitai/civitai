@@ -44,9 +44,6 @@ vi.mock('@civitai/db', () => ({
   loadDbEnv: vi.fn(() => ({})),
 }));
 
-// Collapse the heavy sibling graph — getCollectionRandomSeed touches only
-// sysRedis + computeHourlySeed, so DB / cache / other service infra is inert.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {},  pgDbRead: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
@@ -73,6 +70,7 @@ vi.mock('~/server/services/post.service', () => ({ getPostsInfinite: vi.fn() }))
 vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser: vi.fn(async () => false) }));
 
 import { getCollectionRandomSeed } from '~/server/services/collection.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // The function fails open to Math.floor(Date.now() / (1000*60*60)); compute the
 // same value here to assert the degraded return without pinning a literal.

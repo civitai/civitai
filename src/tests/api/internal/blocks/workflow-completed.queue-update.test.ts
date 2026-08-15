@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * G6 — the completion callback updates the block_workflows queue read-model.
@@ -18,12 +19,13 @@ const JOB_TOKEN = 'test-job-token';
 const BLOCK_INSTANCE_ID = 'bki_0123456789ABCDEFGHJKMNPQRS';
 const WORKFLOW_ID = 'wf_test_123';
 
-const { mockFindUnique, mockIncrBy, mockExpire, mockExecuteRaw } = vi.hoisted(() => ({
-  mockFindUnique: vi.fn(),
+const { mockIncrBy, mockExpire,  } = vi.hoisted(() => ({
   mockIncrBy: vi.fn(),
   mockExpire: vi.fn(),
-  mockExecuteRaw: vi.fn(),
+  
 }));
+const mockFindUnique = dbMock.dbRead.blockUserSubscription.findUnique;
+const mockExecuteRaw = dbMock.dbWrite.$executeRaw;
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
 vi.mock('~/env/server', () => ({
@@ -38,10 +40,6 @@ vi.mock('~/env/server', () => ({
 // Pipeline flag hard-ON — this file is about the (un-gated) queue update, not the gate.
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: vi.fn(async (flag: string) => flag === 'app-blocks-pipeline-enabled'),
-}));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { blockUserSubscription: { findUnique: mockFindUnique } },
-  dbWrite: { $executeRaw: (...a: unknown[]) => mockExecuteRaw(...a) },
 }));
 vi.mock('~/server/redis/client', () => ({
   redis: { incrBy: mockIncrBy, expire: mockExpire },

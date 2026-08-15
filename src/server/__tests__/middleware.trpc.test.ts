@@ -81,10 +81,6 @@ vi.mock('~/server/cloudflare/client', () => ({
   purgeCache: vi.fn(async () => undefined),
 }));
 
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn(async () => undefined),
-}));
-
 vi.mock('~/server/utils/server-domain', () => ({
   getRequestDomainColor: vi.fn(() => 'blue'),
 }));
@@ -113,6 +109,7 @@ vi.mock('~/env/client', () => ({
 }));
 
 import { rateLimit } from '../middleware.trpc';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 beforeEach(() => {
   vi.clearAllMocks();

@@ -10,16 +10,13 @@ vi.mock('~/server/redis/client', () => ({
   redis: { get: redisGet, set: vi.fn() },
   REDIS_KEYS: { SYSTEM: { BLOCKLIST: 'system:blocklist' } },
 }));
-vi.mock('~/server/db/client', () => ({
-  dbWrite: { blocklist: { findFirst: vi.fn(), findUnique: vi.fn() } },
-}));
-
 import {
   buildBenignPhraseRegex,
   stripBenignPhrases,
   throwOnBlockedLinkDomain,
 } from '../blocklist.service';
 import { BlocklistType } from '~/server/common/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /** Make getBlocklistData return the given domains (already lower-cased in prod). */
 function setBlockedDomains(domains: string[]) {

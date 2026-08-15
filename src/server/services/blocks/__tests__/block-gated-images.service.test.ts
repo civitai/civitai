@@ -3,10 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
-const queryRaw = vi.fn();
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: (...a: unknown[]) => queryRaw(...a) },
-}));
+const queryRaw = dbMock.dbRead.$queryRaw;
 // Deterministic edge-url so the assertion is stable and we never import the real
 // CF util (which pulls env). The gated url embeds the raw key so we can assert it
 // is ONLY ever produced for a visible image.
@@ -34,6 +31,7 @@ import {
   resolveViewerBrowsingLevel,
 } from '~/server/services/blocks/block-gated-images.service';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const SFW = NsfwLevel.PG | NsfwLevel.PG13; // 3
 const APP = 'app_test';

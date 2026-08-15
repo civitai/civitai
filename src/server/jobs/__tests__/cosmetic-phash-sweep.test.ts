@@ -19,10 +19,9 @@ vi.mock('~/server/services/cosmetic-phash.service', async (importOriginal) => ({
   storeCosmeticPerceptualHash: mocks.storeCosmeticPerceptualHash,
   markCosmeticHashFailed: mocks.markCosmeticHashFailed,
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
-
 import { COSMETIC_PHASH_LANE } from '~/server/services/cosmetic-phash.service';
 import { sweepCosmeticPerceptualHashes } from '../cosmetic-phash-sweep';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 describe('sweepCosmeticPerceptualHashes', () => {
   beforeEach(() => {

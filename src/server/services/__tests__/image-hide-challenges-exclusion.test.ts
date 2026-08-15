@@ -42,7 +42,6 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/redis/client', () => {
   type KeyProxy = (() => string) & { [key: string]: KeyProxy };
@@ -64,6 +63,7 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 
 import { getAllImages, getAllImagesIndex } from '../image.service';
 import { dailyChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // The literal, not `dailyChallengeConfig.challengeTagId`. Reading the id from config makes the
 // exclusion assertions compare against `undefined` on a tree where the field doesn't exist, which

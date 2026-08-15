@@ -20,7 +20,6 @@ vi.mock('~/env/server', () => ({
   },
 }));
 vi.mock('~/env/other', () => ({ isProd: false, isDev: true }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => null),
 }));
@@ -30,6 +29,7 @@ vi.mock('~/server/flipt/client', () => ({
 }));
 
 import { Tracker } from '../client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const metric = () => ({
   entityType: 'Image' as const,

@@ -39,10 +39,6 @@ vi.mock('~/server/prom/client', () => {
   };
 });
 
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
-}));
-
 import {
   createLabelAdmitter,
   recordLabeledBlock,
@@ -52,6 +48,7 @@ import {
   LONGTASK_LABEL_OVERFLOW,
   LONGTASK_LABEL_PREFIXES,
 } from '~/server/eventloop-longtask';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const PREFIX = 'civitai_app_';
 const LABELED_COUNTER = PREFIX + 'eventloop_longtask_labeled_total';

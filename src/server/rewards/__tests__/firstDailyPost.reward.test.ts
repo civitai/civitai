@@ -9,8 +9,6 @@ vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: { $query: (...args: unknown[]) => h.query(...args) },
 }));
 vi.mock('~/server/redis/client', () => ({ redis: {}, REDIS_KEYS: { BUZZ_EVENTS: 'buzz-events' } }));
-vi.mock('~/server/db/client', () => ({ dbWrite: {}, dbRead: {} }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 vi.mock('~/server/prom/client', () => ({
   rewardFailedCounter: { inc: vi.fn() },
   rewardGivenCounter: { inc: vi.fn() },
@@ -22,6 +20,8 @@ vi.mock('~/server/services/buzz.service', () => ({
 }));
 
 import { getFirstDailyPostRewardedIds } from '~/server/rewards/active/firstDailyPost.reward';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // `$query` is a tagged template, so the mock sees (parts, ...values).
 const lastQuery = () => {

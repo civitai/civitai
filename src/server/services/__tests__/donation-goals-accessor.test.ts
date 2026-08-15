@@ -11,17 +11,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * goal is `null`.
  */
 
-const { mockCacheFetch, mockGetPaidAccess, mockUserFindMany, mockMembership } = vi.hoisted(() => ({
+const { mockCacheFetch, mockGetPaidAccess, mockMembership } = vi.hoisted(() => ({
   mockCacheFetch: vi.fn(),
   mockGetPaidAccess: vi.fn(),
-  mockUserFindMany: vi.fn(),
   mockMembership: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: { user: { findMany: mockUserFindMany } },
-  dbWrite: {},
-}));
 vi.mock('~/server/redis/caches', () => ({
   modelVersionPublicDonationGoalsCache: { fetch: mockCacheFetch, bust: vi.fn() },
 }));
@@ -36,9 +31,10 @@ vi.mock('~/server/services/buzz.service', () => ({
   createMultiAccountBuzzTransaction: vi.fn(),
   refundMultiAccountTransaction: vi.fn(),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
-
 import { getDonationGoals } from '~/server/services/donation-goal.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockUserFindMany = dbMock.dbRead.user.findMany;
 
 const goal = (over: Record<string, unknown> = {}) => ({
   id: 10,

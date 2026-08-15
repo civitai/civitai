@@ -29,12 +29,12 @@ vi.mock('~/env/server', () => ({
   },
 }));
 vi.mock('~/env/other', () => ({ isProd: false, isDev: true }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => null),
 }));
 
 import { Tracker } from '../client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 function lastFetchBody(fetchMock: ReturnType<typeof vi.fn>) {
   const call = fetchMock.mock.calls[fetchMock.mock.calls.length - 1];

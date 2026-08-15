@@ -6,6 +6,8 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 // it by Vitest's transform, so the stubs still apply.
 import { getVaeFiles } from '~/server/services/model.service';
 import type * as RedisClient from '~/server/redis/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const modelFileFindMany = dbMock.dbRead.modelFile.findMany;
 
 /**
  * `getVaeFiles` is the PRODUCER of the cross-version files that both public v1
@@ -23,12 +25,6 @@ import type * as RedisClient from '~/server/redis/client';
  * Only the Prisma call is stubbed; the selection + relabel are the real code.
  */
 
-const { modelFileFindMany } = vi.hoisted(() => ({ modelFileFindMany: vi.fn() }));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { modelFile: { findMany: modelFileFindMany } },
-  dbWrite: {},
-}));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
 // Breaks the `event-engine-common` submodule chain that otherwise blocks
 // importing model.service in the unit env; nothing here is reached by getVaeFiles.

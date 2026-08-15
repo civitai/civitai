@@ -1,31 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
-const queryRaw = vi.fn();
+const queryRaw = dbMock.dbWrite.$queryRaw;
 const settlePlacement = vi.fn();
-const placementFindMany = vi.fn();
-const placementFindUnique = vi.fn();
-const placementUpdateMany = vi.fn();
-const placementCount = vi.fn();
-const suspensionFindUnique = vi.fn();
-const suspensionUpsert = vi.fn();
+const placementFindMany = dbMock.dbWrite.placement.findMany;
+const placementFindUnique = dbMock.dbWrite.placement.findUnique;
+const placementUpdateMany = dbMock.dbWrite.placement.updateMany;
+const placementCount = dbMock.dbWrite.placement.count;
+const suspensionFindUnique = dbMock.dbWrite.placementSuspension.findUnique;
+const suspensionUpsert = dbMock.dbWrite.placementSuspension.upsert;
 
-vi.mock('~/server/db/client', () => ({
-  dbWrite: {
-    $queryRaw: queryRaw,
-    placement: {
-      findMany: placementFindMany,
-      findUnique: placementFindUnique,
-      updateMany: placementUpdateMany,
-      count: placementCount,
-    },
-    placementSuspension: {
-      findUnique: suspensionFindUnique,
-      upsert: suspensionUpsert,
-      deleteMany: vi.fn(),
-    },
-  },
-}));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('~/server/services/placement-escrow.service', () => ({ settlePlacement }));
 
 const {

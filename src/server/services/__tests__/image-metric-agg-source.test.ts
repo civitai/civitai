@@ -21,10 +21,10 @@ import { describe, it, expect, vi } from 'vitest';
 // logger. Stub the smallest seams so importing it is side-effect-free; the
 // function under test reads NONE of these — it's plain string building.
 vi.mock('~/env/server', () => ({ env: new Proxy({}, { get: () => undefined }) }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('@flipt-io/flipt-client-js', () => ({ FliptClient: class {} }));
 
 import { buildEntityMetricPerDaySource } from '~/server/flipt/client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 describe('buildEntityMetricPerDaySource', () => {
   const sql = buildEntityMetricPerDaySource(`WHERE entityType = 'Image'`);

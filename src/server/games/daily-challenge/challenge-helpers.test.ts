@@ -1,15 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
-// Verifies `resolveChallengeReviewInputs` — the category+nsfw resolution extracted out of
-// reviewEntriesForChallenge (~/server/jobs/daily-challenge-processing.ts) so the mod re-review
-// endpoint (~/pages/api/mod/daily-challenge/re-review.ts) can mirror it exactly. Any challenge
-// with a valid judgingCategories value is judged by it regardless of source; a malformed/null
-// value falls back to `categories: undefined` (fixed theme/wittiness/humor/aesthetic rubric).
-
-// challenge-helpers.ts also imports dbRead/dbWrite/redis for its other (DB-backed) exports —
-// stub those so importing the module for this pure-function test doesn't construct real
-// Prisma/Redis clients.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/redis/client', () => ({ redis: {}, REDIS_KEYS: {} }));
 
 const { resolveChallengeReviewInputs } = await import('./challenge-helpers');

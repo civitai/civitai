@@ -37,17 +37,7 @@ vi.mock('~/server/redis/client', () => {
   };
 });
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-const imageFindUnique = vi.fn();
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    image: { findUnique: (...args: unknown[]) => imageFindUnique(...args) },
-    // No stored resource rows: `getResourceData([])` short-circuits, so the whole
-    // resource-enrichment path stays out of this test and `getBaseModelFromResources`
-    // returns undefined — which is what leaves `type` equal to `media.type`.
-    imageResourceNew: { findMany: vi.fn().mockResolvedValue([]) },
-  },
-  dbWrite: {},
-}));
+const imageFindUnique = dbMock.dbRead.image.findUnique;
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
@@ -77,6 +67,7 @@ import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { getGenerationData } from '~/server/services/generation/generation.service';
 import type { GetGenerationDataSchema } from '~/server/schema/generation.schema';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 describe('generation.service — caller rejections are TRPCErrors, not plain Errors', () => {
   it('an unsupported generation data type raises BAD_REQUEST with its own text', async () => {

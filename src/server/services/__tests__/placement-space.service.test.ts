@@ -1,24 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PlacementService from '~/server/services/placement.service';
 import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const spaceFindUnique = vi.fn();
-const spaceFindMany = vi.fn();
-const spaceUpsert = vi.fn();
-const imageFindUnique = vi.fn();
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: {},
-  dbWrite: {
-    placementSpace: {
-      findUnique: spaceFindUnique,
-      findMany: spaceFindMany,
-      upsert: spaceUpsert,
-    },
-    image: { findUnique: imageFindUnique },
-    post: { findUnique: vi.fn() },
-  },
-}));
+const spaceFindUnique = dbMock.dbWrite.placementSpace.findUnique;
+const spaceFindMany = dbMock.dbWrite.placementSpace.findMany;
+const spaceUpsert = dbMock.dbWrite.placementSpace.upsert;
+const imageFindUnique = dbMock.dbWrite.image.findUnique;
 
 vi.mock('~/server/services/placement.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementService>()),

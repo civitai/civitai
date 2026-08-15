@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { UserEngagementType } from '~/shared/utils/prisma/enums';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // Booting PGlite (WASM Postgres) can exceed the default 10s hook timeout on a
 // contended runner. Relaxing it can only help a slow box, never mask a failure.
@@ -42,7 +43,6 @@ vi.mock('~/server/db/client', () => ({
     placementSuspension: { findUnique: async () => null },
   },
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('~/server/services/placement-escrow.service', () => ({ settlePlacement: vi.fn() }));
 
 const { isPlacementBlocked } = await import('~/server/services/placement-moderation.service');

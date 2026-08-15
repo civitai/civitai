@@ -1,11 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-// Mocked for the EXIT CODE, not the assertions — see ecosystems.test.ts.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-
 import { createGrokImageInput } from '../ecosystems/grok.handler';
 import { grokVersionIds } from '~/shared/data-graph/generation/version-ids';
 import type { GenerationHandlerCtx } from '../orchestration-new.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const ctx = {
   airs: {} as any,

@@ -7,14 +7,12 @@ const {
   mockClickhouseQuery,
   mockGetVotingRateLimitConfig,
   mockSmitePlayer,
-  mockLogToAxiom,
   mockHandleLogError,
   counterStub,
 } = vi.hoisted(() => ({
   mockClickhouseQuery: vi.fn().mockResolvedValue([]),
   mockGetVotingRateLimitConfig: vi.fn().mockResolvedValue(null),
   mockSmitePlayer: vi.fn().mockResolvedValue(undefined),
-  mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
   mockHandleLogError: vi.fn(),
   counterStub: {
     increment: vi.fn(),
@@ -51,14 +49,9 @@ vi.mock('~/server/services/games/new-order.service', () => ({
   processFinalRatings: vi.fn(),
   clearRatedImages: vi.fn(),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 vi.mock('~/server/utils/errorHandling', () => ({ handleLogError: mockHandleLogError }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransactionMany: vi.fn(),
-}));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { newOrderPlayer: { findMany: vi.fn() }, newOrderSmite: { findMany: vi.fn() } },
-  dbWrite: {},
 }));
 vi.mock('~/server/utils/concurrency-helpers', () => ({
   limitConcurrency: async (tasks: Array<() => Promise<unknown>>) => {
@@ -71,6 +64,9 @@ vi.mock('~/env/server', () => ({ env: { DISCORD_WEBHOOK_MOD_ALERTS: undefined } 
 // Import AFTER mocks
 import { runAbuseDetectionScan } from '~/server/jobs/new-order-jobs';
 import { constants, newOrderConfig } from '~/server/common/constants';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 const SYSTEM_USER_ID = constants.system.user.id;
 const AUTO_SMITE_SIZE = newOrderConfig.smiteSize * 50;

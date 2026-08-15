@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * App Blocks (Phase-1 seam) — `persistBlockWorkflowOutputImage` redirect-follow
@@ -20,9 +21,6 @@ const { mockUpload, mockCreateImage } = vi.hoisted(() => ({
   mockCreateImage: vi.fn(async (..._a: unknown[]): Promise<{ id: number }> => ({ id: 4242 })),
 }));
 
-// The service statically imports dbRead + getEdgeUrl; stub both so the module
-// graph never touches a real Prisma client / cf-images env.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (u: string) => `edge:${u}` }));
 vi.mock('~/utils/s3-utils', () => ({ uploadImageBufferToStore: mockUpload }));
 // `createImage` is dynamically imported inside the service.

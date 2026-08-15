@@ -1,22 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
-// Focused test for src/pages/api/v1/model-versions/by-hash/ids.ts.
-// Kept in src/server/__tests__ (NOT under src/pages) per CLAUDE.md: Next.js treats
-// every file under src/pages as a route and `next build` fails on test files there.
-
-const { mockFindMany } = vi.hoisted(() => ({ mockFindMany: vi.fn() }));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { modelFile: { findMany: mockFindMany } },
-}));
-
 // Unwrap PublicEndpoint so we can invoke the raw handler directly (no CORS/cache side effects).
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   PublicEndpoint: (handler: Function) => handler,
 }));
 
 import handler from '~/pages/api/v1/model-versions/by-hash/ids';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockFindMany = dbMock.dbRead.modelFile.findMany;
 
 const HASH = 'A'.repeat(64);
 const HASH_2 = 'B'.repeat(64);

@@ -6,12 +6,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // config read fails — a sysRedis DOWN (hGet throws) or SLOW/half-open (withSysReadDeadline
 // rejects) must return early WITHOUT touching clickhouse/dbWrite.
 
-const { hGet, withSysReadDeadline, chQuery, dbQueryRawUnsafe, createNotification, refresh } =
+const { hGet, withSysReadDeadline, chQuery, createNotification, refresh } =
   vi.hoisted(() => ({
     hGet: vi.fn(),
     withSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
     chQuery: vi.fn(),
-    dbQueryRawUnsafe: vi.fn(),
     createNotification: vi.fn(() => Promise.resolve(undefined)),
     refresh: vi.fn(() => Promise.resolve(undefined)),
   }));
@@ -24,10 +23,6 @@ vi.mock('~/server/redis/client', () => ({
 
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: { $query: chQuery },
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbWrite: { $queryRawUnsafe: dbQueryRawUnsafe },
 }));
 
 vi.mock('~/server/redis/caches', () => ({
@@ -56,6 +51,8 @@ vi.mock('~/server/jobs/job', () => ({
 }));
 
 import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const dbQueryRawUnsafe = dbMock.dbWrite.$queryRawUnsafe;
 
 beforeEach(() => {
   vi.clearAllMocks();

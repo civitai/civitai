@@ -26,20 +26,13 @@ vi.mock('~/env/server', () => ({
   ),
 }));
 
-// delivery-worker imports parseKey from s3-utils, which imports db/client and
-// instantiates a real PrismaClient at module load. Stub the db client so the
-// import graph doesn't need `prisma generate` (mirrors s3-utils.test).
-vi.mock('~/server/db/client', () => ({
-  dbRead: {},
-  dbWrite: {},
-}));
-
 import {
   DeliveryWorkerError,
   getDownloadUrl,
   resolveDownloadUrl,
   safeDecodeURIComponent,
 } from '../delivery-worker';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 describe('safeDecodeURIComponent', () => {
   it('decodes a well-formed encoded value', () => {

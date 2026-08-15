@@ -60,8 +60,6 @@ const {
   mockGetGenerationData,
   mockGetResourceData,
   mockGetFileForModelVersion,
-  mockKeyValueFindUnique,
-  mockModelFileFindUnique,
   mockFetchThroughCache,
   mockGetFullTensorAnalysisCached,
   mockHasExceededLimit,
@@ -74,8 +72,6 @@ const {
   mockGetGenerationData: vi.fn(),
   mockGetResourceData: vi.fn(),
   mockGetFileForModelVersion: vi.fn(),
-  mockKeyValueFindUnique: vi.fn(),
-  mockModelFileFindUnique: vi.fn(),
   mockFetchThroughCache: vi.fn(),
   mockGetFullTensorAnalysisCached: vi.fn(),
   mockHasExceededLimit: vi.fn(),
@@ -110,13 +106,6 @@ vi.mock('~/server/utils/rate-limiting', () => ({
   createLimiter: () => ({ hasExceededLimit: mockHasExceededLimit, increment: mockIncrement }),
 }));
 vi.mock('~/server/utils/download-count', () => ({ fetchDownloadCount: vi.fn() }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    keyValue: { findUnique: mockKeyValueFindUnique },
-    modelFile: { findUnique: mockModelFileFindUnique },
-  },
-  dbWrite: {},
-}));
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Tracker: mockTracker,
@@ -144,6 +133,9 @@ import generationDataHandler from '~/pages/api/generation/data';
 import generationResourcesHandler from '~/pages/api/generation/resources';
 import downloadModelRoute from '~/pages/api/download/models/[modelVersionId]';
 import tensorMetadataRoute from '~/pages/api/v1/model-files/[id]/tensor-metadata';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockKeyValueFindUnique = dbMock.dbRead.keyValue.findUnique;
+const mockModelFileFindUnique = dbMock.dbRead.modelFile.findUnique;
 
 /**
  * `MixedAuthEndpoint` is mocked to identity above, so this module exports its

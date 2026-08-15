@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * GET /api/blocks/manifest-schema single-source guard.
@@ -26,7 +27,6 @@ vi.mock('~/env/server', () => ({
     LOGGING: [],
   },
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 // Cut the heavy subtrees endpoint-helpers pulls at module load (redis/logging via
 // the orchestrator token, and the server-host list) — none are exercised by the
 // PublicEndpoint GET path under test.

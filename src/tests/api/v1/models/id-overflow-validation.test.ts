@@ -70,7 +70,6 @@ vi.mock('~/server/utils/model-helpers', () => ({
   getPrimaryFile: (files: any[]) => files?.[0],
   getEpochJobAndFileName: () => ({}),
 }));
-vi.mock('~/server/db/client', () => ({ dbWrite: { $queryRaw: vi.fn(async () => []) } }));
 vi.mock('~/server/services/generation/generation.service', () => ({
   getShouldChargeForResources: vi.fn(async () => ({})),
   resolveCanGenerateForVersions: vi.fn(async () => []),
@@ -83,6 +82,7 @@ vi.mock('~/env/server', () => ({
 // The REAL exported schemas (only the service/db graph around them is mocked).
 import { schema as modelsSchema } from '~/pages/api/v1/models/[id]';
 import { schema as miniSchema } from '~/pages/api/v1/model-versions/mini/[id]';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Out-of-range / invalid ids that a bare z.coerce.number() would WRONGLY accept.
 const OUT_OF_RANGE = ['853267723675816615', '999999999999', '308615308615', String(INT4_MAX + 1)];

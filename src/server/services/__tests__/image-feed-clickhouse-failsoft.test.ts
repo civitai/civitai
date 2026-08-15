@@ -68,7 +68,6 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/redis/client', () => {
   const make = (): any => new Proxy(() => 'k', { get: () => make() });
@@ -98,6 +97,7 @@ vi.mock('~/server/redis/client', () => {
 // (mirrors the proven image-metrics-timeout.test.ts, which also leaves flipt real).
 
 import { getImagesFromFeedSearch } from '../image.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const baseInput = {
   limit: 10,

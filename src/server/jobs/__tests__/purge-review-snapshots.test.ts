@@ -14,25 +14,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *     REVIEW_SNAPSHOT_PURGE_AFTER_MS ago is retained, not reclaimed.
  */
 
-const { mockFindMany, mockFindFirst, mockDelete, mockLogToAxiom, mockGetJobDate, mockSetCursor } =
+const { mockDelete, mockGetJobDate, mockSetCursor } =
   vi.hoisted(() => ({
-    mockFindMany: vi.fn(),
-    mockFindFirst: vi.fn(),
     mockDelete: vi.fn(),
-    mockLogToAxiom: vi.fn(() => Promise.resolve(undefined)),
     mockGetJobDate: vi.fn(),
     mockSetCursor: vi.fn(() => Promise.resolve(undefined)),
   }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: { appBlockPublishRequest: { findMany: (...a: unknown[]) => mockFindMany(...a) } },
-  dbWrite: { appBlockPublishRequest: { findFirst: (...a: unknown[]) => mockFindFirst(...a) } },
-}));
 vi.mock('~/server/services/blocks/forgejo.service', () => ({
   deleteReviewRepo: (...a: unknown[]) => mockDelete(...a),
-}));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...a: unknown[]) => mockLogToAxiom(...a),
 }));
 // createJob wraps the handler in lock/metric machinery we don't need here — stub
 // it to hand back the bare handler (mirrors the sibling block-job tests).
@@ -49,6 +39,11 @@ import {
   REVIEW_SNAPSHOT_PURGE_BATCH_SIZE,
   SNAPSHOT_PROTECTING_STATUSES,
 } from '../purge-review-snapshots';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockFindMany = dbMock.dbRead.appBlockPublishRequest.findMany;
+const mockFindFirst = dbMock.dbWrite.appBlockPublishRequest.findFirst;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 /** The DB pins this vocabulary: CHECK ("status" IN (…)) on the request table. */
 const ALL_STATUSES = ['pending', 'approved', 'rejected', 'withdrawn'] as const;
@@ -197,17 +192,18 @@ describe('purgeExpiredReviewSnapshots — the protection gate', () => {
    * load-bearing. The gate must read the primary.
    */
   it('reads the gate from the PRIMARY, not the replica', async () => {
-    const db = await import('~/server/db/client');
     mockFindMany.mockResolvedValue([row('gen-matrix')]);
 
     await purgeExpiredReviewSnapshots({ now: NOW });
 
-    // Every gate read (the pre-delete gate + the post-delete re-check) is bound
-    // to dbWrite; dbRead exposes no findFirst at all.
+    // Every gate read (the pre-delete gate + the post-delete re-check) is bound to
+    // dbWrite, and the replica is never asked. Asserted as "was not called" rather than
+    // "the method is undefined": the canonical mock vivifies every method, so absence
+    // from the fixture is no longer observable — and a call count is the stronger claim
+    // anyway, since it would still catch a read routed to the replica if some other file
+    // had populated that method first.
     expect(mockFindFirst).toHaveBeenCalledTimes(2);
-    expect(
-      (db.dbRead.appBlockPublishRequest as Record<string, unknown>).findFirst
-    ).toBeUndefined();
+    expect(dbMock.dbRead.appBlockPublishRequest.findFirst).not.toHaveBeenCalled();
   });
 });
 

@@ -8,24 +8,16 @@ import { pack, unpack } from 'msgpackr';
 // semantics stay real (a Map), letting us assert exactly when the origin DB query re-runs.
 const {
   store,
-  auctionFindMany,
   redisPackedGet,
   redisPackedSet,
   redisSetNxKeepTtlWithEx,
   redisDel,
 } = vi.hoisted(() => ({
   store: new Map<string, Buffer>(),
-  auctionFindMany: vi.fn(),
   redisPackedGet: vi.fn(),
   redisPackedSet: vi.fn(),
   redisSetNxKeepTtlWithEx: vi.fn(),
   redisDel: vi.fn(),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  // Call count on this mock is the cache-hit assertion.
-  dbWrite: { auction: { findMany: auctionFindMany } },
-  dbRead: {},
 }));
 
 // Cut the heavy sibling-service import graph (image.service pulls the event-engine-common
@@ -57,6 +49,8 @@ vi.mock('~/server/redis/client', async (importOriginal) => {
 
 import { getAllAuctions, getAllAuctionsUncached } from '~/server/services/auction.service';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const auctionFindMany = dbMock.dbWrite.auction.findMany;
 
 const KEY = REDIS_KEYS.CACHES.ACTIVE_AUCTIONS; // 'packed:caches:active-auctions'
 

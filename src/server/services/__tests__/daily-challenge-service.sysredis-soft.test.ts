@@ -25,7 +25,6 @@ vi.mock('~/server/redis/client', () => ({
   withSysReadDeadline: mockWithSysReadDeadline,
 }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
-vi.mock('~/server/db/client', () => ({ dbRead: {} }));
 // Heavy sibling modules pulled in by the service's import graph — stub so the
 // import doesn't pull DB / article service.
 vi.mock('~/server/games/daily-challenge/daily-challenge.utils', () => ({
@@ -36,6 +35,7 @@ vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({ getChalleng
 vi.mock('~/server/services/article.service', () => ({ getArticles: vi.fn() }));
 
 import { getCustomChallenge } from '~/server/services/daily-challenge.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const VALID = JSON.stringify({
   articleId: 1,

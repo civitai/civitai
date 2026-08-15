@@ -35,38 +35,17 @@ import * as z from 'zod';
  *     keyed on `blocked` would release it.
  */
 
-const { mockCreateXGuardModerationRequest, mockLogToAxiom } = vi.hoisted(() => ({
+const { mockCreateXGuardModerationRequest,  } = vi.hoisted(() => ({
   mockCreateXGuardModerationRequest: vi.fn(),
-  mockLogToAxiom: vi.fn(),
+  
 }));
 
 vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
   createXGuardModerationRequest: mockCreateXGuardModerationRequest,
 }));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: mockLogToAxiom,
-}));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: vi.fn(),
 }));
-// 🔴 NOT OPTIONAL, AND NOT COSMETIC — WITHOUT IT THIS FILE LIES VIA ITS EXIT
-// CODE. `workflow.service` (imported below for the two real read-path
-// projections) imports `~/server/db/client` at module scope, which instantiates
-// a real Prisma client. Nothing in this suite queries it, but the instantiation
-// rejects (`PrismaClientInitializationError`), vitest reports the unhandled
-// rejection as a file-level "Errors: 1", and the process EXITS 1 — while every
-// assertion passes and the summary reads `76 passed (76)`.
-//
-// That combination is the exact harness trap this repo has been bitten by: a
-// mutation sweep that reads `rc` sees a non-zero exit for the CONTROL and for
-// every mutant alike, and reports 100% of mutants killed while testing nothing.
-// The sibling suites all mock this module for the same reason. Read the
-// `Tests N failed | M passed` line, and keep this mock so `rc` agrees with it.
-vi.mock('~/server/db/client', () => ({
-  dbRead: {},
-  dbWrite: {},
-}));
-
 // 🔴 THE REGISTRY IS OVERRIDDEN FOR `getStepByOrchestratorType` ONLY, and it is
 // the minimum needed to test the read path today: the shipped registry has no
 // `'textOutput'` entry yet (registering `chatCompletion` is the follow-up), so
@@ -125,6 +104,9 @@ import {
 // Through the namespace the missing export is merely `undefined`, so each case
 // fails on its own assertion and the rest of the suite still executes. Keep it.
 import * as TextOutputModeration from '~/server/services/blocks/steps/text-output-moderation';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixtures

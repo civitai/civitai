@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { isConsumableCosmeticType } from '~/server/schema/creator-shop.schema';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * A conservation property over the whole pack purchase, table-driven rather than
@@ -53,12 +54,6 @@ vi.mock('~/server/services/user-preferences.service', () => ({
   getBlockedPairIds: vi.fn().mockResolvedValue([]),
 }));
 vi.mock('~/server/redis/caches', () => ({ refreshOwnedStickerCache: vi.fn() }));
-vi.mock('~/server/logging/client', () => ({
-  // Returns a promise, like the real one: the scaled-payout path attaches
-  // `.catch` to it, and a bare `vi.fn()` would throw inside the payout block.
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
-}));
-
 const { purchaseCosmeticPack } = await import('~/server/services/cosmetic-pack.service');
 
 const BUYER = 901;

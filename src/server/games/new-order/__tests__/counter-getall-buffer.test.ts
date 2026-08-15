@@ -40,9 +40,8 @@ vi.mock('~/server/redis/client', () => ({
 vi.mock('~/server/redis/atomic', () => ({ hSetWithTTL: vi.fn(), zAddWithTTL: vi.fn() }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
-vi.mock('~/server/db/client', () => ({ dbRead: {} }));
-
 import { getImageRatingsCounter } from '~/server/games/new-order/utils';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 beforeEach(() => vi.clearAllMocks());
 

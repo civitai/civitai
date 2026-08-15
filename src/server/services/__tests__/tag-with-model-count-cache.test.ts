@@ -6,18 +6,13 @@ import { pack, unpack } from 'msgpackr';
 // get -> unpack(buffer)) — so the byte-identical claim is exercised through the real
 // serializer end-to-end, not a pass-through fake. Cache hit/miss semantics stay real (a
 // Map), letting us assert exactly when the origin DB query is re-run.
-const { store, dbReadQueryRaw, redisPackedGet, redisPackedSet, redisDel } = vi.hoisted(() => ({
+const { store, redisPackedGet, redisPackedSet, redisDel } = vi.hoisted(() => ({
   store: new Map<string, Buffer>(),
-  dbReadQueryRaw: vi.fn(),
   redisPackedGet: vi.fn(),
   redisPackedSet: vi.fn(),
   redisDel: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: dbReadQueryRaw },
-  dbWrite: {},
-}));
 // Keep the real REDIS_KEYS (so the key we build matches the production constant) and only
 // swap the live client for the in-memory fake.
 vi.mock('~/server/redis/client', async (importOriginal) => {
@@ -29,6 +24,8 @@ vi.mock('~/server/redis/client', async (importOriginal) => {
 });
 
 import { getTagWithModelCount } from '~/server/services/tag.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const dbReadQueryRaw = dbMock.dbRead.$queryRaw;
 
 const KEY_PREFIX = 'packed:caches:tag-with-model-count';
 

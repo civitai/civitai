@@ -20,8 +20,6 @@ vi.mock('~/server/db/client', () => ({
 vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
   getPerceptualHash: mocks.getPerceptualHash,
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
-
 import {
   COSMETIC_PHASH_LANE,
   getSimilarCosmetics,
@@ -32,6 +30,7 @@ import {
   queueCosmeticPerceptualHash,
   storeCosmeticPerceptualHash,
 } from '../cosmetic-phash.service';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const LANE = COSMETIC_PHASH_LANE.version;
 

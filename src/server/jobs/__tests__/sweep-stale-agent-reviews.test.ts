@@ -1,27 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-/**
- * AGENTIC MOD CODE-REVIEW — stale-`running`-report-row sweeper (core fn).
- *
- * Covers sweepStaleAgentReviews against a mocked dbWrite:
- *   - flips only status='running' rows older than the 60m cutoff → 'failed'
- *   - returns the swept count
- *   - dark/no-op: zero matches → 0
- */
-
-const { mockUpdateMany } = vi.hoisted(() => ({ mockUpdateMany: vi.fn() }));
-
-vi.mock('~/server/db/client', () => ({
-  dbWrite: { appReviewAgentReport: { updateMany: mockUpdateMany } },
-}));
-// The job module also imports the logging client + prom-backed createJob; stub
-// the logger so importing the module is side-effect-free in the test env.
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
-
 import {
   sweepStaleAgentReviews,
   STALE_AGENT_REVIEW_RUNNING_MS,
 } from '~/server/jobs/sweep-stale-agent-reviews';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockUpdateMany = dbMock.dbWrite.appReviewAgentReport.updateMany;
 
 beforeEach(() => vi.clearAllMocks());
 

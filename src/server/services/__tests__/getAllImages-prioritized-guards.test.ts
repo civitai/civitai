@@ -52,8 +52,6 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
-// Stub the infra clients so no real DB/Redis connection is opened on import.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/redis/client', () => {
   const make = (): any => new Proxy(() => 'k', { get: () => make() });
@@ -81,6 +79,7 @@ vi.mock('../../flipt/client', async (importOriginal) => {
 });
 
 import { getAllImages } from '../image.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const baseInput = {
   browsingLevel: 1,

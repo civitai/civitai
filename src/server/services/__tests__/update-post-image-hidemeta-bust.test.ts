@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * Wiring test for the image-delivery metadata cache bust in `updatePostImage`.
@@ -23,10 +24,8 @@ const IMAGE_ID = 9001;
 const IMAGE_URL = 'abc123/def456.jpeg';
 const USER_ID = 5;
 
-const { mockFindUniqueOrThrow, mockImageUpdate, mockBustImageDeliveryMetadataCache } = vi.hoisted(
+const { mockBustImageDeliveryMetadataCache } = vi.hoisted(
   () => ({
-    mockFindUniqueOrThrow: vi.fn(),
-    mockImageUpdate: vi.fn(),
     mockBustImageDeliveryMetadataCache: vi.fn(),
   })
 );
@@ -58,12 +57,6 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
 vi.mock('~/server/search-index', () => ({}));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 
-// dbWrite is the only DB surface updatePostImage touches (findUniqueOrThrow + update).
-vi.mock('~/server/db/client', () => ({
-  dbRead: {},
-  dbWrite: { image: { findUniqueOrThrow: mockFindUniqueOrThrow, update: mockImageUpdate } },
-}));
-
 // Every cache post.service imports — each a stub whose methods are no-op vi.fns. (Named
 // exports must be statically present for ESM import binding; a Proxy has no own keys.)
 vi.mock('~/server/redis/caches', () => {
@@ -89,6 +82,8 @@ vi.mock('~/server/redis/caches', () => {
 const { mockPurgeResizeCache } = vi.hoisted(() => ({
   mockPurgeResizeCache: vi.fn().mockResolvedValue(undefined),
 }));
+const mockFindUniqueOrThrow = dbMock.dbWrite.image.findUniqueOrThrow;
+const mockImageUpdate = dbMock.dbWrite.image.update;
 
 // The heavy image.service graph — replaced wholesale with the named exports post.service
 // imports. `purgeResizeCache` is spied so we can assert the hide-only path independently.

@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // Scale/regression guard for reviewEntries(): with CHALLENGE_JOB_BATCH_SIZE active challenges
 // pulled per tick, the review loop must process every one of them (no silent drop) and must
@@ -16,7 +18,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const {
   mockIsFlipt,
   mockGetActiveChallenges,
-  mockLogToAxiom,
   mockGetEndedActiveChallenges,
   mockGetChallengesToReconcile,
   mockPickWinnersForChallenge,
@@ -25,7 +26,6 @@ const {
 } = vi.hoisted(() => ({
   mockIsFlipt: vi.fn().mockResolvedValue(true),
   mockGetActiveChallenges: vi.fn(),
-  mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
   mockGetEndedActiveChallenges: vi.fn().mockResolvedValue([]),
   mockGetChallengesToReconcile: vi.fn().mockResolvedValue([]),
   mockPickWinnersForChallenge: vi.fn().mockResolvedValue(undefined),
@@ -34,15 +34,7 @@ const {
     .mockResolvedValue({ promoted: 0, paid: 0, buzzGranted: 0 }),
   mockResetStuckCompletingChallenges: vi.fn().mockResolvedValue(0),
 }));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: vi.fn(), challenge: { findUnique: vi.fn() } },
-  dbWrite: {
-    $queryRaw: vi.fn(),
-    $executeRaw: vi.fn(),
-    challenge: { update: vi.fn(), findUnique: vi.fn() },
-  },
-}));
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 vi.mock('~/server/events', () => ({
   eventEngine: { processEngagement: vi.fn() },
@@ -121,10 +113,6 @@ vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   refundUserChallengeFunds: vi.fn(),
   buildWinnerPayoutTransactions: vi.fn(),
   getChallengeBuzzType: vi.fn(),
-}));
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: mockLogToAxiom,
 }));
 
 vi.mock('~/utils/logging', () => ({

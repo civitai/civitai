@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // The announcement redis read (getAnnouncementsCached) is memoized per domain,
 // while getCurrentAnnouncements applies the per-user (targetAudience) + active
@@ -11,10 +12,6 @@ const { redisGet, redisSet } = vi.hoisted(() => ({
 }));
 
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { day: 86400 } }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { announcement: { findMany: vi.fn(), count: vi.fn() }, $transaction: vi.fn() },
-  dbWrite: { announcement: { findMany: vi.fn() } },
-}));
 vi.mock('~/server/redis/client', () => ({
   redis: { get: redisGet, set: redisSet, del: vi.fn() },
   REDIS_KEYS: { CACHES: { ANNOUNCEMENTS: 'packed:caches:announcements' } },

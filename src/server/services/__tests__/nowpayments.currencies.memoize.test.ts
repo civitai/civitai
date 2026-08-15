@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Focused test for the in-proc memoization of getSupportedCurrencies (a GLOBAL,
 // rarely-changing list). Mocks only what nowpayments.service needs to import;
@@ -24,7 +25,6 @@ vi.mock('../buzz.service', () => ({
 vi.mock('~/server/http/nowpayments/nowpayments.caller', () => ({
   default: { getMerchantCoins, getFullCurrencies, getMinimumPaymentAmount },
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/utils/distributed-lock', () => ({ withDistributedLock: vi.fn() }));
 vi.mock('~/utils/signal-client', () => ({ signalClient: { send: vi.fn() } }));
 vi.mock('~/server/common/enums', () => ({

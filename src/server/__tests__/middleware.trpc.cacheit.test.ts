@@ -36,7 +36,6 @@ vi.mock('~/server/utils/otel-helpers', () => ({
 // Not exercised by cacheIt but imported at module top — stub to keep the import
 // graph light and side-effect-free.
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn() }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('~/server/services/user-preferences.service', () => ({
   getAllHiddenForUser: vi.fn().mockResolvedValue({
     hiddenImages: [],
@@ -57,6 +56,7 @@ vi.mock('~/server/redis/client', () => ({
 }));
 
 import { cacheIt } from '~/server/middleware.trpc';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 type Input = { id: number };
 

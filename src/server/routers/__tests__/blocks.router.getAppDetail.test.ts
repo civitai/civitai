@@ -62,10 +62,6 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: vi.fn(),
 }));
 vi.mock('~/server/services/user.service', () => ({ getUserById: vi.fn() }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { appBlock: { findUnique: vi.fn() } },
-  dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
-}));
 vi.mock('~/server/redis/client', async () => {
   const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
   return {
@@ -80,7 +76,6 @@ vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
 vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzAccounts: vi.fn(async () => ({ yellow: 0, blue: 0, green: 0 })),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 // rateLimit pulls in heavy deps (redis + caches → stale Prisma client in a
 // fresh worktree). Stub it to a pass-through middleware built from the real
 // lightweight factory; the gate under test is the flag middleware.
@@ -91,6 +86,8 @@ vi.mock('~/server/middleware.trpc', async () => {
 
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 function fakePerUserFlag(opts?: { user?: { isModerator?: boolean } }) {
   return Promise.resolve(!!opts?.user?.isModerator);

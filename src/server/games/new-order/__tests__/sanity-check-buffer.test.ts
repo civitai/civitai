@@ -13,9 +13,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // This exercises the REAL getSanityCheckImage() + the REAL decodeRedisString
 // coercion (only sysRedis + dbRead are mocked).
 
-const { mockSysRedis, mockFindUnique, mockHandleLogError, counterStub } = vi.hoisted(() => ({
+const { mockSysRedis, mockHandleLogError, counterStub } = vi.hoisted(() => ({
   mockSysRedis: { sMembers: vi.fn() },
-  mockFindUnique: vi.fn(),
   mockHandleLogError: vi.fn(),
   counterStub: {
     increment: vi.fn(),
@@ -38,11 +37,6 @@ vi.mock('~/server/redis/client', () => ({
       SANITY_CHECKS: { POOL: 'new-order:sanity-checks:pool' },
     },
   },
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { image: { findUnique: mockFindUnique } },
-  dbWrite: {},
 }));
 
 // Heavy transitive deps the service imports at module load — stub so importing
@@ -68,7 +62,6 @@ vi.mock('~/server/games/new-order/utils', () => ({
   getVotingRateLimitConfig: vi.fn(),
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/utils/errorHandling', () => ({
   handleLogError: mockHandleLogError,
   throwBadRequestError: vi.fn(),
@@ -91,6 +84,9 @@ vi.mock('~/utils/signal-client', () => ({ signalClient: { topicSend: vi.fn() } }
 
 // Import AFTER mocks — real decodeRedisString + shuffle stay in play.
 import { getSanityCheckImage } from '~/server/services/games/new-order.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockFindUnique = dbMock.dbRead.image.findUnique;
 
 beforeEach(() => {
   vi.clearAllMocks();

@@ -42,11 +42,11 @@ vi.mock('~/server/redis/atomic', () => ({
 }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
-vi.mock('~/server/db/client', () => ({ dbRead: {} }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/utils/errorHandling', () => ({ handleLogError: vi.fn() }));
 
 import { fervorCounter, sanityCheckFailuresCounter } from '~/server/games/new-order/utils';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 describe('createCounter().reset — empty id array guard', () => {
   beforeEach(() => {
