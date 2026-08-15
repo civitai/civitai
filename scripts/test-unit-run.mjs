@@ -44,7 +44,7 @@ function runDirect(args) {
     process.platform === 'win32' ? 'vitest.cmd' : 'vitest'
   );
   const bin = existsSync(local) ? local : 'vitest';
-  const child = spawn(bin, ['run', '--project', 'unit', ...args], {
+  const child = spawn(bin, ['run', '--project', 'unit*', ...args], {
     cwd: repoRoot,
     stdio: 'inherit',
     shell: process.platform === 'win32',
