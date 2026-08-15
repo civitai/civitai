@@ -24,7 +24,17 @@ export const PROD_ONLY_GROUPS = [
   'notifications',
   'feeds',
   'opensearch',
+  // The auth hub is one process shared by every session and reads its own apps/auth/.env, so it
+  // cannot follow a per-session mode. `db=prod` moves the app and not the login that mints the
+  // token, and the two databases' user ids are unrelated rows.
+  'auth-hub',
 ];
+
+// A group someone has actually defined is not prod-only any more, whatever this list says. Naming
+// it in both halves of the same summary line would make the line unreadable rather than cautious.
+function prodOnlyExcluding(definedGroups) {
+  return PROD_ONLY_GROUPS.filter((g) => !definedGroups.includes(g));
+}
 
 function stripQuotes(value) {
   if (
@@ -99,13 +109,15 @@ export function parseGroupList(value) {
 // Compared as RESOLVED modes rather than as flag text: `--prod all` and `--prod <every group>` are
 // the same session, and a bare start is not the same session it was before someone edited
 // DEVSERVER_PROD_GROUPS.
+//
+// Only groups BOTH sides resolved are compared. Adding a section to env-modes.local otherwise makes
+// every running session disagree with every new bare start, and `start` — which is meant to be
+// idempotent — starts failing everywhere until each session is restarted. A group only one side
+// knows about is a definitions edit, not two agents wanting different environments.
 export function sameResolvedModes(a = {}, b = {}) {
-  const norm = (modes) =>
-    Object.entries(modes)
-      .map(([group, choice]) => `${group}=${choice.mode ?? choice}`)
-      .sort()
-      .join(' ');
-  return norm(a) === norm(b);
+  const modeOf = (choice) => choice?.mode ?? choice;
+  const shared = Object.keys(a).filter((group) => group in b);
+  return shared.every((group) => modeOf(a[group]) === modeOf(b[group]));
 }
 
 // Resolve one session's modes. Every defined group defaults to dev; the skill's own .env can move
@@ -126,7 +138,7 @@ export function resolveSessionModes({ definitions, prod = [], dev = [], defaultP
   if (unknown.length) {
     throw new Error(
       `Unknown env group(s): ${unknown.join(', ')}. Defined in ${definitions.path}: ${known}. ` +
-        `Always production, no dev target: ${PROD_ONLY_GROUPS.join(', ')}.`
+        `Always production, no dev target: ${prodOnlyExcluding(defined).join(', ')}.`
     );
   }
   if ((prod.includes('all') || dev.includes('all')) && !defined.length) {
@@ -200,7 +212,7 @@ export function resolveSessionModes({ definitions, prod = [], dev = [], defaultP
     modes[group] = {
       mode,
       source:
-        explicitProd.has(group) || explicitDev.has(group)
+        explicitProd.has(group) || explicitDev.has(group) || namedByFlag.has(group)
           ? 'flag'
           : defaultProdGroups.includes(group)
           ? 'skill-default'
@@ -229,6 +241,7 @@ export function formatModeSummary(modes) {
   const entries = Object.entries(modes);
   const pairs = entries.length
     ? entries.map(([group, choice]) => `${group}=${choice.mode}`).join(' ')
-    : '(no groups defined)';
-  return `${pairs} | always prod (no dev target): ${PROD_ONLY_GROUPS.join(', ')}`;
+    : '(no groups defined — no overlay applied, the .env stands as written)';
+  const stillProd = prodOnlyExcluding(entries.map(([group]) => group));
+  return `${pairs} | always prod (no dev target): ${stillProd.join(', ')}`;
 }

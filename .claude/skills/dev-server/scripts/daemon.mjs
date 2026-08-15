@@ -450,6 +450,15 @@ async function findAvailablePort(basePort, usedPorts = new Set()) {
   return port;
 }
 
+// The reason a start failed, for the HTTP response — the session's own last error line, so the
+// caller reads what the log says rather than a generic failure.
+function lastErrorLog(session) {
+  for (let i = session.logs.length - 1; i >= 0; i--) {
+    if (session.logs[i].level === 'error') return session.logs[i].message;
+  }
+  return null;
+}
+
 // Session class
 class DevSession {
   constructor(id, worktree, port, envPath, modeOverrides = { prod: [], dev: [] }) {
@@ -458,8 +467,13 @@ class DevSession {
     this.port = port;
     this.envPath = envPath;
     this.modeOverrides = modeOverrides;
+    // Pinned at creation. start() re-reads the skill .env for everything else, so without this an
+    // edit to DEVSERVER_PROD_GROUPS would move a LIVE session onto production at its next
+    // unattended restart — a branch switch or a crash — with nobody having asked for it.
+    this.defaultProdGroups = [...skillConfig.prodGroups];
     this.modes = {};
     this.modeSummary = null;
+    this.pendingModes = null;
     this.status = 'starting';
     this.process = null;
     this.logs = [];
@@ -563,6 +577,7 @@ class DevSession {
     // modes of the run before it, in `status`, `list` or the dashboard.
     this.modes = {};
     this.modeSummary = null;
+    this.pendingModes = null;
 
     const modeDefinitions = loadModeDefinitions(skillDir);
     if (modeDefinitions.errors.length) {
@@ -584,7 +599,7 @@ class DevSession {
         definitions: modeDefinitions,
         prod: this.modeOverrides.prod,
         dev: this.modeOverrides.dev,
-        defaultProdGroups: skillConfig.prodGroups,
+        defaultProdGroups: this.defaultProdGroups,
       });
     } catch (err) {
       this.status = 'error';
@@ -592,6 +607,7 @@ class DevSession {
       return this.getStatus();
     }
     this.modes = resolved.modes;
+    this.pendingModes = null;
     const { applied } = applyModes(envVars, modeDefinitions, this.modes);
     this.modeSummary = formatModeSummary(this.modes);
     for (const note of resolved.notes) {
@@ -1108,6 +1124,11 @@ class DevSession {
         Object.entries(this.modes).map(([group, choice]) => [group, choice.mode])
       ),
       envModeSummary: this.modeSummary,
+      ...(this.pendingModes && {
+        pendingEnvModes: Object.fromEntries(
+          Object.entries(this.pendingModes).map(([group, choice]) => [group, choice.mode])
+        ),
+      }),
       distDir: this.distDir,
       switching: this.switching,
       busy: this.busy,
@@ -2123,7 +2144,7 @@ async function main() {
         if (existing && sessionIsBusy(existing)) {
           // Handing back a live session while quietly ignoring the modes just asked for is how an
           // agent ends up believing it is on dev. Refuse instead of answering a different question.
-          if (!sameResolvedModes(existing.modes, requestedModes)) {
+          if (!sameResolvedModes(existing.pendingModes ?? existing.modes, requestedModes)) {
             res.writeHead(409);
             res.end(JSON.stringify({
               error:
@@ -2151,18 +2172,32 @@ async function main() {
           // therefore lands on dev even where the session it reuses was started with --prod,
           // which is the whole of "prod is never sticky".
           existing.modeOverrides = modeOverrides;
+          existing.defaultProdGroups = [...skillConfig.prodGroups];
           // Stamped BEFORE the await: stop() plus the port claim can take seconds, and until
           // start() runs, `modes` would still describe the run being torn down — long enough for a
           // second agent's bare start to match it and be handed a session coming up on production.
-          existing.modes = requestedModes;
-          existing.modeSummary = formatModeSummary(requestedModes);
+          //
+          // Kept separate from `modes` because a crashed session's process can still be alive and
+          // serving on the OLD env for the length of the port wait. `modes` stays true to what is
+          // running; `pendingModes` is what the next run will be, and the mismatch check reads it.
+          existing.pendingModes = requestedModes;
           await existing.restart((s) => claimPortForReuse(s));
+
+          const reusedStatus = existing.getStatus();
+          if (reusedStatus.status === 'error') {
+            res.writeHead(500);
+            res.end(JSON.stringify({
+              error: lastErrorLog(existing) ?? 'Session failed to restart',
+              session: reusedStatus,
+            }));
+            return;
+          }
 
           res.writeHead(200);
           res.end(JSON.stringify({
             existing: true,
             reused: true,
-            session: existing.getStatus(),
+            session: reusedStatus,
           }));
           return;
         }
@@ -2211,6 +2246,18 @@ async function main() {
         sessions.set(sessionId, session);
 
         const result = await session.start();
+
+        // A start refused over its env modes is the one failure this endpoint promises to be
+        // fail-closed about. Answering 201 for it makes `cli.mjs start && curl` proceed as though a
+        // server came up, and the CLI exits 0.
+        if (result.status === 'error') {
+          res.writeHead(500);
+          res.end(JSON.stringify({
+            error: lastErrorLog(session) ?? 'Session failed to start',
+            session: result,
+          }));
+          return;
+        }
 
         res.writeHead(201);
         res.end(JSON.stringify({

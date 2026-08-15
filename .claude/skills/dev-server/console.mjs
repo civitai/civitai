@@ -179,13 +179,15 @@ async function cmdDashboard(initialWorktree) {
   });
 
   let sessionId;
+  let attachNotice = null;
   if (startResult.ok) {
     sessionId = startResult.data.session.id;
   } else if (startResult.data?.session?.id) {
     // A refusal that names the session it refused for — a session already running this worktree
     // with env modes a bare start would not reproduce. Watching it is what was asked for, but the
-    // dashboard must say so: the request and the session it attaches to disagree.
-    log(`${C.ylw}${startResult.data.error ?? 'Attaching to the running session'}${C.r}`);
+    // dashboard must say so: the request and the session it attaches to disagree. Held for the
+    // alternate screen rather than logged here, where the dashboard's first repaint erases it.
+    attachNotice = startResult.data.error ?? 'Attached to a session with different env modes';
     sessionId = startResult.data.session.id;
   } else {
     // Scoped to THIS worktree. An unfiltered `find` opened the dashboard on whichever session came
@@ -238,6 +240,8 @@ async function cmdDashboard(initialWorktree) {
 
   // Enter alternate screen
   write(ALT_ON + CUR_HIDE);
+
+  if (attachNotice) flash(attachNotice);
 
   // Raw mode
   process.stdin.setRawMode(true);

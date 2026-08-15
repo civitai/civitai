@@ -590,7 +590,10 @@ switch (command) {
 Commands:
   status              Check daemon status and list sessions
   list                List all sessions
-  start [worktree]    Start a dev server (default: current directory)
+  start [worktree] [--prod a,b] [--dev a,b]
+                      Start a dev server (default: current directory).
+                      Every env group defaults to dev; --prod moves named groups
+                      (or "all") to production for this start only. See SKILL.md.
   logs [session-id]   Get logs for a session
   tail [session-id]   Tail logs continuously
   stop <session-id>   Stop a session

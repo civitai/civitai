@@ -59,16 +59,21 @@ A session picks one `.env` (its worktree's if present, otherwise the project roo
 applies a per-service **overlay** on top of it. The overlay only restates the keys for the services
 it names, so nothing else in the chosen `.env` moves — the two `.env` files are still never merged.
 
+**No `env-modes.local` means no overlay at all** — not "everything on dev". The file is gitignored,
+so it never comes with a checkout: until it exists, every start runs on the base `.env` exactly as
+before this feature, and the summary says `(no groups defined — no overlay applied)`.
+
 ```bash
-# Everything on dev. This is what a bare start does.
+# Every defined group on dev. This is what a bare start does.
 node .claude/skills/dev-server/cli.mjs start
 
 # Buzz on production, everything else still dev.
 node .claude/skills/dev-server/cli.mjs start --prod buzz
 
-# Several groups, and the whole lot.
+# Several groups, the whole lot, and the whole lot with an exception.
 node .claude/skills/dev-server/cli.mjs start --prod db,search
 node .claude/skills/dev-server/cli.mjs start --prod all
+node .claude/skills/dev-server/cli.mjs start --prod all --dev search
 ```
 
 The groups are whatever `env-modes.local` defines — today `db`, `buzz`, `search`, `signals`,
@@ -92,6 +97,18 @@ notifications DB, the feeds proxy and OpenSearch have **no dev counterpart at al
 full dev mode still talks to production for every one of them. Pressing Generate submits a real job
 and spends real Buzz whatever the mode says. That list is printed after every mode summary for
 exactly this reason.
+
+**The auth hub does not follow `db`.** It is one process shared by every session and reads its own
+`apps/auth/.env`, so a `--prod db` session authenticates against whatever database that file names
+and then resolves the resulting user id against production. Dev and prod user ids are unrelated
+rows, so expect a 404 — or, worse, to be acting as a different real user. Point `apps/auth/.env` at
+the same database by hand before using `--prod db` with a login.
+
+**Changing `search` or `signals` mode on a warm build dir is not fully clean.** Those groups set
+`NEXT_PUBLIC_*` values, which Turbopack inlines into client chunks, and the build dir is keyed on
+branch rather than on mode. Delete `.next` when you change either of them if the browser matters —
+server-side code reads the new value immediately, so this only affects what the client was compiled
+against.
 
 **Where to read a running session's modes:** `status` and `list` carry `envModes` and
 `envModeSummary`, and the daemon log prints them next to `Env:` at start:
