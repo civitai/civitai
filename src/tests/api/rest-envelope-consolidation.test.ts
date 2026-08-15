@@ -1,3 +1,5 @@
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockLogToAxiom = loggingMock.logToAxiom;
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
@@ -23,20 +25,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * whole-object sites looked safe for years.
  */
 
-const { mockLogToAxiom, mockBuildCentralErrorLog, mockWasServerFaultLogged } = vi.hoisted(() => ({
-  mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
-  mockBuildCentralErrorLog: vi.fn((e: unknown) => ({
-    name: (e as Error)?.name,
-    message: (e as Error)?.message,
-  })),
+const { mockWasServerFaultLogged } = vi.hoisted(() => ({
   mockWasServerFaultLogged: vi.fn(() => false),
-}));
-
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  logToAxiom: mockLogToAxiom,
-  buildCentralErrorLog: mockBuildCentralErrorLog,
-  wasServerFaultLogged: mockWasServerFaultLogged,
 }));
 
 // 🔴 Spread the ORIGINAL. `handleEndpointError` is the thing under test here, so

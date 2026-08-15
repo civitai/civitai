@@ -1,3 +1,5 @@
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockLogToAxiom = loggingMock.logToAxiom;
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
@@ -16,14 +18,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * the `MixedAuthEndpoint` wrapper is stubbed.
  */
 
-const { mockGetPermissions, mockGetCollectionById, mockRateLimit, mockLogToAxiom } = vi.hoisted(
-  () => ({
-    mockGetPermissions: vi.fn(),
-    mockGetCollectionById: vi.fn(),
-    mockRateLimit: vi.fn(),
-    mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
-  })
-);
+const { mockGetPermissions, mockGetCollectionById, mockRateLimit } = vi.hoisted(() => ({
+  mockGetPermissions: vi.fn(),
+  mockGetCollectionById: vi.fn(),
+  mockRateLimit: vi.fn(),
+}));
 
 vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -31,15 +30,6 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
 }));
 // Spread the ORIGINAL (7 exports) rather than replacing it with a 3-key object —
 // same reason as the `endpoint-helpers` mock above.
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  logToAxiom: mockLogToAxiom,
-  buildCentralErrorLog: vi.fn((e: unknown) => ({
-    name: (e as Error)?.name,
-    message: (e as Error)?.message,
-  })),
-  wasServerFaultLogged: vi.fn(() => false),
-}));
 vi.mock('~/server/services/collection.service', () => ({
   getUserCollectionPermissionsById: mockGetPermissions,
   getCollectionById: mockGetCollectionById,

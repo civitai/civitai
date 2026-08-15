@@ -1,3 +1,5 @@
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockLogToAxiom = loggingMock.logToAxiom;
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
@@ -17,14 +19,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *      machine-readable `code`, and a real 200 does NOT carry it.
  */
 
-const { mockResolveScope, mockDetail, mockRateLimit, mockIsHostForColor, mockLogToAxiom } =
-  vi.hoisted(() => ({
-    mockResolveScope: vi.fn(),
-    mockDetail: vi.fn(),
-    mockRateLimit: vi.fn(),
-    mockIsHostForColor: vi.fn(),
-    mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
-  }));
+const { mockResolveScope, mockDetail, mockRateLimit, mockIsHostForColor } = vi.hoisted(() => ({
+  mockResolveScope: vi.fn(),
+  mockDetail: vi.fn(),
+  mockRateLimit: vi.fn(),
+  mockIsHostForColor: vi.fn(),
+}));
 
 // Keep the REAL handleEndpointError — that is the whole point of this suite.
 // Only the auth wrapper is stubbed (it would need a live session + db).
@@ -41,15 +41,6 @@ vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
 // Spread the ORIGINAL: `~/server/logging/client` exports 7 symbols and this suite
 // only needs to intercept 3. Replacing it wholesale makes the mock silently stale
 // the moment anything in the import graph reaches for a fourth export.
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  logToAxiom: mockLogToAxiom,
-  buildCentralErrorLog: vi.fn((e: unknown) => ({
-    name: (e as Error)?.name,
-    message: (e as Error)?.message,
-  })),
-  wasServerFaultLogged: vi.fn(() => false),
-}));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   resolveStoreVisibilityScope: mockResolveScope,
 }));

@@ -1,3 +1,5 @@
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockLogToAxiom = loggingMock.logToAxiom;
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -29,20 +31,8 @@ import path from 'node:path';
  * years, and these payloads leak through several keys at once.
  */
 
-const { mockLogToAxiom, mockBuildCentralErrorLog, mockWasServerFaultLogged } = vi.hoisted(() => ({
-  mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
-  mockBuildCentralErrorLog: vi.fn((e: unknown) => ({
-    name: (e as Error)?.name,
-    message: (e as Error)?.message,
-  })),
+const { mockWasServerFaultLogged } = vi.hoisted(() => ({
   mockWasServerFaultLogged: vi.fn(() => false),
-}));
-
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  logToAxiom: mockLogToAxiom,
-  buildCentralErrorLog: mockBuildCentralErrorLog,
-  wasServerFaultLogged: mockWasServerFaultLogged,
 }));
 
 // 🔴 Spread the ORIGINAL: `handleEndpointError` is under test here, so replacing
