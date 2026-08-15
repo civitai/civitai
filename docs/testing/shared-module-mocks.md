@@ -264,3 +264,10 @@ So the remaining work is **discovered rather than known**, and any estimate buil
 current count is a lower bound. The method for finding the next one is the same each time:
 migrate a set clean for everything listed, run it under `--no-isolate`, and read what still
 fails.
+
+**The unit of work is the CLUSTER of specifiers a set of files shares, not one specifier.**
+Canonicalising `block-scope.middleware` took one pair from 13 failures to 7, and the
+remaining 7 were a different class — so that pair shares at least one more poisoning
+specifier that nobody has named yet. 13 → 7 is the dangerous shape: it reads as progress and
+is not completion. A set is done when its `--no-isolate` failures reach zero, not when the
+specifier you were working on stops appearing.
