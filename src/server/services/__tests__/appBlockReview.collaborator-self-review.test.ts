@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * 🔴 SELF-REVIEW, widened for collaborators.
@@ -17,23 +18,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *     silence a critic by inviting them.
  */
 
-const { mockDb } = vi.hoisted(() => ({
-  mockDb: {
-    appBlock: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    appCollaborator: {
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-    },
-    blockUserSubscription: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    appBlockReview: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-      update: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-    },
-  },
-}));
+// One local served both clients. `upsertAppBlockReview` writes on dbWrite
+// (appBlockReview.service:157, :179, :186, :197) and reads everything else on dbRead:
+// `appBlock.findUnique` at :49, `blockUserSubscription.findFirst` at :81.
+//
+// 🔴 `appCollaborator.findMany` is dbRead too, and it is NOT spelled anywhere in
+// appBlockReview.service — `getAppInsiderUserIds` (:74-77) reaches it through a deferred
+// `await import('~/server/services/blocks/app-access.service')`, and the call is
+// `dbRead.appCollaborator.findMany` at app-access.service:1111. A per-module scan reports it on
+// neither client, which reads as "this call exists nowhere" rather than as "look one hop further".
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
+mockDbWrite.appBlockReview.create.mockResolvedValue({});
+mockDbWrite.appBlockReview.update.mockResolvedValue({});
 vi.mock('~/server/utils/cache-helpers', () => ({ bustCacheTag: vi.fn(async () => undefined) }));
 
 const { upsertAppBlockReview } = await import('~/server/services/appBlockReview.service');
@@ -60,11 +58,11 @@ const SEATS = [
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockDb.appBlock.findUnique.mockResolvedValue({
+  mockDbRead.appBlock.findUnique.mockResolvedValue({
     app: { userId: OWNER },
     appListing: { id: LISTING },
   });
-  mockDb.appCollaborator.findMany.mockImplementation(async (args: unknown) => {
+  mockDbRead.appCollaborator.findMany.mockImplementation(async (args: unknown) => {
     const w = (args as { where: { appListingId?: string; status?: string; displayed?: boolean } })
       .where;
     return SEATS.filter(
@@ -77,7 +75,7 @@ beforeEach(() => {
     ).map((r) => ({ userId: r.userId }));
   });
   // Every caller below has an enabled install, so gate 3 never masks gate 2.
-  mockDb.blockUserSubscription.findFirst.mockResolvedValue({ id: 'bus_1' });
+  mockDbRead.blockUserSubscription.findFirst.mockResolvedValue({ id: 'bus_1' });
 });
 
 const review = (userId: number) => upsertAppBlockReview({ userId, appBlockId: APP, rating: 5 });
@@ -89,7 +87,7 @@ describe('upsertAppBlockReview — the insider set', () => {
 
   it('🔴 an ACCEPTED COLLABORATOR cannot review', async () => {
     await expect(review(ACCEPTED_EDITOR)).rejects.toThrow('You cannot review your own app');
-    expect(mockDb.appBlockReview.create).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlockReview.create).not.toHaveBeenCalled();
   });
 
   it('🔴 an accepted collaborator with `displayed: false` STILL cannot review', async () => {
@@ -113,17 +111,17 @@ describe('upsertAppBlockReview — the insider set', () => {
   it('POSITIVE CONTROL: the happy path really does write a review', async () => {
     // Otherwise the four "resolves" above could be passing for the wrong reason.
     await review(OUTSIDER);
-    expect(mockDb.appBlockReview.create).toHaveBeenCalledOnce();
+    expect(mockDbWrite.appBlockReview.create).toHaveBeenCalledOnce();
   });
 
   it('a missing app is a BAD_REQUEST, not a silent allow', async () => {
-    mockDb.appBlock.findUnique.mockResolvedValue(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue(null);
     await expect(review(OUTSIDER)).rejects.toThrow('App block not found');
   });
 
   it('the insider set degrades to OWNER-ONLY when the seat table is absent', async () => {
     // Pre-migration: the review gate must keep working exactly as it did before.
-    mockDb.appCollaborator.findMany.mockRejectedValue(
+    mockDbRead.appCollaborator.findMany.mockRejectedValue(
       Object.assign(new Error('does not exist'), { code: 'P2021' })
     );
     await expect(review(OWNER)).rejects.toThrow('You cannot review your own app');
@@ -134,17 +132,17 @@ describe('upsertAppBlockReview — the insider set', () => {
     // A first-version app pending approval has no `AppListing` row yet, so there is no
     // id under which a seat could exist. The gate must still refuse the owner, and must
     // not throw trying to key a query on `undefined`.
-    mockDb.appBlock.findUnique.mockResolvedValue({ app: { userId: OWNER }, appListing: null });
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ app: { userId: OWNER }, appListing: null });
     await expect(review(OWNER)).rejects.toThrow('You cannot review your own app');
     await expect(review(ACCEPTED_EDITOR)).resolves.toBeTruthy();
-    expect(mockDb.appCollaborator.findMany).not.toHaveBeenCalled();
+    expect(mockDbRead.appCollaborator.findMany).not.toHaveBeenCalled();
   });
 
   it('🔴 the seat query is keyed on the block’s LISTING, not on the block', async () => {
     // The hop, asserted directly. A query still keyed on `appBlockId` would match no
     // fixture row and every insider would silently become a permitted reviewer.
     await review(OUTSIDER);
-    expect(mockDb.appCollaborator.findMany).toHaveBeenCalledWith(
+    expect(mockDbRead.appCollaborator.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { appListingId: LISTING, status: 'accepted' } })
     );
   });

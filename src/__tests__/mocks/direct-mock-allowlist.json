@@ -19,15 +19,15 @@
     "~/server/prom/client"
   ],
   "totals": {
-    "canonicalFiles": 224,
+    "canonicalFiles": 218,
     "pendingFiles": 395,
-    "allFiles": 486,
-    "canonicalSites": 298,
+    "allFiles": 482,
+    "canonicalSites": 288,
     "pendingSites": 864
   },
   "bySpecifier": {
-    "~/server/db/client": 141,
-    "~/server/redis/client": 92,
+    "~/server/db/client": 135,
+    "~/server/redis/client": 88,
     "~/server/logging/client": 65,
     "~/env/server": 107,
     "~/server/services/buzz.service": 99,
@@ -92,12 +92,6 @@
     "src/server/routers/__tests__/apps-shared.router.test.ts",
     "src/server/routers/__tests__/apps.router.storage.test.ts",
     "src/server/routers/__tests__/track.router.blockRender.test.ts",
-    "src/server/services/__tests__/appBlockReview.collaborator-self-review.test.ts",
-    "src/server/services/__tests__/appBlockReview.service.test.ts",
-    "src/server/services/__tests__/block-registry.marketplace-meta.test.ts",
-    "src/server/services/__tests__/block-registry.pinned-version.test.ts",
-    "src/server/services/__tests__/block-registry.resolve-instance.test.ts",
-    "src/server/services/__tests__/block-registry.spend-cap-config.test.ts",
     "src/server/services/__tests__/model-version.blue-buzz-purchase.service.test.ts",
     "src/server/services/__tests__/model-version.purge-by-hash.service.test.ts",
     "src/server/services/__tests__/model.service.vae-append-no-mutation.test.ts",
