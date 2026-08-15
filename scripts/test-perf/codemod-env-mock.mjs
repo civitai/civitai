@@ -54,6 +54,15 @@ const KNOWN_UNSAFE = new Map([
   ],
   [
     'src/server/services/__tests__/image-cacher-invalidate-scope.test.ts',
+    // ⚠️ The refusal stands — a run disproved a conversion — but this reason text does NOT
+    // survive reading the code, and it is repeated here rather than corrected because an
+    // entry records that a run FAILED, not why. IMAGE_CACHER_ADMIN_SECRET is read at
+    // image.service.ts:359, inside a function, so nothing captures it at module evaluation.
+    // The test supplies it through a GETTER over a mutable box, which makes it a
+    // runtime-varying value — so the likely mechanism is the mutation class: a lift froze the
+    // getter into a static value and lost the per-case variation. Retiring this entry is a
+    // fresh-pair question, and the tool for it is the canonical defineProperty accessor path
+    // (`__envAccessor` in env.mock.ts), not TEST_ENV_DEFAULTS.
     'same one-hop shape: the value is captured during module evaluation, before any setEnv',
   ],
 ]);
