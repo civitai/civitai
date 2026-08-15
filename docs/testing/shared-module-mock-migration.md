@@ -269,6 +269,24 @@ migration presented that way, and none of them looked like an error:
 `compare-runs.mjs` exists because of this. It prints collected-count regressions **before**
 failures and exits non-zero on a count regression even at zero failures.
 
+### What the gate does NOT catch
+
+Collected counts and `residual-mocks.mjs` detect **absence** — a file that lost its tests, a
+specifier still mocked directly. Neither can see a test that still runs, still passes, and no
+longer asserts anything real.
+
+That is not hypothetical either. A codemod shape that dropped a factory's
+`withSysReadDeadline` left two fail-open legs of `session-verifier.test.ts` passing while
+asserting nothing, because the export the test had replaced with a spy was how it injected
+the timeout. Another wrapped a whole client object as a leaf spy: every method vanished, the
+calls returned empty instead of throwing, and a test asserting "nothing was deleted" would
+have gone **green**. Both files converted with zero refusals, kept every test, and read clean
+on residuals.
+
+What caught them was **a control pair at assertion level, on a small set, run by someone who
+did not write the tool**. Keep doing that alongside the gate; it is the half the gate cannot
+do.
+
 ### And the general form, which outlives this migration
 
 The two most valuable findings of the day each came from **someone else running a control on
