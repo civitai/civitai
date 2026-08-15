@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * STEP-4 sysRedis soft-dependency sweep — the SSR/hot-path readers in
