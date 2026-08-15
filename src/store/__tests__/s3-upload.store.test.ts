@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { UploadType } from '~/server/common/enums';
+import { MAX_PART_ATTEMPTS } from '~/utils/upload-retry';
 
 /**
  * Regression cover for large-file uploads that transferred every byte and then
@@ -163,7 +164,50 @@ function makeFile(bytes: number) {
   return new File([new Uint8Array(bytes)], 'model.safetensors');
 }
 
+type UploadArgs = Parameters<ReturnType<typeof useS3UploadStore.getState>['upload']>;
+
+/** Above MAX_BACKOFF_MS, so one turn always clears whatever the longest sleep resolved to. */
+const CLOCK_TURN_MS = 60_000;
+/**
+ * Far above the store's longest chain (MAX_PART_ATTEMPTS backoffs per part, then 3 completion
+ * attempts) and above the microtask turns the fetch chain needs between them.
+ */
+const MAX_CLOCK_TURNS = 200;
+
+/**
+ * Runs an upload with the store's retry sleeps driven rather than waited out. Both give-up paths
+ * sleep for real — parts back off exponentially over MAX_PART_ATTEMPTS, and `withRetries` holds a
+ * flat second between completion attempts — which is wall clock this file was paying in full.
+ *
+ * 🔴 The loop is bounded and THROWS, which is the whole reason a fake clock is safe here. Driving a
+ * loop with a fake is normally how a regression turns into an unreportable hang: the runner's
+ * timeout is itself a timer, so a test that never settles can wedge CI with nothing to read. A
+ * retry loop that stopped terminating fails here with a message instead.
+ *
+ * 🔴 It advances the clock unconditionally rather than while `vi.getTimerCount() > 0`. That was the
+ * first shape and it hung: at the moment the upload is handed back, no timer exists yet — the first
+ * one is scheduled only after `fetch('/api/upload')` resolves — so the guard read 0 and exited
+ * before the run had begun. A count of pending timers says nothing about whether more are coming.
+ */
+async function runUpload(...args: UploadArgs) {
+  let settled = false;
+  const promise = useS3UploadStore
+    .getState()
+    .upload(...args)
+    .finally(() => {
+      settled = true;
+    });
+  for (let turn = 0; !settled && turn < MAX_CLOCK_TURNS; turn++)
+    await vi.advanceTimersByTimeAsync(CLOCK_TURN_MS);
+  if (!settled)
+    throw new Error(
+      `upload did not settle within ${MAX_CLOCK_TURNS} clock turns — a retry loop is not terminating`
+    );
+  return promise;
+}
+
 beforeEach(() => {
+  vi.useFakeTimers();
   useS3UploadStore.setState({ items: [] });
   completeStatus = 200;
   completeStatusQueue = [];
@@ -181,6 +225,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -193,7 +238,7 @@ describe('useS3UploadStore.upload', () => {
       return { status: 200, etag: 'etag' };
     };
 
-    const result = await useS3UploadStore.getState().upload({
+    const result = await runUpload({
       file: makeFile(CHUNK * 3),
       type: UploadType.Model,
     });
@@ -209,11 +254,44 @@ describe('useS3UploadStore.upload', () => {
     partHandler = (_url, partNumber) =>
       partNumber === 2 ? { status: 400 } : { status: 200, etag: 'etag' };
 
-    const result = await useS3UploadStore.getState().upload({
+    const result = await runUpload({
       file: makeFile(CHUNK * 2),
       type: UploadType.Model,
     });
 
+    expect(result).toBeUndefined();
+    expect(useS3UploadStore.getState().items[0].status).toBe('error');
+  });
+
+  // Nothing covered the TRANSIENT part-retry path: flipping shouldRetryPartError so 429/5xx were
+  // never retried left all 17 of the older tests green. It went untested because it was expensive —
+  // exhausting the backoff is ~1s + 2s + 4s + 8s of real sleeping. On the fake clock it is free.
+  it('retries a part that answers with a transient status, and finishes', async () => {
+    vi.stubGlobal('fetch', makeFetch(1));
+    let attempts = 0;
+    partHandler = () => {
+      attempts++;
+      return attempts === 1 ? { status: 503 } : { status: 200, etag: 'etag' };
+    };
+
+    const result = await runUpload({ file: makeFile(CHUNK), type: UploadType.Model });
+
+    expect(attempts).toBe(2);
+    expect(result).toBeTruthy();
+    expect(useS3UploadStore.getState().items[0].status).toBe('success');
+  });
+
+  it('stops at MAX_PART_ATTEMPTS when a part is transient forever, rather than retrying without end', async () => {
+    vi.stubGlobal('fetch', makeFetch(1));
+    let attempts = 0;
+    partHandler = () => {
+      attempts++;
+      return { status: 503 };
+    };
+
+    const result = await runUpload({ file: makeFile(CHUNK), type: UploadType.Model });
+
+    expect(attempts).toBe(MAX_PART_ATTEMPTS);
     expect(result).toBeUndefined();
     expect(useS3UploadStore.getState().items[0].status).toBe('error');
   });
@@ -226,7 +304,7 @@ describe('useS3UploadStore.upload', () => {
       return { status: 200, etag: 'etag' };
     };
 
-    const result = await useS3UploadStore.getState().upload({
+    const result = await runUpload({
       file: makeFile(CHUNK * 2),
       type: UploadType.Model,
     });
@@ -241,7 +319,7 @@ describe('useS3UploadStore.upload', () => {
     signPartStatus = 500;
     partHandler = () => ({ status: 403 });
 
-    const result = await useS3UploadStore.getState().upload({
+    const result = await runUpload({
       file: makeFile(CHUNK),
       type: UploadType.Model,
     });
@@ -255,9 +333,7 @@ describe('useS3UploadStore.upload', () => {
     completeStatusQueue = [503];
     const cb = vi.fn();
 
-    const result = await useS3UploadStore
-      .getState()
-      .upload({ file: makeFile(CHUNK), type: UploadType.Model }, cb);
+    const result = await runUpload({ file: makeFile(CHUNK), type: UploadType.Model }, cb);
 
     expect(completeCalls).toBe(2);
     expect(result).toBeTruthy();
@@ -269,9 +345,7 @@ describe('useS3UploadStore.upload', () => {
     completeStatus = 503;
     const cb = vi.fn();
 
-    const result = await useS3UploadStore
-      .getState()
-      .upload({ file: makeFile(CHUNK), type: UploadType.Model }, cb);
+    const result = await runUpload({ file: makeFile(CHUNK), type: UploadType.Model }, cb);
 
     expect(result).toBeUndefined();
     expect(cb).not.toHaveBeenCalled();
@@ -282,9 +356,7 @@ describe('useS3UploadStore.upload', () => {
     vi.stubGlobal('fetch', makeFetch(1));
     completeStatus = 409;
 
-    const result = await useS3UploadStore
-      .getState()
-      .upload({ file: makeFile(CHUNK), type: UploadType.Model });
+    const result = await runUpload({ file: makeFile(CHUNK), type: UploadType.Model });
 
     expect(completeCalls).toBe(1);
     expect(result).toBeUndefined();
@@ -311,9 +383,7 @@ describe('useS3UploadStore.upload multipart teardown', () => {
     vi.stubGlobal('fetch', makeFetch(1));
     completeStatus = 503;
 
-    const result = await useS3UploadStore
-      .getState()
-      .upload({ file: makeFile(CHUNK), type: UploadType.Model });
+    const result = await runUpload({ file: makeFile(CHUNK), type: UploadType.Model });
 
     expect(result).toBeUndefined();
     expect(useS3UploadStore.getState().items[0].status).toBe('error');
@@ -326,7 +396,7 @@ describe('useS3UploadStore.upload multipart teardown', () => {
     vi.stubGlobal('fetch', makeFetch(2));
     completeStatus = 422;
 
-    await useS3UploadStore.getState().upload({ file: makeFile(CHUNK * 2), type: UploadType.Model });
+    await runUpload({ file: makeFile(CHUNK * 2), type: UploadType.Model });
 
     expect(completeCalls).toBe(1);
     expect(abortCalls).toEqual([expectedAbort]);
@@ -338,7 +408,7 @@ describe('useS3UploadStore.upload multipart teardown', () => {
     vi.stubGlobal('fetch', makeFetch(1));
     completeStatus = 409;
 
-    await useS3UploadStore.getState().upload({ file: makeFile(CHUNK), type: UploadType.Model });
+    await runUpload({ file: makeFile(CHUNK), type: UploadType.Model });
 
     expect(abortCalls).toEqual([expectedAbort]);
   });
@@ -350,7 +420,7 @@ describe('useS3UploadStore.upload multipart teardown', () => {
     partHandler = (_url, partNumber) =>
       partNumber === 2 ? { status: 400 } : { status: 200, etag: 'etag' };
 
-    await useS3UploadStore.getState().upload({ file: makeFile(CHUNK * 2), type: UploadType.Model });
+    await runUpload({ file: makeFile(CHUNK * 2), type: UploadType.Model });
 
     expect(useS3UploadStore.getState().items[0].status).toBe('error');
     expect(abortCalls).toEqual([expectedAbort]);
@@ -361,9 +431,7 @@ describe('useS3UploadStore.upload multipart teardown', () => {
   it('does not abort an upload that completed successfully', async () => {
     vi.stubGlobal('fetch', makeFetch(2));
 
-    const result = await useS3UploadStore
-      .getState()
-      .upload({ file: makeFile(CHUNK * 2), type: UploadType.Model });
+    const result = await runUpload({ file: makeFile(CHUNK * 2), type: UploadType.Model });
 
     expect(result).toBeTruthy();
     expect(abortCalls).toEqual([]);
@@ -377,9 +445,7 @@ describe('useS3UploadStore.upload multipart teardown', () => {
     completeStatus = 503;
     onCompleteRequest = () => useS3UploadStore.setState({ items: [] });
 
-    const result = await useS3UploadStore
-      .getState()
-      .upload({ file: makeFile(CHUNK), type: UploadType.Model });
+    const result = await runUpload({ file: makeFile(CHUNK), type: UploadType.Model });
 
     expect(result).toBeUndefined();
     expect(abortCalls).toEqual([expectedAbort]);
@@ -392,9 +458,7 @@ describe('useS3UploadStore.upload multipart teardown', () => {
       return { status: 400 };
     };
 
-    const result = await useS3UploadStore
-      .getState()
-      .upload({ file: makeFile(CHUNK), type: UploadType.Model });
+    const result = await runUpload({ file: makeFile(CHUNK), type: UploadType.Model });
 
     expect(result).toBeUndefined();
     expect(abortCalls).toEqual([expectedAbort]);
@@ -407,9 +471,7 @@ describe('useS3UploadStore.upload multipart teardown', () => {
     completeStatus = 503;
     abortShouldReject = true;
 
-    const result = await useS3UploadStore
-      .getState()
-      .upload({ file: makeFile(CHUNK), type: UploadType.Model });
+    const result = await runUpload({ file: makeFile(CHUNK), type: UploadType.Model });
 
     expect(result).toBeUndefined();
     expect(useS3UploadStore.getState().items[0].status).toBe('error');
@@ -451,7 +513,7 @@ describe('useS3UploadStore.upload teardown ordering', () => {
     const { timeline, unsubscribe } = recordTimeline('error');
 
     try {
-      await useS3UploadStore.getState().upload({ file: makeFile(CHUNK), type: UploadType.Model });
+      await runUpload({ file: makeFile(CHUNK), type: UploadType.Model });
     } finally {
       unsubscribe();
     }
@@ -466,9 +528,7 @@ describe('useS3UploadStore.upload teardown ordering', () => {
     const { timeline, unsubscribe } = recordTimeline('error');
 
     try {
-      await useS3UploadStore
-        .getState()
-        .upload({ file: makeFile(CHUNK * 2), type: UploadType.Model });
+      await runUpload({ file: makeFile(CHUNK * 2), type: UploadType.Model });
     } finally {
       unsubscribe();
     }

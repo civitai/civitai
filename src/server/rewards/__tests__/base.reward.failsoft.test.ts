@@ -233,7 +233,15 @@ describe('base.reward batch process() still rethrows (cron path unchanged)', () 
     });
   }
 
+  // The batch path retries 5 times with a 500ms backoff, all of it real: this one test cost 2556ms
+  // of the file's 3837ms. The retry budget IS what is under test here — shrinking it would change
+  // the behaviour rather than the clock — so the clock is driven instead.
+  //
+  // The loop is bounded and the assertion is awaited afterwards, so a retry chain that stopped
+  // terminating fails on the awaited rejection rather than spinning: 12 turns of 1000ms is far past
+  // the 5 x 500ms this path can schedule.
   it('(e) rethrows on update failure in the batch process path', async () => {
+    vi.useFakeTimers();
     h.insertImpl.mockRejectedValue(new Error('CH down'));
     const reward = makeProcessableReward();
 
@@ -253,6 +261,21 @@ describe('base.reward batch process() still rethrows (cron path unchanged)', () 
       db: {} as any,
     };
 
-    await expect(reward.process(ctx)).rejects.toThrow(/Buzz Event Processing Failure/);
+    const settled = expect(reward.process(ctx)).rejects.toThrow(/Buzz Event Processing Failure/);
+    try {
+      for (let turn = 0; turn < 12; turn++) await vi.advanceTimersByTimeAsync(1000);
+      await settled;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // 1 attempt plus the 5 retries `updateBuzzEvents` passes to withRetries as a literal — NOT
+    // BATCH_RETRY_COUNT, which is `addBuzzEvent`'s default and which this path never reads. Checked:
+    // dropping BATCH_RETRY_COUNT to 1 leaves this green, dropping the literal to 1 gives
+    // "expected 6 times, but got 2 times".
+    //
+    // Doubles as the control on the fake clock: without it driving the 500ms backoff, these attempts
+    // would not have happened.
+    expect(h.insertImpl).toHaveBeenCalledTimes(6);
   });
 });
