@@ -214,6 +214,72 @@ mock was added, which is what the guard exists to stop.
 that no longer mock anything, so the list cannot be padded. Its length is the migration's
 remaining work.
 
+## The flip gate — a whole-suite collected-count diff, immediately before flipping
+
+🔴 **Blocking prerequisite, not a recommendation.** `isolate: false` does not ship until this
+passes on the exact tree that ships.
+
+```bash
+# same window, back to back
+<whole unit suite, migration branch>   --label flip-candidate
+<whole unit suite, main control>       --label flip-control
+node scripts/test-perf/compare-runs.mjs flip-control flip-candidate
+```
+
+Pass conditions, all of them:
+
+- **zero files collected fewer tests** than the control;
+- **the total matches exactly** — not "no new failures", not "no regressions", an equal count;
+- run **whole-suite**, not per slice;
+- run **immediately before the flip**, not once during the migration.
+
+The last two are the point, and each has a reason.
+
+**Whole-suite, because per-slice verification is sound and insufficient at the same time.**
+Every slice owner diffing per-file collected counts over their own files is correct practice
+and it still leaves a gap: a file nobody owns can collect zero and no owner's control covers
+it. That is not hypothetical. The canonical mocks were registered with an `importOriginal`
+spread that made one file die at module scope and contribute nothing; the 120-file pilot was
+verified by per-file collected counts and could not have caught it, because the affected file
+was outside the set. It was found by someone taking a control run on a *different* slice
+before converting anything. The failure was not in anyone's work — it was in the gap between
+everyone's work.
+
+**Immediately before, because the property is only true of a specific tree.** A clean diff
+during the migration says nothing about the tree three hundred conversions later. This is a
+gate on what ships, not a milestone.
+
+**It is cheap.** The whole-suite integration run on 2026-08-15 was 1069 files / 16806 tests
+with 0 zero-collect files, in about four minutes. The check has already been demonstrated to
+work at full size; it is a run, not a project.
+
+### Why a summary line cannot satisfy this
+
+Under `--no-isolate` a file whose module scope throws collects **zero** tests. The failure
+count does not rise. The run reads as green. Every instance of this found during the
+migration presented that way, and none of them looked like an error:
+
+- a mock factory missing a `default` key under pre-bundling: **7 tests collected instead of
+  106**, reported as 1 failure;
+- the `importOriginal`-on-a-shim regression: **870 passed, 0 failed**, one file contributing
+  nothing;
+- a missing `event-engine-common` submodule (pre-existing, documented in CLAUDE.md): a whole
+  suite collecting 0 and still reading as a pass.
+
+`compare-runs.mjs` exists because of this. It prints collected-count regressions **before**
+failures and exits non-zero on a count regression even at zero failures.
+
+### And the general form, which outlives this migration
+
+The two most valuable findings of the day each came from **someone else running a control on
+another person's work** — not from the author's own verification, which was careful and
+passed. A third correction went the other way, from the author to the reviewer. Three times
+in one day, in both directions.
+
+Authors verify what they changed. What nobody verifies is what changed *around* them. On work
+split across several people, budget for at least one independent whole-suite control that
+belongs to no slice.
+
 ## What this does not cover
 
 `~/env/server` (114 sites), `~/server/services/buzz.service` (98),

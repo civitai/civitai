@@ -10,6 +10,12 @@
  * toward that; it is not the criterion. Measured: a 120-file set clean for all of CANONICAL
  * still failed 110 tests at 4 workers under `--no-isolate`, entirely through specifiers in
  * PENDING — `No "isFliptSync" export is defined on the "~/server/flipt/client" mock`.
+ *
+ * 🔴 And reaching zero is still not sufficient to flip. `isolate: false` is gated on a
+ * WHOLE-SUITE per-file collected-count diff against a `main` control, run immediately before
+ * the flip — zero files may lose tests and the total must match exactly. Per-slice
+ * verification cannot catch a file that belongs to no slice. See the flip gate in
+ * docs/testing/shared-module-mock-migration.md.
  */
 
 /** Have a canonical mock in `src/__tests__/mocks/`. Mocking these directly is a failure. */
