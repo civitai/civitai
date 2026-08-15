@@ -40,6 +40,28 @@ describe('shared-module mocks', () => {
     expect(redisClient.withSysReadDeadline).toBeTypeOf('function');
   });
 
+  it('exposes withSysReadDeadline as a seam whose default is the REAL deadline', async () => {
+    const redisClient = await import('~/server/redis/client');
+    expect(redisClient.withSysReadDeadline).toBe(redisMock.withSysReadDeadline);
+
+    // The default has to still time out, or promoting it to a seam would silently disarm a
+    // live guard in every file in the worker. A hanging promise is the only input that tells
+    // the real implementation apart from a pass-through — every resolved promise looks the
+    // same through both.
+    await expect(redisClient.withSysReadDeadline(new Promise(() => undefined), 5)).rejects.toThrow(
+      'sysRedis read timed out after 5ms'
+    );
+
+    // …and the positive control for that assertion: the same call resolves when the promise
+    // beats the deadline. Without this, a seam that rejected everything would also pass.
+    await expect(redisClient.withSysReadDeadline(Promise.resolve('v'), 5000)).resolves.toBe('v');
+
+    // The lever the nine blocked files need: replace it per file, and the reset restores the
+    // real implementation for the next one.
+    redisMock.withSysReadDeadline.mockRejectedValueOnce(new Error('injected'));
+    await expect(redisClient.withSysReadDeadline(Promise.resolve('v'))).rejects.toThrow('injected');
+  });
+
   it('never evaluates the real db/redis shims, so no client is ever constructed', () => {
     // 🔴 The registration spreads the PACKAGE, not `importOriginal` of the app shim. The
     // shims construct Prisma/Redis clients at module scope, so spreading them forced real

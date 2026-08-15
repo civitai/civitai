@@ -36,11 +36,17 @@ vi.mock('~/server/db/client', async () => ({
   dbWrite: dbMock.dbWrite,
 }));
 
+// The `sys-read-deadline` spread stays for anything else that module exports; the seam is
+// overridden after it, so a test can inject a sysRedis read timeout the way it injects a
+// `sysRedis.get`. Its default IS that real implementation, so this adds a lever and changes
+// no behaviour — see redis.mock.ts. Without it a converted test keeps the real wall-clock
+// race, which the mocked client can never lose, and its timeout leg passes asserting nothing.
 vi.mock('~/server/redis/client', async () => ({
   ...(await import('@civitai/redis/client')),
   ...(await import('~/server/redis/sys-read-deadline')),
   redis: redisMock.redis,
   sysRedis: redisMock.sysRedis,
+  withSysReadDeadline: redisMock.withSysReadDeadline,
 }));
 
 // Mock @civitai/client to avoid ESM resolution issues

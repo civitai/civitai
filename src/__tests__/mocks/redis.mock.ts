@@ -51,13 +51,48 @@ const DEFAULTS: Record<string, () => Promise<unknown>> = {
   ping: () => Promise.resolve('PONG'),
 };
 
+/**
+ * `withSysReadDeadline` is a SEAM, not a command: a test injects a sysRedis read timeout by
+ * replacing it, which is the only lever it has — the deadline is a wall-clock race the mocked
+ * client can never lose on its own.
+ *
+ * 🔴 Its default is the REAL implementation, deliberately. `setup.ts` spread the real module
+ * into the canonical factory, so every migrated file has been running the real wrapper; a
+ * pass-through default would silently disarm a live guard in every file in the worker to give
+ * nine files a lever. Wrapping the real function is the only version of this that adds a seam
+ * and changes nothing else.
+ *
+ * 🔴 Resolved by a LAZY import, not a top-level one. This module is loaded from `setup.ts`, which
+ * also registers the `~/env/server` mock — and `vi.mock` is hoisted above it. A static
+ * `import … from '~/server/redis/sys-read-deadline'` therefore evaluates that module (and its
+ * `import { env }`) before the env mock's factory has initialised, and the whole file collects
+ * ZERO tests with `Cannot access '__vi_import_4__' before initialization`.
+ */
+let realModule: typeof import('~/server/redis/sys-read-deadline') | undefined;
+
+const SEAMS: Record<string, (...args: any[]) => any> = {
+  withSysReadDeadline: async (...args: any[]) => {
+    realModule ??= await import('~/server/redis/sys-read-deadline');
+    return realModule.withSysReadDeadline(...(args as [Promise<unknown>, number?]));
+  },
+};
+
 registerDefaults((path) => {
-  const root = path.slice(0, path.indexOf('.'));
-  if (!ROOTS.includes(root)) return undefined;
+  if (SEAMS[path]) return SEAMS[path];
+  const dot = path.indexOf('.');
+  // A root path with no dot is not a command; `slice(0, -1)` would silently truncate it into
+  // one that never matches, which is how a resolver returns undefined for the wrong reason.
+  if (dot === -1) return undefined;
+  if (!ROOTS.includes(path.slice(0, dot))) return undefined;
   return DEFAULTS[path.slice(path.lastIndexOf('.') + 1)];
 });
 
-export const redisMock: { redis: HybridNode; sysRedis: HybridNode } = {
+export const redisMock: {
+  redis: HybridNode;
+  sysRedis: HybridNode;
+  withSysReadDeadline: HybridNode;
+} = {
   redis: hybridNode('redis'),
   sysRedis: hybridNode('sysRedis'),
+  withSysReadDeadline: hybridNode('withSysReadDeadline'),
 };
