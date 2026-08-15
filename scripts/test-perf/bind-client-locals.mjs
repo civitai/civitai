@@ -49,6 +49,15 @@ function entries(src, open) {
     if ('({['.includes(c)) depth++;
     else if (')}]'.includes(c)) depth--;
     else if (depth === 1) {
+      // ES6 shorthand: `{ groupBy }` is `groupBy: groupBy`, and reading it as "no entries" is
+      // how a spy declared elsewhere gets silently orphaned (mark hit the same shape in a
+      // classifier). Rewrite it to the long form before the key/value scan.
+      const sh = /^([A-Za-z_$][\w$]*)\s*(?=[,}])/.exec(src.slice(i));
+      if (sh && /[{,\s]/.test(src[i - 1] ?? '') && !/^(async|await|return|new|typeof)$/.test(sh[1])) {
+        out.push({ key: sh[1], value: sh[1], start: i, end: i + sh[0].length });
+        i += sh[0].length - 1;
+        continue;
+      }
       const m = /^([A-Za-z_$][\w$]*)\s*:\s*/.exec(src.slice(i));
       if (m && /[{,\s]/.test(src[i - 1] ?? '')) {
         const vs = i + m[0].length;
@@ -94,7 +103,15 @@ for (const file of files) {
     if (at === -1) continue;
     const callOpen = src.indexOf('(', at);
     const callEnd = close(src, callOpen);
-    const objOpen = src.indexOf('{', src.indexOf('=>', callOpen));
+    // 🔴 Only a CONCISE-body factory — `() => ({ … })` — is parsed here. A block body
+    // (`() => { … return { … } }`) opens on the block's brace, so the entry scan reads an empty
+    // object, finds no exports to check, and the whole factory gets deleted with every local it
+    // named left orphaned. That is a wholesale silent delete, so it is a refusal: two files were
+    // cleared this way and only caught by reading the diff.
+    const arrow = src.indexOf('=>', callOpen);
+    const afterArrow = src.slice(arrow + 2, callEnd).replace(/^\s*/, '');
+    if (!afterArrow.startsWith('({')) { bad = `${spec}: factory has a block body, not \`() => ({ … })\``; break; }
+    const objOpen = src.indexOf('{', arrow + 2);
     if (objOpen === -1 || objOpen > callEnd) { bad = `${spec}: factory is not an object literal`; break; }
 
     for (const e of entries(src, objOpen)) {
@@ -136,6 +153,20 @@ for (const file of files) {
 
   if (bad) { console.log('REFUSED', file.replace('src/server/services/__tests__/', '').padEnd(52), bad); refused++; continue; }
   if (!cuts.length) { console.log('SKIP   ', file.replace('src/server/services/__tests__/', ''), 'no canonical vi.mock'); continue; }
+
+  // 🔴 One local serving two clients is an ALIAS, and binding it here would silently pick
+  // whichever came last — the collision the split exists to surface. Which client the code
+  // actually uses is a question for the module under test (or, where the service takes its
+  // client as a parameter, for each test); either way it is not this tool's call.
+  const byLocal = new Map();
+  for (const [l, t] of bindings) {
+    if (byLocal.has(l) && byLocal.get(l) !== t) {
+      bad = `"${l}" is bound to both ${byLocal.get(l)} and ${t} — an alias, split it by call site`;
+      break;
+    }
+    byLocal.set(l, t);
+  }
+  if (bad) { console.log('REFUSED', file.replace('src/server/services/__tests__/', '').padEnd(52), bad); refused++; continue; }
 
   // every local we bind must have a behaviour-free declaration, which we then remove
   const removals = [];
