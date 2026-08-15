@@ -8,7 +8,7 @@ import type {
 } from '~/server/schema/csam.schema';
 import { csamCapabilitiesDictionary, csamContentsDictionary } from '~/server/schema/csam.schema';
 import { clickhouse } from '~/server/clickhouse/client';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { isDefined } from '~/utils/type-guards';
 import { fetchBlob } from '~/utils/file-utils';
 import { S3Client } from '@aws-sdk/client-s3';

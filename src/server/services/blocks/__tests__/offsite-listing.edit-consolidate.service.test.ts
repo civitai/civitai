@@ -52,7 +52,7 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
 });
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (url: string) => `edge:${url}` }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => `edge:${url}` }));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingId: () => `apl_new_${++seq.n}`,
   newAppListingPublishRequestId: () => `alpr_new_${++seq.n}`,

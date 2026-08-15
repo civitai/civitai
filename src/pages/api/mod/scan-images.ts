@@ -5,7 +5,7 @@ import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import type { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import { chunk } from 'lodash-es';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 
 const stringToNumberArraySchema = z
   .string()

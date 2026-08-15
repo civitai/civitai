@@ -48,7 +48,7 @@ vi.mock('~/server/flipt/client', () => ({
   getFliptVariant: mockGetFliptVariant,
 }));
 
-vi.mock('~/client-utils/cf-images-utils', () => ({
+vi.mock('~/client-utils/edge-url', () => ({
   getEdgeUrl: (url: string) => `https://cf-images.com/${url}`,
 }));
 

@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import {
   contentRatingFromNsfwLevel,
   onlySelectableLevels,

@@ -57,9 +57,9 @@ vi.mock('~/env/server', () => ({
   },
 }));
 
-// orchestrator.service.ts pulls in cf-images-utils which validates
+// orchestrator.service.ts pulls in edge-url which validates
 // NEXT_PUBLIC_* env vars at import-time. Stub it to keep tests hermetic.
-vi.mock('~/client-utils/cf-images-utils', () => ({
+vi.mock('~/client-utils/edge-url', () => ({
   getEdgeUrl: (url: string) => url,
 }));
 

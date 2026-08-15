@@ -84,7 +84,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { isValidAIGeneration } from '~/utils/image-utils';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import {
   resolveVerifiedSourceImageIds,
   sanitizeProvenance,
