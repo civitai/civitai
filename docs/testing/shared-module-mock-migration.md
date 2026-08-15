@@ -280,6 +280,18 @@ Authors verify what they changed. What nobody verifies is what changed *around* 
 split across several people, budget for at least one independent whole-suite control that
 belongs to no slice.
 
+## Open question: browser-mode tests
+
+The guard DETECTS `.test.tsx` — a `.browser.test.tsx` adding a direct canonical mock would
+otherwise be a class it structurally cannot observe, which is different from a class that
+happens to be empty. The **codemod deliberately stays `.ts`**: converting a browser-mode file
+would put it in a regime the canonical mocks have never been proven in, and a glob change
+would make that look like a supported path.
+
+Note the shape of what is missing, because it is narrower than "does browser mode work":
+there are **zero** `.tsx` files mocking a canonical specifier today, so proving it requires
+someone to *write* one, not to migrate one. It is a piece of work, not a verification.
+
 ## What this does not cover
 
 `~/env/server` (114 sites), `~/server/services/buzz.service` (98),
