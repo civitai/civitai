@@ -49,7 +49,8 @@ for (const file of Object.keys(a)) {
   }
   if (collected(after) < collected(before))
     lostTests.push({ file, before: collected(before), after: collected(after) });
-  if (after.failed > before.failed) newFailures.push({ file, before: before.failed, after: after.failed });
+  if (after.failed > before.failed)
+    newFailures.push({ file, before: before.failed, after: after.failed });
   if (before.failed > 0 && after.failed === 0) fixed.push({ file, was: before.failed });
 }
 const added = Object.keys(b).filter((f) => !a[f]);
@@ -74,11 +75,24 @@ const totals = (run) => ({
 const ta = totals(control);
 const tb = totals(candidate);
 
-console.log(`control   ${controlLabel.padEnd(28)} files ${ta.files}  tests ${ta.tests}  failed ${ta.failed}  zero-test files ${ta.zeroTestFiles}`);
-console.log(`candidate ${candidateLabel.padEnd(28)} files ${tb.files}  tests ${tb.tests}  failed ${tb.failed}  zero-test files ${tb.zeroTestFiles}`);
-console.log(`wall ${(control.wallMs / 1000).toFixed(1)}s -> ${(candidate.wallMs / 1000).toFixed(1)}s`);
+console.log(
+  `control   ${controlLabel.padEnd(28)} files ${ta.files}  tests ${ta.tests}  failed ${
+    ta.failed
+  }  zero-test files ${ta.zeroTestFiles}`
+);
+console.log(
+  `candidate ${candidateLabel.padEnd(28)} files ${tb.files}  tests ${tb.tests}  failed ${
+    tb.failed
+  }  zero-test files ${tb.zeroTestFiles}`
+);
+console.log(
+  `wall ${(control.wallMs / 1000).toFixed(1)}s -> ${(candidate.wallMs / 1000).toFixed(1)}s`
+);
 
-report('FILES ABSENT FROM CANDIDATE', missing.map((f) => `  ${f}`));
+report(
+  'FILES ABSENT FROM CANDIDATE',
+  missing.map((f) => `  ${f}`)
+);
 report(
   'FILES THAT COLLECTED FEWER TESTS',
   lostTests.map((x) => `  ${x.before} -> ${x.after}  ${x.file}`)
@@ -95,8 +109,15 @@ report(
   'FILES ADDED BY THE CANDIDATE THAT HAVE FAILURES',
   addedFailing.map((f) => `  ${b[f].failed} failed  ${f}`)
 );
-report('FILES FIXED', fixed.map((x) => `  was ${x.was}  ${x.file}`));
-if (added.length) report('FILES ONLY IN CANDIDATE', added.map((f) => `  ${f}  (${collected(b[f])} tests)`));
+report(
+  'FILES FIXED',
+  fixed.map((x) => `  was ${x.was}  ${x.file}`)
+);
+if (added.length)
+  report(
+    'FILES ONLY IN CANDIDATE',
+    added.map((f) => `  ${f}  (${collected(b[f])} tests)`)
+  );
 
 const clean =
   !missing.length &&
@@ -105,7 +126,11 @@ const clean =
   !addedEmpty.length &&
   !addedFailing.length &&
   tb.tests >= ta.tests;
-console.log(`\n${clean ? 'CLEAN' : 'REGRESSION'}: ${tb.tests}/${ta.tests} tests collected, ${tb.failed} failed`);
+console.log(
+  `\n${clean ? 'CLEAN' : 'REGRESSION'}: ${tb.tests}/${ta.tests} tests collected, ${
+    tb.failed
+  } failed`
+);
 process.exit(clean ? 0 : 1);
 
 function report(title, lines) {
