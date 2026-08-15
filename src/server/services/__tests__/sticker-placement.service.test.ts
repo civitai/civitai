@@ -139,14 +139,18 @@ const givenStickerAndBalance = (
     .mockResolvedValueOnce([balance]);
 };
 
-// Same discipline as the numbers above: the default currency is deliberately not
-// the one the escrow test asserts ('green'), so a placement that never carried
-// the caller's currency cannot pass by matching the fixture.
+// Same discipline as the numbers above, applied to the currency: the escrow test
+// overrides the fixture default, and the two must differ or a service that
+// stopped forwarding the caller's currency would pass by matching the fixture.
+// Kept apart as constants so that stays true when someone edits one of them.
+const FIXTURE_SPEND = 'yellow' as const;
+const CALLER_SPEND = 'green' as const;
+
 const placeInput: CreateStickerPlacement = {
   placerId: PLACER,
   imageId: IMAGE,
   data: { cosmeticId: COSMETIC, x: 0.25, y: 0.75, scale: 0.2, rotation: 15 },
-  spendType: 'yellow',
+  spendType: FIXTURE_SPEND,
 };
 
 beforeEach(() => {
@@ -435,12 +439,14 @@ describe('what gets written to the row', () => {
   // untouched. A placement that reached the escrow without it would be held —
   // and later paid out — in whatever the Buzz service defaults to.
   it('carries the caller currency into the escrow', async () => {
+    // The assertion below is only worth anything while these differ.
+    expect(CALLER_SPEND).not.toBe(FIXTURE_SPEND);
     givenStickerAndBalance();
 
-    await createStickerPlacement({ ...placeInput, spendType: 'green' });
+    await createStickerPlacement({ ...placeInput, spendType: CALLER_SPEND });
 
     expect(holdPlacementEscrow).toHaveBeenCalledWith(
-      expect.objectContaining({ spendType: 'green' })
+      expect.objectContaining({ spendType: CALLER_SPEND })
     );
   });
 
