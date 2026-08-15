@@ -19,16 +19,16 @@
     "~/server/prom/client"
   ],
   "totals": {
-    "canonicalFiles": 334,
+    "canonicalFiles": 332,
     "pendingFiles": 390,
-    "allFiles": 509,
-    "canonicalSites": 478,
+    "allFiles": 508,
+    "canonicalSites": 475,
     "pendingSites": 853
   },
   "bySpecifier": {
-    "~/server/db/client": 237,
+    "~/server/db/client": 235,
     "~/server/redis/client": 139,
-    "~/server/logging/client": 102,
+    "~/server/logging/client": 101,
     "~/env/server": 106,
     "~/server/services/buzz.service": 98,
     "~/server/services/image.service": 88,
@@ -233,11 +233,9 @@
     "src/server/services/__tests__/referral.service.test.ts",
     "src/server/services/__tests__/remix-gallery.service.test.ts",
     "src/server/services/__tests__/resourceReview.idempotent.service.test.ts",
-    "src/server/services/__tests__/restore-user-image-recovery.test.ts",
     "src/server/services/__tests__/scanner-policies.buffer.test.ts",
     "src/server/services/__tests__/set-model-minor.service.test.ts",
     "src/server/services/__tests__/signals.service.test.ts",
-    "src/server/services/__tests__/sticker-placement.service.test.ts",
     "src/server/services/__tests__/strike.service.test.ts",
     "src/server/services/__tests__/system-cache.memoize.test.ts",
     "src/server/services/__tests__/system-cache.sysredis-soft.test.ts",

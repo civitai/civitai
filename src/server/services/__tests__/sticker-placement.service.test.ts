@@ -6,6 +6,22 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
 import { STICKER_REMOVAL_LOCK_HOURS } from '~/shared/utils/sticker-placement';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbWrite.placement.create.mockImplementation(async () => {
+  calls.push('create');
+  return { id: PLACEMENT };
+});
+dbMock.dbWrite.placement.count.mockImplementation(async () => 0);
+dbMock.dbWrite.placement.findUnique.mockImplementation(async () => null);
+dbMock.dbWrite.placement.update.mockImplementation(async () => ({}));
+dbMock.dbWrite.placement.updateMany.mockImplementation(async () => ({ count: 1 }));
+dbMock.dbRead.placement.findMany.mockImplementation(async () => []);
+dbMock.dbRead.placement.groupBy.mockImplementation(async () => []);
+dbMock.dbRead.placement.findFirst.mockImplementation(async () => null);
+dbMock.dbRead.image.findMany.mockImplementation(async () => []);
+dbMock.dbRead.placementTransaction.findMany.mockImplementation(async () => []);
+dbMock.dbRead.cosmetic.findUnique.mockImplementation(async () => null);
 
 /**
  * Fixture discipline: every quantity in scope is a distinct number, so a value
@@ -47,8 +63,6 @@ vi.mock('~/server/services/placement-space.service', () => ({ resolvePlacementSp
 const spendStickerUsesFor = vi.fn(async () => undefined);
 vi.mock('~/server/services/sticker.service', () => ({ spendStickerUsesFor }));
 
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
-
 /**
  * The order operations happen in is the whole design of the mutation, and it
  * cannot be read off a set of assertions about final state — so every call
@@ -65,45 +79,19 @@ const calls: string[] = [];
  */
 type PrismaStub<T> = (args: unknown) => Promise<T>;
 
-const queryRaw = vi.fn();
-const placementCreate = vi.fn<PrismaStub<{ id: number }>>(async () => {
-  calls.push('create');
-  return { id: PLACEMENT };
-});
-const placementCount = vi.fn<PrismaStub<number>>(async () => 0);
-const placementFindMany = vi.fn<PrismaStub<unknown[]>>(async () => []);
-const placementGroupBy = vi.fn<PrismaStub<unknown[]>>(async () => []);
-const transactionFindMany = vi.fn<PrismaStub<unknown[]>>(async () => []);
-const placementFindFirst = vi.fn<PrismaStub<unknown>>(async () => null);
-const cosmeticFindUnique = vi.fn<PrismaStub<unknown>>(async () => null);
+const queryRaw = dbMock.dbWrite.$queryRaw;
+const placementCreate = dbMock.dbWrite.placement.create;
+const placementCount = dbMock.dbWrite.placement.count;
+const placementFindMany = dbMock.dbRead.placement.findMany;
+const placementGroupBy = dbMock.dbRead.placement.groupBy;
+const transactionFindMany = dbMock.dbRead.placementTransaction.findMany;
+const placementFindFirst = dbMock.dbRead.placement.findFirst;
+const cosmeticFindUnique = dbMock.dbRead.cosmetic.findUnique;
 
-const imageFindMany = vi.fn<PrismaStub<unknown[]>>(async () => []);
-const placementFindUnique = vi.fn<PrismaStub<unknown>>(async () => null);
-const placementUpdate = vi.fn<PrismaStub<object>>(async () => ({}));
-const placementUpdateMany = vi.fn<PrismaStub<{ count: number }>>(async () => ({ count: 1 }));
-
-vi.mock('~/server/db/client', () => ({
-  dbWrite: {
-    $queryRaw: (...args: unknown[]) => queryRaw(...args),
-    placement: {
-      create: placementCreate,
-      count: placementCount,
-      findUnique: placementFindUnique,
-      update: placementUpdate,
-      updateMany: placementUpdateMany,
-    },
-  },
-  dbRead: {
-    placement: {
-      findMany: placementFindMany,
-      groupBy: placementGroupBy,
-      findFirst: placementFindFirst,
-    },
-    image: { findMany: imageFindMany },
-    placementTransaction: { findMany: transactionFindMany },
-    cosmetic: { findUnique: cosmeticFindUnique },
-  },
-}));
+const imageFindMany = dbMock.dbRead.image.findMany;
+const placementFindUnique = dbMock.dbWrite.placement.findUnique;
+const placementUpdate = dbMock.dbWrite.placement.update;
+const placementUpdateMany = dbMock.dbWrite.placement.updateMany;
 
 const updateEntityMetricDetached = vi.fn(async () => undefined);
 vi.mock('~/server/utils/metric-helpers', async (importOriginal) => ({

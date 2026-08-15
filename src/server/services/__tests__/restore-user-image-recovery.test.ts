@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * `remove-blocked-images` keys purely off `JobQueue` and `Image.updatedAt` — it carries no owner
@@ -8,29 +9,22 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * gallery reversal now sits behind: the account is restored once the transaction commits, and the
  * images come back on `restore-user-images` rather than inside the moderator's request.
  */
-const {
-  mockDbWrite,
-  mockDisarm,
-  mockUnblock,
-  mockRecord,
-  mockCount,
-  mockCacheRefresh,
-  mockQueueUpdate,
-} = vi.hoisted(() => ({
-  mockDbWrite: {
-    user: { findFirst: vi.fn(), update: vi.fn() },
-    model: { findMany: vi.fn(), updateMany: vi.fn() },
-    $transaction: vi.fn(async (ops: unknown[]) => ops),
-  },
-  mockDisarm: vi.fn(() => 'disarm-statement'),
-  mockUnblock: vi.fn(async () => ({ unblocked: 3, stillBlocked: 1, skipped: 0, drained: true })),
-  mockRecord: vi.fn(async () => true),
-  mockCount: vi.fn(async () => 0),
-  mockCacheRefresh: vi.fn(async () => undefined),
-  mockQueueUpdate: vi.fn(async () => undefined),
-}));
+const { mockDisarm, mockUnblock, mockRecord, mockCount, mockCacheRefresh, mockQueueUpdate } =
+  vi.hoisted(() => ({
+    mockDisarm: vi.fn(() => 'disarm-statement'),
+    mockUnblock: vi.fn(async () => ({ unblocked: 3, stillBlocked: 1, skipped: 0, drained: true })),
+    mockRecord: vi.fn(async () => true),
+    mockCount: vi.fn(async () => 0),
+    mockCacheRefresh: vi.fn(async () => undefined),
+    mockQueueUpdate: vi.fn(async () => undefined),
+  }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbWrite, dbWrite: mockDbWrite }));
+// dbWrite, not dbRead: `restoreUser` reaches for the writer on its reads too.
+const mockDbWrite = dbMock.dbWrite;
+// Hands the op array back unresolved; the canonical default would Promise.all it, and the
+// ordering assertions below read the array itself.
+mockDbWrite.$transaction.mockImplementation(async (ops: unknown[]) => ops);
+
 vi.mock('~/server/services/account-deletion-images', () => ({
   disarmAccountDeletionImagePurge: mockDisarm,
   unblockAccountDeletionImages: mockUnblock,
