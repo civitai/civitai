@@ -32,13 +32,11 @@ const {
   mockGetDailyCompensation,
   mockCheckBlockCatalogRateLimit,
   mockGetSessionUser,
-  mockRedis,
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
   mockDailyBoostApply,
   mockDailyBoostGetDetails,
   mockGetUserBuzzAccounts,
-  mockSysRedis,
   mockResolveCanGenerateForVersions,
   mockGetResourceData,
   mockGetHighestTierSubscription,
@@ -72,26 +70,8 @@ const {
   // exposes keeps ANY redis path — the limiter or a transitive cache read — from
   // crashing with `redis.<fn> is not a function` in the preview (get/set alone
   // was the gap the pr-preview surfaced).
-  mockRedis: {
-    get: vi.fn(async () => null),
-    set: vi.fn(async () => undefined),
-    del: vi.fn(async () => 0),
-    incr: vi.fn(async () => 1),
-    incrBy: vi.fn(async () => 1),
-    decrBy: vi.fn(async () => 0),
-    expire: vi.fn(async () => true),
-    ttl: vi.fn(async () => -1),
-    exists: vi.fn(async () => 0),
-  },
   // sysRedis surface used by the cumulative Buzz-cap (audit A7). Default to an
   // empty window (get → null) so the cap is non-binding unless a test seeds it.
-  mockSysRedis: {
-    get: vi.fn(async () => null),
-    incrBy: vi.fn(async () => 0),
-    decrBy: vi.fn(async () => 0),
-    expire: vi.fn(async () => true),
-    ttl: vi.fn(async () => -1),
-  },
   mockIsAppBlocksEnabled: vi.fn(async () => true),
   // Developer soft-launch (Phase B): the runtime AUTHZ gate now checks the
   // `appBlocksAuthor` capability against the token subject (was: isModerator).
@@ -389,12 +369,6 @@ const { completeKeys } = vi.hoisted(() => {
   return { completeKeys };
 });
 
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  sysRedis: mockSysRedis,
-  REDIS_KEYS: completeKeys({ BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } }),
-  REDIS_SYS_KEYS: completeKeys({ BLOCKS: { BUZZ_CAP: 'system:blocks:buzz-cap' } }),
-}));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
   isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
@@ -502,6 +476,19 @@ import { createModelSubstitutionCollector } from '~/shared/data-graph/generation
 import type { ModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockRedis = redisMock.redis;
+const mockSysRedis = redisMock.sysRedis;
+redisMock.redis.set.mockImplementation(async () => undefined);
+redisMock.redis.incr.mockImplementation(async () => 1);
+redisMock.redis.incrBy.mockImplementation(async () => 1);
+redisMock.redis.decrBy.mockImplementation(async () => 0);
+redisMock.redis.expire.mockImplementation(async () => true);
+redisMock.redis.ttl.mockImplementation(async () => -1);
+redisMock.sysRedis.incrBy.mockImplementation(async () => 0);
+redisMock.sysRedis.decrBy.mockImplementation(async () => 0);
+redisMock.sysRedis.expire.mockImplementation(async () => true);
+redisMock.sysRedis.ttl.mockImplementation(async () => -1);
 const mockDbRead = dbMock.dbRead;
 const mockDbWriteUserFindUnique = dbMock.dbWrite.user.findUnique;
 const mockLogToAxiom = loggingMock.logToAxiom;
@@ -2165,9 +2152,11 @@ describe('blocks.submitWorkflow', () => {
       const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
       expect(result.snapshot.workflowId).toBe('wf_real');
       const incrKey = String(mockSysRedis.incrBy.mock.calls[0][0]);
-      // The review-session key (auto-vivified REDIS_SYS_KEYS placeholder) — bound to
-      // the pubreq id and NOT the ordinary daily buzz-cap key.
-      expect(incrKey).toContain('REVIEW_RUN_FOR_REAL_BUZZ_CAP');
+      // The review-session key — bound to the pubreq id and NOT the ordinary daily
+      // buzz-cap key. This asserted the literal string `REVIEW_RUN_FOR_REAL_BUZZ_CAP`
+      // while the file supplied its own placeholder REDIS_SYS_KEYS, so it was matching
+      // the fixture's invented name rather than any key production emits.
+      expect(incrKey).toContain('system:blocks:review-run-for-real-buzz-cap');
       expect(incrKey).toContain('pubreq_ABC');
       expect(incrKey).not.toContain('system:blocks:buzz-cap');
     });

@@ -23,7 +23,6 @@ vi.mock('~/shared/utils/prisma/enums', () => ({
   VaultItemStatus: { Pending: 'Pending', Failed: 'Failed', Stored: 'Stored' },
 }));
 vi.mock('~/env/server', () => ({ env: { S3_VAULT_BUCKET: 'vault-bucket' } }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: () => ({ catch: () => {} }) }));
 vi.mock('~/server/jobs/job', () => ({
   createJob: (_n: string, _c: string, fn: unknown) => fn,
   getJobDate: async () => [new Date(0), async () => {}],
@@ -74,6 +73,8 @@ import {
   LEASE_STALENESS_MS,
 } from '~/server/jobs/process-vault-items';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+loggingMock.logToAxiom.mockImplementation(() => ({ catch: () => {} }));
 const mockDbWrite = dbMock.dbWrite;
 
 // The eligibility WHERE ANDs two OR-groups: [0] = retry-budget, [1] = overlap

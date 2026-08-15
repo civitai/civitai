@@ -8,16 +8,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * This pins that contract.
  */
 
-const { mockDbWrite, mockBust, mockGetTagRules } = vi.hoisted(() => ({
-  mockDbWrite: {
-    $queryRaw: vi.fn(),
-    $executeRaw: vi.fn().mockResolvedValue(undefined),
-  },
+const { mockBust, mockGetTagRules } = vi.hoisted(() => ({
   mockBust: vi.fn(),
   mockGetTagRules: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 vi.mock('~/server/redis/caches', () => ({ modelVotableTagsCache: { bust: mockBust } }));
 vi.mock('~/server/services/system-cache', () => ({ getTagRules: mockGetTagRules }));
 vi.mock('~/utils/logging', () => ({ createLogger: () => () => undefined }));
@@ -31,6 +26,9 @@ vi.mock('~/server/jobs/job', () => ({
 }));
 
 import { applyTagRules } from '~/server/jobs/apply-tag-rules';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbWrite = dbMock.dbWrite;
+dbMock.dbWrite.$executeRaw.mockResolvedValue(undefined);
 
 beforeEach(() => {
   vi.clearAllMocks();

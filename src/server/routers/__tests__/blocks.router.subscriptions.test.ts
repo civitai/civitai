@@ -54,21 +54,6 @@ vi.mock('~/server/services/block-registry.service', () => ({
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
 }));
-// Mock the heavy peer modules the router imports so the import graph
-// stays cheap and we don't accidentally hit live deps.
-// blocks.router transitively pulls in many redis-cache modules (resource-data.redis,
-// caches.ts, ...) that read REDIS_KEYS/REDIS_SYS_KEYS.<GROUP>.<KEY> AT IMPORT TIME.
-// importActual the @civitai/redis PACKAGE — it's side-effect-free (only exports the
-// key constants + factory; connections happen when createRedisClients() is CALLED,
-// which only the ~/server/redis/client shim does at import) → the COMPLETE real key
-// tree, so no hand-trimmed subset can go stale. (Replaces the old completeKeys Proxy,
-// which covered REDIS_KEYS but not REDIS_SYS_KEYS.)
-vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof import('@civitai/redis/client')>(
-    '@civitai/redis/client'
-  );
-  return { ...actual, redis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) } };
-});
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: vi.fn(),
   parseSubjectUserId: vi.fn(),
@@ -115,6 +100,8 @@ vi.mock('~/server/middleware.trpc', async () => {
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+redisMock.redis.set.mockImplementation(async () => undefined);
 const mockDbReadAppBlockFindUnique = dbMock.dbRead.appBlock.findUnique;
 const mockDbWriteModelFindUnique = dbMock.dbWrite.model.findUnique;
 const mockDbWriteSubscriptionFindUnique = dbMock.dbWrite.blockUserSubscription.findUnique;

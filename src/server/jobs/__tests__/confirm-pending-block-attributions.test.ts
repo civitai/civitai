@@ -1,16 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-/**
- * Coverage for the daily cron that promotes pending block_buzz_attribution
- * rows to confirmed once they're past the provider's refund window — with
- * the PAYOUT-1 velocity/volume hold gate. Validates the per-provider
- * window math, the per-owner hold decision, and the idempotent shape of
- * the WHERE clauses.
- */
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: () => Promise.resolve(null),
-}));
 // createJob from ./job wraps the handler in metadata-tracking machinery
 // we don't need here — stub it to just return the bare handler.
 vi.mock('../job', () => ({
@@ -23,6 +12,8 @@ import {
   HOLD_VELOCITY_COUNT,
 } from '../confirm-pending-block-attributions';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+loggingMock.logToAxiom.mockImplementation(() => Promise.resolve(null));
 const mockDbWrite = dbMock.dbWrite;
 
 beforeEach(() => {
