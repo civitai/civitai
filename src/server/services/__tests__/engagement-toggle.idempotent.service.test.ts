@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Regression test for the prod 500-floor bug class:
 //   Invalid `prisma.modelEngagement.create()` — Unique constraint failed on
@@ -12,24 +13,27 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { Prisma } from '@prisma/client';
 
-const { mockDb, refreshCache } = vi.hoisted(() => ({
-  mockDb: {
-    modelEngagement: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-      update: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-      delete: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-    },
-    bountyEngagement: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-      delete: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-    },
-  },
+const { refreshCache } = vi.hoisted(() => ({
   refreshCache: vi.fn(async () => undefined),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
+// One local served both clients, so the bounty toggle's READ was indistinguishable from its
+// writes. `toggleModelEngagement` does every modelEngagement operation on `dbWrite`
+// (user.service:822); `toggleUserBountyEngagement` reads `bountyEngagement` on `dbRead`
+// (:2270) and writes it on `dbWrite` (:2276, :2284).
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+
+// `create`/`update`/`delete` have no canonical default and the service reads what they return.
+for (const fn of [
+  mockDbWrite.modelEngagement.create,
+  mockDbWrite.modelEngagement.update,
+  mockDbWrite.modelEngagement.delete,
+  mockDbWrite.bountyEngagement.create,
+  mockDbWrite.bountyEngagement.delete,
+]) {
+  fn.mockResolvedValue({});
+}
 // HiddenModels.refreshCache is the side-effect the Hide success path runs and
 // MUST still run on a P2002. Stub the whole user-preferences module surface that
 // user.service reaches for at import time.
@@ -60,8 +64,8 @@ beforeEach(() => {
 
 describe('toggleModelEngagement — idempotent on P2002 race (the confirmed prod 500)', () => {
   it('Hide: P2002 on create → returns true AND still refreshes the HiddenModels cache', async () => {
-    mockDb.modelEngagement.findUnique.mockResolvedValueOnce(null);
-    mockDb.modelEngagement.create.mockRejectedValueOnce(p2002(['userId', 'modelId']));
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce(null);
+    mockDbWrite.modelEngagement.create.mockRejectedValueOnce(p2002(['userId', 'modelId']));
 
     const result = await toggleModelEngagement({ userId: 42, modelId: 10, type: 'Hide' });
 
@@ -71,8 +75,8 @@ describe('toggleModelEngagement — idempotent on P2002 race (the confirmed prod
   });
 
   it('Notify: P2002 on create → returns true (no cache refresh for non-Hide)', async () => {
-    mockDb.modelEngagement.findUnique.mockResolvedValueOnce(null);
-    mockDb.modelEngagement.create.mockRejectedValueOnce(p2002(['userId', 'modelId']));
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce(null);
+    mockDbWrite.modelEngagement.create.mockRejectedValueOnce(p2002(['userId', 'modelId']));
 
     const result = await toggleModelEngagement({ userId: 42, modelId: 10, type: 'Notify' });
 
@@ -81,23 +85,23 @@ describe('toggleModelEngagement — idempotent on P2002 race (the confirmed prod
   });
 
   it('happy path (no race): creates, returns true, refreshes cache for Hide', async () => {
-    mockDb.modelEngagement.findUnique.mockResolvedValueOnce(null);
-    mockDb.modelEngagement.create.mockResolvedValueOnce({});
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce(null);
+    mockDbWrite.modelEngagement.create.mockResolvedValueOnce({});
 
     const result = await toggleModelEngagement({ userId: 42, modelId: 10, type: 'Hide' });
 
     expect(result).toBe(true);
-    expect(mockDb.modelEngagement.create).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.modelEngagement.create).toHaveBeenCalledTimes(1);
     expect(refreshCache).toHaveBeenCalledWith({ userId: 42 });
   });
 
   it('rethrows a non-P2002 create error (does not swallow real failures)', async () => {
-    mockDb.modelEngagement.findUnique.mockResolvedValueOnce(null);
-    mockDb.modelEngagement.create.mockRejectedValueOnce(new Error('connection reset'));
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce(null);
+    mockDbWrite.modelEngagement.create.mockRejectedValueOnce(new Error('connection reset'));
 
-    await expect(
-      toggleModelEngagement({ userId: 42, modelId: 10, type: 'Hide' })
-    ).rejects.toThrow('connection reset');
+    await expect(toggleModelEngagement({ userId: 42, modelId: 10, type: 'Hide' })).rejects.toThrow(
+      'connection reset'
+    );
     // The side-effect must NOT run when the create genuinely failed.
     expect(refreshCache).not.toHaveBeenCalled();
   });
@@ -115,17 +119,17 @@ describe('toggleModelEngagement — explicit setTo direction (notify silent-unsu
   // the new explicit-setTo path is an idempotent subscribe.
 
   it('LEGACY blind toggle (no setTo) on an existing Notify → DELETES it (the bug being closed)', async () => {
-    mockDb.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Notify' });
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Notify' });
 
     const result = await toggleModelEngagement({ userId: 42, modelId: 10, type: 'Notify' });
 
     // Blind toggle: existing type === requested type → setTo resolves to false → delete.
-    expect(mockDb.modelEngagement.delete).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.modelEngagement.delete).toHaveBeenCalledTimes(1);
     expect(result).toBe(false); // "unsubscribed" — exactly the silent-unsubscribe symptom
   });
 
   it('explicit setTo:true on an existing Notify → NO delete, idempotent subscribe (returns true)', async () => {
-    mockDb.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Notify' });
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Notify' });
 
     const result = await toggleModelEngagement({
       userId: 42,
@@ -135,13 +139,13 @@ describe('toggleModelEngagement — explicit setTo direction (notify silent-unsu
     });
 
     // The row already IS Notify and we asked to set it ON → no-op success, never a delete.
-    expect(mockDb.modelEngagement.delete).not.toHaveBeenCalled();
-    expect(mockDb.modelEngagement.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.modelEngagement.delete).not.toHaveBeenCalled();
+    expect(mockDbWrite.modelEngagement.update).not.toHaveBeenCalled();
     expect(result).toBe(true); // still subscribed
   });
 
   it('explicit setTo:true on a Mute row (type Notify) → UPDATEs to Notify (un-mute subscribe), never deletes', async () => {
-    mockDb.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Mute' });
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Mute' });
 
     const result = await toggleModelEngagement({
       userId: 42,
@@ -150,13 +154,13 @@ describe('toggleModelEngagement — explicit setTo direction (notify silent-unsu
       setTo: true,
     });
 
-    expect(mockDb.modelEngagement.update).toHaveBeenCalledTimes(1);
-    expect(mockDb.modelEngagement.delete).not.toHaveBeenCalled();
+    expect(mockDbWrite.modelEngagement.update).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.modelEngagement.delete).not.toHaveBeenCalled();
     expect(result).toBe(true);
   });
 
   it('explicit setTo:true type Mute on an existing Notify → UPDATEs to Mute (turn-off), never blind-deletes', async () => {
-    mockDb.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Notify' });
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Notify' });
 
     const result = await toggleModelEngagement({
       userId: 42,
@@ -165,13 +169,13 @@ describe('toggleModelEngagement — explicit setTo direction (notify silent-unsu
       setTo: true,
     });
 
-    expect(mockDb.modelEngagement.update).toHaveBeenCalledTimes(1);
-    expect(mockDb.modelEngagement.delete).not.toHaveBeenCalled();
+    expect(mockDbWrite.modelEngagement.update).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.modelEngagement.delete).not.toHaveBeenCalled();
     expect(result).toBe(true);
   });
 
   it('explicit setTo:true with no existing row → CREATEs the requested type (fresh subscribe)', async () => {
-    mockDb.modelEngagement.findUnique.mockResolvedValueOnce(null);
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce(null);
 
     const result = await toggleModelEngagement({
       userId: 42,
@@ -180,16 +184,16 @@ describe('toggleModelEngagement — explicit setTo direction (notify silent-unsu
       setTo: true,
     });
 
-    expect(mockDb.modelEngagement.create).toHaveBeenCalledTimes(1);
-    expect(mockDb.modelEngagement.delete).not.toHaveBeenCalled();
+    expect(mockDbWrite.modelEngagement.create).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.modelEngagement.delete).not.toHaveBeenCalled();
     expect(result).toBe(true);
   });
 });
 
 describe('toggleUserBountyEngagement — idempotent on P2002 race (sibling)', () => {
   it('P2002 on create → returns true instead of 500', async () => {
-    mockDb.bountyEngagement.findUnique.mockResolvedValueOnce(null);
-    mockDb.bountyEngagement.create.mockRejectedValueOnce(
+    mockDbRead.bountyEngagement.findUnique.mockResolvedValueOnce(null);
+    mockDbWrite.bountyEngagement.create.mockRejectedValueOnce(
       p2002(['type', 'bountyId', 'userId'])
     );
 
@@ -203,8 +207,8 @@ describe('toggleUserBountyEngagement — idempotent on P2002 race (sibling)', ()
   });
 
   it('rethrows a non-P2002 create error', async () => {
-    mockDb.bountyEngagement.findUnique.mockResolvedValueOnce(null);
-    mockDb.bountyEngagement.create.mockRejectedValueOnce(new Error('boom'));
+    mockDbRead.bountyEngagement.findUnique.mockResolvedValueOnce(null);
+    mockDbWrite.bountyEngagement.create.mockRejectedValueOnce(new Error('boom'));
 
     await expect(
       toggleUserBountyEngagement({ userId: 42, bountyId: 5, type: 'Favorite' as never })

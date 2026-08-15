@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * BlockRegistry.getSlotReservation reuses listForModel verbatim and folds the
@@ -7,28 +9,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
  * assert the reservation fold + the "no extra query" reuse.
  */
 
-const { mockDbRead, mockDbWrite, mockRedis, mockSysRedis } = vi.hoisted(() => {
-  const dbRead = {
-    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    modelVersion: { findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) },
-  };
-  const dbWrite = {};
-  const redis = {
-    packed: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-    del: vi.fn(async () => 0),
-    scanIterator: async function* () {},
-  };
-  const sysRedis = { sMembers: vi.fn(async () => []) };
-  return { mockDbRead: dbRead, mockDbWrite: dbWrite, mockRedis: redis, mockSysRedis: sysRedis };
-});
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockRedis = redisMock.redis;
+const mockSysRedis = redisMock.sysRedis;
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  sysRedis: mockSysRedis,
-  REDIS_KEYS: { BLOCKS: { REGISTRY: 'packed:caches:block-registry' } },
-  REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
-}));
+// `scanIterator` is consumed with `for await`, and the canonical node would vivify it as a spy
+// returning undefined — which throws rather than iterating. The empty generator is the fixture.
+mockRedis.scanIterator.mockImplementation(async function* () {});
 
 import { BlockRegistry, CHROME_BAR_PX } from '../block-registry.service';
 import type { BlockInstallRecord } from '../block-registry.service';
