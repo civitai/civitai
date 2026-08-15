@@ -316,6 +316,50 @@ co-importer converted — say so and report the run as a **negative control**: a
 confirms the prediction was right, which is a different and stronger claim than "no failures
 observed".
 
+### What is left on this axis, and the two pieces of work that are designed but not done
+
+**Counts** (`bySpecifier['~/env/server']` is the live number): **17 sites remain** — 10
+convertible by hand, 7 permanently blocked, 6 deferred on a blast-radius or fresh-pair
+decision, plus two files that need a specific shape rather than a lift:
+
+- **`ingest-images-cap` needs a CLIQUE batch, not a file batch.** It is the last holder of an
+  env mock among the six importers of `~/server/jobs/image-ingestion`, and that clique's
+  failure counts are unstable on an unchanged tree (see the verification rules above), so no
+  single-file run can license a change to it. Convert all six together, take **three** control
+  repeats rather than one to characterise the spread, and run it **A-B-A** — restore the
+  control tree afterwards and repeat once more, so the churn returning when the conversion is
+  removed is causal evidence rather than temporal. Restore by re-applying the inverse, never by
+  discarding the working tree.
+- **`delete-image-from-s3-logging` needs a `setEnv` conversion with a mutation probe**, never a
+  deletion. Its `S3_IMAGE_B2_BUCKET` exists only to differ from the code's own
+  `?? 'civitai-media-uploads'` fallback, and its `DATABASE_IS_PROD` is what makes either delete
+  branch reachable — deleting the mock leaves the file green, the same size, passing residual
+  checks, and covering the S3 call zero times.
+
+**And the largest open item: `TEST_ENV_DEFAULTS` does not reproduce the schema's zod DEFAULTS.**
+The comment at `env.mock.ts:46` — *"absent means absent"* — is true for an **optional** key and
+false for a **defaulted** one, because production `env` is the parsed object. 73 keys carry a
+zod default; 59 are absent from the table and 40 of those are numeric or boolean, where
+`undefined` is not equivalent. The live case is `REPLICATION_LAG_DELAY: 0`:
+`db-lag-helpers.ts:47` does `if (env.REPLICATION_LAG_DELAY <= 0) return dbRead;`, taken in
+production and **not** under test, so tests reaching `getDbWithoutLag` have been on a staleness
+branch production skips.
+
+Two design notes for whoever does it, both learned the hard way elsewhere in this document:
+
+- **Derive the defaults by asking the schema what an unset variable produces — `field.parse(undefined)`
+  — not by walking `_def`.** Defaults are expressed in at least three shapes here, including one
+  nested inside a `z.preprocess`, and a `_def` walk silently misses that one.
+- **The guard must read the schema's SOURCE TEXT, not re-run the seeding.** A check asserting
+  `env.KEY === schema.shape[KEY].parse(undefined)` only confirms the seeding agrees with itself.
+  Static-parse `.default(` sites out of `server-schema.ts` and assert each key reads as not
+  `undefined` through the canonical `env` — two instruments sharing no code path. Assert
+  *presence*, not equality, so a deliberate fixture override stays legal.
+
+Expect this one to turn tests **green→red and red→green at the same time**, and report those as
+two lists rather than as a net: a test that has been taking a branch production never takes was
+passing for the wrong reason.
+
 ### What licenses DELETING an env mock
 
 Not "no test mentions the value". **What licenses it is that nothing READS the value through
