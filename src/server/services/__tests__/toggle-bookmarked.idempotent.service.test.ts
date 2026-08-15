@@ -15,24 +15,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { Prisma } from '@prisma/client';
 
-const { mockDb, queueUpdate } = vi.hoisted(() => ({
-  mockDb: {
-    collection: {
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ id: 999 })),
-    },
-    collectionItem: {
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ id: 1 })),
-      createMany: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ count: 1 })),
-      delete: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-      deleteMany: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ count: 1 })),
-    },
-  },
-  queueUpdate: vi.fn(() => undefined),
-}));
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
+const { queueUpdate } = vi.hoisted(() => ({ queueUpdate: vi.fn(() => undefined) }));
+
+// dbWrite, not dbRead: `toggleBookmarked` reaches for the writer on its reads too.
+const mockDb = dbMock.dbWrite;
 // `toggleBookmarked` calls metricsEngine.queueUpdate on the delete path. Stub the metrics module
 // surface user.service reaches at import time.
 vi.mock('~/server/metrics', () => ({

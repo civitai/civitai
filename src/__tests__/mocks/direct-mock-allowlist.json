@@ -19,14 +19,14 @@
     "~/server/prom/client"
   ],
   "totals": {
-    "canonicalFiles": 336,
+    "canonicalFiles": 334,
     "pendingFiles": 390,
-    "allFiles": 511,
-    "canonicalSites": 480,
+    "allFiles": 509,
+    "canonicalSites": 478,
     "pendingSites": 853
   },
   "bySpecifier": {
-    "~/server/db/client": 239,
+    "~/server/db/client": 237,
     "~/server/redis/client": 139,
     "~/server/logging/client": 102,
     "~/env/server": 106,
@@ -236,7 +236,6 @@
     "src/server/services/__tests__/restore-user-image-recovery.test.ts",
     "src/server/services/__tests__/scanner-policies.buffer.test.ts",
     "src/server/services/__tests__/set-model-minor.service.test.ts",
-    "src/server/services/__tests__/set-user-setting.sql.service.test.ts",
     "src/server/services/__tests__/signals.service.test.ts",
     "src/server/services/__tests__/sticker-placement.service.test.ts",
     "src/server/services/__tests__/strike.service.test.ts",
@@ -244,7 +243,6 @@
     "src/server/services/__tests__/system-cache.sysredis-soft.test.ts",
     "src/server/services/__tests__/tag.service.security.test.ts",
     "src/server/services/__tests__/tag.service.unlisted.test.ts",
-    "src/server/services/__tests__/toggle-bookmarked.idempotent.service.test.ts",
     "src/server/services/__tests__/training-status.sysredis-soft.test.ts",
     "src/server/services/__tests__/training.orchestrator-error-mapping.test.ts",
     "src/server/services/__tests__/unblock-image-nsfwlevel-reset.test.ts",

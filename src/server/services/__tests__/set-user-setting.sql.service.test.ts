@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Correctness tests for the two SQL statements `setUserSetting` emits.
 //
@@ -25,42 +26,36 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // asserts a negative on the text, cannot see that. So each statement additionally pins
 // the shape it emits.
 
-const { statements, mockDb } = vi.hoisted(() => {
-  const statements: { text: string; values: unknown[] }[] = [];
-  return {
-    statements,
-    mockDb: {
-      // Parameterised form. Two call shapes reach it: the tagged template
-      // (`$executeRaw`…``) arrives as `(TemplateStringsArray, ...values)`, and a
-      // pre-built `Prisma.sql` passed as an argument arrives as a `Prisma.Sql`
-      // exposing `.sql` (text with $N placeholders) and `.values`. Reduce both to
-      // the same {text, values} pair.
-      $executeRaw: vi.fn(async (first: any, ...rest: unknown[]) => {
-        if (Array.isArray(first) && Array.isArray(first.raw)) {
-          const text = first.reduce(
-            (acc: string, chunk: string, i: number) => acc + (i ? `$${i}` : '') + chunk,
-            ''
-          );
-          statements.push({ text, values: rest });
-        } else {
-          statements.push({
-            text: typeof first?.sql === 'string' ? first.sql : String(first),
-            values: Array.isArray(first?.values) ? first.values : [],
-          });
-        }
-        return 1;
-      }),
-      // Interpolating form: the whole statement arrives as one already-built string.
-      $executeRawUnsafe: vi.fn(async (text: string, ...values: unknown[]) => {
-        statements.push({ text: String(text), values });
-        return 1;
-      }),
-      $queryRaw: vi.fn(async () => []),
-    },
-  };
-});
+const { statements } = vi.hoisted(() => ({
+  statements: [] as { text: string; values: unknown[] }[],
+}));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
+// dbWrite only: `setUserSetting` emits both statements through the writer.
+// Parameterised form. Two call shapes reach it: the tagged template
+// (`$executeRaw`…``) arrives as `(TemplateStringsArray, ...values)`, and a
+// pre-built `Prisma.sql` passed as an argument arrives as a `Prisma.Sql`
+// exposing `.sql` (text with $N placeholders) and `.values`. Reduce both to
+// the same {text, values} pair.
+dbMock.dbWrite.$executeRaw.mockImplementation(async (first: any, ...rest: unknown[]) => {
+  if (Array.isArray(first) && Array.isArray(first.raw)) {
+    const text = first.reduce(
+      (acc: string, chunk: string, i: number) => acc + (i ? `$${i}` : '') + chunk,
+      ''
+    );
+    statements.push({ text, values: rest });
+  } else {
+    statements.push({
+      text: typeof first?.sql === 'string' ? first.sql : String(first),
+      values: Array.isArray(first?.values) ? first.values : [],
+    });
+  }
+  return 1;
+});
+// Interpolating form: the whole statement arrives as one already-built string.
+dbMock.dbWrite.$executeRawUnsafe.mockImplementation(async (text: string, ...values: unknown[]) => {
+  statements.push({ text: String(text), values });
+  return 1;
+});
 // `setUserSetting` busts the user-settings cache after writing; keep Redis out of it.
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
