@@ -44,7 +44,22 @@ The subset is stratified across closure sizes (`--make-subset` regenerates it fr
 slimming one fat chain shows up rather than being averaged away.
 
 ⚠️ Wall clock on a busy box swings up to ~68%. Always pair a measurement with a control run taken in
-the same window; never compare against a number from a different session.
+the same window; never compare against a number from a different session. With several agents sharing
+the box the noise floor was measured at **±30%** — the same configuration gave 53.3s and 76.6s in one
+session. Below ~20%, prefer phase numbers (collect/setup/test worker-seconds) over wall clock, or do
+not claim the win.
+
+🔴 **The yardstick systematically understates `isolate: false`, and cannot be used to judge it.**
+That flag amortises the registry build across the files a worker runs, so its win scales with
+files-per-worker. 90 files at 16 workers is ~6 files each — a registry built once instead of six
+times — and measured 1.65x. The full 1065-file suite at 8 workers is ~133 files each, and measured
+**16x** on the same phase. Judge isolation on a full run or not at all.
+
+🔴 **No `--no-isolate` number is quotable without a per-file collected count beside it.** Its damage
+is not confined to failing assertions: files silently collect ZERO tests, and how many is
+width-dependent — 9 of 90 at forks/4 workers, 14 of 90 at threads/4, 0 of 90 at threads/16, same
+input. A summary line cannot show you this. `reporter.mjs` writes per-file passed/failed/skipped for
+exactly this comparison.
 
 ## Config sweep
 
