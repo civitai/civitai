@@ -357,9 +357,17 @@ export default defineConfig({
       // Measured: `maxWorkers: 2` really does give 2 pool slots against 8 for a project set to 8
       // (same 12 files gave 8 slots when both were 8), so a per-project count is honoured — but
       // buying it means a distinct `groupOrder`, which SERIALISES this project against `unit`.
-      // That trade is unmeasured. Do not add a worker count here without measuring it, and note
-      // `perf/test-pool-tuning`'s sharp split deliberately sets none for the same reason: the
-      // first project to claim one forces the whole topology.
+      //
+      // 🔴 That trade was measured and it LOSES. Alternating full runs on a quiet 32-core box:
+      // baseline 250.0s / 270.5s, `w8` 282.7s (+8.6%), `w16` 279.3s (+7.3%). The decisive part is
+      // the shape, not the ~8%: w8 and w16 sit 1.4% apart while both are ~8% above a baseline that
+      // brackets them, so what costs is the serialisation and not the worker count, and no further
+      // point on that axis moves it. `perf/test-pool-tuning`'s sharp split abstains for the same
+      // reason — the first project to claim a count forces the whole topology.
+      //
+      // Re-measure only if `unit-fast` passes roughly half of total MODULE LOADS (today: 497 files
+      // carrying 15.2%). Half of FILES is a far lower bar and will be crossed much sooner, which is
+      // exactly how someone talks themselves into re-buying this.
       ...(unitFastMembers.length
         ? [
             {
